@@ -49,10 +49,11 @@
         (__tl_make-array i64 vars)
         (__tl_make-array i64 vars)
         (__tl_make-array bool vars))]
+    [extents? : bool false]
     [i : i64 0]
     (while (< i out.params.len)
       (begin
-        (match (ir.compiler-ir-param-seq-ref out.params i)
+        (match (ir.compiler-ir-param-seq-borrow out.params i)
           [(ir.CompilerIrParam.Param _ _ var)
             (when
               (and (>= var 0) (< var vars))
@@ -65,14 +66,13 @@
     (set! i 0)
     (while (< i out.blocks.len)
       (begin
-        (match (ir.compiler-ir-block-seq-ref out.blocks i)
+        (match (ir.compiler-ir-block-seq-borrow out.blocks i)
           [(ir.CompilerIrBlock.Block _ instrs)
             (let
               [p : i64 0]
               (while (< p (ir.compiler-ir-instr-seq-count instrs))
                 (let
-                  [instr : ir.CompilerIrInstr
-                    (ir.compiler-ir-instr-seq-ref instrs p)]
+                  [instr (ir.compiler-ir-instr-seq-borrow instrs p)]
                   [dst : i64 (ir.compiler-ir-instr-dst instr)]
                   ;; Final IR may be mutable. Tail-recursion conversion can
                   ;; leave a full-width self copy of the hidden output pointer;
@@ -81,7 +81,7 @@
                   ;; at every use. Other variables retain the single-definition
                   ;; rule, including aliases and local allocation addresses.
                   [identity? : bool
-                    (match (& instr)
+                    (match instr
                       [(ir.CompilerIrInstr.Mov
                           target
                           (ir.CompilerIrValue.Var source)
@@ -92,6 +92,10 @@
                             [(StorageRange.Range _ _) true]
                             [_ false]))]
                       [_ false])]
+                  (match instr
+                    [(ir.CompilerIrInstr.AddrOf _ _ words)
+                      (unless (= words 0) (set! extents? true))]
+                    [_ unit])
                   (when
                     (and (>= dst 0) (< dst vars) (not identity?))
                     (set!
@@ -101,7 +105,9 @@
                     (set! (array-ref out.definition-pos dst) p))
                   (set! p (+ p 1)))))])
         (set! i (+ i 1))))
-    (storage-facts! (&mut out))
+    ;; With no declared extent, these three zero-initialized tables cannot
+    ;; acquire an owner, word count or invalid bit in either storage walk.
+    (when extents? (storage-facts! (&mut out)))
     out))
 
 ;; A positive AddrOf extent declares one object over exactly these slots.
@@ -186,26 +192,27 @@
 
 (define (storage-facts! [facts : (&mut facts StorageFacts)]) : unit
   (let
+    [blocks : ir.CompilerIrBlockSeq
+      (owned_view.compiler-owned-reference-shared-view (& facts.blocks))]
     [pass : i64 0]
     (while (< pass 2)
       (let
         [b : i64 0]
         (while (< b facts.blocks.len)
           (begin
-            (match (ir.compiler-ir-block-seq-ref facts.blocks b)
+            (match (ir.compiler-ir-block-seq-borrow blocks b)
               [(ir.CompilerIrBlock.Block _ instrs)
                 (let
                   [i : i64 0]
                   (while (< i (ir.compiler-ir-instr-seq-count instrs))
                     (let
-                      [instr : ir.CompilerIrInstr
-                        (ir.compiler-ir-instr-seq-ref instrs i)]
+                      [instr (ir.compiler-ir-instr-seq-borrow instrs i)]
                       (if (= pass 0)
-                        (match (ir.compiler-ir-global-shared-view instr)
+                        (match instr
                           [(ir.CompilerIrInstr.AddrOf dst source words)
                             (storage-declare! facts instrs i dst source words)]
                           [_ unit])
-                        (match (ir.compiler-ir-global-shared-view instr)
+                        (match instr
                           [(ir.CompilerIrInstr.AddrOf dst source _)
                             (when
                               (and
@@ -223,7 +230,8 @@
                                     true))))]
                           [_
                             (ir.compiler-ir-instr-visit-uses
-                              instr
+                              (owned_view.compiler-owned-reference-shared-view
+                                instr)
                               storage-value-use!
                               facts)]))
                       (set! i (+ i 1)))))])

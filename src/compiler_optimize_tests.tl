@@ -82925,10 +82925,14 @@ return 0" true)
       blocks)))
 
 (define (opt-fill-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (opt.opt-loop-call-function opt.opt-fill-call-try-rewrite (& func)))
+  (opt.opt-verify-at
+    "fill_call"
+    (opt.opt-loop-call-function opt.opt-fill-call-try-rewrite (& func))))
 
 (define (opt-copy-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func)))
+  (opt.opt-verify-at
+    "copy_call"
+    (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func))))
 
 ;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
 ;; keeps the defensive entry verify.
@@ -83841,3 +83845,1370 @@ return 0" true)
       0
       "collection-local descriptor replacement leaves the shared empty slots unchanged")
     unit))
+
+(test
+  full-verifier-pass-mutation-coverage
+  (opt.opt-verify-test-start!)
+  (test.assert-i64-eq
+    (compiler-optimize-ctor-adopt-loop-self-test)
+    42
+    "compiler-optimize-ctor-adopt-loop-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ctor-adopt-self-test)
+    42
+    "compiler-optimize-ctor-adopt-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-slot-fwd-self-test)
+    42
+    "compiler-optimize-slot-fwd-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dense-storage-self-test)
+    42
+    "compiler-optimize-dense-storage-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-runtime-call-identity-self-test)
+    42
+    "compiler-optimize-runtime-call-identity-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-spans-self-test)
+    42
+    "compiler-optimize-spans-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-aggregate-candidate-self-test)
+    42
+    "compiler-optimize-aggregate-candidate-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-aggregate-promote-self-test)
+    42
+    "compiler-optimize-aggregate-promote-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-aggregate-split-self-test)
+    42
+    "compiler-optimize-aggregate-split-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-vector-mask-self-test)
+    42
+    "compiler-optimize-vector-mask-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-debug-verifier-self-test)
+    42
+    "compiler-optimize-debug-verifier-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-indirect-call-def-self-test)
+    42
+    "compiler-optimize-indirect-call-def-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-self-test)
+    42
+    "compiler-optimize-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-commute-constant-lhs-self-test)
+    42
+    "compiler-optimize-commute-constant-lhs-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bitwise-width-self-test)
+    42
+    "compiler-optimize-bitwise-width-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-typed-fold-self-test)
+    42
+    "compiler-optimize-typed-fold-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-strength-self-test)
+    42
+    "compiler-optimize-strength-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dce-alloc-self-test)
+    42
+    "compiler-optimize-dce-alloc-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dce-rewrite-self-test)
+    42
+    "compiler-optimize-dce-rewrite-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dce-self-test)
+    42
+    "compiler-optimize-dce-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dce-mem-self-test)
+    42
+    "compiler-optimize-dce-mem-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-length-self-test)
+    42
+    "compiler-optimize-bit-length-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-divrem-safety-self-test)
+    42
+    "compiler-optimize-divrem-safety-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-simd-local-cse-self-test)
+    42
+    "compiler-optimize-simd-local-cse-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-const-divisor-self-test)
+    42
+    "compiler-optimize-const-divisor-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-cse-self-test)
+    42
+    "compiler-optimize-cse-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-gvn-self-test)
+    42
+    "compiler-optimize-gvn-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-simd-gvn-self-test)
+    42
+    "compiler-optimize-simd-gvn-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dce-pack-self-test)
+    42
+    "compiler-optimize-dce-pack-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-cmp-sink-self-test)
+    42
+    "compiler-optimize-cmp-sink-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-sink-self-test)
+    42
+    "compiler-optimize-load-sink-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-store-addr-sink-self-test)
+    42
+    "compiler-optimize-store-addr-sink-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-cmp-dup-self-test)
+    42
+    "compiler-optimize-cmp-dup-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dce-late-self-test)
+    42
+    "compiler-optimize-dce-late-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dce-late-precopy-self-test)
+    42
+    "compiler-optimize-dce-late-precopy-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-late-sweep-after-pricing-self-test)
+    42
+    "compiler-optimize-late-sweep-after-pricing-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-successor-sink-self-test)
+    42
+    "compiler-optimize-successor-sink-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-copy-self-test)
+    42
+    "compiler-optimize-copy-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-dom-self-test)
+    42
+    "compiler-optimize-bounds-dom-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-dom-slice-word-self-test)
+    42
+    "compiler-optimize-bounds-dom-slice-word-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-dom-addr-taken-self-test)
+    42
+    "compiler-optimize-bounds-dom-addr-taken-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-range-merge-self-test)
+    42
+    "compiler-optimize-range-merge-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-nonneg-globals-self-test)
+    42
+    "compiler-optimize-nonneg-globals-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-run-self-test)
+    42
+    "compiler-optimize-bounds-run-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-stride-run-self-test)
+    42
+    "compiler-optimize-bounds-stride-run-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dom-cmp-rule-a-self-test)
+    42
+    "compiler-optimize-dom-cmp-rule-a-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dom-cmp-rule-a-cfg-self-test)
+    42
+    "compiler-optimize-dom-cmp-rule-a-cfg-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dom-cmp-phi-carried-self-test)
+    42
+    "compiler-optimize-dom-cmp-phi-carried-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dom-cmp-branch-fold-self-test)
+    42
+    "compiler-optimize-dom-cmp-branch-fold-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-self-test)
+    42
+    "compiler-optimize-bounds-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-level-self-test)
+    42
+    "compiler-optimize-level-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-dce-self-test)
+    42
+    "compiler-optimize-global-dce-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-scc-self-test)
+    42
+    "compiler-optimize-scc-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-callgraph-self-test)
+    42
+    "compiler-optimize-callgraph-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-converted-leaf-self-test)
+    42
+    "compiler-optimize-inline-converted-leaf-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-two-multiblock-self-test)
+    42
+    "compiler-optimize-inline-two-multiblock-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-checked-call-carrying-self-test)
+    3000111
+    "compiler-optimize-inline-checked-call-carrying-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-checked-call-carrying-deep-self-test)
+    200
+    "compiler-optimize-inline-checked-call-carrying-deep-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-checked-tail-site-self-test)
+    11
+    "compiler-optimize-inline-checked-tail-site-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-checked-tail-post-self-test)
+    110
+    "compiler-optimize-inline-checked-tail-post-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-checked-specialization-self-test)
+    42
+    "compiler-optimize-inline-checked-specialization-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-checked-rescan-self-test)
+    11001
+    "compiler-optimize-inline-checked-rescan-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-checked-absorb-rescan-self-test)
+    10001
+    "compiler-optimize-inline-checked-absorb-rescan-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-inline-self-test)
+    42
+    "compiler-optimize-inline-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-tailrec-frame-self-test)
+    42
+    "compiler-optimize-tailrec-frame-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-tailrec-self-test)
+    42
+    "compiler-optimize-tailrec-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-wide-literal-operand-self-test)
+    42
+    "compiler-optimize-wide-literal-operand-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-store-forward-self-test)
+    42
+    "compiler-optimize-global-store-forward-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-handle-gep-header-self-test)
+    42
+    "compiler-optimize-global-handle-gep-header-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-join-pre-self-test)
+    42
+    "compiler-optimize-load-join-pre-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-gvn-substitution-self-test)
+    42
+    "compiler-optimize-load-gvn-substitution-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-simd-copy-self-test)
+    42
+    "compiler-optimize-global-simd-copy-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-value-number-self-test)
+    42
+    "compiler-optimize-global-value-number-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-sccp-self-test)
+    42
+    "compiler-optimize-sccp-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-addr-taken-forwarding-self-test)
+    42
+    "compiler-optimize-addr-taken-forwarding-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-sccp-wide-literal-operand-self-test)
+    42
+    "compiler-optimize-sccp-wide-literal-operand-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-group-split-self-test)
+    42
+    "compiler-optimize-group-split-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ssa-fixed-handle-self-test)
+    42
+    "compiler-optimize-ssa-fixed-handle-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-profitability-self-test)
+    42
+    "compiler-optimize-licm-profitability-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-simd-self-test)
+    42
+    "compiler-optimize-licm-simd-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-call-memory-frame-roots-self-test)
+    42
+    "compiler-optimize-call-memory-frame-roots-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-frame-call-self-test)
+    42
+    "compiler-optimize-licm-frame-call-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-checked-root-self-test)
+    42
+    "compiler-optimize-licm-checked-root-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-word-self-test)
+    42
+    "compiler-optimize-licm-word-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-self-test)
+    42
+    "compiler-optimize-licm-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-local-slot-self-test)
+    42
+    "compiler-optimize-licm-local-slot-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-unswitch-self-test)
+    42
+    "compiler-optimize-licm-unswitch-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-unswitch-general-self-test)
+    42
+    "compiler-optimize-licm-unswitch-general-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-predicate-hoist-self-test)
+    42
+    "compiler-optimize-licm-predicate-hoist-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-unswitch-chain-self-test)
+    42
+    "compiler-optimize-licm-unswitch-chain-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-induction-add-inv-self-test)
+    42
+    "compiler-optimize-induction-add-inv-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-induction-self-test)
+    42
+    "compiler-optimize-induction-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-lftr-sum-self-test)
+    42
+    "compiler-optimize-lftr-sum-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-lftr-self-test)
+    42
+    "compiler-optimize-lftr-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-load-store-self-test)
+    42
+    "compiler-optimize-unroll-load-store-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-descending-self-test)
+    42
+    "compiler-optimize-unroll-descending-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-self-test)
+    42
+    "compiler-optimize-unroll-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-mask-self-test)
+    42
+    "compiler-optimize-bce-mask-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-self-test)
+    42
+    "compiler-optimize-bce-version-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-pipeline-self-test)
+    42
+    "compiler-optimize-bce-version-pipeline-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-strided-self-test)
+    42
+    "compiler-optimize-bce-version-strided-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-guard-algebra-self-test)
+    42
+    "compiler-optimize-bce-version-guard-algebra-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-self-test)
+    42
+    "compiler-optimize-bce-version-mb-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-switch-self-test)
+    42
+    "compiler-optimize-bce-version-mb-switch-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-second-exit-self-test)
+    42
+    "compiler-optimize-bce-version-mb-second-exit-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
+    42
+    "compiler-optimize-bce-version-mb-second-exit-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-far-phi-input-self-test)
+    42
+    "compiler-optimize-bce-version-mb-far-phi-input-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-pure-call-dedupe-self-test)
+    42
+    "compiler-optimize-pure-call-dedupe-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-merged-body-self-test)
+    42
+    "compiler-optimize-bce-version-mb-merged-body-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-merged-body-refusal-self-test)
+    42
+    "compiler-optimize-bce-version-mb-merged-body-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-fuse-self-test)
+    42
+    "compiler-optimize-bce-fuse-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-negative-self-test)
+    42
+    "compiler-optimize-bce-version-mb-negative-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-fold-self-test)
+    42
+    "compiler-optimize-bce-version-fold-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-fold-refusal-self-test)
+    42
+    "compiler-optimize-bce-version-fold-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-nest-self-test)
+    42
+    "compiler-optimize-bce-version-mb-nest-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-reject-skip-self-test)
+    42
+    "compiler-optimize-bce-version-reject-skip-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-partial-self-test)
+    42
+    "compiler-optimize-bce-version-mb-partial-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-p5a-self-test)
+    42
+    "compiler-optimize-bce-version-p5a-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-p5a-remainder-self-test)
+    42
+    "compiler-optimize-unroll-p5a-remainder-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-gep-offset-self-test)
+    42
+    "compiler-optimize-gep-offset-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-gep-offset-nested-self-test)
+    42
+    "compiler-optimize-gep-offset-nested-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-gep-offset-starved-self-test)
+    42
+    "compiler-optimize-gep-offset-starved-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-flag-exit-self-test)
+    42
+    "compiler-optimize-flag-exit-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-flag-facts-self-test)
+    42
+    "compiler-optimize-flag-facts-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-flag-exit-general-self-test)
+    42
+    "compiler-optimize-flag-exit-general-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dead-phi-self-test)
+    42
+    "compiler-optimize-dead-phi-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-gep-split-self-test)
+    42
+    "compiler-optimize-gep-split-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-pipeline-self-test)
+    42
+    "compiler-optimize-bce-version-mb-pipeline-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-eq-self-test)
+    42
+    "compiler-optimize-bce-version-mb-eq-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mbcall-self-test)
+    42
+    "compiler-optimize-bce-version-mbcall-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-mb-self-test)
+    42
+    "compiler-optimize-unroll-mb-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ssa-preexisting-phi-self-test)
+    42
+    "compiler-optimize-ssa-preexisting-phi-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-multi-exit-self-test)
+    42
+    "compiler-optimize-licm-multi-exit-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-element-bound-self-test)
+    42
+    "compiler-optimize-licm-element-bound-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-guard-self-test)
+    42
+    "compiler-optimize-licm-guard-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-deref-self-test)
+    42
+    "compiler-optimize-licm-deref-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-payload-self-test)
+    42
+    "compiler-optimize-licm-payload-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-dh-self-test)
+    42
+    "compiler-optimize-licm-dh-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-element-class-self-test)
+    42
+    "compiler-optimize-licm-element-class-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-affine-pipeline-self-test)
+    42
+    "compiler-optimize-affine-pipeline-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-affine-env-reference-self-test)
+    42
+    "compiler-optimize-affine-env-reference-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-affine-env-boundary-self-test)
+    42
+    "compiler-optimize-affine-env-boundary-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-affine-storage-integration-self-test)
+    42
+    "compiler-optimize-affine-storage-integration-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-affine-self-test)
+    42
+    "compiler-optimize-affine-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-preheader-synthesis-self-test)
+    42
+    "compiler-optimize-preheader-synthesis-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-shape-clause-order-self-test)
+    42
+    "compiler-optimize-bce-shape-clause-order-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-masked-capacity-self-test)
+    42
+    "compiler-optimize-bce-masked-capacity-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-guard-price-self-test)
+    42
+    "compiler-optimize-bce-guard-price-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-natural-loop-self-test)
+    42
+    "compiler-optimize-natural-loop-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-rotation-self-test)
+    42
+    "compiler-optimize-loop-rotation-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-rotate-ssa-compound-types-self-test)
+    42
+    "compiler-optimize-rotate-ssa-compound-types-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-rotate-ssa-self-test)
+    42
+    "compiler-optimize-rotate-ssa-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ssa-self-test)
+    42
+    "compiler-optimize-ssa-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-uniform-phi-self-test)
+    42
+    "compiler-optimize-uniform-phi-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-cfg-self-test)
+    42
+    "compiler-optimize-cfg-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-fixed-point-self-test)
+    42
+    "compiler-optimize-fixed-point-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-scratch-region-self-test)
+    42
+    "compiler-optimize-scratch-region-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-merge-functions-self-test)
+    42
+    "compiler-optimize-merge-functions-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-alias-self-test)
+    42
+    "compiler-optimize-alias-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-dead-store-self-test)
+    42
+    "compiler-optimize-dead-store-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-self-test)
+    44
+    "compiler-optimize-load-cse-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-self-test)
+    42
+    "compiler-optimize-unroll-const-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-combine-self-test)
+    42
+    "compiler-optimize-load-combine-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-pipeline-self-test)
+    42
+    "compiler-optimize-unroll-const-pipeline-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-guard-groups-self-test)
+    42
+    "compiler-optimize-unroll-const-guard-groups-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-guard-fallback-self-test)
+    42
+    "compiler-optimize-unroll-const-guard-fallback-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-const-guard-idempotent-self-test)
+    42
+    "compiler-optimize-unroll-const-guard-idempotent-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-const-global-early-self-test)
+    42
+    "compiler-optimize-const-global-early-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-call-mod-ref-self-test)
+    42
+    "compiler-optimize-global-cell-call-mod-ref-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-self-test)
+    42
+    "compiler-optimize-global-cell-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-fill-call-self-test)
+    42
+    "compiler-optimize-fill-call-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-call-suffix-self-test)
+    42
+    "compiler-optimize-loop-call-suffix-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-call-entry-proof-self-test)
+    42
+    "compiler-optimize-loop-call-entry-proof-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-copy-call-self-test)
+    42
+    "compiler-optimize-copy-call-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-string-literal-length-self-test)
+    42
+    "compiler-optimize-string-literal-length-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-latch-sink-self-test)
+    42
+    "compiler-optimize-latch-sink-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-counter-sink-self-test)
+    42
+    "compiler-optimize-counter-sink-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-observable-store-self-test)
+    42
+    "compiler-optimize-global-cell-observable-store-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-cell-pipeline-self-test)
+    42
+    "compiler-optimize-global-cell-pipeline-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-clean-call-self-test)
+    42
+    "compiler-optimize-licm-global-clean-call-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-mod-ref-self-test)
+    42
+    "compiler-optimize-licm-global-mod-ref-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-obj-mod-ref-self-test)
+    42
+    "compiler-optimize-global-obj-mod-ref-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-header-hoist-self-test)
+    42
+    "compiler-optimize-licm-global-header-hoist-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-global-obj-overflow-self-test)
+    42
+    "compiler-optimize-global-obj-overflow-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-element-store-descriptor-self-test)
+    42
+    "compiler-optimize-licm-element-store-descriptor-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-descending-self-test)
+    42
+    "compiler-optimize-bce-version-descending-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-vt-derived-var-base-self-test)
+    42
+    "compiler-optimize-vt-derived-var-base-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-vt-offset-counter-self-test)
+    42
+    "compiler-optimize-vt-offset-counter-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-vt-trace-reason-self-test)
+    42
+    "compiler-optimize-vt-trace-reason-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-cfg-straighten-below-threader-self-test)
+    42
+    "compiler-optimize-cfg-straighten-below-threader-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-arg-global-facts-self-test)
+    42
+    "compiler-optimize-arg-global-facts-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-lga-root-budget-self-test)
+    42
+    "compiler-optimize-lga-root-budget-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-lga-specialization-self-test)
+    42
+    "compiler-optimize-lga-specialization-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-pe-exit-only-phi-self-test)
+    42
+    "compiler-optimize-pe-exit-only-phi-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-call-memory-element-write-self-test)
+    42
+    "compiler-optimize-call-memory-element-write-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-promote-self-test)
+    42
+    "compiler-optimize-licm-global-promote-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-header-partial-self-test)
+    42
+    "compiler-optimize-licm-global-header-partial-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-data-slot-self-test)
+    42
+    "compiler-optimize-licm-global-data-slot-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-mc-cursor-self-test)
+    42
+    "compiler-optimize-mc-cursor-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-unroll-self-test)
+    42
+    "compiler-optimize-loop-budget-unroll-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-bce-self-test)
+    42
+    "compiler-optimize-loop-budget-bce-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-mb-self-test)
+    42
+    "compiler-optimize-loop-budget-mb-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-verify-stop-self-test)
+    42
+    "compiler-optimize-loop-budget-verify-stop-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-loop-budget-pipeline-self-test)
+    42
+    "compiler-optimize-loop-budget-pipeline-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-owned-state-self-test)
+    42
+    "compiler-optimize-owned-state-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-debug-dump-linear-self-test)
+    42
+    "compiler-optimize-debug-dump-linear-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-test-runtime-self-test)
+    42
+    "compiler-optimize-bit-test-runtime-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-test-equality-self-test)
+    42
+    "compiler-optimize-bit-test-equality-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-test-range-self-test)
+    42
+    "compiler-optimize-bit-test-range-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-test-full-window-self-test)
+    42
+    "compiler-optimize-bit-test-full-window-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-test-refusal-self-test)
+    42
+    "compiler-optimize-bit-test-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ubound-self-test)
+    42
+    "compiler-optimize-ubound-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ubound-refusal-self-test)
+    42
+    "compiler-optimize-ubound-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ubound-tangled-self-test)
+    42
+    "compiler-optimize-ubound-tangled-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ubound-self-loop-self-test)
+    42
+    "compiler-optimize-ubound-self-loop-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-ubound-self-loop-refusal-self-test)
+    42
+    "compiler-optimize-ubound-self-loop-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-self-test)
+    42
+    "compiler-optimize-bounds-group-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-offset-self-test)
+    42
+    "compiler-optimize-bounds-group-offset-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-refusal-self-test)
+    42
+    "compiler-optimize-bounds-group-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-literal-self-test)
+    42
+    "compiler-optimize-bounds-group-literal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-literal-refusal-self-test)
+    42
+    "compiler-optimize-bounds-group-literal-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-typed-store-self-test)
+    42
+    "compiler-optimize-load-cse-typed-store-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-register-word-self-test)
+    42
+    "compiler-optimize-load-cse-register-word-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-scaled-key-self-test)
+    42
+    "compiler-optimize-load-cse-scaled-key-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-phi-cmp-fold-self-test)
+    42
+    "compiler-optimize-phi-cmp-fold-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-thread-facts-merge-self-test)
+    42
+    "compiler-optimize-thread-facts-merge-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-thread-phi-chain-self-test)
+    42
+    "compiler-optimize-thread-phi-chain-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-phi-cmp-fold-chain-self-test)
+    42
+    "compiler-optimize-phi-cmp-fold-chain-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-cfg-loop-merge-self-test)
+    42
+    "compiler-optimize-cfg-loop-merge-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-gvn-reassoc-self-test)
+    42
+    "compiler-optimize-gvn-reassoc-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-lone-self-test)
+    42
+    "compiler-optimize-bounds-group-lone-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-dom-nonneg-self-test)
+    42
+    "compiler-optimize-bounds-dom-nonneg-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unr-length-divide-self-test)
+    42
+    "compiler-optimize-unr-length-divide-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unr-unroll-guard-self-test)
+    42
+    "compiler-optimize-unr-unroll-guard-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-flag-exit-sentinel-self-test)
+    42
+    "compiler-optimize-flag-exit-sentinel-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-dom-inductive-self-test)
+    42
+    "compiler-optimize-bounds-dom-inductive-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-if-convert-self-test)
+    42
+    "compiler-optimize-if-convert-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-t22-load-cse-precision-self-test)
+    42
+    "compiler-optimize-t22-load-cse-precision-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-t25-thread-sibling-self-test)
+    42
+    "compiler-optimize-t25-thread-sibling-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-index-form-self-test)
+    42
+    "compiler-optimize-bce-index-form-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-range-normal-corner-self-test)
+    42
+    "compiler-optimize-range-normal-corner-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-range-normal-fan-self-test)
+    42
+    "compiler-optimize-range-normal-fan-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-range-normal-shape-self-test)
+    42
+    "compiler-optimize-range-normal-shape-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-guard-sink-self-test)
+    42
+    "compiler-optimize-guard-sink-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-guard-dedup-self-test)
+    42
+    "compiler-optimize-guard-dedup-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-cascade-self-test)
+    42
+    "compiler-optimize-unroll-cascade-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-guard-imply-self-test)
+    42
+    "compiler-optimize-guard-imply-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bce-hoist-self-test)
+    42
+    "compiler-optimize-bce-hoist-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-disjoint-store-forward-self-test)
+    42
+    "compiler-optimize-disjoint-store-forward-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-field-self-test)
+    42
+    "compiler-optimize-licm-field-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-licm-field-pipeline-self-test)
+    42
+    "compiler-optimize-licm-field-pipeline-self-test")
+  ;; A four-arm chain forces the shared switch commit; the smaller classifier
+  ;; fixtures intentionally prefer bit_test and never reach this boundary.
+  (let
+    [func
+      (irt.func
+        "function @verify_switch(tag=%0:i64) -> i64 vars 5 {
+entry:
+%1 = eq %0, 0 : i64
+branch %1, a, c1
+c1:
+%2 = eq %0, 1 : i64
+branch %2, b, c2
+c2:
+%3 = eq %0, 2 : i64
+branch %3, c, c3
+c3:
+%4 = eq %0, 3 : i64
+branch %4, d, e
+a:
+return 0
+b:
+return 1
+c:
+return 2
+d:
+return 3
+e:
+return 4
+}")]
+    (match (opt.opt-switch-form-function-pass func)
+      [(Result _ changed?) (test.assert-true changed? "switch boundary ran")]))
+  ;; The public unroller can receive an unverified input independently of the
+  ;; outer driver. Its false gate must still run the original full check.
+  (let
+    [func
+      (irt.func "function @verify_unroll() -> unit vars 0 {
+entry:
+return
+}")]
+    [context (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+    [_result
+      (opt.opt-unroll-function-verified-with-context-result
+        (ast.ast-node-pool-reader-type-segment-bases)
+        context
+        false
+        func)]
+    unit)
+  ;; Split the existing mutable map's header from its body so the real
+  ;; rotation stage, rather than the already-rotated defensive route, must
+  ;; expose the gang and run its accepted final-contract post check.
+  (let
+    [original-blocks (opt-unroll-mutable-map-test-blocks 0)]
+    [body : ir.CompilerIrInstrSeq
+      (match (opt.opt-cfg-find-block
+        original-blocks
+        (ir.compiler-ir-label "body"))
+        [(Some (Block _ instrs)) instrs]
+        [_ (ir.compiler-ir-instr-seq-empty)])]
+    [builder (ir.compiler-ir-instr-builder-with-capacity 7)]
+    (for [i (iterator.range 0 6)]
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref body i)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header")))
+    (let
+      [func : ir.CompilerIrFunction
+        (Function
+          (opt-test-symbol "verify_rotation_final")
+          (opt-unroll-mutable-map-test-params)
+          (I64)
+          11
+          (ir.compiler-ir-blocks-with-tail
+            (irt.blocks "exit:\nreturn 0")
+            (irt.block "entry:\n%4 = mov 0 : i64\njump header")
+            (irt.block
+              "header:\n%5 = add %4, 4 : i64\n%6 = le %5, %0 : i64\nbranch %6, body, exit")
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-instr-builder-to-seq builder)))
+          Ordinary)]
+      [state
+        (opt.opt-verify-at
+          "rotation"
+          (opt.opt-pass-rotation
+            (ast.ast-node-pool-reader-context-current)
+            (opt.opt-pass-state
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (profile_state.compiler-profile-state-new)
+              false
+              func
+              false)))]
+      (test.assert-true
+        (> (opt.opt-function-frame state.func) 11)
+        "rotation mutable SIMD route actually rewrote")))
+  ;; Exercise the generic public loop-call driver separately from its copy
+  ;; and fill callback labels, and require an actual committed rewrite.
+  (let
+    [func
+      (opt-cc-test-function
+        "while_body.1__bce_fast"
+        "while_body.1__bce_guard"
+        (opt-cc-test-byte)
+        (opt-cc-test-byte)
+        (opt-cc-test-byte)
+        (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
+        false
+        1
+        false
+        false
+        false
+        false)]
+    [out
+      (opt.opt-verify-at
+        "loop_call"
+        (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func)))]
+    (test.assert-true
+      (not
+        (opt.opt-function-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          func
+          out))
+      "generic loop-call driver actually rewrote"))
+  (opt.opt-verify-test-stop!)
+  (let
+    [expected : (Array String 64)
+      (array
+        "entry.bounds_dom"
+        "entry.loop_cluster"
+        "entry.successor_sink"
+        "entry.rotate_ssa"
+        "entry.guard_sink"
+        "entry.licm_unswitch"
+        "ubound"
+        "ssa"
+        "entry.guard_dedup"
+        "cfg_straighten"
+        "successor_sink"
+        "opt-cmp-dup-function-with-budget"
+        "opt-dce-late-unblock-decided-joins"
+        "thread_branch"
+        "entry.thread_branch"
+        "rotate_ssa"
+        "bce_hoist"
+        "preheaders"
+        "entry.phi_cmp_fold"
+        "licm"
+        "entry.global_gvn"
+        "entry.licm"
+        "licm_unswitch"
+        "opt-licm-unswitch-final"
+        "entry.induction"
+        "induction"
+        "entry.lftr"
+        "lftr"
+        "entry.unroll"
+        "unroll"
+        "post_lftr_licm"
+        "entry.bce_version"
+        "bce_version"
+        "entry.bool_branch_chain"
+        "bool_branch_late"
+        "entry.gep_offset"
+        "gep_offset"
+        "entry.flag_exit"
+        "flag_exit"
+        "gep_split"
+        "entry.preheaders"
+        "entry.bool_branch"
+        "bool_branch"
+        "bool_branch_chain"
+        "if_convert"
+        "entry.scratch_reset"
+        "scratch_reset"
+        "entry.loop_call"
+        "fill_call"
+        "loop_call"
+        "copy_call"
+        "guard_sink"
+        "entry.len_eq"
+        "bit_test"
+        "entry.bounds_group"
+        "bounds_group"
+        "phi_cmp_fold"
+        "uniform_phi"
+        "switch"
+        "entry.unroll_verified"
+        "final.entry.unroll_simd"
+        "final.unroll_simd"
+        "final.rotation"
+        "unroll_mb")]
+    (for [i (iterator.range 0 (array-length expected))]
+      (test.assert-true
+        (opt.opt-verify-test-seen? (& (array-ref expected i)))
+        (str_cat.str-cat
+          "missing planted-defect pass coverage: "
+          (clone (array-ref expected i)))))))
+
+;; Goldens captured with the base full verifier on 0bc228b76. Each case checks
+;; the complete first diagnostic, including the two faults in the final rows.
+(test
+  full-verifier-changed-branches
+  (let
+    [cases : (Array String 20)
+      (array
+        "function @branch() -> unit vars 0 {\nentry:\n return\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0\nreturn\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage -1\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = alloc i64\n%2 = addr_of %1 storage 2\nreturn\n}"
+        "function @branch() -> unit vars 4 {\nentry:\n %0 = alloc i64\n%1 = alloc i64\n%2 = addr_of %1 storage 2\n%3 = addr_of %1 storage 1\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = call make() : u64\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage 1\n%2 = call make([sret arg 0] %1) : u64\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage 1\n%2 = call* @make([sret arg 0] %1) : u64\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage 1\n%2 = call_c* @make([sret arg 0] %1) : u64\nreturn\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = mov 0 : u64\n%1 = call make([sret arg 0] %0) : u64\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = call make([sret arg 0] 0) : u64\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = mov 0 : i64\n%0 = mov 1 : i64\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %1 = mov 0 : i64\nreturn\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return %0\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return 0\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = mov %1 : i64\n%0 = mov 1 : i64\nreturn\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage -1\nreturn %2\n}"
+        "function @branch(output=%0:u64) -> u64 vars 2 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n %1 = mov %2 : i64\nreturn 0\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = call_c* @make() : u64\nreturn\n}")]
+    [expected : (Array String 20)
+      (array
+        "Ok"
+        "Ok"
+        "function @branch: block entry instruction 1: optimizer verify: invalid or overlapping inline storage extent"
+        "Ok"
+        "function @branch: block entry instruction 2: optimizer verify: invalid or overlapping inline storage extent"
+        "Ok"
+        "Ok"
+        "Ok"
+        "Ok"
+        "optimizer verify: sret argument must address inline output storage"
+        "optimizer verify: sret argument must be a pointer variable"
+        "optimizer verify: duplicate var definition"
+        "optimizer verify: duplicate var definition"
+        "Ok"
+        "function @branch: block entry instruction 0: optimizer verify: return-storage definition returns a different address"
+        "function @branch: block entry instruction 0: optimizer verify: return-storage definition omits its result"
+        "optimizer verify: duplicate var definition"
+        "optimizer verify: use before definition"
+        "optimizer verify: use before definition"
+        "Ok")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [func (irt.func (clone (array-ref cases i)))]
+        [actual : String
+          (match (opt.opt-verify-function (& func))
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq actual (array-ref expected i))
+          (str_cat.str-cat "full-verifier branch " (string.int->string i)))))))
+
+;; Base final/backend verifier goldens. Non-SSA definition failures deliberately
+;; admit structurally valid bodies; SSA-shaped bodies retain located use errors.
+(test
+  final-verifier-boundary-contract
+  (let
+    [cases : (Array String 8)
+      (array
+        "function @final() -> unit vars 1 {\nentry:\n%0 = mov 0 : i64\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 1 {\nentry:\n%1 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 2 {\nentry:\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 1 {\nentry:\n%0 = mov 0 : i64\n%0 = mov %1 : i64\njump missing\n}"
+        "function @final() -> unit vars 1 {\nentry:\njump missing\nentry:\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 0 {\nentry:\nreturn\n}"
+        "function @final(p=%0:i64) -> unit vars 1 {\nentry:\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 4 {\nentry:\n%0 = mov %1 : i64\n%2 = mov %3 : i64\nreturn\n}")]
+    [expected : (Array String 8)
+      (array
+        "Ok"
+        "Ok"
+        "block entry instruction 0: optimizer verify: use before definition"
+        "optimizer verify: unknown successor label"
+        "optimizer verify: duplicate block label"
+        "Ok"
+        "Ok"
+        "block entry instruction 0: optimizer verify: use before definition")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [func (irt.func (clone (array-ref cases i)))]
+        [verdict (opt.opt-verify-final-function (& func))]
+        [actual : String
+          (match verdict
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq actual (array-ref expected i))
+          (str_cat.str-cat "base final-verifier golden " (string.int->string i)))))))
+
+;; These failures must come from optimizer instruction-proof dispatch, after
+;; SSA admission, not from calling the storage proof helper directly.
+(test
+  full-verifier-marked-dispatch-errors
+  (let
+    [cases : (Array String 3)
+      (array
+        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof() -> unit vars 5 {\nentry:\n%0 = alloc SretValue\n%1 = alloc SretValue\n%2 = alloc SretValue\n%3 = addr_of %2 storage 3\n%4 = call make([sret arg 0] %3, 0) : u64\nreturn\n}"
+        "function @proof(cb=%0:(CFunc non-null (-> SretValue))) -> unit vars 4 {\nentry:\n%1 = alloc i64\n%2 = addr_of %1 storage 1\n%3 = call* %0([sret arg 0] %2) : u64\nreturn\n}"
+        "function @proof(cb=%0:u64) -> unit vars 4 {\nentry:\n%1 = alloc i64\n%2 = addr_of %1 storage 1\n%3 = call_c* %0([sret arg 0] %2) : u64\nreturn\n}")]
+    [expected : (Array String 3)
+      (array
+        "function @proof: block entry instruction 4: optimizer verify: sret physical argument count differs from callee ABI"
+        "function @proof: block entry instruction 2: optimizer verify: CFunc sret callee uses the internal calling convention"
+        "function @proof: block entry instruction 2: optimizer verify: indirect C sret callee lacks a CFunc signature")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [program
+          (opt-tailrec-array-authorize
+            (ast.ast-node-pool-reader-context-current)
+            (irt.program (clone (array-ref cases i))))]
+        [actual : String
+          (match (opt.opt-verify-program (& program))
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq actual (array-ref expected i))
+          (str_cat.str-cat
+            "base marked-dispatch golden "
+            (string.int->string i)
+            ": "
+            (string.copy (& actual))))))))
+
+;; The only storage obligation in each non-SSA caller is its marked call.
+;; No AddrOf or hidden-return ABI may mask the needs-proof? arm under test.
+(test
+  full-verifier-marked-only-obligations
+  (let
+    [cases : (Array String 3)
+      (array
+        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call make([sret arg 0] %0) : u64\nreturn\n}"
+        "function @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call* %1([sret arg 0] %0) : u64\nreturn\n}"
+        "function @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call_c* %1([sret arg 0] %0) : u64\nreturn\n}")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [program
+          (opt-tailrec-array-authorize
+            (ast.ast-node-pool-reader-context-current)
+            (irt.program (clone (array-ref cases i))))]
+        [actual : String
+          (match (opt.opt-verify-program (& program))
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq
+            actual
+            "function @proof: block entry instruction 2: optimizer verify: sret argument is not a proven inline output range")
+          (str_cat.str-cat
+            "base marked-only obligation "
+            (string.int->string i)
+            ": "
+            (string.copy (& actual))))))))

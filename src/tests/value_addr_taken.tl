@@ -604,3 +604,34 @@
       (count (& out) 3)
       2
       "a direct storage write invalidates availability through its address")))
+
+(test
+  value-gate-seeded-argument-forms
+  (for [mode (iterator.range 0 2)]
+    (for [form (iterator.range 0 5)]
+      (let
+        [func (fact-function mode)]
+        [blocks (opt.opt-function-blocks func)]
+        [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+        [args : ir.CompilerIrCallArgs
+          (cond
+            [(= form 0) (Nil)]
+            [(= form 1) (One (Var 0))]
+            [(= form 2) (Two (Var 0) (Var 1))]
+            [(= form 3) (Two (Var 1) (Var 0))]
+            [else
+              (let
+                [xs : (__tl_dyn-array ir.CompilerIrValue)
+                  (__tl_make-array ir.CompilerIrValue 3)]
+                (set! (array-ref xs 0) (Var 1))
+                (set! (array-ref xs 1) (Var 1))
+                (set! (array-ref xs 2) (Var 0))
+                (Array xs))])]
+        [sites : opt.OptPureCallTable
+          (Cons (opt.OptPureCallEntry (sink-symbol) args 3) (box (Nil)))]
+        [out (opt.opt-pure-call-sites-seed sites 3 (Nil))]
+        (test.assert-true
+          (=
+            (opt.opt-pure-call-sites-empty? (& out))
+            (and (= mode 1) (!= form 0)))
+          "every original argument position is checked before seeding")))))

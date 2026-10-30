@@ -157,3 +157,35 @@ stderr empty
 run compile "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
 stdout contains Wrote
 stderr empty
+
+# Refs #9502 Refs #9493. Only a current bare destroy has a binding boundary.
+case arena-end-binding-boundary-regressions
+each arena_end_brand_name_collision_reject arena_end_brand_name_collision_mark_reject arena_end_brand_name_collision_invalidate_reject arena_end_brand_name_collision_inferred_reject arena_rewind_owner_shadow_reject arena_rewind_owner_shadow_mark_reject arena_rewind_atomic_shadow_reject arena_rewind_bare_mark_reject
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]:
+stderr not-contains __tl_tc_
+stderr not-contains arena-brand/
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0212]:
+stderr not-contains __tl_tc_
+stderr not-contains arena-brand/
+
+# Refs #9502 Refs #9493. Known conservative rejection (Refs #9464 Refs #9256).
+case contextual-copy-holder-known-conservative
+each copy_holder_contextual_if_known_conservative_reject copy_holder_contextual_match_known_conservative_reject
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]:
+stderr not-contains __tl_tc_
+stderr not-contains arena-brand/
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]:
+stderr not-contains __tl_tc_
+stderr not-contains arena-brand/

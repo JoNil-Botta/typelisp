@@ -2358,3 +2358,15 @@ with_owner_match_rewind_reject|check-fail|tests/safety/with_owner_match_rewind_r
 with_owner_match_invalidate_reject|check-fail|tests/safety/with_owner_match_invalidate_reject.tl|-|while `with` cleanup owner
 with_owner_match_first_arena_reject|check-fail|tests/safety/with_owner_match_first_arena_reject.tl|-|while `with` cleanup owner
 with_owner_match_second_arena_reject|check-fail|tests/safety/with_owner_match_second_arena_reject.tl|-|while `with` cleanup owner
+
+# Review correction and explicit precision pins (Refs #9502 Refs #9493).
+arena_end_brand_name_collision_reject|check-fail|tests/safety/arena_end_brand_name_collision_reject.tl|-|cannot run inside the arena it destroys
+arena_end_brand_name_collision_mark_reject|check-fail|tests/safety/arena_end_brand_name_collision_mark_reject.tl|-|cannot run inside the arena it destroys
+arena_end_brand_name_collision_invalidate_reject|check-fail|tests/safety/arena_end_brand_name_collision_invalidate_reject.tl|-|cannot run inside the arena it destroys
+arena_end_brand_name_collision_inferred_reject|check-fail|tests/safety/arena_end_brand_name_collision_inferred_reject.tl|-|cannot run inside the arena it destroys
+arena_rewind_owner_shadow_reject|check-fail|tests/safety/arena_rewind_owner_shadow_reject.tl|-|cannot run inside the arena it rewinds
+arena_rewind_owner_shadow_mark_reject|check-fail|tests/safety/arena_rewind_owner_shadow_mark_reject.tl|-|cannot run inside the arena it rewinds
+arena_rewind_atomic_shadow_reject|check-fail|tests/safety/arena_rewind_atomic_shadow_reject.tl|-|cannot run inside the arena it rewinds
+arena_rewind_bare_mark_reject|check-fail|tests/safety/arena_rewind_bare_mark_reject.tl|-|cannot run inside the arena it rewinds
+copy_holder_contextual_if_known_conservative_reject|check-fail|tests/safety/copy_holder_contextual_if_known_conservative_reject.tl|-|cannot store region-tagged value into return value
+copy_holder_contextual_match_known_conservative_reject|check-fail|tests/safety/copy_holder_contextual_match_known_conservative_reject.tl|-|cannot store region-tagged value into return value

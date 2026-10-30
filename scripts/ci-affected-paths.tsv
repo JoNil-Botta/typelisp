@@ -643,3 +643,13 @@ tests/integration/arena_with_match_cleanup_before_end.tl	stage2-public-tool-surf
 tests/integration/arena_with_match_two_owner_cleanup.tl	stage2-public-tool-surface	@corpus	Primary active-stack/contextual-provenance public matrix fixture.
 tests/integration/copy_enum_contextual_return.tl	stage2-public-tool-surface	@corpus	Primary active-stack/contextual-provenance public matrix fixture.
 tests/safety/copy_view_binder_value_ok.tl	stage2-native-integration-corpus	@corpus	Copy view payload control in the native opt0/1/2 matrix.
+tests/safety/arena_end_brand_name_collision_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/arena_end_brand_name_collision_mark_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/arena_end_brand_name_collision_invalidate_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/arena_end_brand_name_collision_inferred_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/arena_rewind_owner_shadow_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/arena_rewind_owner_shadow_mark_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/arena_rewind_atomic_shadow_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/arena_rewind_bare_mark_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/copy_holder_contextual_if_known_conservative_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.
+tests/safety/copy_holder_contextual_match_known_conservative_reject.tl	stage2-public-tool-surface	@corpus	Primary self-check correction or Known conservative public matrix fixture.

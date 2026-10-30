@@ -11345,8 +11345,8 @@
               env
               (tc-global-shared-view arg)
               owner-ty)
-              [(TcMaybeNameId.Some id) id]
-              [(TcMaybeNameId.No) -1])]
+              [(or (TcArenaDestroyOwnerId.Bare id) (TcArenaDestroyOwnerId.Branded id)) id]
+              [(TcArenaDestroyOwnerId.No) -1])]
           [(ResultTcType.Err _) -1])
         -1)]
     [region : i64
@@ -36264,39 +36264,37 @@
       [_ owner])))
 
 ;; An end must not invalidate an enclosing activation hidden by a mark or a
-;; different arena. A bare owner stops at its actual binding: older same-name
-;; markers belong to an outer owner. A Var-brand metadata bind is not a stop.
-;; 1 is a matching activation, -1 the owner boundary, 0 an unrelated entry.
+;; different arena. Only a bare destroy resolved from the current binding may
+;; stop there. Brand ids and phase-owner ids do not name that binding.
+;; 1 is a matching activation, -1 the verified binding boundary, 0 unrelated.
 (define (tc-arena-activation-entry
   [ctx : TcContext]
   [env : TcTypeEnv]
   [owner : i64]
+  [bare-binding? : bool]
   [key : i64]
   [ty : ast.AstType]) : i64
   (if (= key (tc-region-marker-id))
     (match ty
       [(or (Var region) (Region region _))
-        (if (tc-arena-region-owned-by-id? env owner region)
-          1
-          0)]
+        (if (tc-arena-region-owned-by-id? env owner region) 1 0)]
       [_ 0])
-    (if (and (= key owner) (tc-arena-type? ctx ty))
-      -1
-      0)))
+    (if (and bare-binding? (= key owner) (tc-arena-type? ctx ty)) -1 0)))
 
 (define (tc-arena-activation-persistent?
   [ctx : TcContext]
   [root : TcTypeEnv]
   [env : TcTypeEnv]
-  [owner : i64]) : bool
+  [owner : i64]
+  [bare-binding? : bool]) : bool
   (match (tc-type-env-marker-step env)
     [(Done) false]
-    [(Cache rest) (tc-arena-activation-persistent? ctx root rest owner)]
+    [(Cache rest) (tc-arena-activation-persistent? ctx root rest owner bare-binding?)]
     [(Bind key ty rest)
       (let
-        [entry : i64 (tc-arena-activation-entry ctx root owner key ty)]
+        [entry : i64 (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
         (if (= entry 0)
-          (tc-arena-activation-persistent? ctx root rest owner)
+          (tc-arena-activation-persistent? ctx root rest owner bare-binding?)
           (> entry 0)))]))
 
 (define (tc-arena-activation-scoped?
@@ -36304,40 +36302,34 @@
   [root : TcTypeEnv]
   [persistent : TcTypeEnv]
   [cursor : TcTypeEnvScopedMarkerCursor]
-  [owner : i64]) : bool
+  [owner : i64]
+  [bare-binding? : bool]) : bool
   (match (tc-type-env-scoped-marker-step cursor)
     [(Done)
       (tc-arena-activation-persistent?
-        ctx
-        root
-        (tc-type-env-marker-start persistent)
-        owner)]
+        ctx root (tc-type-env-marker-start persistent) owner bare-binding?)]
     [(Bind key ty rest)
       (let
-        [entry : i64 (tc-arena-activation-entry ctx root owner key ty)]
+        [entry : i64 (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
         (if (= entry 0)
-          (tc-arena-activation-scoped? ctx root persistent rest owner)
+          (tc-arena-activation-scoped? ctx root persistent rest owner bare-binding?)
           (> entry 0)))]))
 
 (define (tc-active-region-owned-by-arena-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [owner : i64]) : bool
+  [owner : i64]
+  [bare-binding? : bool]) : bool
   (if (tc-type-env-scoped-runtime-active? env)
     (let
-      [carrier : TcTypeEnvScopedCarrier
-        (tc-type-env-scoped-runtime-current env)]
+      [carrier : TcTypeEnvScopedCarrier (tc-type-env-scoped-runtime-current env)]
       (tc-arena-activation-scoped?
-        ctx
-        env
+        ctx env
         (tc-type-env-scoped-carrier-persistent (tc-global-shared-view carrier))
         (tc-type-env-scoped-carrier-marker-cursor carrier)
-        owner))
+        owner bare-binding?))
     (tc-arena-activation-persistent?
-      ctx
-      env
-      (tc-type-env-marker-start env)
-      owner)))
+      ctx env (tc-type-env-marker-start env) owner bare-binding?)))
 
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
@@ -58023,7 +58015,7 @@
                   "typecheck: an :invalidate argument must be a branded local arena owner or a value the caller itself invalidates"]
                 [(tc-name-id-list-contains seen brand)
                   "typecheck: a call cannot invalidate the same arena through two arguments"]
-                [(tc-active-region-owned-by-arena-id? ctx env brand)
+                [(tc-active-region-owned-by-arena-id? ctx env brand false)
                   "typecheck: an :invalidate call cannot run inside the arena it destroys"]
                 [(tc-type-contains-arena-owner-region?
                     env
@@ -61004,7 +60996,7 @@
               [(Some _)
                 (match (tc-arena-phase-token-owner-active env pid)
                   [(Some owner)
-                    (if (tc-active-region-owned-by-arena-id? ctx env owner)
+                    (if (tc-active-region-owned-by-arena-id? ctx env owner false)
                       (Err
                         (tc-locate-error-at-expr
                           (tc-context-expr-bases ctx)
@@ -61047,11 +61039,16 @@
 ;; the exact place consumed by the move checker, while a branded Arena's
 ;; lifetime is the stable owner identity used for region and atomic-user
 ;; invalidation. Legacy bare owners retain the direct-local name-marker path.
+(defenum TcArenaDestroyOwnerId
+  (No)
+  (Bare i64)
+  (Branded i64))
+
 (define (tc-destroy-safe-owner-place-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [owner-expr : ast.AstExpr]
-  [owner-ty : ast.AstType]) : TcMaybeNameId
+  [owner-ty : ast.AstType]) : TcArenaDestroyOwnerId
   (let
     [root : i64
       (tc-move-direct-root-place (tc-context-expr-bases ctx) owner-expr)]
@@ -61060,7 +61057,7 @@
       (match (tc-arena-branded-region ctx owner-ty)
         [(Some brand)
           (if (tc-invalidate-brand-destroyable? env brand)
-            (Some brand)
+            (Branded brand)
             (No))]
         [(No)
           (if (and
@@ -61068,7 +61065,7 @@
             (or
               (tc-ordinary-arena-owner-active-id? env root)
               (tc-atomic-arena-owner-active-id? env root)))
-            (Some root)
+            (Bare root)
             (No))]))))
 
 (define (tc-destroy-safe-call
@@ -61097,15 +61094,17 @@
               (ArenaOwnership)
               "typecheck: arena.destroy-safe! arena must be Arena")))))
     (let
-      [owner-id : TcMaybeNameId
+      [owner-id : TcArenaDestroyOwnerId
         (tc-destroy-safe-owner-place-id
           ctx
           env
           (tc-global-shared-view owner-expr)
           owner-ty)]
+      [bare-binding? : bool
+        (match owner-id [(Bare _) true] [_ false])]
       (match owner-id
-        [(Some oid)
-          (if (tc-active-region-owned-by-arena-id? ctx env oid)
+        [(or (Bare oid) (Branded oid))
+          (if (tc-active-region-owned-by-arena-id? ctx env oid bare-binding?)
             (Err
               (tc-locate-error-at-expr
                 (tc-context-expr-bases ctx)

@@ -465,7 +465,7 @@ sh git init -q --initial-branch=main "{{dir}}/r"
 sh git -C "{{dir}}/r" add typelisp.pkg src/main.tl
 sh git -C "{{dir}}/r" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m parent
 # et/eb also supply an enclosing GIT_DIR; the child override must replace it.
-exec case "{{each}}" in et|eb) env GIT_DIR="{{native-dir}}/r/.git" GIT_TRACE="{{native-dir}}/trace" "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0 ;; *) env GIT_TRACE="{{native-dir}}/trace" "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0 ;; esac
+exec sh -c 'case "$1" in et|eb) export GIT_DIR="$2/r/.git" ;; esac; export GIT_TRACE="$2/trace"; exec "$3" build --manifest-path "$4" --target "$5" --opt-level 0' fixture "{{each}}" "{{native-dir}}" "{{compiler}}" "{{dir}}/r/typelisp.pkg" {{host-target}}
 exit 1
 stdout empty
 stderr contains GitHub dependency `remote` git rev-parse
@@ -478,7 +478,7 @@ sh CCV_marker=$(find "{{dir}}/r/target" -name .typelisp-cache-complete)
 test -z "{{marker}}"
 step relative-manifest
 cwd {{dir}}/r
-exec case "{{each}}" in et|eb) env GIT_DIR="{{native-dir}}/r/.git" GIT_TRACE="{{native-dir}}/trace" "{{compiler}}" build --manifest-path typelisp.pkg --target {{host-target}} --opt-level 0 ;; *) env GIT_TRACE="{{native-dir}}/trace" "{{compiler}}" build --manifest-path typelisp.pkg --target {{host-target}} --opt-level 0 ;; esac
+exec sh -c 'case "$1" in et|eb) export GIT_DIR="$2/r/.git" ;; esac; export GIT_TRACE="$2/trace"; exec "$3" build --manifest-path "$4" --target "$5" --opt-level 0' fixture "{{each}}" "{{native-dir}}" "{{compiler}}" typelisp.pkg {{host-target}}
 exit 1
 stdout empty
 stderr contains GitHub dependency `remote` git rev-parse
@@ -513,6 +513,8 @@ sh git -C "{{dir}}/d" -c user.name=Fixture -c user.email=fixture@example.invalid
 sh case "{{pin}}" in tag) git -C "{{dir}}/d" tag stable ;; branch) git -C "{{dir}}/d" branch stable ;; esac
 sh CCV_commit=$(git -C "{{dir}}/d" rev-parse HEAD)
 test "{{commit}}" != "{{parent}}"
+# Branch resolution uses the checkout's origin ref, including linked worktrees.
+sh case "{{each}}" in w-b) git -C "{{dir}}/d" update-ref refs/remotes/origin/stable "{{commit}}" ;; esac
 sh mkdir -p "{{dir}}/r/target/typelisp/git-deps"
 sh case "{{each}}" in d-*) git -c advice.detachedHead=false clone -q --local --branch stable "{{dir}}/d" "{{dir}}/r/target/typelisp/git-deps/remote" ;; f-*) git -c advice.detachedHead=false clone -q --local --separate-git-dir "{{dir}}/m" --branch stable "{{dir}}/d" "{{dir}}/r/target/typelisp/git-deps/remote" ;; w-*) git -C "{{dir}}/d" worktree add -q --detach "{{dir}}/r/target/typelisp/git-deps/remote" stable ;; esac
 exec env GIT_TRACE="{{native-dir}}/trace" "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0

@@ -18358,7 +18358,7 @@
               type-segment-bases
               inner)]
           (compiler-backend-type-size type-segment-bases ty))]
-      [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (Array _ _)
+      [(or (I64) (U64) (F64) (CFunc _ _) (Func _) (Tuple _) (Array _ _)
            (DynArray _) (Box _) (Ptr _) (MutPtr _) (Enum _) (EnumArgs _ _)
            (Struct _) (StructArgs _ _) (String) (Str) (Bytes) (Var _)
            (VarArgs _ _))
@@ -36621,12 +36621,16 @@
         (compiler_ast_types.ast-type-segment-bases-get
           type-segment-bases
           signature))]
-    [(Func args ret-ty)
-      (Some
-        (deref args)
-        (compiler_ast_types.ast-type-segment-bases-get
-          type-segment-bases
-          ret-ty))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (compiler_ast_types.ast-function-signature-view
+            (deref args-signature-box))]
+        (Some
+          args-signature.params
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            args-signature.result)))]
     [_ (No)]))
 
 (define (compiler-backend-program-index-extern-call-info
@@ -36638,16 +36642,25 @@
     [aggregate-params? : bool
       (if c-abi?
         (match (& ty)
-          [(Func args _)
-            (compiler-backend-type-list-has-aggregate?
-              type-segment-bases
-              (deref args))]
+          [(Func args-signature-box)
+            (let
+              [args-signature
+                (compiler_ast_types.ast-function-signature-view
+                  (deref args-signature-box))]
+              (compiler-backend-type-list-has-aggregate?
+                type-segment-bases
+                args-signature.params))]
           [_ false])
         false)]
     [fixed-count : i64
       (if (compiler_ast_types.ast-extern-abi-c-varargs? (& abi))
         (match ty
-          [(Func args _) (compiler-backend-type-list-count (deref args))]
+          [(Func args-signature-box)
+            (let
+              [args-signature
+                (compiler_ast_types.ast-function-signature-view
+                  (deref args-signature-box))]
+              (compiler-backend-type-list-count args-signature.params))]
           [_ -1])
         -1)]
     (+
@@ -37898,7 +37911,7 @@
                       (= kind 2)
                       (compiler_ast_types.ast-extern-abi-c? abi)
                       (match ty
-                        [(Func _ _) false]
+                        [(Func _) false]
                         [_ true])))])
               (return
                 (compiler-backend-symbol-validation-error
@@ -37949,28 +37962,32 @@
   [index : CompilerBackendProgramIndex]
   [ty : (& compiler_ast_types.AstType)]) : bool
   (match ty
-    [(Func args ret)
-      (for [position
-        (iterator.range
-          0
-          (compiler_ast_types.ast-type-list-len (& (deref args))))]
-        (unless
-          (compiler-backend-typelisp-extern-layout-known?
-            index
-            (&
-              (compiler_ast_types.ast-type-segment-bases-get
-                index.type-segment-bases
-                (compiler_ast_types.ast-type-list-get
-                  (& (deref args))
-                  position
-                  (compiler_ast_types.ast-type-id-fallback)))))
-          (return false)))
-      (compiler-backend-typelisp-extern-layout-known?
-        index
-        (&
-          (compiler_ast_types.ast-type-segment-bases-get
-            index.type-segment-bases
-            ret)))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (compiler_ast_types.ast-function-signature-view
+            (deref args-signature-box))]
+        (for [position
+          (iterator.range
+            0
+            (compiler_ast_types.ast-type-list-len (& args-signature.params)))]
+          (unless
+            (compiler-backend-typelisp-extern-layout-known?
+              index
+              (&
+                (compiler_ast_types.ast-type-segment-bases-get
+                  index.type-segment-bases
+                  (compiler_ast_types.ast-type-list-get
+                    (& args-signature.params)
+                    position
+                    (compiler_ast_types.ast-type-id-fallback)))))
+            (return false)))
+        (compiler-backend-typelisp-extern-layout-known?
+          index
+          (&
+            (compiler_ast_types.ast-type-segment-bases-get
+              index.type-segment-bases
+              args-signature.result))))]
     [(or (Region _ inner) (Invalidate _ inner))
       (compiler-backend-typelisp-extern-layout-known?
         index

@@ -1231,3 +1231,16 @@ lambda_capture_atomic_arena_alloc|all|0,1,2|tests/integration/lambda_capture_ato
 lambda_capture_atomic_arena_destroy|all|0,1,2|tests/integration/lambda_capture_atomic_arena_destroy.tl|42|-|-|stdlib/arena.tl|-
 lambda_capture_lifetime_enum|all|0,1,2|tests/integration/lambda_capture_lifetime_enum.tl|42|-|-|-|-
 lambda_capture_lifetime_enum_variants|all|0,1,2|tests/integration/lambda_capture_lifetime_enum_variants.tl|42|-|-|stdlib/string.tl|-
+
+# Refs #9098: owned signature binders and fixed enclosing lifetimes.
+callable_binders_elided_owned_repeat_native|all|0,1,2|tests/integration/callable_binders_elided_owned_repeat_native.tl|42|-|-|-|-
+callable_binders_elided_owned_unused_repeat_native|all|0,1,2|tests/integration/callable_binders_elided_owned_unused_repeat_native.tl|42|-|-|-|-
+callable_binders_elided_owned_repeat_side_effects_native|all|0,1,2|tests/integration/callable_binders_elided_owned_repeat_side_effects_native.tl|42|-|-|-|-
+callable_binders_fixed_incoming_native|all|0,1,2|tests/integration/callable_binders_fixed_incoming_native.tl|42|-|-|-|-
+callable_binders_named_independent_canonical|all|0,1,2|tests/integration/callable_binders_named_independent_canonical.tl|42|-|-|-|-
+callable_binders_copy_alias_native|all|0,1,2|tests/integration/callable_binders_copy_alias_native.tl|42|-|-|-|-
+callable_binders_transport|all|0,1,2|tests/integration/callable_binders_transport.tl|42|-|-|callable_binders_transport_defs.tl|-
+callable_binders_generic_result_native|all|0,1,2|tests/integration/callable_binders_generic_result_native.tl|42|-|-|-|-
+callable_binders_named_owned_repeat_native|all|0,1,2|tests/integration/callable_binders_named_owned_repeat_native.tl|42|-|-|-|-
+callable_binders_named_independent_dotted|all|0,1,2|tests/integration/callable_binders_named_independent_dotted.tl|42|-|-|-|-
+callable_binders_tail_forwarding_native|all|0,1,2|tests/integration/callable_binders_tail_forwarding_native.tl|42|-|-|stdlib/io.tl|-

@@ -1145,12 +1145,15 @@
       (and (>= data.current-function 0) (> data.function-depth 0))
       (begin
         (match result
-          [(tc.ResultTcType.Ok (ast.AstType.Func _ return-box))
+          [(tc.ResultTcType.Ok (ast.AstType.Func return-box-signature-box))
             (let
+              [return-box-signature
+                (ast.ast-function-signature-view
+                  (deref return-box-signature-box))]
               [ret : CompilerSemanticFactType
                 (compiler-semantic-fact-type
                   ctx
-                  (tc.tc-context-type-get ctx return-box)
+                  (tc.tc-context-type-get ctx return-box-signature.result)
                   (owned_view.compiler-owned-shared-view data.current-path))]
               (in-arena
                 data.owner

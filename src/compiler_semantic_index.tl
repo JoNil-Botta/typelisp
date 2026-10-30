@@ -1766,7 +1766,8 @@
           (tc.tc-type-render
             (ast.ast-ty-func
               (tc.tc-macro-param-type-list ctx params)
-              (& (tc.tc-resolve-type ctx ret))))]
+              (& (tc.tc-resolve-type ctx ret))
+              (ast.AstCallableBinders.Unresolved)))]
         [(Unsafe inner)
           (compiler-semantic-decl-type ctx env (deref inner) kind name-id name)]
         [_ "macro"])]

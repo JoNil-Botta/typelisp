@@ -1694,9 +1694,12 @@
                   (and
                     (= name (reader.stable-symbol-id "raw-map"))
                     (match ty
-                      [(Func args ret)
+                      [(Func args-signature-box)
                         (let
-                          [args-list : ast.AstTypeList (deref args)]
+                          [args-signature
+                            (ast.ast-function-signature-view
+                              (deref args-signature-box))]
+                          [args-list : ast.AstTypeList args-signature.params]
                           (and
                             (= (ast.ast-type-list-len (& args-list)) 1)
                             (compiler-parse-type-ptr-i64?
@@ -1706,7 +1709,7 @@
                                   0
                                   (ast.ast-type-id-fallback))))
                             (compiler-parse-type-mut-ptr-ptr-u8?
-                              (ast.ty-node-get ret))))]
+                              (ast.ty-node-get args-signature.result))))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -1761,9 +1764,12 @@
                     (compiler-parse-extern-link-inputs-ok?
                       (ast.ast-extern-metadata-link-inputs metadata-view))
                     (match ty
-                      [(Func args ret)
+                      [(Func args-signature-box)
                         (let
-                          [args-list : ast.AstTypeList (deref args)]
+                          [args-signature
+                            (ast.ast-function-signature-view
+                              (deref args-signature-box))]
+                          [args-list : ast.AstTypeList args-signature.params]
                           (and
                             (= (ast.ast-type-list-len (& args-list)) 1)
                             (match (ast.ty-node-get
@@ -1773,7 +1779,7 @@
                                 (ast.ast-type-id-fallback)))
                               [(I64) true]
                               [_ false])
-                            (match (ast.ty-node-get ret)
+                            (match (ast.ty-node-get args-signature.result)
                               [(I64) true]
                               [_ false])))]
                       [_ false]))]
@@ -1798,12 +1804,14 @@
               [_ false])]
           [_ false])
         (match ty
-          [(Func args ret)
+          [(Func args-signature-box)
             (let
-              [args-list : ast.AstTypeList (deref args)]
+              [args-signature
+                (ast.ast-function-signature-view (deref args-signature-box))]
+              [args-list : ast.AstTypeList args-signature.params]
               (and
                 (= (compiler-parse-type-list-count args-list) 3)
-                (match (ast.ty-node-get ret)
+                (match (ast.ty-node-get args-signature.result)
                   [(I32) true]
                   [_ false])
                 (compiler-parse-type-mut-ptr-u8?
@@ -1837,12 +1845,14 @@
           [(CVarargsOpen) true]
           [_ false])
         (match ty
-          [(Func args ret)
+          [(Func args-signature-box)
             (let
-              [args-list : ast.AstTypeList (deref args)]
+              [args-signature
+                (ast.ast-function-signature-view (deref args-signature-box))]
+              [args-list : ast.AstTypeList args-signature.params]
               (and
                 (= (compiler-parse-type-list-count args-list) 1)
-                (match (ast.ty-node-get ret)
+                (match (ast.ty-node-get args-signature.result)
                   [(I32) true]
                   [_ false])
                 (compiler-parse-type-ptr-u8?
@@ -1878,12 +1888,15 @@
           (ast.ast-extern-metadata-symbol (& (deref metadata)))
           "foreign_add_exact")
         (match ty
-          [(Func args ret)
+          [(Func args-signature-box)
             (let
-              [args-list : ast.AstTypeList (deref args)]
+              [args-signature
+                (ast.ast-function-signature-view (deref args-signature-box))]
+              [args-list : ast.AstTypeList args-signature.params]
               (and
                 (= (compiler-parse-type-list-count args-list) 2)
-                (compiler-parse-i64-type? (ast.ty-node-get ret))
+                (compiler-parse-i64-type?
+                  (ast.ty-node-get args-signature.result))
                 (compiler-parse-two-i64-types? args-list)))]
           [_ false]))]
     [_ false]))
@@ -2095,14 +2108,17 @@
               (& params)
               1
               (ast.ast-param-fallback))
-              [(Param _ (Func args _) false)
-                (compiler-parse-type-invalidate?
-                  (ast.ty-node-get
-                    (ast.ast-type-list-get
-                      (& (deref args))
-                      0
-                      (ast.ast-type-id-fallback)))
-                  (ci.intern "q"))]
+              [(Param _ (Func args-signature-box) false)
+                (let
+                  [args-signature
+                    (ast.ast-function-signature-view (deref args-signature-box))]
+                  (compiler-parse-type-invalidate?
+                    (ast.ty-node-get
+                      (ast.ast-type-list-get
+                        (& args-signature.params)
+                        0
+                        (ast.ast-type-id-fallback)))
+                    (ci.intern "q")))]
               [_ false])
             (match (ast.ast-param-list-get
               (& params)
@@ -2420,10 +2436,15 @@
                                               (reader.stable-symbol-id
                                                 "raw-call"))
                                             (match extern-ty
-                                              [(Func _ ret)
-                                                (match (ast.ty-node-get ret)
-                                                  [(I64) true]
-                                                  [_ false])]
+                                              [(Func ret-signature-box)
+                                                (let
+                                                  [ret-signature
+                                                    (ast.ast-function-signature-view
+                                                      (deref ret-signature-box))]
+                                                  (match (ast.ty-node-get
+                                                    ret-signature.result)
+                                                    [(I64) true]
+                                                    [_ false]))]
                                               [_ false]))]
                                         [_ false]))]
                                   [_ false])))]

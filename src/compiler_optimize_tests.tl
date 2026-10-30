@@ -4397,7 +4397,8 @@
               job
               (& tuple)
               (& (ast.ast-type-list-new)))
-            (& tuple))]
+            (& tuple)
+            (ast.AstCallableBinders.Unresolved))]
         [body : ir.CompilerIrFunction
           (opt-inline-job-pool-function "main" function (irt.instrs "return 7"))]
         [ambient : ast.AstNodePoolContext
@@ -32807,7 +32808,11 @@
       [ty (ast.AstType.Str)]
       (opt.opt-ssa-register-value-type? ty))
     (let
-      [ty (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))]
+      [ty
+        (ast.ast-ty-func
+          (ast.ast-type-list-new)
+          (& (I64))
+          (ast.AstCallableBinders.Unresolved))]
       (opt.opt-ssa-register-value-type? ty))
     (let
       [ty (ast.ast-ty-array (& (I64)) 2)]
@@ -33345,7 +33350,11 @@
 
 (define (compiler-optimize-ssa-fixed-handle-self-test) : i64
   (let
-    [func-ty : ast.AstType (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))]
+    [func-ty : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-list-new)
+        (& (I64))
+        (ast.AstCallableBinders.Unresolved))]
     [array-ty : ast.AstType (ast.ast-ty-array (& (I64)) 2)]
     [dyn-array-ty : ast.AstType (ast.ast-ty-dyn-array (& (I64)))]
     [box-ty : ast.AstType (ast.ast-ty-box (& (I64)))]
@@ -67275,7 +67284,10 @@ return 0" true)
     name
     name
     "alias"
-    (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
+    (ast.ast-ty-func
+      (ast.ast-type-list-new)
+      (& (I64))
+      (ast.AstCallableBinders.Unresolved))
     (ast.AstExternAbi.C)
     link
     (ast.ast-extern-link-input-list-new)

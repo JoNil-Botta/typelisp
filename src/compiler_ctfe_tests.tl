@@ -9,6 +9,7 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_diagnostic as cdiag)
 (import compiler_lzss as lzss)
 (import stdlib.byte_buf_core)
@@ -341,6 +342,53 @@
     (ctfe.ctfe-fuel-limit))
     [(Err _) true]
     [(Ok _ _) false]))
+
+(define (compiler-ctfe-callable-type-head-ok?) : bool
+  (let
+    [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ctfe.ctfe-env-source-names (& env)))]
+    [module : i64 (ci.intern "callable.ctfe")]
+    [name : i64 (ci.intern "identity")]
+    [spelling : i64 (ci.intern "owned")]
+    [scope : cis.InternCallableScopeIdentity
+      (cis.intern-structural-session-callable-scope session 1 module name)]
+    [binder : cis.InternCallableLifetimeIdentity
+      (cis.intern-structural-session-callable-lifetime session scope 0 spelling)]
+    [reference : ast.AstType (ast.ast-ty-ref binder.value (& (I64)))]
+    [owned : ast.AstLifetimeList
+      (ast.ast-lifetime-cons binder.value (& (ast.ast-lifetime-list-new)))]
+    [params : ast.AstTypeList
+      (ast.ast-type-cons (& reference) (& (ast.ast-type-list-new)))]
+    [ty : ast.AstType
+      (ast.ast-ty-func
+        params
+        (& reference)
+        (ast.AstCallableBinders.Resolved owned))]
+    [fixed : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-cons (& reference) (& (ast.ast-type-list-new)))
+        (& reference)
+        (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))]
+    [invalid : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-list-new)
+        (& (Unit))
+        (ast.AstCallableBinders.Resolved
+          (ast.ast-lifetime-cons spelling (& (ast.ast-lifetime-list-new)))))]
+    [expression : i64 (ctfe.ctfe-type-to-expr (& ty) env)]
+    [fixed-expression : i64 (ctfe.ctfe-type-to-expr (& fixed) env)]
+    [invalid-expression : i64 (ctfe.ctfe-type-to-expr (& invalid) env)]
+    [origin : ast.AstExpr (ctfe.ctfe-ast-get env expression)]
+    (and
+      (compiler-ctfe-type-expr-is? (& env) expression (clone origin) ty)
+      (compiler-ctfe-type-expr-is?
+        (& env)
+        fixed-expression
+        (clone origin)
+        fixed)
+      (compiler-ctfe-type-expr-rejected? (& env) invalid-expression origin))))
 
 (define (compiler-ctfe-dyn-array-type-head-ok?) : bool
   (let
@@ -943,7 +991,8 @@
                 (ast.ast-type-cons
                   (& (I64))
                   (& (ast.ast-type-cons (& (Bool)) (& (ast.ast-type-list-new)))))
-                (& (String)))))))]
+                (& (String))
+                (ast.AstCallableBinders.Unresolved))))))]
     [ok : bool true]
     (if (compiler-ctfe-eval-string-ok?
       (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-kind") point-ty)
@@ -974,7 +1023,7 @@
     (if (compiler-ctfe-eval-string-ok?
       (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-key") str-ref-ty)
       env
-      "ref_r_str")
+      "ref_s1_114_str")
       unit
       (set! ok false))
     (if (compiler-ctfe-eval-string-ok?
@@ -1184,7 +1233,8 @@
     [signature : ast.AstType
       (ast.ast-ty-func
         (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
-        (& (Bool)))]
+        (& (Bool))
+        (ast.AstCallableBinders.Unresolved))]
     [shared-ref : i64
       (ast.ast-node-push
         (TypeLiteral
@@ -1480,7 +1530,11 @@
       (compiler-ctfe-type-expr-roundtrip-one? env (ExprList))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-func-with-pools pools (clone pair) (& (String))))
+        (ast.ast-ty-func-with-pools
+          pools
+          (clone pair)
+          (& (String))
+          (ast.AstCallableBinders.Unresolved)))
       (compiler-ctfe-type-expr-roundtrip-one? env (Tuple (box pair)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
@@ -1932,7 +1986,8 @@
                 (ast.ast-type-cons
                   (& (I64))
                   (& (ast.ast-type-cons (& (Bool)) (& (ast.ast-type-list-new)))))
-                (& (String)))))))]
+                (& (String))
+                (ast.AstCallableBinders.Unresolved))))))]
     [record-ty : i64
       (ctfe.ctfe-ast-push
         env
@@ -4624,6 +4679,7 @@
     (unless (compiler-ctfe-raw-pointer-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-fixed-type-head-name-provenance-ok?) (return 1))
     (unless (compiler-ctfe-dyn-array-type-head-ok?) (return 1))
+    (unless (compiler-ctfe-callable-type-head-ok?) (return 1))
     (unless (compiler-ctfe-slice-type-head-ok?) (return 1))
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))

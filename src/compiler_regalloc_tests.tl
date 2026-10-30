@@ -8883,7 +8883,8 @@
         (ast.ast-type-cons
           (& (compiler-reg-i64-ty))
           (& (ast.ast-type-list-new)))))
-    (& (compiler-reg-i64-ty))))
+    (& (compiler-reg-i64-ty))
+    (ast.AstCallableBinders.Unresolved)))
 
 (define (compiler-reg-indirect-call-arg-function) : ir.CompilerIrFunction
   (Function
@@ -8916,7 +8917,10 @@
     (Function
       (ir.compiler-ir-test-symbol "indirect_call_args")
       (ir.compiler-ir-param-seq-prepend
-        (Param "callee" (ast.ast-ty-func types (& (I64))) 0)
+        (Param
+          "callee"
+          (ast.ast-ty-func types (& (I64)) (ast.AstCallableBinders.Unresolved))
+          0)
         params)
       (I64)
       (+ count 2)

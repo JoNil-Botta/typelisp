@@ -1,0 +1,24 @@
+(defmacro (read-field [receiver : Expr]) : Expr
+  (comptime.expr-struct-get receiver "value"))
+
+(defstruct RefBox
+  (:lifetimes keep)
+  (value (& keep i64)))
+
+(define (read [b : (&mut holder (RefBox keep))]) : i64
+  ;; lint-allow: nested-let -- retain the canonical callable/argument lifetime scopes.
+  (let
+    [get
+      (lambda ([q : (& independent i64)]) : i64
+        (+ (deref q) (deref (read-field b))))]
+    (let
+      [one : i64 1]
+      [two : i64 2]
+      (- (+ (get (& one)) (get (& two))) 39))))
+
+(define (main) : i64
+  ;; lint-allow: nested-let -- retain the canonical callable/argument lifetime scopes.
+  (let
+    [value : i64 39]
+    [cell (RefBox (& value))]
+    (read (&mut cell))))

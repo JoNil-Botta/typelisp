@@ -4000,7 +4000,10 @@
     (tc_core.tc-type-copyable? ctx (Never))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-func (ast.ast-type-list-new) (& (I64))))
+      (ast.ast-ty-func
+        (ast.ast-type-list-new)
+        (& (I64))
+        (ast.AstCallableBinders.Unresolved)))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-ptr
@@ -4764,10 +4767,7 @@
     [invalid-lifetime-render-ok : bool
       (string.eq
         (tc_core.tc-type-render (ast.ast-ty-ref (ci.intern-capacity) (& (I64))))
-        (str_cat.str-cat
-          "(& <id:"
-          (string.int->string (ci.intern-capacity))
-          "> i64)"))]
+        "(& <invalid lifetime> i64)")]
     [nominal-lifetime-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
@@ -7204,7 +7204,7 @@
               (+ (comptime (if (= (struct-field-type (type Point) 0) (type i64)) 1 0))
                  (+ (comptime (if (= (enum-variant-payload-type (type Maybe) 1 0) (type String)) 1 0))
                     (+ (comptime (array-length (type (Array i64 4))))
-                       (+ (comptime (if (__tl_string_eq (type-key (type (& r str))) \"ref_r_str\") 1 0))
+                       (+ (comptime (if (__tl_string_eq (type-key (type (& r str))) \"ref_s1_114_str\") 1 0))
                           (+ (comptime (function-param-count (type (-> i64 bool String))))
                              (+ (comptime (tuple-element-count (type (Tuple i64 bool String))))
                                 (comptime (if (= (tuple-element-type (type (Tuple i64 bool)) 1) (type bool)) 1 0)))))))))))))")

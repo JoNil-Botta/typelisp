@@ -28,7 +28,7 @@
 (define (ref-score [_n : (& n i64)]) : i64
   2)
 
-(define (call-pair-f [f : (-> (& p Pair) i64)] [p : Pair]) : i64
+(define (call-pair-f [f : (-> (& Pair) i64)] [p : Pair]) : i64
   (f p))
 
 (define (box-pair [p : (& p Pair)]) : (RefBox p)
@@ -50,8 +50,8 @@
     [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [text : String "borrow"]
     [nums : Numbers (Numbers 3 4)]
-    [f : (-> (& p Pair) i64)
-      (lambda ([arg : (& p Pair)]) : i64
+    [f : (-> (& Pair) i64)
+      (lambda ([arg : (& Pair)]) : i64
         (sum-pair arg))]
     (set! (array-ref items 0) 17)
     (set! (array-ref items 1) 19)

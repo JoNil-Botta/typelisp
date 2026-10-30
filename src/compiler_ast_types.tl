@@ -4,7 +4,9 @@
 ;; Parser/typechecker registries and inferred/lowered facts live elsewhere.
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.text_buf)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_builtin_ids as cbi)
 (import stdlib.dense_list)
 (import compiler_owned_view as owned_view)
@@ -561,7 +563,7 @@
   ;; CTFE values, not as a source-level type parameter.
   (Expr)
   (ExprList)
-  (Func (Box AstTypeList) i64)
+  (Func (Box AstFunctionSignature))
   (Tuple (Box AstTypeList))
   (Array i64 i64)
   (DynArray i64)
@@ -597,6 +599,35 @@
 (defstruct AstLifetimeList
   (slots (__tl_dyn-array i64))
   (len i64))
+
+;; Parsed types have not established a lexical lifetime scope. A resolved
+;; empty set is monomorphic, never permission to infer new binders.
+(defenum AstCallableBinders
+  (Unresolved)
+  (Resolved AstLifetimeList))
+
+(defstruct AstFunctionSignature
+  (params AstTypeList)
+  (result i64)
+  (binders AstCallableBinders))
+
+(define (ast-callable-binders-copy [binders : AstCallableBinders]) : AstCallableBinders
+  (match binders
+    [(Unresolved) (Unresolved)]
+    [(Resolved owned) (Resolved (ast-lifetime-list-copy owned))]))
+
+(define (ast-callable-binders-eq?
+  [left : AstCallableBinders]
+  [right : AstCallableBinders]) : bool
+  (match left
+    [(Unresolved)
+      (match right
+        [(Unresolved) true]
+        [_ false])]
+    [(Resolved a)
+      (match right
+        [(Resolved b) (ast-lifetime-list-eq? a b)]
+        [_ false])]))
 
 (defenum AstMaybeType
   (No)
@@ -845,6 +876,9 @@
         (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
     (unsafe
       (ptr-read (int->ptr (cast address : u64) : (Ptr AstTypeList))))))
+
+(define (ast-function-signature-view [value : (& AstFunctionSignature)]) : AstFunctionSignature
+  (owned_view.compiler-owned-reference-shared-view value))
 
 (define (ast-lifetime-list-box-shared-view [value : (Box AstLifetimeList)]) : AstLifetimeList
   (let
@@ -3504,8 +3538,16 @@
   (let
     [fallback : AstType (owned_view.compiler-owned-reference-shared-view node)]
     (match node
-      [(Func args ret)
-        (Func (box (ty-node-persist-type-list (& (deref args)))) ret)]
+      [(Func args-signature-box)
+        (let
+          [args-signature
+            (ast-function-signature-view (deref args-signature-box))]
+          (Func
+            (box
+              (AstFunctionSignature
+                (ty-node-persist-type-list (& args-signature.params))
+                args-signature.result
+                (ast-callable-binders-copy args-signature.binders)))))]
       [(Tuple args) (Tuple (box (ty-node-persist-type-list (& (deref args)))))]
       [(Region name inner) (Region name inner)]
       [(Ref name inner) (Ref name inner)]
@@ -4041,7 +4083,18 @@
     [(Never) 16]
     [(Expr) 17]
     [(ExprList) 18]
-    [(Func args ret) (hash.combine (ty-type-list-hash (& (deref args)) 19) ret)]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast-function-signature-view (deref args-signature-box))]
+        [value
+          (hash.combine
+            (ty-type-list-hash (& args-signature.params) 19)
+            args-signature.result)]
+        (match args-signature.binders
+          [(Unresolved) value]
+          [(Resolved owned)
+            (ty-lifetime-list-hash (& owned) (hash.combine value 1))]))]
     [(Tuple elems) (ty-type-list-hash (& (deref elems)) 20)]
     [(Array elem count) (hash.combine (hash.combine 21 elem) count)]
     [(DynArray elem) (hash.combine 22 elem)]
@@ -6073,8 +6126,13 @@
 (define (ast-type-cons [head : (& AstType)] [rest : (& AstTypeList)]) : AstTypeList
   (ast-type-list-cons-id (ast-node-pool-reader-type-push head) rest))
 
-(define (ast-ty-func [args : AstTypeList] [ret : (& AstType)]) : AstType
-  (Func (box args) (ast-node-pool-reader-type-push ret)))
+(define (ast-ty-func
+  [args : AstTypeList]
+  [ret : (& AstType)]
+  [binders : AstCallableBinders]) : AstType
+  (Func
+    (box
+      (AstFunctionSignature args (ast-node-pool-reader-type-push ret) binders))))
 
 ;; Legacy/test adapter. Compile-job callers use the explicit-pools twin below.
 (define (ast-ty-tuple [elems : AstTypeList]) : AstType
@@ -6142,12 +6200,16 @@
 (define (ast-ty-func-with-pools
   [pools : AstNodePoolContext]
   [args : AstTypeList]
-  [ret : (& AstType)]) : AstType
+  [ret : (& AstType)]
+  [binders : AstCallableBinders]) : AstType
   (Func
-    (box args)
-    (ast-node-pool-context-type-push
-      pools
-      (owned_view.compiler-owned-reference-shared-view ret))))
+    (box
+      (AstFunctionSignature
+        args
+        (ast-node-pool-context-type-push
+          pools
+          (owned_view.compiler-owned-reference-shared-view ret))
+        binders))))
 
 (define (ast-ty-array-with-pools
   [pools : AstNodePoolContext]
@@ -8972,8 +9034,13 @@
       [(AstType.Never) ,s]
       [(AstType.Expr) ,s]
       [(AstType.ExprList) ,s]
-      [(AstType.Func args ret)
-        (,c (ast-type-id-list-fold (deref args) ,c ,s ,t ,@x) (,t ,@x ret))]
+      [(AstType.Func args-signature-box)
+        (let
+          [args-signature
+            (ast-function-signature-view (deref args-signature-box))]
+          (,c
+            (ast-type-id-list-fold args-signature.params ,c ,s ,t ,@x)
+            (,t ,@x args-signature.result)))]
       [(AstType.Tuple elems) (ast-type-id-list-fold (deref elems) ,c ,s ,t ,@x)]
       [(AstType.Array elem _) (,c ,s (,t ,@x elem))]
       [(AstType.DynArray elem) (,c ,s (,t ,@x elem))]
@@ -9045,10 +9112,16 @@
       [(AstType.Never) (AstType.Never)]
       [(AstType.Expr) (AstType.Expr)]
       [(AstType.ExprList) (AstType.ExprList)]
-      [(AstType.Func args ret)
-        (AstType.Func
-          (box (ast-type-id-list-map (deref args) ,t ,@x))
-          (,t ,@x ret))]
+      [(AstType.Func args-signature-box)
+        (let
+          [args-signature
+            (ast-function-signature-view (deref args-signature-box))]
+          (AstType.Func
+            (box
+              (AstFunctionSignature
+                (ast-type-id-list-map args-signature.params ,t ,@x)
+                (,t ,@x args-signature.result)
+                (ast-callable-binders-copy args-signature.binders)))))]
       [(AstType.Tuple elems)
         (AstType.Tuple (box (ast-type-id-list-map (deref elems) ,t ,@x)))]
       [(AstType.Array elem count) (AstType.Array (,t ,@x elem) count)]
@@ -9182,13 +9255,26 @@
         (match ,r
           [(AstType.ExprList) true]
           [_ false])]
-      [(AstType.Func a-args a-ret)
-        (match ,r
-          [(AstType.Func b-args b-ret)
-            (and
-              (ast-type-id-list-eq? (deref a-args) (deref b-args) ,t ,@x)
-              (,t ,@x a-ret b-ret))]
-          [_ false])]
+      [(AstType.Func a-args-signature-box)
+        (let
+          [a-args-signature
+            (ast-function-signature-view (deref a-args-signature-box))]
+          (match ,r
+            [(AstType.Func b-args-signature-box)
+              (let
+                [b-args-signature
+                  (ast-function-signature-view (deref b-args-signature-box))]
+                (and
+                  (ast-callable-binders-eq?
+                    a-args-signature.binders
+                    b-args-signature.binders)
+                  (ast-type-id-list-eq?
+                    a-args-signature.params
+                    b-args-signature.params
+                    ,t
+                    ,@x)
+                  (,t ,@x a-args-signature.result b-args-signature.result)))]
+            [_ false]))]
       [(AstType.Tuple a-elems)
         (match ,r
           [(AstType.Tuple b-elems)
@@ -12198,7 +12284,7 @@
     [(Never) 15]
     [(Expr) 16]
     [(ExprList) 29]
-    [(Func _ _) 17]
+    [(Func _) 17]
     [(Tuple _) 18]
     [(Array _ _) 19]
     [(DynArray _) 20]
@@ -12541,3 +12627,240 @@
   (match cleanup
     [(or (Fn _) (Owned)) true]
     [(No) false]))
+
+;; A content key encodes the structural record, not the session's allocation
+;; address or printable spelling. Bound lifetimes use lexical indices instead.
+(define (ast-callable-identity-key
+  [source-names : ci.InternSourceNameSessionHandle]
+  [raw : i64]
+  [depth : i64]) : String
+  (when
+    (> depth 32)
+    (ci.intern-runtime-abort-string
+      "tl: callable identity key exceeds nesting limit\n"))
+  (if (< raw (ci.intern-structural-key-base))
+    (if (and
+      (>= raw 0)
+      (< raw (ci.intern-source-name-session-handle-capacity source-names)))
+      (let
+        [text : String
+          (ci.intern-source-name-session-handle-str source-names raw)]
+        [out : text_buf.TextBuf
+          (text_buf.append-int
+            (text_buf.append (text_buf.empty) "s")
+            (string.string-length text))]
+        (for [index (iterator.range 0 (string.string-length text))]
+          (set!
+            out
+            (text_buf.append-int
+              (text_buf.append out "_")
+              (cast (string.string-ref text index) : i64))))
+        (text_buf.render out))
+      (ci.intern-runtime-abort-string "tl: invalid callable source identity\n"))
+    (match (cis.intern-structural-session-record-for-raw
+      (cis.intern-structural-session-handle-from-source-names source-names)
+      raw)
+      [(cis.InternMaybeStructuralRecord.No)
+        (ci.intern-runtime-abort-string
+          "tl: invalid or stale callable identity\n")]
+      [(cis.InternMaybeStructuralRecord.Some record)
+        (when
+          (= record.kind (ci.intern-structural-kind-callable-scope))
+          (return (ast-callable-scope-key source-names raw depth)))
+        (let
+          [kind : i64 record.kind]
+          [left : String
+            (if (or (= kind 1) (= kind 2) (= kind 6) (= kind 9) (= kind 11))
+              (ast-callable-identity-key
+                source-names
+                record.left-id
+                (+ depth 1))
+              (string.int->string record.left-id))]
+          [middle : String
+            (if (or
+              (= kind 2)
+              (= kind 5)
+              (and (= kind 10) (or (= record.left-id 1) (> record.middle-id 0))))
+              (ast-callable-identity-key
+                source-names
+                record.middle-id
+                (+ depth 1))
+              (string.int->string record.middle-id))]
+          [right : String
+            (if (and (= kind 10) (!= record.left-id 1))
+              (string.int->string record.right-id)
+              (ast-callable-identity-key
+                source-names
+                record.right-id
+                (+ depth 1)))]
+          (str_cat.str-cat
+            "k"
+            (string.int->string kind)
+            "_"
+            (string.int->string (string.string-length left))
+            "_"
+            left
+            (string.int->string (string.string-length middle))
+            "_"
+            middle
+            (string.int->string (string.string-length right))
+            "_"
+            right))])))
+
+(define (ast-callable-key-binders
+  [source-names : ci.InternSourceNameSessionHandle]
+  [outer : (& outer AstLifetimeList)]
+  [binders : (& binders AstCallableBinders)]) : AstLifetimeList
+  (let
+    [out : AstLifetimeList
+      (ast-lifetime-list-copy
+        (owned_view.compiler-owned-reference-shared-view outer))]
+    (match binders
+      [(Resolved owned)
+        (let
+          [index : i64 0]
+          [scope : i64 -1]
+          (while (< index (ast-lifetime-list-len (& owned)))
+            (let
+              [id : i64 (ast-lifetime-list-get (& owned) index -1)]
+              (match (cis.intern-structural-session-callable-lifetime-record
+                (cis.intern-structural-session-handle-from-source-names
+                  source-names)
+                id)
+                [(cis.InternMaybeCallableLifetimeRecord.No)
+                  (ci.intern-runtime-abort-string
+                    "tl: invalid or stale callable lifetime contract\n")]
+                [(cis.InternMaybeCallableLifetimeRecord.Some record)
+                  (when
+                    (and (>= scope 0) (!= scope record.scope.value))
+                    (ci.intern-runtime-abort-string
+                      "tl: mixed callable binder owners\n"))
+                  (set! scope record.scope.value)])
+              (let
+                [prior : i64 0]
+                (while (< prior index)
+                  (when
+                    (= id (ast-lifetime-list-get (& owned) prior -1))
+                    (ci.intern-runtime-abort-string
+                      "tl: duplicate callable binder\n"))
+                  (+= prior 1)))
+              (ast-lifetime-list-push (&mut out) id))
+            (+= index 1)))]
+      [(Unresolved) unit])
+    out))
+
+(define (ast-callable-key-binder-count
+  [binders : (& binders AstCallableBinders)]) : i64
+  (match binders
+    [(Unresolved) -1]
+    [(Resolved owned) (ast-lifetime-list-len (& owned))]))
+
+(define (ast-callable-lifetime-key
+  [source-names : ci.InternSourceNameSessionHandle]
+  [bound : (& bound AstLifetimeList)]
+  [lifetime : i64]) : String
+  (let
+    [index : i64 (- (ast-lifetime-list-len bound) 1)]
+    (while (>= index 0)
+      (when
+        (= lifetime (ast-lifetime-list-get bound index -1))
+        (return
+          (str_cat.str-cat
+            "b"
+            (string.int->string (- (- (ast-lifetime-list-len bound) 1) index)))))
+      (-= index 1))
+    (ast-callable-identity-key source-names lifetime 0)))
+
+;; One authority check shared by semantic consumers and wire readers. A binder
+;; set is a single declaration's identities, never a list of source spellings.
+(define (ast-callable-binders-valid?
+  [source-names : ci.InternSourceNameSessionHandle]
+  [binders : (& binders AstCallableBinders)]) : bool
+  (match binders
+    [(Unresolved) false]
+    [(Resolved owned)
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names source-names)]
+        [index : i64 0]
+        [owner : i64 -1]
+        (while (< index (ast-lifetime-list-len (& owned)))
+          (let
+            [id : i64 (ast-lifetime-list-get (& owned) index -1)]
+            (match (cis.intern-structural-session-callable-lifetime-record
+              session
+              id)
+              [(cis.InternMaybeCallableLifetimeRecord.No) (return false)]
+              [(cis.InternMaybeCallableLifetimeRecord.Some record)
+                (when
+                  (and (>= owner 0) (!= owner record.scope.value))
+                  (return false))
+                (set! owner record.scope.value)])
+            (let
+              [previous : i64 0]
+              (while (< previous index)
+                (when
+                  (= id (ast-lifetime-list-get (& owned) previous -1))
+                  (return false))
+                (+= previous 1))))
+          (+= index 1))
+        true)]))
+
+;; Scope chains are linear and can be arbitrarily deep; their root syntax
+;; names still use the bounded, general structural-name key.
+(define (ast-callable-scope-key
+  [source-names : ci.InternSourceNameSessionHandle]
+  [raw : i64]
+  [depth : i64]) : String
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names source-names)]
+    [cursor : i64 raw]
+    [out : text_buf.TextBuf (text_buf.append (text_buf.empty) "c")]
+    (unless
+      (cis.intern-structural-session-callable-scope-valid-at? session raw 0)
+      (ci.intern-runtime-abort-string "tl: invalid callable scope identity\n"))
+    (while (> cursor 0)
+      (match (cis.intern-structural-session-record-for-raw session cursor)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (set!
+            out
+            (text_buf.append-int (text_buf.append out "_") record.left-id))
+          (if (= record.left-id 1)
+            (let
+              [left : String
+                (ast-callable-identity-key
+                  source-names
+                  record.middle-id
+                  (+ depth 1))]
+              [right : String
+                (ast-callable-identity-key
+                  source-names
+                  record.right-id
+                  (+ depth 1))]
+              (set!
+                out
+                (text_buf.append
+                  (text_buf.append-int
+                    (text_buf.append out "_")
+                    (string.string-length left))
+                  "_"))
+              (set! out (text_buf.append out left))
+              (set!
+                out
+                (text_buf.append
+                  (text_buf.append-int
+                    (text_buf.append out "_")
+                    (string.string-length right))
+                  "_"))
+              (set! out (text_buf.append out right))
+              (set! cursor 0))
+            (begin
+              (set!
+                out
+                (text_buf.append-int (text_buf.append out "_") record.right-id))
+              (set! cursor record.middle-id)))]
+        [_
+          (ci.intern-runtime-abort-string
+            "tl: invalid callable scope identity\n")]))
+    (text_buf.render (text_buf.append out "_end"))))

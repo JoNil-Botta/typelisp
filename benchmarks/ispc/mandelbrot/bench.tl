@@ -80,7 +80,7 @@
         [kernel : (->
           (&mut iterations (Slice i32))
           (&mut remaining (Slice i32))
-          (&mut output (Slice i32))
+          (&mut (Slice i32))
           (&mut x-values (Slice f32))
           (&mut y-values (Slice f32))
           (&mut z-re (Slice f32))

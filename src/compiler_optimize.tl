@@ -6762,16 +6762,26 @@
         (match b
           [(ExprList) true]
           [_ false])]
-      [(Func a-params a-ret)
-        (match b
-          [(Func b-params b-ret)
-            (and
-              (opt-type-list-eq
-                type-segment-bases
-                (& (deref a-params))
-                (& (deref b-params)))
-              (opt-type-ids-eq? type-segment-bases a-ret b-ret))]
-          [_ false])]
+      [(Func a-params-signature-box)
+        (let
+          [a-params-signature
+            (ast.ast-function-signature-view (deref a-params-signature-box))]
+          (match b
+            [(Func b-params-signature-box)
+              (let
+                [b-params-signature
+                  (ast.ast-function-signature-view
+                    (deref b-params-signature-box))]
+                (and
+                  (opt-type-list-eq
+                    type-segment-bases
+                    (& a-params-signature.params)
+                    (& b-params-signature.params))
+                  (opt-type-ids-eq?
+                    type-segment-bases
+                    a-params-signature.result
+                    b-params-signature.result)))]
+            [_ false]))]
       [(CFunc a-signature a-mode)
         (match b
           [(CFunc b-signature b-mode)
@@ -7035,14 +7045,20 @@
     [(Never) (hash.i64 16)]
     [(Expr) (hash.i64 17)]
     [(ExprList) (hash.i64 18)]
-    [(Func params ret)
-      (hash.combine
-        19
+    [(Func params-signature-box)
+      (let
+        [params-signature
+          (ast.ast-function-signature-view (deref params-signature-box))]
         (hash.combine
-          (opt-type-list-hash type-segment-bases (& (deref params)))
-          (opt-type-hash
-            type-segment-bases
-            (& (ast.ast-type-segment-bases-get type-segment-bases ret)))))]
+          19
+          (hash.combine
+            (opt-type-list-hash type-segment-bases (& params-signature.params))
+            (opt-type-hash
+              type-segment-bases
+              (&
+                (ast.ast-type-segment-bases-get
+                  type-segment-bases
+                  params-signature.result))))))]
     [(CFunc signature mode)
       (hash.combine
         38
@@ -14540,7 +14556,7 @@
     ;; boundary explicit: aggregate/nominal and lifetime-wrapper forms still
     ;; need grouped SSA packets before they can be renamed safely.
     [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
-         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (String) (Str) (Func _ _)
+         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (String) (Str) (Func _)
          (Array _ _) (DynArray _) (Box _))
       true]
     [_ false]))
@@ -25782,7 +25798,7 @@
       (opt-licm-deref-referent-extent
         type-segment-bases
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-    [(or (Slice _) (Bytes) (Array _ _) (Func _ _) (CFunc _ _) (Var _)
+    [(or (Slice _) (Bytes) (Array _ _) (Func _) (CFunc _ _) (Var _)
          (VarArgs _ _))
       0]
     [_
@@ -95980,7 +95996,7 @@
 (define (opt-ctor-fwd-store-byte-size [ty : (& ast.AstType)]) : i64
   (match ty
     [(or (I64) (U64) (F64) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Box _)
-         (String) (Str) (Bytes) (DynArray _) (Array _ _) (Func _ _) (Tuple _)
+         (String) (Str) (Bytes) (DynArray _) (Array _ _) (Func _) (Tuple _)
          (Enum _) (EnumArgs _ _) (Struct _) (StructArgs _ _))
       8]
     [(or (I32) (U32) (F32)) 4]
@@ -121507,7 +121523,7 @@
   (match ty
     [(or (I64) (U64) (F64) (I32) (U32) (F32) (I16) (U16) (I8) (U8) (Bool) (Char)
          (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Box _) (String) (Str)
-         (Bytes) (DynArray _) (Array _ _) (Func _ _) (Tuple _))
+         (Bytes) (DynArray _) (Array _ _) (Func _) (Tuple _))
       true]
     [_ false]))
 
@@ -128765,7 +128781,7 @@
   [type-segment-bases : i64]
   [ty : (& ast.AstType)]) : i64
   (match ty
-    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (Array _ _)
+    [(or (I64) (U64) (F64) (CFunc _ _) (Func _) (Tuple _) (Array _ _)
          (DynArray _) (Box _) (Ptr _) (MutPtr _) (Enum _) (EnumArgs _ _)
          (Struct _) (StructArgs _ _) (String) (Str) (Bytes))
       8]
@@ -130679,7 +130695,7 @@
       (opt-load-loc-type-size
         type-segment-bases
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (Array _ _)
+    [(or (I64) (U64) (F64) (CFunc _ _) (Func _) (Tuple _) (Array _ _)
          (DynArray _) (Box _) (Ptr _) (MutPtr _) (Enum _) (EnumArgs _ _)
          (Struct _) (StructArgs _ _) (String) (Str) (Bytes) (Var _)
          (VarArgs _ _))
@@ -130712,7 +130728,7 @@
     [(or (I16) (U16)) 3]
     [(F64) 4]
     [(F32) 5]
-    [(or (DynArray _) (String) (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
+    [(or (DynArray _) (String) (Box _) (Ptr _) (MutPtr _) (Func _)) 6]
     [(or (Ref _ inner) (MutRef _ inner))
       (if (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)
         0

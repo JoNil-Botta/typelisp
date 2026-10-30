@@ -614,7 +614,11 @@
 
 (define (typed-function-arity [value : (& value ast.AstType)]) : i64
   (match value
-    [(ast.AstType.Func params _) (ast.ast-type-list-len params)]
+    [(ast.AstType.Func params-signature-box)
+      (let
+        [params-signature
+          (ast.ast-function-signature-view (deref params-signature-box))]
+        (ast.ast-type-list-len (& params-signature.params)))]
     [_ -1]))
 
 (define (typed-call-signature-arity
@@ -625,7 +629,7 @@
     [(TypedResult.Err _) -1]
     [(TypedResult.Ok _)
       (match (& (array-ref store.types signature.handle.index).value)
-        [(ast.AstType.Func _ _)
+        [(ast.AstType.Func _)
           (typed-function-arity
             (& (array-ref store.types signature.handle.index).value))]
         [(ast.AstType.CFunc inner _)

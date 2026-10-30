@@ -3986,7 +3986,8 @@
                             (ast.ast-type-cons
                               (& (ast.AstType.I64))
                               (& (ast.ast-type-list-new)))))))))))))
-        (& (ast.AstType.I64)))]
+        (& (ast.AstType.I64))
+        (ast.AstCallableBinders.Unresolved))]
     [externs : ir.CompilerIrExternSeq
       (ir.compiler-ir-extern-seq1
         (ir.CompilerIrExtern.Extern
@@ -8183,7 +8184,8 @@
     [closure-type : ast.AstType
       (ast.ast-ty-func
         (ast.ast-type-cons (& source-array40) (& (ast.ast-type-list-new)))
-        (& (I64)))]
+        (& (I64))
+        (ast.AstCallableBinders.Unresolved))]
     [dynamic-types : regalloc.CompilerRegVarTypes
       (regalloc.compiler-reg-var-types-insert
         (regalloc.compiler-reg-var-types-insert
@@ -23259,7 +23261,10 @@ entry:
           local-id
           local-id
           "compiler-startup-profile-process-entry-probe"
-          (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
+          (ast.ast-ty-func
+            (ast.ast-type-list-new)
+            (& (I64))
+            (ast.AstCallableBinders.Unresolved))
           (C)
           link-id
           (ast.ast-extern-link-input-list-new)
@@ -23316,7 +23321,8 @@ entry:
           "compiler-arena-debug-plan-local-operation"
           (ast.ast-ty-func
             (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
-            (& (Unit)))
+            (& (Unit))
+            (ast.AstCallableBinders.Unresolved))
           (C)
           debug-id
           (ast.ast-extern-link-input-list-new)
@@ -32027,7 +32033,8 @@ entry:
     [callee-type : ast.AstType
       (ast.ast-ty-func
         (owned_view.compiler-owned-shared-view reader-types)
-        (& (ast.AstType.I64)))]
+        (& (ast.AstType.I64))
+        (ast.AstCallableBinders.Unresolved))]
     [tail : ir.CompilerIrInstr
       (if (= route 2)
         (ir.CompilerIrInstr.TailCallIndirect
@@ -32267,7 +32274,10 @@ entry:
         (backend.compiler-backend-target-abi target))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
     [callee-ty : ast.AstType
-      (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))]
+      (ast.ast-ty-func
+        (ast.ast-type-list-new)
+        (& (I64))
+        (ast.AstCallableBinders.Unresolved))]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r11")]
     [types : regalloc.CompilerRegVarTypes
       (regalloc.compiler-reg-var-types-insert
@@ -32344,7 +32354,7 @@ entry:
     name-id
     name-id
     name
-    (ast.ast-ty-func params (& ret))
+    (ast.ast-ty-func params (& ret) (ast.AstCallableBinders.Unresolved))
     abi
     symbol-id
     (ast.ast-extern-link-input-list-new)
@@ -33841,7 +33851,10 @@ entry:
       provided-id
       provided-id
       "provided_decl"
-      (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
+      (ast.ast-ty-func
+        (ast.ast-type-list-new)
+        (& (I64))
+        (ast.AstCallableBinders.Unresolved))
       (C)
       provided-link-id
       (ast.ast-extern-link-input-list-new)
@@ -33853,7 +33866,8 @@ entry:
       "referenced_decl"
       (ast.ast-ty-func
         (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
-        (& (I64)))
+        (& (I64))
+        (ast.AstCallableBinders.Unresolved))
       (C)
       referenced-link-id
       (ast.ast-extern-link-input-list-new)
@@ -34497,7 +34511,10 @@ entry:
             extern-id
             extern-id
             (owned_view.compiler-owned-shared-view extern-name)
-            (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
+            (ast.ast-ty-func
+              (ast.ast-type-list-new)
+              (& (I64))
+              (ast.AstCallableBinders.Unresolved))
             (C)
             extern-link-id
             (ast.ast-extern-link-input-list-new)
@@ -34509,7 +34526,8 @@ entry:
             (owned_view.compiler-owned-shared-view extern-name)
             (ast.ast-ty-func
               (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
-              (& (I64)))
+              (& (I64))
+              (ast.AstCallableBinders.Unresolved))
             (C)
             same-name-link-id
             (ast.ast-extern-link-input-list-new)
@@ -43463,7 +43481,8 @@ user_fn:
         (&
           (if as-result
             (Struct nominal)
-            (I64))))]
+            (I64)))
+        (ast.AstCallableBinders.Unresolved))]
     [externs : ir.CompilerIrExternBuilder
       (ir.compiler-ir-extern-builder-with-capacity 3)]
     [_native : unit
@@ -43632,7 +43651,10 @@ user_fn:
       [source : i64 (ci.intern "convention_source")]
       [link : i64 (ci.intern "convention_link")]
       [signature : ast.AstType
-        (ast.ast-ty-func (compiler-backend-i64-type-list8) (& (I64)))]
+        (ast.ast-ty-func
+          (compiler-backend-i64-type-list8)
+          (& (I64))
+          (ast.AstCallableBinders.Unresolved))]
       [externs : ir.CompilerIrExternBuilder
         (ir.compiler-ir-extern-builder-with-capacity 1)]
       (ir.compiler-ir-extern-builder-push!
@@ -44133,7 +44155,10 @@ user_fn:
       id
       id
       name
-      (ast.ast-ty-func (compiler-backend-type-list-of params) (& (I64)))
+      (ast.ast-ty-func
+        (compiler-backend-type-list-of params)
+        (& (I64))
+        (ast.AstCallableBinders.Unresolved))
       abi
       id
       (ast.ast-extern-link-input-list-new)
@@ -44682,7 +44707,10 @@ user_fn:
         (compiler-backend-test-symbol "bridge")
         (compiler-backend-test-symbol "bridge")
         "bridge"
-        (ast.ast-ty-func (compiler-backend-type-list-of "iiiiiiii") (& (I64)))
+        (ast.ast-ty-func
+          (compiler-backend-type-list-of "iiiiiiii")
+          (& (I64))
+          (ast.AstCallableBinders.Unresolved))
         (C)
         (compiler-backend-test-symbol "bridge_c")
         (ast.ast-extern-link-input-list-new)

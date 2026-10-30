@@ -1251,6 +1251,12 @@
                       (intern-structural-session-handle-source-names handle))))
                   record.right-id
                   fallback)]
+              [(= record.kind (ci.intern-structural-kind-callable-lifetime))
+                (match (intern-structural-session-callable-lifetime-record
+                  handle
+                  raw)
+                  [(Some lifetime) lifetime.source-name-id]
+                  [(No) fallback])]
               [(= record.kind (ci.intern-structural-kind-macro-global))
                 (if (or (= record.left-id 0) (= record.left-id 1))
                   record.right-id
@@ -1341,3 +1347,143 @@
   (intern-structural-session-arena-phase-record
     handle
     (InternArenaPhaseIdentity raw)))
+
+;; Callable binders share the structural session's owner and reset generation.
+;; The scope is semantic identity; the spelling is retained only for rendering.
+(defstruct InternCallableScopeIdentity
+  (value i64))
+
+(defstruct InternCallableLifetimeIdentity
+  (value i64))
+
+(defstruct InternCallableLifetimeRecord
+  (scope InternCallableScopeIdentity)
+  (ordinal i64)
+  (binding-name-id i64)
+  (source-name-id i64))
+
+(defenum InternMaybeCallableLifetimeRecord
+  (No)
+  (Some InternCallableLifetimeRecord))
+
+(define (intern-structural-session-callable-scope
+  [handle : InternStructuralSessionHandle]
+  [role : i64]
+  [parent : i64]
+  [position : i64]) : InternCallableScopeIdentity
+  (InternCallableScopeIdentity
+    (intern-structural-key-raw
+      (intern-structural-session-key
+        handle
+        (ci.intern-structural-kind-callable-scope)
+        role
+        parent
+        position))))
+
+(define (intern-structural-session-callable-lifetime
+  [handle : InternStructuralSessionHandle]
+  [scope : InternCallableScopeIdentity]
+  [ordinal : i64]
+  [source-name-id : i64]) : InternCallableLifetimeIdentity
+  (InternCallableLifetimeIdentity
+    (intern-structural-key-raw
+      (intern-structural-session-key
+        handle
+        (ci.intern-structural-kind-callable-lifetime)
+        scope.value
+        ordinal
+        source-name-id))))
+
+(define (intern-structural-session-callable-lifetime-record
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : InternMaybeCallableLifetimeRecord
+  (match (intern-structural-session-record-for-raw handle raw)
+    [(Some record)
+      (if (and
+        (= record.kind (ci.intern-structural-kind-callable-lifetime))
+        (>= record.middle-id 0)
+        (>= record.right-id 0))
+        (let
+          [binding-kind : i64
+            (match (intern-structural-session-record-for-raw
+              handle
+              record.right-id)
+              [(Some binding) binding.kind]
+              [_ -1])]
+          [source : i64
+            (if (= binding-kind (ci.intern-structural-kind-callable-lifetime))
+              -1
+              (intern-structural-session-syntax-source-name-id-or
+                handle
+                record.right-id
+                -1))]
+          (if (not
+            (intern-structural-session-source-name-component-valid?
+              handle
+              source))
+            (No)
+            (match (intern-structural-session-record-for-raw
+              handle
+              record.left-id)
+              [(Some scope)
+                (if (intern-structural-session-callable-scope-valid-at?
+                  handle
+                  record.left-id
+                  0)
+                  (Some
+                    (InternCallableLifetimeRecord
+                      (InternCallableScopeIdentity record.left-id)
+                      record.middle-id
+                      record.right-id
+                      source))
+                  (No))]
+              [(No) (No)])))
+        (No))]
+    [(No) (No)]))
+
+(define (intern-structural-session-callable-scope-valid-at?
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [_depth : i64]) : bool
+  (let
+    [cursor : i64 raw]
+    (while (> cursor 0)
+      (match (intern-structural-session-record-for-raw handle cursor)
+        [(Some record)
+          (unless
+            (and
+              (= record.kind (ci.intern-structural-kind-callable-scope))
+              (>= record.middle-id 0)
+              (>= record.right-id 0))
+            (return false))
+          (cond
+            [(= record.left-id 1)
+              (return
+                (and
+                  (or
+                    (intern-structural-session-source-name-component-valid?
+                      handle
+                      record.middle-id)
+                    (match (intern-structural-session-record-for-raw
+                      handle
+                      record.middle-id)
+                      [(Some _) true]
+                      [_ false]))
+                  (or
+                    (intern-structural-session-source-name-component-valid?
+                      handle
+                      record.right-id)
+                    (match (intern-structural-session-record-for-raw
+                      handle
+                      record.right-id)
+                      [(Some _) true]
+                      [_ false]))))]
+            [(or (= record.left-id 2) (= record.left-id 3))
+              ;; A parent was minted before its child in this same owner.
+              ;; Strictly descending slots prove termination without a depth cap.
+              (when (= record.middle-id 0) (return true))
+              (unless (< record.middle-id cursor) (return false))
+              (set! cursor record.middle-id)]
+            [else (return false)])]
+        [_ (return false)]))
+    false))

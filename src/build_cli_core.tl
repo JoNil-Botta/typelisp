@@ -1152,7 +1152,11 @@
   (build_run_core.source-tool-git-checkout-command root checkout-ref))
 
 (define (build-git-rev-parse-command [root : String]) : process.ProcessCommand
-  (build_run_core.source-tool-git-rev-parse-command root "HEAD"))
+  ;; Bind metadata after -C root; do not discover an enclosing repository.
+  (process.command-with-env
+    (build_run_core.source-tool-git-rev-parse-command root "HEAD")
+    "GIT_DIR"
+    ".git"))
 
 (define (build-trim-command-output [output : String]) : String
   (string.trim (& output)))

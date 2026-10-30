@@ -47,14 +47,16 @@
     [(Word.Ok p) (deref p.right)]
     [(Word.Err e) (deref e)]))
 
+;; Counts above 10 take the explicit-return tail calls down to 10 before the
+;; direct path; 0 takes the zero-count return and the `try` exit on `Err`.
 (define (main) : i64
   (let
     [n : i64 (- (io.arg-count) 1)]
     [x : i64 7]
     [first : (Pair x) (wrap-pair (& x) n)]
-    [second : (Pair x) (wrap-pair (& x) (+ n 1))]
-    [ok : i64 (score (wrap-word (& x) (+ n 1)))]
+    [second : (Pair x) (wrap-pair (& x) (+ n 12))]
+    [ok : i64 (score (wrap-word (& x) (+ n 12)))]
     [err : i64 (score (wrap-word (& x) n))]
-    [iok : i64 (score (indirect wrap-word (& x) (+ n 1)))]
+    [iok : i64 (score (indirect wrap-word (& x) (+ n 12)))]
     [ierr : i64 (score (indirect wrap-word (& x) n))]
     (+ (+ (deref first.left) (deref second.middle)) (+ (+ ok err) (+ iok ierr)))))

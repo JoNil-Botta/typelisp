@@ -36543,9 +36543,19 @@
       [(Some (Var region)) region]
       [_ owner])))
 
+;; An incoming owner's brand is a canonical identity, while a `with-arena`
+;; region keeps its spelling. Inside `(in-arena owner ...)` a `with-arena` marks
+;; and resets the owner's own arena, which main recognised only through the
+;; shared spelling, so the brand also matches through its declaration key, as
+;; main's other same-name queries do (`tc-storage-lifetime-source-id`).
 (define (tc-active-region-owned-by-arena-id? [env : TcTypeEnv] [owner : i64]) : bool
   (match (tc-active-region env)
-    [(Some region) (tc-arena-region-owned-by-id? env owner region)]
+    [(Some region)
+      (let
+        [key : i64 (tc-storage-lifetime-source-id env owner)]
+        (or
+          (tc-arena-region-owned-by-id? env owner region)
+          (and (!= key owner) (tc-arena-region-owned-by-id? env key region))))]
     [(No) false]))
 
 (define (tc-cleanup-owner-marker-for?

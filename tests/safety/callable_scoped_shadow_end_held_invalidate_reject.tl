@@ -1,7 +1,6 @@
-;; Refs #9098: with-arena shadowing does not hide a held owner. The fresh
-;; `with-arena r` is not the incoming owner's arena, but the `with` cleanup
-;; owner `w` still holds values from the incoming owner, so ending it through
-;; an `:invalidate` call is rejected as it is without the shadow.
+;; Refs #9098: ending an incoming owner through an `:invalidate` call inside a
+;; `with-arena` of its brand's spelling while a `with` cleanup owner holds
+;; values from it is rejected with the same diagnostic as on main.
 (import stdlib.arena)
 (import stdlib.string)
 

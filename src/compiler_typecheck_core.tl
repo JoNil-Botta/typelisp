@@ -65441,6 +65441,33 @@
 ;; from its referent (`tc-selected-place-acquire`, `tc-infer-selected-var`).
 ;; Only a field read or a name can be such a view; an unannotated name never
 ;; holds one whose regions are not visible (its own binding needed them).
+;; Main relates an incoming lifetime to a `with-arena` region for references,
+;; but not for the lifetime arguments of a nominal. A nominal let annotation
+;; naming such a region therefore leaves main's binding with its inferred type,
+;; which ends with the incoming lifetime. The initializer is typed without the
+;; annotation, which the binding still checks, so the binding keeps that type.
+(define (tc-let-annotation-names-arena-region?
+  [env : TcTypeEnv]
+  [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(or (StructArgs _ lifetimes) (EnumArgs _ lifetimes))
+      (tc-lifetime-list-names-arena-region-at? env (& (deref lifetimes)) 0)]
+    [_ false]))
+
+(define (tc-lifetime-list-names-arena-region-at?
+  [env : TcTypeEnv]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-lifetime-list-len lifetimes))
+    false
+    (or
+      (match (tc-source-lifetime-local-scan
+        env
+        (ast.ast-lifetime-list-get lifetimes index -1))
+        [(TcSourceLifetimeLocal.Region) true]
+        [_ false])
+      (tc-lifetime-list-names-arena-region-at? env lifetimes (+ index 1)))))
+
 (define (tc-selected-let-init-expected
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -65592,7 +65619,11 @@
                   ctx
                   env
                   init-id
-                  (ast.AstMaybeType.Some resolved-want))
+                  (if (tc-let-annotation-names-arena-region?
+                    env
+                    (& resolved-want))
+                    ast.AstMaybeType.No
+                    (ast.AstMaybeType.Some resolved-want)))
                 source
                 sink)))]
         [(ast.AstMaybeType.No)

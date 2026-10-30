@@ -1220,12 +1220,16 @@ with_owner_destroy_unannotated_reject|check-fail|tests/safety/with_owner_destroy
 with_owner_invalidate_call_reject|check-fail|tests/safety/with_owner_invalidate_call_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
 with_owner_invalidate_call_second_brand_reject|check-fail|tests/safety/with_owner_invalidate_call_second_brand_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `second` while `with` cleanup owner `w` holds values from it
 with_owner_invalidate_call_place_reject|check-fail|tests/safety/with_owner_invalidate_call_place_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
-# Known open (#9476 d6/d9/d11, deferred to #9445 / D-C47 S4): an owner in a
-# younger scope holding a value fed from the ended arena is not seen by any end
-# kind until admission records that edge. S4 turns this row into check-fail.
+with_owner_invalidate_call_alias_reject|check-fail|tests/safety/with_owner_invalidate_call_alias_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+# KNOWN OPEN, pre-existing and unsafe (accepted, crashes at run time): tracked in
+# #9445 / D-C47 S4 (#9476 d6/d9/d11). An owner in a younger scope holding a value
+# fed from the ended arena is not seen by any end kind until admission records
+# that edge. This row must flip to check-fail when S4 lands.
 with_owner_scope_fed_invalidate_known_open|check-ok|tests/safety/with_owner_scope_fed_invalidate_known_open.tl|-|-
-# Known open (#9479, deferred to D-C47 S2): a branded `in-arena` allocates in
-# the brand, not the owner's live phase, so a rewind does not see the owner.
+# KNOWN OPEN, pre-existing and unsafe (accepted, reads reclaimed storage):
+# tracked in #9479 / D-C47 S2. A branded `in-arena` allocates in the brand, not
+# the owner's live phase, so a rewind does not see the owner. This row must flip
+# to check-fail when S2 lands.
 with_owner_rewind_unannotated_known_open|check-ok|tests/safety/with_owner_rewind_unannotated_known_open.tl|-|-
 # Every end kind runs typing's in-arena self-check before the end operator: an
 # end inside its own arena is that error even while a `with` owner holds it.

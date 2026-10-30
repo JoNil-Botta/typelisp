@@ -553,6 +553,7 @@ tests/safety/with_owner_destroy_unannotated_reject.tl	stage2-public-tool-surface
 tests/safety/with_owner_invalidate_call_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
 tests/safety/with_owner_invalidate_call_second_brand_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
 tests/safety/with_owner_invalidate_call_place_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
+tests/safety/with_owner_invalidate_call_alias_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
 tests/safety/with_owner_end_inside_arena_destroy_reject.tl	stage2-public-tool-surface	@corpus	Primary in-arena self-check before the end operator.
 tests/safety/with_owner_end_inside_arena_rewind_reject.tl	stage2-public-tool-surface	@corpus	Primary in-arena self-check before the end operator.
 tests/safety/with_owner_end_inside_arena_invalidate_call_reject.tl	stage2-public-tool-surface	@corpus	Primary in-arena self-check before the end operator.

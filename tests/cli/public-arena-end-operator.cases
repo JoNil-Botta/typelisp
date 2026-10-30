@@ -44,7 +44,8 @@ stderr contains error[E0212]: typecheck: an :invalidate call cannot invalidate `
 stderr contains tests/safety/with_owner_invalidate_call_reject.tl:27:18
 
 # A call ending two arenas is located at the argument whose arena the owner
-# holds; a call through an owner place names the owner local of its brand.
+# holds; a call through an owner place names the owner local of its brand; a
+# borrow of the owner in scope does not rename the argument.
 case arena-end-with-owner-invalidate-call-arguments-reject
 run check "{{root}}/tests/safety/with_owner_invalidate_call_second_brand_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
 exit 1
@@ -66,6 +67,16 @@ exit 1
 stdout empty
 stderr contains error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
 stderr contains tests/safety/with_owner_invalidate_call_place_reject.tl:32:20
+run check "{{root}}/tests/safety/with_owner_invalidate_call_alias_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+stderr contains tests/safety/with_owner_invalidate_call_alias_reject.tl:28:20
+run compile "{{root}}/tests/safety/with_owner_invalidate_call_alias_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+stderr contains tests/safety/with_owner_invalidate_call_alias_reject.tl:28:20
 
 # Typing's in-arena self-check runs before the end operator for every end
 # kind: inside its own arena, each end reports that error, not the `with` owner.

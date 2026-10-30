@@ -727,7 +727,10 @@ publishes arena bodies to the ownership core:
 - A `with` owner allocated in an arena may hold none of that arena's values
   when the arena is destroyed, rewound or ended by an `:invalidate` call
   (`RequireUnheld`, exits 9-11): a later cleanup of the owner would read freed
-  storage. All three ends go through one typing operator, `tc-selected-end`.
+  storage. Every end recognized by the builtin dispatch goes through one
+  typing operator, `tc-selected-end`. A macro-expanded name of the safe
+  primitives (#9041) and a function-value alias of them (#9490) are
+  pre-existing bypasses.
 
 ### Threads in the selected route (#8449)
 

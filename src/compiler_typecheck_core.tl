@@ -10268,23 +10268,47 @@
       index
       -1)))
 
-;; The binder naming an ended arena: the local named `arena` (a bare owner or
-;; a phase token), else the owner local of that brand. An owner destroyed
-;; through a place holding it (`state.arena`) is named by its brand.
+;; The variable an end's argument `origin-id` spells (`o` in `(release o)`),
+;; or -1: none for a rewind (its phase token is not the arena), for no
+;; argument, or for an argument that is not a variable (`state.arena`).
+(define (tc-selected-end-spelled-arena
+  [ctx : TcContext]
+  [kind : i64]
+  [origin-id : i64]) : i64
+  (if (or (= kind 1) (< origin-id 0))
+    -1
+    (let
+      [origin : ast.AstExpr (tc-context-expr-get ctx origin-id)]
+      (tc-expr-var-name-id
+        (tc-context-expr-segment-bases ctx)
+        (tc-global-shared-view origin)))))
+
+;; The binder naming an ended arena: the local `spelled` (the end's argument,
+;; -1 for none), else the local named `arena` (a bare owner or a phase token),
+;; else the innermost local of that brand. An owner destroyed through a place
+;; holding it (`state.arena`) is named by its brand.
 (define (tc-selected-end-arena-binder
   [ctx : TcContext]
   [env : TcTypeEnv]
   [bindings : (& bindings TcSelectedBindings)]
+  [spelled : i64]
   [arena : i64]) : TcSelectedBinder
-  (match (tc-selected-named-binder env bindings arena)
+  (match (if (< spelled 0)
+    TcSelectedBinder.Unrepresented
+    (tc-selected-named-binder env bindings spelled))
     [(TcSelectedBinder.Found found) (TcSelectedBinder.Found found)]
     [(TcSelectedBinder.Unrepresented)
-      (tc-selected-brand-owner-binder ctx env bindings arena)]))
+      (match (tc-selected-named-binder env bindings arena)
+        [(TcSelectedBinder.Found found) (TcSelectedBinder.Found found)]
+        [(TcSelectedBinder.Unrepresented)
+          (tc-selected-brand-owner-binder ctx env bindings arena)])]))
 
 ;; E0212 for `with` cleanup owner `holder` holding values of `arena` at an end
-;; of `kind`, located at the arena's argument `origin-id` (-1 for none). The
-;; arena is named as that argument spells it (`o`, `state.arena`), not by a
-;; generated brand; a rewind names its phase's owner.
+;; of `kind`, located at the arena's argument `origin-id` (-1 for none). An
+;; argument that is a variable names the arena as the source spells it; any
+;; other argument (a projected place such as `state.arena`) falls back to
+;; `arena` itself, a generated brand for an unannotated owner. A rewind names
+;; its phase's owner.
 (define (tc-selected-end-held-message
   [ctx : TcContext]
   [kind : i64]
@@ -10296,12 +10320,7 @@
       (if (< origin-id 0)
         (ast.AstExpr.Var -1)
         (tc-context-expr-get ctx origin-id))]
-    [spelled : i64
-      (if (= kind 1)
-        -1
-        (tc-expr-var-name-id
-          (tc-context-expr-segment-bases ctx)
-          (tc-global-shared-view origin)))]
+    [spelled : i64 (tc-selected-end-spelled-arena ctx kind origin-id)]
     (tc-move-safe-invalidation-cleanup-owner-message
       (tc-context-expr-bases ctx)
       origin
@@ -10362,20 +10381,26 @@
             (tc-name-id-list-head origins)
             live))))))
 
-;; The end operator (D-C47): every end of arena regions, a safe destroy or
-;; rewind or a call passing `:invalidate` arguments, publishes its occurrences
-;; here, after `call` (its type `result-ty`). No live `with` cleanup owner may
-;; hold an ended region: the legacy pre-check, then a `RequireUnheld` of the
-;; arena for every `with` owner whose binder holds one. Then an Invalidate for
-;; every binder in scope whose type holds an ended region
-;; (`tc-selected-type-ends-region?`; every scoped slot, so a shadowed binder
-;; counts too), and an EndBrand for every enclosing `:invalidate` parameter
-;; whose brand is among `owners`. A unit call is followed by them in one unit
-;; sequence; a call yielding a value is held in a temporary read after them.
-;; Typing has already rejected an end inside its own arena
-;; (`tc-active-region-owned-by-arena-id?`, the in-arena self-check every end
-;; kind runs first). A new kind of end must call both that predicate in its
-;; typing and this operator, never a check of its own.
+;; The end operator (D-C47): every end recognized by the builtin dispatch goes
+;; through this operator. Those are a safe destroy or rewind (`ArenaForm`) and
+;; a call passing `:invalidate` arguments. Two pre-existing bypasses are not
+;; recognized ends: a hygienic or macro-expanded name of the safe primitives
+;; (#9041) and a function-value alias of them (#9490).
+;;
+;; Each end publishes its occurrences here, after `call` (its type
+;; `result-ty`). No live `with` cleanup owner may hold an ended region: the
+;; legacy pre-check, then a `RequireUnheld` of the arena for every `with` owner
+;; whose binder holds one. Then an Invalidate for every binder in scope whose
+;; type holds an ended region (`tc-selected-type-ends-region?`; every scoped
+;; slot, so a shadowed binder counts too), and an EndBrand for every enclosing
+;; `:invalidate` parameter whose brand is among `owners`. A unit call is
+;; followed by them in one unit sequence; a call yielding a value is held in a
+;; temporary read after them. Typing has already rejected an end inside its
+;; own arena (`tc-active-region-owned-by-arena-id?`, the in-arena self-check
+;; every end kind runs first). An atomic owner's release checks
+;; (`tc-selected-release-checks!`) are sequenced before the end by its caller.
+;; A new kind of end must call that predicate in its typing, the release
+;; checks and this operator, never a check of its own.
 (define (tc-selected-end
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -10523,6 +10548,7 @@
                             ctx
                             env
                             (& bindings)
+                            (tc-selected-end-spelled-arena ctx kind origin-id)
                             arena)
                             [(TcSelectedBinder.Found arena-binder)
                               (match (tc-selected-op!
@@ -11125,7 +11151,7 @@
       (tc-selected-no-occurrences)]
     (if (or (< owner 0) (not (tc-atomic-arena-owner-active-id? env owner)))
       (TcSelectedReleaseChecks.Ok checks)
-      (match (tc-selected-end-arena-binder ctx env bindings owner)
+      (match (tc-selected-end-arena-binder ctx env bindings -1 owner)
         [(TcSelectedBinder.Unrepresented) TcSelectedReleaseChecks.Unrepresented]
         [(TcSelectedBinder.Found owner-binder)
           (let
@@ -123334,6 +123360,8 @@
     [(ownership_normalize.OwnershipNormalizeFailure.Obligation diagnostic)
       (cond
         [(= diagnostic.exit 8) (tc-selected-overwrite-failure diagnostic)]
+        ;; Exits 9-11: a `with` owner holding values of an ended arena.
+        [(>= diagnostic.exit 9) (tc-selected-unheld-failure "" "" diagnostic)]
         [(>= diagnostic.exit 6) (tc-selected-release-failure "" "" diagnostic)]
         [else (tc-selected-obligation-failure "" diagnostic)])]
     [(ownership_normalize.OwnershipNormalizeFailure.Escaped diagnostic)
@@ -123785,8 +123813,8 @@
             [(= diagnostic.exit 8) (tc-selected-overwrite-failure diagnostic)]
             [(= diagnostic.status 4)
               (tc-selected-with-owner-moved-failure ctx name diagnostic)]
-            ;; A `with` owner still holding values of a destroyed (9) or
-            ;; rewound (10) arena.
+            ;; A `with` owner still holding values of an arena a safe destroy
+            ;; (9), a safe rewind (10) or an `:invalidate` call (11) ends.
             [(>= diagnostic.exit 9)
               (tc-selected-unheld-failure
                 (if (< diagnostic.arena 0)
@@ -123818,8 +123846,9 @@
         (ResultTcUnit.Err
           "typecheck: ownership failure changed during rendering")])))
 
-;; A `with` cleanup owner holding values of arena `arena` at its safe destroy
-;; or rewind, in the legacy arena checker's wording.
+;; A `with` cleanup owner holding values of arena `arena` at its end (exit 9 a
+;; safe destroy, 10 a safe rewind, 11 an `:invalidate` call), in the legacy
+;; arena checker's wording.
 (define (tc-selected-unheld-failure
   [arena : String]
   [name : String]

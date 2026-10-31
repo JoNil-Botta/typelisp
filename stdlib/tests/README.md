@@ -553,3 +553,39 @@ stepping, and cancellation/chunk lifetimes across arenas. Fixture provenance
 is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md).
 The integration manifest runs this driver and the embedded-module example at
 opt0/1/2 on Linux and Windows.
+The `deflate-preset-history` test covers `decoder-prime!`:
+
+- references that reach exactly the first preset byte, and one byte beyond it;
+- a dictionary longer than the window, which keeps only its tail;
+- window 0;
+- input and work accounting for the container prefix;
+- refusal on a decoder that has already started.
+
+### Bounded zlib and Adler-32
+
+`zlib_api.tl` supplies both named compiler tests and a native driver. Its corpus comes from Python zlib and handmade members:
+
+- empty, stored, fixed and dynamic members;
+- FLEVEL 0–3 and CINFO 0–7;
+- a preset dictionary.
+
+Every corpus member runs:
+
+- at every two-chunk input split, with output chunks 1–8 and zero-capacity probes;
+- byte at a time;
+- with equal work across all chunkings;
+- with exact member consumption and terminal repetition;
+- with allocation-free stepping.
+
+Other cases cover:
+
+- each malformed header field, in zlib's order, and declared windows against the history limit;
+- forbidden, missing, wrong, unused and work-limited dictionaries, plus a reference before the dictionary;
+- every truncation prefix;
+- each corrupted trailer byte, plus a corrupt stored payload; neither ever reports Done;
+- two adjacent members;
+- input, output, work and ratio limits counting framing bytes, each giving the same outcome at every split;
+- corrupted public state;
+- arena lifetimes and cancellation.
+
+Adler-32 vectors cover the empty string through a 1 MiB run, in every split and uneven chunks. Fixture provenance and the offline generator are in [`tests/fixtures/zlib/README.md`](../../tests/fixtures/zlib/README.md). The integration manifest runs this driver and the embedded-module example at opt0/1/2 on Linux and Windows.

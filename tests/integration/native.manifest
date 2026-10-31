@@ -24,7 +24,7 @@
 #   is resolved from that compiled input, then the complete stream is compared.
 # suite-members: space-separated smoke drivers the row's source runs.
 stdlib_deflate|all|0,1,2|tests/integration/stdlib_deflate.tl|42|-|-|-|stage-stdlib
-deflate_embedded_example|all|0,1,2|examples/deflate_decode.tl|42|-|-|-|-
+deflate_embedded_example|all|0,1,2|examples/deflate_decode.tl|42|deflate decode score: 42\n|-|-|-
 mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
 enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner_layout.tl|42|-|-|enum_constructor_owner_defs.tl|-
 enum_constructor_owner_root|all|0,1,2|tests/integration/enum_constructor_owner_root.tl|42|-|-|enum_constructor_owner_defs.tl|-

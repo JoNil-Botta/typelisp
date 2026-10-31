@@ -200,6 +200,7 @@ byte_reader.tl
 clone.tl
 checked_size.tl
 comptime.tl
+compress/deflate.tl
 concurrency_registry.tl
 core_macros.tl
 crypto_p256.tl
@@ -299,6 +300,7 @@ stdlib/tests/format_fixed_empty_digits.tl|134|-|literal:format: fixed float digi
 stdlib/tests/format_negative_precision.tl|134|-|literal:format: negative width or precision|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/base64_api.tl|42|-|-|-
+stdlib/tests/deflate_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-

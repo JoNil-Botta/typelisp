@@ -23,6 +23,10 @@ rejected. This census records the remaining compiler-private
   bounded public-input RSA limb/REDC storage in `stdlib/crypto_rsa_core.tl`,
   `stdlib/ffi.tl`, `stdlib/io.tl`, `stdlib/fs.tl`, and
   `stdlib/process_runtime.tl`.
+- `stdlib/compress/deflate.tl` exposes `ByteBuf`/borrowed bytes at binary
+  boundaries. Its history and capped one-shot output use private exact-sized
+  byte backing behind `ByteBuf`; all Huffman and partial-length workspace is
+  fixed-size `Array` storage embedded in the decoder value.
 - Compiler scratch buffers, dense tables, captured-field lists, object/codegen
   byte streams, and serialized metadata in `src/*.tl`.
 - Runtime and thread context/result cells whose public operations expose only

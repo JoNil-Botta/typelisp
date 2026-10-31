@@ -25,6 +25,7 @@ expected_exit() {
         arena_lifetimes) echo 42 ;;
         calc) echo 14 ;;
         char_literals) echo 64 ;;
+        deflate_decode) echo 42 ;;
         hello) echo 0 ;;
         lexer) echo 12 ;;
         nested_eval) echo 7 ;;
@@ -42,6 +43,7 @@ expected_stdout() {
         arena_lifetimes) printf '%s\n' 'arena lifetime score: 42' ;;
         calc) printf '%s\n' 'calculator result: 14' ;;
         char_literals) printf '%s\n' 'character literal code sum: 64' ;;
+        deflate_decode) printf '%s\n' 'deflate decode score: 42' ;;
         hello)
             printf '%s\n' \
                 'Hello, TypeLisp!' \

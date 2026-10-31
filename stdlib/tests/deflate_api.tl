@@ -70,6 +70,7 @@
           [(= index 17) "639e19e369ffcfa720f6fc73e116de86ef5dcc37aefa270200"]
           [(= index 18)
             "35514bb685200c5b6bd2825f2a2a5ed1d5bf38783069396992866c70dd7d2b79e1e080139cefea6c9b813003ea88a2726e8e69c78f3519ec4480c25608012bbff83a7c67d3501795f5057c0ff5824604ba8d4f49580ced188008faee9825daeb61d7d9b0a4345e5c016e07718b7b9d6e3c69eb8f062ebb5624acbecd2dea2e390ff7e3636046868dcccebd50e20c398b6f37a3db5b819966596626709555337326170907fbe6796320e2f5e4af98cb0519deaabbb9478d68090f206cac94826562049fc42267dfdac97ef8cf40e92817690df8593f57acdfe3ec1bb2aab188e65488a742ebe6b27606de89ad65b63e4b9ed66c77d9138d6447981b0efd8d783b9482ce19cebb35a192b373e27c6ca8567053cda81eafa6f02549bf1671a56bc20b9f0c0b3015fb03"]
+          [(= index 20) "0dc1010900000080a06df57f54212e"]
           [else
             "731c05a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a468123f0fe7f00"]))
       (cast 165 : u8))
@@ -107,7 +108,13 @@
     [(= index 18)
       (hex-bytes
         "66636164616461716f6d666b6267646161646261626a77706462746f63616261636361617068616d6162616a7464616971617662706563616373616e6162626162706163616161636d766e6262616261616161616f6363617864616163786b61627a72616f636e61626e6e6e61786368796d65616b636174726761616e6e62647164616a61616478707263757374616b65656875626c6161626f726261776163616c69776179656f78796761617563756c6165616c646f6a746e7071616261646e646472616a61616266616661636862666462716d62646161626e7061636e64616461636264637a7061616a62636366616f636961626c62616263636364626564616261626763616266616277616762616e7a6465647a6261646d75616178636f7064646364646e706e6e7465617961616763616e6c62626461636662616861627965626d6161756161616f656376616261626161616161616e616361616369616761766378736c616c616161616a646f61666c6161686d67636173616373736262617863646a6263736e617a69627474666274786a6261646263746371646461626361617961616861636463617261626a6163617861616561616161736e6462777474646461656462786269626a726f6170636d6177626269626869626a617a64636161626177616264756b626361657569617a61646963616b6161696d63")]
+    [(= index 20) (hex-bytes "4142414241")]
     [else (repeat-byte 32771 (cast 65 : u8))]))
+
+;; Fixtures 18 and 19 are large boundary streams; every other fixture runs
+;; every input split.
+(define (small-fixture? [index : i64]) : bool
+  (or (< index 18) (> index 19)))
 
 (define (kind-code [kind : (& kind deflate.DeflateErrorKind)]) : i64
   (match kind
@@ -289,7 +296,7 @@
           0)])))
 
 (define (assert-corpus) : unit
-  (for [fixture (iterator.range 0 20)]
+  (for [fixture (iterator.range 0 21)]
     (with-arena
       corpus
       (let
@@ -325,7 +332,7 @@
               4096
               false
               member)]
-          (if (< fixture 18)
+          (if (small-fixture? fixture)
             (for [split (iterator.range 0 (+ input.len 1))]
               (for [capacity (iterator.range 1 9)]
                 (test.assert-i64-eq
@@ -374,7 +381,15 @@
       [(= index 11) "05000224"]
       [(= index 12) "050080e4ff1f"]
       [(= index 13) "050080e47f1b"]
-      [else "05c0810800000000207feb0b0000"])))
+      [(= index 14) "05c0810800000000207feb0b0000"]
+      [(= index 15) "05c0010900000080a06dfe3f1502"]
+      [(= index 16) "05c0010500000000a06df57f540000"]
+      [(= index 17) "0dc2010100000080906dfe9f2a0000"]
+      [(= index 18) "0dc0010100000080906dfe9faa04"]
+      [(= index 19) "0dc1010100000080906dfe9f2a09"]
+      [(= index 20)
+        "05200444fdffffffffffffffffffffffffffffffffffffffff0f8282828282828282"]
+      [else "0dc1010900000080a06df57f54211e0000"])))
 
 (define (malformed-kind [index : i64]) : i64
   (cond
@@ -392,7 +407,22 @@
     [(= index 11) 3]
     [(= index 12) 3]
     [(= index 13) 3]
-    [else 4]))
+    [(= index 14) 4]
+    [(= index 21) 4]
+    [else 3]))
+
+;; One-shot error input position for fixtures whose failure point is pinned:
+;; literal/distance tree failures stop at the end of the code-length sequence,
+;; and an unused singleton code stops before the following container bytes.
+;; -1 leaves the position to the chunk-split consistency checks.
+(define (malformed-position [index : i64]) : i64
+  (cond
+    [(= index 14) 12]
+    [(= index 15) 13]
+    [(= index 20) 26]
+    [(= index 21) 15]
+    [(> index 15) 14]
+    [else -1]))
 
 (define (error-stream
   [input : (& input bytes)]
@@ -506,12 +536,13 @@
 (define (assert-errors) : unit
   (let
     [limits : deflate.DeflateLimits (deflate.default-limits)]
-    (for [fixture (iterator.range 0 15)]
+    (for [fixture (iterator.range 0 22)]
       (with-arena
         malformed
         (let
           [input : byte_buf.ByteBuf (malformed-input fixture)]
           [expected : i64 (malformed-kind fixture)]
+          [position : i64 (malformed-position fixture)]
           [work : i64
             (error-stream
               (byte_buf.as-bytes (& input))
@@ -527,11 +558,11 @@
                 expected
                 "one-shot malformed kind")
               (when
-                (= fixture 14)
+                (>= position 0)
                 (test.assert-i64-eq
                   error.input
-                  (- input.len 2)
-                  "invalid singleton preserves following bytes"))])
+                  position
+                  "malformed one-shot error position"))])
           (for [split (iterator.range 0 (+ input.len 1))]
             (test.assert-i64-eq
               (error-stream
@@ -541,23 +572,28 @@
                 expected)
               work
               "malformed chunk-independent work")))))
-    (for [fixture (iterator.range 0 18)]
-      (with-arena
-        truncated
-        (let
-          [input : byte_buf.ByteBuf (fixture-input fixture)]
-          [member : i64 (- input.len 2)]
-          (for [prefix (iterator.range 0 member)]
-            (match (deflate.decode
-              (byte_buf.bytes-slice-view (byte_buf.as-bytes (& input)) 0 prefix)
-              (& limits))
-              [(deflate.DeflateDecodeOk _)
-                (test.assert-true false "truncated prefix completed")]
-              [(deflate.DeflateDecodeErr error)
-                (test.assert-i64-eq
-                  (kind-code (& error.kind))
-                  5
-                  "every valid prefix truncates")])))))))
+    (for [fixture (iterator.range 0 21)]
+      (when
+        (small-fixture? fixture)
+        (with-arena
+          truncated
+          (let
+            [input : byte_buf.ByteBuf (fixture-input fixture)]
+            [member : i64 (- input.len 2)]
+            (for [prefix (iterator.range 0 member)]
+              (match (deflate.decode
+                (byte_buf.bytes-slice-view
+                  (byte_buf.as-bytes (& input))
+                  0
+                  prefix)
+                (& limits))
+                [(deflate.DeflateDecodeOk _)
+                  (test.assert-true false "truncated prefix completed")]
+                [(deflate.DeflateDecodeErr error)
+                  (test.assert-i64-eq
+                    (kind-code (& error.kind))
+                    5
+                    "every valid prefix truncates")]))))))))
 
 (define (assert-limits) : unit
   (let

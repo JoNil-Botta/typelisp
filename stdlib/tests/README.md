@@ -545,10 +545,11 @@ Inline stdlib coverage:
 small RFC-derived corpus covers every input split with output chunks 1–8,
 zero-capacity calls, exact member consumption, terminal repetition and equal
 work across chunking. Other cases cover all length/distance codes and field
-boundaries, legal degenerate trees, malformed/truncated streams, the maximum
-stored block and distance, overlapping/cross-block history, each resource
-limit, empty-block chains, corrupted public state, allocation-free stepping,
-and cancellation/chunk lifetimes across arenas. Fixture provenance is in
-[`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md).
+boundaries, legal degenerate trees, oversubscribed/incomplete literal and
+distance trees, a missing end-of-block code, malformed/truncated streams, the
+maximum stored block and distance, overlapping/cross-block history, each
+resource limit, empty-block chains, corrupted public state, allocation-free
+stepping, and cancellation/chunk lifetimes across arenas. Fixture provenance
+is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md).
 The integration manifest runs this driver and the embedded-module example at
 opt0/1/2 on Linux and Windows.

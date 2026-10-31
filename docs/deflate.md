@@ -23,7 +23,7 @@
 
 `DeflateDecoded.bytes` is an owned `byte_buf.ByteBuf`. `consumed` is the compressed member's byte length, including its last partially used byte but excluding any following container bytes. Output remains binary; text conversion is an explicit caller decision.
 
-`decode` loops over the same engine as the incremental API. Its output backing capacity never exceeds `max-output`. Geometric growth can retain retired arrays until the owning arena is dropped; their combined capacity is less than three times that limit. No decoded-size field controls an allocation.
+`decode` loops over the same engine as the incremental API. Its output backing capacity never exceeds `max-output`. Geometric growth can retain retired arrays until the owning arena is dropped; their combined capacity is less than three times that limit. The decoder's history backing (`window-bytes`, 32 KiB by default) also stays in the caller's arena until it is dropped. No decoded-size field controls an allocation.
 
 ## Incremental use
 

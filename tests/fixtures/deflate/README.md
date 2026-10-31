@@ -26,6 +26,7 @@ Valid cases (compressed SHA256):
 17. random-fixed-7 — fb09719ab2bd799d308168eb0b80dedfb650e867d4bdefcdef622f78059f3bb8 — Python zlib 1.3.2 Random7785 sequential, Z_FIXED
 18. zlib-dynamic-text — 70043b77cd751bab933e58f6050dbf7e9eb894a33b10ff3afaa0d57b1c4cdda5 — Python zlib 1.3.2 level6; seeded weighted alphabet
 19. distance32768-window-wrap — ef0fc41036c8534bf3948fd2c40057a19f13dd14be0c29f0e6d6d13ee205e5d4 — fixed distance32768 after exactly32768 bytes
+20. single-one-bit-distance-used — 804e6855fe3a40d329208735c69e05a6a1f2b484a4cb357e4d714587b01766a6 — handwritten dynamic; A/B/EOB/257 length2, single one-bit distance code (symbol1, distance2) used by a length3 match
 
 Malformed cases:
 
@@ -44,5 +45,14 @@ repeat16-first — MalformedTree — 05000224 — repeat16 without predecessor
 repeat-overflow — MalformedTree — 050080e4ff1f — repeat over combined length count
 missing-eob — MalformedTree — 050080e47f1b — all lengths zero, no EOB
 unused-singleton-code — InvalidCode — 05c0810800000000207feb0b0000 — unused half of one-bit literal alphabet
+incomplete-literal-one-bit-plus — MalformedTree — 05c0010900000080a06dfe3f1502 — literal lengths A1/EOB2, incomplete beside a one-bit code
+oversubscribed-literal — MalformedTree — 05c0010500000000a06df57f540000 — literal lengths A1/B1/EOB1
+oversubscribed-distance — MalformedTree — 0dc2010100000080906dfe9f2a0000 — distance lengths 1/1/1
+incomplete-distance-single-two-bit — MalformedTree — 0dc0010100000080906dfe9faa04 — single distance code of length2
+incomplete-distance-one-bit-plus — MalformedTree — 0dc1010100000080906dfe9f2a09 — distance lengths 1/2
+complete-literal-without-eob — MalformedTree — 05200444fdffffffffffffffffffffffffffffffffffffffff0f8282828282828282 — literals 0..255 length8 (complete), EOB length0
+unused-singleton-distance-code — InvalidCode — 0dc1010900000080a06df57f54211e0000 — unused half of one-bit distance alphabet; two following bytes stay unconsumed
+
+The literal/distance tree cases were emitted from canonical RFC 1951 code lengths. Each is rejected by the optional zlib oracle and by an independent puff-style reference decoder. The tests pin each one-shot failure position: tree failures stop at the end of the code-length sequence, and unused singleton codes stop before the following bytes. The puff-style reference scans up to 15 bits before rejecting an unused code, so it reports a later position for those two cases.
 
 All-code boundary corpus: 429 compressed bytes, 36321 repeated A bytes, 191 field-boundary split positions; compressed SHA256 220496387a8f1cd22e807d8775ef16b80bb18140f14bf2dceda132d0a6b4e6bd. Each length/distance code is exercised at both ends of its extra-bit range (code284 capped at length257); the complete stream agrees with the optional zlib oracle.

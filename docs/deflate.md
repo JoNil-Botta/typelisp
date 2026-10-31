@@ -40,6 +40,15 @@ Set `eof` when no input follows the offered chunk. After `NeedOutput`, continue 
 
 An empty call can progress using buffered bits or pending output. Otherwise it needs input. Zero output capacity can parse metadata and complete an empty member; a pending output byte gives `NeedOutput`. If that byte violates a limit, the typed limit failure takes precedence. Repeated terminal calls produce zero counts and repeat their terminal status. No automatic reset or next-member decoding occurs.
 
+## Containers and preset history
+
+`decoder-prime! (&mut decoder) prefix dictionary` prepares a fresh decoder, before its first `step!`, for a containing format such as [zlib](zlib.md):
+
+- `prefix` counts container bytes already accepted, such as a header. They count toward `max-input`, ratio credit and work, so one budget covers the whole container member.
+- The last `window-bytes` bytes of `dictionary` become history that references may reach, as for RFC 1950 preset dictionaries. A reference may reach back over emitted output plus that preset; anything earlier is `InvalidDistance`.
+- Priming charges one work unit per prefix byte and per dictionary byte, before any copy.
+- It returns false without change for a decoder that has already started. It also returns false, with a sticky `InputLimit` or `WorkLimit`, when a limit is exceeded.
+
 Only a byte needed for the current field or Huffman symbol is accepted. Stored-block alignment and final-byte padding discard the remaining bits of the current byte, with no requirement that they be zero. No speculative look-ahead consumes a following container byte.
 
 ## Limits and work
@@ -62,6 +71,7 @@ Every emission must satisfy `total-output <= startup-bytes + ratio * total-input
 Work charges are independent of input/output chunk splitting:
 
 - Initialization: 721 fixed workspace cells plus `window-bytes`, charged before allocation.
+- Priming: 1 unit per container prefix byte and per dictionary byte.
 - Each accepted input byte: 1 unit; each consumed bit: 1 unit.
 - Each emitted byte: 1 unit.
 - Fixed table preparation: 1054 units per fixed block.
@@ -69,7 +79,7 @@ Work charges are independent of input/output chunk splitting:
 
 Charges precede the corresponding bounded action. A suspended attempt, repeated empty call or terminal call adds no semantic work. Empty blocks still consume charged header bits, so an empty-block chain cannot evade the limit. These units bound decoder actions, not elapsed time or machine instructions. Each call also has fixed bounded argument/state validation overhead.
 
-The decoder embeds 721 fixed integer workspace slots and owns a `ByteBuf` history of at most 32768 bytes. Only the history backing storage requires an arena allocation; the fixed tables are part of the decoder value. On Linux x86-64, the full-window backing allocation measures 32784 bytes and the decoder value is 6064 bytes, totaling 38848 bytes of retained decoder storage. The streaming engine performs no further allocation, including table rebuilds and suspended symbols/matches. Drop the owning arena to release its history; caller chunk arenas may be dropped after each call. The conformance tests exercise this separately from dropping a partial decoder.
+The decoder embeds 721 fixed integer workspace slots and owns a `ByteBuf` history of at most 32768 bytes. Only the history backing storage requires an arena allocation; the fixed tables are part of the decoder value. On Linux x86-64, the full-window backing allocation measures 32784 bytes and the decoder value is 6072 bytes, totaling 38856 bytes of retained decoder storage. The streaming engine performs no further allocation, including table rebuilds and suspended symbols/matches. Drop the owning arena to release its history; caller chunk arenas may be dropped after each call. The conformance tests exercise this separately from dropping a partial decoder.
 
 ## Failures and state integrity
 

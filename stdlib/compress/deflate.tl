@@ -8,6 +8,7 @@
 ;# Usage: `(import stdlib.compress.deflate)`. Create bounded defaults with
 ;# `default-limits`, pass `(& limits)` to `decoder-new` or `decode`, and handle
 ;# the typed result. `DeflateDecoded.consumed` preserves a container suffix.
+;# Containers such as zlib account framing and preset history with `decoder-prime!`.
 ;# See `docs/deflate.md` and `examples/deflate_decode.tl` for complete examples.
 (import stdlib.byte_buf)
 (import stdlib.iterator)
@@ -89,6 +90,7 @@
   (total-output i64)
   (work i64)
   (history-position i64)
+  (preset i64)
   (history byte_buf.ByteBuf)
   (lengths (Array i64 318))
   (offsets (Array i64 16))
@@ -175,6 +177,7 @@
             0
             (+ 721 window)
             0
+            0
             (byte_buf.from-array (__tl_make-array u8 window))
             (make-array i64 318)
             (make-array i64 16)
@@ -248,6 +251,8 @@
     (if (= state.limits.window-bytes 0)
       (= state.history-position 0)
       (< state.history-position state.limits.window-bytes))
+    (>= state.preset 0)
+    (<= state.preset state.limits.window-bytes)
     (= (array-length state.lengths) 318)
     (= (array-length state.offsets) 16)
     (= state.history.len state.limits.window-bytes)
@@ -268,7 +273,7 @@
       (!= state.phase 16)
       (and
         (> state.pending-distance 0)
-        (<= state.pending-distance state.total-output)
+        (<= (- state.pending-distance state.preset) state.total-output)
         (<= state.pending-distance state.limits.window-bytes)))))
 
 ;: Charge deterministic semantic work with subtraction-based overflow checks.
@@ -780,6 +785,53 @@
         (set! state.repeat-extra extra)
         (set! state.phase 14))]))
 
+;: Prepare a fresh decoder for a containing format before its first step.
+;: `prefix` container bytes already accepted, such as a zlib header, count
+;: toward max-input, ratio credit and work. The last window-bytes of
+;: `dictionary` become history that references may reach (RFC 1950 preset
+;: dictionaries). Charges one unit per prefix and dictionary byte. Returns
+;: false without change unless fresh, or false with a sticky limit failure.
+(define (decoder-prime!
+  [state : (&mut state Decoder)]
+  [prefix : i64]
+  [dictionary : (& dictionary bytes)]) : bool
+  (unless
+    (and
+      (deflate-state-valid? state)
+      (= state.phase 0)
+      (= state.total-input 0)
+      (= state.total-output 0)
+      (= state.bit-count 0)
+      (= state.field-read 0)
+      (= state.preset 0)
+      (= state.history-position 0)
+      (>= prefix 0))
+    (return false))
+  (when
+    (> prefix state.limits.max-input)
+    (deflate-fail! state (InputLimit))
+    (return false))
+  (let
+    [length : i64 (byte_buf.bytes-length dictionary)]
+    [kept : i64
+      (if (< length state.limits.window-bytes)
+        length
+        state.limits.window-bytes)]
+    (unless (deflate-charge! state prefix) (return false))
+    (unless (deflate-charge! state length) (return false))
+    (set! state.total-input prefix)
+    (for [index (iterator.range 0 kept)]
+      (set!
+        (array-ref state.history.slots index)
+        (byte_buf.bytes-ref dictionary (+ (- length kept) index))))
+    (set! state.preset kept)
+    (set!
+      state.history-position
+      (if (= kept state.limits.window-bytes)
+        0
+        kept))
+    true))
+
 ;: Decode as far as caller chunks permit, without retaining a chunk borrow.
 ;: EOF applies to this chunk's end; retries supply its unconsumed suffix.
 ;: Final padding bits are ignored, and no following byte is read. Empty output
@@ -1018,7 +1070,7 @@
             (cond
               [(or
                   (< state.pending-distance 1)
-                  (> state.pending-distance state.total-output))
+                  (> (- state.pending-distance state.preset) state.total-output))
                 (deflate-fail! state (InvalidDistance))]
               [(> state.pending-distance state.limits.window-bytes)
                 (deflate-fail! state (WindowLimit))]
@@ -1034,7 +1086,7 @@
               (< state.pending-length 1)
               (> state.pending-length 258)
               (< state.pending-distance 1)
-              (> state.pending-distance state.total-output)
+              (> (- state.pending-distance state.preset) state.total-output)
               (> state.pending-distance state.limits.window-bytes))
             (deflate-fail! state (InvalidState))
             (return (deflate-output-stop state (& cursor))))

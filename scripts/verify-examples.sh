@@ -31,6 +31,7 @@ expected_exit() {
         nested_eval) echo 7 ;;
         parser) echo 14 ;;
         safe_threading) echo 42 ;;
+        zlib_decode) echo 42 ;;
         *) echo "unknown example: $1" >&2; exit 1 ;;
     esac
 }
@@ -53,6 +54,7 @@ expected_stdout() {
         nested_eval) printf '%s\n' 'nested evaluator result: 7' ;;
         parser) printf '%s\n' 'parser result: 14' ;;
         safe_threading) printf '%s\n' 'safe threading score: 42' ;;
+        zlib_decode) printf '%s\n' 'zlib decode score: 42' ;;
         *) echo "unknown example: $1" >&2; exit 1 ;;
     esac
 }

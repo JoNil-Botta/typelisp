@@ -27,6 +27,9 @@ rejected. This census records the remaining compiler-private
   boundaries. Its history and capped one-shot output use private exact-sized
   byte backing behind `ByteBuf`; all Huffman and partial-length workspace is
   fixed-size `Array` storage embedded in the decoder value.
+  `stdlib/compress/zlib.tl` and `stdlib/compress/adler32.tl` add no backing
+  storage of their own; zlib reuses the raw decoder's history and its capped
+  one-shot output growth.
 - Compiler scratch buffers, dense tables, captured-field lists, object/codegen
   byte streams, and serialized metadata in `src/*.tl`.
 - Runtime and thread context/result cells whose public operations expose only

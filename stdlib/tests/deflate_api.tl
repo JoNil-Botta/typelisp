@@ -886,7 +886,7 @@
           [allocated : i64 (- (profile.alloc-total) before)]
           (test.assert-true (> allocated 0) "allocation counter is active")
           (test.assert-true
-            (<= allocated 38848)
+            (<= allocated 38856)
             "fixed retained workspace bound")
           (test.assert-i64-eq state.work 33489 "fixed initial work charge"))])
     (set! limits.window-bytes -1)
@@ -1204,6 +1204,130 @@
           work
           "all-code field boundary split")))))
 
+;; Prime a fresh decoder with `prefix` container bytes and a preset history,
+;; then decode one fixed block. Returns -1 for Done with `expected` output,
+;; the step's error kind, or 100 plus the kind of a refused priming.
+(define (primed-case
+  [limits : (& limits deflate.DeflateLimits)]
+  [prefix : i64]
+  [dictionary : String]
+  [body : String]
+  [expected : String]) : i64
+  (match (deflate.decoder-new limits)
+    [(deflate.DeflateNewErr _) -2]
+    [(deflate.DeflateNewOk state)
+      (let
+        [history : byte_buf.ByteBuf (hex-bytes dictionary)]
+        [input : byte_buf.ByteBuf (hex-bytes body)]
+        [out : byte_buf.ByteBuf (repeat-byte 8 (cast 0 : u8))]
+        [initial : i64 state.work]
+        (if (deflate.decoder-prime!
+          (&mut state)
+          prefix
+          (byte_buf.as-bytes (& history)))
+          (begin
+            (test.assert-i64-eq
+              state.total-input
+              prefix
+              "prefix counts as input")
+            (test.assert-i64-eq
+              state.work
+              (+ initial (+ prefix history.len))
+              "prefix and dictionary bytes are charged")
+            (let
+              [result : deflate.DeflateStep
+                (deflate.step!
+                  (&mut state)
+                  (byte_buf.as-bytes (& input))
+                  (byte_buf.as-mut-bytes (&mut out))
+                  true)]
+              (match result.status
+                [(deflate.Done)
+                  (set! out.len result.produced)
+                  (let
+                    [actual : String (byte_buf.to-string out)]
+                    (test.assert-string-eq
+                      (& actual)
+                      (& expected)
+                      "primed output"))
+                  -1]
+                [(deflate.Error error) (kind-code (& error.kind))]
+                [_ -3])))
+          (let
+            [result : deflate.DeflateStep
+              (deflate.step!
+                (&mut state)
+                (byte_buf.as-bytes (& input))
+                (byte_buf.as-mut-bytes (&mut out))
+                true)]
+            (match result.status
+              [(deflate.Error error) (+ 100 (kind-code (& error.kind)))]
+              [_ 99]))))]))
+
+;; Body 032200 is length 3 at distance 3; 036200 is length 3 at distance 4.
+(define (assert-preset-history) : unit
+  (let
+    [limits : deflate.DeflateLimits (deflate.default-limits)]
+    [small : deflate.DeflateLimits (deflate.default-limits)]
+    (test.assert-i64-eq
+      (primed-case (& limits) 0 "616263" "032200" "abc")
+      -1
+      "reference reaches the first dictionary byte")
+    (test.assert-i64-eq
+      (primed-case (& limits) 0 "616263" "036200" "")
+      7
+      "reference before the dictionary")
+    (test.assert-i64-eq
+      (primed-case (& limits) 6 "616263" "032200" "abc")
+      -1
+      "container prefix")
+    (set! small.window-bytes 3)
+    (test.assert-i64-eq
+      (primed-case (& small) 0 "78797a616263" "032200" "abc")
+      -1
+      "long dictionary keeps its window tail")
+    (set! small.window-bytes 0)
+    (test.assert-i64-eq
+      (primed-case (& small) 0 "616263" "032200" "")
+      7
+      "no history without a window")
+    (set! small.window-bytes 32768)
+    (set! small.max-input 5)
+    (test.assert-i64-eq
+      (primed-case (& small) 6 "616263" "032200" "")
+      109
+      "prefix beyond the input limit")
+    (set! small.max-input 67108864)
+    (set! small.max-work 33497)
+    (test.assert-i64-eq
+      (primed-case (& small) 6 "616263" "032200" "")
+      112
+      "prefix and dictionary beyond the work limit"))
+  (match (new-decoder)
+    [(deflate.DeflateNewErr _) (test.assert-true false "non-fresh setup")]
+    [(deflate.DeflateNewOk state)
+      (let
+        [input : byte_buf.ByteBuf (hex-bytes "03")]
+        [history : byte_buf.ByteBuf (hex-bytes "616263")]
+        [out : byte_buf.ByteBuf (repeat-byte 4 (cast 0 : u8))]
+        (deflate.step!
+          (&mut state)
+          (byte_buf.as-bytes (& input))
+          (byte_buf.as-mut-bytes (&mut out))
+          false)
+        (let
+          [work : i64 state.work]
+          (test.assert-true
+            (not
+              (deflate.decoder-prime!
+                (&mut state)
+                0
+                (byte_buf.as-bytes (& history))))
+            "started decoder is not primed")
+          (test.assert-i64-eq state.work work "refused priming charges nothing")
+          (test.assert-i64-eq state.preset 0 "refused priming keeps no history")
+          (test.assert-i64-eq state.phase 11 "refused priming keeps the phase")))]))
+
 (test deflate-valid-splits (assert-corpus))
 
 (test deflate-malformed-and-truncated (assert-errors))
@@ -1226,6 +1350,8 @@
 
 (test deflate-every-length-distance-code (assert-all-codes))
 
+(test deflate-preset-history (assert-preset-history))
+
 (test
   deflate-one-shot-exact-member
   (assert-decode "cb48cdc9c90700aabbcc" "hello" 7))
@@ -1246,4 +1372,5 @@
   (assert-cancellation)
   (assert-random-bounds)
   (assert-all-codes)
+  (assert-preset-history)
   42)

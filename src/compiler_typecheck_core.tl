@@ -49454,18 +49454,114 @@
         (set! cursor (tc-name-id-list-rest cursor))))
     out))
 
+;; A brand that this parameter list invalidates (`(:invalidate r T)`) can end in
+;; the body, so storage reached through a reference parameter whose type names
+;; `r` is that arena's storage. Such a reference is bound with the region tag
+;; `(in r T)` gives it: provenance stays on every value bound or captured from
+;; it, including one shortened to a body-local lifetime, and the existing end
+;; operator and store rules apply as they do to `(in r T)` (#9503, D-C47 I2).
+;; Projections and call results drop it, as for `(in r T)` (#9508). The owner
+;; (`param-ty`) and every parameter that is not a reference keep their type.
+(define (tc-param-with-invalidated-brand-region
+  [params : (& params ast.AstParamList)]
+  [param-ty : (& param-ty ast.AstType)]
+  [ty : ast.AstType]) : ast.AstType
+  (match param-ty
+    [(Invalidate _ _) (return ty)]
+    [_ unit])
+  (unless
+    (match (& ty)
+      [(or (Ref _ _) (MutRef _ _)) true]
+      [_ false])
+    (return ty))
+  (let
+    [pairs : ast.AstLifetimeList (tc-param-list-invalidate-pairs params)]
+    [index : i64 0]
+    [brand : i64 -1]
+    (while (and (< brand 0) (< index (ast.ast-lifetime-list-len (& pairs))))
+      (let
+        [lifetime : i64
+          (ast.ast-lifetime-list-get
+            (& pairs)
+            index
+            (ast.ast-lifetime-fallback))]
+        (when (tc-type-names-lifetime? (& ty) lifetime) (set! brand lifetime)))
+      (+= index 2))
+    (if (< brand 0)
+      ty
+      (ast.ast-ty-region brand (& ty)))))
+
+;; Whether a parameter of `params` is `(:invalidate r T)`, by a scan that does
+;; not allocate; computed once per parameter list.
+(define (tc-params-invalidate-any? [params : (& params ast.AstParamList)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (when
+      (tc-invalidate-types-present?)
+      (while (and (not found) (< index (ast.ast-param-list-len params)))
+        (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+          [(Param _ ty _)
+            (match ty
+              [(Invalidate _ _) (set! found true)]
+              [_ unit])])
+        (+= index 1)))
+    found))
+
+;; Whether `ty` names `lifetime` outside function types: as a reference, region
+;; or `:invalidate` lifetime, or as a lifetime argument of a nominal.
+(define (tc-type-names-lifetime? [ty : (& ty ast.AstType)] [lifetime : i64]) : bool
+  (match ty
+    [(or (Ref name inner) (MutRef name inner) (Region name inner)
+         (Invalidate name inner))
+      (or
+        (= name lifetime)
+        (tc-type-names-lifetime? (& (ast.ty-node-get inner)) lifetime))]
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
+         (MutPtr elem))
+      (tc-type-names-lifetime? (& (ast.ty-node-get elem)) lifetime)]
+    [(Tuple elems)
+      (let
+        [index : i64 0]
+        [found : bool false]
+        (while (and
+          (not found)
+          (< index (ast.ast-type-list-len (& (deref elems)))))
+          (set!
+            found
+            (tc-type-names-lifetime?
+              (&
+                (ast.ty-node-get
+                  (ast.ast-type-list-get
+                    (& (deref elems))
+                    index
+                    (ast.ast-type-id-fallback))))
+              lifetime))
+          (+= index 1))
+        found)]
+    [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
+      (tc-lifetime-list-contains-at? (& (deref lifetimes)) lifetime 0)]
+    [_ false]))
+
 (define (tc-bind-params
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]) : TcTypeEnv
-  (tc-bind-params-at ctx env (& params) 0 Nil))
+  (tc-bind-params-at
+    ctx
+    env
+    (& params)
+    0
+    Nil
+    (tc-params-invalidate-any? params)))
 
 (define (tc-bind-params-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]
   [index : i64]
-  [lifetimes : TcNameIdList]) : TcTypeEnv
+  [lifetimes : TcNameIdList]
+  [invalidates? : bool]) : TcTypeEnv
   (if (>= index (ast.ast-param-list-len params))
     (tc-bind-invalidate-marker
       (tc-bind-signature-lifetime-markers env params lifetimes)
@@ -49478,12 +49574,21 @@
             env
             name
             (if (tc-invalidate-types-present?)
-              (tc-type-strip-invalidate
-                (tc-resolve-type ctx (tc-global-shared-view ty)))
+              (let
+                [resolved : ast.AstType
+                  (tc-type-strip-invalidate
+                    (tc-resolve-type ctx (tc-global-shared-view ty)))]
+                (if invalidates?
+                  (tc-param-with-invalidated-brand-region
+                    params
+                    (& ty)
+                    resolved)
+                  resolved))
               (tc-resolve-type ctx (tc-global-shared-view ty))))
           params
           (+ index 1)
-          (tc-signature-lifetime-type-collect-into ty name lifetimes))])))
+          (tc-signature-lifetime-type-collect-into ty name lifetimes)
+          invalidates?)])))
 
 ;; --- `(:invalidate r T)` parameters (#6670) --------------------------------
 ;;
@@ -49592,6 +49697,7 @@
     (& params)
     0
     TcNameIdList.Nil
+    (tc-params-invalidate-any? params)
     store
     lease
     bindings
@@ -49603,6 +49709,7 @@
   [params : (& params ast.AstParamList)]
   [index : i64]
   [lifetimes : TcNameIdList]
+  [invalidates? : bool]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [bindings : (&mut bindings TcSelectedBindings)]
@@ -49638,6 +49745,10 @@
               (tc-type-strip-invalidate
                 (tc-resolve-type ctx (tc-global-shared-view ty)))
               (tc-resolve-type ctx (tc-global-shared-view ty)))]
+          [resolved : ast.AstType
+            (if invalidates?
+              (tc-param-with-invalidated-brand-region params (& ty) resolved)
+              resolved)]
           [next : TcTypeEnvScopedCarrier
             (tc-type-env-scoped-carrier-bind-id
               carrier
@@ -49683,6 +49794,7 @@
             params
             (+ index 1)
             (tc-signature-lifetime-type-collect-into ty name lifetimes)
+            invalidates?
             store
             lease
             bindings

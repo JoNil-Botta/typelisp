@@ -1152,7 +1152,7 @@
   (build_run_core.source-tool-git-checkout-command root checkout-ref))
 
 (define (build-git-rev-parse-command [root : String]) : process.ProcessCommand
-  (build_run_core.source-tool-git-rev-parse-command root "HEAD"))
+  (build_run_core.source-tool-git-local-rev-parse-command root "HEAD"))
 
 (define (build-trim-command-output [output : String]) : String
   (string.trim (& output)))

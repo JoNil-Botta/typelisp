@@ -27,12 +27,13 @@ file git-stub.tl
           (write-text (fs.path-join-owned-pair root "src/lib.tl")
             "(define (answer) : i64 42)\n")
           (return 0))))
-    (when (> (io.arg-count) 5)
+    (when (> (io.arg-count) 6)
       (when (string.eq (io.arg 5) "checkout") (return 0))
-      (when (string.eq (io.arg 5) "rev-parse")
-        (let [head : String (env.var-value "TYPELISP_TEST_GIT_HEAD")]
-          (io.println "{}" (if (string.eq head "empty") "" head))
-          (return 0))))
+      (when (string.eq (io.arg 5) "--git-dir=.git")
+        (when (string.eq (io.arg 6) "rev-parse")
+          (let [head : String (env.var-value "TYPELISP_TEST_GIT_HEAD")]
+            (io.println "{}" (if (string.eq head "empty") "" head))
+            (return 0)))))
     90))
 end-file
 
@@ -442,3 +443,171 @@ stderr contains library package `raw_library` cannot declare normal dependency `
 stderr not-contains rev must be a full lowercase
 test ! -f "{{dir}}/git.log"
 test ! -d "{{dir}}/r/target"
+
+
+# Dependency HEAD queries must not discover the application repository, Refs #9515.
+case gn
+each t b et eb
+sh case "{{each}}" in t|et) CCV_pin=tag ;; b|eb) CCV_pin=branch ;; esac
+file -x r/typelisp.pkg
+(package (name "root") (version "1") (kind bin) (dependencies (remote (github "a/b" ({{pin}} "stable")))))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+file r/target/typelisp/git-deps/remote/typelisp.pkg
+(package (name "dep") (version "1") (kind staticlib))
+end-file
+file r/target/typelisp/git-deps/remote/src/lib.tl
+(define (answer) : i64 42)
+end-file
+sh git init -q --initial-branch=main "{{dir}}/r"
+sh git -C "{{dir}}/r" add typelisp.pkg src/main.tl
+sh git -C "{{dir}}/r" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m parent
+# et/eb also supply an enclosing GIT_DIR; the child override must replace it.
+exec sh -c 'case "$1" in et|eb) export GIT_DIR="$2/r/.git" ;; esac; export GIT_TRACE="$2/trace"; exec "$3" build --manifest-path "$4" --target "$5" --opt-level 0' fixture "{{each}}" "{{native-dir}}" "{{compiler}}" "{{dir}}/r/typelisp.pkg" {{host-target}}
+exit 1
+stdout empty
+stderr contains GitHub dependency `remote` git rev-parse
+stderr contains not a git repository
+in file {{dir}}/trace
+contains rev-parse HEAD
+not-contains clone
+test ! -f "{{dir}}/r/typelisp.lock"
+sh CCV_marker=$(find "{{dir}}/r/target" -name .typelisp-cache-complete)
+test -z "{{marker}}"
+step relative-manifest
+cwd {{dir}}/r
+exec sh -c 'case "$1" in et|eb) export GIT_DIR="$2/r/.git" ;; esac; export GIT_TRACE="$2/trace"; exec "$3" build --manifest-path "$4" --target "$5" --opt-level 0' fixture "{{each}}" "{{native-dir}}" "{{compiler}}" typelisp.pkg {{host-target}}
+exit 1
+stdout empty
+stderr contains GitHub dependency `remote` git rev-parse
+stderr contains not a git repository
+test ! -f "{{dir}}/r/typelisp.lock"
+
+
+# Windows environment names are case-insensitive, so an inherited git_dir or
+# Git_Dir naming the application must not select its HEAD either; on Linux these
+# variants are controls. The fake Git child reports its argv and every inherited
+# GIT_DIR spelling as received: raw Win32 block entries on Windows, exact names
+# on Linux. That shows the harness delivered the spelling unnormalised.
+case gm
+each lt lb mt mb
+sh case "{{each}}" in ?t) CCV_pin=tag ;; ?b) CCV_pin=branch ;; esac
+sh case "{{each}}" in l?) CCV_spell=git_dir ;; m?) CCV_spell=Git_Dir ;; esac
+file git-env.tl
+(import stdlib.io)
+(import stdlib.env)
+(cfg
+  windows
+  (extern (raw-environment) : (Ptr u8) (:symbol "GetEnvironmentStringsA")))
+(define (report-exact [name : (& name str)]) : unit
+  (when (env.var-exists? name) (io.eprintln "env {}={}" name (env.var-value name))))
+(define (main) : i64
+  (let [i : i64 1]
+    (while (< i (io.arg-count))
+      (io.eprintln "arg {}" (io.arg i))
+      (set! i (+ i 1))))
+  (cfg
+    windows
+    (unsafe
+      (let [p : (Ptr u8) (raw-environment)]
+        (while (not (= (ptr-read p) (cast 0 : u8)))
+          (when (not (ptr-null? (env.match-entry "GIT_DIR" p true)))
+            (io.eprintln "env {}" (env.copy-c-string p)))
+          (set! p (ptr-offset p (+ (env.c-string-length p) 1))))))
+    (begin (report-exact "GIT_DIR") (report-exact "git_dir") (report-exact "Git_Dir")))
+  128)
+end-file
+file -x r/typelisp.pkg
+(package (name "root") (version "1") (kind bin) (dependencies (remote (github "a/b" ({{pin}} "stable")))))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+file r/target/typelisp/git-deps/remote/typelisp.pkg
+(package (name "dep") (version "1") (kind staticlib))
+end-file
+file r/target/typelisp/git-deps/remote/src/lib.tl
+(define (answer) : i64 42)
+end-file
+sh git init -q --initial-branch=main "{{dir}}/r"
+sh git -C "{{dir}}/r" add typelisp.pkg src/main.tl
+sh git -C "{{dir}}/r" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m parent
+sh mkdir -p "{{dir}}/bin"
+run build "{{dir}}/git-env.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+exec sh -c 'unset GIT_DIR; export "$1=$2/r/.git"; export PATH="$3:$PATH"; exec "$4" build --manifest-path "$5" --target "$6" --opt-level 0' fixture "{{spell}}" "{{native-dir}}" "{{dir}}/bin" "{{compiler}}" "{{dir}}/r/typelisp.pkg" {{host-target}}
+exit 1
+stdout empty
+stderr contains GitHub dependency `remote` git rev-parse failed with status 128
+stderr order arg -C || arg --git-dir=.git || arg rev-parse || arg HEAD
+stderr contains env {{spell}}={{native-dir}}/r/.git
+stderr not-contains env GIT_DIR=
+test ! -f "{{dir}}/r/typelisp.lock"
+step real-git
+exec sh -c 'unset GIT_DIR; export "$1=$2/r/.git"; export GIT_TRACE="$2/trace"; exec "$3" build --manifest-path "$4" --target "$5" --opt-level 0' fixture "{{spell}}" "{{native-dir}}" "{{compiler}}" "{{dir}}/r/typelisp.pkg" {{host-target}}
+exit 1
+stdout empty
+stderr contains GitHub dependency `remote` git rev-parse
+stderr contains not a git repository
+in file {{dir}}/trace
+contains rev-parse HEAD
+not-contains clone
+test ! -f "{{dir}}/r/typelisp.lock"
+sh CCV_marker=$(find "{{dir}}/r/target" -name .typelisp-cache-complete)
+test -z "{{marker}}"
+
+
+# d: own .git directory; f: separate metadata gitfile; w: linked worktree.
+case go
+each d-t d-b f-t f-b w-t w-b
+sh case "{{each}}" in *-t) CCV_pin=tag ;; *-b) CCV_pin=branch ;; esac
+file -x r/typelisp.pkg
+(package (name "root") (version "1") (kind bin) (dependencies (remote (github "a/b" ({{pin}} "stable")))))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+file d/typelisp.pkg
+(package (name "dep") (version "1") (kind staticlib))
+end-file
+file d/src/lib.tl
+(define (answer) : i64 42)
+end-file
+sh git init -q --initial-branch=main "{{dir}}/r"
+sh git -C "{{dir}}/r" add typelisp.pkg src/main.tl
+sh git -C "{{dir}}/r" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m parent
+sh CCV_parent=$(git -C "{{dir}}/r" rev-parse HEAD)
+sh git init -q --initial-branch=main "{{dir}}/d"
+sh git -C "{{dir}}/d" add typelisp.pkg src/lib.tl
+sh git -C "{{dir}}/d" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m dependency
+sh case "{{pin}}" in tag) git -C "{{dir}}/d" tag stable ;; branch) git -C "{{dir}}/d" branch stable ;; esac
+sh CCV_commit=$(git -C "{{dir}}/d" rev-parse HEAD)
+test "{{commit}}" != "{{parent}}"
+# Branch resolution uses the checkout's origin ref, including linked worktrees.
+sh case "{{each}}" in w-b) git -C "{{dir}}/d" update-ref refs/remotes/origin/stable "{{commit}}" ;; esac
+sh mkdir -p "{{dir}}/r/target/typelisp/git-deps"
+sh case "{{each}}" in d-*) git -c advice.detachedHead=false clone -q --local --branch stable "{{dir}}/d" "{{dir}}/r/target/typelisp/git-deps/remote" ;; f-*) git -c advice.detachedHead=false clone -q --local --separate-git-dir "{{dir}}/m" --branch stable "{{dir}}/d" "{{dir}}/r/target/typelisp/git-deps/remote" ;; w-*) git -C "{{dir}}/d" worktree add -q --detach "{{dir}}/r/target/typelisp/git-deps/remote" stable ;; esac
+exec env GIT_TRACE="{{native-dir}}/trace" "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in file {{dir}}/r/typelisp.lock
+contains (commit "{{commit}}"))
+not-contains (commit "{{parent}}"))
+in file {{dir}}/trace
+contains rev-parse HEAD
+not-contains clone
+step relative-update
+cwd {{dir}}/r
+exec env GIT_TRACE="{{native-dir}}/trace" "{{compiler}}" build --manifest-path typelisp.pkg --target {{host-target}} --opt-level 0 --update-lock
+stderr empty
+in file {{dir}}/r/typelisp.lock
+contains (commit "{{commit}}"))
+not-contains (commit "{{parent}}"))
+exec "{{dir}}/r/target/release/root{{exe}}"
+exit 42
+stdout empty
+stderr empty

@@ -213,6 +213,21 @@
     "rev-parse"
     revision))
 
+;; Reads root/.git only: --git-dir after -C disables enclosing-repository
+;; discovery and overrides an inherited GIT_DIR of any spelling.
+(define (source-tool-git-local-rev-parse-command
+  [root : String]
+  [revision : String]) : process.ProcessCommand
+  (source-tool-command7
+    (source-tool-git-executable)
+    "-c"
+    "core.longpaths=true"
+    "-C"
+    root
+    "--git-dir=.git"
+    "rev-parse"
+    revision))
+
 (define (source-tool-args-from-argv
   [idx : i64]
   [count : i64]

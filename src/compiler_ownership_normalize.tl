@@ -9097,13 +9097,30 @@
 
 ;; Copy/move coordinates, grouped by (source root, target root). Heads and
 ;; links are one-based; reverse construction preserves block/instruction order.
-;; Place counts are bounded by limits.records <= 1048576, so the pair key fits
-;; in i64. Splitting changes flow edges, never instructions or place parents.
+;; The solver bounds places to 2^24, so the pair identity fits in i64.
+;; Splitting changes flow edges, never instructions or place parents.
 (defstruct NormalizeTransfers
   (heads normalize_transfer_map.Map)
   (blocks (__tl_dyn-array i64))
   (indices (__tl_dyn-array i64))
   (next (__tl_dyn-array i64)))
+
+;; Bijective 64-bit finalizer: odd multiplies and logical xor-shifts preserve
+;; full pair equality while spreading source bits into the map's low buckets.
+(define (normalize-transfer-key [source : i64] [target : i64] [places : i64]) : i64
+  (let
+    [key : u64 (cast (+ (* source places) target) : u64)]
+    (set!
+      key
+      (*
+        (bit-xor key (shr key (cast 30 : u64)))
+        (cast 0xbf58476d1ce4e5b9 : u64)))
+    (set!
+      key
+      (*
+        (bit-xor key (shr key (cast 27 : u64)))
+        (cast 0x94d049bb133111eb : u64)))
+    (cast (bit-xor key (shr key (cast 31 : u64))) : i64)))
 
 (define (normalize-transfer-index
   [body : (& body own.OwnershipBody)]
@@ -9141,7 +9158,7 @@
               (when
                 (>= source 0)
                 (let
-                  [key : i64 (+ (* source places) target)]
+                  [key : i64 (normalize-transfer-key source target places)]
                   (set! (array-ref out.blocks row) block)
                   (set! (array-ref out.indices row) index)
                   (set!
@@ -9414,7 +9431,10 @@
               [read : i64
                 (normalize_transfer_map.get-value-or
                   (& transfers.heads)
-                  (+ (* place (array-length state.body.places)) to)
+                  (normalize-transfer-key
+                    place
+                    to
+                    (array-length state.body.places))
                   0)]
               (while (> read 0)
                 (let

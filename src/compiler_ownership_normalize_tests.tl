@@ -1013,7 +1013,7 @@
               [read : i64
                 (transfer_map.get-value-or
                   (& transfers.heads)
-                  (+ (* source 7) target)
+                  (norm.normalize-transfer-key source target 7)
                   0)]
               [block : i64 0]
               (while (< block 3)
@@ -1049,10 +1049,84 @@
         (set! source (+ source 1)))
       true)))
 
+;; Power-of-two place count and many sources into one target used to put all
+;; unmixed pair keys into one bucket. Compare each list with a fresh scan.
+(define (normalize-test-transfer-fan-in?) : bool
+  (let
+    [instructions : (__tl_dyn-array own.OwnershipInstruction)
+      (__tl_make-array own.OwnershipInstruction 1024)]
+    [blocks : (__tl_dyn-array own.OwnershipBlock)
+      (__tl_make-array own.OwnershipBlock 1)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [index : i64 0]
+    (while (< index 1024)
+      (set!
+        (array-ref instructions index)
+        (own.OwnershipInstruction
+          (own.OwnershipOperation.Copy
+            (core_fixture.ownership-test-place-id (+ index 1))
+            (core_fixture.ownership-test-place-id 3))
+          (core_fixture.ownership-test-source index)))
+      (set! index (+ index 1)))
+    (set! (array-ref counts 0) 1024)
+    (set!
+      (array-ref blocks 0)
+      (core_fixture.ownership-test-block
+        instructions
+        (core_fixture.ownership-test-return)))
+    (let
+      [body : own.OwnershipBody (core_fixture.ownership-test-body blocks)]
+      (set! body.places (__tl_make-array own.OwnershipPlace 4096))
+      (set! body.locals (__tl_make-array own.OwnershipLocal 4096))
+      (set! index 0)
+      (while (< index 4096)
+        (set!
+          (array-ref body.places index)
+          (core_fixture.ownership-test-place index 0 -1 0))
+        (set!
+          (array-ref body.locals index)
+          (core_fixture.ownership-test-local 0 false))
+        (set! index (+ index 1)))
+      (let
+        [transfers : norm.NormalizeTransfers
+          (norm.normalize-transfer-index (& body) (& counts))]
+        [source : i64 0]
+        (while (< source 1026)
+          (let
+            [read : i64
+              (transfer_map.get-value-or
+                (& transfers.heads)
+                (norm.normalize-transfer-key source 3 4096)
+                0)]
+            [index : i64 0]
+            (while (< index 1024)
+              (match (&
+                (array-ref (array-ref body.blocks 0).instructions index).operation)
+                [(own.OwnershipOperation.Copy from to)
+                  (when
+                    (and
+                      (= source (own.ownership-place-root (& body) from.index))
+                      (= 3 (own.ownership-place-root (& body) to.index)))
+                    (unless
+                      (and
+                        (> read 0)
+                        (= (array-ref transfers.blocks (- read 1)) 0)
+                        (= (array-ref transfers.indices (- read 1)) index))
+                      (return false))
+                    (set! read (array-ref transfers.next (- read 1))))]
+                [_ (return false)])
+              (set! index (+ index 1)))
+            (unless (= read 0) (return false)))
+          (set! source (+ source 1)))
+        true))))
+
 (define (compiler-ownership-normalize-self-test) : i64
   (test.assert-true
     (normalize-test-transfer-index?)
     "normalizer transfer index preserves every ordered scan match")
+  (test.assert-true
+    (normalize-test-transfer-fan-in?)
+    "normalizer transfer index preserves 1024 fan-in pairs across 4096 places")
   (let
     [mode : i64 0]
     (while (< mode 12)

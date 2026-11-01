@@ -111,14 +111,14 @@
       (test.assert-i64-eq
         (tuple-ref baseline 0)
         (if wide
-          52515
-          40402)
+          52671
+          40522)
         "complete expansion work")
       (test.assert-i64-eq
         (tuple-ref baseline 1)
         (if wide
-          224186
-          160130)
+          224858
+          160610)
         "complete cipher work")
       (io.println
         "AES-{} instrumented source work: setup={} block={}"

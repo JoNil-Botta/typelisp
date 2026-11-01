@@ -318,6 +318,7 @@ stdlib/tests/x509_api.tl|42|-|-|-
 stdlib/tests/deflate_api.tl|42|-|-|-
 stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
+stdlib/tests/crypto_aes_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_api.tl|42|-|-|-

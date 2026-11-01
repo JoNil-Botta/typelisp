@@ -15,7 +15,27 @@
 ;# are outside the cleanup guarantee. This is not an ECB mode or policy API.
 ;#
 ;# Usage: `(import stdlib.crypto_aes_core)`
+;#
+;# This internal example lends a schedule and two secret block owners to the
+;# primitive, then discharges all three owners on either structured result.
+;#
+;# ```typelisp
+;# (import stdlib.crypto_aes_core as aes)
+;# (import stdlib.crypto_secret as secret)
+;# (define (main) : i64
+;#   (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
+;#     [(aes.Aes128Ok schedule)
+;#       (with
+;#         ([live schedule aes.close-128]
+;#          [source (secret.fixed-zero (secret.Secret16)) secret.close-fixed]
+;#          [destination (secret.fixed-zero (secret.Secret16)) secret.close-fixed])
+;#         (match (aes.encrypt-128! (& live) (& source) (&mut destination))
+;#           [(aes.AesOk) 42]
+;#           [(aes.AesErr _) 1]))]
+;#     [(aes.Aes128Err _) 1]))
+;# ```
 (import stdlib.crypto_secret as secret)
+(cfg test (import stdlib.test))
 
 ;: Test-only tally of visited source work sites, never secret values. Each
 ;: primitive/loop site contributes its documented arithmetic or byte-work units.
@@ -94,7 +114,7 @@
 
 ;: FIPS 197 Table 4, computed by the fixed x^254 chain and affine transform.
 (define (sbox [value : u8]) : u8
-  (cfg test (set! source-work (+ source-work 14)) unit)
+  (cfg test (set! source-work (+ source-work 17)) unit)
   (let
     [x2 : u8 (gf-mul value value)]
     [x3 : u8 (gf-mul x2 value)]
@@ -508,3 +528,18 @@
   [destination : (&mut destination secret.SecretFixed)]) : AesStatus
   (unsafe
     (encrypt-checked! (& schedule.expanded) source destination 240 14)))
+
+(cfg
+  test
+  (test
+    aes-core-field-arithmetic
+    (begin
+      (test.assert-true
+        (= (xtime (cast 0x80 : u8)) (cast 0x1b : u8))
+        "FIPS reduction polynomial")
+      (test.assert-true
+        (= (sbox (cast 0 : u8)) (cast 0x63 : u8))
+        "zero inverse convention")
+      (test.assert-true
+        (= (sbox (cast 0x53 : u8)) (cast 0xed : u8))
+        "FIPS S-box example"))))

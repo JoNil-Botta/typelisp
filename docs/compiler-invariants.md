@@ -1422,6 +1422,12 @@ reset epoch
 reject stale or reused identities. Allocation always selects the job owner
 arena, including when a function scratch arena is current.
 
+Call lifetime substitutions retain invariant-binding facts in the existing
+append-only substitution store. Their negative metadata keys cannot alias a
+source lifetime id; a sibling retry sees only its own tail. An invariant
+occurrence may fix a compatible earlier covariant bound, and the substituted
+call is checked again against every argument before acceptance.
+
 The module declaration/import index has a lazy typed header in that job's
 state directory and an independently retained payload arena containing only
 integer module keys, shape codes and declaration positions. Its stamp uses the

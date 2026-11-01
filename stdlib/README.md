@@ -122,7 +122,8 @@ so this section only maps the modules by area. Import a module with
   `generated/idna_unicode12_data` ([offline generation and profile contract](../tools/idna-unicode12-data/README.md)).
 - Networking and security: `net` (host-free socket ownership and finite-progress
   I/O contracts, [surface mapping and adapter contract](../docs/net.md)),
-  `net_fake` (injected conformance support), `net/http_types`, `net/http_head_codec`,
+  `net_fake` (injected conformance support), `net/dns/wire`,
+  `net/http_types`, `net/http_head_codec`,
   `net/http_trailer`, `net/http_trailer_policy`, `net/ip`, `net/tls_wire`,
   `net/dns_name`, `net/resolver_config`, `net/resolver_config_linux`,
   `net/tls_transcript`,
@@ -132,6 +133,38 @@ so this section only maps the modules by area. Import a module with
   `crypto_p256`, `crypto_secret`, `x509_time`, `x509` (owned certificate models,
   exact signed bytes and parsed extensions; no trust/signature decisions).
   See [certificate parsing](../docs/x509.md) for limits and the supported profile.
+
+`net/dns/wire` is the pure DNS codec for the future stub resolver (Refs #7472).
+It encodes one IN/A or IN/AAAA question with caller ID/RD and optional EDNS0
+advertising 1232 UDP bytes. `decode-response` returns `DnsComplete` only after
+validating every declared section and consuming the whole input. `DnsTruncated`
+contains only a validated header and exactly one complete question; no RR bytes
+are inspected when TC is set, so a datagram ending inside a declared RR can
+trigger transport fallback. Matching ID, QR/opcode, question, server and socket
+identity remains the resolver's responsibility.
+
+Canonical names retain lowercase ASCII length-prefixed wire bytes, preserving
+label boundaries. Empty text and `.` mean root; one final dot is accepted.
+Unicode and IDNA are unsupported. Limits are 63 bytes/label, 253 text bytes
+excluding a final dot, 255 expanded wire bytes, 127 labels and 32 compression
+hops/name; each message allows 65535 bytes, 256 RRs, 256 decoded names, 4096
+total hops and 64 addresses. `DnsLimitExceeded` is distinct from `DnsMalformed`,
+and each reports its first failure offset. Compression targets must be backward
+label boundaries already validated in a question, owner or supported IN name
+field. Skipped NS, MD/MF, MB/MG/MR, PTR, MINFO, MX and DNAME records validate
+their name-field layouts and exact RDATA lengths under the same budgets; their
+values are never returned. For systemd-resolved interoperability, the receiver
+accepts compressed DNAME targets under the same boundary and budget checks;
+RFC 6672's uncompressed-target rule constrains senders. This allows glue owners
+to reference NS authority data and CNAMEs to reference DNAME targets. Other
+opaque RDATA (including SRV and unknown types/classes) cannot supply compression
+targets. Non-ASCII bytes in any decoded name reject
+the message, including owners of unrelated records. Returned A/AAAA bytes,
+CNAME, SOA and OPT metadata retain message order and section identity. OPT
+tuples are checked and skipped; the resolver owns version/RCODE policy. The
+codec performs no host or network calls and retains no input borrow. Only the
+first `DnsMessage.len` slots in `records` are live; the backing array length is
+capacity and its padding must never be treated as decoded records.
 
 `net/dns_name` is the shared checked ASCII DNS-name value for resolver keys
 and policy. `parse`/`parse-bytes` lowercase LDH labels, retain an optional final
@@ -371,6 +404,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `net/ip.tl` | Address construction, byte access, equality, ordering, hashing, and strict borrowed-text parsing are non-allocating. IPv4 and IPv6 formatting use bounded stack scratch storage, then allocate exactly the returned active-arena `String` backing bytes and handle; no growable intermediate buffer is allocated. |
 | `net.tl` | Each published socket/duplicate allocates one private state cell, generation word and reusable transfer buffer (16384 TCP bytes or 65507 UDP bytes). Ordinary I/O/retry/wait/close and queries allocate nothing in the contract layer. Sends copy the dispatched borrowed prefix into owned transfer storage; receives copy only the validated committed prefix back. Owned-read helpers explicitly allocate bounded output buffers. The platform adapter owns its allocation policy; keep owners inside their allocation arena. |
 | `net_fake.tl` | One process-lifetime integer table holds bounded fake contexts, scripted traces, generation-checked tokens and shared socket groups; no simulated operation sleeps, calls a host API or allocates per retry. |
+| `net/dns/wire.tl` | Names occupy fixed inline storage. Query encoding allocates one active-arena `ByteBuf` of at most 282 bytes. Response decoding checks the 65535-byte cap before allocating a 16384-byte compression-boundary table, then checks the RR cap before allocating at most 256 fixed-size record slots. TC allocates no record array. Parsing never allocates per hop or copies opaque RDATA; errors expose no partial records. Per-call scratch and returned arrays live in the caller's active arena. |
 | `net/tls_wire.tl` | The record and handshake readers own their buffers and fill them in place: once they have grown to the largest record and message, reading records, reassembling messages and returning each message's exact bytes as a borrowed view allocate nothing. Record headers, handshake message headers, extension blocks and every list are checked against the protocol maximum and `TlsWireLimits` before anything is copied. Typed decoders validate a whole list before allocating its exact array and copy each opaque field into its own `ByteBuf`; encoders append to the caller's `ByteBuf`, filling length prefixes in place. |
 | `net/tls_transcript.tl` | Public SHA-256 transcript construction, exact held-frame absorption, raw snapshots, finalization and closure allocate nothing. `snapshot-boundary` validates the last message kind and allocates one fixed-size opaque tagged hash in the active arena; its read-only pointer must remain within that arena's lifetime. Consumers accept only that handle and use `boundary-digest` with the expected tag. Frame-body and cumulative SHA-work budgets are checked before mutation. The single atomic HRR replacement allocates a 32-byte digest buffer and a 36-byte synthetic frame through `tls_wire.message-hash-frame`; it retains neither. All hashes are public values, with no secret storage, ordering policy or transport dependency. |
 | `net/url.tl` | Parsing first checks the whole input against `UrlLimits.max-input` and each component against its own limit before copying it; each component is then normalized into one buffer of exactly its input length. Bracketed IPv6 text is copied only after its length is checked against the longest IPv6 spelling. Formatting and the origin, identity and complete keys allocate their returned `String`s and the intermediate component strings they concatenate. Nothing allocates in proportion to a length the input declares. |

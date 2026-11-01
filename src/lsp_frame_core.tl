@@ -7465,7 +7465,7 @@
         (& state.documentation-sites)
         (& docs)
         (doc_targets.DocumentationTargetRequest
-          (build_identity.compiler-build-git-hash-shared-view)
+          (build_identity.compiler-build-producer-identity)
           (doc_targets.current-source-digest
             (& state.documents)
             cache

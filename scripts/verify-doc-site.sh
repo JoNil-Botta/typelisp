@@ -117,7 +117,7 @@ gate_require_compiler
 
 TYPELISP_DOC_SOURCE_IDENTITY=${TYPELISP_DOC_SOURCE_IDENTITY:-$(git rev-parse HEAD)}
 TYPELISP_DOC_COMPILER_IDENTITY=${TYPELISP_DOC_COMPILER_IDENTITY:-$(
-    "$COMPILER" --version 2>/dev/null | awk 'NR == 1 && $1 == "typelisp" { print $2 }'
+    "$COMPILER" --producer-identity 2>/dev/null | tr -d '\r\n'
 )}
 case "$TYPELISP_DOC_SOURCE_IDENTITY" in
     "" | *[!0-9a-f]*) fail "invalid docs source identity: $TYPELISP_DOC_SOURCE_IDENTITY" ;;

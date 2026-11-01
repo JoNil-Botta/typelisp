@@ -470,7 +470,7 @@
             (owned_view.compiler-owned-shared-view manifest.name)
             manifest.version)]
         [compiler-identity : String
-          (build_identity.compiler-build-git-hash-shared-view)]
+          (build_identity.compiler-build-producer-identity)]
         [source-identity : String
           (doc_local_site.doc-local-site-source-identity source-digest)]
         [modules : doc_module_vec.Vec

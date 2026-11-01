@@ -54,7 +54,7 @@
     [name : String "TYPELISP_DOC_COMPILER_IDENTITY"]
     (match (env.get (& name))
       [(EnvSomeString value) value]
-      [(EnvNoString) (build_identity.compiler-build-git-hash-shared-view)])))
+      [(EnvNoString) (build_identity.compiler-build-producer-identity)])))
 
 (define (doc-site-source-identity) : String
   (let

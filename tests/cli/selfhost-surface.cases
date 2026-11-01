@@ -245,10 +245,12 @@ test -f "{{dir}}/doc-package/target/doc/typelisp-docs-search-index.js" -a -s "{{
 in file {{dir}}/doc-package/target/doc/index.html
 contains Package entry docs.
 contains typelisp-package-identity
+contains name="typelisp-compiler-identity" content="{{producer}}"
 contains surface_doc@0.1.0
 contains data-doc-search-input
 in file {{dir}}/doc-package/target/doc/typelisp-docs-search-index.js
 contains "packageIdentity":"surface_doc@0.1.0"
+contains "compilerIdentity":"{{producer}}"
 in file {{dir}}/doc-package/target/doc/typelisp-docs.js
 contains Search index identity does not match this page.
 sh cp -R "{{dir}}/doc-package/target/doc" "{{dir}}/doc.first"

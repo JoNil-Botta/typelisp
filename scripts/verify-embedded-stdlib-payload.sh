@@ -47,8 +47,8 @@ if [ ! -s "$NORMALIZED_MANIFEST" ]; then
     echo "embedded stdlib payload has no build inputs" >&2
     exit 1
 fi
-if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 67 ]; then
-    echo "embedded stdlib payload must declare exactly 67 build inputs" >&2
+if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 69 ]; then
+    echo "embedded stdlib payload must declare exactly 69 build inputs" >&2
     exit 1
 fi
 if grep -n -v '^[A-Za-z0-9_][A-Za-z0-9_/]*\.tl$' "$NORMALIZED_MANIFEST" \

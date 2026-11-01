@@ -19,6 +19,11 @@ rejected. This census records the remaining compiler-private
 
 ## Intentional Private Storage
 
+- `stdlib/net.tl` hides generation-checked owner state and reusable transfer
+  backing behind move-only handles and borrowed byte/explicit `ByteBuf` APIs.
+  `stdlib/net_fake.tl` uses one bounded integer table for conformance scripts,
+  tokens and shared simulated socket state; it never transports an address.
+
 - Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/byte_buf_core.tl`,
   bounded public-input RSA limb/REDC storage in `stdlib/crypto_rsa_core.tl`,
   `stdlib/ffi.tl`, `stdlib/io.tl`, `stdlib/fs.tl`, and

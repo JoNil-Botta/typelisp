@@ -8947,6 +8947,51 @@ ordering parameter and does not protect unrelated non-atomic locations.
 
 ---
 
+### 6.6 Target-independent socket contracts
+
+`stdlib.net` defines move-only cleanup-owning `TcpStream`, `TcpListener` and
+`UdpSocket`, checked IPv4/IPv6 socket endpoints, portable domain-tagged errors
+and byte-only synchronous I/O. [The socket contract](docs/net.md) specifies the
+selected Rust surface, explicit omissions, adapter obligations and complete
+operation/result mutation rules. This layer performs no host networking calls.
+
+Owners retain private state identity, generation and adapter identity. Every
+operation checks the effective generation and private kind before dispatch;
+closed/stale handles cannot reach a native socket. Explicit close poisons the
+owner before exactly one close attempt and never retries an ambiguous close.
+Scoped `with` cleanup is idempotent after explicit close. A successful duplicate
+has a distinct cleanup obligation and shares the underlying socket's queues,
+connection/shutdown state, options and pending error. Callers serialize protocol
+ordering and shared UDP connect/option mutation across duplicates.
+
+The checked capability boundary passes integer context/generation tokens and
+owned `ByteBuf` values handed back in replies, never a pointer, descriptor or
+borrowed view. Ordinary safe function values must validate every admitted
+argument independently before host dispatch. Each adapter keeps native sockets
+permanently nonblocking and implements bounded private readiness waits. No trait
+system, automatic cleanup insertion or implicit text conversion is introduced.
+
+Wait-capable operations take an optional nonnegative absolute monotonic-ms
+deadline, a cancellation callback and finite work budget. Cancellation precedes
+expiry, which precedes work exhaustion before the next host call. Committed
+positive progress is returned even when a stop becomes observable afterward.
+Wait slices reuse `local_ipc.wait-slice-ms` (100 ms), including without a caller
+deadline. Try operations never wait or retry interruption. UDP's live connected
+state metadata preflight is separately counted from its one transfer attempt.
+
+All byte ranges/options/endpoints are validated before dispatch. TCP zero-size
+read/peek/write completes without a host call; only a zero receive on a positive
+view is EOF. Whole-buffer helpers dispatch only the remaining suffix, loop only
+after positive counts, and retain completed count on every failure. UDP handles
+one datagram per call, including empty datagrams; its maximum is 65507 bytes and
+truncation is explicit host metadata. Partial sends are terminal structured
+errors. Invalid receive metadata can leave a committed payload prefix, reported
+with its count/truncation and no partially decoded peer. Construction and accept
+publish complete ownership/metadata together or clean up the unpublished owner.
+
+DNS, TLS, HTTP, async scheduling, public readiness polling, Unix-domain sockets,
+named pipes and platform host-call implementations are separate modules.
+
 ## 7. Memory model
 
 TypeLisp has no garbage collector, no implicit destructors, and no general

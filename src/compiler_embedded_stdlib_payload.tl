@@ -147,6 +147,14 @@
   payload-string-caller-result
   "../stdlib/string_caller_result.tl")
 
+(include-str-lzss payload-asn1-der "../stdlib/asn1_der.tl")
+
+(include-str-lzss payload-pem "../stdlib/pem.tl")
+
+(include-str-lzss payload-x509-time "../stdlib/x509_time.tl")
+
+(include-str-lzss payload-x509 "../stdlib/x509.tl")
+
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
   (CompilerEmbeddedStdlibPayloadSome (__tl_dyn-array u8)))
@@ -300,4 +308,12 @@
       (compiler-embedded-stdlib-payload-copy payload-set)]
     [(string.eq suffix "string_caller_result.tl")
       (compiler-embedded-stdlib-payload-copy payload-string-caller-result)]
+    [(string.eq suffix "asn1_der.tl")
+      (compiler-embedded-stdlib-payload-copy payload-asn1-der)]
+    [(string.eq suffix "pem.tl")
+      (compiler-embedded-stdlib-payload-copy payload-pem)]
+    [(string.eq suffix "x509_time.tl")
+      (compiler-embedded-stdlib-payload-copy payload-x509-time)]
+    [(string.eq suffix "x509.tl")
+      (compiler-embedded-stdlib-payload-copy payload-x509)]
     [else (CompilerEmbeddedStdlibPayloadNone)]))

@@ -192,6 +192,7 @@ stdlib_manifest() {
 arena.tl
 atomic.tl
 args.tl
+asn1_der.tl
 base64.tl
 byte_buf.tl
 byte_buf_core.tl
@@ -251,6 +252,7 @@ net_fake.tl
 math.tl
 msvc.tl
 option.tl
+pem.tl
 process.tl
 process_borrowed.tl
 process_runtime.tl
@@ -275,6 +277,8 @@ text_buf.tl
 text_buf_borrowed.tl
 text_buf_family.tl
 vector.tl
+x509.tl
+x509_time.tl
 EOF
 }
 
@@ -305,6 +309,7 @@ stdlib/tests/format_fixed_empty_digits.tl|134|-|literal:format: fixed float digi
 stdlib/tests/format_negative_precision.tl|134|-|literal:format: negative width or precision|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/base64_api.tl|42|-|-|-
+stdlib/tests/x509_api.tl|42|-|-|-
 stdlib/tests/deflate_api.tl|42|-|-|-
 stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-

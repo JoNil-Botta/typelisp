@@ -117468,8 +117468,7 @@
             (begin
               (set! (array-ref keys count) key)
               (set! (array-ref types count) ty))
-            (when (tc-type-needs-resolution-for-context? ctx ty)
-              (return -1)))
+            (when (tc-type-needs-resolution-for-context? ctx ty) (return -1)))
           (+= count 1)
           (set! cur rest)]))
     count))

@@ -9,6 +9,8 @@
 ;# `default-limits`, pass `(& limits)` to `decoder-new` or `decode`, and handle
 ;# the typed result. `DeflateDecoded.consumed` preserves a container suffix.
 ;# Containers such as zlib account framing and preset history with `decoder-prime!`.
+;# Fixed alphabets use RFC constants; their 1054-unit preparation charge occurs
+;# once per decoder. All byte/bit charges remain independent of chunk splitting.
 ;# See `docs/deflate.md` and `examples/deflate_decode.tl` for complete examples.
 (import stdlib.byte_buf)
 (import stdlib.iterator)
@@ -46,6 +48,9 @@
   (startup-bytes i64))
 
 ;: Conservative defaults: 64 MiB input, 256 MiB output, full history.
+;: Ratio 1024/startup 1024 deliberately reject legitimate streams near the
+;: roughly 1032:1 DEFLATE maximum with RatioLimit and byte offsets. Trusted or
+;: highly compressible data (including Git packs) needs an explicit higher ratio.
 (define (default-limits) : DeflateLimits
   (DeflateLimits 67108864 268435456 32768 2147483647 1024 1024))
 
@@ -66,6 +71,8 @@
   (limits DeflateLimits)
   (phase i64)
   (final bool)
+  (fixed bool)
+  (fixed-charged bool)
   (bits i64)
   (bit-count i64)
   (field-value i64)
@@ -153,6 +160,8 @@
               limits.startup-bytes)
             0
             false
+            false
+            false
             0
             0
             0
@@ -200,6 +209,7 @@
     (limits-valid? (& state.limits))
     (>= state.phase 0)
     (<= state.phase 18)
+    (or (not state.fixed) state.fixed-charged)
     (>= state.bits 0)
     (<= state.bits 255)
     (>= state.bit-count 0)
@@ -458,7 +468,13 @@
     (deflate-fail! state (InvalidState))
     (return -1))
   (let
-    [maximum : i64 (array-ref state.tree-counts (* alphabet 16))]
+    [fixed : bool (and state.fixed (< alphabet 2))]
+    [maximum : i64
+      (if fixed
+        (if (= alphabet 0)
+          9
+          5)
+        (array-ref state.tree-counts (* alphabet 16)))]
     (when
       (or (< maximum 0) (> maximum 15))
       (deflate-fail! state (InvalidState))
@@ -482,7 +498,18 @@
         (set! state.symbol-code (bit-or (shl state.symbol-code 1) bit)))
       (let
         [length : i64 state.symbol-length]
-        [count : i64 (array-ref state.tree-counts (+ (* alphabet 16) length))]
+        [count : i64
+          (if fixed
+            (if (= alphabet 1)
+              (if (= length 5)
+                32
+                0)
+              (cond
+                [(= length 7) 24]
+                [(= length 8) 152]
+                [(= length 9) 112]
+                [else 0]))
+            (array-ref state.tree-counts (+ (* alphabet 16) length)))]
         [offset : i64 (- state.symbol-code state.symbol-first)]
         (when
           (or (< count 0) (> count 288))
@@ -497,8 +524,16 @@
             [base : i64
               (cond [(= alphabet 0) 0] [(= alphabet 1) 288] [else 320])]
             [symbol : i64
-              (if (< index capacity)
-                (array-ref state.tree-symbols (+ base index))
+              (if (and (>= index 0) (< index capacity))
+                (if fixed
+                  (if (= alphabet 1)
+                    index
+                    (cond
+                      [(< index 24) (+ index 256)]
+                      [(< index 168) (- index 24)]
+                      [(< index 176) (+ index 112)]
+                      [else (- index 32)]))
+                  (array-ref state.tree-symbols (+ base index)))
                 -1)]
             (when
               (or (< symbol 0) (>= symbol capacity))
@@ -573,18 +608,7 @@
     (return false))
   (when (= cursor.output (byte_buf.bytes-mut-length output)) (return false))
   (unless (deflate-charge! state 1) (return false))
-  (byte_buf.bytes-set! output cursor.output (cast value : u8))
-  (set! cursor.output (+ cursor.output 1))
-  (set! state.total-output (+ state.total-output 1))
-  (when
-    (> state.limits.window-bytes 0)
-    (set!
-      (array-ref state.history.slots state.history-position)
-      (cast value : u8))
-    (set! state.history-position (+ state.history-position 1))
-    (when
-      (= state.history-position state.limits.window-bytes)
-      (set! state.history-position 0)))
+  (deflate-write-byte! state output cursor value)
   true)
 
 ;: Return a per-call sticky failure, or a pending-output result.
@@ -643,43 +667,18 @@
     [(= index 17) 1]
     [else 15]))
 
-;: Build both fixed alphabets, charging before any workspace mutation.
+;: Select immutable RFC fixed alphabets. Their constant representation needs
+;: no workspace rebuild, including after a dynamic block. Charge at most once.
 (define (deflate-fixed! [state : (&mut state Decoder)]) : bool
   (unless
     (deflate-state-valid? state)
     (deflate-fail! state (InvalidState))
     (return false))
-  (unless (deflate-charge! state 1054) (return false))
-  (for [symbol (iterator.range 0 288)]
-    (set!
-      (array-ref state.lengths symbol)
-      (cond [(< symbol 144) 8] [(< symbol 256) 9] [(< symbol 280) 7] [else 8])))
   (unless
-    (deflate-build-tree!
-      (&mut state.tree-counts)
-      (&mut state.tree-symbols)
-      (& state.lengths)
-      0
-      288
-      0
-      0
-      (&mut state.offsets))
-    (deflate-fail! state (InvalidState))
-    (return false))
-  (for [symbol (iterator.range 0 32)]
-    (set! (array-ref state.lengths symbol) 5))
-  (unless
-    (deflate-build-tree!
-      (&mut state.tree-counts)
-      (&mut state.tree-symbols)
-      (& state.lengths)
-      0
-      32
-      1
-      0
-      (&mut state.offsets))
-    (deflate-fail! state (InvalidState))
-    (return false))
+    state.fixed-charged
+    (unless (deflate-charge! state 1054) (return false))
+    (set! state.fixed-charged true))
+  (set! state.fixed true)
   true)
 
 ;: Build the dynamic code-length alphabet after its last field.
@@ -842,6 +841,131 @@
         kept))
     true))
 
+;: Saturate ratio credit at max-output without overflowing either operation.
+;: Called only after validating limits and nonnegative input.
+(define (deflate-output-ceiling
+  [limits : (& limits DeflateLimits)]
+  [input : i64]) : i64
+  (when
+    (or
+      (< limits.max-output 0)
+      (< limits.startup-bytes 0)
+      (< limits.ratio 0)
+      (< input 0))
+    (return 0))
+  (when (>= limits.startup-bytes limits.max-output) (return limits.max-output))
+  (let
+    [remaining : i64 (- limits.max-output limits.startup-bytes)]
+    (if (and (> limits.ratio 0) (> input (/ remaining limits.ratio)))
+      limits.max-output
+      (+ limits.startup-bytes (* limits.ratio input)))))
+
+;: Write checked storage and advance byte positions. The caller accounts work
+;: and establishes output credit before invoking this storage-only operation.
+(define (deflate-write-byte!
+  [state : (&mut state Decoder)]
+  [output : (&mut output bytes)]
+  [cursor : (&mut cursor DeflateCursor)]
+  [value : i64]) : unit
+  (byte_buf.bytes-set! output cursor.output (cast value : u8))
+  (set! cursor.output (+ cursor.output 1))
+  (set! state.total-output (+ state.total-output 1))
+  (when
+    (> state.limits.window-bytes 0)
+    (set!
+      (array-ref state.history.slots state.history-position)
+      (cast value : u8))
+    (set! state.history-position (+ state.history-position 1))
+    (when
+      (= state.history-position state.limits.window-bytes)
+      (set! state.history-position 0))))
+
+;: Bound a match run by remaining output, ratio credit, work and chunk space.
+(define (deflate-run-size
+  [state : (& state Decoder)]
+  [output : (& output bytes)]
+  [cursor : (& cursor DeflateCursor)]
+  [ceiling : i64]) : i64
+  (let
+    [count : i64 state.pending-length]
+    [space : i64 (- (byte_buf.bytes-length output) cursor.output)]
+    [credit : i64 (- ceiling state.total-output)]
+    [work : i64 (- state.limits.max-work state.work)]
+    (when (< space count) (set! count space))
+    (when (< credit count) (set! count credit))
+    (when (< work count) (set! count work))
+    count))
+
+;: Copy forward through the ring, so distance-one overlap and wrap use bytes
+;: just written. Count and scalar state are bounded by the step caller.
+(define (deflate-match-run!
+  [state : (&mut state Decoder)]
+  [output : (&mut output bytes)]
+  [cursor : (&mut cursor DeflateCursor)]
+  [count : i64]) : unit
+  (let
+    [source : i64 (- state.history-position state.pending-distance)]
+    [destination : i64 state.history-position]
+    [position : i64 cursor.output]
+    (set! state.work (+ state.work count))
+    (when (< source 0) (set! source (+ source state.limits.window-bytes)))
+    (for [index (iterator.range 0 count)]
+      (let
+        [value : u8 (array-ref state.history.slots source)]
+        (byte_buf.bytes-set! output (+ position index) value)
+        (set! (array-ref state.history.slots destination) value))
+      (set! source (+ source 1))
+      (set! destination (+ destination 1))
+      (when (= source state.limits.window-bytes) (set! source 0))
+      (when (= destination state.limits.window-bytes) (set! destination 0)))
+    (set! state.history-position destination)
+    (set! cursor.output (+ position count))
+    (set! state.total-output (+ state.total-output count))))
+
+;: Whole stored bytes pay the original 1 input + 8 bit + 1 output units.
+;: Leave every boundary byte to the scalar path, including a partial field.
+(define (deflate-stored-run!
+  [state : (&mut state Decoder)]
+  [input : (& input bytes)]
+  [output : (&mut output bytes)]
+  [cursor : (&mut cursor DeflateCursor)]) : i64
+  (when (or (!= state.bit-count 0) (!= state.field-read 0)) (return 0))
+  (let
+    [count : i64 state.stored-left]
+    [available : i64 (- (byte_buf.bytes-length input) cursor.input)]
+    [space : i64 (- (byte_buf.bytes-mut-length output) cursor.output)]
+    [input-credit : i64 (- state.limits.max-input state.total-input)]
+    [output-credit : i64 (- state.limits.max-output state.total-output)]
+    [work-credit : i64 (/ (- state.limits.max-work state.work) 10)]
+    (when (< available count) (set! count available))
+    (when (< space count) (set! count space))
+    (when (< input-credit count) (set! count input-credit))
+    (when (< output-credit count) (set! count output-credit))
+    (when (< work-credit count) (set! count work-credit))
+    (when (<= count 0) (return 0))
+    (if (= state.limits.ratio 0)
+      (let
+        [credit : i64 (- state.limits.startup-bytes state.total-output)]
+        (when (< credit count) (set! count credit)))
+      ;; For ratio >= 1, credit never decreases while stored bytes are copied.
+      (when
+        (>=
+          state.total-output
+          (deflate-output-ceiling (& state.limits) (+ state.total-input 1)))
+        (return 0)))
+    (when (<= count 0) (return 0))
+    (set! state.work (+ state.work (* count 10)))
+    (for [index (iterator.range 0 count)]
+      (deflate-write-byte!
+        state
+        output
+        cursor
+        (cast (byte_buf.bytes-ref input (+ cursor.input index)) : i64)))
+    (set! cursor.input (+ cursor.input count))
+    (set! state.total-input (+ state.total-input count))
+    (set! state.stored-left (- state.stored-left count))
+    count))
+
 ;: Decode as far as caller chunks permit, without retaining a chunk borrow.
 ;: EOF applies to this chunk's end; retries supply its unconsumed suffix.
 ;: Final padding bits are ignored, and no following byte is read. Empty output
@@ -853,11 +977,24 @@
   [eof : bool]) : DeflateStep
   (let
     [cursor : DeflateCursor (DeflateCursor 0 0)]
+    [budget-input : i64 -1]
+    [budget-output : i64 0]
+    ;; Failed states expose only the saved error. Active workspace validation
+    ;; must not replace it, even when forged state caused the first failure.
+    (when (= state.phase 18) (return (deflate-output-stop state (& cursor))))
     (unless
       (deflate-state-valid? state)
       (deflate-fail! state (InvalidState))
       (return (deflate-output-stop state (& cursor))))
     (while (< state.phase 17)
+      ;; Cache the saturated ratio threshold only in this call. Input can grow
+      ;; while parsing metadata or symbols, so refresh before pending output.
+      (when
+        (and (>= state.phase 15) (!= budget-input state.total-input))
+        (set! budget-input state.total-input)
+        (set!
+          budget-output
+          (deflate-output-ceiling (& state.limits) budget-input)))
       (cond
         [(= state.phase 0)
           (let
@@ -884,6 +1021,7 @@
                   (deflate-symbol-reset! state)
                   (set! state.phase 11))]
               [(= value 2)
+                (set! state.fixed false)
                 (unless
                   (deflate-charge! state 19)
                   (return (deflate-output-stop state (& cursor))))
@@ -913,14 +1051,20 @@
           (if (= state.stored-left 0)
             (deflate-finish-block! state)
             (let
-              [value : i64 (deflate-field! state input (&mut cursor) 8)]
-              (when
-                (< value 0)
-                (return (deflate-input-stop! state (& cursor) eof)))
-              (set! state.stored-left (- state.stored-left 1))
-              (set! state.pending-value value)
-              (set! state.after-literal 4)
-              (set! state.phase 15)))]
+              [copied : i64
+                (deflate-stored-run! state input output (&mut cursor))]
+              (when (> copied 0) (continue))
+              ;; A boundary may fall inside the eight bit charges for the next
+              ;; stored byte. Resume the original path to preserve its offsets.
+              (let
+                [value : i64 (deflate-field! state input (&mut cursor) 8)]
+                (when
+                  (< value 0)
+                  (return (deflate-input-stop! state (& cursor) eof)))
+                (set! state.stored-left (- state.stored-left 1))
+                (set! state.pending-value value)
+                (set! state.after-literal 4)
+                (set! state.phase 15))))]
         [(= state.phase 5)
           (let
             [value : i64 (deflate-field! state input (&mut cursor) 5)]
@@ -1086,9 +1230,20 @@
                 (deflate-fail! state (WindowLimit))]
               [else (set! state.phase 16)]))]
         [(= state.phase 15)
-          (unless
-            (deflate-emit! state output (&mut cursor) state.pending-value)
-            (return (deflate-output-stop state (& cursor))))
+          (if (and
+            (< state.total-output budget-output)
+            (< state.work state.limits.max-work)
+            (< cursor.output (byte_buf.bytes-mut-length output)))
+            (begin
+              (set! state.work (+ state.work 1))
+              (deflate-write-byte!
+                state
+                output
+                (&mut cursor)
+                state.pending-value))
+            (unless
+              (deflate-emit! state output (&mut cursor) state.pending-value)
+              (return (deflate-output-stop state (& cursor)))))
           (set! state.phase state.after-literal)]
         [else
           (when
@@ -1100,6 +1255,15 @@
               (> state.pending-distance state.limits.window-bytes))
             (deflate-fail! state (InvalidState))
             (return (deflate-output-stop state (& cursor))))
+          (let
+            [count : i64
+              (deflate-run-size state output (& cursor) budget-output)]
+            (when
+              (> count 0)
+              (deflate-match-run! state output (&mut cursor) count)
+              (set! state.pending-length (- state.pending-length count))
+              (when (= state.pending-length 0) (set! state.phase 11))
+              (continue)))
           (let
             [index : i64 (- state.history-position state.pending-distance)]
             (when (< index 0) (set! index (+ index state.limits.window-bytes)))

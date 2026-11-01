@@ -38,7 +38,7 @@
 
 Set `eof` when no input follows the offered chunk. After `NeedOutput`, continue with its unconsumed suffix and the same final-chunk promise. A required byte missing at explicit EOF produces `Truncated`, never `NeedInput`. The flag does not force consumption of a trailing container suffix.
 
-An empty call can progress using buffered bits or pending output. Otherwise it needs input. Zero output capacity can parse metadata and complete an empty member; a pending output byte gives `NeedOutput`. If that byte violates a limit, the typed limit failure takes precedence. Repeated terminal calls produce zero counts and repeat their terminal status. No automatic reset or next-member decoding occurs.
+An empty call can progress using buffered bits or pending output. Otherwise it needs input. Zero output capacity can parse metadata and complete an empty member; a pending output byte gives `NeedOutput`. If that byte violates a limit, the typed limit failure takes precedence. Repeated terminal calls produce zero counts and repeat their terminal status. After an error, the first error kind and offsets remain sticky even if forged public fields caused the failure; active workspace validation never replaces the saved error. Callers must not mutate decoder fields between calls. No automatic reset or next-member decoding occurs.
 
 ## Containers and preset history
 
@@ -64,9 +64,11 @@ Only a byte needed for the current field or Huffman symbol is accepted. Stored-b
 | `ratio` | Maximum additional output per accepted input byte. |
 | `startup-bytes` | Output allowance before ratio accounting requires input credit. |
 
-Defaults are 64 MiB input, 256 MiB output, 32768 history bytes, 2147483647 work units, ratio 1024 and startup allowance 1024. Applications should choose limits for their workload. A smaller history window can decode literals/stored bytes and nearby references; a valid reference outside it fails with `WindowLimit`. References before the beginning of decoded output fail with `InvalidDistance`.
+Defaults are 64 MiB input, 256 MiB output, 32768 history bytes, 2147483647 work units, ratio 1024 and startup allowance 1024. This is a deliberate bomb-protection policy: legitimate DEFLATE streams can approach roughly 1032:1 and exceed the default ratio. Such a stream returns typed `RatioLimit` with cumulative accepted-input and emitted-output byte offsets, rather than a malformed-input error. Callers decoding trusted or highly compressible data, such as a native Git client, must explicitly raise `ratio` (for example to 1032) while retaining suitable input, output and work bounds. Applications should choose limits for their workload. A smaller history window can decode literals/stored bytes and nearby references; a valid reference outside it fails with `WindowLimit`. References before the beginning of decoded output fail with `InvalidDistance`.
 
-Every emission must satisfy `total-output <= startup-bytes + ratio * total-input`. The implementation uses division and subtraction to avoid overflowing the multiplication. Accounting is cumulative across chunks and blocks. Ratio zero permits only the startup allowance.
+Every emission must satisfy `total-output <= startup-bytes + ratio * total-input`. The engine caches a saturated output threshold for the current call and refreshes it when accepted input changes. Division and subtraction establish that multiplication cannot overflow. Accounting is cumulative across chunks and blocks. Ratio zero permits only the startup allowance.
+
+Stored bytes and matches copy in bounded runs. Forward match copying preserves overlap and history-ring wrap. Runs stop within the available input, output, work and ratio budgets; the boundary byte follows the same scalar checks as before. In particular, a stored byte can already have been accepted when output backpressure or a limit prevents its emission. This preserves exact consumed/produced counts, failure positions and partial-bit work at every chunk split. No run allocates storage.
 
 Work charges are independent of input/output chunk splitting:
 
@@ -74,10 +76,14 @@ Work charges are independent of input/output chunk splitting:
 - Priming: 1 unit per container prefix byte and per dictionary byte.
 - Each accepted input byte: 1 unit; each consumed bit: 1 unit.
 - Each emitted byte: 1 unit.
-- Fixed table preparation: 1054 units per fixed block.
+- Fixed alphabet preparation: 1054 units once per decoder, immediately before its first fixed block. Later fixed blocks use the same immutable RFC count/symbol mapping, including after dynamic blocks; they allocate and rebuild nothing.
 - Dynamic preparation: 19 units to clear the code-length workspace, 85 to build its tree, 1 per materialized combined alphabet length, and `94 + 2 * (literal-count + distance-count)` to build the final trees.
 
 Charges precede the corresponding bounded action. A suspended attempt, repeated empty call or terminal call adds no semantic work. Empty blocks still consume charged header bits, so an empty-block chain cannot evade the limit. These units bound decoder actions, not elapsed time or machine instructions. Each call also has fixed bounded argument/state validation overhead.
+
+The once-per-decoder fixed charge is the work-accounting change authorized by issue #9531. Previously each fixed block cost another 1054 units to rebuild its tables. The constant mapping removes that work, so repeated fixed blocks can now complete under budgets that previously returned `WorkLimit`. With the full default window, two empty fixed blocks consume exactly 34566 units (formerly 35620); 34565 fails. A single empty fixed block still consumes 34555. The first preparation charge remains conservative; subsequent constant mapping and block selection take bounded work covered by the unchanged input/bit charges. Dynamic preparation charges and all accepted-byte, consumed-bit and emitted-byte charges are unchanged. Stored data therefore still costs 10 units per byte: 1 accepted byte, 8 bits and 1 emission.
+
+Work units are not a uniform instruction estimate. The original opt2 measurement fixtures used about 109 instructions per unit for fixed blocks, 105 for stored and 13 for dynamic, including decoder initialization. Run copying changes those ratios substantially: instructions per unit must be measured for the implementation and workload rather than inferred from the budget. `max-work` provides deterministic, split-independent bounds on algorithmic actions; it is not a time or instruction quota.
 
 The decoder embeds 721 fixed integer workspace slots and owns a `ByteBuf` history of at most 32768 bytes. Only the history backing storage requires an arena allocation; the fixed tables are part of the decoder value. On Linux x86-64, the full-window backing allocation measures 32784 bytes and the decoder value is 6072 bytes, totaling 38856 bytes of retained decoder storage. The streaming engine performs no further allocation, including table rebuilds and suspended symbols/matches. Drop the owning arena to release its history; caller chunk arenas may be dropped after each call. The conformance tests exercise this separately from dropping a partial decoder.
 
@@ -87,4 +93,8 @@ The decoder embeds 721 fixed integer workspace slots and owns a `ByteBuf` histor
 
 Tables reject oversubscription, missing end-of-block codes and invalid incomplete trees. Legal single-one-bit-symbol trees and literal-only blocks with an empty distance alphabet are accepted. Dynamic distance alphabets may describe 32 slots; reserved symbols 30/31 are rejected if decoded. The [fixture provenance](../tests/fixtures/deflate/README.md) records that zlib rejects HDIST=32 headers and therefore is not the oracle for that RFC-derived fixture.
 
+[Limit boundary and mutation derivations](deflate-fixtures.md) give the independent work totals, ratio offsets and expected errors used by the conformance tests.
+
 Public state fields are implementation state, not a serialization format. Do not edit them. Safe calls nevertheless validate shapes/scalars and check table-derived indices before use. Forged state cannot introduce unchecked decoder memory access; detected inconsistencies return `InvalidState`. No unsafe decoder helper is exposed through a safe wrapper.
+
+The incremental and one-shot entry-point signatures are unchanged. The implementation state now records whether the active alphabet is fixed and whether its preparation was charged; callers should continue to construct it through `decoder-new`. Functions prefixed `deflate-` are implementation helpers, including the storage-only run helpers, rather than independent decoding entry points.

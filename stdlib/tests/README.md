@@ -172,6 +172,17 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   positive and negative text tables with byte offsets, RFC 5952 formatting,
   all 65,536 IPv4 suffixes, generated IPv6 round trips, and parser/formatter
   allocation contracts.
+- `net_tls_transcript_api.tl` checks the public transcript across every RFC
+  8448 section 3 and 5 handshake boundary, with independently pinned SHA-256
+  digests, every two-fragment split, coalesced and byte-at-a-time input. It
+  checks the atomic single HRR replacement, snapshot independence, typed
+  lifecycle/counter/resource failures and bounded fixed-seed frame mutations.
+  Boundary tags validate the local last kind, including HRR exclusion from
+  ServerHello key derivation; the construct/project/escape rejection fixtures
+  protect the opaque hash constructor, contents and arena lifetime. Both the
+  native fixture and inline tests share the complete corpus.
+  `net_tls_transcript_parity.tl` is the pure import/ABI witness at opt0/1/2
+  on both targets, without host-specific assertion I/O.
 - `net_tls_wire_api.tl` checks the TLS 1.3 wire codec against RFC 8448's
   traces: every handshake message decodes to the expected fields and
   re-encodes to the same bytes. It feeds every two-piece split of record
@@ -564,12 +575,19 @@ Inline stdlib coverage:
 small RFC-derived corpus covers every input split with output chunks 1–8,
 zero-capacity calls, exact member consumption, terminal repetition and equal
 work across chunking. Other cases cover all length/distance codes and field
-boundaries, legal degenerate trees, oversubscribed/incomplete literal and
-distance trees, a missing end-of-block code, malformed/truncated streams, the
+boundaries, legal one-bit literal/distance singletons and empty distance
+alphabets, rejected singleton/incomplete/oversubscribed code-length trees,
+rejected incomplete/oversubscribed literal and distance alphabets, a missing
+end-of-block code, malformed/truncated streams, the
 maximum stored block and distance, overlapping/cross-block history, each
-resource limit, empty-block chains, corrupted public state, allocation-free
+resource limit (including exact ratio2 and absolute dynamic-work boundaries),
+the deliberate default rejection and raised-limit success of a valid near-maximum
+ratio stream, an independently checked fixed-seed negative mutation corpus,
+empty-block chains, sticky errors from corrupted public state, allocation-free
 stepping, and cancellation/chunk lifetimes across arenas. Fixture provenance
-is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md).
+is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md);
+limit boundaries and checked mutations are derived in
+[`docs/deflate-fixtures.md`](../../docs/deflate-fixtures.md).
 The integration manifest runs this driver and the embedded-module example at
 opt0/1/2 on Linux and Windows.
 The `deflate-preset-history` test covers `decoder-prime!`:

@@ -61,6 +61,7 @@ corpus() {
 arithmetic tests/integration/arithmetic.tl
 stdlib_net_parity tests/integration/stdlib_net_parity.tl
 stdlib_net_owner_parity tests/integration/stdlib_net_owner_parity.tl
+net_tls_transcript stdlib/tests/net_tls_transcript_parity.tl
 control_flow tests/integration/control_flow.tl
 enum_match tests/integration/enum_match.tl
 enum_constructor_owner_layout tests/integration/enum_constructor_owner_layout.tl

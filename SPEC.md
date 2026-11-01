@@ -3963,6 +3963,16 @@ the selected names, declaration locations, run/ignored/slow-skipped state, and
 ignore reasons without compiling or running a harness; it may be combined with
 either selector but not `--check`.
 
+Before running or checking package test harnesses, package-mode `typelisp test`
+checks the manifest entry's production import closure with the same target and
+user cfgs as package `check`/`build`, without the automatic `test` cfg. This
+preflight also runs when no tests exist or a selector matches no tests; a
+production error fails the command before any harness runs. Discovered
+package-owned inline tests are checked by their harnesses. Disconnected
+production modules without inline tests remain outside the checked entry
+closure, as with package `check`/`build`. `--list` only lists tests and does not
+perform the production preflight.
+
 `--backend-mode scalar|avx2|avx512` selects one code-generation mode for every
 harness of the invocation: a source file, each `--batch` entry, package inline
 tests, and package integration tests. The default is `scalar`. A SIMD request

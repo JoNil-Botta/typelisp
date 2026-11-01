@@ -114200,9 +114200,12 @@
           tc-top-env-resolution-generation)
         (set! (deref data).macro-cache-len (+ (deref data).macro-cache-len 1))))))
 
-;; Ineligible views never mutate or carry this process-owned empty map.
-(define tc-macro-module-env-empty-seen : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 1))
+;; Even an ineligible view's unused map belongs to the persistent store.
+(define (tc-macro-module-env-empty-seen [env : TcTypeEnv]) : tc_i64_i64_map.Map
+  (in-arena
+    (unsafe
+      (arena.Arena (tc-chain-store-owner env.store)))
+    (tc_i64_i64_map.with-capacity 1)))
 
 ;; The walk allocates in a macro-generation arena. Its continued name map
 ;; must instead outlive that generation, with the persistent view's store.
@@ -114288,7 +114291,7 @@
                       tc-module-view-pending-name
                       (if carry?
                         (tc-macro-module-env-seen-own top-env (& seen))
-                        (tc-global-shared-view tc-macro-module-env-empty-seen))
+                        (tc-macro-module-env-empty-seen top-env))
                       (if carry?
                         1
                         0))
@@ -114302,7 +114305,7 @@
                   module-id
                   env
                   tc-module-view-pending-name
-                  (tc-global-shared-view tc-macro-module-env-empty-seen)
+                  (tc-macro-module-env-empty-seen top-env)
                   0)
                 (Ok env)))))))))
 
@@ -117459,15 +117462,14 @@
         [(Done) (return -1)]
         [(Cache rest) (set! cur rest)]
         [(Bind key ty rest)
-          (when
-            (tc-type-needs-resolution-for-context?
-              ctx
-              (tc-global-shared-view ty))
-            (return -1))
-          (when
-            fill?
-            (set! (array-ref keys count) key)
-            (set! (array-ref types count) ty))
+          ;; The first pass validates the unchanged spine; the second fills
+          ;; the exact-sized arrays without retaining another type alias.
+          (if fill?
+            (begin
+              (set! (array-ref keys count) key)
+              (set! (array-ref types count) ty))
+            (when (tc-type-needs-resolution-for-context? ctx ty)
+              (return -1)))
           (+= count 1)
           (set! cur rest)]))
     count))
@@ -117519,10 +117521,7 @@
         (let
           [module-ctx : TcContext
             (tc-context-with-module-id ctx module module-id)]
-          [seen : tc_i64_i64_map.Map
-            (tc-global-array-element-shared-view
-              (deref data).macro-cache-seen
-              index)]
+          [seen (& (array-ref (deref data).macro-cache-seen index))]
           [view : TcTypeEnv (array-ref (deref data).macro-cache-values index)]
           [owned? : bool
             (= (array-ref (deref data).macro-cache-carry-state index) 2)]
@@ -117543,7 +117542,7 @@
           (unless
             (and
               (>= count 0)
-              (macro-module-env-splice-fresh? module-ctx (& seen) (& splice)))
+              (macro-module-env-splice-fresh? module-ctx seen (& splice)))
             (return unit))
           (set! keys (__tl_make-array i64 count))
           (set! types (__tl_make-array ast.AstType count))
@@ -117565,7 +117564,7 @@
               (when
                 (and
                   owned?
-                  (tc_i64_i64_map.contains? (& seen) (array-ref keys position)))
+                  (tc_i64_i64_map.contains? seen (array-ref keys position)))
                 (return unit))
               (set!
                 replayed
@@ -117573,25 +117572,29 @@
                   replayed
                   (array-ref keys position)
                   (clone (array-ref types position)))))
-            ;; A failed delta must not publish the partially continued map.
-            (set! (deref data).macro-cache-store top-env.store)
-            (set! (deref data).macro-cache-head top-env.head)
-            (set! (deref data).macro-cache-len 0)
-            (set! tc-module-view-pending-name -1)
-            (match (macro-module-env-add-rows
-              module-ctx
-              replayed
-              (&mut seen)
-              splice)
-              [(Err _) unit]
-              [(Ok rows-env)
-                (tc-macro-module-env-cache-insert!
-                  state
-                  module-id
-                  (tc-env-with-cache-layer-over-explicit rows-env)
-                  tc-module-view-pending-name
-                  seen
-                  2)])))))))
+            (let
+              ;; Eligibility only borrows the map. Move its descriptor out
+              ;; at publication, before any mutation, and retire the old row.
+              [continued : tc_i64_i64_map.Map
+                (array-ref (deref data).macro-cache-seen index)]
+              (set! (deref data).macro-cache-store top-env.store)
+              (set! (deref data).macro-cache-head top-env.head)
+              (set! (deref data).macro-cache-len 0)
+              (set! tc-module-view-pending-name -1)
+              (match (macro-module-env-add-rows
+                module-ctx
+                replayed
+                (&mut continued)
+                splice)
+                [(Err _) unit]
+                [(Ok rows-env)
+                  (tc-macro-module-env-cache-insert!
+                    state
+                    module-id
+                    (tc-env-with-cache-layer-over-explicit rows-env)
+                    tc-module-view-pending-name
+                    continued
+                    2)]))))))))
 
 (define (macro-splice-top-env
   [ctx : TcContext]
@@ -117605,7 +117608,19 @@
       (if (macro-decls-type-resolution-relevant? splice)
         (tc-top-env-resolution-inputs-changed!)
         unit)
-      (tc-extend-top-env-for-splice ctx base-env splice module module-id)]
+      (let
+        [carry-module : String (clone module)]
+        [top-env : TcTypeEnv
+          (try
+            (tc-extend-top-env-for-splice ctx base-env splice module module-id))]
+        (macro-module-env-carry!
+          ctx
+          base-env
+          top-env
+          splice
+          carry-module
+          module-id)
+        (Ok top-env))]
     [(ExtendGeneratedModule base-env summary marker)
       (let
         [module-env : TcTypeEnv
@@ -117696,18 +117711,8 @@
                 next-decls
                 (tc-global-shared-view module)
                 module-id
-                (tc-global-shared-view env-plan))
+                env-plan)
                 [(Ok top-env)
-                  (match env-plan
-                    [(Extend base-env splice)
-                      (macro-module-env-carry!
-                        next-ctx
-                        base-env
-                        top-env
-                        splice
-                        (tc-global-shared-view module)
-                        module-id)]
-                    [_ unit])
                   (tc-hygiene-reset-active-top-env! state top-env)
                   (tc-context-capture-active-pools! next-ctx)
                   (macro-expand-ctfe-env-build-once! next-ctx)

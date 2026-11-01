@@ -10238,6 +10238,10 @@
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [state : LowerReachState]
   [logical-id : i64]) : LowerReachState
+  ;; Failed name resolution yields -1, never a logical function ID. Reject it
+  ;; before probing: structural IDs can share its low bucket bits, so repeated
+  ;; unresolved references must not walk that source-layout-dependent cluster.
+  (when (= logical-id -1) (return state))
   (match (lower_i64_i64_map.get (& all-functions) logical-id)
     [(LookupMissing) state]
     [(LookupFound slot)

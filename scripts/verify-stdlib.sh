@@ -232,6 +232,7 @@ ffi.tl
 hash.tl
 hashmap.tl
 leb128.tl
+net/dns/wire.tl
 net/http_head_codec.tl
 net/http_trailer.tl
 net/http_trailer_policy.tl
@@ -240,6 +241,7 @@ net/ip.tl
 net/dns_name.tl
 net/resolver_config.tl
 net/resolver_config_linux.tl
+net/tls_transcript.tl
 net/tls_wire.tl
 net/url.tl
 net_windows_winsock.tl
@@ -350,6 +352,8 @@ stdlib/tests/net_resolver_config_api.tl|42|-|-|-
 stdlib/tests/net_api.tl|42|-|-|-
 stdlib/tests/net_owner_api.tl|42|-|-|-
 stdlib/tests/net_tls_wire_api.tl|42|-|-|-
+stdlib/tests/net_tls_transcript_api.tl|42|-|-|-
+stdlib/tests/net_tls_transcript_parity.tl|42|-|-|-
 stdlib/tests/net_tls_wire_encode_reject.tl|134|-|printf:tl: array index out of bounds\n|-
 stdlib/tests/net_url_api.tl|42|-|-|-
 stdlib/tests/ssh_known_hosts_parse_api.tl|42|-|-|-
@@ -384,6 +388,7 @@ EOF
 # appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
+stdlib/tests/dns_wire.tl|pass|-
 stdlib/tests/net_conformance.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
@@ -397,6 +402,9 @@ stdlib/tests/crypto_sha1_git_inline.tl|pass|-
 stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha256_inline.tl|pass|-
 stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
+stdlib/tests/net_tls_transcript_construct_reject.tl|fail|opaque type
+stdlib/tests/net_tls_transcript_project_reject.tl|fail|opaque type
+stdlib/tests/net_tls_transcript_escape_reject.tl|fail|region-tagged value cannot escape with-arena
 stdlib/tests/crypto_secret_inline.tl|pass|-
 stdlib/tests/crypto_secret_unsafe_accessor_reject.tl|fail|crypto_secret/fixed-read-pointer requires unsafe context
 stdlib/tests/crypto_secret_storage_read_reject.tl|fail|ptr-read requires unsafe context

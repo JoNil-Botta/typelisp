@@ -122,15 +122,49 @@ so this section only maps the modules by area. Import a module with
   `generated/idna_unicode12_data` ([offline generation and profile contract](../tools/idna-unicode12-data/README.md)).
 - Networking and security: `net` (host-free socket ownership and finite-progress
   I/O contracts, [surface mapping and adapter contract](../docs/net.md)),
-  `net_fake` (injected conformance support), `net/http_types`, `net/http_head_codec`,
+  `net_fake` (injected conformance support), `net/dns/wire`,
+  `net/http_types`, `net/http_head_codec`,
   `net/http_trailer`, `net/http_trailer_policy`, `net/ip`, `net/tls_wire`,
   `net/dns_name`, `net/resolver_config`, `net/resolver_config_linux`,
+  `net/tls_transcript`,
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,
   `crypto_sha1_git`,
   `crypto_sha256`, `crypto_sha512`, `crypto_rsa_core`, `crypto_rsa_verify`,
   `crypto_p256`, `crypto_secret`, `x509_time`, `x509` (owned certificate models,
   exact signed bytes and parsed extensions; no trust/signature decisions).
   See [certificate parsing](../docs/x509.md) for limits and the supported profile.
+
+`net/dns/wire` is the pure DNS codec for the future stub resolver (Refs #7472).
+It encodes one IN/A or IN/AAAA question with caller ID/RD and optional EDNS0
+advertising 1232 UDP bytes. `decode-response` returns `DnsComplete` only after
+validating every declared section and consuming the whole input. `DnsTruncated`
+contains only a validated header and exactly one complete question; no RR bytes
+are inspected when TC is set, so a datagram ending inside a declared RR can
+trigger transport fallback. Matching ID, QR/opcode, question, server and socket
+identity remains the resolver's responsibility.
+
+Canonical names retain lowercase ASCII length-prefixed wire bytes, preserving
+label boundaries. Empty text and `.` mean root; one final dot is accepted.
+Unicode and IDNA are unsupported. Limits are 63 bytes/label, 253 text bytes
+excluding a final dot, 255 expanded wire bytes, 127 labels and 32 compression
+hops/name; each message allows 65535 bytes, 256 RRs, 256 decoded names, 4096
+total hops and 64 addresses. `DnsLimitExceeded` is distinct from `DnsMalformed`,
+and each reports its first failure offset. Compression targets must be backward
+label boundaries already validated in a question, owner or supported IN name
+field. Skipped NS, MD/MF, MB/MG/MR, PTR, MINFO, MX and DNAME records validate
+their name-field layouts and exact RDATA lengths under the same budgets; their
+values are never returned. For systemd-resolved interoperability, the receiver
+accepts compressed DNAME targets under the same boundary and budget checks;
+RFC 6672's uncompressed-target rule constrains senders. This allows glue owners
+to reference NS authority data and CNAMEs to reference DNAME targets. Other
+opaque RDATA (including SRV and unknown types/classes) cannot supply compression
+targets. Non-ASCII bytes in any decoded name reject
+the message, including owners of unrelated records. Returned A/AAAA bytes,
+CNAME, SOA and OPT metadata retain message order and section identity. OPT
+tuples are checked and skipped; the resolver owns version/RCODE policy. The
+codec performs no host or network calls and retains no input borrow. Only the
+first `DnsMessage.len` slots in `records` are live; the backing array length is
+capacity and its padding must never be treated as decoded records.
 
 `net/dns_name` is the shared checked ASCII DNS-name value for resolver keys
 and policy. `parse`/`parse-bytes` lowercase LDH labels, retain an optional final
@@ -334,7 +368,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
 | `try-append-file` | Appends a borrowed `bytes` view through the recoverable stdlib status helper. It preserves existing contents, creates missing files, allocates no concatenated temporary, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque stdlib-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, `OpenWriteAppend`, and exclusive `OpenWriteCreateNew`. The stdlib copies the path into active-arena storage for the host call and tracks handle state in a process-global table. Create-new never opens an existing path. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
-| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with an active-arena `ByteBuf` plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
+| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with an active-arena `ByteBuf` plus the sticky EOF flag. For a valid read-mode handle, a positive request allocates its full byte count before host I/O; a short read or host error does not reclaim that storage. Repeated readers should use the [bounded scratch pattern](#streaming-file-read-allocation). Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `file-write`, `file-flush` | `file-write` writes a borrowed `bytes` view to a write-mode handle, retrying host short writes until complete or an error is reported. `file-flush` calls `fsync` on Linux and `FlushFileBuffers` on Windows. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. Flushing a file does not flush its containing directory. |
 | `read-file-or` | Returns a successful `ByteBuf` or the caller-provided `ByteBuf` fallback for every structured error. `io_caller_result.tl` provides an explicitly textual result shape for callers that deliberately materialize file bytes as `String`. |
 | `append-file` | Panic-on-error borrowed-`bytes` wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
@@ -370,7 +404,9 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `net/ip.tl` | Address construction, byte access, equality, ordering, hashing, and strict borrowed-text parsing are non-allocating. IPv4 and IPv6 formatting use bounded stack scratch storage, then allocate exactly the returned active-arena `String` backing bytes and handle; no growable intermediate buffer is allocated. |
 | `net.tl` | Each published socket/duplicate allocates one private state cell, generation word and reusable transfer buffer (16384 TCP bytes or 65507 UDP bytes). Ordinary I/O/retry/wait/close and queries allocate nothing in the contract layer. Sends copy the dispatched borrowed prefix into owned transfer storage; receives copy only the validated committed prefix back. Owned-read helpers explicitly allocate bounded output buffers. The platform adapter owns its allocation policy; keep owners inside their allocation arena. |
 | `net_fake.tl` | One process-lifetime integer table holds bounded fake contexts, scripted traces, generation-checked tokens and shared socket groups; no simulated operation sleeps, calls a host API or allocates per retry. |
+| `net/dns/wire.tl` | Names occupy fixed inline storage. Query encoding allocates one active-arena `ByteBuf` of at most 282 bytes. Response decoding checks the 65535-byte cap before allocating a 16384-byte compression-boundary table, then checks the RR cap before allocating at most 256 fixed-size record slots. TC allocates no record array. Parsing never allocates per hop or copies opaque RDATA; errors expose no partial records. Per-call scratch and returned arrays live in the caller's active arena. |
 | `net/tls_wire.tl` | The record and handshake readers own their buffers and fill them in place: once they have grown to the largest record and message, reading records, reassembling messages and returning each message's exact bytes as a borrowed view allocate nothing. Record headers, handshake message headers, extension blocks and every list are checked against the protocol maximum and `TlsWireLimits` before anything is copied. Typed decoders validate a whole list before allocating its exact array and copy each opaque field into its own `ByteBuf`; encoders append to the caller's `ByteBuf`, filling length prefixes in place. |
+| `net/tls_transcript.tl` | Public SHA-256 transcript construction, exact held-frame absorption, raw snapshots, finalization and closure allocate nothing. `snapshot-boundary` validates the last message kind and allocates one fixed-size opaque tagged hash in the active arena; its read-only pointer must remain within that arena's lifetime. Consumers accept only that handle and use `boundary-digest` with the expected tag. Frame-body and cumulative SHA-work budgets are checked before mutation. The single atomic HRR replacement allocates a 32-byte digest buffer and a 36-byte synthetic frame through `tls_wire.message-hash-frame`; it retains neither. All hashes are public values, with no secret storage, ordering policy or transport dependency. |
 | `net/url.tl` | Parsing first checks the whole input against `UrlLimits.max-input` and each component against its own limit before copying it; each component is then normalized into one buffer of exactly its input length. Bracketed IPv6 text is copied only after its length is checked against the longest IPv6 spelling. Formatting and the origin, identity and complete keys allocate their returned `String`s and the intermediate component strings they concatenate. Nothing allocates in proportion to a length the input declares. |
 | `ssh_wire_core.tl` | `SshDecoder` reads over the caller's borrowed view and allocates only the exact array of name spans for a `name-list`, after the whole list is validated; `string`, `mpint` and nested blob values are returned as spans into the view, never copied or converted to text. Every length prefix is checked against `SshWireLimits` before anything is taken. `SshIdentReader` and `SshPacketReader` own one buffer each and fill it in place, holding at most one line or one packet; a packet's buffer is reserved only after its length field passed the limit. Encoders append to the caller's `ByteBuf`; `encode-frame` copies the caller's payload and padding once. |
 | `crypto_rsa_core.tl` | Key parsing rejects negative, noncanonical, undersized, oversized, or even public values before arithmetic allocation. Limb arrays allocate only at a selected 2048/3072/4096/8192-bit public capacity. Setup retains modulus and `R^2 mod n`; each public exponentiation allocates one exact-width result plus bounded 32-bit-limb results and 64-bit `2n+2` REDC scratch in the active arena. `public-exponentiation-retained-bytes-upper-bound` reports a conservative per-call bound from the checked public class, actual modulus limbs, and at-most-32-bit exponent. No routine accepts secret operands or claims constant-time behavior. |
@@ -414,6 +450,41 @@ helpers (`file-open`, `file-close`, `file-read-chunk`, `file-write`,
 `file-flush`). v1 requires an explicit close. All handle helpers reuse the
 `IoError` model: mode violations, closed or invalid handles, and unsupported
 operations return structured `IoError` results rather than panicking.
+
+### Streaming file read allocation
+
+`file-read-chunk` allocates the full positive request in the active arena
+before host I/O. A short read exposes only the returned prefix, without
+shrinking its backing allocation; a host error also leaves that storage in
+the arena. Dropping or replacing the result does not reclaim it. Repeatedly
+requesting the remaining capacity can therefore retain nearly the whole
+capacity on every one-byte read, until that arena ends.
+
+For a reader with a total byte limit, use this bounded scratch pattern:
+
+1. Allocate one output `ByteBuf` with the required fixed capacity outside the
+   loop. Include one overflow-detection byte if the reader must distinguish
+   an exact-limit file from an oversized file.
+2. On each iteration, request at most `min(8192, remaining)` bytes inside
+   `(with-arena scratch ...)`. The per-read cap must be independent of the
+   total remaining capacity.
+3. Copy only the returned live bytes into the already allocated outer slots,
+   then update the outer live length. Check the available capacity first;
+   never grow the outer buffer while scratch is active, since growth would
+   allocate its replacement storage in scratch.
+4. Let only scalar byte counts, EOF, and error facts leave scratch. Neither
+   the read buffer nor a scratch-owned error message may escape it. Construct
+   any retained error in the outer arena, with the consumed-byte offset when
+   needed. Scratch ends before the next read, reclaiming the entire request.
+5. Stop on error, EOF, or the total limit. A positive short read is progress,
+   not EOF; reject zero progress without EOF. Do not retry a zero-count
+   request, which preserves EOF. Close the handle on every exit path and
+   return an error without publishing partial data on failure.
+
+A fixed chunk size alone still retains one chunk allocation per iteration
+when used in a long-lived arena. Both the cap and scratch lifetime matter.
+The [caller audit](../docs/file-read-chunk-audit.md) records existing uses and
+the resolver loader's tested implementation of this pattern.
 
 ## Importing Stdlib Modules
 

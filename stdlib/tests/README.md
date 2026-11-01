@@ -12,6 +12,17 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+`dns_wire.tl` runs inline hermetic DNS codec fixtures: exact A/AAAA query
+bytes, EDNS0, all supported response records, unknown type/class skipping,
+canonical names, legal compression boundaries and cycles, every byte prefix,
+all hard limits, and 512 fixed-seed mutation cases. Its TC prefix/mutation
+matrix requires an envelope-only result regardless of incomplete RR bytes.
+Skipped IN name-field layouts are checked for legal NS/glue, legacy and DNAME
+compression targets, exact RDATA extents and shared name budgets. Both literal
+BIND-style and compressed systemd-resolved DNAME targets support synthesized
+CNAMEs and chained address owners. SRV, unknown types and unknown classes cannot
+supply speculative targets.
+
 `x509_api.tl` is a cross-module DER/PEM/certificate integration witness with
 separate pinned fixture files loaded through the stdlib-root include path. It
 checks independently generated RSA, RSA-PSS, P-256 and Ed25519 certificates,
@@ -161,6 +172,17 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   positive and negative text tables with byte offsets, RFC 5952 formatting,
   all 65,536 IPv4 suffixes, generated IPv6 round trips, and parser/formatter
   allocation contracts.
+- `net_tls_transcript_api.tl` checks the public transcript across every RFC
+  8448 section 3 and 5 handshake boundary, with independently pinned SHA-256
+  digests, every two-fragment split, coalesced and byte-at-a-time input. It
+  checks the atomic single HRR replacement, snapshot independence, typed
+  lifecycle/counter/resource failures and bounded fixed-seed frame mutations.
+  Boundary tags validate the local last kind, including HRR exclusion from
+  ServerHello key derivation; the construct/project/escape rejection fixtures
+  protect the opaque hash constructor, contents and arena lifetime. Both the
+  native fixture and inline tests share the complete corpus.
+  `net_tls_transcript_parity.tl` is the pure import/ABI witness at opt0/1/2
+  on both targets, without host-specific assertion I/O.
 - `net_tls_wire_api.tl` checks the TLS 1.3 wire codec against RFC 8448's
   traces: every handshake message decodes to the expected fields and
   re-encodes to the same bytes. It feeds every two-piece split of record

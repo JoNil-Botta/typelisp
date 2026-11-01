@@ -65,6 +65,8 @@
 
 (include-str-lzss payload-net "../stdlib/net.tl")
 
+(include-str-lzss payload-net-dns-wire "../stdlib/net/dns/wire.tl")
+
 (include-str-lzss
   payload-net-http-head-codec
   "../stdlib/net/http_head_codec.tl")
@@ -88,6 +90,10 @@
 (include-str-lzss
   payload-net-resolver-config-linux
   "../stdlib/net/resolver_config_linux.tl")
+
+(include-str-lzss payload-net-tls-wire "../stdlib/net/tls_wire.tl")
+
+(include-str-lzss payload-net-tls-transcript "../stdlib/net/tls_transcript.tl")
 
 (include-str-lzss payload-io-core "../stdlib/io_core.tl")
 
@@ -240,6 +246,8 @@
       (compiler-embedded-stdlib-payload-copy payload-local-ipc)]
     [(string.eq suffix "net.tl")
       (compiler-embedded-stdlib-payload-copy payload-net)]
+    [(string.eq suffix "net/dns/wire.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-dns-wire)]
     [(string.eq suffix "net/http_head_codec.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-http-head-codec)]
     [(string.eq suffix "net/http_trailer.tl")
@@ -256,6 +264,10 @@
       (compiler-embedded-stdlib-payload-copy payload-net-resolver-config)]
     [(string.eq suffix "net/resolver_config_linux.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-resolver-config-linux)]
+    [(string.eq suffix "net/tls_wire.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-tls-wire)]
+    [(string.eq suffix "net/tls_transcript.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-tls-transcript)]
     [(string.eq suffix "io_core.tl")
       (compiler-embedded-stdlib-payload-copy payload-io-core)]
     [(string.eq suffix "io.tl")

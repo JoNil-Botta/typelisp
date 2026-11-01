@@ -72,10 +72,10 @@
                 (+ base (* (- index 1) 65536)))]
             [decl : ast.AstDecl
               (ast.ast-decl-def-fn-id id (ast.ast-param-list-new) (I64) 0)]
+            (ast.ast-decl-list-push (&mut decls) decl)
             (ast.ast-decl-list-push
               (&mut decls)
-              (owned_view.compiler-owned-shared-view decl))
-            (ast.ast-decl-list-push (&mut decls) decl)))
+              (ast.ast-decl-def-fn-id id (ast.ast-param-list-new) (I64) 0))))
         (let
           [all-functions : lower_i64_i64_map.Map
             (lower.lower-function-set-from-decls-in-module

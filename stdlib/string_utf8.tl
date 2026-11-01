@@ -406,9 +406,9 @@
     [(RangeError error) (SliceError error)]))
 
 ;: Bytes written, the rejected scalar value, or the required output byte capacity.
-(defenum EncodeResult
+(defenum EncodeIntoResult
   (:must-use)
-  (Encoded i64)
+  (EncodedBytes i64)
   (InvalidScalar u32)
   (InsufficientSpace i64))
 
@@ -416,7 +416,7 @@
 ;: Returns bytes written, the invalid scalar, or the required size. On either
 ;: error the output is untouched. Directly constructed UnicodeScalar values
 ;: are checked, including surrogates and values greater than U+10FFFF.
-(define (encode [scalar : UnicodeScalar] [output : (&mut output bytes)]) : EncodeResult
+(define (encode [scalar : UnicodeScalar] [output : (&mut output bytes)]) : EncodeIntoResult
   (let
     [value : i64 (cast scalar.value : i64)]
     (when
@@ -454,4 +454,4 @@
                     0x80)
                   : u8))
               (set! index (+ index 1))))))
-      (Encoded width))))
+      (EncodedBytes width))))

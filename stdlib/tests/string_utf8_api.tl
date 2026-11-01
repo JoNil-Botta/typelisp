@@ -324,7 +324,7 @@
                 (match (utf8.encode
                   (utf8.UnicodeScalar (cast value : u32))
                   (byte_buf.as-mut-bytes (&mut out)))
-                  [(Encoded actual-width)
+                  [(EncodedBytes actual-width)
                     (test.assert-i64-eq
                       actual-width
                       width
@@ -599,7 +599,7 @@
         (match (utf8.encode
           (utf8.UnicodeScalar (cast value : u32))
           (byte_buf.as-mut-bytes (&mut output)))
-          [(Encoded width)
+          [(EncodedBytes width)
             (test.assert-true (< i 10) "only valid scalar encodes")
             (let
               [text : String (byte_buf.to-string output)]
@@ -687,7 +687,7 @@
         (match (utf8.encode
           (utf8.UnicodeScalar (cast 0xfffd : u32))
           (byte_buf.as-mut-bytes (&mut output)))
-          [(Encoded n) (set! total (+ total n))]
+          [(EncodedBytes n) (set! total (+ total n))]
           [_ (test.assert-true false "allocation encoding")]))
       (set! round (+ round 1)))
     (test.assert-i64-eq

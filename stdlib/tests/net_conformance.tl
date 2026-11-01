@@ -1133,7 +1133,223 @@
           [_ false])
         "capability validates limits"))))
 
+(define clock-reads : i64
+  0)
+(define clock-stop-at : i64
+  0)
+(define clock-stop-value : i64
+  -1)
+
+(define (scripted-clock [_context : i64]) : i64
+  (set! clock-reads (+ clock-reads 1))
+  (if (= clock-reads clock-stop-at)
+    clock-stop-value
+    0))
+
+(define (clock-failure-cases [make-fixture : (-> Fixture)]) : unit
+  (let
+    [fault : i64 -1]
+    (while (<= fault 100)
+      (let
+        [wanted : net.NetErrorKind
+          (if (< fault 0)
+            (net.UnsupportedTarget)
+            (net.TimedOut))]
+        [f : Fixture (make-fixture)]
+        [bytes : byte_buf.ByteBuf (buffer 1)]
+        (set!
+          f.adapter
+          (net.NetAdapter f.adapter.context scripted-clock f.adapter.dispatch))
+        (with
+          ([stream (open-stream f) net.cleanup-tcp-stream])
+          (set! clock-reads 0)
+          (set! clock-stop-at 3)
+          (set! clock-stop-value fault)
+          (f.script f.adapter.context (net.Read) 0 -1)
+          (assert-kind
+            (net.tcp-stream-read!
+              (&mut stream)
+              (byte_buf.as-mut-bytes (&mut bytes))
+              0
+              1
+              (net.NetLimits (net.Deadline 100) net.never-canceled 10)).status
+            wanted
+            "data wait preserves slice clock failure or expiry")
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.Read))
+            1
+            "clock failure after one blocked read")
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.WaitRead))
+            0
+            "no wait on failed slice clock"))
+        (let
+          [listener-fixture : Fixture (make-fixture)]
+          (set!
+            listener-fixture.adapter
+            (net.NetAdapter
+              listener-fixture.adapter.context
+              scripted-clock
+              listener-fixture.adapter.dispatch))
+          (with
+            ([listener
+                (open-listener listener-fixture)
+                net.cleanup-tcp-listener])
+            (set! clock-reads 0)
+            (set! clock-stop-at 3)
+            (listener-fixture.script
+              listener-fixture.adapter.context
+              (net.Accept)
+              0
+              -1)
+            (match (net.tcp-listener-accept!
+              (&mut listener)
+              (net.NetLimits (net.Deadline 100) net.never-canceled 10))
+              [(AcceptError failure)
+                (assert-kind
+                  (net.Err failure)
+                  wanted
+                  "accept wait preserves clock result")]
+              [(AcceptOk stream _)
+                (net.cleanup-tcp-stream stream)
+                (io.panic "accept unexpectedly completed")])
+            (test.assert-i64-eq
+              (listener-fixture.calls
+                listener-fixture.adapter.context
+                (net.WaitRead))
+              0
+              "accept clock failure issues no wait")
+            (test.assert-true
+              (match (net.tcp-listener-local-address! (&mut listener))
+                [(Address _) true]
+                [_ false])
+              "listener usable after clock failure")))
+        (let
+          [connect-fixture : Fixture (make-fixture)]
+          (set!
+            connect-fixture.adapter
+            (net.NetAdapter
+              connect-fixture.adapter.context
+              scripted-clock
+              connect-fixture.adapter.dispatch))
+          (set! clock-reads 0)
+          (set! clock-stop-at 4)
+          (connect-fixture.script
+            connect-fixture.adapter.context
+            (net.Create)
+            0
+            1)
+          (connect-fixture.script
+            connect-fixture.adapter.context
+            (net.FinishConnect)
+            0
+            -1)
+          (match (net.tcp-stream-connect
+            connect-fixture.adapter
+            (endpoint)
+            (net.NetLimits (net.Deadline 100) net.never-canceled 10))
+            [(StreamError failure)
+              (assert-kind
+                (net.Err failure)
+                wanted
+                "connect wait preserves clock result")]
+            [(StreamOk stream)
+              (net.cleanup-tcp-stream stream)
+              (io.panic "connect unexpectedly completed")])
+          (test.assert-i64-eq
+            (connect-fixture.calls
+              connect-fixture.adapter.context
+              (net.WaitWrite))
+            0
+            "connect clock failure issues no wait")
+          (test.assert-i64-eq
+            (connect-fixture.calls connect-fixture.adapter.context (net.Close))
+            1
+            "clock failure cleans construction owner once")))
+      (set! fault (+ fault 101)))))
+
+(define (control-step-cases [make-fixture : (-> Fixture)]) : unit
+  (let
+    [script : i64 -2]
+    (while (<= script -1)
+      (let
+        [f : Fixture (make-fixture)]
+        [wanted : net.NetErrorKind
+          (if (= script -2)
+            (net.Interrupted)
+            (net.WouldBlock))]
+        (with
+          ([stream (open-stream f) net.cleanup-tcp-stream])
+          (f.script f.adapter.context (net.Duplicate) 0 script)
+          (match (net.tcp-stream-duplicate! (&mut stream))
+            [(StreamError failure)
+              (assert-kind
+                (net.Err failure)
+                wanted
+                "duplicate retains ordinary control step")]
+            [(StreamOk other)
+              (net.cleanup-tcp-stream other)
+              (io.panic "unexpected duplicate")])
+          (f.script f.adapter.context (net.LocalAddress) 0 script)
+          (match (net.tcp-stream-local-address! (&mut stream))
+            [(AddressError failure)
+              (assert-kind
+                (net.Err failure)
+                wanted
+                "address retains ordinary control step")]
+            [_ (io.panic "unexpected address")])
+          (f.script f.adapter.context (net.GetOption) 0 script)
+          (match (net.tcp-stream-get-option! (&mut stream) (net.NoDelay))
+            [(OptionError failure)
+              (assert-kind
+                (net.Err failure)
+                wanted
+                "option query retains ordinary control step")]
+            [_ (io.panic "unexpected option")])
+          (f.script f.adapter.context (net.SetOption) 0 script)
+          (match (net.tcp-stream-set-option! (&mut stream) (net.NoDelay) 1)
+            [(OptionError failure)
+              (assert-kind
+                (net.Err failure)
+                wanted
+                "option mutation retains ordinary control step")]
+            [_ (io.panic "unexpected option mutation")])
+          (match (net.tcp-stream-take-error! (&mut stream))
+            [(QueryError failure)
+              (assert-kind
+                (net.Err failure)
+                wanted
+                "pending-error query retains ordinary control step")]
+            [_ (io.panic "unexpected pending error")])
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.Duplicate))
+            1
+            "duplicate does not retry")
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.LocalAddress))
+            1
+            "address does not retry")
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.GetOption))
+            2
+            "one query per option and pending-error call")
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.SetOption))
+            1
+            "option mutation does not retry")
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.WaitRead))
+            0
+            "controls do not wait for reads")
+          (test.assert-i64-eq
+            (f.calls f.adapter.context (net.WaitWrite))
+            0
+            "controls do not wait for writes")))
+      (set! script (+ script 1)))))
+
 (define (run [make-fixture : (-> Fixture)]) : unit
+  (clock-failure-cases make-fixture)
+  (control-step-cases make-fixture)
   (capability-limits make-fixture)
   (zero-limit-validation make-fixture)
   (stream-zero-and-ranges make-fixture)

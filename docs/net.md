@@ -53,7 +53,9 @@ Before each new host dispatch, cancellation precedes expiry, which precedes
 work exhaustion. Deadline comparison uses `now >= deadline` before subtraction.
 Wait slices reuse `local_ipc.wait-slice-ms`, at most 100 ms even without a caller
 deadline, and are recomputed after wakes. An unavailable required monotonic
-clock returns `UnsupportedTarget`. No host infinite-wait sentinel is generated.
+clock returns `UnsupportedTarget`, including a failure first observed while
+computing the next wait slice. Expiry remains `TimedOut`; neither condition
+dispatches a readiness wait. No host infinite-wait sentinel is generated.
 
 Each adapter dispatch costs at least one work unit, or its reported host-call
 count if larger. This includes construction, metadata preflight, interruption
@@ -69,6 +71,10 @@ and data attempt share the budget and do not atomically serialize a concurrent
 reconnect. Wait-capable operations retry only bounded interrupted, would-block
 and spurious-readiness transitions. Native sockets are permanently nonblocking;
 mutable per-socket nonblocking modes and read/write timeouts are omitted.
+
+Duplicate, address, option and pending-error queries make one attempt. Their
+ordinary `Interrupted` and `WouldBlock` results are returned in the appropriate
+error result without being reclassified as adapter corruption or retried.
 
 Positive committed byte progress is returned even if cancellation/expiry is
 observable immediately afterward. `read-exact!` and `write-all!` share the
@@ -89,7 +95,7 @@ advance through that view without narrowing its total length.
 | --- | --- |
 | TCP read/peek | Zero-capacity view succeeds with count zero, no EOF and no host call. Only a zero host receive on a positive-capacity view is EOF. Positive count changes exactly that destination prefix. Peek leaves queued bytes unconsumed. |
 | TCP write | Empty input succeeds without a host call. Positive partial count commits exactly that prefix. Adapters suppress broken-pipe process signals. |
-| UDP send/send-to | Exactly one datagram; empty input still makes a transfer call. Success requires the complete length. Any short count, including zero for nonempty input, is `PartialDatagram` with its committed count and is never retried. |
+| UDP send/send-to | Exactly one datagram; empty input still makes a transfer call. Success requires the complete length. Any short count, including zero for nonempty input, is `PartialDatagram` with its committed count and is never retried. The receive-only `truncated?` flag is always false. |
 | UDP receive/peek | Exactly one datagram; count zero is never EOF. Host metadata alone sets truncation. Exact-capacity packets are not truncated. Zero capacity plus truncation identifies a nonempty datagram. Receive discards excess bytes; peek retains the packet. |
 | UDP from-operations | Publish one whole validated peer. If payload copied but metadata fails, `CommittedMetadata` preserves count/truncation and copied destination bytes, with no peer. Receive consumed the packet; peek retained it. |
 | Connect/bind/accept | No public half-constructed handle. Failed construction closes its native owner. Accept publishes stream and peer together; bad peer metadata closes the new stream while the listener remains usable. |
@@ -125,6 +131,10 @@ metadata is decoded into scratch and never published partially. No callback
 retains a buffer after returning. The native adapter owns and validates all
 construction resources until it returns a cleanup token. Create, accept and
 duplicate make native handles non-inheritable before publication.
+
+A resource-shaped reply in an operation that cannot publish that resource is
+`AdapterCorrupt`. The contract abandons its independent token with one cleanup
+attempt; a malformed reply cannot cause it to close the active owner's token.
 
 Every request carries the original deadline and cancellation probe together
 with remaining work. A compound create/bind/listen/duplicate operation checks

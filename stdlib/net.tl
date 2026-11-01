@@ -387,7 +387,9 @@
               [(Complete) (Ok)]
               [(Interrupt) (Err (error (Interrupted)))]
               [(Failed failure) (Err (checked-error failure))]
-              [_ (Err (error (AdapterCorrupt)))])))))))
+              [_
+                (abandon-step current.adapter kind token step)
+                (Err (error (AdapterCorrupt)))])))))))
 
 ;: Lexical cleanup is idempotent; stale values cannot close the active owner.
 (define (owner-cleanup [owner : SocketOwner]) : unit
@@ -493,21 +495,29 @@
           (Err (error (WorkExhausted)))
           (Ok))])))
 
-;: Saturating remaining time: compare before subtraction, never infinite host
-;: sentinel, even with no caller deadline. Called only after stop-reason.
-(define (wait-slice [adapter : NetAdapter] [limits : NetLimits]) : i64
+;: A strictly positive bounded wait, or the exact reason no wait is allowed.
+(defenum NetWaitSlice
+  (SliceMs i64)
+  (SliceError NetError))
+
+;: Compare before subtraction; preserve clock failure independently of expiry.
+;: No caller deadline still produces a bounded slice, never a host sentinel.
+(define (wait-slice [adapter : NetAdapter] [limits : NetLimits]) : NetWaitSlice
   (match limits.deadline
-    [(NoDeadline) local_ipc.wait-slice-ms]
+    [(NoDeadline) (SliceMs local_ipc.wait-slice-ms)]
     [(Deadline deadline)
       (let
         [now : i64 (adapter.now-ms adapter.context)]
-        (if (or (< now 0) (>= now deadline))
-          0
-          (let
-            [left : i64 (- deadline now)]
-            (if (> left local_ipc.wait-slice-ms)
-              local_ipc.wait-slice-ms
-              left))))]))
+        (cond
+          [(< now 0) (SliceError (error (UnsupportedTarget)))]
+          [(>= now deadline) (SliceError (error (TimedOut)))]
+          [else
+            (let
+              [left : i64 (- deadline now)]
+              (SliceMs
+                (if (> left local_ipc.wait-slice-ms)
+                  local_ipc.wait-slice-ms
+                  left)))]))]))
 
 ;: True for a data operation with read readiness interest.
 (define (reading? [operation : NetOperation]) : bool
@@ -571,6 +581,41 @@
             current.adapter
             buffer))))))
 
+;: Only duplication and accept may publish a resource after construction.
+(define (resource-step-valid? [operation : NetOperation] [step : NetStep]) : bool
+  (match step
+    [(Created _)
+      (match operation
+        [(Duplicate) true]
+        [_ false])]
+    [(Accepted _ _)
+      (match operation
+        [(Accept) true]
+        [_ false])]
+    [(PendingConnect _) false]
+    [_ true]))
+
+;: Consume an independent token in an abandoned reply, never the active token.
+(define (abandon-step
+  [adapter : NetAdapter]
+  [kind : SocketKind]
+  [protected-token : i64]
+  [step : NetStep]) : unit
+  (match step
+    [(Created token)
+      (if (!= token protected-token)
+        (abandon adapter kind token)
+        unit)]
+    [(PendingConnect token)
+      (if (!= token protected-token)
+        (abandon adapter kind token)
+        unit)]
+    [(Accepted token _)
+      (if (!= token protected-token)
+        (abandon adapter (Stream) token)
+        unit)]
+    [_ unit]))
+
 ;: Execute one attempt or bounded wait/retry sequence. Interruptions and
 ;: spurious readiness consume work. Try operations return after one dispatch.
 (unsafe
@@ -610,12 +655,14 @@
                     (if (reading? req.operation)
                       (WaitRead)
                       (WaitWrite)))
-                  (set! call.value (wait-slice adapter limits)))
+                  (match (wait-slice adapter limits)
+                    [(SliceMs ms) (set! call.value ms)]
+                    [(SliceError failure)
+                      (set! step (Failed failure))
+                      (set! done true)]))
                 unit)
-              (if (and waiting (<= call.value 0))
-                (begin
-                  (set! step (Failed (error (TimedOut))))
-                  (set! done true))
+              (if done
+                unit
                 (let
                   [reply : NetReply
                     (unsafe
@@ -625,6 +672,7 @@
                   (unsafe
                     (restore-buffer state reply.buffer))
                   (if (or
+                    (not (resource-step-valid? call.operation result))
                     (< calls 0)
                     (> calls left)
                     (and
@@ -635,12 +683,7 @@
                         [(MetadataFailure _ _) (!= calls 1)]
                         [_ false])))
                     (begin
-                      (match result
-                        [(Created token) (abandon adapter req.kind token)]
-                        [(PendingConnect token)
-                          (abandon adapter req.kind token)]
-                        [(Accepted token _) (abandon adapter (Stream) token)]
-                        [_ unit])
+                      (abandon-step adapter req.kind req.token result)
                       (set! step (Failed (error (AdapterCorrupt))))
                       (set! done true))
                     (begin
@@ -680,14 +723,20 @@
                           (set! done true)]))))))]))
       (NetAttempt step left))))
 
-;: Convert status-only capability results and normalize raw errors.
+;: Normalize terminal errors and ordinary one-attempt retry conditions. A
+;: success-shaped reply in an error position is adapter corruption.
+(define (step-error [step : NetStep]) : NetError
+  (match step
+    [(Failed failure) (checked-error failure)]
+    [(Blocked) (error (WouldBlock))]
+    [(Interrupt) (error (Interrupted))]
+    [_ (error (AdapterCorrupt))]))
+
+;: Convert status-only capability results using the common error mapping.
 (define (step-status [step : NetStep]) : NetStatus
   (match step
     [(Complete) (Ok)]
-    [(Failed failure) (Err (checked-error failure))]
-    [(Blocked) (Err (error (WouldBlock)))]
-    [(Interrupt) (Err (error (Interrupted)))]
-    [_ (Err (error (AdapterCorrupt)))]))
+    [_ (Err (step-error step))]))
 
 ;: Internal construction result owns a token only on success.
 (defenum OwnerResult
@@ -772,7 +821,9 @@
                       (checked-error failure)
                       (error (AdapterCorrupt))))]
                 [(Interrupt) (OwnerError (error (Interrupted)))]
-                [_ (OwnerError (error (AdapterCorrupt)))])))])]))
+                [_
+                  (abandon-step adapter kind -1 step)
+                  (OwnerError (error (AdapterCorrupt)))])))])]))
 
 ;: Connected TCP stream or construction error; no half-connected public value.
 (defenum TcpStreamResult
@@ -927,11 +978,13 @@
                 (if (reading? req.operation)
                   (WaitRead)
                   (WaitWrite)))
-              (set! call.value (wait-slice adapter limits))
-              (if (<= call.value 0)
-                (begin
-                  (set! result (Failed (error (TimedOut))))
-                  (set! done true))
+              (match (wait-slice adapter limits)
+                [(SliceMs ms) (set! call.value ms)]
+                [(SliceError failure)
+                  (set! result (Failed failure))
+                  (set! done true)])
+              (if done
+                unit
                 (let
                   [reply : NetAttempt
                     (unsafe
@@ -992,6 +1045,9 @@
           (set! committed? true)
           (set! metadata-error? true)]
         [_ (set! status (step-status step))])
+      (if (and udp? writing?)
+        (set! truncated? false)
+        unit)
       (if (not committed?)
         (match status
           [(Err failure) (io-error failure)]
@@ -1659,24 +1715,21 @@
 
 ;: Duplicate creates a distinct native cleanup owner over shared kernel state.
 (define (duplicate! [owner : (&mut owner SocketOwner)] [kind : SocketKind]) : OwnerResult
-  (match (control!
-    owner
-    kind
-    (request (Duplicate) kind -1)
-    (default-limits)
-    false)
-    [(Created token)
-      (let
-        [current : SocketState
-          (unsafe
-            (ptr-read owner.state))]
-        (if (and (>= token 0) (!= token current.token))
-          (OwnerOk
+  (let
+    [step : NetStep
+      (control! owner kind (request (Duplicate) kind -1) (default-limits) false)]
+    (match step
+      [(Created token)
+        (let
+          [current : SocketState
             (unsafe
-              (publish current.adapter kind current.family token)))
-          (OwnerError (error (AdapterCorrupt)))))]
-    [(Failed failure) (OwnerError (checked-error failure))]
-    [_ (OwnerError (error (AdapterCorrupt)))]))
+              (ptr-read owner.state))]
+          (if (and (>= token 0) (!= token current.token))
+            (OwnerOk
+              (unsafe
+                (publish current.adapter kind current.family token)))
+            (OwnerError (error (AdapterCorrupt)))))]
+      [_ (OwnerError (step-error step))])))
 
 ;: Duplicate stream; byte queues, options, shutdown and pending error are shared.
 (define (tcp-stream-duplicate! [stream : (&mut stream TcpStream)]) : TcpStreamResult
@@ -1707,36 +1760,36 @@
   [listener : (&mut listener TcpListener)]
   [limits : NetLimits]
   [wait? : bool]) : TcpAcceptResult
-  (match (control!
-    (&mut listener.owner)
-    (Listener)
-    (request (Accept) (Listener) -1)
-    limits
-    wait?)
-    [(Accepted token peer)
-      (let
-        [current : SocketState
-          (unsafe
-            (ptr-read listener.owner.state))]
-        (if (and
-          (>= token 0)
-          (!= token current.token)
-          (status-ok? (validate-address peer))
-          (= (address-family peer) current.family))
-          (AcceptOk
-            (TcpStream
-              (unsafe
-                (publish current.adapter (Stream) current.family token)))
-            peer)
-          (begin
-            (if (!= token current.token)
-              (abandon current.adapter (Stream) token)
-              unit)
-            (AcceptError (error (AdapterCorrupt))))))]
-    [(Failed failure) (AcceptError (checked-error failure))]
-    [(Blocked) (AcceptError (error (WouldBlock)))]
-    [(Interrupt) (AcceptError (error (Interrupted)))]
-    [_ (AcceptError (error (AdapterCorrupt)))]))
+  (let
+    [step : NetStep
+      (control!
+        (&mut listener.owner)
+        (Listener)
+        (request (Accept) (Listener) -1)
+        limits
+        wait?)]
+    (match step
+      [(Accepted token peer)
+        (let
+          [current : SocketState
+            (unsafe
+              (ptr-read listener.owner.state))]
+          (if (and
+            (>= token 0)
+            (!= token current.token)
+            (status-ok? (validate-address peer))
+            (= (address-family peer) current.family))
+            (AcceptOk
+              (TcpStream
+                (unsafe
+                  (publish current.adapter (Stream) current.family token)))
+              peer)
+            (begin
+              (if (!= token current.token)
+                (abandon current.adapter (Stream) token)
+                unit)
+              (AcceptError (error (AdapterCorrupt))))))]
+      [_ (AcceptError (step-error step))])))
 
 ;: One accept attempt, with no wait or interruption retry.
 (define (tcp-listener-try-accept! [listener : (&mut listener TcpListener)]) : TcpAcceptResult
@@ -1753,28 +1806,30 @@
   [owner : (&mut owner SocketOwner)]
   [kind : SocketKind]
   [peer? : bool]) : SocketAddrResult
-  (match (control!
-    owner
-    kind
-    (request
-      (if peer?
-        (PeerAddress)
-        (LocalAddress))
-      kind
-      -1)
-    (default-limits)
-    false)
-    [(Endpoint address)
-      (if (and
-        (status-ok? (validate-address address))
-        (=
-          (address-family address)
-          (unsafe
-            (ptr-read owner.state)).family))
-        (Address address)
-        (AddressError (error (AdapterCorrupt))))]
-    [(Failed failure) (AddressError (checked-error failure))]
-    [_ (AddressError (error (AdapterCorrupt)))]))
+  (let
+    [step : NetStep
+      (control!
+        owner
+        kind
+        (request
+          (if peer?
+            (PeerAddress)
+            (LocalAddress))
+          kind
+          -1)
+        (default-limits)
+        false)]
+    (match step
+      [(Endpoint address)
+        (if (and
+          (status-ok? (validate-address address))
+          (=
+            (address-family address)
+            (unsafe
+              (ptr-read owner.state)).family))
+          (Address address)
+          (AddressError (error (AdapterCorrupt))))]
+      [_ (AddressError (step-error step))])))
 
 ;: Stream's assigned local endpoint, including an ephemeral port.
 (define (tcp-stream-local-address! [stream : (&mut stream TcpStream)]) : SocketAddrResult
@@ -1906,34 +1961,33 @@
                   current.token)]
               (set! req.option option)
               (set! req.value value)
-              (match (unsafe
-                (attempt owner.state req (default-limits) false 1)).step
-                [(Complete)
-                  (if set?
-                    (Option value)
-                    (OptionError (error (AdapterCorrupt))))]
-                [(OptionValue result)
-                  (if (and
-                    (not set?)
-                    (status-ok?
-                      (option-valid kind current.family option result true)))
-                    (Option result)
-                    (OptionError (error (AdapterCorrupt))))]
-                [(Failed failure) (OptionError (checked-error failure))]
-                [_ (OptionError (error (AdapterCorrupt)))]))]))]))
+              (let
+                [step : NetStep
+                  (unsafe
+                    (attempt owner.state req (default-limits) false 1)).step]
+                (match step
+                  [(Complete)
+                    (if set?
+                      (Option value)
+                      (OptionError (error (AdapterCorrupt))))]
+                  [(OptionValue result)
+                    (if (and
+                      (not set?)
+                      (status-ok?
+                        (option-valid kind current.family option result true)))
+                      (Option result)
+                      (OptionError (error (AdapterCorrupt))))]
+                  [_ (OptionError (step-error step))])))]))]))
 
 ;: Shared pending-error query, separate from option integers.
 (define (take-error! [owner : (&mut owner SocketOwner)] [kind : SocketKind]) : NetPendingError
-  (match (control!
-    owner
-    kind
-    (request (GetOption) kind -1)
-    (default-limits)
-    false)
-    [(Complete) (NoError)]
-    [(PendingError failure) (SocketError (checked-error failure))]
-    [(Failed failure) (QueryError (checked-error failure))]
-    [_ (QueryError (error (AdapterCorrupt)))]))
+  (let
+    [step : NetStep
+      (control! owner kind (request (GetOption) kind -1) (default-limits) false)]
+    (match step
+      [(Complete) (NoError)]
+      [(PendingError failure) (SocketError (checked-error failure))]
+      [_ (QueryError (step-error step))])))
 
 ;: Stream option access (NoDelay and UnicastHopLimit).
 (define (tcp-stream-get-option!

@@ -193,7 +193,184 @@
       (net.Closed)
       "safe null stream owner")))
 
+(define corrupt-operation : i64
+  -1)
+(define corrupt-shape : i64
+  0)
+
+;; Supply a real independent fake token in a reply shape the operation forbids.
+(define (corrupt-dispatch
+  [context : i64]
+  [req : net.NetRequest]
+  [buffer : byte_buf.ByteBuf]) : net.NetReply
+  (if (= (fake.operation-code req.operation) corrupt-operation)
+    (if (= corrupt-shape 3)
+      (net.NetReply (net.Created req.token) buffer 1)
+      (let
+        [creation : net.NetRequest
+          (net.request
+            (net.Create)
+            (if (= corrupt-shape 2)
+              (net.Stream)
+              req.kind)
+            -1)]
+        (set! creation.value net.listener-backlog)
+        (let
+          [created : net.NetReply (fake.dispatch context creation buffer)]
+          (match created.step
+            [(Created token)
+              (net.NetReply
+                (cond
+                  [(= corrupt-shape 0) (net.Created token)]
+                  [(= corrupt-shape 1) (net.PendingConnect token)]
+                  [else (net.Accepted token (net.empty-address))])
+                created.buffer
+                1)]
+            [_ created]))))
+    (fake.dispatch context req buffer)))
+
+(define (corrupt-resource-cases) : unit
+  (let
+    [shape : i64 0]
+    (while (< shape 4)
+      (let
+        [path : i64 0]
+        (while (< path 4)
+          (if (and (= path 3) (= shape 0))
+            unit
+            (let
+              [f : c.Fixture (fixture)]
+              (set! corrupt-shape shape)
+              (set!
+                corrupt-operation
+                (fake.operation-code
+                  (cond
+                    [(= path 1) (net.WaitWrite)]
+                    [(= path 3) (net.Duplicate)]
+                    [else (net.WaitRead)])))
+              (set!
+                f.adapter
+                (net.NetAdapter f.adapter.context fake.now-ms corrupt-dispatch))
+              (if (= path 2)
+                (with
+                  ([listener (c.open-listener f) net.cleanup-tcp-listener])
+                  (fake.script! f.adapter.context (net.Accept) 0 -1)
+                  (match (net.tcp-listener-accept!
+                    (&mut listener)
+                    (net.default-limits))
+                    [(AcceptError failure)
+                      (c.assert-kind
+                        (net.Err failure)
+                        (net.AdapterCorrupt)
+                        "bad resource reply during accept wait")]
+                    [(AcceptOk stream _)
+                      (net.cleanup-tcp-stream stream)
+                      (test.assert-true false "unexpected accept")])
+                  (test.assert-i64-eq
+                    (fake.calls f.adapter.context (net.Close))
+                    (if (= shape 3)
+                      0
+                      1)
+                    "accept wait abandons returned token once"))
+                (with
+                  ([stream (c.open-stream f) net.cleanup-tcp-stream])
+                  (if (= path 3)
+                    (match (net.tcp-stream-duplicate! (&mut stream))
+                      [(StreamError failure)
+                        (c.assert-kind
+                          (net.Err failure)
+                          (net.AdapterCorrupt)
+                          "bad duplicate resource shape")]
+                      [(StreamOk duplicate)
+                        (net.cleanup-tcp-stream duplicate)
+                        (test.assert-true false "unexpected duplicate")])
+                    (let
+                      [bytes : byte_buf.ByteBuf (c.buffer 1)]
+                      (fake.script!
+                        f.adapter.context
+                        (if (= path 1)
+                          (net.Write)
+                          (net.Read))
+                        0
+                        -1)
+                      (let
+                        [result : net.NetIoResult
+                          (if (= path 1)
+                            (net.tcp-stream-write!
+                              (&mut stream)
+                              (byte_buf.as-bytes (& bytes))
+                              0
+                              1
+                              (net.default-limits))
+                            (net.tcp-stream-read!
+                              (&mut stream)
+                              (byte_buf.as-mut-bytes (&mut bytes))
+                              0
+                              1
+                              (net.default-limits)))]
+                        (c.assert-kind
+                          result.status
+                          (net.AdapterCorrupt)
+                          "bad resource reply during data wait"))))
+                  (test.assert-i64-eq
+                    (fake.calls f.adapter.context (net.Close))
+                    (if (= shape 3)
+                      0
+                      1)
+                    "bad resource token abandoned once")
+                  (test.assert-true
+                    (match (net.tcp-stream-local-address! (&mut stream))
+                      [(Address _) true]
+                      [_ false])
+                    "original owner survives bad resource reply")))
+              (test.assert-i64-eq
+                (fake.calls f.adapter.context (net.Close))
+                (if (= shape 3)
+                  1
+                  2)
+                "returned token and original owner each cleaned once")))
+          (set! path (+ path 1))))
+      (set! shape (+ shape 1)))))
+
+(define (send-truncation-cases) : unit
+  (let
+    [f : c.Fixture (fixture)]
+    [bytes : byte_buf.ByteBuf (c.buffer 4)]
+    (with
+      ([socket (c.open-udp f) net.cleanup-udp-socket])
+      (fake.script! f.adapter.context (net.SendTo) 0 -9)
+      (let
+        [sent : net.NetIoResult
+          (net.udp-try-send-to!
+            (&mut socket)
+            (byte_buf.as-bytes (& bytes))
+            0
+            4
+            (c.endpoint))]
+        (test.assert-true
+          (and
+            (= sent.count 4)
+            (net.status-ok? sent.status)
+            (not sent.truncated?))
+          "send-to has no receive truncation flag"))
+      (test.assert-true
+        (net.status-ok?
+          (net.udp-connect! (&mut socket) (c.endpoint) (net.default-limits)))
+        "connect for send truncation check")
+      (fake.script! f.adapter.context (net.Send) 0 -9)
+      (let
+        [sent : net.NetIoResult
+          (net.udp-try-send! (&mut socket) (byte_buf.as-bytes (& bytes)) 0 4)]
+        (test.assert-true
+          (and
+            (= sent.count 4)
+            (net.status-ok? sent.status)
+            (not sent.truncated?))
+          "connected send has no receive truncation flag")))))
+
 (define (main) : i64
+  (corrupt-resource-cases)
+  (send-truncation-cases)
   (null-owners)
   (cfg compile-profile (allocation-contract))
   (options)

@@ -13235,6 +13235,7 @@
                 (match op
                   [(ast.AstUnOp.Neg) true]
                   [_ false])]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ false]))]
         [_ false])]
     [types : bool
@@ -13359,6 +13360,7 @@
               (match op
                 [(ast.AstBinOp.Lt) true]
                 [_ false])]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ false])]
         [_ false])]
     [types : bool
@@ -14335,6 +14337,7 @@
           [(typed.TypedNodeResult.Ok node)
             (match node.operation
               [(typed.TypedOperation.Sequence) true]
+              ;; ArenaScope wraps only a scoped arena body, never a plain `begin`.
               [_ false])]
           [_ false]))]
     [env : tc_core.TcTypeEnv
@@ -14400,6 +14403,7 @@
           (if initialize?
             -1
             binder.handle.index)]
+        ;; ArenaScope (as Sequence) takes this arm.
         [_ -1])]
     [_ -1]))
 
@@ -14822,6 +14826,7 @@
           [(typed.TypedNodeResult.Ok node)
             (match node.operation
               [(typed.TypedOperation.Assign binder) (= binder.handle.index 0)]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ false])]
           [_ false]))]
     [return-type : typed.TypedTypeId
@@ -14977,6 +14982,7 @@
         [(typed.TypedNodeResult.Ok node)
           (match node.operation
             [(typed.TypedOperation.Return) true]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ false])]
         [_ false])]
     [intrinsic : bool
@@ -15118,6 +15124,7 @@
                 [(typed.TypedNodeResult.Ok node)
                   (match node.operation
                     [(typed.TypedOperation.Return) true]
+                    ;; ArenaScope (as Sequence) takes this arm.
                     [_ false])]
                 [_ false])))]
         [_ false])]
@@ -15351,6 +15358,7 @@
                                   [(typed.TypedBinderKind.Parameter) true]
                                   [_ false])]
                               [_ false]))]
+                        ;; ArenaScope (as Sequence) takes this arm.
                         [_ false])]
                     [_ false])]
                 [_ false])]
@@ -15387,6 +15395,7 @@
               (if moving
                 id
                 (return false))]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ (return false)])]
         [_ (return false)])]
     [formation : typed.TypedOccurrenceId
@@ -15405,6 +15414,7 @@
             (match (& node.operation)
               [(typed.TypedOperation.FormPlace id)
                 (typed.typed-handle-equal? (& id.handle) (& place.handle))]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ false]))]
         [_ false])]
     [depth : i64 2]
@@ -15637,6 +15647,7 @@
         [(typed.TypedNodeResult.Ok node)
           (match node.operation
             [(typed.TypedOperation.CopyPlace id) id]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ (return false)])]
         [_ (return false)])]
     [formation : typed.TypedOccurrenceId
@@ -15651,6 +15662,7 @@
             (match (& node.operation)
               [(typed.TypedOperation.FormPlace id)
                 (typed.typed-handle-equal? (& id.handle) (& place.handle))]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ false]))]
         [_ false])]
     [at : i64 0]

@@ -114200,16 +114200,21 @@
           tc-top-env-resolution-generation)
         (set! (deref data).macro-cache-len (+ (deref data).macro-cache-len 1))))))
 
+;; Ineligible views never mutate or carry this process-owned empty map.
+(define tc-macro-module-env-empty-seen : tc_i64_i64_map.Map
+  (tc_i64_i64_map.with-capacity 1))
+
 ;; The walk allocates in a macro-generation arena. Its continued name map
 ;; must instead outlive that generation, with the persistent view's store.
 (define (tc-macro-module-env-seen-own
   [env : TcTypeEnv]
   [seen : (& seen tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
   (in-arena
-    (arena.Arena (tc-chain-store-owner env.store))
+    (unsafe
+      (arena.Arena (tc-chain-store-owner env.store)))
     (if (= (tc_i64_i64_map.len seen) 0)
       (tc_i64_i64_map.with-capacity 64)
-      (tc-moved-clone-id-map seen))))
+      (tc-clone-id-map seen))))
 
 (define (tc-macro-module-local-env-id
   [ctx : TcContext]
@@ -114283,7 +114288,7 @@
                       tc-module-view-pending-name
                       (if carry?
                         (tc-macro-module-env-seen-own top-env (& seen))
-                        (tc-global-shared-view tc-moved-shared-empty-id-map))
+                        (tc-global-shared-view tc-macro-module-env-empty-seen))
                       (if carry?
                         1
                         0))
@@ -114297,7 +114302,7 @@
                   module-id
                   env
                   tc-module-view-pending-name
-                  (clone tc-moved-shared-empty-id-map)
+                  (tc-global-shared-view tc-macro-module-env-empty-seen)
                   0)
                 (Ok env)))))))))
 

@@ -92,6 +92,7 @@ stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	compiler,stdlib,corpus	Consumes
 stage2-sha-256-fixed-round-wipe-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-sha-512-wipe-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-crypto-aes-fixed-work-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior, opaque secret storage and the reviewed both-target AES body pins.
 stage2-by-value-aggregate-abi-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-examples	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 benchmark-wall-clock-harness-self-tests	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

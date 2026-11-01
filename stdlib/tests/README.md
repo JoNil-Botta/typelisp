@@ -12,6 +12,19 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+`crypto_aes_core.tl` owns small inline field-arithmetic checks and a checked
+ownership/forward-block doctest. `crypto_aes_api.tl` is the installed-module and
+native macro identity witness for both consuming constructors and repeated
+borrowed block calls. The cross-module `crypto_aes_*_inline.tl` fixtures share
+one driver across typed variants: full FIPS schedules and intermediate states,
+the public 256-byte S-box oracle, all 689 pinned CAVP forward cases, consuming
+key/schedule cleanup, exact boundaries, alias/partial-overlap preflight, 128
+fixed-seed metadata mutations, zero-allocation blocks and paired source-work
+counts. The six `crypto_aes_*_reject.tl` fixtures pin moved-key, variant, clone,
+format, unsafe-access and public-round-selection rejection. Provenance and
+the both-target opt1/opt2 fail-closed assembly inventory are documented in
+[`tests/fixtures/crypto-aes/`](../../tests/fixtures/crypto-aes/README.md).
+
 `dns_wire.tl` runs inline hermetic DNS codec fixtures: exact A/AAAA query
 bytes, EDNS0, all supported response records, unknown type/class skipping,
 canonical names, legal compression boundaries and cycles, every byte prefix,

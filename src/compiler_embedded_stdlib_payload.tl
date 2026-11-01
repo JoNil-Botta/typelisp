@@ -37,6 +37,8 @@
 
 (include-str-lzss payload-core-macros "../stdlib/core_macros.tl")
 
+(include-str-lzss payload-crypto-aes-core "../stdlib/crypto_aes_core.tl")
+
 (include-str-lzss payload-crypto-hmac-sha256 "../stdlib/crypto_hmac_sha256.tl")
 
 (include-str-lzss payload-crypto-secret "../stdlib/crypto_secret.tl")
@@ -222,6 +224,8 @@
       (compiler-embedded-stdlib-payload-copy payload-concurrency-registry)]
     [(string.eq suffix "core_macros.tl")
       (compiler-embedded-stdlib-payload-copy payload-core-macros)]
+    [(string.eq suffix "crypto_aes_core.tl")
+      (compiler-embedded-stdlib-payload-copy payload-crypto-aes-core)]
     [(string.eq suffix "crypto_hmac_sha256.tl")
       (compiler-embedded-stdlib-payload-copy payload-crypto-hmac-sha256)]
     [(string.eq suffix "crypto_secret.tl")

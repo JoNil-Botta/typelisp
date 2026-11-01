@@ -68,6 +68,18 @@ reject_diag() {
             printf 'requires unsafe context' ;;
         stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl)
             printf 'requires unsafe context' ;;
+        stdlib/tests/crypto_aes_key_reuse_reject.tl)
+            printf 'use of moved value `key`' ;;
+        stdlib/tests/crypto_aes_variant_reject.tl)
+            printf 'argument 1 type mismatch' ;;
+        stdlib/tests/crypto_aes_clone_reject.tl)
+            printf 'clone unsupported type stdlib.crypto_aes_core/Aes128Schedule' ;;
+        stdlib/tests/crypto_aes_format_reject.tl)
+            printf 'format: unsupported nominal type struct_stdlib.crypto_aes_core/Aes256Schedule' ;;
+        stdlib/tests/crypto_aes_raw_reject.tl)
+            printf 'ptr-read requires unsafe context' ;;
+        stdlib/tests/crypto_aes_rounds_reject.tl)
+            printf 'encrypt-checked! requires unsafe context' ;;
         stdlib/tests/crypto_hmac_sha256_storage_reject.tl)
             printf 'opaque type' ;;
         stdlib/tests/crypto_hmac_sha256_unsafe_reject.tl)

@@ -66,6 +66,15 @@ tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	
 tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	IR observability consumes golden snapshots and their guarded source fixtures.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
 tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@corpus	Exact case file named by the secret-wipe gate.
+tests/codegen/crypto-aes.cases	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Exact case file named by the AES fixed-work gate.
+tests/fixtures/crypto-aes/README.md	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
+tests/fixtures/crypto-aes/shape-*	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	AES shape-pin family, including target/optimization-templated references in the case inventory.
+tests/fixtures/crypto-aes/shape-review.md	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
+tests/fixtures/crypto-aes/sources.sha256	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
+tests/fixtures/crypto-aes/shape-linux-x86_64-opt1.sha256	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
+tests/fixtures/crypto-aes/shape-linux-x86_64-opt2.sha256	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
+tests/fixtures/crypto-aes/shape-windows-x86_64-opt1.sha256	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
+tests/fixtures/crypto-aes/shape-windows-x86_64-opt2.sha256	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
 tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.
 tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast,stage2-sde-fallback	@corpus	Exact case file named by the lane and broadcast gates.
 tests/cli/public-*.cases	stage2-public-tool-surface	@corpus	Public command transcripts discovered by the public-tool runner.
@@ -368,6 +377,19 @@ src/tests/test_cli_entry_memory_smoke.tl	stage2-native-integration-corpus	@compi
 src/tests/test_cli_entry_state_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 src/tests/tlci_loader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/math.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+stdlib/crypto_aes_core.tl	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Primary shared AES implementation, local arithmetic checks and both-target assembly-shape source.
+stdlib/tests/crypto_aes_api.tl	embedded-stdlib-tlci-image,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary installed-module and native macro identity witness for both AES constructors.
+stdlib/tests/crypto_aes_core_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_fips_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_kat_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_lifecycle_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_work_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_clone_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
+stdlib/tests/crypto_aes_format_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
+stdlib/tests/crypto_aes_key_reuse_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
+stdlib/tests/crypto_aes_raw_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
+stdlib/tests/crypto_aes_rounds_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
+stdlib/tests/crypto_aes_variant_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
 stdlib/tests/byte_buf_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/tests/raw_copy_api.tl	stage2-native-integration-corpus	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/tests/vector_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.

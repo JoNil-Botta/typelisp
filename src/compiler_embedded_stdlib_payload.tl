@@ -65,6 +65,8 @@
 
 (include-str-lzss payload-net "../stdlib/net.tl")
 
+(include-str-lzss payload-net-dns-wire "../stdlib/net/dns/wire.tl")
+
 (include-str-lzss
   payload-net-http-head-codec
   "../stdlib/net/http_head_codec.tl")
@@ -240,6 +242,8 @@
       (compiler-embedded-stdlib-payload-copy payload-local-ipc)]
     [(string.eq suffix "net.tl")
       (compiler-embedded-stdlib-payload-copy payload-net)]
+    [(string.eq suffix "net/dns/wire.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-dns-wire)]
     [(string.eq suffix "net/http_head_codec.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-http-head-codec)]
     [(string.eq suffix "net/http_trailer.tl")

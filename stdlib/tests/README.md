@@ -12,6 +12,17 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+`dns_wire.tl` runs inline hermetic DNS codec fixtures: exact A/AAAA query
+bytes, EDNS0, all supported response records, unknown type/class skipping,
+canonical names, legal compression boundaries and cycles, every byte prefix,
+all hard limits, and 512 fixed-seed mutation cases. Its TC prefix/mutation
+matrix requires an envelope-only result regardless of incomplete RR bytes.
+Skipped IN name-field layouts are checked for legal NS/glue, legacy and DNAME
+compression targets, exact RDATA extents and shared name budgets. Both literal
+BIND-style and compressed systemd-resolved DNAME targets support synthesized
+CNAMEs and chained address owners. SRV, unknown types and unknown classes cannot
+supply speculative targets.
+
 `x509_api.tl` is a cross-module DER/PEM/certificate integration witness with
 separate pinned fixture files loaded through the stdlib-root include path. It
 checks independently generated RSA, RSA-PSS, P-256 and Ed25519 certificates,

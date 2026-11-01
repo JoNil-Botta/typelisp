@@ -1026,6 +1026,9 @@ order. Negative and lazy-derived answers therefore describe the same relation.
 Root shadows, other declaration forms and incompatible views rebuild; other
 import-derived caches still invalidate independently. Selected-item replay
 remains independent of module-alias indexing.
+View and lazy-stub mutations invalidate query readiness at their boundary.
+A splice keeps its old payload unpublished until the commit validates its
+proof and restores readiness; qualified lookups need no repeated proof scan.
 
 A cached segmented module view may continue across a splice containing only
 fresh, undotted function declarations in that non-root module. The first carry

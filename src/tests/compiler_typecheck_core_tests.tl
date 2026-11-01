@@ -9606,6 +9606,24 @@
     [t2 : i64 (ci.intern "seg-event-t2")]
     [t3 : i64 (ci.intern "seg-event-t3")]
     [t4 : i64 (ci.intern "seg-event-t4")]
+    [item : i64 (ci.intern "seg-event-item")]
+    [item-alias : i64 (ci.intern "seg-event-selected")]
+    [macro-handle : i64
+      (csym.compiler-symbol-make-handle (csym.compiler-symbol-kind-defmacro) 0)]
+    [_macro : unit
+      (let
+        [empty : csym.CompilerSymbols (csym.compiler-symbols-empty)]
+        (match (csym.compiler-symbols-add-macro-in-module-id
+          (& empty)
+          t3
+          item
+          macro-handle)
+          [(Ok symbols)
+            (tc_core.tc-macro-walk-set!
+              macro-state
+              macro-live-symbols-value
+              symbols)]
+          [_ (io.panic "selected-item fixture failed")]))]
     ;; Twenty prefix events outgrow the index's first allocation.
     [prefix-specs : (__tl_dyn-array i64) (__tl_make-array i64 44)]
     [_prefix-specs : unit
@@ -9639,6 +9657,29 @@
         (set! (array-ref source-specs 16) 1)
         (set! (array-ref source-specs 17) t2))]
     [source : ast.AstDeclList (macro-segmented-event-rows (& source-specs))]
+    [_extra-imports : unit
+      (let
+        [duplicate : ast.AstDeclList
+          (tc_core.macro-module-import-marker-decls
+            "duplicate"
+            t4
+            (Some (+ t2 1))
+            (ast.ast-source-span 1 1 1 2))]
+        ;; A different target for the same alias must lose to the earlier
+        ;; import. The selected item publishes a macro, never a module alias.
+        (set!
+          (array-ref source.slots (+ source.offset 3))
+          (ast.ast-decl-list-ref duplicate 0))
+        (set!
+          (array-ref source.slots (+ source.offset 4))
+          (Import
+            (ast.AstDeclMeta (box (Runtime 0)))
+            (Spec
+              (ModuleItem item)
+              "selected"
+              (Some t3)
+              (Some item-alias)
+              (box (ast.ast-source-span 1 1 1 2))))))]
     [delta-specs : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [_delta-specs : unit
       (begin
@@ -9683,6 +9724,19 @@
       (tc_core.macro-paths-for-decls macro-state source "source"))
     (let
       [initial-ok : bool (macro-segmented-events-match-flat? state)]
+      [initial-alias-ok : bool
+        (macro-segmented-alias-index-matches-flat? state (& pairs))]
+      [first-import-ok : bool
+        (= (tc_core.macro-alias-cache-get macro-state m1 (+ t2 1)) t2)]
+      [selected-ok : bool
+        (=
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (&
+              (tc_core.tc-macro-walk-field macro-state macro-live-symbols-value))
+            m1
+            item-alias
+            -1)
+          macro-handle)]
       ;; Emit the module marker and the plain row, then replace the import at
       ;; the cursor by a delta with its own import (a mid-node split).
       [_emit : unit (macro-segmented-events-emit! state 2)]
@@ -9723,6 +9777,9 @@
       (tc_core.macro-expand-scratch-release! macro-state)
       (and
         initial-ok
+        initial-alias-ok
+        first-import-ok
+        selected-ok
         split-ok
         split-alias-ok
         boundary-ok
@@ -9740,93 +9797,235 @@
 
 (test
   macro-segmented-alias-index-retains-function-splice
-  (let
-    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
-    [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
-    [module-id : i64 (ci.intern "alias-retain")]
-    [decls : ast.AstDeclList
-      (tc-module-carry-test-decls
-        pools
-        "(module alias-retain)\n(import dep as d)\n(generate)")]
-    [paths : ast.AstDeclPathList
-      (tc_core.macro-paths-for-decls state (& decls) "alias-retain")]
-    [program : ast.AstProgram (ast.ast-program (clone decls))]
-    [symbols : csym.CompilerSymbols
-      (match (tc_core.macro-live-symbols-build-or-reuse!
-        state
-        (& program)
-        (& paths))
-        [(Ok value) value]
-        [_ (io.panic "alias retention symbols failed")])]
-    [ctx : tc_core.TcContext
-      (tc_core.tc-context-new-with-source-names-and-job-state
-        program
-        symbols
-        (tc_core.macro-live-registries-shared-view state)
-        "alias-retain"
-        module-id
-        pools
-        (ci.intern-source-name-session-capture-active-handle)
-        job)]
-    [delta : ast.AstDeclList
-      (tc-module-carry-test-decls pools "(define (fresh) : i64 42)")]
-    [delta-paths : ast.AstDeclPathList
-      (tc_core.macro-paths-for-decls state (& delta) "alias-retain")]
-    [base : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
-    [missing : i64 (ci.intern "alias-retain-missing")]
-    (tc_core.macro-expand-scratch-begin! state)
-    (tc_core.macro-segmented-program-begin!
-      job
-      (ast.ast-decl-list-new)
-      (ast.ast-decl-path-list-new)
-      decls
-      paths)
-    (macro-segmented-events-emit! job 2)
-    (tc_core.macro-import-alias-target-cached-id-in-context
-      ctx
-      (ast.ast-decl-list-new)
-      module-id
-      missing)
-    (test.assert-true
-      (= (tc_core.macro-alias-cache-get state module-id missing) -1)
-      "negative answer warmed")
+  (for [_job-index (iterator.range 0 2)]
     (let
-      [inert? : bool
-        (tc_core.macro-alias-cache-splice-inert? ctx (& delta) module-id)]
-      (tc_core.macro-segmented-program-splice-current!
-        job
-        (clone delta)
-        (clone delta-paths))
-      (test.assert-true
-        (tc_core.macro-live-symbols-insert-decls! state (clone delta) module-id)
-        "fresh symbols committed")
-      (test.assert-true
-        (tc_core.macro-live-registries-append-decls!
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
+      [module-id : i64 (ci.intern "alias-retain")]
+      [source : String
+        "(define (shadowed) : i64 1)\n(module alias-retain)\n(import dep as d)"]
+      [_placeholders : unit
+        (for [index (iterator.range 0 32)]
+          (set! source (str_cat.str-cat source "\n(generate)")))]
+      [decls : ast.AstDeclList (tc-module-carry-test-decls pools (& source))]
+      [paths : ast.AstDeclPathList
+        (tc_core.macro-paths-for-decls state (& decls) "alias-retain")]
+      [program : ast.AstProgram (ast.ast-program (clone decls))]
+      [symbols : csym.CompilerSymbols
+        (match (tc_core.macro-live-symbols-build-or-reuse!
           state
-          (clone delta)
-          (clone delta-paths)
-          module-id)
-        "fresh registries committed")
-      (match (tc_core.macro-expand-rebuild-context-for-splice
-        ctx
-        (clone delta)
-        delta-paths
-        "alias-retain"
-        module-id
-        (Extend base delta)
-        inert?)
-        [(Ok _ _)
+          (& program)
+          (& paths))
+          [(Ok value) value]
+          [_ (io.panic "alias retention symbols failed")])]
+      [ctx : tc_core.TcContext
+        (tc_core.tc-context-new-with-source-names-and-job-state
+          program
+          symbols
+          (tc_core.macro-live-registries-shared-view state)
+          "alias-retain"
+          module-id
+          pools
+          (ci.intern-source-name-session-capture-active-handle)
+          job)]
+      [delta : ast.AstDeclList
+        (tc-module-carry-test-decls pools "(define (fresh) : i64 42)")]
+      [delta-paths : ast.AstDeclPathList
+        (tc_core.macro-paths-for-decls state (& delta) "alias-retain")]
+      [base : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+      [missing : i64 (ci.intern "alias-retain-missing")]
+      [pairs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [_pairs : unit
+        (begin
+          (set! (array-ref pairs 0) module-id)
+          (set! (array-ref pairs 1) (ci.intern "d"))
+          (set! (array-ref pairs 2) module-id)
+          (set! (array-ref pairs 3) missing))]
+      (tc_core.macro-expand-scratch-begin! state)
+      (tc_core.macro-segmented-program-begin!
+        job
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        (clone decls)
+        paths)
+      (macro-segmented-events-emit! job 3)
+      (for [index (iterator.range 0 32)]
+        (set!
+          delta
+          (tc-module-carry-test-decls
+            pools
+            (&
+              (str_cat.str-cat
+                "(define (alias-fresh-"
+                (string.int->string index)
+                ") : i64 42)\n"
+                "(unsafe (define (alias-unsafe-"
+                (string.int->string index)
+                ") : bool true))"))))
+        (set!
+          delta-paths
+          (tc_core.macro-paths-for-decls state (& delta) "alias-retain"))
+        (match (tc_core.macro-import-alias-target-cached-id-in-context
+          ctx
+          (ast.ast-decl-list-new)
+          module-id
+          missing)
+          [_ unit])
+        (test.assert-true
+          (= (tc_core.macro-alias-cache-get state module-id missing) -1)
+          "negative answer warmed")
+        (when
+          (= index 16)
+          ;; Reach the real insertion cap, then let an indexed event mark this
+          ;; table incomplete. Retention must preserve that fallback obligation.
+          (for [slot (iterator.range 0 8192)]
+            (tc_core.macro-alias-cache-put!
+              state
+              (+ module-id 100000)
+              (+ slot 200000)
+              1))
+          (let
+            [_event-module : i64
+              (tc_core.macro-alias-cache-index-at! state (& decls) 2 module-id)]
+            unit)
           (test.assert-true
-            (and
-              (= (tc_core.tc-macro-import-index-control state 3) 1)
-              (= (tc_core.tc-macro-import-index-control state 5) 1)
-              (= (tc_core.macro-alias-cache-get state module-id missing) -1))
-            "function splice retains the built alias index and negative answer")]
-        [_ (io.panic "alias retention rebuild failed")]))
-    (tc_core.macro-segmented-program-end! job)
-    (tc_core.macro-live-symbols-clear! state)
-    (tc_core.macro-expand-scratch-release! state)))
+            (= (tc_core.tc-macro-import-index-control state 6) 0)
+            "half-load index is incomplete"))
+        (let
+          [inert? : bool
+            (tc_core.macro-alias-cache-splice-inert? ctx (& delta) module-id)]
+          [complete : i64 (tc_core.tc-macro-import-index-control state 6)]
+          (test.assert-true inert? "fresh function delta is eligible")
+          (test.assert-true
+            (not (tc_core.macro-alias-cache-splice-inert? ctx (& delta) -1))
+            "root additions rebuild")
+          (for [rejected (iterator.range 0 4)]
+            (let
+              [bad-source : String
+                (match rejected
+                  [0 "(define (shadowed) : i64 2)"]
+                  [1 "(define (other.dotted) : i64 2)"]
+                  [2 "(import another as a)"]
+                  [_ "(module changed)"])]
+              [bad : ast.AstDeclList
+                (tc-module-carry-test-decls pools (& bad-source))]
+              (test.assert-true
+                (not
+                  (tc_core.macro-alias-cache-splice-inert?
+                    ctx
+                    (& bad)
+                    module-id))
+                "shadows, dotted names, imports and markers rebuild")))
+          (tc_core.macro-segmented-program-splice-current!
+            job
+            (clone delta)
+            (clone delta-paths))
+          (test.assert-true
+            (tc_core.macro-live-symbols-insert-decls!
+              state
+              (clone delta)
+              module-id)
+            "fresh symbols committed")
+          (test.assert-true
+            (tc_core.macro-live-registries-append-decls!
+              state
+              (clone delta)
+              (clone delta-paths)
+              module-id)
+            "fresh registries committed")
+          (match (tc_core.macro-expand-rebuild-context-for-splice
+            ctx
+            (clone delta)
+            delta-paths
+            "alias-retain"
+            module-id
+            (Extend base (clone delta))
+            inert?)
+            [(Ok next-ctx next-top)
+              (test.assert-true
+                (and
+                  (= (tc_core.tc-macro-import-index-control state 3) 1)
+                  (= (tc_core.tc-macro-import-index-control state 5) 1)
+                  (= (tc_core.tc-macro-import-index-control state 6) complete)
+                  (=
+                    (tc_core.tc-macro-import-index-control state 7)
+                    (tc_core.macro-segmented-program-decl-count job))
+                  (= (tc_core.macro-alias-cache-get state module-id missing) -1))
+                "function splice retains the index, completeness and negative answer")
+              (set! ctx next-ctx)
+              (set! base next-top)]
+            [_ (io.panic "alias retention rebuild failed")]))
+        (test.assert-true
+          (macro-segmented-alias-index-matches-flat? job (& pairs))
+          "retained positive and negative lookups match the flat oracle")
+        (macro-segmented-events-emit! job 2))
+      (tc_core.tc-lazy-import-stub-record-for-job!
+        job
+        module-id
+        missing
+        (ci.intern "lazy-target")
+        false)
+      (test.assert-true
+        (not (tc_core.macro-alias-cache-segmented-current? job 0))
+        "a new lazy target invalidates negative answers")
+      (test.assert-true
+        (match (tc_core.macro-import-alias-target-cached-id-in-context
+          ctx
+          (clone decls)
+          module-id
+          missing)
+          [(Some target) (= target (ci.intern "lazy-target"))]
+          [_ false])
+        "new lazy target replaces the retained negative")
+      (tc_core.tc-lazy-import-stubs-reset-for-job! job)
+      (test.assert-true
+        (not (tc_core.macro-alias-cache-segmented-current? job 0))
+        "stub reset invalidates lazy-derived answers")
+      (test.assert-true
+        (match (tc_core.macro-import-alias-target-cached-id-in-context
+          ctx
+          (clone decls)
+          module-id
+          missing)
+          [(No) true]
+          [_ false])
+        "a retired lazy target is absent")
+      (tc_core.macro-segmented-program-end! job)
+      (match (tc_core.macro-import-alias-target-cached-id-in-context
+        ctx
+        (clone decls)
+        module-id
+        missing)
+        [_ unit])
+      (test.assert-true
+        (= (tc_core.tc-macro-import-index-control state 5) 0)
+        "segmented to flat transition rebuilds")
+      (let
+        [saved : ci.InternSourceNameSessionHandle
+          (tc_core.tc-macro-state-source-names state)]
+        [other : ci.InternCompatState (ci.intern-compat-state-new)]
+        (tc_core.tc-macro-state-bind-source-names!
+          state
+          (ci.intern-source-name-session-handle-from-state other))
+        (tc_core.macro-alias-cache-ensure! state)
+        (test.assert-true
+          (= (tc_core.macro-alias-cache-get state module-id missing) -2)
+          "source owner change discards earlier answers")
+        (ci.intern-compat-state-reset! (&mut other))
+        (tc_core.tc-macro-state-bind-source-names!
+          state
+          (ci.intern-source-name-session-handle-from-state other))
+        (tc_core.macro-alias-cache-ensure! state)
+        (test.assert-true
+          (=
+            (tc_core.tc-macro-import-index-control state 2)
+            (tc_core.tc-macro-state-source-name-reset-generation state))
+          "source reset generation is current")
+        (tc_core.tc-macro-state-bind-source-names! state saved))
+      (tc_core.macro-live-symbols-clear! state)
+      (tc_core.macro-expand-scratch-release! state))))
 
 (define (macro-segmented-program-job-reset-smoke?) : bool
   (let

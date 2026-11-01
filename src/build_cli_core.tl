@@ -1154,6 +1154,34 @@
 (define (build-git-rev-parse-command [root : String]) : process.ProcessCommand
   (build_run_core.source-tool-git-local-rev-parse-command root "HEAD"))
 
+;; --git-dir/--work-tree override GIT_DIR/GIT_WORK_TREE, including Windows
+;; case variants. These other repository-routing variables have no equivalent
+;; CLI override. Refuse them before any dependency Git child can touch a repo.
+(define (build-run-git-dependency
+  [context : String]
+  [command : process.ProcessCommand]) : ResultBuildString
+  (let
+    [redirect : String
+      (cond
+        [(env.var-exists? "GIT_COMMON_DIR") "GIT_COMMON_DIR"]
+        [(env.var-exists? "GIT_INDEX_FILE") "GIT_INDEX_FILE"]
+        [(env.var-exists? "GIT_OBJECT_DIRECTORY") "GIT_OBJECT_DIRECTORY"]
+        [(env.var-exists? "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+          "GIT_ALTERNATE_OBJECT_DIRECTORIES"]
+        [(env.var-exists? "GIT_SHALLOW_FILE") "GIT_SHALLOW_FILE"]
+        [(env.var-exists? "GIT_GRAFT_FILE") "GIT_GRAFT_FILE"]
+        [(env.var-exists? "GIT_REPLACE_REF_BASE") "GIT_REPLACE_REF_BASE"]
+        [(env.var-exists? "GIT_NAMESPACE") "GIT_NAMESPACE"]
+        [else ""])]
+    (if (> (string.string-length redirect) 0)
+      (Err
+        (str_cat.str-cat
+          context
+          " refused inherited "
+          redirect
+          "; unset it to keep dependency Git metadata local"))
+      (build-run-captured context command))))
+
 (define (build-trim-command-output [output : String]) : String
   (string.trim (& output)))
 
@@ -1161,7 +1189,7 @@
   (let
     [output
       (try
-        (build-run-captured
+        (build-run-git-dependency
           (build-git-dep-error alias "git rev-parse")
           (build-git-rev-parse-command root)))]
     [commit : String (build-trim-command-output output)]
@@ -1420,7 +1448,7 @@
               1))]
         [_
           (try
-            (build-run-captured
+            (build-run-git-dependency
               (build-git-dep-error alias "git clone")
               (build-git-clone-command
                 (string.copy (& dep.remote))
@@ -1428,7 +1456,7 @@
         (let
           [_
             (try
-              (build-run-captured
+              (build-run-git-dependency
                 (build-git-dep-error alias "git checkout")
                 (build-git-checkout-command
                   (owned_view.compiler-owned-shared-view staged-path)
@@ -1554,7 +1582,7 @@
       manifest-dir
       (owned_view.compiler-owned-shared-view alias)))
     (Ok root)
-    (build-run-captured
+    (build-run-git-dependency
       (build-git-dep-error alias "git clone")
       (build-git-clone-command (string.copy (& dep.remote)) root))))
 
@@ -1593,7 +1621,7 @@
           (let
             [_
               (try
-                (build-run-captured
+                (build-run-git-dependency
                   (build-git-dep-error alias "git checkout")
                   (build-git-checkout-command
                     (owned_view.compiler-owned-shared-view root)

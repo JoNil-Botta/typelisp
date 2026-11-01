@@ -28,7 +28,7 @@ file git-stub.tl
             "(define (answer) : i64 42)\n")
           (return 0))))
     (when (> (io.arg-count) 6)
-      (when (string.eq (io.arg 5) "checkout") (return 0))
+      (when (string.eq (io.arg 7) "checkout") (return 0))
       (when (string.eq (io.arg 5) "--git-dir=.git")
         (when (string.eq (io.arg 6) "rev-parse")
           (let [head : String (env.var-value "TYPELISP_TEST_GIT_HEAD")]
@@ -559,6 +559,80 @@ not-contains clone
 test ! -f "{{dir}}/r/typelisp.lock"
 sh CCV_marker=$(find "{{dir}}/r/target" -name .typelisp-cache-complete)
 test -z "{{marker}}"
+
+
+# Legacy checkout must neither discover nor redirect into the enclosing repo,
+# Refs #9518. e/h: empty/missing-HEAD metadata; u/l/m: GIT_DIR spellings;
+# w/c: inherited/configured work tree; g/i/o/a: other metadata routing.
+case gx
+each e-t e-b h-t h-b u-t u-b l-t l-b m-t m-b w-t w-b c-t c-b g-t g-b i-t i-b o-t o-b a-t a-b
+sh case "{{each}}" in *-t) CCV_pin=tag ;; *-b) CCV_pin=branch ;; esac
+file -x r/typelisp.pkg
+(package (name "root") (version "1") (kind bin) (dependencies (remote (github "a/b" ({{pin}} "stable")))))
+end-file
+file r/.gitignore
+target/
+typelisp.lock
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+file r/sentinel
+old
+end-file
+sh git init -q --initial-branch=main "{{dir}}/r"
+sh git -C "{{dir}}/r" add .
+sh git -C "{{dir}}/r" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m old
+sh git -C "{{dir}}/r" tag stable && git -C "{{dir}}/r" update-ref refs/remotes/origin/stable HEAD
+file r/sentinel
+current
+end-file
+sh git -C "{{dir}}/r" add sentinel && git -C "{{dir}}/r" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m current
+file r/staged
+staged application change
+end-file
+file r/untracked
+untracked application change
+end-file
+sh git -C "{{dir}}/r" add staged
+sh git -C "{{dir}}/r" rev-parse HEAD > "{{dir}}/before-commit" && git -C "{{dir}}/r" status --porcelain > "{{dir}}/before-status"
+sh cp "{{dir}}/r/.git/HEAD" "{{dir}}/before-head" && cp "{{dir}}/r/.git/index" "{{dir}}/before-index" && cp "{{dir}}/r/sentinel" "{{dir}}/before-sentinel"
+file d/typelisp.pkg
+(package (name "dep") (version "1") (kind staticlib))
+end-file
+file d/src/lib.tl
+(define (answer) : i64 42)
+end-file
+sh git init -q --initial-branch=main "{{dir}}/d"
+sh git -C "{{dir}}/d" add . && git -C "{{dir}}/d" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m pinned
+sh git -C "{{dir}}/d" tag stable && git -C "{{dir}}/d" branch stable && CCV_commit=$(git -C "{{dir}}/d" rev-parse HEAD)
+file d/src/lib.tl
+(define (answer) : i64 43)
+end-file
+sh git -C "{{dir}}/d" add . && git -C "{{dir}}/d" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m later
+sh CCV_dep="{{dir}}/r/target/typelisp/git-deps/remote"
+sh mkdir -p "{{dir}}/r/target/typelisp/git-deps"
+sh case "{{each}}" in e-*) mkdir -p "{{dep}}/.git" ;; h-*) git init -q "{{dep}}" && mv "{{dep}}/.git/HEAD" "{{dep}}/.git/saved-HEAD" ;; *) git clone -q --local --no-checkout "{{dir}}/d" "{{dep}}" ;; esac
+sh CCV_envname=TYPELISP_TEST_NO_GIT_ENV && CCV_envvalue=control
+sh case "{{each}}" in u-*) CCV_envname=GIT_DIR ;; l-*) CCV_envname=git_dir ;; m-*) CCV_envname=Git_Dir ;; w-*) CCV_envname=GIT_WORK_TREE ;; g-*) CCV_envname=GIT_COMMON_DIR ;; i-*) CCV_envname=GIT_INDEX_FILE ;; o-*) CCV_envname=GIT_OBJECT_DIRECTORY ;; a-*) CCV_envname=GIT_ALTERNATE_OBJECT_DIRECTORIES ;; esac
+sh case "{{each}}" in u-*|l-*|m-*|g-*) CCV_envvalue="{{native-dir}}/r/.git" ;; w-*) CCV_envvalue="{{native-dir}}/r" ;; i-*) CCV_envvalue="{{native-dir}}/r/.git/index" ;; o-*|a-*) CCV_envvalue="{{native-dir}}/r/.git/objects" ;; c-*) git -C "{{dep}}" config core.worktree "{{native-dir}}/r" ;; esac
+# Relative manifest + application cwd also pin --work-tree=. semantics.
+cwd {{dir}}/r
+sh case "{{each}}" in e-*|h-*|g-*|i-*|o-*|a-*) CCV_reject=yes && CCV_expect=1 ;; *) CCV_reject=no && CCV_expect=0 ;; esac
+exec sh -c 'env "$1=$2" "$3" build --manifest-path typelisp.pkg --target "$4" --opt-level 0; result=$?; test "$result" = "$5"' fixture "{{envname}}" "{{envvalue}}" "{{compiler}}" {{host-target}} "{{expect}}"
+sh if [ "{{reject}}" = yes ]; then grep -F 'GitHub dependency `remote` git checkout' "{{stderr}}"; else test ! -s "{{stderr}}"; fi
+sh case "{{each}}" in e-*|h-*) grep -F 'not a git repository' "{{stderr}}" ;; g-*|i-*|o-*|a-*) grep -F "{{envname}}" "{{stderr}}" ;; esac
+# The compiler must not move application HEAD, detach it, change its index,
+# overwrite tracked files, or disturb staged/untracked user changes.
+same "{{dir}}/before-head" "{{dir}}/r/.git/HEAD"
+same "{{dir}}/before-index" "{{dir}}/r/.git/index"
+same "{{dir}}/before-sentinel" "{{dir}}/r/sentinel"
+sh git -C "{{dir}}/r" rev-parse HEAD > "{{dir}}/after-commit" && git -C "{{dir}}/r" status --porcelain > "{{dir}}/after-status"
+same "{{dir}}/before-commit" "{{dir}}/after-commit"
+same "{{dir}}/before-status" "{{dir}}/after-status"
+sh if [ "{{reject}}" = yes ]; then test ! -f "{{dir}}/r/typelisp.lock"; else grep -F "(commit \"{{commit}}\")" "{{dir}}/r/typelisp.lock"; fi
+sh if [ "{{reject}}" = no ]; then CCV_result=0; "{{dir}}/r/target/release/root{{exe}}" || CCV_result=$?; test "$CCV_result" = 42; fi
 
 
 # d: own .git directory; f: separate metadata gitfile; w: linked worktree.

@@ -117,6 +117,7 @@ gate_require_compiler
 
 TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh tests/codegen/for-source-macro.cases
 TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh --only 'secret-generation-*' tests/codegen/crypto-secret.cases
+TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh --only 'secret-copy-transfer-*' tests/codegen/crypto-secret.cases
 
 # The generated `(hashmap K V)` modules are the only supported scalar hashmap
 # surface. Keep the removed flat family spellings from returning in source,
@@ -323,6 +324,7 @@ stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_aes_api.tl|42|-|-|-
 stdlib/tests/crypto_hmac_sha256_api.tl|42|-|-|-
 stdlib/tests/crypto_hmac_sha256_parity.tl|42|-|-|-
+stdlib/tests/crypto_secret_range_transfer.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_api.tl|42|-|-|-

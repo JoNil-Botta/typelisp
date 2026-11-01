@@ -25,6 +25,7 @@ stdlib.core_macros/all?	2	variadic	expr	tests/integration/core_macros_any_all.tl
 stdlib.core_macros/for	2	variadic	expr	tests/integration/for_macro.tl	ok	default	assembly
 stdlib.crypto_aes_core/new-128	1	fixed	expr	stdlib/tests/crypto_aes_api.tl	ok	default	assembly
 stdlib.crypto_aes_core/new-256	1	fixed	expr	stdlib/tests/crypto_aes_api.tl	ok	default	assembly
+stdlib.crypto_secret/transfer-fixed	2	fixed	expr	stdlib/tests/crypto_secret_range_transfer.tl	ok	default	assembly
 stdlib.dense_list/compiler-dense-list-operations	7	variadic	decls	tests/integration/dense_list_generated.tl	ok	default	assembly
 stdlib.eq/eq-ref	1	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
 stdlib.eq/eq-value	1	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly

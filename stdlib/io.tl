@@ -2254,6 +2254,26 @@
 ;:
 ;: A short read does not imply EOF; EOF becomes true only after the stdlib
 ;: receives a zero-byte host read.
+;:
+;: For a valid read-mode handle and positive `count`, this allocates the full
+;: `count` bytes in the active arena before host I/O. A short read exposes only
+;: the returned prefix; it does not shrink the allocation. A host error also
+;: leaves that allocation in the arena. Dropping or replacing the result does
+;: not reclaim it; the owning arena must be rewound, reset, or destroyed.
+;:
+;: Do not repeatedly request the total remaining capacity in a long-lived
+;: arena: many one-byte reads can retain nearly that whole capacity per read.
+;: Instead, allocate a fixed-capacity output buffer outside the loop. In each
+;: iteration, use `(with-arena scratch ...)` for a read capped independently of
+;: the total input size, for example `min(8192, remaining)`. Copy only the live
+;: bytes into the preallocated outer slots, then update the outer live length.
+;: Do not grow the outer buffer inside scratch: growth allocates there. Let
+;: only scalar progress, EOF, and error facts leave scratch, so every temporary
+;: read allocation is reclaimed before the next iteration.
+;:
+;: Enforce the total input limit separately, stop on errors or EOF, reject a
+;: zero-byte non-EOF read rather than spinning, and close the handle on every
+;: exit path. A zero-count request preserves EOF and cannot make progress.
 (define (file-read-chunk [handle : FileHandle] [count : i64]) : ResultIoRead
   (if (< count 0)
     (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))

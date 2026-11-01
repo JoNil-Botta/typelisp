@@ -585,5 +585,46 @@
       (wipe-state! state)
       result)))
 
+;: Scoped pointer-backed owner adapter. The caller owns initialized, aligned
+;: state storage and a disjoint source for the whole call. A temporary state
+;: is wiped after publishing the result; rejected updates preserve the state.
+(unsafe
+  (define (update-state-from-pointer!
+    [state : (MutPtr Sha256State)]
+    [input : (Ptr u8)]
+    [input-length : i64]) : Sha256UpdateResult
+    (let
+      [working : Sha256State
+        (unsafe
+          (ptr-read state))]
+      [result : Sha256UpdateResult
+        (unsafe
+          (update-from-pointer! (&mut working) input input-length))]
+      (unsafe
+        (ptr-write! state working))
+      (wipe-state! (&mut working))
+      result)))
+
+;: Consuming scoped pointer-backed owner adapter. Poison the original before
+;: finalization and wipe the temporary on every outcome. The exact sink must
+;: remain disjoint from the state and caller-validated for the whole call.
+(unsafe
+  (define (consume-state-pointer-into!
+    [state : (MutPtr Sha256State)]
+    [output : (MutPtr u8)]
+    [output-length : i64]) : Sha256FinalizeIntoResult
+    (let
+      [working : Sha256State
+        (unsafe
+          (ptr-read state))]
+      (unsafe
+        (ptr-write! state (wiped-state)))
+      (let
+        [result : Sha256FinalizeIntoResult
+          (unsafe
+            (consume-finalize-into! (&mut working) output output-length))]
+        (wipe-state! (&mut working))
+        result))))
+
 ;: Copy a digest into caller-owned metadata.
 (clone_gen.gen-clone Sha256Digest)

@@ -556,6 +556,18 @@ Inline stdlib coverage:
   remains in `thread_api.tl`.
 - `cpu.tl` owns inline tests for host-independent CPUID/XGETBV SIMD detection
   relationships.
+- `crypto_hmac_sha256_api.tl` shares RFC 4231 full-length vectors and lifecycle
+  checks between native and inline execution. It covers binary and empty
+  inputs, every vector split, bytewise updates, key/padding/block boundaries,
+  exact caller and injected SHA prefix limits, refusal versus terminal errors,
+  fixed-work verification with 128 fixed-seed mutations, cleanup and retained
+  storage wipes, opaque secret adapters and address-preserving result transfer
+  into a nominal KDF owner. Profile-enabled execution pins fixed allocation
+  sizes and allocation-free updates. RFC case 5 is a truncated 16-byte tag and
+  is rejected. `crypto_hmac_sha256_parity.tl` is the pure target/ABI witness;
+  the adjacent rejection fixtures pin opacity, unsafe sources, clone refusal
+  and separation of secret results from public tag helpers. The `secret-hmac-*`
+  codegen rows run the native corpus at opt0/1/2 and inspect both target shapes.
 - `crypto_sha512_inline.tl` owns FIPS vectors, streaming/counter/lifecycle
   coverage, and public-equivalence tests for the SHA-512 scoped raw
   source/exact sink seam. `crypto_sha512_unsafe_adapter_reject.tl` pins that

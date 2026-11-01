@@ -102,6 +102,9 @@ so this section only maps the modules by area. Import a module with
   (bounded cursor with a sticky error and a work limit), `leb128` (LEB128
   variable-length integers), `base64` (strict bounded RFC 4648 standard-alphabet
   bytes with length planning and caller-owned decode/encode forms).
+  `asn1_der` validates bounded canonical certificate DER and preserves exact
+  source ranges; `pem` extracts bounded RFC 7468 `CERTIFICATE` bundles through
+  the shared base64 decoder.
 - Compression: `compress/deflate` implements bounded incremental RFC 1951
   decoding over borrowed input and caller-owned output chunks, plus a bounded
   one-shot wrapper. See [the API and bounds](../docs/deflate.md).
@@ -122,7 +125,9 @@ so this section only maps the modules by area. Import a module with
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,
   `crypto_sha1_git`,
   `crypto_sha256`, `crypto_sha512`, `crypto_rsa_core`, `crypto_rsa_verify`,
-  `crypto_p256`, `crypto_secret`.
+  `crypto_p256`, `crypto_secret`, `x509_time`, `x509` (owned certificate models,
+  exact signed bytes and parsed extensions; no trust/signature decisions).
+  See [certificate parsing](../docs/x509.md) for limits and the supported profile.
 
 ## Backend Runtime Helper Ownership
 

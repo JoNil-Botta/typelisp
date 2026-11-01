@@ -23,6 +23,7 @@
 # Expected text may use @loc{path;column;exact source line}; the unique line
 #   is resolved from that compiled input, then the complete stream is compared.
 # suite-members: space-separated smoke drivers the row's source runs.
+ownership_split_many|all|0,1,2|tests/integration/ownership_split_many.tl|42|-|-|-|stage-stdlib
 stdlib_deflate|all|0,1,2|tests/integration/stdlib_deflate.tl|42|-|-|-|stage-stdlib
 deflate_embedded_example|all|0,1,2|examples/deflate_decode.tl|42|deflate decode score: 42\n|-|-|-
 stdlib_zlib|all|0,1,2|tests/integration/stdlib_zlib.tl|42|-|-|-|stage-stdlib
@@ -948,7 +949,7 @@ compiler_ownership_core_smoke|all|0,1,2|src/tests/compiler_ownership_core_smoke.
 compiler_ownership_loan_smoke|all|0,1,2|src/tests/compiler_ownership_loan_smoke.tl|42|-|-|compiler_ownership_core.tl compiler_ownership_dump.tl compiler_ownership_core_tests.tl compiler_ownership_loan_tests.tl|stage-stdlib
 compiler_ownership_cleanup_smoke|all|0,1,2|src/tests/compiler_ownership_cleanup_smoke.tl|42|-|-|compiler_ownership_core.tl compiler_ownership_dump.tl compiler_ownership_cleanup_tests.tl|stage-stdlib
 compiler_typed_occurrence_smoke|all|0,1,2|src/tests/compiler_typed_occurrence_smoke.tl|42|-|-|compiler_typed_occurrence.tl compiler_typed_occurrence_tests.tl compiler_ownership_core.tl|stage-stdlib
-compiler_ownership_normalize_smoke|all|0,1,2|src/tests/compiler_ownership_normalize_smoke.tl|42|-|-|compiler_ownership_normalize.tl compiler_ownership_normalize_tests.tl compiler_typed_occurrence.tl compiler_typed_occurrence_tests.tl compiler_ownership_core.tl compiler_ownership_dump.tl|stage-stdlib
+compiler_ownership_normalize_smoke|all|0,1,2|src/tests/compiler_ownership_normalize_smoke.tl|42|-|-|compiler_ownership_normalize.tl compiler_ownership_normalize_tests.tl compiler_typed_occurrence.tl compiler_typed_occurrence_tests.tl compiler_ownership_core.tl compiler_ownership_core_tests.tl compiler_ownership_dump.tl|stage-stdlib
 ir_sequence_borrow_instr_valid|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|42|-|0 0|-|-
 ir_sequence_borrow_instr_negative|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 -1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=-1 length=1\n
 ir_sequence_borrow_instr_end|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=1 length=1\n

@@ -3732,11 +3732,6 @@
       (match expected
         [(ast.AstMaybeType.No) (TcSelectedResult.Ok actual occurrence sink)]
         [(ast.AstMaybeType.Some want)
-          (let
-            [want-tagged? : bool
-              (match (& want)
-                [(ast.AstType.Region _ _) true]
-                [_ false])]
           (match (tc-expr-result-with-expected-or-actual
             ctx
             env
@@ -3766,14 +3761,6 @@
                   (match (& actual)
                     [(ast.AstType.Never) true]
                     [_ false])]
-                ;; A tag the coercion kept for a brand the value still
-                ;; stores (`tc-coercion-retain-invalidated-brands`) is
-                ;; provenance on the same value, not a read under a region.
-                [retained? : bool
-                  (and
-                    expected-tagged?
-                    (not actual-tagged?)
-                    (not want-tagged?))]
                 [beneath? : bool
                   (tc-selected-same-type?
                     (tc-selected-strip-regions actual)
@@ -3781,9 +3768,14 @@
                 (cond
                   [(or
                       never?
+                      (and beneath? (= expected-tagged? actual-tagged?))
                       (and
                         beneath?
-                        (or retained? (= expected-tagged? actual-tagged?))))
+                        tc-invalidate-scope-seen?
+                        (tc-selected-retained-tag?
+                          env
+                          (tc-global-shared-view actual)
+                          (tc-global-shared-view ty))))
                     (TcSelectedResult.Ok ty occurrence sink)]
                   [(or widening? (and beneath? expected-tagged?))
                     (tc-selected-widening ty occurrence sink)]
@@ -3791,7 +3783,7 @@
                     (TcSelectedResult.Ok
                       ty
                       TcSelectedOccurrence.Unrepresented
-                      sink)]))]))])]))
+                      sink)]))])])]))
 
 ;; The implicit cast of a selected scalar to its contextual type `ty`, at the
 ;; scalar's own source.
@@ -8440,14 +8432,16 @@
                   ;; The join keeps the brands any arm retained
                   ;; (`tc-coercion-retain-invalidated-brands`).
                   [(TcInferredTypeMatch.Compatible _)
-                    (ResultTcType.Ok
-                      (tc-coercion-retain-invalidated-brands
+                    (if tc-invalidate-scope-seen?
+                      (tc-join-keep-brands
                         ctx
                         arm-env
-                        (& got)
-                        (if (= index 0)
-                          want
-                          (tc-global-shared-view merged))))]
+                        (tc-global-shared-view got)
+                        (ResultTcType.Ok
+                          (if (= index 0)
+                            want
+                            (tc-global-shared-view merged))))
+                      (ResultTcType.Ok want))]
                   [(TcInferredTypeMatch.Mismatch _)
                     (ResultTcType.Err
                       "typecheck: match arm result type mismatch")])]
@@ -13286,7 +13280,10 @@
   (match (tc-infer-selected-legacy ctx env expr syntax expected)
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
-      (match (tc-resolve-type ctx (tc-global-shared-view ty))
+      ;; Beneath the brand tag a shortened element gave the tuple
+      ;; (`tc-tuple-retain-element-brands`).
+      (match (tc-selected-strip-regions
+        (tc-resolve-type ctx (tc-global-shared-view ty)))
         [(ast.AstType.Tuple elems)
           (let
             [slots : ast.AstTypeList (ast.ast-type-list-box-shared-view elems)]
@@ -13296,7 +13293,10 @@
               (!=
                 (ast.ast-type-list-len (& slots))
                 (ast.ast-expr-list-len items))
-              (not (tc-selected-call-type-ok? ctx (tc-global-shared-view ty)))
+              (not
+                (tc-selected-call-type-ok?
+                  ctx
+                  (tc-selected-strip-regions (tc-global-shared-view ty))))
               (tc-type-reaches-cleanup? ctx (tc-global-shared-view ty)))
               (tc-selected-unrepresented (ResultTcType.Ok ty) sink)
               (match (tc-infer-selected-tuple-items
@@ -18438,12 +18438,7 @@
             (if (not
               (tc-selected-same-type?
                 (tc-global-shared-view actual)
-                (tc-selected-without-retained-brands
-                  (tc-global-shared-view actual)
-                  (match (tc-global-shared-view expected)
-                    [(ast.AstMaybeType.Some (ast.AstType.Region _ _)) true]
-                    [_ false])
-                  (tc-global-shared-view ty))))
+                (tc-global-shared-view ty)))
               ;; A branded arena owner erased into a bare `Arena` (a bare field
               ;; or binding) is read whole, which moves the owner (#8172), and
               ;; cast to the bare handle; a scalar is read and widened. Any
@@ -18471,7 +18466,28 @@
                     (tc-selected-widening ty occurrence next)]
                   [(TcSelectedResult.Err message next)
                     (TcSelectedResult.Err message next)])
-                (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented sink))
+                ;; A brand tag the coercion kept is provenance on the same
+                ;; value: read as itself, typed with the tag.
+                (if (tc-selected-retained-same-type?
+                  env
+                  (tc-global-shared-view actual)
+                  (tc-global-shared-view ty))
+                  (match (tc-infer-selected-var
+                    ctx
+                    env
+                    name
+                    syntax
+                    (ast.AstMaybeType.Some (tc-global-shared-view actual))
+                    source
+                    sink)
+                    [(TcSelectedResult.Ok _ occurrence next)
+                      (TcSelectedResult.Ok ty occurrence next)]
+                    [(TcSelectedResult.Err message next)
+                      (TcSelectedResult.Err message next)])
+                  (TcSelectedResult.Ok
+                    ty
+                    TcSelectedOccurrence.Unrepresented
+                    sink)))
               (match sink
                 [(TcSelectedSink.Query)
                   (TcSelectedResult.Ok
@@ -49537,6 +49553,13 @@
   0)
 (define tc-invalidate-marker-id-generation : i64
   -1)
+;; Whether the function declaration being checked has bound a parameter list
+;; with an `:invalidate` effect (its own or a lambda's): until it has, no
+;; coercion in it can drop an endable brand
+;; (`tc-coercion-retain-invalidated-brands`), so the arena-free path skips
+;; that work. Saved and reset around each declaration body.
+(define tc-invalidate-scope-seen? : bool
+  false)
 (define tc-invalidate-marker-id-cache : i64
   -1)
 
@@ -49576,6 +49599,7 @@
         (Some (ast.ast-ty-var-args (tc-invalidate-marker-id) pairs)))
       (begin
         (+= tc-invalidate-param-bind-count 1)
+        (set! tc-invalidate-scope-seen? true)
         (Some (ast.ast-ty-var-args (tc-invalidate-marker-id) pairs))))))
 
 (define (tc-bind-invalidate-marker
@@ -53123,16 +53147,6 @@
                   children
                   sink))])])]))
 
-(define (tc-selected-joined-without-retained-brands
-  [branch : ast.AstType]
-  [want-tagged? : bool]
-  [joined : ResultTcType]) : ResultTcType
-  (match joined
-    [(ResultTcType.Ok ty)
-      (ResultTcType.Ok
-        (tc-selected-without-retained-brands branch want-tagged? ty))]
-    [(ResultTcType.Err message) (ResultTcType.Err message)]))
-
 (define (tc-selected-branch-aligned?
   [ctx : TcContext]
   [branch : ast.AstType]
@@ -53146,10 +53160,6 @@
         (tc-selected-aligned-type? ctx branch ty))]
     [(ResultTcType.Err _) true]))
 
-;; The type a branch of an `if` is checked against. Without a context type, a
-;; numeric literal branch takes the other branch's type, as
-;; `tc-merge-if-branch-types` retypes it (#8590): `(if c -1 n)` with `n : i64`
-;; is an `i64`.
 (define (tc-selected-if-branch-expected
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -53280,13 +53290,6 @@
                   (TcSelectedResult.Err message done)]
                 [(TcSelectedResult.Ok else-ty else-occurrence done)
                   (let
-                    [want-tagged? : bool
-                      (match (& expected)
-                        [(ast.AstMaybeType.Some (ast.AstType.Region _ _))
-                          true]
-                        [_ false])]
-                    ;; The join keeps the brands either branch retained
-                    ;; (`tc-coercion-retain-invalidated-brands`).
                     [joined : ResultTcType
                       (match expected
                         [(ast.AstMaybeType.No)
@@ -53307,16 +53310,21 @@
                               env
                               (tc-global-shared-view want)
                               (tc-global-shared-view else-ty)))
-                            (ResultTcType.Ok
-                              (tc-coercion-retain-invalidated-brands
+                            ;; The join keeps the brands either branch kept
+                            ;; (`tc-coercion-retain-invalidated-brands`); a
+                            ;; reference branch stays aligned with it, as
+                            ;; region tags on Copy values are.
+                            (if tc-invalidate-scope-seen?
+                              (tc-join-keep-brands
                                 ctx
                                 env
-                                (& else-ty)
-                                (tc-coercion-retain-invalidated-brands
+                                (tc-global-shared-view else-ty)
+                                (tc-join-keep-brands
                                   ctx
                                   env
-                                  (& then-ty)
-                                  want)))
+                                  (tc-global-shared-view then-ty)
+                                  (ResultTcType.Ok want)))
+                              (ResultTcType.Ok want))
                             (tc-merge-branch-type
                               ctx
                               env
@@ -53328,17 +53336,11 @@
                         (tc-selected-branch-aligned?
                           ctx
                           (tc-global-shared-view then-ty)
-                          (tc-selected-joined-without-retained-brands
-                            (tc-global-shared-view then-ty)
-                            want-tagged?
-                            (tc-global-shared-view joined)))
+                          (tc-global-shared-view joined))
                         (tc-selected-branch-aligned?
                           ctx
                           (tc-global-shared-view else-ty)
-                          (tc-selected-joined-without-retained-brands
-                            (tc-global-shared-view else-ty)
-                            want-tagged?
-                            (tc-global-shared-view joined))))]
+                          (tc-global-shared-view joined)))]
                     (tc-selected-publish-if
                       joined
                       syntax
@@ -53351,6 +53353,18 @@
                         else-occurrence
                         TcSelectedOccurrence.Unrepresented)
                       done))])])])]))
+
+;; A join of a branch of type `branch`, keeping the brands that branch kept
+;; (`tc-coercion-retain-invalidated-brands`).
+(define (tc-join-keep-brands
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [branch : ast.AstType]
+  [joined : ResultTcType]) : ResultTcType
+  (match joined
+    [(ResultTcType.Ok ty)
+      (ResultTcType.Ok (tc-coercion-retain-invalidated-brands ctx env branch ty))]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-type-list-len [types : (& types ast.AstTypeList)]) : i64
   (ast.ast-type-list-len (& types)))
@@ -53437,9 +53451,78 @@
       [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
       [result-elems : ast.AstTypeList
         (try
-          (tc-check-tuple-elements-with-expected ctx env exprs expected-elems))]
-      (Ok (ast.ast-ty-tuple result-elems)))
+          (tc-check-tuple-elements-with-expected
+            ctx
+            env
+            exprs
+            (tc-global-shared-view expected-elems)))]
+      (Ok
+        (if tc-invalidate-scope-seen?
+          (tc-tuple-retain-element-brands
+            ctx
+            env
+            (ast.ast-ty-tuple result-elems)
+            (& expected-elems))
+          (ast.ast-ty-tuple result-elems))))
     (tc-expr ctx env (Tuple exprs))))
+
+;; A brand a tuple element kept (`tc-coercion-retain-invalidated-brands`) tags
+;; the tuple instead, as a region-carrying aggregate is tagged.
+(define (tc-tuple-retain-element-brands
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [tagged : ast.AstType]
+  [expected : (& expected ast.AstTypeList)]) : ast.AstType
+  (if (not (tc-type-contains-region-tag? (tc-global-shared-view tagged)))
+    tagged
+    (match (tc-global-shared-view tagged)
+      [(ast.AstType.Tuple elems)
+        (let
+          [types : ast.AstTypeList (ast.ast-type-list-box-shared-view elems)]
+          (tc-coercion-retain-invalidated-brands
+            ctx
+            env
+            (tc-global-shared-view tagged)
+            (ast.ast-ty-tuple
+              (tc-type-list-without-reference-tags (& types) expected))))]
+      [_ tagged])))
+
+;; `types` without the region tags over references that their `expected`
+;; types do not carry: provenance a coercion kept, which the aggregate holding
+;; them carries instead.
+(define (tc-type-list-without-reference-tags
+  [types : (& types ast.AstTypeList)]
+  [expected : (& expected ast.AstTypeList)]) : ast.AstTypeList
+  (let
+    [out : ast.AstTypeList (ast.ast-type-list-new)]
+    [index : i64 0]
+    (while (< index (ast.ast-type-list-len types))
+      (let
+        [ty : ast.AstType
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        [want-tagged? : bool
+          (and
+            (< index (ast.ast-type-list-len expected))
+            (match (ast.ty-node-get
+              (ast.ast-type-list-get expected index (ast.ast-type-id-fallback)))
+              [(ast.AstType.Region _ _) true]
+              [_ false]))]
+        [plain : ast.AstType (tc-selected-strip-regions (tc-global-shared-view ty))]
+        (ast.ast-type-list-push
+          (&mut out)
+          (ast.ast-node-pool-reader-type-push
+            (&
+              (if (and
+                (not want-tagged?)
+                (match (& plain)
+                  [(ast.AstType.Ref _ _) true]
+                  [(ast.AstType.MutRef _ _) true]
+                  [_ false]))
+                plain
+                ty)))))
+      (+= index 1))
+    out))
 
 ;; Flow the expected type into a begin's final expression so a contextual
 ;; literal in tail position resolves against it; non-final expressions keep
@@ -53891,9 +53974,22 @@
 (define (tc-coercion-retain-invalidated-brands
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [actual : (& actual ast.AstType)]
+  [actual : ast.AstType]
   [result : ast.AstType]) : ast.AstType
-  (unless (tc-invalidate-types-present?) (return result))
+  ;; Cheap exits first: no `:invalidate` list was bound, no lifetime in
+  ;; `actual`, or a coercion of an untagged value that changed no lifetime
+  ;; (`tc-type-eq` ignores region tags, so a tagged value always continues).
+  (unless
+    (and
+      tc-invalidate-scope-seen?
+      (tc-type-contains-any-region (tc-global-shared-view actual))
+      (or
+        (tc-type-contains-region-tag? (tc-global-shared-view actual))
+        (not
+          (tc-type-eq
+            (tc-global-shared-view actual)
+            (tc-global-shared-view result)))))
+    (return result))
   (let
     [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
     [index : i64 0]
@@ -53905,27 +54001,70 @@
         (when
           (and
             (not (tc-type-contains-region (tc-global-shared-view out) brand))
-            (tc-type-stores-lifetime? ctx actual brand))
+            (tc-type-stores-lifetime? ctx (& actual) brand))
           (set! out (ast.ast-ty-region brand (& out)))))
       (+= index 2))
     out))
 
-;; `ty` beneath the region tags its coercion retained
-;; (`tc-coercion-retain-invalidated-brands`): those on a value whose own type
-;; `actual` and expected type (`want-tagged?`) carry none. They are provenance
-;; on the same value, not a read under a region, so the value keeps its
-;; ownership-graph occurrence.
-(define (tc-selected-without-retained-brands
+;; Whether `ty`'s outer region tag, on a value whose own type `actual` has
+;; none, is a brand of the enclosing `:invalidate` list: provenance a coercion
+;; kept (`tc-coercion-retain-invalidated-brands`) on the same value, not a read
+;; under a region, so the value keeps its ownership-graph occurrence.
+(define (tc-selected-retained-tag?
+  [env : TcTypeEnv]
   [actual : ast.AstType]
-  [want-tagged? : bool]
-  [ty : ast.AstType]) : ast.AstType
-  (if (or
-    want-tagged?
-    (match (& actual)
-      [(ast.AstType.Region _ _) true]
-      [_ false]))
-    ty
-    (tc-selected-strip-regions ty)))
+  [ty : ast.AstType]) : bool
+  (match (& actual)
+    [(ast.AstType.Region _ _) false]
+    [_
+      (match (& ty)
+        [(ast.AstType.Region region _)
+          (let
+            [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
+            [index : i64 0]
+            [found : bool false]
+            (while (and
+              (not found)
+              (< index (ast.ast-lifetime-list-len (& pairs))))
+              (set!
+                found
+                (=
+                  region
+                  (ast.ast-lifetime-list-get
+                    (& pairs)
+                    index
+                    (ast.ast-lifetime-fallback))))
+              (+= index 2))
+            found)]
+        [_ false])]))
+
+;; Whether `ty` is `actual` under the brand tag a coercion kept.
+(define (tc-selected-retained-same-type?
+  [env : TcTypeEnv]
+  [actual : ast.AstType]
+  [ty : ast.AstType]) : bool
+  (and
+    tc-invalidate-scope-seen?
+    (tc-selected-retained-tag?
+      env
+      (tc-global-shared-view actual)
+      (tc-global-shared-view ty))
+    (tc-selected-same-type? actual (tc-selected-strip-regions ty))))
+
+;; `tc-contextual-result-type` that keeps the brands the coercion would drop.
+(define (tc-contextual-result-retaining
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [actual : ast.AstType]) : ResultTcType
+  (Ok
+    (tc-coercion-retain-invalidated-brands
+      ctx
+      env
+      (tc-global-shared-view actual)
+      (tc-contextual-result-type
+        (tc-global-shared-view expected)
+        (tc-global-shared-view actual)))))
 
 (define (tc-expr-result-with-expected-or-actual
   [ctx : TcContext]
@@ -53941,14 +54080,9 @@
           env
           (tc-global-shared-view expected)
           (tc-global-shared-view actual))
-        (Ok
-          (tc-coercion-retain-invalidated-brands
-            ctx
-            env
-            (& actual)
-            (tc-contextual-result-type
-              (tc-global-shared-view expected)
-              (tc-global-shared-view actual))))]
+        (if tc-invalidate-scope-seen?
+          (tc-contextual-result-retaining ctx env expected actual)
+          (Ok (tc-contextual-result-type expected actual)))]
       [(and
           allow-mut-by-value-borrow
           (tc-call-string-temporary-ref-compatible?
@@ -53963,12 +54097,9 @@
           (tc-global-shared-view actual)
           (tc-global-shared-view expected))
           [(Compatible matched)
-            (Ok
-              (tc-coercion-retain-invalidated-brands
-                ctx
-                env
-                (& actual)
-                (tc-contextual-result-type expected matched)))]
+            (if tc-invalidate-scope-seen?
+              (tc-contextual-result-retaining ctx env expected matched)
+              (Ok (tc-contextual-result-type expected matched)))]
           [(Mismatch _) (Ok actual)])])))
 
 ;; An unlocated error from checking the expanded node EXPANDED takes that

@@ -193,15 +193,20 @@
 (define (source-tool-git-checkout-command
   [root : String]
   [checkout-ref : String]) : process.ProcessCommand
-  (source-tool-command7
-    (source-tool-git-executable)
-    "-c"
-    "core.longpaths=true"
-    "-C"
-    root
-    "checkout"
-    "--detach"
-    checkout-ref))
+  ;; Dependency checkout must not discover a parent or inherit a different
+  ;; work tree, including core.worktree in separate/linked metadata.
+  (process.command-with-args
+    (source-tool-command6
+      (source-tool-git-executable)
+      "-c"
+      "core.longpaths=true"
+      "-C"
+      root
+      "--git-dir=.git"
+      "--work-tree=.")
+    (process.args-cons
+      "checkout"
+      (process.args-cons "--detach" (process.args-single checkout-ref)))))
 
 (define (source-tool-git-rev-parse-command [root : String] [revision : String]) : process.ProcessCommand
   (source-tool-command6

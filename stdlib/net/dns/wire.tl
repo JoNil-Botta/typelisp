@@ -25,6 +25,15 @@
 ;# for Complete, and no partial result escapes on failure.
 ;#
 ;# Usage: `(import stdlib.net.dns.wire)`.
+;#
+;# ```typelisp
+;# (import stdlib.byte_buf)
+;# (import stdlib.net.dns.wire)
+;# (define (main) : i64
+;#   (match (wire.encode-query "." 28 4660 true true)
+;#     [(DnsQueryOk query) (if (= (byte_buf.len (& query)) 28) 0 1)]
+;#     [(DnsQueryErr _) 1]))
+;# ```
 (import stdlib.byte_buf)
 (import stdlib.string)
 

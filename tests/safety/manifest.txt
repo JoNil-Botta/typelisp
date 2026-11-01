@@ -2132,6 +2132,7 @@ reassigned_ref_branch_reject|check-fail|tests/safety/reassigned_ref_branch_rejec
 reassigned_ref_loop_reject|check-fail|tests/safety/reassigned_ref_loop_reject.tl|tests/safety/reassigned_ref_loop_reject.tl:18:11|cannot assign to borrowed place `p.l`
 reassigned_ref_copy_reject|check-fail|tests/safety/reassigned_ref_copy_reject.tl|tests/safety/reassigned_ref_copy_reject.tl:16:11|cannot assign to borrowed place `p.l`
 reassigned_ref_ok|run-exit|tests/safety/reassigned_ref_ok.tl|42|-
+ownership_split_chain_reject|check-fail|tests/safety/ownership_split_chain_reject.tl|tests/safety/ownership_split_chain_reject.tl:20:13|cannot assign to borrowed place `pair.right`
 reassigned_ref_call_store_reject|check-fail|tests/safety/reassigned_ref_call_store_reject.tl|tests/safety/reassigned_ref_call_store_reject.tl:22:11|cannot assign to borrowed place `p.z`
 reassigned_ref_call_store_ok|run-exit|tests/safety/reassigned_ref_call_store_ok.tl|42|-
 reborrow_through_mut_holder_bound_reject|check-fail|tests/safety/reborrow_through_mut_holder_bound_reject.tl|tests/safety/reborrow_through_mut_holder_bound_reject.tl:19:3|return type mismatch

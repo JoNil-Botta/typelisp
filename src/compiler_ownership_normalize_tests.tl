@@ -2,6 +2,7 @@
 (import compiler_typed_occurrence as typed)
 (import compiler_typed_occurrence_tests as fixture)
 (import compiler_ownership_core as own)
+(import compiler_ownership_core_tests as core_fixture)
 (import compiler_ownership_dump as dump)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
@@ -9,6 +10,8 @@
 (import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as transfer_map)
 
 (define (normalize-test-node!
   [store : (&mut store typed.TypedStore)]
@@ -957,7 +960,99 @@
                   (= (array-ref diagnostic.fields 0) -1))))]
           [_ false])])))
 
+;; Compare every key with the former block/instruction scan: repeated pairs,
+;; interleaved Copy/Move/Read, projected roots, empty blocks and spare capacity.
+(define (normalize-test-transfer-index?) : bool
+  (let
+    [blocks : (__tl_dyn-array own.OwnershipBlock)
+      (__tl_make-array own.OwnershipBlock 3)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array 0 127 127)]
+    [block : i64 0]
+    (while (< block 3)
+      (let
+        [instructions : (__tl_dyn-array own.OwnershipInstruction)
+          (__tl_make-array own.OwnershipInstruction 128)]
+        [index : i64 0]
+        (while (< index 128)
+          (let
+            [from : own.OwnershipPlaceId
+              (core_fixture.ownership-test-place-id
+                (if (= (% index 2) 0)
+                  1
+                  3))]
+            [to : own.OwnershipPlaceId
+              (core_fixture.ownership-test-place-id
+                (if (= (% index 5) 0)
+                  6
+                  5))]
+            (set!
+              (array-ref instructions index)
+              (own.OwnershipInstruction
+                (match (% index 3)
+                  [0 (own.OwnershipOperation.Copy from to)]
+                  [1 (own.OwnershipOperation.Move from to)]
+                  [_ (own.OwnershipOperation.Read from)])
+                (core_fixture.ownership-test-source index))))
+          (set! index (+ index 1)))
+        (set!
+          (array-ref blocks block)
+          (core_fixture.ownership-test-block
+            instructions
+            (core_fixture.ownership-test-return))))
+      (set! block (+ block 1)))
+    (let
+      [body : own.OwnershipBody (core_fixture.ownership-test-body blocks)]
+      [transfers : norm.NormalizeTransfers
+        (norm.normalize-transfer-index (& body) (& counts))]
+      [source : i64 0]
+      (while (< source 7)
+        (let
+          [target : i64 0]
+          (while (< target 7)
+            (let
+              [read : i64
+                (transfer_map.get-value-or
+                  (& transfers.heads)
+                  (+ (* source 7) target)
+                  0)]
+              [block : i64 0]
+              (while (< block 3)
+                (let
+                  [index : i64 0]
+                  (while (< index (array-ref counts block))
+                    (match (&
+                      (array-ref
+                        (array-ref body.blocks block).instructions
+                        index).operation)
+                      [(or (own.OwnershipOperation.Copy from to)
+                           (own.OwnershipOperation.Move from to))
+                        (when
+                          (and
+                            (=
+                              source
+                              (own.ownership-place-root (& body) from.index))
+                            (=
+                              target
+                              (own.ownership-place-root (& body) to.index)))
+                          (unless
+                            (and
+                              (> read 0)
+                              (= (array-ref transfers.blocks (- read 1)) block)
+                              (= (array-ref transfers.indices (- read 1)) index))
+                            (return false))
+                          (set! read (array-ref transfers.next (- read 1))))]
+                      [_ unit])
+                    (set! index (+ index 1))))
+                (set! block (+ block 1)))
+              (unless (= read 0) (return false)))
+            (set! target (+ target 1))))
+        (set! source (+ source 1)))
+      true)))
+
 (define (compiler-ownership-normalize-self-test) : i64
+  (test.assert-true
+    (normalize-test-transfer-index?)
+    "normalizer transfer index preserves every ordered scan match")
   (let
     [mode : i64 0]
     (while (< mode 12)

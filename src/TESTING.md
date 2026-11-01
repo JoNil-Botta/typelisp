@@ -1501,6 +1501,11 @@ initializers, duplicate executable edges, malformed child spans, stale owners,
 resource limits and unsupported dead forms. They use selected-occurrence
 fixtures; broader source producer coverage and lowering admission remain
 separate obligations.
+The transfer-index fixture compares every ordered match with a full instruction
+scan, including duplicate pairs, projected roots, empty blocks and spare
+instruction capacity. `ownership_split_many.tl` exercises 256 split bindings
+and chained redirects at opt0/1/2; the adjacent safety rejection keeps the
+redirected borrow live after its source binding is reassigned.
 Isolated production mutations removing the repeated-occurrence guard or
 forcing an `and` RHS to execute are rejected by the focused expectations with
 normal exit 1; compilation failures or crashes are not mutation witnesses.

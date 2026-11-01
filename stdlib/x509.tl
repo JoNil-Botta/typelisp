@@ -547,7 +547,7 @@
       (der.fail! state (der.InvalidValue) range.start)
       (NoAddress)]))
 
-;: Validate an implicit IA5String, preserving every exact byte and its case.
+;: Validate a nonempty implicit IA5String, preserving exact bytes and case.
 (define (ascii!
   [input : (& input bytes)]
   [state : (&mut state der.Cursor)]
@@ -584,7 +584,11 @@
       (not state.failed)
       (cond
         [(or (= value.tag 1) (= value.tag 2) (= value.tag 6))
-          (ascii! input state value)]
+          ; Empty IA5 bases are valid name constraints (including DNS
+          ; namespace exclusions), while empty SAN entries are forbidden.
+          (when
+            (or (not constraint?) (< value.content value.end))
+            (ascii! input state value))]
         [(= value.tag 7)
           (let
             [length : i64 (- value.end value.content)]

@@ -202,6 +202,9 @@
   (reject-extension 35 "3003820101")
   (reject-extension 35 "3006800101800101")
   (reject-extension 17 "3000")
+  (reject-extension 17 "30028100")
+  (reject-extension 17 "30028200")
+  (reject-extension 17 "30028600")
   (reject-extension 17 "30058703c00002")
   (reject-extension 17 "30038201ff")
   (reject-extension 17 "30028900")
@@ -209,12 +212,81 @@
   (reject-extension 17 "3004a5020500")
   (reject-extension 30 "3000")
   (reject-extension 30 "3002a000")
+  (reject-extension 30 "3009a1073005820361ff62")
   (reject-extension 30 "300ba009300782026162800101")
   (let
     [bytes : byte_buf.ByteBuf
       (synthetic (append (extension 19 true "3000") (extension 19 true "3000")))]
     (expect-rejected (byte_buf.as-bytes (& bytes)))
     unit))
+
+(define (namespace-exclusions [ia5-tag : i64]) : unit
+  (let
+    [subtrees : byte_buf.ByteBuf
+      (append
+        (tlv 48 (tlv ia5-tag (byte_buf.new)))
+        (append (tlv 48 (tlv 135 (zeros 8))) (tlv 48 (tlv 135 (zeros 32)))))]
+    [value : byte_buf.ByteBuf (tlv 48 (tlv 161 subtrees))]
+    [bytes : byte_buf.ByteBuf
+      (synthetic (tlv 48 (append (hex "0603551d1e0101ff") (tlv 4 value))))]
+    [fallback : x509.GeneralName
+      (x509.GeneralName 0 (der.Range 0 0) (der.Range 0 0) (x509.NoAddress))]
+    (match (x509.parse-der (byte_buf.as-bytes (& bytes)) (x509.default-limits))
+      [(x509.CertificateErr error)
+        (test.assert-i64-eq
+          error.offset
+          -1
+          "empty IA5 namespace exclusion rejected")]
+      [(x509.CertificateOk certificate)
+        (test.assert-i64-eq
+          (constraints.len (& certificate.name-constraints))
+          3
+          "all namespace exclusions")
+        (let
+          [empty : x509.Constraint
+            (constraints.get
+              (& certificate.name-constraints)
+              0
+              (x509.Constraint false fallback (x509.NoAddress)))]
+          (test.assert-true empty.excluded "excluded empty IA5 base")
+          (test.assert-i64-eq
+            empty.base.kind
+            (- ia5-tag 128)
+            "empty IA5 CHOICE")
+          (test.assert-i64-eq
+            empty.base.value.length
+            0
+            "empty IA5 bytes retained"))
+        (let
+          [ipv4 : x509.Constraint
+            (constraints.get
+              (& certificate.name-constraints)
+              1
+              (x509.Constraint false fallback (x509.NoAddress)))]
+          [ipv6 : x509.Constraint
+            (constraints.get
+              (& certificate.name-constraints)
+              2
+              (x509.Constraint false fallback (x509.NoAddress)))]
+          (test.assert-true
+            (and ipv4.excluded ipv6.excluded)
+            "IP namespace exclusions")
+          (test.assert-i64-eq ipv4.base.value.length 8 "IPv4 address and mask")
+          (test.assert-i64-eq ipv6.base.value.length 32 "IPv6 address and mask")
+          (match ipv4.mask
+            [(x509.Address (ip.V4 mask))
+              (test.assert-i64-eq
+                (cast (ip.ipv4-octet (& mask) 0) : i64)
+                0
+                "zero IPv4 mask")]
+            [_ (test.assert-true false "IPv4 mask lost type")])
+          (match ipv6.mask
+            [(x509.Address (ip.V6 mask))
+              (test.assert-i64-eq
+                (cast (ip.ipv6-segment (& mask) 7) : i64)
+                0
+                "zero IPv6 mask")]
+            [_ (test.assert-true false "IPv6 mask lost type")]))])))
 
 (define (other-names) : unit
   (let
@@ -892,6 +964,9 @@
       859
       "2a9eea703a50934b911d577d64aa1b76d9e7139f350083169da3bb017d604226")
     (schema-negatives)
+    (namespace-exclusions 130)
+    (namespace-exclusions 129)
+    (namespace-exclusions 134)
     (version-tests)
     (other-names)
     (unsupported-name)

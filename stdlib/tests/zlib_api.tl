@@ -692,22 +692,39 @@
         8
         0
         "reference before the dictionary"))
-    (let
-      [narrow : deflate.DeflateLimits (deflate.default-limits)]
-      (set! narrow.max-work (+ 33495 (- dictionary.len 1)))
-      (assert-outcome
-        (&
-          (split-outcome
-            (byte_buf.as-bytes (& input))
-            (& narrow)
-            (byte_buf.as-bytes (& dictionary))
-            true
-            (byte_buf.as-bytes (& expected))
-            true))
-        19
-        6
-        0
-        "dictionary bytes are charged"))
+    ;; Priming needs 33489 initialization units, 6 framing units and one per
+    ;; dictionary byte. Each short budget fails with WorkLimit after the
+    ;; identifier, charging each framing byte once, and the failure repeats.
+    (for [case (iterator.range 0 5)]
+      (let
+        [index : i64
+          (if (< case 3)
+            15
+            14)]
+        [member : byte_buf.ByteBuf (fixture-input index)]
+        [member-output : byte_buf.ByteBuf (fixture-output index)]
+        [member-dictionary : byte_buf.ByteBuf (dictionary-bytes index)]
+        [narrow : deflate.DeflateLimits (deflate.default-limits)]
+        (set!
+          narrow.max-work
+          (cond
+            [(< case 3) (+ 33495 case)]
+            [(= case 3) 33495]
+            [else (+ 33495 (- member-dictionary.len 1))]))
+        (let
+          [outcome : Outcome
+            (split-outcome
+              (byte_buf.as-bytes (& member))
+              (& narrow)
+              (byte_buf.as-bytes (& member-dictionary))
+              true
+              (byte_buf.as-bytes (& member-output))
+              true)]
+          (assert-outcome (& outcome) 19 6 0 "dictionary bytes are charged")
+          (test.assert-i64-eq
+            outcome.work
+            33495
+            "framing bytes are charged once"))))
     (match (zlib.decoder-new (& limits) (& (zlib.AllowDictionary)))
       [(zlib.ZlibNewErr _) (test.assert-true false "dictionary phase setup")]
       [(zlib.ZlibNewOk state)
@@ -960,6 +977,45 @@
       5
       0
       "dictionary identifier counts as input")
+    ;; A missing framing byte is Truncated at EOF before either limit applies.
+    (let
+      [member : byte_buf.ByteBuf (member-bytes 2)]
+      [expected : byte_buf.ByteBuf (fixture-output 2)]
+      [none : byte_buf.ByteBuf (byte_buf.new)]
+      (for [case (iterator.range 0 4)]
+        (let
+          [field : i64
+            (if (< case 2)
+              0
+              2)]
+          [value : i64
+            (cond
+              [(= case 0) 19]
+              [(= case 1) 1]
+              [(= case 2) (- work 1)]
+              [else 33490])]
+          [input : byte_buf.ByteBuf
+            (byte_buf.from-bytes-range
+              (byte_buf.as-bytes (& member))
+              0
+              (if (= (% case 2) 0)
+                19
+                1))]
+          (assert-outcome
+            (&
+              (split-outcome
+                (byte_buf.as-bytes (& input))
+                (& (limits-with field value))
+                (byte_buf.as-bytes (& none))
+                false
+                (byte_buf.as-bytes (& expected))
+                true))
+            12
+            input.len
+            (if (= (% case 2) 0)
+              22
+              0)
+            "missing framing byte precedes limits"))))
     (assert-outcome
       (& (fixture-outcome 2 (& (limits-with 1 22))))
       -1

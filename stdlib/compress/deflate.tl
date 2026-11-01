@@ -789,8 +789,10 @@
 ;: `prefix` container bytes already accepted, such as a zlib header, count
 ;: toward max-input, ratio credit and work. The last window-bytes of
 ;: `dictionary` become history that references may reach (RFC 1950 preset
-;: dictionaries). Charges one unit per prefix and dictionary byte. Returns
-;: false without change unless fresh, or false with a sticky limit failure.
+;: dictionaries). Charges one unit per prefix and dictionary byte, all or
+;: nothing. Returns false without change unless fresh, or false with a sticky
+;: limit failure that leaves the counters unchanged and reports the prefix
+;: bytes within max-input as its input position.
 (define (decoder-prime!
   [state : (&mut state Decoder)]
   [prefix : i64]
@@ -810,6 +812,7 @@
   (when
     (> prefix state.limits.max-input)
     (deflate-fail! state (InputLimit))
+    (set! state.failure.input state.limits.max-input)
     (return false))
   (let
     [length : i64 (byte_buf.bytes-length dictionary)]
@@ -817,8 +820,15 @@
       (if (< length state.limits.window-bytes)
         length
         state.limits.window-bytes)]
-    (unless (deflate-charge! state prefix) (return false))
-    (unless (deflate-charge! state length) (return false))
+    (when
+      (> length (- 9223372036854775807 prefix))
+      (deflate-fail! state (Overflow))
+      (set! state.failure.input prefix)
+      (return false))
+    (unless
+      (deflate-charge! state (+ prefix length))
+      (set! state.failure.input prefix)
+      (return false))
     (set! state.total-input prefix)
     (for [index (iterator.range 0 kept)]
       (set!

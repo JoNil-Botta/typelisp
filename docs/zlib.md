@@ -77,6 +77,7 @@ Both wrappers loop over the incremental engine. They grow output exactly as `def
 - The dictionary is checked against the identifier.
 - Its last `window-bytes` bytes become history through `deflate.decoder-prime!`, so references may reach into it.
 - A mismatch is a sticky `DictionaryMismatch`.
+- The dictionary's work charge precedes the identifier check, so a dictionary beyond the remaining work budget fails with a sticky `WorkLimit`, even when it would not have matched.
 - A call while the decoder is not awaiting a dictionary is rejected with `InvalidState` and changes nothing.
 - Callers holding several candidates can compare `adler32.checksum` with the identifier first.
 - No dictionary is ever found through I/O or global state.

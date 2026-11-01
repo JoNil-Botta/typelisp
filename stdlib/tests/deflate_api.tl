@@ -1260,8 +1260,23 @@
                 (byte_buf.as-bytes (& input))
                 (byte_buf.as-mut-bytes (&mut out))
                 true)]
+            (test.assert-i64-eq
+              state.work
+              initial
+              "failed priming charges nothing")
+            (test.assert-i64-eq
+              state.total-input
+              0
+              "failed priming accepts nothing")
             (match result.status
-              [(deflate.Error error) (+ 100 (kind-code (& error.kind)))]
+              [(deflate.Error error)
+                (test.assert-i64-eq
+                  error.input
+                  (if (> prefix limits.max-input)
+                    limits.max-input
+                    prefix)
+                  "failed priming position")
+                (+ 100 (kind-code (& error.kind)))]
               [_ 99]))))]))
 
 ;; Body 032200 is length 3 at distance 3; 036200 is length 3 at distance 4.

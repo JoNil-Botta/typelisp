@@ -46,8 +46,8 @@ An empty call can progress using buffered bits or pending output. Otherwise it n
 
 - `prefix` counts container bytes already accepted, such as a header. They count toward `max-input`, ratio credit and work, so one budget covers the whole container member.
 - The last `window-bytes` bytes of `dictionary` become history that references may reach, as for RFC 1950 preset dictionaries. A reference may reach back over emitted output plus that preset; anything earlier is `InvalidDistance`.
-- Priming charges one work unit per prefix byte and per dictionary byte, before any copy.
-- It returns false without change for a decoder that has already started. It also returns false, with a sticky `InputLimit` or `WorkLimit`, when a limit is exceeded.
+- Priming charges one work unit per prefix byte and per dictionary byte, all at once and before any copy.
+- It returns false without change for a decoder that has already started. It also returns false, with a sticky `InputLimit` or `WorkLimit`, when a limit is exceeded. Such a failure leaves the input and work counters unchanged, so a container that still holds its prefix bytes counts each byte exactly once. Its reported input position is the number of prefix bytes within `max-input`.
 
 Only a byte needed for the current field or Huffman symbol is accepted. Stored-block alignment and final-byte padding discard the remaining bits of the current byte, with no requirement that they be zero. No speculative look-ahead consumes a following container byte.
 

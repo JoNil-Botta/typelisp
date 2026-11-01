@@ -571,7 +571,7 @@ The `deflate-preset-history` test covers `decoder-prime!`:
 
 Every corpus member runs:
 
-- at every two-chunk input split, with output chunks 1–8 and zero-capacity probes;
+- at two-chunk input splits with output chunks 1–8 and zero-capacity probes: every split for the small members, and the first and last three splits for the three 378-byte dynamic members;
 - byte at a time;
 - with equal work across all chunkings;
 - with exact member consumption and terminal repetition;
@@ -588,4 +588,4 @@ Other cases cover:
 - corrupted public state;
 - arena lifetimes and cancellation.
 
-Adler-32 vectors cover the empty string through a 1 MiB run, in every split and uneven chunks. Fixture provenance and the offline generator are in [`tests/fixtures/zlib/README.md`](../../tests/fixtures/zlib/README.md). The integration manifest runs this driver and the embedded-module example at opt0/1/2 on Linux and Windows.
+Adler-32 vectors cover the empty string through an 80-byte string, each at every two-chunk split, and a 1 MiB run checked whole and in uneven chunks. Fixture provenance and the offline generator are in [`tests/fixtures/zlib/README.md`](../../tests/fixtures/zlib/README.md). The integration manifest runs this driver and the embedded-module example at opt0/1/2 on Linux and Windows.

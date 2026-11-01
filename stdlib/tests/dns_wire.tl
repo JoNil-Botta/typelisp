@@ -884,7 +884,7 @@
     [packet : byte_buf.ByteBuf (rr (message 1 0 0) (pointer 29) 1 1 0 (a-data))]
     (assert-error (byte_buf.as-bytes (& packet)) false)))
 
-(define (dname-response [compressed-cname : bool]) : byte_buf.ByteBuf
+(define (dname-response [compressed-dname : bool] [compressed-cname : bool]) : byte_buf.ByteBuf
   (let
     [question-name : byte_buf.ByteBuf
       (byte_buf.push
@@ -893,12 +893,16 @@
           "example")
         0)]
     [target : byte_buf.ByteBuf
-      (byte_buf.push (text-label (text-label (byte_buf.new) "b") "example") 0)]
+      (if compressed-dname
+        (u16 (text-label (byte_buf.new) "b") 49170)
+        (byte_buf.push (text-label (text-label (byte_buf.new) "b") "example") 0))]
     [packet : byte_buf.ByteBuf (question (header 0x8180 3 0 0) question-name 1)]
     (set! packet (rr packet (pointer 16) 39 1 300 target))
     (test.assert-i64-eq
       (byte_buf.len (& packet))
-      54
+      (if compressed-dname
+        47
+        54)
       "DNAME target offset43 extent")
     (let
       [cname : byte_buf.ByteBuf
@@ -910,15 +914,34 @@
               "example")
             0))]
       (set! packet (rr packet (pointer 12) 5 1 300 cname)))
-    (rr packet (pointer 66) 1 1 300 (u32 (byte_buf.new) 0xc0000202))))
+    (test.assert-i64-eq
+      (byte_buf.len (& packet))
+      (if compressed-cname
+        (if compressed-dname
+          65
+          72)
+        (if compressed-dname
+          74
+          81))
+      "CNAME extent")
+    (rr
+      packet
+      (pointer
+        (if compressed-dname
+          59
+          66))
+      1
+      1
+      300
+      (u32 (byte_buf.new) 0xc0000202))))
 
 (test
   dns-dname-target-and-synthesized-cname
   (let
-    [packet : byte_buf.ByteBuf (dname-response false)]
+    [packet : byte_buf.ByteBuf (dname-response false false)]
     (assert-complete (& packet) 2))
   (let
-    [packet : byte_buf.ByteBuf (dname-response true)]
+    [packet : byte_buf.ByteBuf (dname-response false true)]
     (match (wire.decode-response (byte_buf.as-bytes (& packet)))
       [(DnsComplete msg)
         (test.assert-i64-eq msg.len 2 "DNAME stays skipped")
@@ -936,11 +959,11 @@
           "address owner expands via CNAME data")]
       [_
         (test.assert-true false "compressed synthesized CNAME references DNAME")]))
-  ;; DNAME's target is literal, even though later names may point into it.
+  ;; Receive compressed DNAME targets through the same checked name decoder.
   (let
     [packet : byte_buf.ByteBuf
       (rr (message 0 1 0) (pointer 12) 39 1 0 (pointer 12))]
-    (assert-error (byte_buf.as-bytes (& packet)) false))
+    (assert-complete (& packet) 0))
   (let
     [packet : byte_buf.ByteBuf
       (rr
@@ -950,7 +973,7 @@
         1
         0
         (u16 (text-label (byte_buf.new) "x") 49164))]
-    (assert-error (byte_buf.as-bytes (& packet)) false))
+    (assert-complete (& packet) 0))
   (let
     [packet : byte_buf.ByteBuf
       (rr (message 0 1 0) (pointer 12) 39 3 0 (pointer 12))]
@@ -969,15 +992,73 @@
 (test
   dns-dname-targets-charge-name-budget
   (let
-    [count : i64 127]
-    (while (<= count 128)
+    [mode : i64 0]
+    (while (< mode 2)
       (let
-        [packet : byte_buf.ByteBuf (message 0 count 0)]
-        [i : i64 0]
-        (while (< i count)
-          (set! packet (rr packet (pointer 12) 39 1 0 (root)))
-          (set! i (+ i 1)))
-        (if (= count 127)
-          (assert-complete (& packet) 0)
-          (assert-error (byte_buf.as-bytes (& packet)) true)))
-      (set! count (+ count 1)))))
+        [count : i64 127]
+        (while (<= count 128)
+          (let
+            [packet : byte_buf.ByteBuf (message 0 count 0)]
+            [i : i64 0]
+            (while (< i count)
+              (set!
+                packet
+                (rr
+                  packet
+                  (pointer 12)
+                  39
+                  1
+                  0
+                  (if (= mode 0)
+                    (root)
+                    (pointer 12))))
+              (set! i (+ i 1)))
+            (if (= count 127)
+              (assert-complete (& packet) 0)
+              (assert-error (byte_buf.as-bytes (& packet)) true)))
+          (set! count (+ count 1))))
+      (set! mode (+ mode 1)))))
+
+(test
+  dns-systemd-dname-compression
+  ;; Question at12, DNAME data at43 uses b + pointer18; synthesized CNAME
+  ;; data at59 uses www + pointer43, and the A owner points back to59.
+  (let
+    [packet : byte_buf.ByteBuf (dname-response true true)]
+    [text : String "www.b.example"]
+    (match (wire.decode-response (byte_buf.as-bytes (& packet)))
+      [(DnsComplete msg)
+        (test.assert-i64-eq msg.len 2 "systemd DNAME stays skipped")
+        (match (wire.parse-name (& text))
+          [(DnsNameOk expected)
+            (match (array-ref msg.records 0).data
+              [(DnsCname target)
+                (test.assert-true
+                  (wire.name-eq? (& target) (& expected))
+                  "systemd synthesized CNAME target")]
+              [_ (test.assert-true false "systemd CNAME type")])
+            (test.assert-true
+              (wire.name-eq? (& (array-ref msg.records 1).owner) (& expected))
+              "systemd A owner follows CNAME and DNAME compression")]
+          [_ (test.assert-true false "expected canonical name")])
+        (match (array-ref msg.records 1).data
+          [(DnsA octets)
+            (test.assert-i64-eq
+              (cast (array-ref octets 3) : i64)
+              2
+              "systemd A bytes")]
+          [_ (test.assert-true false "systemd A type")])]
+      [_ (test.assert-true false "systemd-resolved compressed DNAME response")]))
+  ;; DNAME still has exactly one bounded name, including compressed encodings.
+  (let
+    [target : i64 29]
+    (while (<= target 30)
+      (let
+        [packet : byte_buf.ByteBuf
+          (rr (message 0 1 0) (pointer 12) 39 1 0 (pointer target))]
+        (assert-error (byte_buf.as-bytes (& packet)) false))
+      (set! target (+ target 1))))
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr (message 0 1 0) (pointer 12) 39 1 0 (byte_buf.push (pointer 12) 0))]
+    (assert-error (byte_buf.as-bytes (& packet)) false)))

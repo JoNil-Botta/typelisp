@@ -143,18 +143,18 @@ and each reports its first failure offset. Compression targets must be backward
 label boundaries already validated in a question, owner or supported IN name
 field. Skipped NS, MD/MF, MB/MG/MR, PTR, MINFO, MX and DNAME records validate
 their name-field layouts and exact RDATA lengths under the same budgets; their
-values are never returned. DNAME targets must be uncompressed, as RFC 6672
-requires, and can supply targets for later compressed names. This allows glue
-owners to reference NS authority data and CNAMEs to reference DNAME targets.
-Other opaque RDATA (including SRV and unknown types/classes)
-cannot supply compression targets. Non-ASCII bytes in any decoded name reject
+values are never returned. For systemd-resolved interoperability, the receiver
+accepts compressed DNAME targets under the same boundary and budget checks;
+RFC 6672's uncompressed-target rule constrains senders. This allows glue owners
+to reference NS authority data and CNAMEs to reference DNAME targets. Other
+opaque RDATA (including SRV and unknown types/classes) cannot supply compression
+targets. Non-ASCII bytes in any decoded name reject
 the message, including owners of unrelated records. Returned A/AAAA bytes,
 CNAME, SOA and OPT metadata retain message order and section identity. OPT
 tuples are checked and skipped; the resolver owns version/RCODE policy. The
 codec performs no host or network calls and retains no input borrow. Only the
-first `DnsMessage.len` slots
-in `records` are live; the backing array length is capacity and its padding
-must never be treated as decoded records.
+first `DnsMessage.len` slots in `records` are live; the backing array length is
+capacity and its padding must never be treated as decoded records.
 
 ## Backend Runtime Helper Ownership
 

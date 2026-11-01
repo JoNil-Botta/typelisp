@@ -18,9 +18,10 @@ canonical names, legal compression boundaries and cycles, every byte prefix,
 all hard limits, and 512 fixed-seed mutation cases. Its TC prefix/mutation
 matrix requires an envelope-only result regardless of incomplete RR bytes.
 Skipped IN name-field layouts are checked for legal NS/glue, legacy and DNAME
-compression targets, exact RDATA extents and shared name budgets. DNAME targets
-must be literal, but synthesized CNAMEs can reference them. SRV, unknown types
-and unknown classes cannot supply speculative targets.
+compression targets, exact RDATA extents and shared name budgets. Both literal
+BIND-style and compressed systemd-resolved DNAME targets support synthesized
+CNAMEs and chained address owners. SRV, unknown types and unknown classes cannot
+supply speculative targets.
 
 `string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second

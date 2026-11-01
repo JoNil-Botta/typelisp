@@ -13,10 +13,11 @@
 ;# Compression targets must be backward, previously validated label boundaries.
 ;# IN name fields (including skipped NS/MD/MF/MB/MG/MR/PTR/MINFO/MX and DNAME
 ;# records) are validated under the same bounds so later names can reference
-;# them. DNAME targets must be literal (RFC 6672 section 2.5). Their record
-;# values remain unreturned. Other opaque RDATA is never scanned for speculative
-;# names. Each hop must precede the current expansion
-;# start, rejecting cycles even when a pointer follows literal labels.
+;# them. DNAME target compression is accepted for systemd-resolved compatibility
+;# under the same boundary and budget checks. Their values remain unreturned.
+;# Other opaque RDATA is never scanned for speculative names. Each hop must
+;# precede the current expansion start, rejecting cycles even when a pointer
+;# follows literal labels.
 ;# Non-ASCII bytes in any decoded name, including skipped-record names and
 ;# owners of unrelated records, reject the message under the ASCII-only policy.
 ;#
@@ -312,10 +313,7 @@
     (+ (shl high 16) low)))
 
 ;: Decode a name within the current field; pointer expansion uses message bounds.
-(define (read-name!
-  [d : (&mut d Decoder)]
-  [input : (& input bytes)]
-  [allow-compression : bool]) : DnsName
+(define (read-name! [d : (&mut d Decoder)] [input : (& input bytes)]) : DnsName
   (let
     [out : DnsName (root-name)]
     [p : i64 d.offset]
@@ -340,7 +338,6 @@
           [tag : i64 (cast (byte_buf.bytes-ref input p) : i64)]
           (cond
             [(>= tag 192)
-              (when (not allow-compression) (fail! d false p) (return out))
               (when (not (present? bound p 2)) (fail! d false p) (return out))
               (let
                 [target : i64
@@ -413,7 +410,7 @@
       (DnsMalformed))
     d.error-offset))
 
-;: Number of domain-name fields in skipped IN RDATA. Legacy fields and literal
+;: Number of domain-name fields in skipped IN RDATA. Legacy fields and
 ;: DNAME targets are validated for later compression references, although their
 ;: records are not returned. MX also has a two-byte preference.
 (define (skipped-name-count [rtype : i64]) : i64
@@ -451,7 +448,7 @@
       [ar : i64 (read-u16! (&mut d) input)]
       (when (!= qd 1) (return (DnsResponseErr (DnsError (DnsMalformed) 4))))
       (let
-        [name : DnsName (read-name! (&mut d) input true)]
+        [name : DnsName (read-name! (&mut d) input)]
         [qtype : u16 (cast (read-u16! (&mut d) input) : u16)]
         [qclass : u16 (cast (read-u16! (&mut d) input) : u16)]
         [envelope : DnsEnvelope
@@ -474,7 +471,7 @@
             [index : i64 0]
             (while (and (< index total) (not d.failed))
               (let
-                [owner : DnsName (read-name! (&mut d) input true)]
+                [owner : DnsName (read-name! (&mut d) input)]
                 [rtype : i64 (read-u16! (&mut d) input)]
                 [rclass : i64 (read-u16! (&mut d) input)]
                 [ttl : i64 (read-u32! (&mut d) input)]
@@ -537,11 +534,11 @@
                                     (array-ref octets 3)))
                                 (DnsAaaa octets))))]
                         [(and (= rclass 1) (= rtype 5))
-                          (DnsCname (read-name! (&mut d) input true))]
+                          (DnsCname (read-name! (&mut d) input))]
                         [(and (= rclass 1) (= rtype 6))
                           (let
-                            [primary : DnsName (read-name! (&mut d) input true)]
-                            [mailbox : DnsName (read-name! (&mut d) input true)]
+                            [primary : DnsName (read-name! (&mut d) input)]
+                            [mailbox : DnsName (read-name! (&mut d) input)]
                             [serial : i64 (read-u32! (&mut d) input)]
                             [refresh : i64 (read-u32! (&mut d) input)]
                             [retry : i64 (read-u32! (&mut d) input)]
@@ -587,8 +584,7 @@
                               (< name-index skipped-names)
                               (not d.failed))
                               (let
-                                [_name : DnsName
-                                  (read-name! (&mut d) input (!= rtype 39))]
+                                [_name : DnsName (read-name! (&mut d) input)]
                                 unit)
                               (set! name-index (+ name-index 1))))
                           (DnsCname (root-name))]

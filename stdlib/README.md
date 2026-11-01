@@ -125,6 +125,7 @@ so this section only maps the modules by area. Import a module with
   `net_fake` (injected conformance support), `net/dns/wire`,
   `net/http_types`, `net/http_head_codec`,
   `net/http_trailer`, `net/http_trailer_policy`, `net/ip`, `net/tls_wire`,
+  `net/dns_name`, `net/resolver_config`, `net/resolver_config_linux`,
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,
   `crypto_sha1_git`,
   `crypto_sha256`, `crypto_sha512`, `crypto_rsa_core`, `crypto_rsa_verify`,
@@ -163,6 +164,52 @@ tuples are checked and skipped; the resolver owns version/RCODE policy. The
 codec performs no host or network calls and retains no input borrow. Only the
 first `DnsMessage.len` slots in `records` are live; the backing array length is
 capacity and its padding must never be treated as decoded records.
+
+`net/dns_name` is the shared checked ASCII DNS-name value for resolver keys
+and policy. `parse`/`parse-bytes` lowercase LDH labels, retain an optional final
+dot as separate rooted identity, and report original byte offsets. Labels are
+limited to 63 bytes, canonical text to 253 bytes and expanded wire names to
+255 bytes/127 labels. Unicode, empty labels and boundary hyphens are rejected.
+
+`net/resolver_config` builds complete immutable-by-API owned snapshots:
+`parse-hosts` accepts bytes, `from-explicit` accepts checked nameserver values,
+suffix text, hosts bytes and a timeout, and `parse-linux` accepts injected hosts
+and resolv.conf bytes. Accessors borrow the published value; builder mutations
+operate on a distinct construction type. As with other stdlib value records,
+the public representation must not be forged or mutated by callers. No files,
+environment, libc resolver, sockets or cache are consulted by these constructors.
+
+`nameserver` checks ports 1..65535 and scope IDs 0..4294967295 (IPv4 requires
+zero scope). Complete address/port/scope tuples deduplicate in first-occurrence
+order. At most eight server inputs and six suffixes are accepted explicitly;
+suffix wire lengths total at most 256 bytes. Linux parsing accepts `nameserver`
+with canonical IP literals (port 53/scope 0), and the last `search` or `domain`
+directive. Empty `search` clears the list. Suffix order and rooted identity are
+preserved. No server or search suffix is inferred when none is supplied.
+Timeouts are 1..30000 monotonic milliseconds, default 1000; Linux options,
+`LOCALDOMAIN` and `RES_OPTIONS` cannot change them or search policy.
+
+Each file is bounded to 1 MiB, each line to 8192 bytes excluding CRLF, hosts
+input to 4096 records, 16 aliases per record and 16384 input name bindings
+(including duplicates). Supported malformed input and exceeded bounds fail
+the entire replacement with source path identity, one-based line, byte offset
+and category. Unsupported resolv.conf directives/options are ignored, retaining
+the first 64 location/category diagnostics plus a total count, without copying
+input text. Comments (`#`, also `;` in resolv.conf), tabs, CRLF and missing final
+newlines are accepted. Hosts lookup ignores rootedness, deduplicates exact IP
+values and returns IPv6 then IPv4, each in network-byte order. `localhost?` and
+`localhost-addresses` represent reserved loopback policy separately from hosts;
+resolver consumers apply this policy before consulting hosts or DNS.
+
+`net/resolver_config_linux.load-system` (Linux only) reads `/etc/hosts` and
+`/etc/resolv.conf` with bounded streaming handles. Temporary read buffers are
+limited to 8192 bytes and reclaimed after each read, so repeated short reads
+retain only the fixed output buffer. Missing/unreadable files
+return a structured error. `load-with-source` injects byte-source results for
+hermetic adapters/tests; `read-source-path` permits filesystem fixtures and
+reports the corresponding logical source path. A successful call returns one
+complete replacement; any error leaves the caller's existing state untouched.
+There is no watcher, resolver state swap or DNS exchange in these modules.
 
 ## Backend Runtime Helper Ownership
 

@@ -16,13 +16,17 @@ function selected(name) {
 }
 /^[[:space:]]*\.globl / {
     name = $2
-    active = selected(name)
-    if (active) {
-        if (name !~ /^[A-Za-z0-9_$]+$/) exit 1
-        file = output "/" name ".body"
-        print name > (output "/symbols")
-    }
+    pending = selected(name) ? name : ""
+    active = 0
     next
+}
+/^[A-Za-z0-9_$]+:$/ && $0 == pending ":" {
+    name = pending
+    if (defined[name]++) exit 1
+    file = output "/" name ".body"
+    print name > (output "/symbols")
+    pending = ""
+    active = 1
 }
 /^[[:space:]]*\.(size|section)[[:space:]]/ { active = 0; next }
 active {
@@ -47,6 +51,6 @@ if [ ! -f "$pins" ]; then
     echo "missing reviewed AES shape pins: $pins" >&2
     exit 1
 fi
-awk 'NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-f]/ { exit 1 }' "$pins" \
+awk 'NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-f]/ || seen[$2]++ { exit 1 }' "$pins" \
     || { echo 'malformed AES shape pins' >&2; exit 1; }
 diff -u "$pins" "$work/actual.sha256"

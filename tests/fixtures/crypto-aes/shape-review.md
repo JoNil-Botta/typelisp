@@ -8,9 +8,14 @@ unused helper alone can satisfy this boundary.
 
 The extractor selects every emitted `crypto_aes_core` function, the exported
 `aes_audit_production_128`/`256` roots, their Windows `$typelisp` bridge bodies,
-and the real `main`. It preserves opcodes, operands, memory addresses, local
+and the real ordinary-entry `main`. All four target/opt outputs must assemble.
+Windows entry setup adds only its public argc/argv stores; every AES helper
+and retained root is byte-identical to the reviewed library-context body.
+It preserves opcodes, operands, memory addresses, local
 labels, branch targets, constants and calls, omitting only assembler metadata
-and comments. It resets its symbol inventory on each invocation and compares
+and comments. It starts extraction only at an actual selected function label, not a forward
+`.globl` declaration, and rejects duplicate definitions and malformed pin rows.
+It resets its symbol inventory on each invocation and compares
 both the full inventory and hashes; missing, additional, changed or newly
 inlined work requires renewed review. The fixture compiles twice identically.
 

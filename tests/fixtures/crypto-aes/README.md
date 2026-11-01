@@ -66,7 +66,8 @@ middle and last bits must preserve both setup and per-block counts. Steady-state
 throughput is measured separately without this instrumentation.
 
 The required `aes-*` codegen rows compile both target ABIs at opt1/opt2, retain
-explicit production roots, require reproducible assembly, and compare the
+explicit production roots plus ordinary-entry callers, require reproducible
+assembly accepted by the native/target assembler, and compare the
 complete AES instruction/label bodies against reviewed SHA-256 pins. They
 include actual inlined callers and the Windows ABI bridge bodies. See
 [shape-review.md](shape-review.md) for the public branch/address/wipe inventory.

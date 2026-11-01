@@ -1,8 +1,8 @@
 # AES-specific required both-target opt1/opt2 shape boundary. Public vector,
 # lifecycle and source-work checks live in stdlib/tests/crypto_aes_*_inline.tl.
 #
-# Retain every library helper AND compile real consuming constructors and typed
-# repeated-use callers. The complete normalized instruction/label bodies of
+# Pin every emitted AES helper AND retain explicit production roots alongside
+# ordinary-entry consuming constructors and typed repeated-use callers. The complete normalized instruction/label bodies of
 # ALL AES functions and these production roots are pinned, not only unused
 # helpers. Every changed branch, address, call or wipe fails closed and requires
 # renewed assembly review; see tests/fixtures/crypto-aes/shape-review.md.
@@ -49,9 +49,10 @@ end-file
 
 case aes-production-shape
 source {{work}}/aes_audit.tl
-args --stdlib-root {{root}}/stdlib --no-entry
+args --stdlib-root {{root}}/stdlib
 target linux-x86_64 windows-x86_64
 opt 1 2
+assemble
 repeatable
 if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime
   in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime

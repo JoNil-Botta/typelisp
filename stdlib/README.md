@@ -107,7 +107,11 @@ so this section only maps the modules by area. Import a module with
   the shared base64 decoder.
 - Compression: `compress/deflate` implements bounded incremental RFC 1951
   decoding over borrowed input and caller-owned output chunks, plus a bounded
-  one-shot wrapper. See [the API and bounds](../docs/deflate.md).
+  one-shot wrapper. Its default ratio 1024/startup 1024 deliberately rejects
+  legitimate streams near DEFLATE's roughly 1032:1 maximum with typed
+  `RatioLimit` and byte offsets. Trusted or highly compressible data, including
+  native Git packs, requires an explicitly raised ratio limit. See
+  [the API and bounds](../docs/deflate.md).
   `compress/zlib` composes it with RFC 1950 framing, preset-dictionary policy
   and the canonical incremental `compress/adler32` checksum. See
   [zlib decoding](../docs/zlib.md).

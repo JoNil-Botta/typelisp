@@ -38,7 +38,7 @@
 
 Set `eof` when no input follows the offered chunk. After `NeedOutput`, continue with its unconsumed suffix and the same final-chunk promise. A required byte missing at explicit EOF produces `Truncated`, never `NeedInput`. The flag does not force consumption of a trailing container suffix.
 
-An empty call can progress using buffered bits or pending output. Otherwise it needs input. Zero output capacity can parse metadata and complete an empty member; a pending output byte gives `NeedOutput`. If that byte violates a limit, the typed limit failure takes precedence. Repeated terminal calls produce zero counts and repeat their terminal status. No automatic reset or next-member decoding occurs.
+An empty call can progress using buffered bits or pending output. Otherwise it needs input. Zero output capacity can parse metadata and complete an empty member; a pending output byte gives `NeedOutput`. If that byte violates a limit, the typed limit failure takes precedence. Repeated terminal calls produce zero counts and repeat their terminal status. After an error, the first error kind and offsets remain sticky even if forged public fields caused the failure; active workspace validation never replaces the saved error. Callers must not mutate decoder fields between calls. No automatic reset or next-member decoding occurs.
 
 ## Containers and preset history
 
@@ -64,7 +64,7 @@ Only a byte needed for the current field or Huffman symbol is accepted. Stored-b
 | `ratio` | Maximum additional output per accepted input byte. |
 | `startup-bytes` | Output allowance before ratio accounting requires input credit. |
 
-Defaults are 64 MiB input, 256 MiB output, 32768 history bytes, 2147483647 work units, ratio 1024 and startup allowance 1024. Applications should choose limits for their workload. A smaller history window can decode literals/stored bytes and nearby references; a valid reference outside it fails with `WindowLimit`. References before the beginning of decoded output fail with `InvalidDistance`.
+Defaults are 64 MiB input, 256 MiB output, 32768 history bytes, 2147483647 work units, ratio 1024 and startup allowance 1024. This is a deliberate bomb-protection policy: legitimate DEFLATE streams can approach roughly 1032:1 and exceed the default ratio. Such a stream returns typed `RatioLimit` with cumulative accepted-input and emitted-output byte offsets, rather than a malformed-input error. Callers decoding trusted or highly compressible data, such as a native Git client, must explicitly raise `ratio` (for example to 1032) while retaining suitable input, output and work bounds. Applications should choose limits for their workload. A smaller history window can decode literals/stored bytes and nearby references; a valid reference outside it fails with `WindowLimit`. References before the beginning of decoded output fail with `InvalidDistance`.
 
 Every emission must satisfy `total-output <= startup-bytes + ratio * total-input`. The engine caches a saturated output threshold for the current call and refreshes it when accepted input changes. Division and subtraction establish that multiplication cannot overflow. Accounting is cumulative across chunks and blocks. Ratio zero permits only the startup allowance.
 
@@ -92,6 +92,8 @@ The decoder embeds 721 fixed integer workspace slots and owns a `ByteBuf` histor
 `DeflateError.kind` distinguishes `InvalidLimits`, `InvalidState`, `MalformedBlock`, `MalformedTree`, `InvalidCode`, `Truncated`, `ReservedEncoding`, `InvalidDistance`, `Overflow`, and the input/output/window/work/ratio limits. `input` and `output` record cumulative accepted/emitted byte counts at the failure. They are progress positions, not a promise to identify the first offending bit. No payload bytes enter diagnostics.
 
 Tables reject oversubscription, missing end-of-block codes and invalid incomplete trees. Legal single-one-bit-symbol trees and literal-only blocks with an empty distance alphabet are accepted. Dynamic distance alphabets may describe 32 slots; reserved symbols 30/31 are rejected if decoded. The [fixture provenance](../tests/fixtures/deflate/README.md) records that zlib rejects HDIST=32 headers and therefore is not the oracle for that RFC-derived fixture.
+
+[Limit boundary and mutation derivations](deflate-fixtures.md) give the independent work totals, ratio offsets and expected errors used by the conformance tests.
 
 Public state fields are implementation state, not a serialization format. Do not edit them. Safe calls nevertheless validate shapes/scalars and check table-derived indices before use. Forged state cannot introduce unchecked decoder memory access; detected inconsistencies return `InvalidState`. No unsafe decoder helper is exposed through a safe wrapper.
 

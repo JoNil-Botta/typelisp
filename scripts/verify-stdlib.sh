@@ -200,7 +200,9 @@ byte_reader.tl
 clone.tl
 checked_size.tl
 comptime.tl
+compress/adler32.tl
 compress/deflate.tl
+compress/zlib.tl
 concurrency_registry.tl
 core_macros.tl
 crypto_p256.tl
@@ -301,6 +303,7 @@ stdlib/tests/format_negative_precision.tl|134|-|literal:format: negative width o
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/base64_api.tl|42|-|-|-
 stdlib/tests/deflate_api.tl|42|-|-|-
+stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-

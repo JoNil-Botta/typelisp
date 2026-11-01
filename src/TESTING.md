@@ -14,6 +14,20 @@ The exact Unicode command-line golden retains the literal backslash/quote
 regression; captured child stderr is checked before status so failures retain
 the child assertion.
 
+`tc-arena-phase-token-cache-boundaries` sweeps every local-binding count from
+zero through the partial-cache layer collapse, placing automatic compaction at
+each boundary between a phase token and its owner/region markers. Its explicit
+base cache enables compaction; partial-layer depth and covered-count checks at
+each full window require actual cache creation and collapse. It also
+inserts explicit transparent caches between those records, checks nested
+owner/region identity and re-reads the original environment after constructing
+shadows. Same-spelled shadows, opaque caches and unrelated intervening bindings
+must still reject the token. Keep this boundary matrix alongside the existing
+nested structural-record and deep-scan tests: burying an intact marker bundle
+under caches does not exercise a cache inside the bundle. Removing the two
+transparent-cache cases in the phase-token head helpers must make this matrix
+fail.
+
 `macro_struct_pattern` checks positional, named and nested struct patterns from
 expression macros against direct-source controls at opt0/1/2 on both hosts.
 Owned and shared scrutinees retain their field binding modes, including String

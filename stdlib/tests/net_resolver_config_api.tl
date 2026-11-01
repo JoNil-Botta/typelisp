@@ -5,7 +5,7 @@
 (import stdlib.net.ip)
 (import stdlib.net.resolver_config as config)
 (import stdlib.net.resolver_config_linux as linux)
-(import stdlib.string)
+(import stdlib.str_cat)
 (import stdlib.test)
 
 (define (name-checks) : unit
@@ -61,18 +61,20 @@
   (let
     [label : String (repeat-text "a" 63)]
     [source : String
-      (string.concat5
+      (str_cat.str-cat
         (clone label)
         "."
         (clone label)
         "."
-        (string.concat3 label "." (repeat-text "b" 61)))]
+        label
+        "."
+        (repeat-text "b" 61))]
     (match (names.parse (& source))
       [(DnsNameErr _) (io.panic "253-byte name rejected")]
       [(DnsNameOk name)
         (test.assert-i64-eq (names.wire-length (& name)) 255 "max wire")]))
   (let
-    [source : String (string.concat (& (repeat-text "a." 126)) "a.")]
+    [source : String (str_cat.str-cat (repeat-text "a." 126) "a.")]
     (match (names.parse (& source))
       [(DnsNameErr _) (io.panic "127 labels rejected")]
       [(DnsNameOk name)
@@ -172,22 +174,24 @@
   (let
     [large : String (repeat-text "a" 63)]
     [suffix : String
-      (string.concat5
+      (str_cat.str-cat
         (clone large)
         "."
         (clone large)
         "."
-        (string.concat3 large "." (repeat-text "b" 61)))]
-    (expect-resolv-error (string.concat3 "search " suffix " a") 8 1))
+        large
+        "."
+        (repeat-text "b" 61))]
+    (expect-resolv-error (str_cat.str-cat "search " suffix " a") 8 1))
   (let
     [source : String (repeat-text "#x\n" 349525)]
-    [exact : String (string.concat (& source) "#")]
+    [exact : String (str_cat.str-cat source "#")]
     (match (config.parse-hosts (byte_buf.str-as-bytes (& exact)))
       [(HostsSnapshotErr _) (io.panic "exact file bound rejected")]
       [(HostsSnapshotOk hosts)
         (test.assert-i64-eq (config.binding-count (& hosts)) 0 "exact 1 MiB")]))
   (let
-    [exact : String (string.concat (& (repeat-text "#" 8192)) "\r\n")]
+    [exact : String (str_cat.str-cat (repeat-text "#" 8192) "\r\n")]
     (match (config.parse-hosts (byte_buf.str-as-bytes (& exact)))
       [(HostsSnapshotErr _) (io.panic "exact CRLF line bound rejected")]
       [(HostsSnapshotOk _) unit]))
@@ -311,13 +315,15 @@
   (let
     [label : String (repeat-text "a" 63)]
     [suffix : String
-      (string.concat5
+      (str_cat.str-cat
         (clone label)
         "."
         (clone label)
         "."
-        (string.concat3 label "." (repeat-text "b" 59)))]
-    [source : String (string.concat3 "search " suffix " a")]
+        label
+        "."
+        (repeat-text "b" 59))]
+    [source : String (str_cat.str-cat "search " suffix " a")]
     (match (config.parse-linux
       (byte_buf.str-as-bytes "")
       (byte_buf.str-as-bytes (& source)))

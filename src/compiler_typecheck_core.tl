@@ -9849,9 +9849,9 @@
     bind)
   (match result
     [(TcSelectedResult.Ok
-        ty
-        (TcSelectedOccurrence.Selected id)
-        (TcSelectedSink.Capture store lease bindings))
+      ty
+      (TcSelectedOccurrence.Selected id)
+      (TcSelectedSink.Capture store lease bindings))
       (set! store.lender-sites (+ store.lender-sites 1))
       (TcSelectedResult.Ok
         ty
@@ -123900,9 +123900,7 @@
     ;; mint-implies-site assertion (`normalize-lender-gate-check!`).
     (cfg
       test
-      (when
-        (array-ref tc-lender-test-drop-sites 0)
-        (set! store.lender-sites 0)))
+      (when (array-ref tc-lender-test-drop-sites 0) (set! store.lender-sites 0)))
     (when
       (> store.lender-sites 0)
       (tc-selected-arena-input! ctx store lease (&mut table)))
@@ -123949,7 +123947,10 @@
         [head : i64
           (match (& ty)
             [(ast.AstType.Region region _)
-              (if (tc-selected-arena-region-in? ctx (& table.arena-regions) region)
+              (if (tc-selected-arena-region-in?
+                ctx
+                (& table.arena-regions)
+                region)
                 region
                 -1)]
             [_ -1])]
@@ -123963,7 +123964,13 @@
               (tc-global-shared-view ty))
               1
               0)
-            (bit-or (if owner? 4 0) (if (>= head 0) 2 0)))))
+            (bit-or
+              (if owner?
+                4
+                0)
+              (if (>= head 0)
+                2
+                0)))))
       (set! index (+ index 1)))
     (set! index 0)
     (while (< index (array-length table.variances.names))
@@ -123972,10 +123979,16 @@
         [at : i64 0]
         (while (< at (array-ref table.variances.counts index))
           (set!
-            (array-ref bivariant (+ (array-ref table.variances.starts index) at))
+            (array-ref
+              bivariant
+              (+ (array-ref table.variances.starts index) at))
             (and
               (not (and (tc-arena-nominal-name-id? name) (= at 0)))
-              (match (tc-nominal-lifetime-variance-at ctx name at TcNameIdList.Nil)
+              (match (tc-nominal-lifetime-variance-at
+                ctx
+                name
+                at
+                TcNameIdList.Nil)
                 [(TcVarianceBivariant) true]
                 [_ false])))
           (set! at (+ at 1))))

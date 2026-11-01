@@ -4,23 +4,21 @@
 ;; are the p0 witnesses (#9503/#9508): G1 still accepts them, and G2 rejects
 ;; them from these rows.
 (import compiler_typecheck_api as tc_api)
-(import compiler_typecheck_core as tc_core)
-(import compiler_ownership_normalize as norm)
 (import compiler_diagnostic as cdiag)
-(import compiler_typed_occurrence as typed)
-(import compiler_typed_occurrence_tests as fixture)
-(import compiler_intern as ci)
 (import stdlib.io)
 (import stdlib.string)
+(cfg test (import compiler_typecheck_core as tc_core))
+(cfg test (import compiler_ownership_normalize as norm))
+(cfg test (import compiler_typed_occurrence as typed))
+(cfg test (import compiler_typed_occurrence_tests as fixture))
+(cfg test (import compiler_intern as ci))
 (cfg test (import stdlib.test))
 
 ;; Lender kinds (`OwnershipArenaLender.kind`).
 (define lender-test-owner : i64
   0)
-
 (define lender-test-scope : i64
   1)
-
 (define lender-test-brand : i64
   2)
 
@@ -401,10 +399,18 @@
     arena-lender-mint-kinds
     (let
       [x1 : (__tl_dyn-array i64) (lender-test-log (lender-test-x1-source))]
-      [scope : (__tl_dyn-array i64) (lender-test-log (lender-test-scope-source))]
-      [plain : (__tl_dyn-array i64) (lender-test-log (lender-test-plain-source))]
-      (test.assert-i64-eq (lender-test-minted (& x1) lender-test-brand) 1 "brand")
-      (test.assert-i64-eq (lender-test-minted (& x1) lender-test-owner) 2 "owners")
+      [scope : (__tl_dyn-array i64)
+        (lender-test-log (lender-test-scope-source))]
+      [plain : (__tl_dyn-array i64)
+        (lender-test-log (lender-test-plain-source))]
+      (test.assert-i64-eq
+        (lender-test-minted (& x1) lender-test-brand)
+        1
+        "brand")
+      (test.assert-i64-eq
+        (lender-test-minted (& x1) lender-test-owner)
+        2
+        "owners")
       (test.assert-i64-eq
         (lender-test-minted (& scope) lender-test-scope)
         3
@@ -526,8 +532,10 @@
   (test
     arena-lender-scopes
     (let
-      [scope : (__tl_dyn-array i64) (lender-test-log (lender-test-scope-source))]
-      [nested : (__tl_dyn-array i64) (lender-test-log (lender-test-nested-source))]
+      [scope : (__tl_dyn-array i64)
+        (lender-test-log (lender-test-scope-source))]
+      [nested : (__tl_dyn-array i64)
+        (lender-test-log (lender-test-nested-source))]
       (test.assert-true
         (lender-test-demands? (& scope) 5 lender-test-scope)
         "with-arena body")
@@ -541,7 +549,10 @@
         (lender-test-minted (& nested) lender-test-scope)
         2
         "nested same-name scopes")
-      (test.assert-i64-eq (lender-test-mask-at (& nested) 6) 3 "both scopes read"))))
+      (test.assert-i64-eq
+        (lender-test-mask-at (& nested) 6)
+        3
+        "both scopes read"))))
 
 (cfg
   test
@@ -567,9 +578,14 @@
   (test
     arena-lender-lambda-stores
     (let
-      [outer : (__tl_dyn-array i64) (lender-test-log (lender-test-lambda-source))]
-      [inner : (__tl_dyn-array i64) (lender-test-log (lender-test-lambda2-source))]
-      (test.assert-i64-eq (lender-test-bodies (& outer)) 1 "only the scope's body")
+      [outer : (__tl_dyn-array i64)
+        (lender-test-log (lender-test-lambda-source))]
+      [inner : (__tl_dyn-array i64)
+        (lender-test-log (lender-test-lambda2-source))]
+      (test.assert-i64-eq
+        (lender-test-bodies (& outer))
+        1
+        "only the scope's body")
       ;; Each lane logged is the lambda body's (typing may normalize it more
       ;; than once), with its one scope; `main` has none.
       (test.assert-i64-eq

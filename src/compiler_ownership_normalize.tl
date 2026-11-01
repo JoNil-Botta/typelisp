@@ -9204,8 +9204,10 @@
                   (set! row (+ row 1))))))))
       out)))
 
+;; `keep` names the places to split (the lender lane's); empty splits all.
 (define (normalize-split-reassigned!
   [state : (&mut state NormalizeState)]
+  [keep : (& keep (__tl_dyn-array bool))]
   [alt-start : (&mut alt-start (__tl_dyn-array i64))]
   [alt-count : (&mut alt-count (__tl_dyn-array i64))]
   [alt-places : (&mut alt-places (__tl_dyn-array i64))]) : NormalizeUnit
@@ -9296,6 +9298,7 @@
           (when
             (and
               (>= (array-ref def-total place) 2)
+              (or (= (array-length keep) 0) (array-ref keep place))
               (not (array-ref opaque place))
               ;; Some other operation writes it too.
               (= (array-ref flow-total place) (array-ref def-total place)))
@@ -9941,7 +9944,8 @@
   [outer : i64]) : unit
   (when
     out.lender?
-    (return (normalize-lender-lifetimes variances name lifetimes inv? out outer)))
+    (return
+      (normalize-lender-lifetimes variances name lifetimes inv? out outer)))
   (let
     [index : i64 0]
     (while (< index (ast.ast-lifetime-list-len (& lifetimes)))
@@ -11235,6 +11239,7 @@
       (try
         (normalize-split-reassigned!
           state
+          (& (normalize-no-bools))
           (&mut alt-start)
           (&mut alt-count)
           (&mut alt-places)))
@@ -13362,9 +13367,7 @@
     (= (normalize-reference-kind state place) 0)
     (or
       (>=
-        (array-ref
-          state.body.places
-          (normalize-region-root state place)).type.index
+        (array-ref state.body.places (normalize-region-root state place)).type.index
         normalize-first-value-type)
       (normalize-lender-arena? state input place))))
 
@@ -13382,7 +13385,9 @@
     (normalize-reserve-i64! state.use-places state.use-count)
     (set! (array-ref state.use-blocks state.use-count) block)
     (set! (array-ref state.use-indices state.use-count) index)
-    (set! (array-ref state.use-places state.use-count) (normalize-place-root (& state) place))
+    (set!
+      (array-ref state.use-places state.use-count)
+      (normalize-place-root (& state) place))
     (set! state.use-count (+ state.use-count 1))))
 
 (define (normalize-lender-flow!
@@ -13508,7 +13513,9 @@
               (and
                 (= kind 4)
                 (>= read 0)
-                (>= (own.ownership-parent (& (array-ref state.body.places read))) 0))
+                (>=
+                  (own.ownership-parent (& (array-ref state.body.places read)))
+                  0))
               (normalize-lender-flow! state input read first false))
             (when
               (and (= kind 4) (>= loan 0))
@@ -13519,7 +13526,9 @@
             (when
               (or (= kind 2) (= kind 3))
               (normalize-lender-use! state input block index first))
-            (when (= kind 3) (normalize-lender-flow! state input first second false))
+            (when
+              (= kind 3)
+              (normalize-lender-flow! state input first second false))
             (set!
               pending
               (if (= kind 1)
@@ -13560,8 +13569,7 @@
       (if (< at (array-length operands.items))
         (array-ref operands.items at).index
         -1)]
-    [(or (own.OwnershipTerminator.Goto _)
-         (own.OwnershipTerminator.Branch _ _ _)
+    [(or (own.OwnershipTerminator.Goto _) (own.OwnershipTerminator.Branch _ _ _)
          (own.OwnershipTerminator.Abort)
          (own.OwnershipTerminator.Unsupported _))
       -1]))
@@ -13616,7 +13624,9 @@
         (while (< child (array-length (array-ref state.nodes index).children))
           (let
             [at : i64 (normalize-lender-child (& state) index child)]
-            (when (and (>= at 0) (< at index)) (set! (array-ref parents at) index)))
+            (when
+              (and (>= at 0) (< at index))
+              (set! (array-ref parents at) index)))
           (set! child (+ child 1)))
         (set! (array-ref scopes index) -1)
         (match (typed.typed-occurrence-get!
@@ -13643,10 +13653,12 @@
                           [_ false]))
                       (__tl_array-push! seeds result)
                       (__tl_array-push!
-          loans
-          (normalize-lender-mint! lenders (& site) result 0 -1)))]
+                        loans
+                        (normalize-lender-mint! lenders (& site) result 0 -1)))]
                   [(typed.TypedCallView.Err error)
-                    (return (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+                    (return
+                      (NormalizeUnit.Err
+                        (OwnershipNormalizeFailure.Typed error)))])]
               [_ unit])]
           [(typed.TypedNodeResult.Err error)
             (return (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))]))
@@ -13665,13 +13677,19 @@
                 5
                 4)]
             [(NormalizeOperation.Literal _) 4]
-            [(NormalizeOperation.Primitive (typed.TypedPrimitive.Builtin code _))
+            [(NormalizeOperation.Primitive
+                (typed.TypedPrimitive.Builtin code _))
               (bit-or
                 (if (or (= code 150) (= code 151))
                   0
                   1)
                 (bit-or
-                  (if (or (= code 104) (= code 105) (= code 111) (= code 125) (= code 126))
+                  (if (or
+                    (= code 104)
+                    (= code 105)
+                    (= code 111)
+                    (= code 125)
+                    (= code 126))
                     2
                     0)
                   (if (or (= code 116) (= code 123))
@@ -13831,7 +13849,9 @@
         (clone state.origin-loans)
         (clone state.type-references))]
     [_inputs : unit
-      (set! state.variances.lenders (OwnershipNormalizeLenderInput.Gated inputs))]
+      (set!
+        state.variances.lenders
+        (OwnershipNormalizeLenderInput.Gated inputs))]
     [solved : NormalizeLendersResult
       (normalize-lenders-solve! state store lease return-type)]
     (set! state.variances.lenders OwnershipNormalizeLenderInput.Clear)
@@ -13879,7 +13899,9 @@
             (clone (array-ref inputs 0).records)
             (clone (array-ref inputs 0).heads)
             (normalize-no-bools))]
-        [_ (return (NormalizeLendersResult.Err OwnershipNormalizeFailure.Resource))])]
+        [_
+          (return
+            (NormalizeLendersResult.Err OwnershipNormalizeFailure.Resource))])]
     [lenders : (__tl_dyn-array OwnershipArenaLender)
       (__tl_make-array OwnershipArenaLender 0)]
     [seeds : (__tl_dyn-array i64) (normalize-no-i64s)]
@@ -13903,13 +13925,19 @@
       (begin
         (set!
           state.use-blocks
-          (normalize-trimmed-i64s (replace! state.use-blocks (normalize-no-i64s)) uses))
+          (normalize-trimmed-i64s
+            (replace! state.use-blocks (normalize-no-i64s))
+            uses))
         (set!
           state.use-indices
-          (normalize-trimmed-i64s (replace! state.use-indices (normalize-no-i64s)) uses))
+          (normalize-trimmed-i64s
+            (replace! state.use-indices (normalize-no-i64s))
+            uses))
         (set!
           state.use-places
-          (normalize-trimmed-i64s (replace! state.use-places (normalize-no-i64s)) uses)))]
+          (normalize-trimmed-i64s
+            (replace! state.use-places (normalize-no-i64s))
+            uses)))]
     [alt-start : (__tl_dyn-array i64) (__tl_make-array i64 uses)]
     [alt-count : (__tl_dyn-array i64) (__tl_make-array i64 uses)]
     [alt-places : (__tl_dyn-array i64) (normalize-no-i64s)]
@@ -13927,91 +13955,93 @@
             (normalize-no-i64s)
             (normalize-no-i64s)))))
     (let
-      [kinds : (__tl_dyn-array i64)
-        (replace!
-          state.type-references
-          (__tl_make-array i64 (array-length state.type-references)))]
-      (while (< index (array-length kinds))
-        (set! (array-ref state.type-references index) 1)
-        (set! index (+ index 1)))
-      (try
-        (normalize-split-reassigned!
-          state
-          (&mut alt-start)
-          (&mut alt-count)
-          (&mut alt-places)))
-      (set! state.type-references kinds))
-    (let
-      [shapes : NormalizeShapes
-        (try (normalize-compute-shapes! (& state) store lease return-type true))]
-      [nodes : NormalizeNodes (normalize-build-nodes (& state) (& shapes) true)]
-      ;; C3: an arena allocation's Region head is no view in the lane. C4: a
-      ;; bare arena owner (no lifetime position) has a nameless node.
-      [_c3c4 : unit
-        (begin
-          (set! index 0)
-          (while (< index state.place-count)
-            (let
-              [shape : i64 (array-ref shapes.place-shapes index)]
-              [record : i64 (array-ref state.place-typed index)]
-              (when
-                (and
-                  (>= shape 0)
-                  (>= record 0)
-                  (< record (array-length input.heads))
-                  (>= (array-ref input.heads record) 0))
-                (set! (array-ref shapes.views.items shape) false))
-              (when
-                (and
-                  (< (own.ownership-parent (& (array-ref state.body.places index))) 0)
-                  (< (array-ref state.region-roots index) 0)
-                  (= (array-ref nodes.place-count index) 0)
-                  (> (bit-and (normalize-lender-flag (& state) (& input) index) 4) 0))
-                (set! (array-ref nodes.place-first index) nodes.keys.len)
-                (set! (array-ref nodes.place-count index) 1)
-                (normalize-node-add! (&mut nodes) index -1)))
-            (set! index (+ index 1))))]
-      [edges : NormalizeRegionEdges
-        (normalize-region-edges (& state) (& shapes) (& nodes))]
-      [_extra : unit
-        (normalize-lender-edges! (& state) (& input) (& shapes) (& nodes) (&mut edges))]
-      [_bound : unit
-        (unless
-          (and
-            (not edges.exhausted)
-            (<= (+ nodes.keys.len state.place-count uses 1) (/ 16777216 words)))
-          (return (NormalizeLendersResult.Err OwnershipNormalizeFailure.Resource)))]
-      [_charge : unit
-        (try
-          (normalize-charge!
-            state
-            0
-            (+ edges.from.len (* (+ nodes.keys.len state.place-count uses 1) words))
-            0))]
-      [_seeds : unit
-        (begin
-          (set! state.origin-places seeds)
-          (set! state.origin-loans seeded))]
-      [bits : (__tl_dyn-array i64)
-        (try (normalize-region-loans! state (& shapes) (& nodes) (& edges) words true))]
-      [rows : (__tl_dyn-array i64) (__tl_make-array i64 (* state.place-count words))]
-      [pointed : (__tl_dyn-array i64) (__tl_make-array i64 (* state.place-count words))]
+      [rows : (__tl_dyn-array i64)
+        (__tl_make-array i64 (* state.place-count words))]
+      [pointed : (__tl_dyn-array i64)
+        (__tl_make-array i64 (* state.place-count words))]
       [demand : (__tl_dyn-array i64) (__tl_make-array i64 (* uses words))]
       [one : (__tl_dyn-array i64) (__tl_make-array i64 words)]
-      (set! index 0)
-      (while (< index state.place-count)
-        (normalize-place-rows-or!
-          (& state)
-          (& shapes)
-          (& nodes)
-          (& bits)
-          (& nodes)
-          (& bits)
-          index
+      [keep : (__tl_dyn-array bool) (__tl_make-array bool state.place-count)]
+      [split? : bool false]
+      (try
+        (normalize-lender-rows!
+          state
+          store
+          lease
+          (& input)
+          (& seeds)
+          (& seeded)
+          return-type
+          uses
           words
           (&mut rows)
-          (&mut pointed))
+          (&mut pointed)))
+      ;; Splitting a reassigned place redirects its reads and uses to its
+      ;; definitions' values. Where the unsplit lane gives neither the place
+      ;; nor any value it is defined from a lender, that changes no row, so
+      ;; only the other places are split, and the lane is solved again.
+      (while (< index state.place-count)
+        (set!
+          (array-ref keep index)
+          (normalize-lender-row? (& rows) (& pointed) index words))
+        (set! split? (or split? (array-ref keep index)))
         (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (array-length state.body.blocks))
+        (let
+          [at : i64 0]
+          (while (< at (array-ref state.instruction-counts index))
+            (let
+              [value : i64 -1]
+              [target : i64
+                (normalize-whole-transfer-target
+                  (& state)
+                  (&
+                    (array-ref
+                      (array-ref state.body.blocks index).instructions
+                      at).operation)
+                  (&mut value))]
+              (when
+                (and
+                  (>= target 0)
+                  (>= value 0)
+                  (normalize-lender-row? (& rows) (& pointed) value words))
+                (set! (array-ref keep target) true)
+                (set! split? true)))
+            (set! at (+ at 1))))
+        (set! index (+ index 1)))
+      (when
+        split?
+        (let
+          [kinds : (__tl_dyn-array i64)
+            (replace!
+              state.type-references
+              (__tl_make-array i64 (array-length state.type-references)))]
+          (set! index 0)
+          (while (< index (array-length kinds))
+            (set! (array-ref state.type-references index) 1)
+            (set! index (+ index 1)))
+          (try
+            (normalize-split-reassigned!
+              state
+              (& keep)
+              (&mut alt-start)
+              (&mut alt-count)
+              (&mut alt-places)))
+          (set! state.type-references kinds))
+        (try
+          (normalize-lender-rows!
+            state
+            store
+            lease
+            (& input)
+            (& seeds)
+            (& seeded)
+            return-type
+            uses
+            words
+            (&mut rows)
+            (&mut pointed))))
       ;; An invalidated parameter's brand is discharged at its exit.
       (set! index 0)
       (while (and (>= state.exit-holder 0) (< index loans))
@@ -14021,7 +14051,9 @@
             [slot : i64 (+ (* state.exit-holder words) (shr index 6))]
             (set!
               (array-ref rows slot)
-              (bit-and (array-ref rows slot) (bit-not (shl 1 (bit-and index 63)))))))
+              (bit-and
+                (array-ref rows slot)
+                (bit-not (shl 1 (bit-and index 63)))))))
         (set! index (+ index 1)))
       (set! index 0)
       (while (< index uses)
@@ -14039,7 +14071,9 @@
           (let
             [word : i64 0]
             (while (< word words)
-              (set! (array-ref demand (+ (* index words) word)) (array-ref one word))
+              (set!
+                (array-ref demand (+ (* index words) word))
+                (array-ref one word))
               (set! word (+ word 1)))))
         (set! index (+ index 1)))
       (NormalizeLendersResult.Ok
@@ -14051,6 +14085,123 @@
           (clone state.use-indices)
           (clone state.use-places)
           demand)))))
+
+;; Whether place `place` may hold a lender (`normalize-lender-rows!`).
+(define (normalize-lender-row?
+  [rows : (& rows (__tl_dyn-array i64))]
+  [pointed : (& pointed (__tl_dyn-array i64))]
+  [place : i64]
+  [words : i64]) : bool
+  (let
+    [word : i64 (* place words)]
+    (while (< word (* (+ place 1) words))
+      (when
+        (!= (bit-or (array-ref rows word) (array-ref pointed word)) 0)
+        (return true))
+      (set! word (+ word 1)))
+    false))
+
+;; The lane's per-place rows (`rows`, and `pointed` for referents) over the
+;; current notes, solved with the lane's seeds as the origins; the notes'
+;; own origins are kept.
+(define (normalize-lender-rows!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [input : (& input OwnershipNormalizeArena)]
+  [seeds : (& seeds (__tl_dyn-array i64))]
+  [seeded : (& seeded (__tl_dyn-array i64))]
+  [return-type : i64]
+  [uses : i64]
+  [words : i64]
+  [rows : (&mut rows (__tl_dyn-array i64))]
+  [pointed : (&mut pointed (__tl_dyn-array i64))]) : NormalizeUnit
+  (let
+    [index : i64 0]
+    [shapes : NormalizeShapes
+      (try (normalize-compute-shapes! (& state) store lease return-type true))]
+    [nodes : NormalizeNodes (normalize-build-nodes (& state) (& shapes) true)]
+    ;; C3: an arena allocation's Region head is no view in the lane. C4: a
+    ;; bare arena owner (no lifetime position) has a nameless node.
+    [_c3c4 : unit
+      (while (< index state.place-count)
+        (let
+          [shape : i64 (array-ref shapes.place-shapes index)]
+          [record : i64 (array-ref state.place-typed index)]
+          (when
+            (and
+              (>= shape 0)
+              (>= record 0)
+              (< record (array-length input.heads))
+              (>= (array-ref input.heads record) 0))
+            (set! (array-ref shapes.views.items shape) false))
+          (when
+            (and
+              (<
+                (own.ownership-parent (& (array-ref state.body.places index)))
+                0)
+              (< (array-ref state.region-roots index) 0)
+              (= (array-ref nodes.place-count index) 0)
+              (> (bit-and (normalize-lender-flag (& state) input index) 4) 0))
+            (set! (array-ref nodes.place-first index) nodes.keys.len)
+            (set! (array-ref nodes.place-count index) 1)
+            (normalize-node-add! (&mut nodes) index -1)))
+        (set! index (+ index 1)))]
+    [edges : NormalizeRegionEdges
+      (normalize-region-edges (& state) (& shapes) (& nodes))]
+    [_extra : unit
+      (normalize-lender-edges!
+        (& state)
+        input
+        (& shapes)
+        (& nodes)
+        (&mut edges))]
+    [_bound : unit
+      (unless
+        (and
+          (not edges.exhausted)
+          (<= (+ nodes.keys.len state.place-count uses 1) (/ 16777216 words)))
+        (return (normalize-unit-resource)))]
+    [_charge : unit
+      (try
+        (normalize-charge!
+          state
+          0
+          (+
+            edges.from.len
+            (* (+ nodes.keys.len state.place-count uses 1) words))
+          0))]
+    [places : (__tl_dyn-array i64)
+      (replace! state.origin-places (clone (deref seeds)))]
+    [loans : (__tl_dyn-array i64)
+      (replace! state.origin-loans (clone (deref seeded)))]
+    [bits : NormalizeWords
+      (normalize-region-loans! state (& shapes) (& nodes) (& edges) words true)]
+    (set! state.origin-places places)
+    (set! state.origin-loans loans)
+    (match bits
+      [(NormalizeWords.Ok bits)
+        (set! index 0)
+        (while (< index (array-length rows))
+          (set! (array-ref rows index) 0)
+          (set! (array-ref pointed index) 0)
+          (set! index (+ index 1)))
+        (set! index 0)
+        (while (< index state.place-count)
+          (normalize-place-rows-or!
+            (& state)
+            (& shapes)
+            (& nodes)
+            (& bits)
+            (& nodes)
+            (& bits)
+            index
+            words
+            rows
+            pointed)
+          (set! index (+ index 1)))
+        (NormalizeUnit.Ok unit)]
+      [(NormalizeWords.Err failure) (NormalizeUnit.Err failure)])))
 
 ;; Lender-only edges: R4, a borrow of an arena root's interior (a scalar
 ;; read through an allocation) keeps the root's lenders while the reference
@@ -14067,8 +14218,10 @@
     (while (< index state.flow-count)
       (let
         [from : i64 (array-ref state.flow-from index)]
-        [to : i64 (normalize-region-root state (array-ref state.flow-to-place index))]
-        [shape : i64 (array-ref shapes.place-shapes (array-ref state.flow-to-place index))]
+        [to : i64
+          (normalize-region-root state (array-ref state.flow-to-place index))]
+        [shape : i64
+          (array-ref shapes.place-shapes (array-ref state.flow-to-place index))]
         [roots : (__tl_dyn-array i64) (normalize-no-i64s)]
         [at : i64 0]
         (when
@@ -14086,7 +14239,9 @@
                     nodes
                     shapes
                     to
-                    (array-ref shapes.names.items (array-ref shapes.starts.items shape)))]
+                    (array-ref
+                      shapes.names.items
+                      (array-ref shapes.starts.items shape)))]
                 (normalize-key-nodes-into!
                   nodes
                   shapes
@@ -14094,14 +14249,22 @@
                   (array-ref shapes.place-shapes from)
                   (&mut roots))
                 (while (and (>= outer 0) (< at (array-length roots)))
-                  (normalize-region-edge-kind! edges (array-ref roots at) outer true)
+                  (normalize-region-edge-kind!
+                    edges
+                    (array-ref roots at)
+                    outer
+                    true)
                   (set! at (+ at 1))))]
             [(and
-                (not (array-ref state.flow-contents index))
-                (= (array-ref nodes.place-count from) 1)
-                (= (array-ref nodes.place-count to) 1)
-                (= (array-ref nodes.names.items (array-ref nodes.place-first from)) -1)
-                (= (array-ref nodes.names.items (array-ref nodes.place-first to)) -1))
+              (not (array-ref state.flow-contents index))
+              (= (array-ref nodes.place-count from) 1)
+              (= (array-ref nodes.place-count to) 1)
+              (=
+                (array-ref nodes.names.items (array-ref nodes.place-first from))
+                -1)
+              (=
+                (array-ref nodes.names.items (array-ref nodes.place-first to))
+                -1))
               (normalize-region-edge-kind!
                 edges
                 (array-ref nodes.place-first from)
@@ -14184,9 +14347,7 @@
             (>= (array-ref arena.use-places index) 0)
             (normalize-lender-test-push!
               (if (< at (array-ref state.instruction-counts block))
-                (array-ref
-                  (array-ref state.body.blocks block).instructions
-                  at).source.line
+                (array-ref (array-ref state.body.blocks block).instructions at).source.line
                 (array-ref state.body.blocks block).source.line))
             (normalize-lender-test-push!
               (array-ref arena.use-rows (* index arena.words)))))
@@ -14246,22 +14407,28 @@
           (while (< (* index arena.words) (array-length arena.rows))
             (io.print-error "R ")
             (io.print-error (string.int->string index))
-            (normalize-lender-dump-row arena (& arena.rows) (* index arena.words))
+            (normalize-lender-dump-row
+              arena
+              (& arena.rows)
+              (* index arena.words))
             (set! index (+ index 1)))
           (set! index 0)
           (while (< index (array-length arena.use-places))
             (when
               (>= (array-ref arena.use-places index) 0)
-            (io.print-error "U ")
-            (io.print-error (string.int->string (array-ref arena.use-blocks index)))
-            (io.print-error " ")
-            (io.print-error (string.int->string (array-ref arena.use-indices index)))
-            (io.print-error " ")
-            (io.print-error (string.int->string (array-ref arena.use-places index)))
-            (normalize-lender-dump-row
-              arena
-              (& arena.use-rows)
-              (* index arena.words)))
+              (io.print-error "U ")
+              (io.print-error
+                (string.int->string (array-ref arena.use-blocks index)))
+              (io.print-error " ")
+              (io.print-error
+                (string.int->string (array-ref arena.use-indices index)))
+              (io.print-error " ")
+              (io.print-error
+                (string.int->string (array-ref arena.use-places index)))
+              (normalize-lender-dump-row
+                arena
+                (& arena.use-rows)
+                (* index arena.words)))
             (set! index (+ index 1))))))
     unit))
 
@@ -14274,7 +14441,8 @@
       arena-lender-dump
       (begin
         (io.print-error " ")
-        (io.print-error (string.int->string (array-ref arena.lenders loan).kind))
+        (io.print-error
+          (string.int->string (array-ref arena.lenders loan).kind))
         (io.print-error ":")
         (io.print-error
           (string.int->string (array-ref arena.lenders loan).site.index))))
@@ -14591,112 +14759,115 @@
                 lease
                 inputs
                 return-type.handle.index)])]
-      (cfg
-        arena-lender-dump
-        (match (& lenders)
-          [(OwnershipNormalizedLenders.Gated arenas)
-            (normalize-lender-dump (& state.body) (& (array-ref arenas 0)))]
-          [_ unit]))
-      (cfg
-        test
-        (match (& lenders)
-          [(OwnershipNormalizedLenders.Gated arenas)
-            (normalize-lender-test-record! (& state) (& (array-ref arenas 0)))]
-          [_ unit]))
-      (let
-        [shapes : NormalizeShapes
-          (match (normalize-compute-shapes!
-            (& state)
-            store
-            lease
-            return-type.handle.index
-            false)
-            [(NormalizeShapesResult.Ok shapes) shapes]
-            [(NormalizeShapesResult.Err failure)
-              (return (OwnershipNormalizeResult.Err failure))])]
-        (try (normalize-solve-origins! (&mut state) (& shapes))))
-      (normalize-trim-instructions! (&mut state))
-      (normalize-mir-dump (& state.body))
-      (match (own.ownership-check (& state.body) state.limits.core)
-        [(own.OwnershipResult.Ok)
-          (let
-            [_charged : unit
-              (try
-                (normalize-charge!
-                  (&mut state)
-                  0
+        (cfg
+          arena-lender-dump
+          (match (& lenders)
+            [(OwnershipNormalizedLenders.Gated arenas)
+              (normalize-lender-dump (& state.body) (& (array-ref arenas 0)))]
+            [_ unit]))
+        (cfg
+          test
+          (match (& lenders)
+            [(OwnershipNormalizedLenders.Gated arenas)
+              (normalize-lender-test-record! (& state) (& (array-ref arenas 0)))]
+            [_ unit]))
+        (let
+          [shapes : NormalizeShapes
+            (match (normalize-compute-shapes!
+              (& state)
+              store
+              lease
+              return-type.handle.index
+              false)
+              [(NormalizeShapesResult.Ok shapes) shapes]
+              [(NormalizeShapesResult.Err failure)
+                (return (OwnershipNormalizeResult.Err failure))])]
+          (try (normalize-solve-origins! (&mut state) (& shapes))))
+        (normalize-trim-instructions! (&mut state))
+        (normalize-mir-dump (& state.body))
+        (match (own.ownership-check (& state.body) state.limits.core)
+          [(own.OwnershipResult.Ok)
+            (let
+              [_charged : unit
+                (try
+                  (normalize-charge!
+                    (&mut state)
+                    0
+                    (+
+                      (normalize-deferred-work (& state))
+                      (* state.binder-count (array-length state.body.loans)))
+                    0))]
+              [deferred : OwnershipNormalizeDeferred
+                (match (normalize-deferred-effects (& state) state.limits.core)
+                  [(NormalizeDeferredEffectsResult.Ok value) value]
+                  [(NormalizeDeferredEffectsResult.Err failure)
+                    (return (OwnershipNormalizeResult.Err failure))])]
+              [borrowed-globals : (__tl_dyn-array i64)
+                (normalize-borrowed-globals (& state))]
+              [mutable-views : (__tl_dyn-array i64)
+                (normalize-mutable-views (& state))]
+              [storage-ends : (__tl_dyn-array i64)
+                (__tl_make-array i64 state.retired-blocks.len)]
+              [ended : i64 0]
+              (while (< ended state.retired-blocks.len)
+                (set!
+                  (array-ref storage-ends ended)
                   (+
-                    (normalize-deferred-work (& state))
-                    (* state.binder-count (array-length state.body.loans)))
-                  0))]
-            [deferred : OwnershipNormalizeDeferred
-              (match (normalize-deferred-effects (& state) state.limits.core)
-                [(NormalizeDeferredEffectsResult.Ok value) value]
-                [(NormalizeDeferredEffectsResult.Err failure)
-                  (return (OwnershipNormalizeResult.Err failure))])]
-            [borrowed-globals : (__tl_dyn-array i64)
-              (normalize-borrowed-globals (& state))]
-            [mutable-views : (__tl_dyn-array i64)
-              (normalize-mutable-views (& state))]
-            [storage-ends : (__tl_dyn-array i64)
-              (__tl_make-array i64 state.retired-blocks.len)]
-            [ended : i64 0]
-            (while (< ended state.retired-blocks.len)
-              (set!
-                (array-ref storage-ends ended)
-                (+
-                  (* (array-ref state.retired-blocks.items ended) 4294967296)
-                  (array-ref state.retired-indices.items ended)))
-              (set! ended (+ ended 1)))
-            (OwnershipNormalizeResult.Ok
-              (OwnershipNormalizedBody
-                state.body
-                state.nodes
-                state.binders
-                root
-                result-type
-                state.records
-                state.work
-                state.bytes
-                deferred
-                borrowed-globals
-                mutable-views
-                storage-ends
-                lenders)))]
-        ;; The core's own bounds and unsupported shapes are this route's
-        ;; limits, not the program's: such a body is unsupported here.
-        [(own.OwnershipResult.Err failure)
-          (OwnershipNormalizeResult.Err
-            (match (normalize-core-limit (& failure))
-              [(NormalizeCoreLimit.Resource) (return (normalize-body-resource))]
-              [(NormalizeCoreLimit.Unsupported)
-                (return
-                  (normalize-body-unsupported
-                    "ownership normalization: core unsupported shape"))]
-              [(NormalizeCoreLimit.No)
-                (match (normalize-escape-diagnostic (& state) (& failure))
-                  [(NormalizeEscapeResult.Some diagnostic)
-                    (return
-                      (OwnershipNormalizeResult.Err
-                        (OwnershipNormalizeFailure.Escaped diagnostic)))]
-                  [(NormalizeEscapeResult.No) unit])
-                (match (normalize-obligation-diagnostic (& state) (& failure))
-                  [(NormalizeObligationDiagnosticResult.Some diagnostic)
-                    (return
-                      (OwnershipNormalizeResult.Err
-                        (OwnershipNormalizeFailure.Obligation diagnostic)))]
-                  [(NormalizeObligationDiagnosticResult.No) unit])
-                (match (normalize-move-diagnostic (& state) (& failure))
-                  [(NormalizeMoveDiagnosticResult.Some diagnostic)
-                    (OwnershipNormalizeFailure.Moved failure diagnostic)]
-                  [(NormalizeMoveDiagnosticResult.No)
-                    (match (normalize-borrow-diagnostic (& state) (& failure))
-                      [(NormalizeBorrowDiagnosticResult.Some diagnostic source)
-                        (let
-                          [located : own.OwnershipFailure failure]
-                          (set! located.source source)
-                          (OwnershipNormalizeFailure.Borrowed
-                            located
-                            diagnostic))]
-                      [(NormalizeBorrowDiagnosticResult.No)
-                        (OwnershipNormalizeFailure.Core failure)])])]))])))))
+                    (* (array-ref state.retired-blocks.items ended) 4294967296)
+                    (array-ref state.retired-indices.items ended)))
+                (set! ended (+ ended 1)))
+              (OwnershipNormalizeResult.Ok
+                (OwnershipNormalizedBody
+                  state.body
+                  state.nodes
+                  state.binders
+                  root
+                  result-type
+                  state.records
+                  state.work
+                  state.bytes
+                  deferred
+                  borrowed-globals
+                  mutable-views
+                  storage-ends
+                  lenders)))]
+          ;; The core's own bounds and unsupported shapes are this route's
+          ;; limits, not the program's: such a body is unsupported here.
+          [(own.OwnershipResult.Err failure)
+            (OwnershipNormalizeResult.Err
+              (match (normalize-core-limit (& failure))
+                [(NormalizeCoreLimit.Resource)
+                  (return (normalize-body-resource))]
+                [(NormalizeCoreLimit.Unsupported)
+                  (return
+                    (normalize-body-unsupported
+                      "ownership normalization: core unsupported shape"))]
+                [(NormalizeCoreLimit.No)
+                  (match (normalize-escape-diagnostic (& state) (& failure))
+                    [(NormalizeEscapeResult.Some diagnostic)
+                      (return
+                        (OwnershipNormalizeResult.Err
+                          (OwnershipNormalizeFailure.Escaped diagnostic)))]
+                    [(NormalizeEscapeResult.No) unit])
+                  (match (normalize-obligation-diagnostic (& state) (& failure))
+                    [(NormalizeObligationDiagnosticResult.Some diagnostic)
+                      (return
+                        (OwnershipNormalizeResult.Err
+                          (OwnershipNormalizeFailure.Obligation diagnostic)))]
+                    [(NormalizeObligationDiagnosticResult.No) unit])
+                  (match (normalize-move-diagnostic (& state) (& failure))
+                    [(NormalizeMoveDiagnosticResult.Some diagnostic)
+                      (OwnershipNormalizeFailure.Moved failure diagnostic)]
+                    [(NormalizeMoveDiagnosticResult.No)
+                      (match (normalize-borrow-diagnostic (& state) (& failure))
+                        [(NormalizeBorrowDiagnosticResult.Some
+                            diagnostic
+                            source)
+                          (let
+                            [located : own.OwnershipFailure failure]
+                            (set! located.source source)
+                            (OwnershipNormalizeFailure.Borrowed
+                              located
+                              diagnostic))]
+                        [(NormalizeBorrowDiagnosticResult.No)
+                          (OwnershipNormalizeFailure.Core failure)])])]))])))))

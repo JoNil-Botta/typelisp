@@ -399,28 +399,26 @@
   (let
     [n : i64 0]
     (while (< n 18)
-      (when
-        (or (!= n 4) (!= n 16))
-        (let
-          [data : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 n))]
-          (when
-            (!= n 4)
-            (let
-              [packet : byte_buf.ByteBuf
-                (rr
-                  (message 1 0 0)
-                  (pointer 12)
-                  1
-                  1
-                  0
-                  (byte_buf.from-bytes (byte_buf.as-bytes (& data))))]
-              (assert-error (byte_buf.as-bytes (& packet)) false)))
-          (when
-            (!= n 16)
-            (let
-              [packet : byte_buf.ByteBuf
-                (rr (message 1 0 0) (pointer 12) 28 1 0 data)]
-              (assert-error (byte_buf.as-bytes (& packet)) false)))))
+      (let
+        [data : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 n))]
+        (when
+          (!= n 4)
+          (let
+            [packet : byte_buf.ByteBuf
+              (rr
+                (message 1 0 0)
+                (pointer 12)
+                1
+                1
+                0
+                (byte_buf.from-bytes (byte_buf.as-bytes (& data))))]
+            (assert-error (byte_buf.as-bytes (& packet)) false)))
+        (when
+          (!= n 16)
+          (let
+            [packet : byte_buf.ByteBuf
+              (rr (message 1 0 0) (pointer 12) 28 1 0 data)]
+            (assert-error (byte_buf.as-bytes (& packet)) false))))
       (set! n (+ n 1))))
   (let
     [packet : byte_buf.ByteBuf
@@ -600,12 +598,18 @@
     [base : byte_buf.ByteBuf
       (rr
         (rr
-          (rr (message 2 0 1) (pointer 12) 5 1 30 (pointer 12))
+          (rr
+            (rr (message 2 1 1) (pointer 12) 5 1 30 (pointer 12))
+            (pointer 12)
+            1
+            1
+            60
+            (a-data))
           (pointer 12)
+          2
           1
-          1
-          60
-          (a-data))
+          30
+          (byte_buf.push (text-label (byte_buf.new) "ns") 0))
         (root)
         41
         1232
@@ -671,3 +675,211 @@
               (assert-tc
                 (byte_buf.bytes-slice-view (byte_buf.as-bytes (& mutated)) 0 n))))))
       (set! case-index (+ case-index 1)))))
+
+(define (skipped-name-data [rtype : i64]) : byte_buf.ByteBuf
+  (let
+    [out : byte_buf.ByteBuf
+      (if (= rtype 15)
+        (u16 (byte_buf.new) 10)
+        (byte_buf.new))]
+    (set! out (byte_buf.push (text-label out "x") 0))
+    (when (= rtype 14) (set! out (byte_buf.push (text-label out "y") 0)))
+    out))
+
+(test
+  dns-rfc1035-skipped-name-boundaries
+  (let
+    [types : (Array i64 9) (array 2 3 4 7 8 9 12 14 15)]
+    [i : i64 0]
+    (while (< i 9)
+      (let
+        [rtype : i64 (array-ref types i)]
+        [data : byte_buf.ByteBuf (skipped-name-data rtype)]
+        [target : i64
+          (if (= rtype 15)
+            31
+            29)]
+        [packet : byte_buf.ByteBuf
+          (rr
+            (message 0 1 1)
+            (pointer 12)
+            rtype
+            1
+            60
+            (byte_buf.from-bytes (byte_buf.as-bytes (& data))))]
+        (set! packet (rr packet (pointer target) 1 1 60 (a-data)))
+        (match (wire.decode-response (byte_buf.as-bytes (& packet)))
+          [(DnsComplete msg)
+            (test.assert-i64-eq msg.len 1 "legacy RR stays skipped")
+            (test.assert-i64-eq
+              (array-ref msg.records 0).owner.len
+              3
+              "glue owner length")
+            (test.assert-i64-eq
+              (cast (array-ref (array-ref msg.records 0).owner.octets 1) : i64)
+              120
+              "glue owner expands from skipped RDATA")]
+          [_ (test.assert-true false "legal skipped-name compression target")])
+        ;; Every proper RDATA prefix is invalid even when following bytes
+        ;; would complete the name or MX preference in the containing message.
+        (let
+          [n : i64 0]
+          (while (< n (byte_buf.len (& data)))
+            (let
+              [prefix : byte_buf.ByteBuf
+                (byte_buf.from-bytes-range (byte_buf.as-bytes (& data)) 0 n)]
+              [packet : byte_buf.ByteBuf
+                (rr
+                  (rr (message 0 1 1) (pointer 12) rtype 1 60 prefix)
+                  (pointer 12)
+                  1
+                  1
+                  60
+                  (a-data))]
+              (assert-error (byte_buf.as-bytes (& packet)) false))
+            (set! n (+ n 1))))
+        (set! data (byte_buf.push data 0))
+        (let
+          [packet : byte_buf.ByteBuf
+            (rr (message 0 1 0) (pointer 12) rtype 1 60 data)]
+          (assert-error (byte_buf.as-bytes (& packet)) false))
+        (let
+          [packet : byte_buf.ByteBuf
+            (rr
+              (message 0 1 0)
+              (pointer 12)
+              rtype
+              1
+              60
+              (byte_buf.push (byte_buf.new) 64))]
+          (assert-error (byte_buf.as-bytes (& packet)) false)))
+      (set! i (+ i 1))))
+  ;; MINFO's second name is a target too; MX's preference bytes are not.
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr
+        (rr (message 0 1 1) (pointer 12) 14 1 0 (skipped-name-data 14))
+        (pointer 32)
+        1
+        1
+        0
+        (a-data))]
+    (assert-complete (& packet) 1))
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr
+        (rr (message 0 1 1) (pointer 12) 15 1 0 (skipped-name-data 15))
+        (pointer 29)
+        1
+        1
+        0
+        (a-data))]
+    (assert-error (byte_buf.as-bytes (& packet)) false)))
+
+(test
+  dns-ns-glue-real-response-and-opaque-targets
+  ;; www.example.com A, example.com NS ns1.example.com, then compressed glue.
+  (let
+    [name : byte_buf.ByteBuf
+      (byte_buf.push
+        (text-label
+          (text-label (text-label (byte_buf.new) "www") "example")
+          "com")
+        0)]
+    [packet : byte_buf.ByteBuf (question (header 0x8180 1 1 1) name 1)]
+    [ns-name : byte_buf.ByteBuf (u16 (text-label (byte_buf.new) "ns1") 49168)]
+    (set! packet (rr packet (pointer 12) 1 1 300 (a-data)))
+    (set! packet (rr packet (pointer 16) 2 1 300 ns-name))
+    (test.assert-i64-eq (byte_buf.len (& packet)) 67 "NS RDATA fixture extent")
+    (set! packet (rr packet (pointer 61) 1 1 300 (a-data)))
+    (assert-complete (& packet) 2))
+  (let
+    [types : (Array i64 2) (array 33 65000)]
+    [i : i64 0]
+    (while (< i 2)
+      (let
+        [rtype : i64 (array-ref types i)]
+        [data : byte_buf.ByteBuf
+          (if (= rtype 33)
+            (u16 (u16 (u16 (byte_buf.new) 0) 0) 53)
+            (byte_buf.new))]
+        [target : i64
+          (if (= rtype 33)
+            35
+            29)]
+        (set! data (byte_buf.push (text-label data "x") 0))
+        (let
+          [packet : byte_buf.ByteBuf
+            (rr
+              (message 0 1 0)
+              (pointer 12)
+              rtype
+              1
+              0
+              (byte_buf.from-bytes (byte_buf.as-bytes (& data))))]
+          (assert-complete (& packet) 0))
+        (let
+          [packet : byte_buf.ByteBuf
+            (rr
+              (rr (message 0 1 1) (pointer 12) rtype 1 0 data)
+              (pointer target)
+              1
+              1
+              0
+              (a-data))]
+          (assert-error (byte_buf.as-bytes (& packet)) false)))
+      (set! i (+ i 1))))
+  ;; Unknown classes stay opaque, even for a legacy RR type.
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr (message 0 1 0) (pointer 12) 2 3 0 (byte_buf.push (byte_buf.new) 64))]
+    (assert-complete (& packet) 0))
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr
+        (rr (message 0 1 1) (pointer 12) 2 3 0 (skipped-name-data 2))
+        (pointer 29)
+        1
+        1
+        0
+        (a-data))]
+    (assert-error (byte_buf.as-bytes (& packet)) false)))
+
+(test
+  dns-skipped-names-charge-message-budgets
+  (let
+    [count : i64 85]
+    (while (<= count 86)
+      (let
+        [packet : byte_buf.ByteBuf (message 0 count 0)]
+        [i : i64 0]
+        (while (< i count)
+          (set! packet (rr packet (pointer 12) 14 1 0 (u16 (pointer 12) 49164)))
+          (set! i (+ i 1)))
+        ;; question + 85 * (owner + two MINFO names) = 256 names.
+        (if (= count 85)
+          (assert-complete (& packet) 0)
+          (assert-error (byte_buf.as-bytes (& packet)) true)))
+      (set! count (+ count 1)))))
+
+(test
+  dns-suffix-and-explicit-forward-targets
+  (let
+    [name : byte_buf.ByteBuf
+      (byte_buf.push (text-label (text-label (byte_buf.new) "example") "COM") 0)]
+    [packet : byte_buf.ByteBuf
+      (rr (question (header 0x8180 1 0 0) name 1) (pointer 20) 1 1 0 (a-data))]
+    (match (wire.decode-response (byte_buf.as-bytes (& packet)))
+      [(DnsComplete msg)
+        (test.assert-i64-eq
+          (array-ref msg.records 0).owner.len
+          5
+          "suffix wire length")
+        (test.assert-i64-eq
+          (cast (array-ref (array-ref msg.records 0).owner.octets 1) : i64)
+          99
+          "suffix is lowercase com")]
+      [_ (test.assert-true false "pointer to middle label boundary")]))
+  (let
+    [packet : byte_buf.ByteBuf (rr (message 1 0 0) (pointer 29) 1 1 0 (a-data))]
+    (assert-error (byte_buf.as-bytes (& packet)) false)))

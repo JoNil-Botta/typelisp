@@ -10,10 +10,14 @@
 ;# terminator. Label contents remain distinct even when they contain a dot.
 ;# Text input accepts ASCII labels separated by dots, with at most one final
 ;# dot; empty text and `.` denote the root. No Unicode or IDNA is accepted.
-;# Compression targets must be backward, previously validated label boundaries
-;# in a question, owner, CNAME or SOA name; opaque RDATA is never scanned for
-;# speculative names. Each hop must precede the current expansion start, which
-;# rejects cycles even when a pointer follows literal labels.
+;# Compression targets must be backward, previously validated label boundaries.
+;# RFC 1035 IN name fields (including skipped NS/MD/MF/MB/MG/MR/PTR/MINFO/MX
+;# records) are validated under the same bounds so later owners can reference
+;# them. Their record values remain unreturned. Other opaque RDATA is never
+;# scanned for speculative names. Each hop must precede the current expansion
+;# start, rejecting cycles even when a pointer follows literal labels.
+;# Non-ASCII bytes in any decoded name, including skipped-record names and
+;# owners of unrelated records, reject the message under the ASCII-only policy.
 ;#
 ;# Hard bounds: 65535 input bytes, 256 RRs, 256 decoded names, 4096 total
 ;# compression hops, 32 hops/name, 64 addresses, 127 labels/name, 255 expanded
@@ -114,7 +118,8 @@
   (section i64)
   (data DnsRecordData))
 
-;: Complete response. Only the first `len` record slots are live.
+;: Complete response. Only the first `len` record slots are live. The backing
+;: array's length is capacity, not a record count: never inspect its padding.
 (defstruct DnsMessage
   (envelope DnsEnvelope)
   (records (__tl_dyn-array DnsRecord))
@@ -403,6 +408,24 @@
       (DnsMalformed))
     d.error-offset))
 
+;: Number of domain-name fields in skipped RFC 1035 IN RDATA. These fields
+;: must be validated for later compression targets (RFC 3597 section 4), even
+;: though their records are not returned. MX also has a two-byte preference.
+(define (skipped-name-count [rtype : i64]) : i64
+  (cond
+    [(= rtype 14) 2]
+    [(or
+        (= rtype 2)
+        (= rtype 3)
+        (= rtype 4)
+        (= rtype 7)
+        (= rtype 8)
+        (= rtype 9)
+        (= rtype 12)
+        (= rtype 15))
+      1]
+    [else 0]))
+
 ;: Decode and validate a complete message or return only its TC envelope.
 (define (decode-response [input : (& input bytes)]) : DnsResponseResult
   (let
@@ -467,6 +490,10 @@
                       (and
                         (= rclass 1)
                         (or (= rtype 1) (= rtype 28) (= rtype 5) (= rtype 6))))]
+                  [skipped-names : i64
+                    (if (= rclass 1)
+                      (skipped-name-count rtype)
+                      0)]
                   (set! d.end end)
                   (let
                     [data : DnsRecordData
@@ -542,6 +569,22 @@
                               (cast (shr ttl 24) : u8)
                               (cast (bit-and (shr ttl 16) 255) : u8)
                               (cast (bit-and ttl 65535) : u16)))]
+                        [(> skipped-names 0)
+                          (when
+                            (= rtype 15)
+                            (let
+                              [_preference : i64 (read-u16! (&mut d) input)]
+                              unit))
+                          (let
+                            [name-index : i64 0]
+                            (while (and
+                              (< name-index skipped-names)
+                              (not d.failed))
+                              (let
+                                [_name : DnsName (read-name! (&mut d) input)]
+                                unit)
+                              (set! name-index (+ name-index 1))))
+                          (DnsCname (root-name))]
                         [else
                           (set! d.offset end)
                           (DnsCname (root-name))])]

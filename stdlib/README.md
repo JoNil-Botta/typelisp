@@ -140,12 +140,18 @@ excluding a final dot, 255 expanded wire bytes, 127 labels and 32 compression
 hops/name; each message allows 65535 bytes, 256 RRs, 256 decoded names, 4096
 total hops and 64 addresses. `DnsLimitExceeded` is distinct from `DnsMalformed`,
 and each reports its first failure offset. Compression targets must be backward
-label boundaries already validated in a question, owner, CNAME or SOA name.
-Opaque RDATA is skipped, so speculative names inside unknown types/classes
-cannot become compression targets. Returned A/AAAA bytes, CNAME, SOA and OPT
+label boundaries already validated in a question, owner or RFC 1035 IN name
+field. Skipped NS, MD/MF, MB/MG/MR, PTR, MINFO and MX records validate their
+name-field layouts and exact RDATA lengths under the same budgets; their values
+are never returned. This allows additional owners to reference names in NS
+authority data. Other opaque RDATA (including SRV and unknown types/classes)
+cannot supply compression targets. Non-ASCII bytes in any decoded name reject
+the message, including owners of unrelated records. Returned A/AAAA bytes, CNAME, SOA and OPT
 metadata retain message order and section identity. OPT tuples are checked and
 skipped; the resolver owns version/RCODE policy. The codec performs no host or
-network calls and retains no input borrow.
+network calls and retains no input borrow. Only the first `DnsMessage.len` slots
+in `records` are live; the backing array length is capacity and its padding
+must never be treated as decoded records.
 
 ## Backend Runtime Helper Ownership
 

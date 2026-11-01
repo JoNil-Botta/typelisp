@@ -17,6 +17,9 @@ bytes, EDNS0, all supported response records, unknown type/class skipping,
 canonical names, legal compression boundaries and cycles, every byte prefix,
 all hard limits, and 512 fixed-seed mutation cases. Its TC prefix/mutation
 matrix requires an envelope-only result regardless of incomplete RR bytes.
+Skipped RFC 1035 IN name-field layouts are checked for legal NS/glue and other
+legacy compression targets, exact RDATA extents and shared name budgets. SRV,
+unknown types and unknown classes cannot supply speculative targets.
 
 `string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second

@@ -12,6 +12,14 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+`crypto_secret_inline.tl` shares safe stale-generation witnesses and legitimate
+full-capacity wipe controls with `crypto-secret.cases`. Both stdlib host gates
+run those native bodies at opt0/1/2; the shape gate also assembles both targets.
+Direct, result, moved and nested structured cleanup pass the pointer and stamp
+together. Null, non-live and mismatched handles are no-ops; a repeated close of
+the same live generation wipes only once. These handles are checked identities,
+not unique capabilities, and copying one does not create a generation.
+
 `crypto_aes_core.tl` owns small inline field-arithmetic checks and a checked
 ownership/forward-block doctest. `crypto_aes_api.tl` is the installed-module and
 native macro identity witness for both consuming constructors and repeated

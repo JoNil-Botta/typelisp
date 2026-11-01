@@ -2,6 +2,113 @@
 (cfg test (import stdlib.crypto_secret as secret))
 (cfg test (import stdlib.test))
 
+;: Nested result cleanup must pass the stamp through both generated plans.
+(cfg
+  test
+  (defstruct FixedEnvelope
+    (:cleanup close-fixed-envelope)
+    (result secret.SecretFixedResult (:owned))))
+
+(cfg
+  test
+  (defstruct BytesEnvelope
+    (:cleanup close-bytes-envelope)
+    (result secret.SecretBytesResult (:owned))))
+
+;: The nominal envelope transfers cleanup responsibility into the helper.
+(cfg
+  test
+  (define (discard-fixed [input : FixedEnvelope] [path : i64]) : unit
+    (cond
+      [(= path 0)
+        (match input.result
+          [(SecretFixedOk value) (secret.close-fixed value)]
+          [_ unit])]
+      [(= path 1) (secret.close-fixed-result input.result)]
+      [else
+        (let
+          [moved : FixedEnvelope input]
+          (with
+            ([outer moved close-fixed-envelope])
+            (when (= path 2) (return unit))
+            (let
+              [index : i64 0]
+              (while (< index 2)
+                (with
+                  ([inner
+                      (secret.fixed-zero (secret.Secret16))
+                      secret.close-fixed])
+                  (set! index (+ index 1))
+                  (when (= path 3) (break))
+                  (continue))))))])))
+
+(cfg
+  test
+  (define (discard-bytes [input : BytesEnvelope] [path : i64]) : unit
+    (cond
+      [(= path 0)
+        (match input.result
+          [(SecretBytesOk value) (secret.close-bytes value)]
+          [_ unit])]
+      [(= path 1) (secret.close-bytes-result input.result)]
+      [else
+        (let
+          [moved : BytesEnvelope input]
+          (with
+            ([outer moved close-bytes-envelope])
+            (when (= path 2) (return unit))
+            (let
+              [index : i64 0]
+              (while (< index 2)
+                (with
+                  ([inner (secret.bytes-new 1) secret.close-bytes-result])
+                  (set! index (+ index 1))
+                  (when (= path 3) (break))
+                  (continue))))))])))
+
+;: No unsafe operations: stale cleanup must preserve the rightful generation.
+;: Native codegen cases run this exact witness at every optimization level.
+(cfg
+  test
+  (define (generation-safe?) : bool
+    (let
+      [ok : bool true]
+      [path : i64 0]
+      (while (< path 5)
+        (let
+          [owner : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
+          [stale : secret.SecretFixed
+            (secret.SecretFixed
+              (secret.SecretHandle
+                owner.handle.storage
+                (+ owner.handle.generation 1)))]
+          (set! ok (and ok (= (secret.fixed-length (& stale)) 0)))
+          (discard-fixed (FixedEnvelope (secret.SecretFixedOk stale)) path)
+          (set! ok (and ok (= (secret.fixed-length (& owner)) 16)))
+          (secret.close-fixed owner))
+        (match (secret.bytes-new 19)
+          [(SecretBytesOk owner)
+            (let
+              [stale : secret.SecretBytes
+                (secret.SecretBytes
+                  (secret.SecretHandle
+                    owner.handle.storage
+                    (+ owner.handle.generation 1)))]
+              (set! ok (and ok (= (secret.bytes-capacity (& stale)) 0)))
+              (discard-bytes (BytesEnvelope (secret.SecretBytesOk stale)) path)
+              (set! ok (and ok (= (secret.bytes-capacity (& owner)) 19)))
+              (secret.close-bytes owner))]
+          [_ (set! ok false)])
+        (set! path (+ path 1)))
+      (secret.close-fixed
+        (secret.SecretFixed
+          (secret.SecretHandle (ptr-null : (MutPtr secret.SecretStorage)) 1)))
+      (secret.close-bytes-result
+        (secret.SecretBytesOk
+          (secret.SecretBytes
+            (secret.SecretHandle (ptr-null : (MutPtr secret.SecretStorage)) 1))))
+      ok)))
+
 ;: Header snapshot of storage the test still points at after its owner closed.
 (cfg
   test
@@ -205,8 +312,8 @@
     (let
       [owner : secret.SecretFixed
         (test-fixed-text (secret.Secret20) "0123456789abcdefghij")]
-      [storage : (MutPtr secret.SecretStorage) owner.storage]
-      [generation : i64 owner.generation]
+      [storage : (MutPtr secret.SecretStorage) owner.handle.storage]
+      [generation : i64 owner.handle.generation]
       (test.assert-false (test-data-zero? storage 20) "secret is present")
       (secret.close-fixed owner)
       (test.assert-true
@@ -218,12 +325,13 @@
       (test.assert-true
         (test-data-zero? storage 24)
         "every capacity byte is wiped")
-      (secret.storage-close storage)
+      (secret.storage-close (secret.SecretHandle storage generation))
       (test.assert-true
         (= (test-header storage).state (cast 2 : u64))
         "closing again changes nothing")
       (let
-        [stale : secret.SecretFixed (secret.SecretFixed storage generation)]
+        [stale : secret.SecretFixed
+          (secret.SecretFixed (secret.SecretHandle storage generation))]
         (test.assert-i64-eq (secret.fixed-length (& stale)) 0 "closed length")
         (test.assert-true
           (test-compare-closed? (secret.fixed-equal (& stale) (& stale)))
@@ -240,7 +348,7 @@
         (ptr-null : (MutPtr secret.SecretStorage))]
       (with
         ([owner (secret.fixed-zero (secret.Secret32)) secret.close-fixed])
-        (set! seen owner.storage)
+        (set! seen owner.handle.storage)
         (when early (return seen))
         unit)
       seen)))
@@ -265,7 +373,10 @@
       [owner : secret.SecretFixed
         (test-fixed-text (secret.Secret16) "0123456789abcdef")]
       [forged : secret.SecretFixed
-        (secret.SecretFixed owner.storage (+ owner.generation 1))]
+        (secret.SecretFixed
+          (secret.SecretHandle
+            owner.handle.storage
+            (+ owner.handle.generation 1)))]
       (test.assert-i64-eq (secret.fixed-length (& forged)) 0 "stale stamp")
       (test.assert-true
         (test-compare-closed? (secret.fixed-equal (& owner) (& forged)))
@@ -275,8 +386,12 @@
         [(SecretReadErr (SecretClosed)) unit]
         [_ (test.assert-true false "stale owner yields no pointer")])
       (test.assert-i64-eq (secret.fixed-length (& owner)) 16 "owner still live")
-      (secret.close-fixed owner)
-      (secret.close-fixed forged))))
+      (secret.close-fixed forged)
+      (test.assert-i64-eq
+        (secret.fixed-length (& owner))
+        16
+        "stale close preserves owner")
+      (secret.close-fixed owner))))
 
 (cfg
   test
@@ -378,7 +493,7 @@
       (let
         [data : (MutPtr u8)
           (unsafe
-            (secret.storage-data owner.storage))]
+            (secret.storage-data owner.handle.storage))]
         (test.assert-i64-eq
           (cast
             (unsafe
@@ -473,3 +588,189 @@
         "content comparison")
       (secret.close-fixed left)
       (secret.close-fixed right))))
+
+;: Deliberately dirty padding and uninitialized capacity as well as the prefix.
+(cfg
+  test
+  (define (test-fill-capacity! [storage : (MutPtr secret.SecretStorage)]) : unit
+    (let
+      [data : (MutPtr u8)
+        (unsafe
+          (secret.storage-data storage))]
+      [index : i64 0]
+      (while (< index 24)
+        (unsafe
+          (ptr-write! (ptr-offset data index) (cast 165 : u8)))
+        (set! index (+ index 1))))))
+
+(cfg
+  test
+  (test
+    crypto-secret-generation-cleanup-safe
+    (test.assert-true
+      (generation-safe?)
+      "stale cleanup never owns a live generation")))
+
+(cfg
+  test
+  (define (generation-lawful) : unit
+    (let
+      [path : i64 0]
+      (while (< path 5)
+        (let
+          [owner : secret.SecretFixed (secret.fixed-zero (secret.Secret20))]
+          [handle : secret.SecretHandle owner.handle]
+          (test-fill-capacity! handle.storage)
+          (discard-fixed (FixedEnvelope (secret.SecretFixedOk owner)) path)
+          (test.assert-true
+            (test-data-zero? handle.storage 24)
+            "fixed full rounded capacity wipes")
+          (test.assert-true
+            (= (test-header handle.storage).state (secret.state-closed))
+            "fixed closes")
+          (test.assert-true
+            (= (test-header handle.storage).length (cast 0 : u64))
+            "fixed length wipes")
+          (test-fill-capacity! handle.storage)
+          (secret.close-fixed (secret.SecretFixed handle))
+          (test.assert-false
+            (test-data-zero? handle.storage 24)
+            "closed same-stamp cleanup does not wipe again"))
+        (let
+          [owner : secret.SecretBytes (test-bytes (secret.bytes-new 19))]
+          [handle : secret.SecretHandle owner.handle]
+          (match (unsafe
+            (secret.bytes-set-length! (&mut owner) 5))
+            [(SecretOk) unit]
+            [_ (test.assert-true false "set prefix length")])
+          (test-fill-capacity! handle.storage)
+          (discard-bytes (BytesEnvelope (secret.SecretBytesOk owner)) path)
+          (test.assert-true
+            (test-data-zero? handle.storage 24)
+            "variable full rounded capacity wipes")
+          (test.assert-true
+            (= (test-header handle.storage).state (secret.state-closed))
+            "variable closes")
+          (test.assert-true
+            (= (test-header handle.storage).length (cast 0 : u64))
+            "variable prefix length wipes")
+          (test-fill-capacity! handle.storage)
+          (secret.close-bytes-result
+            (secret.SecretBytesOk (secret.SecretBytes handle)))
+          (test.assert-false
+            (test-data-zero? handle.storage 24)
+            "closed variable same-stamp cleanup does not wipe again"))
+        (set! path (+ path 1))))))
+
+(cfg
+  test
+  (define (generation-live-same-stamp) : unit
+    (let
+      [owner : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
+      [same : secret.SecretFixed (secret.SecretFixed owner.handle)]
+      (secret.close-fixed same)
+      (test.assert-i64-eq
+        (secret.fixed-length (& owner))
+        0
+        "same live stamp names the same allocation")
+      (secret.close-fixed owner))
+    (let
+      [owner : secret.SecretBytes (test-bytes (secret.bytes-new 16))]
+      [same : secret.SecretBytes (secret.SecretBytes owner.handle)]
+      (secret.close-bytes same)
+      (test.assert-i64-eq
+        (secret.bytes-capacity (& owner))
+        0
+        "same live variable stamp names the same allocation")
+      (secret.close-bytes owner))))
+
+(cfg test (test crypto-secret-generation-cleanup-lawful (generation-lawful)))
+
+(cfg
+  test
+  (test
+    crypto-secret-generation-cleanup-live-same-stamp
+    (generation-live-same-stamp)))
+
+;: An invalid close must leave both the header and every retained byte alone.
+(cfg
+  test
+  (define (test-header-same?
+    [storage : (MutPtr secret.SecretStorage)]
+    [before : secret.SecretStorage]) : bool
+    (let
+      [after : secret.SecretStorage (test-header storage)]
+      (and
+        (= after.state before.state)
+        (= after.generation before.generation)
+        (= after.length before.length)
+        (= after.capacity before.capacity)))))
+
+(cfg
+  test
+  (define (generation-preserves-storage) : unit
+    (let
+      [path : i64 0]
+      (while (< path 5)
+        (let
+          [fixed : secret.SecretFixed (secret.fixed-zero (secret.Secret20))]
+          [bytes : secret.SecretBytes (test-bytes (secret.bytes-new 19))]
+          [fixed-before : secret.SecretStorage
+            (test-header fixed.handle.storage)]
+          [bytes-before : secret.SecretStorage
+            (test-header bytes.handle.storage)]
+          (test-fill-capacity! fixed.handle.storage)
+          (test-fill-capacity! bytes.handle.storage)
+          (discard-fixed
+            (FixedEnvelope
+              (secret.SecretFixedOk
+                (secret.SecretFixed
+                  (secret.SecretHandle
+                    fixed.handle.storage
+                    (+ fixed.handle.generation 1)))))
+            path)
+          (discard-bytes
+            (BytesEnvelope
+              (secret.SecretBytesOk
+                (secret.SecretBytes
+                  (secret.SecretHandle
+                    bytes.handle.storage
+                    (+ bytes.handle.generation 1)))))
+            path)
+          (test.assert-true
+            (test-header-same? fixed.handle.storage fixed-before)
+            "stale fixed leaves all header fields")
+          (test.assert-true
+            (test-header-same? bytes.handle.storage bytes-before)
+            "stale variable leaves all header fields")
+          (let
+            [index : i64 0]
+            (while (< index 24)
+              (test.assert-true
+                (=
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset
+                        (secret.storage-data fixed.handle.storage)
+                        index)))
+                  (cast 165 : u8))
+                "stale fixed leaves all data words")
+              (test.assert-true
+                (=
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset
+                        (secret.storage-data bytes.handle.storage)
+                        index)))
+                  (cast 165 : u8))
+                "stale variable leaves all data words")
+              (set! index (+ index 1))))
+          (secret.close-fixed fixed)
+          (secret.close-bytes bytes))
+        (set! path (+ path 1))))))
+
+(cfg
+  test
+  (test
+    crypto-secret-generation-cleanup-preserves-storage
+    (generation-preserves-storage)))

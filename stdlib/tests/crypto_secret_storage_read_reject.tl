@@ -4,6 +4,6 @@
   (let
     [owner : crypto_secret.SecretFixed
       (crypto_secret.fixed-zero (crypto_secret.Secret16))]
-    [_header : crypto_secret.SecretStorage (ptr-read owner.storage)]
+    [_header : crypto_secret.SecretStorage (ptr-read owner.handle.storage)]
     (crypto_secret.close-fixed owner)
     42))

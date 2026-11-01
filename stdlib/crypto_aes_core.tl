@@ -371,14 +371,16 @@
   (cond
     [(not
         (unsafe
-          (secret.storage-live? owner.storage owner.generation)))
+          (secret.storage-live? owner.handle.storage owner.handle.generation)))
       (secret.SecretErr (secret.SecretClosed))]
     [(or
         (not (= (secret.fixed-length owner) length))
         (not
           (=
             (unsafe
-              (secret.live-capacity owner.storage owner.generation))
+              (secret.live-capacity
+                owner.handle.storage
+                owner.handle.generation))
             length)))
       (secret.SecretErr
         (secret.SecretLengthMismatch length (secret.fixed-length owner)))]
@@ -395,7 +397,9 @@
     (when
       (not
         (unsafe
-          (secret.storage-live? input.value.storage input.value.generation)))
+          (secret.storage-live?
+            input.value.handle.storage
+            input.value.handle.generation)))
       (return (secret.SecretBytesErr (secret.SecretClosed))))
     (with
       ([key input.value secret.close-fixed])
@@ -413,8 +417,10 @@
                 [(SecretOk)
                   (unsafe
                     (expand!
-                      (ptr-cast (secret.storage-data key.storage) : (Ptr u8))
-                      (secret.storage-data expanded.storage)
+                      (ptr-cast
+                        (secret.storage-data key.handle.storage)
+                        : (Ptr u8))
+                      (secret.storage-data expanded.handle.storage)
                       key-length
                       length))
                   (secret.SecretBytesOk expanded)])])]))))
@@ -471,7 +477,9 @@
     (cond
       [(not
           (unsafe
-            (secret.storage-live? expanded.storage expanded.generation)))
+            (secret.storage-live?
+              expanded.handle.storage
+              expanded.handle.generation)))
         (AesErr (AesSecret (secret.SecretClosed)))]
       [(or
           (not (= (secret.bytes-length expanded) length))
@@ -488,19 +496,21 @@
                   [keys : (Ptr u8)
                     (unsafe
                       (ptr-cast
-                        (secret.storage-data expanded.storage)
+                        (secret.storage-data expanded.handle.storage)
                         : (Ptr u8)))]
                   [input : (Ptr u8)
                     (unsafe
-                      (ptr-cast (secret.storage-data source.storage) : (Ptr u8)))]
+                      (ptr-cast
+                        (secret.storage-data source.handle.storage)
+                        : (Ptr u8)))]
                   [output : (MutPtr u8)
                     (unsafe
-                      (secret.storage-data destination.storage))]
+                      (secret.storage-data destination.handle.storage))]
                   [output-read : (Ptr u8)
                     (unsafe
                       (ptr-cast output : (Ptr u8)))]
                   (if (or
-                    (= source.storage destination.storage)
+                    (= source.handle.storage destination.handle.storage)
                     (unsafe
                       (overlap? input 16 output-read 16))
                     (unsafe

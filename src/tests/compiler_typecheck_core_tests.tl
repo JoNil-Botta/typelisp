@@ -9541,7 +9541,7 @@
         (array-ref segmented index)
         (match (tc_core.macro-import-alias-target-cached-id
           macro-state
-          (tc_core.tc-global-shared-view flat-decls)
+          (clone flat-decls)
           (array-ref pairs index)
           (array-ref pairs (+ index 1)))
           [(Some target) target]
@@ -9556,7 +9556,7 @@
         (array-ref segmented index)
         (match (tc_core.macro-import-alias-target-cached-id
           macro-state
-          (tc_core.tc-global-shared-view flat-decls)
+          (clone flat-decls)
           (array-ref pairs index)
           (array-ref pairs (+ index 1)))
           [(Some target) target]

@@ -29,6 +29,122 @@
 (import compiler_owned_view as owned_view)
 
 (test
+  compiler-lower-unresolved-logical-id-is-not-a-root
+  (let
+    [all-functions : lower_i64_i64_map.Map (lower_i64_i64_map.new)]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    ;; A failed resolution is not a function identity, even if a table happens
+    ;; to contain that word. This distinguishes rejecting the sentinel before
+    ;; membership from relying on a particular empty bucket after probing.
+    (lower_i64_i64_map.insert-ref! (&mut all-functions) -1 0)
+    (match (lower.lower-reach-add-logical
+      (& all-functions)
+      (State (lower_i64_i64_map.new) (lower.lower-id-set-empty) owner)
+      -1)
+      [(State reachable worklist _)
+        (test.assert-i64-eq
+          (lower_i64_i64_map.len (& reachable))
+          0
+          "an unresolved ID never adds a reachable slot")
+        (test.assert-i64-eq
+          worklist.len
+          0
+          "an unresolved ID never enters the worklist")])))
+
+(test
+  compiler-lower-logical-function-dense-slots
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [counts : (Array i64 8) (array 0 1 3 4 5 8 17 33)]
+    (for [case-index (iterator.range 0 (array-length counts))]
+      (let
+        [count : i64 (array-ref counts case-index)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+        [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+        ;; These positive structural-shaped IDs differ only above the bucket
+        ;; bits, including the low word shared by the unresolved sentinel.
+        [base : i64 4611686029164871679]
+        (for [index (iterator.range 0 count)]
+          (let
+            [id : i64
+              (if (= index 0)
+                0
+                (+ base (* (- index 1) 65536)))]
+            [decl : ast.AstDecl
+              (ast.ast-decl-def-fn-id id (ast.ast-param-list-new) (I64) 0)]
+            (ast.ast-decl-list-push (&mut decls) decl)
+            (ast.ast-decl-list-push
+              (&mut decls)
+              (ast.ast-decl-def-fn-id id (ast.ast-param-list-new) (I64) 0))))
+        (let
+          [all-functions : lower_i64_i64_map.Map
+            (lower.lower-function-set-from-decls-in-module
+              owner
+              (& decls)
+              (& paths)
+              "entry.tl"
+              ""
+              cbi.compiler-builtin-id-fix-empty
+              (lower_i64_i64_map.with-capacity 1))]
+          [state : lower.LowerReachState
+            (State (lower_i64_i64_map.new) (lower.lower-id-set-empty) owner)]
+          (test.assert-i64-eq
+            (lower_i64_i64_map.len (& all-functions))
+            count
+            "duplicate declarations keep one dense slot across growth")
+          (set!
+            state
+            (lower.lower-reach-add-logical (& all-functions) state -1))
+          (set!
+            state
+            (lower.lower-reach-add-logical
+              (& all-functions)
+              state
+              9223372036854775807))
+          (for [index (iterator.range 0 count)]
+            (let
+              [id : i64
+                (if (= index 0)
+                  0
+                  (+ base (* (- index 1) 65536)))]
+              (test.assert-i64-eq
+                (lower_i64_i64_map.get-value-or (& all-functions) id -1)
+                index
+                "slots follow first declaration order")
+              (set!
+                state
+                (lower.lower-reach-add-logical (& all-functions) state id))
+              (set!
+                state
+                (lower.lower-reach-add-logical (& all-functions) state id))))
+          (match state
+            [(State reachable worklist _)
+              (test.assert-i64-eq
+                (lower_i64_i64_map.len (& reachable))
+                count
+                "each slot is reached once")
+              (test.assert-i64-eq
+                worklist.len
+                count
+                "missing and repeated IDs add no work")
+              (for [index (iterator.range 0 count)]
+                (let
+                  [id : i64
+                    (if (= index 0)
+                      0
+                      (+ base (* (- index 1) 65536)))]
+                  (test.assert-i64-eq
+                    (array-ref worklist.slots index)
+                    id
+                    "the worklist retains logical IDs")
+                  (test.assert-true
+                    (lower.lower-reach-slot-set-contains-id?
+                      (& all-functions)
+                      (& reachable)
+                      id)
+                    "high-bit IDs resolve through their dense slots")))]))))))
+
+(test
   compiler-lower-native-lane-table
   (let
     [types : (Array ast.AstType 13)

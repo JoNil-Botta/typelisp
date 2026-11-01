@@ -206,6 +206,7 @@ compress/deflate.tl
 compress/zlib.tl
 concurrency_registry.tl
 core_macros.tl
+crypto_aes_core.tl
 crypto_p256.tl
 crypto_rsa_core.tl
 crypto_rsa_verify.tl
@@ -405,6 +406,17 @@ stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/net_tls_transcript_construct_reject.tl|fail|opaque type
 stdlib/tests/net_tls_transcript_project_reject.tl|fail|opaque type
 stdlib/tests/net_tls_transcript_escape_reject.tl|fail|region-tagged value cannot escape with-arena
+stdlib/tests/crypto_aes_core_inline.tl|pass|-
+stdlib/tests/crypto_aes_fips_inline.tl|pass|-
+stdlib/tests/crypto_aes_kat_inline.tl|pass|-
+stdlib/tests/crypto_aes_lifecycle_inline.tl|pass|-
+stdlib/tests/crypto_aes_work_inline.tl|pass|-
+stdlib/tests/crypto_aes_key_reuse_reject.tl|fail|use of moved value `key`
+stdlib/tests/crypto_aes_variant_reject.tl|fail|argument 1 type mismatch
+stdlib/tests/crypto_aes_clone_reject.tl|fail|clone unsupported type stdlib.crypto_aes_core/Aes128Schedule
+stdlib/tests/crypto_aes_format_reject.tl|fail|format: unsupported nominal type struct_stdlib.crypto_aes_core/Aes256Schedule
+stdlib/tests/crypto_aes_raw_reject.tl|fail|ptr-read requires unsafe context
+stdlib/tests/crypto_aes_rounds_reject.tl|fail|encrypt-checked! requires unsafe context
 stdlib/tests/crypto_secret_inline.tl|pass|-
 stdlib/tests/crypto_secret_unsafe_accessor_reject.tl|fail|crypto_secret/fixed-read-pointer requires unsafe context
 stdlib/tests/crypto_secret_storage_read_reject.tl|fail|ptr-read requires unsafe context

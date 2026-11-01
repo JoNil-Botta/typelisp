@@ -648,14 +648,12 @@ stdout not-contains passed:
 case package-test-production-context
 each bin lib
 file -x typelisp.pkg
-(package (name "production_context") (version "0.1.0") (kind "{{each}}") (entry "src/main.tl")
-  (dependencies (dependency "vendor/dependency")))
+(package (name "production_context") (version "0.1.0") (kind "{{each}}") (entry "src/main.tl"))
 end-file
 file src/main.tl
 (import extra)
 (import stdlib.test)
-(import dependency.src.lib as dependency)
-(cfg enabled (define (main) : i64 (+ extra.value dependency.value)))
+(cfg enabled (define (main) : i64 extra.value))
 (cfg (not enabled) (define (main) : i64 "missing cfg"))
 (cfg test (define fixture : i64 42))
 (test cfg-fixture (test.assert-i64-eq fixture 42 "fixture retained"))
@@ -664,12 +662,6 @@ file src/disconnected.tl
 (define disconnected : i64 "intentionally outside entry closure")
 end-file
 file roots/extra.tl
-(define value : i64 0)
-end-file
-file vendor/dependency/typelisp.pkg
-(package (name "dependency") (version "0.1.0") (kind "lib"))
-end-file
-file vendor/dependency/src/lib.tl
 (define value : i64 0)
 end-file
 step production-context-check
@@ -683,3 +675,29 @@ step production-context-run
 run test --manifest-path "{{dir}}/typelisp.pkg" --stdlib-root "{{dir}}/roots" --cfg enabled --target {{host-target}}
 stderr contains ok cfg-fixture
 stdout contains TypeLisp package tests passed: 1 test(s) in 1 file(s)
+
+case package-test-production-dependency
+file typelisp.pkg
+(package (name "production_dependency") (version "0.1.0") (kind "bin")
+  (dependencies (dependency "vendor/dependency")))
+end-file
+file src/main.tl
+(import dependency.src.lib)
+(define (main) : i64 (lib.answer))
+end-file
+file src/math.tl
+(test independent unit)
+end-file
+file vendor/dependency/typelisp.pkg
+(package (name "dependency") (version "0.1.0") (kind "lib"))
+end-file
+file vendor/dependency/src/lib.tl
+(define (answer) : i64 0)
+end-file
+step production-dependency-check
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+stderr empty
+step production-dependency-test
+run test --check --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+stderr empty
+stdout contains TypeLisp package test typecheck passed: 1 test(s) in 1 file(s)

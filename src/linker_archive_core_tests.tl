@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import linker_archive_core as archive)
 (import linker_archive_output as output)
 (import stdlib.byte_buf as buf)
@@ -141,9 +142,8 @@
   (let
     [data : String (one-member)]
     [policy : archive.ArchiveProfile (profile)]
-    [length : i64 0]
     ;; Every byte boundary of the signature, header, payload and odd pad.
-    (while (< length 72)
+    (for [length (iterator.range 0 72)]
       (if (= length 8)
         (match (archive.scan
           (string.substring-view (& data) 0 length)
@@ -164,8 +164,7 @@
           (if (< length 8)
             -1
             0)
-          (cond [(< length 8) 0] [(< length 68) 8] [(< length 71) 68] [else 71])))
-      (set! length (+ length 1)))
+          (cond [(< length 8) 0] [(< length 68) 8] [(< length 71) 68] [else 71]))))
     (let
       [trailing : String (cat.str-cat data "x")]
       (assert-scan-error (& trailing) (& policy) (limits) 11 1 72))))
@@ -196,8 +195,7 @@
         (BadByte 66 39 12 66)
         (BadByte 67 13 12 66)
         (BadByte 71 0 16 71))]
-    [index : i64 0]
-    (while (< index (array-length cases))
+    (for [index (iterator.range 0 (array-length cases))]
       (let
         [item : BadByte (array-ref cases index)]
         [changed : String (patch (& data) item.offset item.value)]
@@ -209,8 +207,7 @@
           (if (< item.offset 8)
             -1
             0)
-          item.error-offset)
-        (set! index (+ index 1))))
+          item.error-offset)))
     ;; A declared giant payload and a removed inter-member pad fail at the
     ;; container boundary; no object or name parser is needed to reject them.
     (let
@@ -266,8 +263,7 @@
         (NumberCase " 1" 10 true 99 0 13 1)
         (NumberCase "8" 8 false 99 0 13 0)
         (NumberCase "1\t" 10 false 99 0 13 1))]
-    [index : i64 0]
-    (while (< index (array-length cases))
+    (for [index (iterator.range 0 (array-length cases))]
       (let
         [item : (& cases NumberCase) (& (array-ref cases index))]
         [rule : archive.ArchiveNumberRule
@@ -286,8 +282,7 @@
               "blank metadata")]
           [(NumberFailed kind offset)
             (test.assert-i64-eq (kind-code kind) item.kind "numeric error")
-            (test.assert-i64-eq offset item.offset "numeric error byte")])
-        (set! index (+ index 1))))))
+            (test.assert-i64-eq offset item.offset "numeric error byte")])))))
 
 (define (assert-scan-limits) : unit
   (let
@@ -505,10 +500,9 @@
             (let
               [offsets : (Array i64 9)
                 (array -1 0 7 9 68 71 73 194 9223372036854775807)]
-              [index : i64 0]
               [bad : archive.ArchiveMemberId
                 (archive.ArchiveMemberId (identity) -1 8)]
-              (while (< index (array-length offsets))
+              (for [index (iterator.range 0 (array-length offsets))]
                 (let
                   [offset : i64 (array-ref offsets index)]
                   (assert-index-error
@@ -519,8 +513,7 @@
                       false)
                     21
                     -1
-                    offset)
-                  (set! index (+ index 1))))
+                    offset)))
               (assert-claim-error
                 (archive.open! (& directory) (&mut session) bad)
                 20
@@ -790,46 +783,41 @@
     [data : String (one-member)]
     [policy : archive.ArchiveProfile (profile)]
     [values : (Array i64 9) (array 0 9 10 32 47 48 57 127 255)]
-    [at : i64 0]
-    (while (< at 72)
-      (let
-        [index : i64 0]
-        (while (< index 9)
-          (let
-            [changed : String (patch (& data) at (array-ref values index))]
-            (match (archive.scan (& changed) (identity) (& policy) (limits))
-              [(ScanFailed first)
-                (assert-scan-error
-                  (& changed)
-                  (& policy)
-                  (limits)
-                  (kind-code first.kind)
-                  first.ordinal
-                  first.offset)]
-              [(Scanned first)
-                (match (archive.scan (& changed) (identity) (& policy) (limits))
-                  [(Scanned second)
-                    (test.assert-i64-eq
-                      (array-length second.members)
-                      (array-length first.members)
-                      "deterministic member count")]
-                  [_ (test.assert-true false "nondeterministic scan")])
-                (let
-                  [member : (& first archive.ArchiveMember)
-                    (& (array-ref first.members 0))]
+    (for [at (iterator.range 0 72)]
+      (for [index (iterator.range 0 9)]
+        (let
+          [changed : String (patch (& data) at (array-ref values index))]
+          (match (archive.scan (& changed) (identity) (& policy) (limits))
+            [(ScanFailed first)
+              (assert-scan-error
+                (& changed)
+                (& policy)
+                (limits)
+                (kind-code first.kind)
+                first.ordinal
+                first.offset)]
+            [(Scanned first)
+              (match (archive.scan (& changed) (identity) (& policy) (limits))
+                [(Scanned second)
                   (test.assert-i64-eq
-                    member.id.header-offset
-                    8
-                    "mutation header identity")
-                  (test.assert-i64-eq
-                    member.payload-offset
-                    68
-                    "mutation payload start")
-                  (test.assert-true
-                    (and (>= member.payload-size 0) (<= member.payload-size 4))
-                    "mutation bounded payload"))])
-            (set! index (+ index 1))))
-        (set! at (+ at 1))))))
+                    (array-length second.members)
+                    (array-length first.members)
+                    "deterministic member count")]
+                [_ (test.assert-true false "nondeterministic scan")])
+              (let
+                [member : (& first archive.ArchiveMember)
+                  (& (array-ref first.members 0))]
+                (test.assert-i64-eq
+                  member.id.header-offset
+                  8
+                  "mutation header identity")
+                (test.assert-i64-eq
+                  member.payload-offset
+                  68
+                  "mutation payload start")
+                (test.assert-true
+                  (and (>= member.payload-size 0) (<= member.payload-size 4))
+                  "mutation bounded payload"))]))))))
 
 (define (scan-allocation [data : (& d str)]) : i64
   (let
@@ -847,11 +835,9 @@
 (define (assert-allocation-bound) : unit
   (let
     [payload : buf.ByteBuf (buf.with-capacity 8192)]
-    [index : i64 0]
     [policy : archive.ArchiveProfile (profile)]
-    (while (< index 8192)
-      (set! payload (buf.push payload (cast 255 : u8)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 8192)]
+      (set! payload (buf.push payload (cast 255 : u8))))
     (let
       [plans : (Array output.ArchiveEncodeMember 1)
         (array

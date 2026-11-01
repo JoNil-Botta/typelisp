@@ -25,6 +25,8 @@
 
 (include-str-lzss payload-comptime "../stdlib/comptime.tl")
 
+(include-str-lzss payload-compress-deflate "../stdlib/compress/deflate.tl")
+
 (include-str-lzss
   payload-concurrency-registry
   "../stdlib/concurrency_registry.tl")
@@ -174,6 +176,8 @@
       (compiler-embedded-stdlib-payload-copy payload-checked-size)]
     [(string.eq suffix "comptime.tl")
       (compiler-embedded-stdlib-payload-copy payload-comptime)]
+    [(string.eq suffix "compress/deflate.tl")
+      (compiler-embedded-stdlib-payload-copy payload-compress-deflate)]
     [(string.eq suffix "concurrency_registry.tl")
       (compiler-embedded-stdlib-payload-copy payload-concurrency-registry)]
     [(string.eq suffix "core_macros.tl")

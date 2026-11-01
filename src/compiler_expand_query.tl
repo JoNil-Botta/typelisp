@@ -358,7 +358,7 @@
         (if out.truncated
           out
           (match (format_rules.format-rules-render-source-width-result
-            (text_buf.render out.buf)
+            (text_buf.render (clone out.buf))
             80)
             [(Ok formatted)
               (let

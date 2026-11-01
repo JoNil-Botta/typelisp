@@ -6,6 +6,7 @@
 ;; the owned-byte and string limits, exact byte comparisons, and portable
 ;; text/path validation. It deliberately does not import compiler state,
 ;; filesystem access, or cache storage.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
 (import stdlib.byte_reader)
@@ -24,10 +25,8 @@
   [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
-    [index : i64 0]
-    (while (< index (array-length bytes))
-      (set! (array-ref out index) (array-ref bytes index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (array-length bytes))]
+      (set! (array-ref out index) (array-ref bytes index)))
     out))
 
 (define (compiler-incremental-binary-reader
@@ -74,13 +73,11 @@
   [text : (& text str)]) : unit
   (let
     [length : i64 (string.string-length text)]
-    [index : i64 0]
     (byte_le.push-u32! out length)
-    (while (< index length)
+    (for [index (iterator.range 0 length)]
       (byte_buf_core.byte-buf-builder-push
         out
-        (cast (string.string-ref text index) : u8))
-      (set! index (+ index 1)))))
+        (cast (string.string-ref text index) : u8)))))
 
 (define (compiler-incremental-binary-push-array!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -126,8 +123,8 @@
             (set! ok? (and (>= byte low) (<= byte high)))
             (set! low 0x80)
             (set! high 0xbf)
-            (set! k (+ k 1))))
-        (set! index (+ index count))))
+            (+= k 1)))
+        (+= index count)))
     ok?))
 
 (define (compiler-incremental-binary-path-range-valid?
@@ -169,8 +166,8 @@
                 (set! ok? false)
                 (begin
                   (set! segment-start (+ index 1))
-                  (set! index (+ index 1)))))]
-          [else (set! index (+ index 1))])))
+                  (+= index 1))))]
+          [else (+= index 1)])))
     (if ok?
       (let
         [segment-length : i64 (- end segment-start)]
@@ -240,14 +237,12 @@
       [else
         (let
           [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-          [index : i64 0]
-          (while (< index length)
+          (for [index (iterator.range 0 length)]
             (set!
               (array-ref out index)
-              (array-ref reader.cursor.bytes (+ start index)))
-            (set! index (+ index 1)))
+              (array-ref reader.cursor.bytes (+ start index))))
           (set! reader.cursor.offset (+ start length))
-          (set! reader.owned-bytes (+ reader.owned-bytes length))
+          (+= reader.owned-bytes length)
           (unsafe
             (string-from-bytes
               (ptr-cast (__tl_array-data out) : (Ptr u8))
@@ -263,5 +258,5 @@
       (if (= (array-ref left index) (array-ref right index))
         unit
         (set! equal? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     equal?))

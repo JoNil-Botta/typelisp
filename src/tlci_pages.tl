@@ -302,12 +302,7 @@
 
 (define (tlci-pages-release [region : TlciPageRegion]) : ResultTlciPageUnit
   (begin
-    (cfg
-      test
-      (set!
-        tlci-pages-test-release-attempts
-        (+ tlci-pages-test-release-attempts 1))
-      unit)
+    (cfg test (+= tlci-pages-test-release-attempts 1) unit)
     (if (and
       (not (cfg test tlci-pages-test-fail-release false))
       (tlci-pages-platform-release region))

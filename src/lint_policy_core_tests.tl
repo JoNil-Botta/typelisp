@@ -1,5 +1,6 @@
 ;; lint_policy_core_tests.tl - Executable coverage for pure lint policy
 ;; resolution. Main-less companion imported by src/tests/lint_smoke.tl.
+(import stdlib.iterator)
 (import lint_core)
 (import lint_core_tests)
 (import lint_policy_core as policy)
@@ -36,32 +37,30 @@
   [resolution : (& resolution policy.LintPolicyResolution)]
   [kind-code : i64]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index (lint-policy-diagnostics-count resolution.diagnostics))
+    (for [index
+      (iterator.range 0 (lint-policy-diagnostics-count resolution.diagnostics))]
       (let
         [diagnostic : policy.LintPolicyDiagnostic
           (lint-policy-diagnostics-ref resolution.diagnostics index)]
         (when
           (= (lint-policy-test-kind-code diagnostic.kind) kind-code)
-          (set! count (+ count 1)))
-        (set! index (+ index 1))))
+          (+= count 1))))
     count))
 
 (define (lint-policy-test-trace-count
   [resolution : (& resolution policy.LintPolicyResolution)]
   [outcome-code : i64]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index (policy.lint-policy-trace-count resolution.trace))
+    (for [index
+      (iterator.range 0 (policy.lint-policy-trace-count resolution.trace))]
       (let
         [entry : policy.LintPolicyTraceEntry
           (lint-policy-trace-ref resolution.trace index)]
         (when
           (= (lint-policy-test-outcome-code entry.outcome) outcome-code)
-          (set! count (+ count 1)))
-        (set! index (+ index 1))))
+          (+= count 1))))
     count))
 
 (define (lint-policy-test-trace-has-source?
@@ -82,7 +81,7 @@
             (= (lint-policy-test-outcome-code entry.outcome) outcome-code)
             (string.eq entry.origin.source source))
           (set! found true))
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (lint-policy-test-decision-is?
@@ -155,17 +154,15 @@
     [redundant-begin-default : lint_core.LintLevel
       (lint_core_tests.lint-rule-default-level
         (lint_core.lint-rule-redundant-begin-id))]
-    [index : i64 0]
     (lint-policy-test-expect
       (= (lint_core.lint-rule-list-count rules) 28)
       "lint policy: registry count should remain deterministic")
-    (while (< index (lint_core.lint-rule-list-count rules))
+    (for [index (iterator.range 0 (lint_core.lint-rule-list-count rules))]
       (let
         [rule : lint_core.LintRule (lint_core.lint-rule-list-ref rules index)]
         (lint-policy-test-expect
           (> rule.group-mask 0)
-          "lint policy: every registered rule needs a built-in group")
-        (set! index (+ index 1))))
+          "lint policy: every registered rule needs a built-in group")))
     (lint-policy-test-expect
       (string.eq
         (lint_core.lint-rule-list-ref rules 0).rule-id
@@ -481,8 +478,7 @@
   (let
     [slots : (__tl_dyn-array policy.LintPolicyGroup)
       (__tl_make-array policy.LintPolicyGroup count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [name : String (str_cat.str-cat "chain-" (string.int->string index))]
         [member-name : String
@@ -495,8 +491,7 @@
             name
             (lint-policy-group-members-from
               (__tl_make-array (policy.LintPolicyGroupMember.Group member-name)))
-            "linear-chain"))
-        (set! index (+ index 1))))
+            "linear-chain"))))
     (lint-policy-groups-from slots)))
 
 (define (lint-policy-test-linear-chain) : unit

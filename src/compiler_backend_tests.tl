@@ -59,7 +59,7 @@
     [end : i64 (string.string-length spec)]
     [i : i64 end]
     (while (> i 0)
-      (set! i (- i 1))
+      (-= i 1)
       (when
         (= (string.char-at spec i) ' ')
         (set!
@@ -536,9 +536,8 @@
     [items : (__tl_dyn-array regalloc.CompilerRegLocation)
       (regalloc.compiler-reg-assignment-table-items assignment-index)]
     [limit : i64 (array-length present)]
-    [v : i64 0]
     [mask : i64 0]
-    (while (< v vars)
+    (for [v (iterator.range 0 vars)]
       (if (and
         (< v limit)
         (not (= (array-ref present v) 0))
@@ -551,8 +550,7 @@
             mask
             (backend.compiler-backend-scavenge-location-mask
               (ir.compiler-ir-array-shared-view items v))))
-        unit)
-      (set! v (+ v 1)))
+        unit))
     mask))
 
 (define (compiler-backend-scavenge-pick
@@ -606,8 +604,7 @@
   (let
     [slots : (__tl_dyn-array backend.BackendFloatEntry) items.slots]
     [count : i64 items.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [entry : backend.BackendFloatEntry
           (ir.compiler-ir-array-shared-view slots index)]
@@ -615,8 +612,7 @@
           (and
             (compiler-backend-test-float-type-eq? entry.ty ty)
             (= entry.bits bits))
-          (return true))
-        (set! index (+ index 1))))
+          (return true))))
     false))
 
 (define (compiler-backend-smoke-source) : String
@@ -1615,7 +1611,8 @@
       (Program
         runtime-globals
         (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty))]
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None))]
     (and
       (match (backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
         backend-state
@@ -1949,13 +1946,13 @@
 (define (main) : i64
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set! (array-ref items 0) answer)
+    (+
+      foreign-data
       (+
-        foreign-data
+        (foreign-fn 1)
         (+
-          (foreign-fn 1)
-          (+ (foreign-call (inc (array-ref items 0))) (+ (float-ok) (float32-ok))))))))")
+          (foreign-call (inc (+ answer (array-length items))))
+          (+ (float-ok) (float32-ok)))))))")
 
 (define (compiler-backend-coff-real-text-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -2206,7 +2203,7 @@
         [(Jump symbol)
           (if (cobj.compiler-object-string-contains? (& symbol) "if_merge" 0)
             (if previous-store?
-              (set! edges (+ edges 1))
+              (+= edges 1)
               (set! edges -1))
             unit)
           (set! previous-store? false)]
@@ -2214,11 +2211,11 @@
           (if (and
             previous-store?
             (cobj.compiler-object-string-contains? (& symbol) "if_merge" 0))
-            (set! edges (+ edges 1))
+            (+= edges 1)
             unit)
           (set! previous-store? false)]
         [_ (set! previous-store? false)])
-      (set! index (+ index 1)))
+      (+= index 1))
     edges))
 
 (define (compiler-backend-object-phi-edge-copy-ok?) : bool
@@ -2227,7 +2224,8 @@
     (backend.CompilerBackendTarget.Windows))
     [(Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList image.sections]
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
         (and
           (not
             (cobj.compiler-object-section-contains-bytes?
@@ -2507,7 +2505,7 @@
                 (compiler-backend-object-rbp-store-chunk? value))]
             [(Jcc cc _)
               (if (and (= cc expected-cc) previous-store?)
-                (set! jcc-count (+ jcc-count 1))
+                (+= jcc-count 1)
                 (set! ok false))]
             [(Branch _ _) (set! ok false)]
             [(Jump target)
@@ -2521,7 +2519,7 @@
                 unit)]
             [_ unit])
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (and ok (= jcc-count 1))))
 
 (define (compiler-backend-object-branch-flags-ok?) : bool
@@ -2549,7 +2547,7 @@
                   instrs
                   (array-ref inverse-cc (% index 6)))])]
           [(Err _) false]))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 ;; Flags are scoped to one adjacent integer producer, including when the same
@@ -2622,7 +2620,7 @@
                 (Var 7)
                 program-index)
               -1)))
-        (set! case-index (+ case-index 1))))
+        (+= case-index 1)))
     ok))
 
 ;; The absent-next-block sentinel must never erase an invalid target. Include
@@ -2674,7 +2672,8 @@
               blocks
               (Ordinary)))
           (& (ir.compiler-ir-function-seq-empty)))
-        (ir.compiler-ir-extern-seq-empty))]
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None))]
     [renders : bool
       (match (backend.compiler-backend-emit-program-object-image-target
         program
@@ -2707,7 +2706,7 @@
           (if (< index 8)
             (backend.CompilerBackendTarget.Linux)
             (backend.CompilerBackendTarget.Windows))))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
@@ -3133,11 +3132,30 @@
                 [xdata-size : i64
                   (layout.compiler-object-layout-u32-at obj (+ xdata-header 16))]
                 [xdata-ptr : i64
-                  (layout.compiler-object-layout-u32-at obj (+ xdata-header 20))]
+                  (+
+                    (layout.compiler-object-layout-u32-at
+                      obj
+                      (+ xdata-header 20))
+                    (layout.compiler-object-layout-section-label-offset
+                      image
+                      (Xdata)
+                      ".L_tl_start_xdata"))]
                 (and
-                  (= pdata-size 36)
-                  (= pdata-relocs 9)
-                  (= xdata-size 8)
+                  (= pdata-size 48)
+                  (= pdata-relocs 12)
+                  (= xdata-size 16)
+                  (cobj.compiler-object-relocation-list-contains?
+                    relocs
+                    (Addr32Nb)
+                    "tl_tlci_call_image_entry")
+                  (cobj.compiler-object-relocation-list-contains?
+                    relocs
+                    (Addr32Nb)
+                    "tl_tlci_call_image_entry$end")
+                  (cobj.compiler-object-relocation-list-contains?
+                    relocs
+                    (Addr32Nb)
+                    "tl_tlci_call_image_entry$unwind")
                   (= (layout.compiler-object-layout-u8-at obj xdata-ptr) 0x01)
                   (=
                     (layout.compiler-object-layout-u8-at obj (+ xdata-ptr 1))
@@ -3223,7 +3241,8 @@
     (backend.CompilerBackendTarget.Windows))
     [(Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList image.sections]
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -3235,14 +3254,15 @@
 
 (define (compiler-backend-windows-object-stack-param-spill-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
-    "(define (sum5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
-  e)
+    "(define (sum7 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64
+  g)
 (define (main) : i64
-  (sum5 1 2 3 4 5))"
+  (sum7 1 2 3 4 5 6 7))"
     (backend.CompilerBackendTarget.Windows))
     [(Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList image.sections]
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
         (backend.backend-and4
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -3937,6 +3957,129 @@
                 [needle (compiler-backend-todo-marker)]
                 (asm-has? asm needle))))))]
     [(Err _) false]))
+
+(define (compiler-backend-c-abi-memory-outgoing-size-ok?
+  [target : backend.CompilerBackendTarget]
+  [size : i64]) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [name : i64 (ir.compiler-ir-test-symbol "c-memory-outgoing-fixture")]
+    [signature : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-cons
+          (& (ast.AstType.I64))
+          (&
+            (ast.ast-type-cons
+              (& (ast.AstType.I64))
+              (&
+                (ast.ast-type-cons
+                  (& (ast.AstType.I64))
+                  (&
+                    (ast.ast-type-cons
+                      (& (ast.AstType.I64))
+                      (&
+                        (ast.ast-type-cons
+                          (&
+                            (ast.AstType.Struct
+                              (ci.intern "OutgoingMemoryPayload")))
+                          (&
+                            (ast.ast-type-cons
+                              (& (ast.AstType.I64))
+                              (& (ast.ast-type-list-new)))))))))))))
+        (& (ast.AstType.I64)))]
+    [externs : ir.CompilerIrExternSeq
+      (ir.compiler-ir-extern-seq1
+        (ir.CompilerIrExtern.Extern
+          name
+          name
+          "c-memory-outgoing-fixture"
+          (owned_view.compiler-owned-shared-view signature)
+          (ast.AstExternAbi.C)
+          name
+          (ast.ast-extern-link-input-list-new)
+          false
+          (ir.CompilerIrReturnStorage.None)))]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        bases
+        (ir.compiler-ir-function-seq-empty)
+        externs)]
+    [types : regalloc.CompilerRegVarTypes
+      (regalloc.compiler-reg-var-types-insert
+        (regalloc.compiler-reg-var-types-empty)
+        1
+        signature)]
+    [args : String
+      (match target
+        [(backend.CompilerBackendTarget.Linux)
+          (str_cat.str-cat
+            "1, 2, 3, 4, %0, "
+            (string.int->string size)
+            ", unit, 9")]
+        [(backend.CompilerBackendTarget.Windows) "1, 2, 3, 4, %0, 9"])]
+    [calls : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array
+        (irt.instr
+          (str_cat.str-cat
+            "%2 = call c-memory-outgoing-fixture("
+            args
+            ") : i64"))
+        (irt.instr
+          (str_cat.str-cat "tailcall c-memory-outgoing-fixture(" args ") : i64"))
+        (irt.instr (str_cat.str-cat "%2 = call_c* %1(" args ") : i64"))
+        (irt.instr
+          (str_cat.str-cat
+            "call_c_store c-memory-outgoing-fixture("
+            args
+            ") -> %3 []"))
+        (irt.instr (str_cat.str-cat "call_c_store* %1(" args ") -> %3 []")))]
+    [position : i64 0]
+    [ok : bool true]
+    ;; SysV puts the complete payload on the stack. Its five scalar arguments
+    ;; still fit registers. Win64 passes the aggregate by address and spills
+    ;; it and the final scalar after four register arguments, using two words.
+    ;; Shadow space is separate; result-store forms add their result-base save.
+    (while (< position 5)
+      (set!
+        ok
+        (and
+          ok
+          (=
+            (backend.compiler-backend-instr-outgoing-stack-space
+              bases
+              target
+              (owned_view.compiler-owned-array-element-shared-view
+                calls
+                position)
+              types
+              (backend.CompilerBackendGlobalTypeTable.Empty)
+              index)
+            (+
+              (match target
+                [(backend.CompilerBackendTarget.Linux)
+                  (* (/ (+ size 15) 16) 16)]
+                [(backend.CompilerBackendTarget.Windows) 16])
+              (if (>= position 3)
+                16
+                0)))))
+      (set! position (+ position 1)))
+    ok))
+
+(define (compiler-backend-c-abi-memory-outgoing-ok?) : bool
+  (and
+    (compiler-backend-c-abi-memory-outgoing-size-ok?
+      backend.CompilerBackendTarget.Linux
+      24)
+    ;; This exceeds the former argument-count bound for an indirect call.
+    (compiler-backend-c-abi-memory-outgoing-size-ok?
+      backend.CompilerBackendTarget.Linux
+      200)
+    (compiler-backend-c-abi-memory-outgoing-size-ok?
+      backend.CompilerBackendTarget.Windows
+      24)
+    (compiler-backend-c-abi-memory-outgoing-size-ok?
+      backend.CompilerBackendTarget.Windows
+      200)))
 
 (define (compiler-backend-c-abi-sysv-two-register-return-source) : String
   "(defstruct PairI64 (:repr c) (lo i64) (hi i64))
@@ -4958,12 +5101,12 @@
         (or (asm-has? asm "_tl_calc") (asm-has? asm "_tl_f"))
         ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; T1-6 (a) puts
         ;; this call-free leaf's frame in the red zone. Parameter identities
-        ;; stay pinned at -8/-16 while lifetime coloring compacts the sum into
-        ;; -32 and lets the later constant/product share -24.
+        ;; stay pinned at -8/-16; expression snapshots may change the colored
+        ;; temporary offsets and whether multiplication folds a memory operand.
         (asm-has? asm "    movq %rdi, -8(%rsp)\n")
         (asm-has? asm "    movq %rsi, -16(%rsp)\n")
         (asm-has? asm "    movq %r8, -24(%rsp)\n")
-        (asm-has? asm "    imulq -24(%rsp), %r8\n")
+        (asm-has? asm "    imulq ")
         (asm-lacks? asm "    movq %r12, -")
         true
         true)]
@@ -4976,9 +5119,10 @@
       (backend.backend-and8
         ;; T1-6 (a) red-zone frame slots. Without scalar-register web
         ;; coalescing, the stack-only path keeps the two copied operands at
-        ;; -16/-24 while reusing the staging -8 slot for the sum.
+        ;; -16/-24. The left operand needs no snapshot (the right operand
+        ;; cannot write it), so the sum reads -16 directly into -8.
         (asm-has? asm "main:\n")
-        (asm-has? asm "    movsd -8(%rsp), %xmm2\n")
+        (asm-has? asm "    movsd -16(%rsp), %xmm2\n")
         (asm-has? asm "    addsd -24(%rsp), %xmm2\n")
         (asm-has? asm "    movsd %xmm2, -8(%rsp)\n")
         (asm-has? asm "    movsd -8(%rsp), %xmm0\n")
@@ -5204,7 +5348,8 @@
                   (compiler-backend-call-save-main-instrs)))
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-call-save-r9-wrap-ok?) : bool
   (let
@@ -5475,8 +5620,12 @@
             "    subq $520, %rsp\n")]
         (and
           (asm-has? asm "#t _tl_f0 _tl_stack_only_branch_storage\n")
+          ;; Each branch's `let` adopts its literal's storage as its only home
+          ;; at every level. The exact frame pins that the two branches share
+          ;; one colored slot; the opt1 uncolored size (measured with branch
+          ;; coloring disabled) must not appear.
           (asm-has? body frame)
-          (asm-lacks? body uncolored-frame)
+          (or (= level 0) (asm-lacks? body uncolored-frame))
           ;; The stack-only policy is unchanged: compaction must not smuggle
           ;; scalar allocation or callee-saved homes into opt0/opt1.
           (asm-lacks? body "%r12")
@@ -5652,7 +5801,9 @@
 ;; The array allocation below makes that preheader callful: injecting the
 ;; 2^32 literal there puts it in a caller-saved register before `tl_alloc` and
 ;; `tl_array_zero`, and the subtraction loop later observes the clobbered home.
-;; This is the reduced `stdlib.format/bn-sub` failure from #6875.
+;; This is the reduced `stdlib.format/bn-sub` failure from #6875. The callful
+;; refusal is also tested directly below (`compiler-backend-const-hoist-test-
+;; inject`), independently of this source's register and loop plan.
 (define compiler-backend-callful-preheader-wide-literal-source : String
   "(defstruct BigNum
   (limbs (__tl_dyn-array u64))
@@ -5706,17 +5857,46 @@
     (string.copy (& compiler-backend-callful-preheader-wide-literal-source))
     target)
     [(Ok asm)
-      (and
-        (asm-has? asm "    call tl_alloc\n")
-        (asm-has? asm "    call tl_array_zero\n")
-        ;; A declined hoist rematerializes at the loop use. The ordinary use
-        ;; spelling is `movq`; `movabsq` is unique to the preheader injection.
-        (asm-has? asm "    movq $4294967296")
-        (asm-lacks? asm "    movabsq $4294967296"))]
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_bn_sub")]
+        (and
+          (asm-has? body "    call tl_alloc\n" "    call tl_array_zero\n")
+          ;; A declined hoist rematerializes at the loop use. The ordinary use
+          ;; spelling is `movq`; `movabsq` is unique to the preheader injection.
+          (asm-has? body "    movq $4294967296")
+          (asm-lacks? body "    movabsq $4294967296")))]
     [(Err _) false]))
+
+(define (compiler-backend-const-hoist-test-inject [prefix : String]) : i64
+  (match (irt.func
+    (str_cat.str-cat
+      "function @callful_preheader(limit=%0:i64) -> i64 vars 5 {\nentry:\n"
+      (str_cat.str-cat
+        prefix
+        "jump loop\nloop:\n%1 = phi [0, entry], [%2, loop] : i64\n%2 = add %1, 1 : i64\n%3 = lt %2, %0 : i64\nbranch %3, loop, exit\nexit:\nreturn %2\n}")))
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      ;; Block lists are dense arrays (#8594).
+      (let
+        [ids : backend_i64_i64_map.Map
+          (regalloc.compiler-reg-loop-depth-block-ids
+            (& blocks)
+            (& (backend_i64_i64_map.with-capacity 16))
+            0)]
+        (match blocks
+          [(ir.CompilerIrBlockList.Array seq)
+            (backend.compiler-backend-const-hoist-resolve-inject
+              seq.slots
+              (& ids)
+              1
+              1)]))]))
 
 (define (compiler-backend-callful-preheader-wide-literal-ok?) : bool
   (and
+    (= (compiler-backend-const-hoist-test-inject "") 0)
+    (=
+      (compiler-backend-const-hoist-test-inject "%4 = call opaque() : i64\n")
+      -1)
+    (= (compiler-backend-const-hoist-test-inject "%4 = syscall(39)\n") -1)
     (compiler-backend-callful-preheader-wide-literal-target-ok?
       (backend.CompilerBackendTarget.Linux))
     (compiler-backend-callful-preheader-wide-literal-target-ok?
@@ -6789,23 +6969,15 @@
         (backend.compiler-backend-plan-uses-callee-regs?
           assignments
           backend-state)
-        (=
-          (backend.compiler-backend-frame-slots 3 assignments backend-state)
-          10)
-        (= (backend.compiler-backend-frame-slots 1 full backend-state) 8)
-        (string.eq
-          save
-          "    movq %r12, -32(%rbp)\n    movq %rsi, -72(%rbp)\n    movq %rdi, -80(%rbp)\n")
-        (string.eq
-          restore
-          "    movq -80(%rbp), %rdi\n    movq -72(%rbp), %rsi\n    movq -32(%rbp), %r12\n")
+        (= (backend.compiler-backend-frame-slots 3 assignments backend-state) 7)
+        (= (backend.compiler-backend-frame-slots 1 full backend-state) 6)
+        (string.eq save "    movq %r12, -32(%rbp)\n")
+        (string.eq restore "    movq -32(%rbp), %r12\n")
         (asm-lacks? restore "popq")
-        (asm-lacks? full-restore "popq")
-        (asm-has?
+        (asm-lacks? full-restore "%rsi" "%rdi")
+        (string.eq
           full-restore
-          "    movq -64(%rbp), %rdi\n"
-          "    movq -56(%rbp), %rsi\n"
-          "    movq -48(%rbp), %rbx\n"))]
+          "    leaq -48(%rbp), %rsp\n    popq %rbx\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n"))]
     [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
     ok))
 
@@ -6841,10 +7013,8 @@
     [safe-body : String
       "    movq %r12, -16(%rbp)
     movq -8(%rbp), %rax
-    leaq -72(%rbp), %rsp
+    leaq -56(%rbp), %rsp
     popq %rbp
-    popq %rdi
-    popq %rsi
     popq %rbx
     popq %r15
     popq %r14
@@ -6879,26 +7049,26 @@
     [unsafe-rejected : bool (not unsafe-result.ok)]
     [ok : bool
       (and
-        (= push-count 8)
-        (= (backend.compiler-backend-frame-slots 1 assignments backend-state) 9)
+        (= push-count 6)
+        (= (backend.compiler-backend-frame-slots 1 assignments backend-state) 7)
         (let
           [text
             (backend.compiler-backend-emit-save-callee-regs
               assignments
               1
               backend-state)]
-          (asm-has? text "    movq %rbp, -72(%rbp)\n"))
-        (= (backend.compiler-backend-string-count prologue "    pushq %") 8)
+          (asm-has? text "    movq %rbp, -56(%rbp)\n"))
+        (= (backend.compiler-backend-string-count prologue "    pushq %") 6)
         (=
           (backend.compiler-backend-string-count prologue "    .seh_pushreg %")
-          8)
+          6)
         (asm-has?
           prologue
           "    pushq %rbp\n"
           "    .seh_pushreg %rbp\n"
-          "    .seh_stackalloc 88\n"
+          "    .seh_stackalloc 72\n"
           "    .seh_endprologue\n")
-        (asm-lacks? prologue ".seh_setframe" "movq %rsp, %rbp")
+        (asm-lacks? prologue ".seh_setframe" "movq %rsp, %rbp" "%rsi" "%rdi")
         safe-result.ok
         (asm-lacks? safe-rebased "(%rbp)")
         (asm-has? safe-rebased "    popq %rbp\n")
@@ -7015,53 +7185,53 @@
         (asm-has? planned-save "    movdqu %xmm6, ")
         (asm-lacks? planned-save "%xmm7")
         (backend.compiler-backend-plan-uses-callee-regs? sparse backend-state)
-        (= frame 240)
-        (= (backend.compiler-backend-frame-slots 3 sparse backend-state) 30)
+        (= frame 224)
+        (= (backend.compiler-backend-frame-slots 3 sparse backend-state) 28)
         (=
           (backend.compiler-backend-frame-slots-with-groups
             3
             sparse
             true
             backend-state)
-          36)
+          34)
         (=
           (backend.compiler-backend-frame-slots-emergency-max
             3
             true
             backend-state)
-          38)
+          36)
         (=
           (backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
             sparse
             3
             0)
-          -96)
+          -80)
         (=
           (backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
             sparse
             3
             9)
-          -240)
+          -224)
         (=
           (backend.compiler-backend-group-word0-slot 0 3 sparse backend-state)
-          -256)
+          -240)
         (=
           (backend.compiler-backend-group-word1-slot 0 3 sparse backend-state)
-          -248)
+          -232)
         (string.eq
           save
-          "    movdqu %xmm6, -96(%rbp)\n    .seh_savexmm %xmm6, 144\n    movdqu %xmm15, -240(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+          "    movdqu %xmm6, -80(%rbp)\n    .seh_savexmm %xmm6, 144\n    movdqu %xmm15, -224(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (string.eq
           restore
-          "    movdqu -240(%rbp), %xmm15\n    movdqu -96(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
+          "    movdqu -224(%rbp), %xmm15\n    movdqu -80(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
         (asm-has?
           entry
-          "    subq $240, %rsp\n"
+          "    subq $224, %rsp\n"
           save
           "    .seh_savexmm %xmm15, 0\n    .seh_endprologue\n")
-        (= full-frame 224)
+        (= full-frame 208)
         (=
           (backend.compiler-backend-string-count full-save "    movdqu %xmm")
           10)
@@ -7080,27 +7250,27 @@
             backend-state)
           3)
         (asm-lacks? empty-entry "movdqu" ".seh_savexmm")
-        (= large-frame 5024)
+        (= large-frame 5008)
         (asm-has?
           large-entry
           "    callq __chkstk\n"
-          "    movdqu %xmm15, -5024(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+          "    movdqu %xmm15, -5008(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (=
           (backend.compiler-backend-string-count
             inline-tail
-            "movdqu -240(%rbp), %xmm15")
+            "movdqu -224(%rbp), %xmm15")
           1)
         (asm-has? inline-tail "    leave\n    ret\n")
         (=
           (backend.compiler-backend-string-count
             jump-tail
-            "movdqu -240(%rbp), %xmm15")
+            "movdqu -224(%rbp), %xmm15")
           1)
         (asm-has? jump-tail "    leave\n    jmp _tl_xmm_target\n")
         (=
           (backend.compiler-backend-string-count
             shared-tail
-            "movdqu -240(%rbp), %xmm15")
+            "movdqu -224(%rbp), %xmm15")
           1)
         (asm-has? shared-tail ".L_tl_xmm_shared_return:"))]
     [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
@@ -7161,7 +7331,7 @@
         backend.CompilerBackendTarget.Windows)]
     [full : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12 %1=%r13 %2=%r14 %3=%r15 %4=%rbx %5=%rsi %6=%rdi")]
-    [sparse : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r13 %1=%rdi")]
+    [sparse : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r13 %1=%rbx")]
     [r12-only : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12")]
     [mixed : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12 %1=%vec6")]
     [xmm-only : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%vec6")]
@@ -7205,7 +7375,7 @@
         backend-state)]
     [sparse-described : String
       (compiler-backend-win64-seh-splice
-        "    movq %r13, 40(%rsp)\n    movq %rdi, 0(%rsp)\n    ret\n"
+        "    movq %r13, 40(%rsp)\n    movq %rbx, 16(%rsp)\n    ret\n"
         0
         ""
         sparse
@@ -7214,7 +7384,7 @@
         backend-state)]
     [mode-described : String
       (compiler-backend-win64-seh-splice
-        "    vzeroupper\n    movq %r13, 40(%rsp)\n    movq %rdi, 0(%rsp)\n    ret\n"
+        "    vzeroupper\n    movq %r13, 40(%rsp)\n    movq %rbx, 16(%rsp)\n    ret\n"
         0
         "    vzeroupper\n"
         sparse
@@ -7288,23 +7458,23 @@
         backend-state)]
     [ok : bool
       (and
-        (= full-frame 80)
+        (= full-frame 64)
         (string.eq
           full-entry
-          ".seh_proc _tl_seh_full\n_tl_seh_full:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $80, %rsp\n    .seh_stackalloc 80\n")
+          ".seh_proc _tl_seh_full\n_tl_seh_full:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n")
         (asm-has?
           framed-entry
           "    .seh_setframe %rbp, 0\n"
-          "    .seh_stackalloc 80\n    .seh_endprologue\n")
+          "    .seh_stackalloc 64\n    .seh_endprologue\n")
         (string.eq
           full-described
-          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 48\n    movq %r13, -40(%rbp)\n    .seh_savereg %r13, 40\n    movq %r14, -48(%rbp)\n    .seh_savereg %r14, 32\n    movq %r15, -56(%rbp)\n    .seh_savereg %r15, 24\n    movq %rbx, -64(%rbp)\n    .seh_savereg %rbx, 16\n    movq %rsi, -72(%rbp)\n    .seh_savereg %rsi, 8\n    movq %rdi, -80(%rbp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    movq %rcx, %rax\n    call _tl_seh_probe\n")
+          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 32\n    movq %r13, -40(%rbp)\n    .seh_savereg %r13, 24\n    movq %r14, -48(%rbp)\n    .seh_savereg %r14, 16\n    movq %r15, -56(%rbp)\n    .seh_savereg %r15, 8\n    movq %rbx, -64(%rbp)\n    .seh_savereg %rbx, 0\n    .seh_endprologue\n    movq %rcx, %rax\n    call _tl_seh_probe\n")
         (string.eq
           sparse-described
-          "    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rdi, 0(%rsp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    ret\n")
+          "    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rbx, 16(%rsp)\n    .seh_savereg %rbx, 16\n    .seh_endprologue\n    ret\n")
         (string.eq
           mode-described
-          "    vzeroupper\n    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rdi, 0(%rsp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    ret\n")
+          "    vzeroupper\n    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rbx, 16(%rsp)\n    .seh_savereg %rbx, 16\n    .seh_endprologue\n    ret\n")
         (string.eq
           xmm-only-described
           "    .seh_endprologue\n    vzeroupper\n    ret\n")
@@ -7313,22 +7483,22 @@
           (str_cat.str-cat
             wrap-prefix
             "    movq %r12, 16(%rsp)\n    .seh_savereg %r12, 16\n    .seh_endprologue\n    ret\n"))
-        (= mixed-frame 96)
+        (= mixed-frame 80)
         (string.eq
           mixed-entry
-          ".seh_proc _tl_seh_mixed\n_tl_seh_mixed:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $96, %rsp\n    .seh_stackalloc 96\n    movdqu %xmm6, -96(%rbp)\n    .seh_savexmm %xmm6, 0\n")
+          ".seh_proc _tl_seh_mixed\n_tl_seh_mixed:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $80, %rsp\n    .seh_stackalloc 80\n    movdqu %xmm6, -80(%rbp)\n    .seh_savexmm %xmm6, 0\n")
         (string.eq
           mixed-described
-          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 64\n    .seh_endprologue\n    ret\n")
-        (= large-frame 4864)
+          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 48\n    .seh_endprologue\n    ret\n")
+        (= large-frame 4848)
         (asm-has?
           large-entry
-          "    movl $4864, %eax\n    callq __chkstk\n    subq %rax, %rsp\n    .seh_stackalloc 4864\n")
+          "    movl $4848, %eax\n    callq __chkstk\n    subq %rax, %rsp\n    .seh_stackalloc 4848\n")
         (asm-lacks? large-entry ".seh_setframe" ".seh_endprologue")
         (asm-has?
           large-described
-          "    movq %r12, -4808(%rbp)\n    .seh_savereg %r12, 56\n"
-          "    movq %rdi, -4856(%rbp)\n    .seh_savereg %rdi, 8\n    .seh_endprologue\n")
+          "    movq %r12, -4808(%rbp)\n    .seh_savereg %r12, 40\n"
+          "    movq %rbx, -4840(%rbp)\n    .seh_savereg %rbx, 8\n    .seh_endprologue\n")
         (string.eq
           far-described
           "    movq %r12, 599968(%rsp)\n    .seh_savereg %r12, 599968\n    .seh_endprologue\n")
@@ -7336,7 +7506,7 @@
         ;; inside the allocation; XMM rows must stay 16-byte aligned.
         (string.eq
           (compiler-backend-win64-seh-splice
-            "    movq %rdi, 0(%rsp)\n    movq %r13, 40(%rsp)\n"
+            "    movq %rbx, 16(%rsp)\n    movq %r13, 40(%rsp)\n"
             0
             ""
             sparse
@@ -8054,6 +8224,7 @@
         backend.CompilerBackendTarget.Linux
         dynamic-instr
         dynamic-types
+        (backend.CompilerBackendGlobalTypeTable.Empty)
         index)]
     [stack-count : i64
       (backend.compiler-backend-call-stack-arg-count
@@ -8630,7 +8801,7 @@
             (compiler-backend-test-instr-seq-prepend
               (Alloc 1 (I64))
               (compiler-backend-test-instr-seq-prepend
-                (AddrOf 2 1)
+                (AddrOf 2 1 0)
                 (compiler-backend-test-instr-seq-prepend
                   (irt.instr "store_ptr %2, 123 : u64")
                   (compiler-backend-test-instr-seq-prepend
@@ -8666,7 +8837,7 @@
                                         (compiler-backend-test-instr-seq-prepend
                                           (Alloc 13 (I64))
                                           (compiler-backend-test-instr-seq-prepend
-                                            (AddrOf 14 13)
+                                            (AddrOf 14 13 0)
                                             (compiler-backend-test-instr-seq-prepend
                                               (StorePtr (Var 14) (Var 10) (U64))
                                               (compiler-backend-test-instr-seq-prepend
@@ -8699,7 +8870,8 @@
         (ir.compiler-ir-function-seq-prepend
           (& (compiler-backend-descriptor-pair-consumer))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-descriptor-pair-spill-order-ok?) : bool
   (let
@@ -8708,7 +8880,7 @@
     [program : ir.CompilerIrProgram (compiler-backend-descriptor-pair-program)]
     [index : backend.CompilerBackendProgramIndex
       (match program
-        [(Program _ functions externs)
+        [(Program _ functions externs _authority)
           (compiler-backend-program-index-build
             (ast.ast-node-pool-reader-type-segment-bases)
             functions
@@ -8774,7 +8946,7 @@
     [program : ir.CompilerIrProgram (compiler-backend-descriptor-pair-program)]
     [index : backend.CompilerBackendProgramIndex
       (match program
-        [(Program _ functions externs)
+        [(Program _ functions externs _authority)
           (compiler-backend-program-index-build
             (ast.ast-node-pool-reader-type-segment-bases)
             functions
@@ -8874,7 +9046,8 @@
     (ir.compiler-ir-function-seq-prepend
       (& (compiler-backend-descriptor-pair-object-main))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-descriptor-pair-object-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
@@ -8885,7 +9058,8 @@
     true)
     [(Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList image.sections]
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
         [renders : bool
           (match target
             [(backend.CompilerBackendTarget.Linux)
@@ -8932,7 +9106,7 @@
     [program : ir.CompilerIrProgram (compiler-backend-descriptor-pair-program)]
     [program-index : backend.CompilerBackendProgramIndex
       (match (owned_view.compiler-owned-shared-view program)
-        [(Program _ functions externs)
+        [(Program _ functions externs _authority)
           (compiler-backend-program-index-build
             (ast.ast-node-pool-reader-type-segment-bases)
             functions
@@ -9096,7 +9270,7 @@
           (regalloc.compiler-reg-id-seq-ref regs index)))
         unit
         (set! ok false))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (compiler-backend-reg-part-pools-ok?) : bool
@@ -9395,7 +9569,11 @@
           (String "global-string"))]
       [collections : backend.CompilerBackendProgramCollections
         (compiler-backend-collect-program-collections
-          (Program globals functions (ir.compiler-ir-extern-seq-empty)))]
+          (Program
+            globals
+            functions
+            (ir.compiler-ir-extern-seq-empty)
+            (ir.CompilerIrReturnStorageAuthority.None)))]
       (and
         (let
           [items
@@ -9449,7 +9627,9 @@
     [lifetimes : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
     [struct-plain : ast.AstType (Struct plain-id)]
     [struct-args-root : ast.AstType
-      (StructArgs root-qualified-id (box lifetimes))]
+      (StructArgs
+        root-qualified-id
+        (box (owned_view.compiler-owned-shared-view lifetimes)))]
     [enum-qualified : ast.AstType (Enum qualified-id)]
     [enum-args-qualified : ast.AstType (EnumArgs qualified-id (box lifetimes))]
     [opaque-struct : ast.AstType (Struct opaque-id)]
@@ -10540,7 +10720,6 @@
   (let
     [input-buf : text_buf.TextBuf (text_buf.empty)]
     [want-buf : text_buf.TextBuf (text_buf.empty)]
-    [k : i64 0]
     (set!
       input-buf
       (text_buf.append
@@ -10551,7 +10730,7 @@
       (text_buf.append
         want-buf
         "main:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq $808, %rsp\n"))
-    (while (< k 50)
+    (for [k (iterator.range 0 50)]
       (let
         [a : i64 (+ 8 (* 16 k))]
         [b : i64 (+ 16 (* 16 k))]
@@ -10592,8 +10771,7 @@
               (string.int->string a)
               "(%rsp), "
               reg
-              "\n")))
-        (set! k (+ k 1))))
+              "\n")))))
     (let
       [input : String
         (text_buf.render (text_buf.append input-buf "    leave\n    ret\n"))]
@@ -11192,6 +11370,43 @@
       (> size-at div-stub-at)
       (asm-lacks? out "    jb .Lf0_bounds_ok.1\n"))))
 
+;; COLD-1 sharing: stubs of one function whose whole body is the same
+;; argument-free abort call are emitted once, and every check jumps there. A
+;; different abort keeps its own stub, and no stub is shared across functions.
+(define (compiler-backend-cold-share-source) : String
+  (str_cat.str-cat
+    ".text\n.globl f\n    .type f,@function\nf:\n"
+    "    cmpq %r9, %rdi\n    jb .Lf0_a\n    call tl_oob_abort\n.Lf0_a:\n"
+    "    cmpq %r9, %rsi\n    jb .Lf0_b\n    call tl_oob_abort\n.Lf0_b:\n"
+    "    testq %r8, %r8\n    jne .Lf0_c\n    call tl_div_abort\n.Lf0_c:\n"
+    "    ret\n    .size f, . - f\n"
+    ".globl g\n    .type g,@function\ng:\n"
+    "    cmpq %r9, %rdi\n    jb .Lf1_a\n    call tl_oob_abort\n.Lf1_a:\n"
+    "    ret\n    .size g, . - g\n"))
+
+(define (compiler-backend-cold-share-ok?) : bool
+  (let
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append
+            (text_buf.empty)
+            (compiler-backend-cold-share-source))))]
+    (and
+      (asm-has?
+        out
+        "    cmpq %r9, %rdi\n    jae .Lf0_a.cold\n.Lf0_a:\n    cmpq %r9, %rsi\n    jae .Lf0_a.cold\n.Lf0_b:\n")
+      (asm-has?
+        out
+        "    testq %r8, %r8\n    je .Lf0_c.cold\n.Lf0_c:\n    ret\n")
+      (asm-has?
+        out
+        ".Lf0_a.cold:\n    call tl_oob_abort\n.Lf0_c.cold:\n    call tl_div_abort\n    .size f, . - f\n")
+      (asm-lacks? out ".Lf0_b.cold")
+      (asm-has?
+        out
+        "    jae .Lf1_a.cold\n.Lf1_a:\n    ret\n.Lf1_a.cold:\n    call tl_oob_abort\n    .size g, . - g\n"))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -11260,8 +11475,7 @@
 (define (compiler-backend-streamed-final-batch-equivalent?) : bool
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i 65)
+    (for [i (iterator.range 0 65)]
       (set!
         buf
         (text_buf.append
@@ -11271,8 +11485,7 @@
             (string.int->string i)
             ") : i64 "
             (string.int->string i)
-            ")\n")))
-      (set! i (+ i 1)))
+            ")\n"))))
     (compiler-backend-streamed-final-output-equivalent-source?
       (text_buf.render
         (text_buf.append buf "(define (main) : i64 (+ (f0) (f64)))\n")))))
@@ -11513,12 +11726,10 @@
     [total : i64 (+ count 1)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr total)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref slots index)
-        (ir.CompilerIrInstr.Mov index (I64 index) (I64)))
-      (set! index (+ index 1)))
+        (ir.CompilerIrInstr.Mov index (I64 index) (I64))))
     (set!
       (array-ref slots count)
       (ir.CompilerIrInstr.Return (Some (Var (- count 1)))))
@@ -13106,10 +13317,77 @@ f:
     .size f, . - f
 ")))
 
+(define (compiler-backend-layout-debug-end-case? [closing : String]) : bool
+  (compiler-backend-layout-case?
+    backend.compiler-backend-layout-mode-sink
+    (str_cat.str-cat
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    testq %rdi, %rdi
+    jl .Lf0_else
+.Lf0_check:
+    cmpq %r9, %rdi
+    jge .Lf0_else
+.Lf0_then:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_else:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+"
+      closing
+      "    .size f, . - f\n")
+    (str_cat.str-cat
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    testq %rdi, %rdi
+    jl .Lf0_else
+.Lf0_check:
+    cmpq %r9, %rdi
+    jge .Lf0_else
+.Lf0_then:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+.Lf0_else:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+    jmp .Lf0_cont
+"
+      closing
+      "    .size f, . - f\n")))
+
+(define (compiler-backend-layout-debug-ends-ok?) : bool
+  (and
+    (compiler-backend-layout-debug-end-case? "    .cfi_endproc\n")
+    (compiler-backend-layout-debug-end-case?
+      ".L_tl_backtrace_function_end_0:\n")
+    (compiler-backend-layout-debug-end-case?
+      ".L_tl_backtrace_function_end_0:\n    .cfi_endproc\n")
+    (compiler-backend-layout-debug-end-case?
+      ".Lcv_func_end_0:\n.L_tl_backtrace_function_end_0:\n    .seh_endproc\n")))
+
+(test
+  backend-layout-keeps-debug-ends-after-cold-blocks
+  (unless
+    (compiler-backend-layout-debug-ends-ok?)
+    (io.panic "cold layout moved instructions beyond a debug function end")))
+
 (define (compiler-backend-layout-ok?) : bool
   (and
     (compiler-backend-layout-tail-duplication-ok?)
     (compiler-backend-layout-cold-arm-ok?)
+    (compiler-backend-layout-debug-ends-ok?)
     (compiler-backend-layout-island-ok?)))
 
 (define (compiler-backend-peephole-ok?) : bool
@@ -13152,6 +13430,7 @@ f:
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
     (compiler-backend-cold-split-ok?)
+    (compiler-backend-cold-share-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
@@ -13196,7 +13475,8 @@ f:
                 (ir.compiler-ir-instr-seq-empty))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-fallthrough-jump-ok?) : bool
   (asm-ok?
@@ -13761,7 +14041,8 @@ f:
                       (ir.compiler-ir-instr-seq-empty)))))
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-call-return-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -14831,7 +15112,9 @@ f:
         (and
           (>= (string.string-length asm) (string.string-length first))
           (string.eq
-            (string.substring-copy-checked asm 0 (string.string-length first))
+            ;; The length was checked above.
+            (unsafe
+              (string.substring-copy-checked asm 0 (string.string-length first)))
             first)
           (backend.compiler-backend-string-contains? asm ", %xmm0\n")))]
     [(Err _) false]))
@@ -15052,13 +15335,13 @@ f:
           (asm-has? asm ".globl main\n")
           (asm-lacks? asm "\n_start:\n")
           (asm-lacks? asm "syscall\n")
-          ;; Win64 FPO rebases both local slots and the positive incoming
-          ;; stack argument against the constant post-prologue %rsp.
+          ;; The Internal entry captures its fifth word from RSI; forwarding
+          ;; to the C extern still writes that word after the Win64 home area.
           (asm-has? asm "    movq %rcx, 88(%rsp)\n")
           (asm-has? asm "    movq %rdx, 80(%rsp)\n")
           (asm-has? asm "    movq %r8, 72(%rsp)\n")
           (asm-has? asm "    movq %r9, 64(%rsp)\n")
-          (asm-has? asm "    movq 144(%rsp), %r8\n"))
+          (asm-has? asm "    movq %rsi, 56(%rsp)\n"))
         (asm-has? asm "    movq %r10, 32(%rsp)\n")
         (asm-lacks? asm "    movq %r11, 32(%rsp)\n")
         (asm-has? asm "    call ext\n"))]
@@ -15068,7 +15351,14 @@ f:
   (let
     [ok : bool
       (match (backend.compiler-backend-lower-source-for-target
-        (compiler-backend-callee-save-source)
+        ;; Keep every value live across a call so this remains an allocated
+        ;; frame/SEH control when six register arguments need no local slots.
+        (str_cat.str-cat
+          "(extern (callee-save-sink) : unit)\n"
+          (string.replace
+            (compiler-backend-callee-save-source)
+            "[v5 : i64 (+ f 6)]"
+            "[v5 : i64 (+ f 6)]\n    (callee-save-sink)"))
         (backend.CompilerBackendTarget.Windows))
         [(Ok program spans lower-owner)
           (let
@@ -15553,11 +15843,22 @@ f:
 (define (compiler-backend-backtrace-metadata-shape-ok?) : bool
   (let
     [previous-debug : bool (ir.compiler-debug-info-enabled?)]
+    [bridge-source : String
+      "(define (small) (:export-symbol \"tl_bt_small\") : i64 1)
+(define (six [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64])
+  (:export-symbol \"tl_bt_six\") : i64 (+ a b c d e f))
+(define (main) : i64 (small))"]
     [_disable : unit (ir.compiler-debug-info-set-enabled! false)]
     [disabled-ok : bool
       (asm-ok?
         (backend.compiler-backend-emit-source "(define (main) : i64 0)")
         (lacks "tl_backtrace_map_data_begin" "tl_backtrace_map_begin:"))]
+    [bridge-disabled-ok : bool
+      (asm-ok?
+        (backend.compiler-backend-emit-source-for-target
+          (clone bridge-source)
+          (Windows))
+        (lacks ".L_tl_c_entry_shared_end" ".L_tl_c_entry_end_tl_bt_six"))]
     [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
     [linux-ok : bool
       (asm-ok?
@@ -15576,6 +15877,15 @@ f:
           ".section .rdata$TLBT,\"dr\""
           ".section .rdata$TLBS,\"dr\""
           "tl_backtrace_map_begin:"))]
+    [bridge-ok : bool
+      (asm-ok?
+        (backend.compiler-backend-emit-source-for-target
+          bridge-source
+          (Windows))
+        (has
+          "    .quad __tl$c_entry\n    .quad .L_tl_c_entry_shared_end\n"
+          "    .quad tl_bt_six\n    .quad .L_tl_c_entry_end_tl_bt_six\n"
+          "    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad 0\n    .quad 0\n"))]
     ;; A two-form body has no `begin` node of its own. Its row still names the
     ;; first form's location (line 2, column 3), not an empty path at 0:0, so
     ;; the frame renders with a location and the runtime-path filter can match
@@ -15588,7 +15898,13 @@ f:
           "    .ascii \"two-forms\"\n.L_tl_backtrace_path_0:\n    .ascii \"<source>\"\n"
           "    .quad .L_tl_backtrace_path_0\n    .quad 8\n    .quad 2\n    .quad 3\n"))]
     [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
-    (and disabled-ok linux-ok windows-ok multi-form-ok)))
+    (and
+      disabled-ok
+      bridge-disabled-ok
+      linux-ok
+      windows-ok
+      bridge-ok
+      multi-form-ok)))
 
 ;; Representation facts are per compile entry even when the explicit backend
 ;; state is reused by a batch. Rebuilding them must rewind their dedicated
@@ -15723,7 +16039,8 @@ f:
                 (ir.compiler-ir-instr-seq-empty))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-explicit-state-duplicate-function-program
   [name-id : i64]) : ir.CompilerIrProgram
@@ -15759,7 +16076,8 @@ f:
                     (ir.compiler-ir-instr-seq-empty))))
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-explicit-state-buffer-result-ok?
   [result : (& result backend.ResultCompilerBackendBuffer)]) : bool
@@ -16359,7 +16677,8 @@ f:
                     (ir.compiler-ir-instr-seq-empty))))
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))
-        (ir.compiler-ir-extern-seq-empty))]
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None))]
     (match (backend.compiler-backend-emit-program-linux-with-spans
       program
       spans)
@@ -16398,7 +16717,8 @@ f:
           (compiler-backend-switch-test-blocks)
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-total-switch-test-cases) : ir.CompilerIrSwitchCaseSeq
   (let
@@ -16495,7 +16815,8 @@ f:
           (compiler-backend-total-switch-test-blocks true)
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-forwarded-total-switch-test-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
@@ -16554,7 +16875,8 @@ f:
           (compiler-backend-forwarded-total-switch-test-blocks)
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-spoofed-total-switch-test-program) : ir.CompilerIrProgram
   (Program
@@ -16569,7 +16891,8 @@ f:
           (compiler-backend-total-switch-test-blocks false)
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-total-switch-source) : String
   "(defenum TotalSwitchValue
@@ -16653,8 +16976,10 @@ f:
     (ir.compiler-source-spans-empty))
     [(Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList image.sections]
-        [relocs : cobj.CompilerObjectRelocationList image.relocations]
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (owned_view.compiler-owned-shared-view image.relocations)]
         (and
           (not
             (cobj.compiler-object-section-contains-bytes?
@@ -16748,7 +17073,8 @@ f:
                 (ir.compiler-ir-instr-seq-empty))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-switch-base-asm-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -16790,7 +17116,8 @@ f:
                 (ir.compiler-ir-instr-seq-empty))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-switch-shape-diagnostic-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -16838,7 +17165,8 @@ f:
                   (ir.compiler-ir-instr-seq-empty)))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-switch-phi-edge-copy-ok?) : bool
   (asm-ok?
@@ -16904,7 +17232,8 @@ f:
                   (ir.compiler-ir-instr-seq-empty)))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-switch-negative-case-label-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -16932,9 +17261,12 @@ f:
     (ir.compiler-source-spans-empty))
     [(Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList image.sections]
-        [symbols : cobj.CompilerObjectSymbolList image.symbols]
-        [relocs : cobj.CompilerObjectRelocationList image.relocations]
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
+        [symbols : cobj.CompilerObjectSymbolList
+          (owned_view.compiler-owned-shared-view image.symbols)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (owned_view.compiler-owned-shared-view image.relocations)]
         [table-label : String ".Lf0_entry_switch_table"]
         (and
           (elf.compiler-object-elf-image-supported? image)
@@ -16987,7 +17319,8 @@ f:
     (ir.compiler-source-spans-empty))
     [(Ok image)
       (let
-        [sections : cobj.CompilerObjectSectionList image.sections]
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
@@ -19369,7 +19702,239 @@ f:
         (ir.compiler-ir-function-seq-prepend
           (& func)
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
+
+(define (compiler-backend-empty-private-param-homes-ok?
+  [target : backend.CompilerBackendTarget]
+  [debug? : bool]) : bool
+  (let
+    [previous-debug : bool (ir.compiler-debug-info-enabled?)]
+    [_debug : unit (ir.compiler-debug-info-set-enabled! debug?)]
+    [result : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-program-target-with-mode
+        (irt.program
+          "typelisp-ir v1
+function @__tl_spmd_ret_varying_empty_private(__tl_spmd_active_mask_avx2=%0:bool, __tl_spmd_varying_arg_avx2_0=%1:i64) -> unit vars 2 {
+entry:
+  return
+}")
+        target
+        (Avx2)
+        (ir.compiler-source-spans-empty)
+        false)]
+    [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
+    (match result
+      [(Ok asm)
+        (and
+          (asm-has? asm "    vmovdqu 0(%r10), %ymm14\n")
+          (asm-has? asm "    vmovdqu 32(%r10), %ymm14\n")
+          (match target
+            [(Linux)
+              (if debug?
+                ;; Debug CFI retains RBP; both homes fit below its saved value.
+                (asm-has?
+                  asm
+                  "    subq $64, %rsp\n"
+                  "    vmovdqu %ymm14, 32(%rsp)\n"
+                  "    vmovdqu %ymm14, 0(%rsp)\n"
+                  "    .cfi_def_cfa_register %rbp\n")
+                ;; Two disjoint 32-byte homes fit in the leaf's red zone.
+                (and
+                  (asm-has? asm "    vmovdqu %ymm14, -32(%rsp)\n")
+                  (asm-has? asm "    vmovdqu %ymm14, -64(%rsp)\n")
+                  (asm-lacks? asm "    subq $")))]
+            [(Windows)
+              ;; The upper store ends at byte 64, below the return slot at 72.
+              (and
+                (asm-has? asm "    subq $72, %rsp\n")
+                (asm-has? asm "    vmovdqu %ymm14, 32(%rsp)\n")
+                (asm-has? asm "    vmovdqu %ymm14, 0(%rsp)\n")
+                (asm-has? asm "    addq $72, %rsp\n"))]))]
+      [(Err _) false])))
+
+(define (compiler-backend-debug-private-param-provenance-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (let
+    [_initialize : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [previous-debug : bool (ir.compiler-debug-info-enabled?)]
+    [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
+    [name : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id
+        (ir.compiler-ir-test-symbol "__tl_spmd_ret_varying_debug_private"))]
+    [path : i64 (ci.intern "debug_private.tl")]
+    ;; Instruction locations must follow their destination IDs through remapping.
+    [spans : ir.CompilerSourceSpans
+      (ir.compiler-source-spans-insert-instr-located
+        (ir.compiler-source-spans-insert-instr-located
+          (ir.compiler-source-spans-insert-located
+            (ir.compiler-source-spans-empty)
+            name
+            path
+            (compiler-backend-test-span 11 1))
+          name
+          (& (irt.instr "%2 = add 1, 2 : i64"))
+          path
+          (compiler-backend-test-span 37 3))
+        name
+        (& (irt.instr "%3 = add 3, 4 : i64"))
+        path
+        (compiler-backend-test-span 53 5))]
+    [result : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-program-target-with-mode
+        (irt.program
+          "typelisp-ir v1
+function @__tl_spmd_ret_varying_debug_private(__tl_spmd_active_mask_avx2=%0:bool, __tl_spmd_varying_arg_avx2_0=%1:i64) -> unit vars 4 {
+entry:
+  %2 = add 1, 2 : i64
+  %3 = add 3, 4 : i64
+  return
+}")
+        target
+        (Avx2)
+        spans
+        false)]
+    [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
+    (match result
+      [(Ok asm)
+        (match target
+          [(Linux) (asm-has? asm "    .loc 1 37 3\n" "    .loc 1 53 5\n")]
+          [(Windows)
+            (asm-has? asm "    .cv_loc 0 1 37 3\n" "    .cv_loc 0 1 53 5\n")])]
+      [(Err _) false])))
+
+(define (compiler-backend-private-param-homes-and-provenance-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (and
+    ;; Run provenance first so the fixture also covers fresh-process setup.
+    (compiler-backend-debug-private-param-provenance-ok? target)
+    (compiler-backend-empty-private-param-homes-ok? target false)
+    (compiler-backend-empty-private-param-homes-ok? target true)))
+
+(test
+  backend-empty-private-body-keeps-entry-stores-inside-frame
+  (unless
+    (and
+      (compiler-backend-private-param-homes-and-provenance-ok?
+        (backend.CompilerBackendTarget.Linux))
+      (compiler-backend-private-param-homes-and-provenance-ok?
+        (backend.CompilerBackendTarget.Windows)))
+    (io.panic "prologue-only AVX2 parameter stores escaped their frame")))
+
+(define (compiler-backend-debug-caller-provenance-ok?
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]) : bool
+  (let
+    [_initialize : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [previous-debug : bool (ir.compiler-debug-info-enabled?)]
+    [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
+    [name : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id
+        (ir.compiler-ir-test-symbol "debug_caller"))]
+    [other : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id
+        (ir.compiler-ir-test-symbol "debug_other"))]
+    [path : i64 (ci.intern "debug_caller.tl")]
+    [first : ir.CompilerIrInstr (irt.instr "%0 = add 1, 2 : i64")]
+    [second : ir.CompilerIrInstr (irt.instr "%1 = add 3, 4 : i64")]
+    [bounds : ir.CompilerIrInstr
+      (irt.instr "bounds_check %0, 10 message \"debug_ok\"")]
+    [spans : ir.CompilerSourceSpans
+      (ir.compiler-source-spans-insert-instr-located
+        (ir.compiler-source-spans-insert-instr-located
+          (ir.compiler-source-spans-insert-instr-located
+            (ir.compiler-source-spans-insert-instr-located
+              (ir.compiler-source-spans-empty)
+              name
+              (& first)
+              path
+              (compiler-backend-test-span 17 1))
+            other
+            (& first)
+            path
+            (compiler-backend-test-span 71 7))
+          name
+          (& second)
+          path
+          (compiler-backend-test-span 53 5))
+        name
+        (& first)
+        path
+        (compiler-backend-test-span 37 3))]
+    ;; Interleaved functions and a duplicate key must keep newest-entry wins.
+    [located : ir.CompilerSourceSpans
+      (ir.compiler-source-spans-insert-instr-located
+        spans
+        name
+        (& bounds)
+        path
+        (compiler-backend-test-span 61 6))]
+    ;; Bounds keys remain unchanged while value keys follow coloring.
+    [result : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-program-target-with-mode
+        (irt.program
+          "typelisp-ir v1
+function @debug_caller() -> i64 vars 2 {
+entry:
+  %0 = add 1, 2 : i64
+  %1 = add 3, 4 : i64
+  bounds_check %0, 10 message \"debug_ok\"
+  return %1
+}
+function @debug_other() -> i64 vars 1 {
+entry:
+  %0 = add 1, 2 : i64
+  return %0
+}")
+        target
+        mode
+        located
+        false)]
+    [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
+    (match result
+      [(Ok asm)
+        (match target
+          [(Linux)
+            (and
+              (asm-has?
+                asm
+                "    .loc 1 37 3\n"
+                "    .loc 1 53 5\n"
+                "    .loc 1 61 6\n"
+                "    .loc 1 71 7\n")
+              (asm-lacks? asm "    .loc 1 17 1\n"))]
+          [(Windows)
+            (and
+              (asm-has?
+                asm
+                "    .cv_loc 0 1 37 3\n"
+                "    .cv_loc 0 1 53 5\n"
+                "    .cv_loc 0 1 61 6\n"
+                "    .cv_loc 1 1 71 7\n")
+              (asm-lacks? asm "    .cv_loc 0 1 17 1\n"))])]
+      [(Err _) false])))
+
+(define (compiler-backend-debug-caller-provenance-targets-ok?) : bool
+  (and
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Linux
+      (Avx2))
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Windows
+      (Avx2))
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Linux
+      (Avx512))
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Windows
+      (Avx512))))
+
+(test
+  backend-debug-simd-caller-provenance
+  (unless
+    (compiler-backend-debug-caller-provenance-targets-ok?)
+    (io.panic
+      "debug SIMD caller locations lost function ownership or remapping")))
 
 (define (compiler-backend-vector-call-lifetime-function) : ir.CompilerIrFunction
   (Function
@@ -19920,20 +20485,20 @@ f:
     [(No) true]))
 
 (define (compiler-backend-avx512-mask-spill-assignment?
-  [assignments : regalloc.CompilerRegAssignmentTable]
-  [var : i64]) : bool
-  (if (> var 6)
-    false
-    (or
+  [assignments : regalloc.CompilerRegAssignmentTable]) : bool
+  (for [var (iterator.range 0 (+ 6 1))]
+    (when
       (compiler-backend-maybe-location-mask-stack?
         (regalloc.compiler-reg-assignment-lookup assignments var))
-      (compiler-backend-avx512-mask-spill-assignment? assignments (+ var 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (compiler-backend-avx512-mask-spill-plan-ok?) : bool
   (match (reg_tests.compiler-reg-plan-function
     (compiler-backend-avx512-mask-spill-function))
     [(Plan assignments _ _ _ _)
-      (compiler-backend-avx512-mask-spill-assignment? assignments 0)]))
+      (compiler-backend-avx512-mask-spill-assignment? assignments)]))
 
 (define (compiler-backend-avx512-mask-spill-compile-ok?) : bool
   (match (backend.compiler-backend-emit-program-target-with-mode
@@ -20095,8 +20660,7 @@ f:
 (define (compiler-backend-simd-copy-shape-branching-text [n : i64]) : String
   (let
     [body : String ""]
-    [i : i64 1]
-    (while (< i n)
+    (for [i (iterator.range 1 n)]
       (set!
         body
         (str_cat.str-cat
@@ -20105,8 +20669,7 @@ f:
           (string.int->string i)
           " = mov %"
           (string.int->string (+ i 1))
-          " : i64\n"))
-      (set! i (+ i 1)))
+          " : i64\n")))
     (str_cat.str-cat
       "first:\n"
       body
@@ -20212,10 +20775,9 @@ f:
       (text_buf.append
         (text_buf.empty)
         "function @colored_vector_extent() -> f64 vars 10 {\nentry:\n")]
-    [index : i64 0]
     ;; Nine independent full-width values remain live across an ordinary
     ;; call. Their final homes exceed the raw ten-variable ID domain.
-    (while (< index 9)
+    (for [index (iterator.range 0 9)]
       (set!
         body
         (text_buf.append
@@ -20227,11 +20789,9 @@ f:
             (string.int->string index)
             " lanes "
             (string.int->string lanes)
-            " : i64\n")))
-      (set! index (+ index 1)))
+            " : i64\n"))))
     (set! body (text_buf.append body "%9 = call side_effect() : f64\n"))
-    (set! index 0)
-    (while (< index 9)
+    (for [index (iterator.range 0 9)]
       (set!
         body
         (text_buf.append
@@ -20243,8 +20803,7 @@ f:
             (string.int->string index)
             " lanes "
             (string.int->string lanes)
-            " : i64\n")))
-      (set! index (+ index 1)))
+            " : i64\n"))))
     (set! body (text_buf.append body "return %9\n}"))
     (match (backend.compiler-backend-emit-program-target-with-mode
       (compiler-backend-vector-home-program (irt.func (text_buf.render body)))
@@ -21683,6 +22242,11 @@ f:
     (compiler-backend-byte-vector-shift-spill-ok? false)
     (compiler-backend-byte-vector-shift-spill-ok? true)
     (compiler-backend-avx2-unsigned-compare-alias-ok?)
+    (compiler-backend-private-param-homes-and-provenance-ok?
+      (backend.CompilerBackendTarget.Linux))
+    (compiler-backend-private-param-homes-and-provenance-ok?
+      (backend.CompilerBackendTarget.Windows))
+    (compiler-backend-debug-caller-provenance-targets-ok?)
     (compiler-backend-vector-call-lifetime-spill-ok?)
     (compiler-backend-colored-vector-extent-ok?)
     (compiler-backend-simd-scratch-requests-ok?)
@@ -21719,7 +22283,8 @@ f:
                     (irt.instrs "return %0"))))
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))
-        (ir.compiler-ir-extern-seq-empty))]
+        (ir.compiler-ir-extern-seq-empty)
+        (ir.CompilerIrReturnStorageAuthority.None))]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-insert
@@ -21961,13 +22526,7 @@ f:
         (owned_view.compiler-owned-shared-view prev-starts)
         (owned_view.compiler-owned-shared-view prev-ends)
         prev-assignment-index
-        (if (backend.compiler-backend-target-windows? target)
-          (bit-or
-            prev-plan-mask
-            backend.compiler-backend-scavenge-plan-win64-bit)
-          (bit-and
-            prev-plan-mask
-            (- backend.compiler-backend-scavenge-plan-win64-bit 1)))
+        prev-plan-mask
         (owned_view.compiler-owned-shared-view prev-occupied-masks)
         prev-vars)]
     [prev-post-base : i64 (state-emit-instr-post-base backend-state)]
@@ -22045,6 +22604,7 @@ f:
       (backend.compiler-backend-addr-of-forwarding-enable!
         backend-state
         vars
+        (& (ir.compiler-ir-param-seq-empty))
         (owned_view.compiler-owned-shared-view blocks)
         (owned_view.compiler-owned-shared-view use-counts))]
     (match (compiler-backend-test-emit-instrs-text
@@ -22703,7 +23263,8 @@ f:
           (C)
           link-id
           (ast.ast-extern-link-input-list-new)
-          true))]
+          true
+          (ir.CompilerIrReturnStorage.None)))]
     (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
@@ -22759,7 +23320,8 @@ f:
           (C)
           debug-id
           (ast.ast-extern-link-input-list-new)
-          false))]
+          false
+          (ir.CompilerIrReturnStorage.None)))]
     (match (compiler-backend-runtime-plan-for functions externs)
       [(Ok plan)
         (let
@@ -23206,7 +23768,9 @@ f:
 
 (define (compiler-backend-memory-op-ok?) : bool
   (and
-    (compiler-backend-instr-contains? (AddrOf 2 1) "    leaq -16(%rbp), %r8\n")
+    (compiler-backend-instr-contains?
+      (AddrOf 2 1 0)
+      "    leaq -16(%rbp), %r8\n")
     (compiler-backend-instr-contains?
       (irt.instr "%3 = gep %1, 2 : i32")
       "    addq $8, %r10\n")
@@ -23340,6 +23904,74 @@ f:
       (lacks "    movq -24(%rbp), %rax\n"))))
 
 (test
+  backend-forwarded-address-redefined-slot
+  (for [abi (iterator.range 0 2)]
+    (test.assert-true
+      (asm-ok?
+        (compiler-backend-emit-test-instrs-target
+          (irt.instrs
+            "%2 = addr_of %1
+             %2 = gep %0, 0 : u8
+             %3 = mov 0 : i64
+             return %2")
+          (regalloc.compiler-reg-assignment-table-empty)
+          4
+          (if (= abi 0)
+            (Linux)
+            (Windows)))
+        (has "    movq -24(%rbp), %rax\n")
+        (lacks "    leaq -16(%rbp), %rax\n"))
+      "a reused slot has no function-wide address recipe")))
+
+(test
+  backend-forwarded-address-adjacent-definition
+  (for [abi (iterator.range 0 2)]
+    (test.assert-true
+      (asm-ok?
+        (compiler-backend-emit-test-instrs-target
+          (irt.instrs
+            "%2 = gep %0, 0 : u8
+             %2 = addr_of %1
+             return %2")
+          (regalloc.compiler-reg-assignment-table-empty)
+          4
+          (if (= abi 0)
+            (Linux)
+            (Windows)))
+        (has "    leaq -16(%rbp), %rax\n")
+        (lacks "    movq -24(%rbp), %rax\n"))
+      "the adjacent address definition reaches the only read despite an earlier definition")))
+
+(test
+  backend-forwarded-address-parameter-redefined
+  (let
+    [program-index
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [state program-index.backend-state]
+    [params
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "p" (ast.AstType.I64) 2)
+        (ir.compiler-ir-param-seq-empty))]
+    [blocks
+      (irt.blocks
+        "entry:
+           %3 = load %2 : i64
+           %2 = addr_of %1")]
+    [_forward : unit
+      (backend.compiler-backend-addr-of-forwarding-enable!
+        state
+        4
+        (& params)
+        (clone blocks)
+        (backend.compiler-backend-function-use-counts 4 (clone blocks)))]
+    (test.assert-true
+      (< (backend.compiler-backend-forwarded-addr-of-src state 2) 0)
+      "a parameter use cannot become a later address definition")))
+
+(test
   backend-forwarded-address-coalesced-copies
   (for [abi (iterator.range 0 2)]
     (let
@@ -23405,6 +24037,7 @@ f:
       (backend.compiler-backend-addr-of-forwarding-enable!
         state
         6
+        (& (ir.compiler-ir-param-seq-empty))
         (clone blocks)
         (backend.compiler-backend-function-use-counts 6 (clone blocks)))]
     [copies
@@ -26218,13 +26851,17 @@ f:
       (backend.compiler-backend-program-collections-floats both)]
     (and
       (= floats.len 2)
-      (match (__tl-project-field (array-ref floats.slots 0) ty)
+      (match (__tl-project-field
+        (owned_view.compiler-owned-element-view floats.slots 0)
+        ty)
         [(F64) true]
         [_ false])
       (=
         (__tl-project-field (array-ref floats.slots 0) bits)
         4890909195324358656)
-      (match (__tl-project-field (array-ref floats.slots 1) ty)
+      (match (__tl-project-field
+        (owned_view.compiler-owned-element-view floats.slots 1)
+        ty)
         [(F32) true]
         [_ false])
       (= (__tl-project-field (array-ref floats.slots 1) bits) 1593835520))))
@@ -26487,6 +27124,8 @@ f:
           (asm-has? asm "    cmpq $3, %r10\n")
           (asm-lacks? asm "    movl $3, %r11d\n")
           (asm-has? asm "    call tl_oob_abort_at\n")
+          ;; The index is checked before the value; the scalar element's
+          ;; address is formed at the store, inside its operand.
           (asm-has? asm "    movq %r9, (%r10,%r8,8)\n")
           (asm-has? asm "    movq (%r10,%r8,8), %r9\n")
           (asm-lacks? asm "    leaq (%rax,%r8,8), %rax\n")
@@ -29365,7 +30004,8 @@ f:
 ;; in %rcx.  The direct store must reject that address/clobber intersection so
 ;; %rcx is restored before the ordinary Gep+StorePtr reads it.
 (define (compiler-backend-c22-divmod-store-collision-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%rcx %1=%r8 %4=%r12 %7=%rdx %8=%rax %10=%r10 %11=%r11"))
+  (reg-homes
+    "%0=%rcx %1=%r8 %4=%r12 %7=%rdx %8=%rax %10=%r10 %11=%r11 %15=%rsi %16=%rdi"))
 
 (define (compiler-backend-c22-divmod-store-collision-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs
@@ -29379,7 +30019,9 @@ f:
      store_ptr %9, %8 : i64
      %12 = mov %1 : i64
      %13 = mov %10 : i64
-     %14 = mov %11 : i64"))
+     %14 = mov %11 : i64
+     %17 = mov %15 : i64
+     %18 = mov %16 : i64"))
 
 (define (compiler-backend-c22-divmod-store-collision-asm) : backend.ResultCompilerBackend
   (let
@@ -29423,7 +30065,7 @@ f:
           "c22_divmod_store_collision"
           (ir.compiler-ir-param-seq-empty)
           (I64)
-          15
+          19
           blocks
           assignments
           backend-state)
@@ -29436,7 +30078,7 @@ f:
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
         assignments
-        15
+        19
         (backend.CompilerBackendTarget.Windows)
         backend-state)]
     [_restore : unit
@@ -30055,7 +30697,8 @@ f:
                 (ir.compiler-ir-instr-seq-empty))))
           Ordinary))
       (& (ir.compiler-ir-function-seq-empty)))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-global-compare-branch-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -30116,7 +30759,8 @@ f:
       (backend.backend-and8
         ;; T1-6 (a) red-zone frame slots (second's n at -8(%rsp); half's x
         ;; f64 param spills from %xmm0 to -8(%rsp), divisor 2.0 at
-        ;; -16(%rsp)); every one of these leaves is call-free.
+        ;; -16(%rsp); a literal divisor needs no left-operand snapshot);
+        ;; these leaves are call-free.
         (asm-has? asm "    movq %rdi, -8(%rsp)\n")
         (asm-has? asm "    movsd %xmm0, -8(%rsp)\n")
         (asm-lacks? asm "    movsd %xmm1, -8(%rsp)\n")
@@ -30133,55 +30777,61 @@ f:
         (asm-lacks? asm "    divsd %xmm1, %xmm0\n"))]
     [(Err _) false]))
 
-;; Windows f64 ABI emit-shape coverage: the first four positional
-;; f64 args use xmm0..xmm3, the fifth is stacked after the 32-byte shadow
-;; space, and f64 returns remain in xmm0.
+;; Windows Internal f64 calls use six positional registers, retain the
+;; shadow area before the seventh argument, and return f64 in XMM0.
 (define (compiler-backend-win64-f64-abi-source) : String
-  "(define (sum5
+  "(define (sum7
   [a : f64]
   [b : f64]
   [c : f64]
   [d : f64]
-  [e : f64]) : f64
-  (+ (+ (+ (+ a b) c) d) e))
+  [e : f64]
+  [f : f64]
+  [g : f64]) : f64
+  (+ a b c d e f g))
 
-(define (call5 [x : f64]) : f64
-  (+ 0.0 (sum5 x 2.0 3.0 4.0 5.0)))
+(define (call7 [x : f64]) : f64
+  (+ 0.0 (sum7 x 2.0 3.0 4.0 5.0 6.0 7.0)))
 
 (define (main) : i64
-  (if (< (call5 1.0) 16.0) 42 0))")
+  (if (< (call7 1.0) 29.0) 42 0))")
 
 (define (compiler-backend-win64-f64-abi-ok?) : bool
   (match (backend.compiler-backend-emit-source-for-target
     (compiler-backend-win64-f64-abi-source)
     (backend.CompilerBackendTarget.Windows))
     [(Ok asm)
-      (and
-        (backend.backend-and8
-          ;; Win64 FPO rebases local slots and the positive incoming fifth
-          ;; argument against the compacted post-prologue %rsp frame.
-          (asm-has? asm "    movsd %xmm0, 56(%rsp)\n")
-          (asm-has? asm "    movsd %xmm1, 48(%rsp)\n")
-          (asm-has? asm "    movsd %xmm2, 40(%rsp)\n")
-          (asm-has? asm "    movsd %xmm3, 32(%rsp)\n")
-          (asm-has? asm "    subq $72, %rsp\n")
-          (asm-has? asm "    movq 64(%rsp), %r10\n")
-          (asm-has? asm "    movq %r10, 32(%rsp)\n")
-          (asm-has? asm "    movsd 112(%rsp), %xmm2\n"))
-        (or
-          (asm-has? asm "    call _tl_f")
-          (asm-has? asm "    call _tl_sum5")
-          (asm-has? asm "    call _tl_call5"))
-        ;; The f64 call result (kept in %xmm0) spills to rsp slot 56(%rsp).
-        (asm-has? asm "    movsd %xmm0, 56(%rsp)\n")
-        (asm-lacks? asm "too many call args")
-        (asm-lacks? asm "    syscall")
-        (asm-lacks? asm "    movsd 48(%rbp), %xmm0\n")
-        (asm-lacks? asm "    movq %r11, 32(%rsp)\n")
-        (not
-          (let
-            [needle (compiler-backend-todo-marker)]
-            (asm-has? asm needle))))]
+      (let
+        [callee : String (compiler-backend-asm-function-body asm "_tl_sum7")]
+        [caller : String (compiler-backend-asm-function-body asm "_tl_call7")]
+        (and
+          (backend.backend-and8
+            (asm-has? callee "    movsd %xmm0, 72(%rsp)\n")
+            (asm-has? callee "    movsd %xmm1, 64(%rsp)\n")
+            (asm-has? callee "    movsd %xmm2, 56(%rsp)\n")
+            (asm-has? callee "    movsd %xmm3, 48(%rsp)\n")
+            (asm-has? callee "    movsd %xmm4, 40(%rsp)\n")
+            (asm-has? callee "    movsd %xmm5, 32(%rsp)\n")
+            (asm-has? callee "    subq $88, %rsp\n")
+            ;; Entry copies preserve XMM0-5 and the nonvolatile XMM6 family.
+            (asm-has? callee "    movq 128(%rsp), %rax\n"))
+          (asm-has?
+            caller
+            "    movsd 80(%rsp), %xmm4\n"
+            "    movsd 72(%rsp), %xmm5\n"
+            "    movq 64(%rsp), %r10\n    movq %r10, 32(%rsp)\n"
+            "    call _tl_sum7\n"
+            "    movsd %xmm0, 56(%rsp)\n")
+          (asm-lacks?
+            asm
+            "too many call args"
+            "    syscall"
+            "    movsd 48(%rbp), %xmm0\n"
+            "    movq %r11, 32(%rsp)\n")
+          (not
+            (let
+              [needle (compiler-backend-todo-marker)]
+              (asm-has? asm needle)))))]
     [(Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-source) : String
@@ -30334,11 +30984,12 @@ f:
         ;; per-call `subq $16`); the two spilled f64 args go to 0/8(%rsp) via GP
         ;; bit-copies. `_tl_sum10` is a call-free leaf, so T1-6 (a) leaves its
         ;; %rsp at the entry value and it reads its incoming f64 stack args at
-        ;; 8/16(%rsp) instead of positive 16/24(%rbp).
+        ;; 8/16(%rsp) instead of positive 16/24(%rbp), as entry copies
+        ;; through %xmm8, the first register past the System V float bank.
         (asm-has? asm "    movq %r10, 0(%rsp)\n")
         (asm-has? asm "    movq %r10, 8(%rsp)\n")
-        (asm-has? asm "    movsd 8(%rsp), %xmm2\n")
-        (asm-has? asm "    movsd 16(%rsp), %xmm2\n")
+        (asm-has? asm "    movsd 8(%rsp), %xmm8\n")
+        (asm-has? asm "    movsd 16(%rsp), %xmm8\n")
         (asm-lacks? asm "    movsd 8(%rsp), %xmm0\n")
         (asm-lacks? asm "    movsd 16(%rsp), %xmm0\n"))]
     [(Err _) false]))
@@ -30356,8 +31007,8 @@ f:
         (compiler-backend-stack-mix-call-ok? asm))]
     [(Err _) false]))
 
-;; The Windows positional ABI still reserves 32-byte shadow space, stacks
-;; args after the first four, and stores them after the shadow space.
+;; Windows Internal calls reserve 32-byte shadow space, pass six words in
+;; registers, and place the seventh/eighth words after the shadow space.
 (define (compiler-backend-stack-windows-args-ok?) : bool
   (asm-ok?
     (backend.compiler-backend-emit-source-for-target
@@ -30367,19 +31018,19 @@ f:
     (has
       "    call _tl_add8\n"
       "    movq %r10, 32(%rsp)\n"
-      "    movq %r10, 56(%rsp)\n"
+      "    movq %r10, 40(%rsp)\n"
+      "    movq 80(%rsp), %rsi\n"
+      "    movq 72(%rsp), %rdi\n"
       "    movq 128(%rsp), %r8\n")
     (lacks "    movq 128(%rsp), %rax\n")))
 
 (define (compiler-backend-i64-type-list8) : ast.AstTypeList
   (let
     [out : ast.AstTypeList (ast.ast-type-list-with-capacity 8)]
-    [i : i64 0]
-    (while (< i 8)
+    (for [i (iterator.range 0 8)]
       (ast.ast-type-list-push
         (&mut out)
-        (ast.ast-node-pool-reader-type-push (& (I64))))
-      (set! i (+ i 1)))
+        (ast.ast-node-pool-reader-type-push (& (I64)))))
     out))
 
 (define (compiler-backend-i64-immediate-call-args8) : ir.CompilerIrCallArgs
@@ -30614,7 +31265,7 @@ f:
     [i : i64 5]
     (while (> i 0)
       (set! types (ast.ast-type-cons (& (I64)) (& types)))
-      (set! i (- i 1)))
+      (-= i 1))
     types))
 
 (define (compiler-backend-linux-atomic-pressure-args [tail? : bool]) : ir.CompilerIrCallArgs
@@ -30633,7 +31284,7 @@ f:
       (set!
         values
         (ir.compiler-ir-value-seq-prepend (& (I64 (+ i 10))) (& values)))
-      (set! i (- i 1)))
+      (-= i 1))
     (ir.compiler-ir-call-args-from-seq (& values))))
 
 (define (compiler-backend-linux-atomic-pressure-params [group : ast.AstType]) : ir.CompilerIrParamSeq
@@ -30649,7 +31300,7 @@ f:
         (ir.compiler-ir-param-seq-prepend
           (Param (str_cat.str-cat "scalar" (string.int->string i)) (I64) i)
           params))
-      (set! i (- i 1)))
+      (-= i 1))
     params))
 
 (define (compiler-backend-linux-atomic-pressure-memory-assignments) : regalloc.CompilerRegAssignmentTable
@@ -31026,29 +31677,23 @@ f:
     [groups : compiler_liveness.CompilerLiveI64Set
       (compiler_liveness.compiler-live-set-empty)]
     [slots : (__tl_dyn-array String) (__tl_make-array String 16)]
-    [index : i64 0]
-    [mask : i64 0]
-    (while (< index 8)
-      (set! groups (compiler_liveness.compiler-live-set-insert groups index))
-      (set! index (+ index 1)))
-    (while (< mask 256)
+    (for [index (iterator.range 0 8)]
+      (set! groups (compiler_liveness.compiler-live-set-insert groups index)))
+    (for [mask (iterator.range 0 256)]
       (let
         [addressable : compiler_liveness.CompilerLiveI64Set
           (compiler_liveness.compiler-live-set-empty)]
-        (set! index 0)
-        (while (< index 8)
+        (for [index (iterator.range 0 8)]
           (when
             (not (= (bit-and mask (shl 1 index)) 0))
             (set!
               addressable
-              (compiler_liveness.compiler-live-set-insert addressable index)))
-          (set! index (+ index 1)))
+              (compiler_liveness.compiler-live-set-insert addressable index))))
         (backend.compiler-backend-group-vars-enable!
           state
           (owned_view.compiler-owned-shared-view groups)
           addressable)
-        (set! index 0)
-        (while (< index 16)
+        (for [index (iterator.range 0 16)]
           (match (backend.compiler-backend-group-word-operand-with-backend-state
             (regalloc.compiler-reg-assignment-table-empty)
             (/ index 2)
@@ -31056,17 +31701,12 @@ f:
             8
             state)
             [(Ok operand)
-              (let
-                [previous : i64 0]
-                (while (< previous index)
-                  (when
-                    (string.eq operand (array-ref slots previous))
-                    (return false))
-                  (set! previous (+ previous 1)))
-                (set! (array-ref slots index) operand))]
-            [(Err _) (return false)])
-          (set! index (+ index 1)))
-        (set! mask (+ mask 1))))
+              (for [previous (iterator.range 0 index)]
+                (when
+                  (string.eq operand (array-ref slots previous))
+                  (return false)))
+              (set! (array-ref slots index) operand)]
+            [(Err _) (return false)]))))
     true))
 
 (define (compiler-backend-stack-args-ok?) : bool
@@ -31144,6 +31784,8 @@ f:
     (and
       (asm-has? body "    jmp _tl_finish\n")
       (asm-lacks? body "    call _tl_finish\n")
+      (asm-lacks? body (str_cat.str-cat "    movq " reg0 ", "))
+      (asm-lacks? body (str_cat.str-cat "    movq " reg1 ", "))
       (not
         (let
           [needle
@@ -31236,9 +31878,9 @@ f:
   [target : backend.CompilerBackendTarget]) : String
   (if (backend.compiler-backend-target-windows? target)
     ;; Win64 FPO rebases the outgoing tail stack-arg store.
-    "    movq %r10, 200(%rsp)\n"
+    "    movq %r10, 168(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
-    "    movq %r10, 104(%rsp)\n"))
+    "    movq %r10, 96(%rsp)\n"))
 
 (define (compiler-backend-direct-tail-call-stack-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
@@ -31279,9 +31921,9 @@ f:
   [target : backend.CompilerBackendTarget]) : String
   (if (backend.compiler-backend-target-windows? target)
     ;; Win64 FPO rebases the outgoing mixed tail stack-arg store.
-    "    movq %r10, 392(%rsp)\n"
+    "    movq %r10, 360(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
-    "    movq %r10, 168(%rsp)\n"))
+    "    movq %r10, 160(%rsp)\n"))
 
 (define (compiler-backend-direct-tail-call-mixed-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
@@ -31298,6 +31940,223 @@ f:
             [needle (compiler-backend-direct-tail-call-mixed-slot target)]
             (asm-has? body needle))))]
     [(Err _) false]))
+
+;; A typed snapshot of an unchanged parameter can preserve identity forwarding.
+;; Mutated parameters, duplicate destinations, narrowing and unknown operands
+;; must retain ordinary emission and parameter homes.
+(define (compiler-backend-identity-snapshot-admitted?
+  [prefix : ir.CompilerIrInstrSeq]
+  [arg : i64]) : bool
+  (let
+    [params : ir.CompilerIrParamSeq
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
+        (ir.compiler-ir-param-seq-empty))]
+    [body : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
+    [_body : unit
+      (begin
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut body)
+          prefix
+          0
+          prefix.len)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut body)
+          (ir.CompilerIrInstr.TailCall
+            (ci.intern "known_target")
+            (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var arg))
+            (ast.AstType.I64))))]
+    [block : ir.CompilerIrBlock
+      (ir.CompilerIrBlock.Block
+        (ci.intern "entry")
+        (ir.compiler-ir-instr-builder-to-seq body))]
+    (backend.compiler-backend-identity-tail-forwarder-block?
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (backend.CompilerBackendTarget.Linux)
+      (ci.intern "snapshot_forwarder")
+      params
+      (& block)
+      (compiler-backend-known-function-call-index))))
+
+(define (compiler-backend-identity-snapshot-proof-ok?) : bool
+  (and
+    (compiler-backend-identity-snapshot-admitted?
+      (ir.compiler-ir-instr-seq-empty)
+      0)
+    (compiler-backend-identity-snapshot-admitted?
+      (irt.instrs "%1 = mov %0 : i64")
+      1)
+    (not
+      (compiler-backend-identity-snapshot-admitted?
+        (irt.instrs "%0 = mov %0 : i64")
+        0))
+    (not
+      (compiler-backend-identity-snapshot-admitted?
+        (irt.instrs "%1 = mov %0 : i64
+                   %1 = mov %0 : i64")
+        1))
+    (not
+      (compiler-backend-identity-snapshot-admitted?
+        (irt.instrs "%1 = mov 99 : i64")
+        1))
+    (not
+      (compiler-backend-identity-snapshot-admitted?
+        (irt.instrs "%1 = mov %0 : i32")
+        1))
+    (not
+      (compiler-backend-identity-snapshot-admitted?
+        (irt.instrs "%1 = mov %7 : i64")
+        1))
+    (not
+      (compiler-backend-identity-snapshot-admitted?
+        (irt.instrs "%1 = addr_of %0")
+        1))
+    (not
+      (compiler-backend-identity-snapshot-admitted?
+        (irt.instrs "%1 = mov %0 : i64")
+        2))))
+
+;; Authored IR bypasses the lowering tail-call guard. Frame-address provenance
+;; must also protect every backend jump path, including register-only arguments.
+(define (compiler-backend-frame-tail-program [route : i64]) : ir.CompilerIrProgram
+  (let
+    [reader-id : i64 (ci.intern "frame_reader")]
+    [pointer-type : ast.AstType (ast.ast-ty-ptr (& (ast.AstType.I64)))]
+    [reader-types : ast.AstTypeList
+      (ast.ast-type-cons (& pointer-type) (& (ast.ast-type-list-new)))]
+    [callee-type : ast.AstType
+      (ast.ast-ty-func
+        (owned_view.compiler-owned-shared-view reader-types)
+        (& (ast.AstType.I64)))]
+    [tail : ir.CompilerIrInstr
+      (if (= route 2)
+        (ir.CompilerIrInstr.TailCallIndirect
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 4))
+          (ast.AstType.I64))
+        (ir.CompilerIrInstr.TailCall
+          reader-id
+          (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 4))
+          (ast.AstType.I64)))]
+    [prefix : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%1 = mov 42 : i64
+                   %2 = addr_of %1
+                   %3 = cast %2 : u64 to u64
+                   %4 = gep %3, 0 : u8")]
+    [body : ir.CompilerIrInstrBuilder (ir.compiler-ir-instr-builder-new)]
+    [_body : unit
+      (begin
+        (ir.compiler-ir-instr-builder-append-seq-range! (&mut body) prefix 0 4)
+        (ir.compiler-ir-instr-builder-push! (&mut body) tail))]
+    [caller : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "frame_tail")
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "callback" callee-type 0)
+          (ir.compiler-ir-param-seq-empty))
+        (ast.AstType.I64)
+        5
+        (let
+          [cons-builder (ir.compiler-ir-block-builder-new)]
+          (ir.compiler-ir-block-builder-push!
+            (&mut cons-builder)
+            (ir.CompilerIrBlock.Block
+              (ci.intern "entry")
+              (ir.compiler-ir-instr-builder-to-seq body)))
+          (ir.compiler-ir-block-builder-append-list!
+            (&mut cons-builder)
+            (ir.compiler-ir-block-list-empty))
+          (ir.compiler-ir-block-builder-to-list cons-builder))
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        caller
+        (&
+          (ir.compiler-ir-function-seq1
+            (&
+              (ir.CompilerIrFunction.Function
+                (ci.intern "main")
+                (ir.compiler-ir-param-seq-empty)
+                (ast.AstType.I64)
+                0
+                (irt.blocks "entry:
+               return 42")
+                ir.CompilerIrFunctionAbi.Ordinary)))))]
+    [externs : ir.CompilerIrExternSeq (ir.compiler-ir-extern-seq-empty)]
+    (if (= route 1)
+      (set!
+        externs
+        (ir.compiler-ir-extern-seq1
+          (compiler-backend-non-direct-tail-call-extern
+            reader-id
+            "frame_reader"
+            (ci.intern "tl_frame_reader")
+            reader-types
+            (ast.AstType.I64)
+            (ast.AstExternAbi.C))))
+      (set!
+        functions
+        (ir.compiler-ir-function-seq-prepend
+          (&
+            (ir.CompilerIrFunction.Function
+              reader-id
+              (ir.compiler-ir-param-seq-prepend
+                (ir.CompilerIrParam.Param "value" pointer-type 0)
+                (ir.compiler-ir-param-seq-empty))
+              (ast.AstType.I64)
+              2
+              (irt.blocks
+                "entry:
+                 %1 = load %0 : i64
+                 return %1")
+              ir.CompilerIrFunctionAbi.Ordinary))
+          functions)))
+    (ir.CompilerIrProgram.Program
+      (ir.compiler-ir-global-seq-empty)
+      functions
+      externs
+      (ir.CompilerIrReturnStorageAuthority.None))))
+
+(define (compiler-backend-frame-tail-target-ok?
+  [target : backend.CompilerBackendTarget]
+  [route : i64]) : bool
+  (match (backend.compiler-backend-emit-program-for-target
+    (compiler-backend-frame-tail-program route)
+    target)
+    [(backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_frame_tail")]
+        (if (= route 2)
+          (and
+            (asm-has? body "    call *(%r10)\n")
+            (asm-lacks? body "    jmp *(%r10)\n"))
+          (let
+            [callee : String
+              (if (= route 1)
+                "tl_frame_reader"
+                "_tl_frame_reader")]
+            (and
+              (asm-has? body (str_cat.str-cat "    call " callee "\n"))
+              (asm-lacks? body (str_cat.str-cat "    jmp " callee "\n"))))))]
+    [(backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-frame-tail-ok?) : bool
+  (let
+    [route : i64 0]
+    (while (< route 3)
+      (unless
+        (and
+          (compiler-backend-frame-tail-target-ok?
+            (backend.CompilerBackendTarget.Linux)
+            route)
+          (compiler-backend-frame-tail-target-ok?
+            (backend.CompilerBackendTarget.Windows)
+            route))
+        (return false))
+      (set! route (+ route 1)))
+    true))
 
 (define (compiler-backend-direct-tail-call-ok?) : bool
   (and
@@ -31437,6 +32296,7 @@ f:
         target
         callee-id
         blocks
+        (ir.compiler-ir-label "entry")
         (Var 0)
         (Nil)
         (I64)
@@ -31488,7 +32348,8 @@ f:
     abi
     symbol-id
     (ast.ast-extern-link-input-list-new)
-    false))
+    false
+    (ir.CompilerIrReturnStorage.None)))
 
 (define (compiler-backend-non-direct-tail-call-emit
   [target : backend.CompilerBackendTarget]
@@ -31524,6 +32385,7 @@ f:
           target
           caller-id
           (ir.compiler-ir-block-list-empty)
+          (ir.compiler-ir-label "entry")
           name-id
           args
           ret
@@ -32134,7 +32996,8 @@ f:
                         (ir.compiler-ir-instr-seq-empty))))
                   Ordinary))
               (& (ir.compiler-ir-function-seq-empty)))))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-clean-module-symbol-collision-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -32242,14 +33105,13 @@ f:
       (match target
         [(Linux) "_slow:\n    movl $16, %edi\n    call tl_alloc_global\n"]
         [(Windows) "_slow:\n    movl $16, %ecx\n    call tl_alloc_global\n"])]
+    ;; An inline aggregate global keeps its static home (SPEC 5.10), so no
+    ;; source store reaches the global allocator; its call is built directly.
     (asm-ok?
-      (compiler-backend-emit-source-opt2-for-target
-        "(define values : (Array i64 2) (array 0 0))
-(define (replace [x : i64]) : unit
-  (with-scratch (set! values (array x (+ x 1)))))
-(define (main) : i64
-  (set! (array-ref values 0) (begin (replace 41) -1))
-  (array-ref values 1))"
+      (compiler-backend-emit-alloc-instrs-for-target
+        (compiler-backend-test-instr-seq-prepend
+          (Call 0 (ci.intern "tl_alloc_global") (One (I64 16)) (U64))
+          (ir.compiler-ir-instr-seq-empty))
         target)
       (has
         "    movq .L_tl_global_aggregate_arena+56(%rip), %r9\n    movq 16(%r9), %rax\n"
@@ -32261,6 +33123,7 @@ f:
 
 (test
   backend-inline-global-alloc
+  (cbi.compiler-builtin-initialize-for-parse!)
   (unless
     (and
       (compiler-backend-inline-global-alloc-target-ok?
@@ -32298,14 +33161,27 @@ f:
 ;; directly so the regression stays two instructions instead of depending on
 ;; the source size that happened to expose it in compiler_backend_tests.tl.
 (define (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?) : bool
+  (match (compiler-backend-emit-alloc-instrs-for-target
+    (compiler-backend-inline-fast-alloc-reused-vreg-instrs)
+    (backend.CompilerBackendTarget.Linux))
+    [(Ok asm)
+      (backend.backend-and4
+        (asm-has? asm ".L_tl_test_allocentry_i0_v0_slow:\n")
+        (asm-has? asm ".L_tl_test_allocentry_i1_v0_slow:\n")
+        (asm-has? asm ".L_tl_test_allocentry_i0_v0_done:\n")
+        (asm-has? asm ".L_tl_test_allocentry_i1_v0_done:\n"))]
+    [(Err _) false]))
+
+;; Emits `instrs` as the one block of a test function returning u64.
+(define (compiler-backend-emit-alloc-instrs-for-target
+  [instrs : ir.CompilerIrInstrSeq]
+  [target : backend.CompilerBackendTarget]) : backend.ResultCompilerBackend
   (let
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
     [prev-current-site : i64 (state-emit-current-site backend-state)]
-    [instrs : ir.CompilerIrInstrSeq
-      (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [blocks : ir.CompilerIrBlockList
       (ir.compiler-ir-blocks
@@ -32330,20 +33206,11 @@ f:
         instrs
         (regalloc.compiler-reg-assignment-table-empty)
         1
-        (backend.CompilerBackendTarget.Linux)
+        target
         backend-state)]
-    [_restore : unit
-      (begin
-        (emitter-scratch-restore! backend-state saved)
-        (set-state-emit-current-site! backend-state prev-current-site))]
-    (match result
-      [(Ok asm)
-        (backend.backend-and4
-          (asm-has? asm ".L_tl_test_allocentry_i0_v0_slow:\n")
-          (asm-has? asm ".L_tl_test_allocentry_i1_v0_slow:\n")
-          (asm-has? asm ".L_tl_test_allocentry_i0_v0_done:\n")
-          (asm-has? asm ".L_tl_test_allocentry_i1_v0_done:\n"))]
-      [(Err _) false])))
+    (emitter-scratch-restore! backend-state saved)
+    (set-state-emit-current-site! backend-state prev-current-site)
+    result))
 
 (define (compiler-backend-inline-fast-alloc-multi-size-source) : String
   "(define (make3 [x : i64]) : (Box (Tuple i64 i64 i64))
@@ -32525,7 +33392,7 @@ f:
         (compiler-backend-test-instr-seq-prepend
           (Mov (+ 30 v) (Var v) (I64))
           instrs))
-      (set! v (- v 1)))
+      (-= v 1))
     (compiler-backend-test-instr-seq-prepend
       (Call 20 (ci.intern "tl_alloc") (One (I64 8)) (U64))
       instrs)))
@@ -32978,7 +33845,8 @@ f:
       (C)
       provided-link-id
       (ast.ast-extern-link-input-list-new)
-      true)
+      true
+      (ir.CompilerIrReturnStorage.None))
     (Extern
       referenced-id
       referenced-id
@@ -32989,7 +33857,8 @@ f:
       (C)
       referenced-link-id
       (ast.ast-extern-link-input-list-new)
-      false)))
+      false
+      (ir.CompilerIrReturnStorage.None))))
 
 ;; A backend job owns one exact intern capability and one cache arena.  Keep a
 ;; compact one-word smoke here so the state boundary itself is exercised before
@@ -33632,7 +34501,8 @@ f:
             (C)
             extern-link-id
             (ast.ast-extern-link-input-list-new)
-            false)
+            false
+            (ir.CompilerIrReturnStorage.None))
           (Extern
             same-name-id
             same-name-id
@@ -33643,7 +34513,8 @@ f:
             (C)
             same-name-link-id
             (ast.ast-extern-link-input-list-new)
-            false)))]
+            false
+            (ir.CompilerIrReturnStorage.None))))]
     (and
       (= source-count-before (ci.intern-pool-len))
       (backend.backend-and8
@@ -33954,13 +34825,10 @@ f:
   [count : i64]
   [start : i64]
   [end : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (set! (array-ref starts i) start)
-      (set! (array-ref ends i) end)
-      (set! i (+ i 1)))
-    unit))
+  (for [i (iterator.range 0 count)]
+    (set! (array-ref starts i) start)
+    (set! (array-ref ends i) end))
+  unit)
 
 (define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
   (and
@@ -34163,14 +35031,13 @@ f:
           0)))
     ok))
 
-(define (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?) : bool
+(define (compiler-backend-scavenge-internal-rsi-rdi-plan-mask-ok?) : bool
   (let
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [rsi-bit : i64 (backend.compiler-backend-scavenge-reg-bit "%rsi")]
     [rdi-bit : i64 (backend.compiler-backend-scavenge-reg-bit "%rdi")]
-    [win64-bit : i64 backend.compiler-backend-scavenge-plan-win64-bit]
     [linux-ok : bool false]
     [win64-ok : bool false]
     (set!
@@ -34188,35 +35055,36 @@ f:
           0
           0
           cabi.compiler-reg-id-rdi)))
+    (compiler-backend-set-current-fn-win64! backend-state)
     (set!
       win64-ok
       (and
-        (not
-          (backend.compiler-backend-scavenge-candidate-ok?
-            (backend.compiler-backend-state-function-state backend-state)
-            0
-            0
-            win64-bit
-            cabi.compiler-reg-id-rsi))
-        (not
-          (backend.compiler-backend-scavenge-candidate-ok?
-            (backend.compiler-backend-state-function-state backend-state)
-            0
-            0
-            win64-bit
-            cabi.compiler-reg-id-rdi))
         (backend.compiler-backend-scavenge-candidate-ok?
           (backend.compiler-backend-state-function-state backend-state)
           0
           0
-          (bit-or win64-bit rsi-bit)
+          0
           cabi.compiler-reg-id-rsi)
         (backend.compiler-backend-scavenge-candidate-ok?
           (backend.compiler-backend-state-function-state backend-state)
           0
           0
-          (bit-or win64-bit rdi-bit)
-          cabi.compiler-reg-id-rdi)))
+          0
+          cabi.compiler-reg-id-rdi)
+        (not
+          (backend.compiler-backend-scavenge-candidate-ok?
+            (backend.compiler-backend-state-function-state backend-state)
+            rsi-bit
+            0
+            0
+            cabi.compiler-reg-id-rsi))
+        (not
+          (backend.compiler-backend-scavenge-candidate-ok?
+            (backend.compiler-backend-state-function-state backend-state)
+            rdi-bit
+            0
+            0
+            cabi.compiler-reg-id-rdi))))
     (and linux-ok win64-ok)))
 
 (define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : regalloc.CompilerRegVarTypes
@@ -34477,9 +35345,8 @@ f:
         1)
       (= (array-ref tally 0) 1))))
 
-;; Const-hoist candidates must reflect ABI volatility. Win64 keeps %rsi/%rdi
-;; out of the plan while retaining the caller-saved %r8/%r9 and the
-;; ABI-neutral %rbx frame-home fallback.
+;; Both Internal conventions admit the same volatile RSI/RDI/R8/R9 subset
+;; and the RBX frame-home fallback.
 (define (compiler-backend-const-hoist-candidates-abi-ok?) : bool
   (and
     (=
@@ -34511,7 +35378,7 @@ f:
       (regalloc.compiler-reg-id-seq-count
         (backend.compiler-backend-const-hoist-candidate-regs
           (backend.CompilerBackendTarget.Windows)))
-      3)
+      5)
     (regalloc.compiler-reg-id-seq-contains?
       (backend.compiler-backend-const-hoist-candidate-regs
         (backend.CompilerBackendTarget.Windows))
@@ -34524,16 +35391,14 @@ f:
       (backend.compiler-backend-const-hoist-candidate-regs
         (backend.CompilerBackendTarget.Windows))
       cabi.compiler-reg-id-rbx)
-    (not
-      (regalloc.compiler-reg-id-seq-contains?
-        (backend.compiler-backend-const-hoist-candidate-regs
-          (backend.CompilerBackendTarget.Windows))
-        cabi.compiler-reg-id-rsi))
-    (not
-      (regalloc.compiler-reg-id-seq-contains?
-        (backend.compiler-backend-const-hoist-candidate-regs
-          (backend.CompilerBackendTarget.Windows))
-        cabi.compiler-reg-id-rdi))))
+    (regalloc.compiler-reg-id-seq-contains?
+      (backend.compiler-backend-const-hoist-candidate-regs
+        (backend.CompilerBackendTarget.Windows))
+      cabi.compiler-reg-id-rsi)
+    (regalloc.compiler-reg-id-seq-contains?
+      (backend.compiler-backend-const-hoist-candidate-regs
+        (backend.CompilerBackendTarget.Windows))
+      cabi.compiler-reg-id-rdi)))
 
 ;; Regression for the opt1-built compiler crash exposed by
 ;; integration_spmd_gather_read/fill-lane-offset-gather. The reduced IR keeps
@@ -34693,7 +35558,7 @@ f:
         (if (or (< at 0) (>= at limit))
           (set! done true)
           (begin
-            (set! seen (+ seen 1))
+            (+= seen 1)
             (set! i (+ at 1))))))
     seen))
 
@@ -35087,7 +35952,7 @@ f:
     [out : ir.CompilerIrBlockList (ir.compiler-ir-block-list-empty)]
     [i : i64 (array-length labels)]
     (while (> i 0)
-      (set! i (- i 1))
+      (-= i 1)
       (set!
         out
         (ir.compiler-ir-blocks-with-tail
@@ -35113,6 +35978,44 @@ f:
     (compiler-backend-swb-fix-prologue-mask)
     form-a-saving-label
     (compiler-backend-swb-fix-block-list labels)))
+
+;; A bare return and an edge to the shared epilogue both read ABI result
+;; registers implicitly.  The entry guard deliberately names none of the
+;; prologue registers, so only that implicit use can keep the parameter-home
+;; move before the early return.  An unrelated home still permits placement.
+(define (compiler-backend-swb-implicit-return-plan
+  [shared : bool]
+  [prologue-mask : i64]) : backend.CompilerBackendSwbPlan
+  (backend.compiler-backend-swb-plan-for
+    (if shared
+      ".Lswbimplicit_entry:\n    cmpq 8(%rsi), %rcx\n    jge .Lswbimplicit_early\n.Lswbimplicit_body:\n    callq _tl_swbfix_opaque\n    jmp .Lswbimplicit_ret\n.Lswbimplicit_early:\n    jmp .Lswbimplicit_ret\n"
+      ".Lswbimplicit_entry:\n    cmpq 8(%rsi), %rcx\n    jge .Lswbimplicit_early\n.Lswbimplicit_body:\n    callq _tl_swbfix_opaque\n    jmp .Lswbimplicit_ret\n.Lswbimplicit_early:\n    ret\n")
+    "swbimplicit"
+    ".Lswbimplicit_ret"
+    prologue-mask
+    (ir.compiler-ir-label-none)
+    (compiler-backend-swb-fix-block-list
+      (__tl_make-array
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-label "body")
+        (ir.compiler-ir-label "early")))))
+
+(define (compiler-backend-swb-implicit-return-kind-ok? [shared : bool]) : bool
+  (let
+    [rax (compiler-backend-swb-implicit-return-plan shared 1)]
+    [rdx (compiler-backend-swb-implicit-return-plan shared 4)]
+    [vector (compiler-backend-swb-implicit-return-plan shared 65536)]
+    [unrelated (compiler-backend-swb-implicit-return-plan shared 256)]
+    (and
+      (not (ir.compiler-ir-label-some? rax.label))
+      (not (ir.compiler-ir-label-some? rdx.label))
+      (not (ir.compiler-ir-label-some? vector.label))
+      (= unrelated.label (ir.compiler-ir-label "body")))))
+
+(define (compiler-backend-swb-implicit-return-ok?) : bool
+  (and
+    (compiler-backend-swb-implicit-return-kind-ok? false)
+    (compiler-backend-swb-implicit-return-kind-ok? true)))
 
 ;; (8a) Variant (i): the form (a) bare clone lies INSIDE the would-be framed
 ;; region.  No duplication is involved -- the region is single-entry -- so only
@@ -35445,17 +36348,17 @@ f:
 
 (define (compiler-backend-scavenge-segment-subset-ok?
   [hull : (__tl_dyn-array i64)]
-  [segmented : (__tl_dyn-array i64)]
-  [index : i64]) : bool
-  (if (>= index (array-length hull))
-    true
-    (and
+  [segmented : (__tl_dyn-array i64)]) : bool
+  (for [index (iterator.range 0 (array-length hull))]
+    (unless
       (=
         (bit-and
           (array-ref segmented index)
           (bit-xor (array-ref hull index) -1))
         0)
-      (compiler-backend-scavenge-segment-subset-ok? hull segmented (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (compiler-backend-scavenge-segment-occupancy-ok?) : bool
   (let
@@ -35480,7 +36383,7 @@ f:
       (not (= (bit-and (array-ref segmented 4) r11) 0))
       (not (= (bit-and (array-ref hull 4) r11) 0))
       ;; monotone: the table can only LOSE bits, never gain one
-      (compiler-backend-scavenge-segment-subset-ok? hull segmented 0))))
+      (compiler-backend-scavenge-segment-subset-ok? hull segmented))))
 
 ;; The consequence at the pick. With every candidate reading occupied the picker
 ;; runs off the end of the pool and returns its emergency fallback with a pending
@@ -36062,7 +36965,8 @@ f:
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool
   (let
     [params : ir.CompilerIrParamSeq
-      (irt.params "a=%0:u64, b=%1:u64, c=%2:u64, d=%3:u64, e=%4:bool")]
+      (irt.params
+        "a=%0:u64, b=%1:u64, c=%2:u64, d=%3:u64, e=%4:u64, f=%5:u64, g=%6:bool")]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%3=%r9")]
     [index : backend.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -36081,10 +36985,454 @@ f:
         0
         0
         index
-        5
+        7
         backend-state)
       (has "    movzbq 48(%rbp), ")
       (lacks "    movzbq 48(%rbp), %r9\n"))))
+
+;; #8894: the stale body cursor the float parameter copies used to consult.
+;; Its occupancy reports every register free, although the pinned parameters
+;; still hold their incoming registers.
+(define (compiler-backend-param-entry-stale-free-cursor!
+  [backend-state : backend.CompilerBackendState]) : unit
+  (set-scratch-scavenge-ctx-occupied-masks!
+    (backend.compiler-backend-state-function-state backend-state)
+    (__tl_make-array 0 0))
+  (set-state-emit-instr-post-base! backend-state 1)
+  (set-state-emit-current-count! backend-state 0))
+
+;; The issue's opt2 System V plan: c..h are pinned to their incoming %xmm2-%xmm7
+;; and the stack-passed i and j live in frame slots. Their copies run first,
+;; through %xmm8, and nothing writes a pinned parameter's register.
+(define (compiler-backend-param-entry-float-copy-linux-ok?) : bool
+  (let
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:f64, b=%1:f64, c=%2:f64, d=%3:f64, e=%4:f64, f=%5:f64, g=%6:f64, h=%7:f64, i=%8:f64, j=%9:f64")]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=spill:-8 %1=spill:-16 %2=%xmm2 %3=%xmm3 %4=%xmm4 %5=%xmm5 %6=%xmm6 %7=%xmm7 %8=spill:-24 %9=spill:-32")]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    (compiler-backend-param-entry-stale-free-cursor! backend-state)
+    (asm-ok?
+      (backend.compiler-backend-emit-param-spills
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        10
+        backend-state)
+      (has
+        "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -24(%rbp)\n    movsd 24(%rbp), %xmm8\n    movsd %xmm8, -32(%rbp)\n    movsd %xmm0, -8(%rbp)\n")
+      (lacks
+        ", %xmm2\n"
+        ", %xmm3\n"
+        ", %xmm4\n"
+        ", %xmm5\n"
+        ", %xmm6\n"
+        ", %xmm7\n"))))
+
+;; Windows Internal pins a..f to XMM0-5 and passes g..j on the stack. h and j
+;; copy through volatile RAX before g/i enter their XMM6/7 homes. No entry copy
+;; may overwrite an unread input or add an undescribed nonvolatile XMM use.
+(define (compiler-backend-param-entry-float-copy-windows-ok?) : bool
+  (let
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:f64, b=%1:f64, c=%2:f64, d=%3:f64, e=%4:f64, f=%5:f64, g=%6:f64, h=%7:f64, i=%8:f64, j=%9:f64")]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=%xmm0 %1=%xmm1 %2=%xmm2 %3=%xmm3 %4=%xmm4 %5=%xmm5 %6=%xmm6 %7=spill:-8 %8=%xmm7 %9=spill:-16")]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    (compiler-backend-param-entry-stale-free-cursor! backend-state)
+    (asm-ok?
+      (backend.compiler-backend-emit-param-spills
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Windows)
+        assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        10
+        backend-state)
+      (has
+        "    movq 56(%rbp), %rax\n    movq %rax, -8(%rbp)\n    movq 72(%rbp), %rax\n    movq %rax, -16(%rbp)\n    movsd 48(%rbp), %xmm6\n    movsd 64(%rbp), %xmm7\n")
+      (lacks
+        ", %xmm0\n"
+        ", %xmm1\n"
+        ", %xmm2\n"
+        ", %xmm3\n"
+        ", %xmm4\n"
+        ", %xmm5\n"))))
+
+;; A System V register group whose two SSE words do not fit the one float
+;; argument register left after g arrives on the stack. With c..g pinned to
+;; %xmm2-%xmm6 the scavenger's XMM pool had no free register and fell back to
+;; the pinned %xmm2 under an emergency save nothing restored. The words now
+;; copy first, through %xmm8, and arm no emergency save.
+(define (compiler-backend-param-entry-group-copy-linux-ok?) : bool
+  (let
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-register-group-f64-test-index)]
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:f64, b=%1:f64, c=%2:f64, d=%3:f64, e=%4:f64, f=%5:f64, g=%6:f64, p=%7:BackendGroupF64Test")]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=spill:-8 %1=spill:-16 %2=%xmm2 %3=%xmm3 %4=%xmm4 %5=%xmm5 %6=%xmm6")]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state backend-state)]
+    [_cursor : unit
+      (compiler-backend-param-entry-stale-free-cursor! backend-state)]
+    [pending-before : i64 (scratch-emergency-pending-count function-state)]
+    [result : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-param-spills
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        8
+        backend-state)]
+    [pending-after : i64 (scratch-emergency-pending-count function-state)]
+    (and
+      (= pending-before pending-after)
+      (match result
+        [(Ok text)
+          (let
+            [word1 : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movsd 24(%rbp), %xmm8\n"
+                0)]
+            [first-home : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movsd %xmm0, -8(%rbp)\n"
+                0)]
+            (and
+              (string.is-string-prefix-at text "    movsd 16(%rbp), %xmm8\n" 0)
+              (>= word1 0)
+              (> first-home word1)
+              (asm-lacks?
+                text
+                ", %xmm2\n"
+                ", %xmm3\n"
+                ", %xmm4\n"
+                ", %xmm5\n"
+                ", %xmm6\n")))]
+        [(Err _) false]))))
+
+;; #9302: a private SPMD helper's parameter spills for `params` and `homes`,
+;; in backend `mode`, under the stale all-free cursor.
+(define (compiler-backend-spmd-entry-copy-spills
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
+  [params : String]
+  [homes : String]
+  [vars : i64]) : backend.ResultCompilerBackend
+  (let
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    (backend.compiler-backend-set-current-mode!
+      (backend.compiler-backend-state-function-state backend-state)
+      mode)
+    (compiler-backend-param-entry-stale-free-cursor! backend-state)
+    (backend.compiler-backend-emit-spmd-private-param-spills
+      (ast.ast-node-pool-reader-type-segment-bases)
+      target
+      (reg-homes homes)
+      (irt.params params)
+      vars
+      backend-state)))
+
+;; System V AVX2: the uniforms a..h fill %xmm0-%xmm7, so the f64 i and the f32
+;; j arrive on the stack, and the varying x is loaded into %ymm2 -- the old
+;; staging register. Both copies run through %xmm8 before the first
+;; special-parameter load and before any register homing.
+(define (compiler-backend-spmd-entry-copy-linux-avx2-ok?) : bool
+  (match (compiler-backend-spmd-entry-copy-spills
+    (backend.CompilerBackendTarget.Linux)
+    (Avx2)
+    "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx2_x=%9:f64, i=%10:f64, j=%11:f32"
+    "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%ymm2 %10=spill:-272 %11=spill:-280"
+    12)
+    [(Ok text)
+      (and
+        (string.is-string-prefix-at
+          text
+          "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n"
+          0)
+        (asm-has? text "    vmovdqu 32(%r10), %ymm2\n")
+        (asm-lacks? text ", %xmm2\n"))]
+    [(Err _) false]))
+
+;; Windows Internal AVX2: a..f fill the six positional registers. The frame-homed
+;; f64 g and f32 h copy through RAX/EAX before varying inputs and register homes.
+;; i, whose home is a register, still loads straight into that home.
+(define (compiler-backend-spmd-entry-copy-windows-avx2-ok?) : bool
+  (match (compiler-backend-spmd-entry-copy-spills
+    (backend.CompilerBackendTarget.Windows)
+    (Avx2)
+    "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, __tl_spmd_varying_arg_avx2_x=%5:f64, e=%6:f64, f=%7:f64, g=%8:f64, h=%9:f32, i=%10:f64"
+    "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=%ymm2 %6=spill:-240 %7=spill:-248 %8=spill:-256 %9=spill:-264 %10=%xmm7"
+    11)
+    [(Ok text)
+      (and
+        (string.is-string-prefix-at
+          text
+          "    movq 48(%rbp), %rax\n    movq %rax, -256(%rbp)\n    movl 56(%rbp), %eax\n    movl %eax, -264(%rbp)\n"
+          0)
+        (asm-has?
+          text
+          "    vmovdqu 32(%r10), %ymm2\n"
+          "    movsd 64(%rbp), %xmm7\n")
+        (asm-lacks? text ", %xmm2\n"))]
+    [(Err _) false]))
+
+;; System V AVX-512: the varying x arrives in %zmm17 and moves to %zmm2. The
+;; entry copies run before the opmask entry plan and that move.
+(define (compiler-backend-spmd-entry-copy-linux-avx512-ok?) : bool
+  (match (compiler-backend-spmd-entry-copy-spills
+    (backend.CompilerBackendTarget.Linux)
+    (Avx512)
+    "__tl_spmd_active_mask_avx512=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx512_x=%9:f64, i=%10:f64, j=%11:f32"
+    "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%zmm2 %10=spill:-272 %11=spill:-280"
+    12)
+    [(Ok text)
+      (let
+        [mask : i64
+          (backend.compiler-backend-string-find-from text "    kmovq %k1, " 0)]
+        [varying : i64
+          (backend.compiler-backend-string-find-from
+            text
+            "    vmovupd %zmm17, %zmm2\n"
+            0)]
+        (and
+          (string.is-string-prefix-at
+            text
+            "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n"
+            0)
+          (> mask 0)
+          (> varying mask)
+          (asm-lacks? text ", %xmm2\n")))]
+    [(Err _) false]))
+
+;; Every incoming operand must be read before any write to it, including the
+;; XMM/YMM/ZMM aliases of a physical vector register. These fixtures contain
+;; only moves; checking the emitted operands also covers frame and block inputs.
+(define (compiler-backend-entry-preserves-inputs?
+  [text : (& text str)]
+  [sources : (& sources (__tl_dyn-array String))]) : bool
+  (for [index (iterator.range 0 (array-length sources))]
+    (let
+      [source : String (string.copy (& (array-ref sources index)))]
+      [read : i64
+        (backend.compiler-backend-string-find-from
+          text
+          (str_cat.str-cat " " (string.copy (& source)) ", ")
+          0)]
+      [family : i64
+        (cabi.compiler-abi-register-vector-family-index
+          (cabi.compiler-abi-register-id-from-spelling (string.copy (& source))))]
+      [aliases : (__tl_dyn-array String)
+        (if (< family 0)
+          (__tl_make-array source)
+          (__tl_make-array
+            (str_cat.str-cat "%xmm" (string.int->string family))
+            (str_cat.str-cat "%ymm" (string.int->string family))
+            (str_cat.str-cat "%zmm" (string.int->string family))))]
+      (when (< read 0) (return false))
+      (for [alias-index (iterator.range 0 (array-length aliases))]
+        (let
+          [write : i64
+            (backend.compiler-backend-string-find-from
+              text
+              (str_cat.str-cat
+                ", "
+                (string.copy (& (array-ref aliases alias-index)))
+                "\n")
+              0)]
+          (when (and (>= write 0) (< write read)) (return false))))))
+  true)
+
+(define (compiler-backend-entry-preservation-oracle-ok?) : bool
+  (let
+    [sources : (__tl_dyn-array String) (__tl_make-array "%xmm2" "%k1")]
+    (and
+      (compiler-backend-entry-preserves-inputs?
+        "    movss %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n    vmovdqu 32(%r10), %ymm2\n"
+        (& sources))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    vmovdqu 32(%r10), %ymm2\n    movss %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n"
+          (& sources)))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    vmovupd %zmm17, %zmm2\n    movsd %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n"
+          (& sources)))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    movss %xmm0, %xmm2\n    movss %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n"
+          (& sources)))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    movss %xmm2, -8(%rbp)\n    kmovq %k2, %k1\n    kmovq %k1, %k3\n"
+          (& sources)))
+      (not (compiler-backend-entry-preserves-inputs? "" (& sources))))))
+
+;; #9301: special parameters precede and interleave the uniforms. Both float
+;; widths have register and frame destinations; the varying homes alias later
+;; incoming XMM2/XMM6. AVX2 also has a frame-homed varying value. AVX-512 keeps
+;; its active/bool mask swap as one graph. WIN1 remains unchanged.
+(define (compiler-backend-spmd-entry-preservation-case?
+  [windows? : bool]
+  [avx512? : bool]
+  [f64? : bool]) : bool
+  (let
+    [sources : (__tl_dyn-array String)
+      (if windows?
+        (__tl_make-array
+          "%xmm0"
+          "%xmm1"
+          "%xmm2"
+          "%r9"
+          "%xmm4"
+          "%xmm5"
+          "48(%rbp)"
+          "56(%rbp)"
+          "64(%rbp)"
+          "72(%rbp)"
+          "80(%rbp)")
+        (__tl_make-array
+          "%xmm0"
+          "%xmm1"
+          "%xmm2"
+          "%rdi"
+          "%xmm3"
+          "%xmm4"
+          "%xmm5"
+          "%xmm6"
+          "%xmm7"
+          "16(%rbp)"
+          "24(%rbp)"))]
+    [special-sources : (__tl_dyn-array String)
+      (if avx512?
+        (__tl_make-array "%k1" "%zmm17" "%k2" "%zmm18")
+        (__tl_make-array "0(%r10)" "32(%r10)" "64(%r10)" "96(%r10)"))]
+    [first-ty : String
+      (if f64?
+        "f64"
+        "f32")]
+    [second-ty : String
+      (if f64?
+        "f32"
+        "f64")]
+    [result
+      (compiler-backend-spmd-entry-copy-spills
+        (if windows?
+          (backend.CompilerBackendTarget.Windows)
+          (backend.CompilerBackendTarget.Linux))
+        (if avx512?
+          (Avx512)
+          (Avx2))
+        (str_cat.str-cat
+          "__tl_spmd_active_mask=%0:bool, __tl_spmd_varying_arg_x=%1:"
+          (string.copy (& first-ty))
+          ", a=%2:"
+          (string.copy (& first-ty))
+          ", __tl_spmd_mask_arg_b=%3:bool, b=%4:"
+          (string.copy (& second-ty))
+          ", __tl_spmd_varying_arg_y=%5:i64, c=%6:"
+          (string.copy (& first-ty))
+          ", d=%7:i64, e=%8:"
+          (string.copy (& second-ty))
+          ", f=%9:"
+          (string.copy (& first-ty))
+          ", g=%10:"
+          (string.copy (& second-ty))
+          ", h=%11:"
+          (string.copy (& first-ty))
+          ", i=%12:"
+          (string.copy (& second-ty))
+          ", j=%13:"
+          first-ty
+          ", k=%14:"
+          second-ty)
+        (str_cat.str-cat
+          (if avx512?
+            "%0=%k2 %1=%zmm2 %3=%k1 %5=%zmm6 "
+            "%0=spill:-32 %1=%ymm2 %3=%ymm6 %5=spill:-96 ")
+          "%2=spill:-104 %4=%xmm12 %6=spill:-112 %7=%r12 %8=%xmm11 %9=spill:-120 %10=%xmm10 %11=spill:-128 %12=%xmm9 %13=spill:-136 %14=spill:-144")
+        15)]
+    (match result
+      [(Ok text)
+        (and
+          (compiler-backend-entry-preserves-inputs? text (& sources))
+          (compiler-backend-entry-preserves-inputs? text (& special-sources))
+          (asm-lacks? text ", %r10\n")
+          (if avx512?
+            (asm-has?
+              text
+              "    kmovq %k1, %k7\n    kmovq %k2, %k1\n    kmovq %k7, %k2\n")
+            (asm-has? text "    vmovdqu %ymm14, -96(%rbp)\n")))]
+      [(Err _) false])))
+
+(define (compiler-backend-spmd-entry-preservation-ok?) : bool
+  (unless (compiler-backend-entry-preservation-oracle-ok?) (return false))
+  (for [abi (iterator.range 0 2)]
+    (for [mode (iterator.range 0 2)]
+      (for [width (iterator.range 0 2)]
+        (unless
+          (compiler-backend-spmd-entry-preservation-case?
+            (= abi 1)
+            (= mode 1)
+            (= width 1))
+          (return false)))))
+  true)
+
+(test
+  backend-spmd-entry-preserves-every-unread-input
+  (test.assert-true
+    (compiler-backend-spmd-entry-preservation-ok?)
+    "private entry preserves every unread argument and its physical aliases"))
+
+(test
+  backend-param-entry-copies-use-volatile-registers
+  (test.assert-true
+    (and
+      (compiler-backend-param-entry-float-copy-linux-ok?)
+      (compiler-backend-param-entry-float-copy-windows-ok?)
+      (compiler-backend-spmd-entry-copy-linux-avx2-ok?)
+      (compiler-backend-spmd-entry-copy-windows-avx2-ok?))
+    "entry copies preserve unread inputs and do not borrow nonvolatile XMM6"))
 
 (define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
@@ -36433,9 +37781,8 @@ b_keep:
     addq $56, %rsp
     ret
 ")]
-    [i : i64 1]
     (set! (array-ref chunks 0) first)
-    (while (< i 65)
+    (for [i (iterator.range 1 65)]
       (let
         [suffix : String (string.int->string i)]
         [symbol : String (str_cat.str-cat prefix suffix)]
@@ -36448,8 +37795,7 @@ b_keep:
             symbol
             ":\n    movq $"
             suffix
-            ", %rax\n    ret\n"))
-        (set! i (+ i 1))))
+            ", %rax\n    ret\n"))))
     chunks))
 
 (define (compiler-backend-assembly-stream-test-run-serial
@@ -36458,15 +37804,13 @@ b_keep:
   (let
     [session : CompilerBackendAssemblyStreamTestSession
       (compiler-backend-assembly-stream-test-session-new)]
-    [i : i64 0]
     (if a?
       (compiler-backend-assembly-stream-test-seed-a! session)
       (compiler-backend-assembly-stream-test-seed-b! session))
-    (while (< i (array-length chunks))
+    (for [i (iterator.range 0 (array-length chunks))]
       (compiler-backend-assembly-stream-test-session-process!
         session
-        (ir.compiler-ir-array-shared-view chunks i))
-      (set! i (+ i 1)))
+        (ir.compiler-ir-array-shared-view chunks i)))
     (let
       [out : String
         (compiler-backend-assembly-stream-test-session-finish-copy session)]
@@ -36507,18 +37851,16 @@ b_keep:
       (compiler-backend-assembly-stream-test-session-process!
         failed-b
         (ir.compiler-ir-array-shared-view chunks-b i))
-      (set! i (+ i 1)))
+      (+= i 1))
     (compiler-backend-assembly-stream-test-session-destroy! failed-b)
     (let
       [session-b : CompilerBackendAssemblyStreamTestSession
         (compiler-backend-assembly-stream-test-session-new)]
       [_seed-b : unit (compiler-backend-assembly-stream-test-seed-b! session-b)]
-      [replay : i64 0]
-      (while (< replay 7)
+      (for [replay (iterator.range 0 7)]
         (compiler-backend-assembly-stream-test-session-process!
           session-b
-          (ir.compiler-ir-array-shared-view chunks-b replay))
-        (set! replay (+ replay 1)))
+          (ir.compiler-ir-array-shared-view chunks-b replay)))
       (while (< i 65)
         (compiler-backend-assembly-stream-test-session-process!
           session-a
@@ -36526,7 +37868,7 @@ b_keep:
         (compiler-backend-assembly-stream-test-session-process!
           session-b
           (ir.compiler-ir-array-shared-view chunks-b i))
-        (set! i (+ i 1)))
+        (+= i 1))
       (let
         [out-a : String
           (compiler-backend-assembly-stream-test-session-finish-copy session-a)]
@@ -36568,8 +37910,7 @@ b_keep:
       (text_buf.append
         (text_buf.empty)
         ".globl stream_growth\nstream_growth:\n")]
-    [i : i64 0]
-    (while (< i 128)
+    (for [i (iterator.range 0 128)]
       (set!
         body
         (text_buf.append
@@ -36577,8 +37918,7 @@ b_keep:
           (str_cat.str-cat
             "    movq very_long_stream_owner_global_symbol_"
             (string.int->string i)
-            "(%rip), %rax\n")))
-      (set! i (+ i 1)))
+            "(%rip), %rax\n"))))
     (set! body (text_buf.append body "    ret\n"))
     (compiler-backend-assembly-stream-test-session-process!
       session
@@ -36605,13 +37945,11 @@ b_keep:
     [idle? : bool
       (= (compiler-backend-stream-state-retained-table-bytes stream) 0)]
     [_reset : unit (compiler-backend-peephole-test-session-reset! session)]
-    [i : i64 0]
-    (while (< i 600)
+    (for [i (iterator.range 0 600)]
       (backend.compiler-backend-peephole-carry-safe-insert!
         backend-state
         stream
-        (str_cat.str-cat ".Lcarry_growth_" (string.int->string i)))
-      (set! i (+ i 1)))
+        (str_cat.str-cat ".Lcarry_growth_" (string.int->string i))))
     (let
       [last : String ".Lcarry_growth_599"]
       [carry-grew? : bool
@@ -36626,8 +37964,7 @@ b_keep:
             (string.string-length last)
             (ci.intern-hash last)))]
       [owner-input : text_buf.TextBuf (text_buf.empty)]
-      (set! i 0)
-      (while (< i 128)
+      (for [i (iterator.range 0 128)]
         (set!
           owner-input
           (text_buf.append
@@ -36635,8 +37972,7 @@ b_keep:
             (str_cat.str-cat
               "    movq very_long_owner_global_symbol_"
               (string.int->string i)
-              "(%rip), %rax\n")))
-        (set! i (+ i 1)))
+              "(%rip), %rax\n"))))
       (let
         [_owner-output : String
           (compiler-backend-peephole-test-session-asm
@@ -36649,8 +37985,7 @@ b_keep:
               (compiler-backend-stream-state-owner-bytes-capacity stream)
               4096))]
         (backend.compiler-backend-sweep-reset! backend-state stream)
-        (set! i 0)
-        (while (< i 200)
+        (for [i (iterator.range 0 200)]
           (backend.compiler-backend-sweep-record-win64!
             backend-state
             stream
@@ -36661,8 +37996,7 @@ b_keep:
             1
             0
             0
-            0)
-          (set! i (+ i 1)))
+            0))
         (let
           [sweep-grew? : bool
             (and
@@ -36704,10 +38038,8 @@ b_keep:
     [session : CompilerBackendPeepholeTestSession
       (compiler-backend-peephole-test-session-new)]
     [input : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i 128)
-      (set! input (text_buf.append input "\n"))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 128)]
+      (set! input (text_buf.append input "\n")))
     (let
       [expected : String (text_buf.render input)]
       [actual : String
@@ -36975,15 +38307,13 @@ b_keep:
 
 (define (compiler-backend-test-register-mask [regs : (__tl_dyn-array i64)]) : i64
   (let
-    [index : i64 0]
     [mask : i64 0]
-    (while (< index (array-length regs))
+    (for [index (iterator.range 0 (array-length regs))]
       (set!
         mask
         (bit-or
           mask
-          (backend.compiler-backend-scavenge-reg-id-bit (array-ref regs index))))
-      (set! index (+ index 1)))
+          (backend.compiler-backend-scavenge-reg-id-bit (array-ref regs index)))))
     mask))
 
 ;; Function-local traversal state must follow the backend job, even when two
@@ -37432,7 +38762,7 @@ b_keep:
       (if (= (array-ref order i) (array-ref expected i))
         unit
         (set! same false))
-      (set! i (+ i 1)))
+      (+= i 1))
     same))
 
 (define (compiler-backend-placement-test-expected
@@ -37721,7 +39051,8 @@ b_keep:
         (ir.compiler-ir-function-seq-prepend
           (& (compiler-backend-placement-seh-main))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-placement-test-last-before
   [text : (& text str)]
@@ -37810,8 +39141,11 @@ b_keep:
 (define (read-len) : i64 (+ (peek (& cell)) (+ cell.len triple.c)))
 (define (main) : i64 (begin (install! 3) (install3! 4) (read-len)))")
 
-;; A raw alias can observe box identity across a rebind. The corresponding
-;; safe reference program must be rejected before reaching the backend.
+;; The t2 shape: `observe` holds a reference to `cell` (a safe borrow, or a raw
+;; pointer) across a call that rebinds it. The safe form is rejected with E0222
+;; before reaching the backend (#7904). The raw form shares the inline-home
+;; assertions: the rebind copies into the global's one home, so the alias reads
+;; the new value.
 (define (compiler-backend-inline-aggregate-global-escape-source
   [raw-alias : bool]) : String
   (str_cat.str-cat
@@ -37828,7 +39162,7 @@ b_keep:
 (define (main) : i64 (observe (& cell)))")))
 
 ;; `through` reads `cell` and calls through a function VALUE, so its callee set
-;; is not enumerable and the global must stay boxed.
+;; is not enumerable; the global still has its one inline home.
 (define (compiler-backend-inline-aggregate-global-indirect-source) : String
   "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
 (define cell : Cell (Cell (__tl_make-array i64 4) 4))
@@ -37863,13 +39197,14 @@ b_keep:
           (asm-has?
             asm
             "    call _tl___global_init_triple\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_triple(%rip)\n    movq 16(%rax), %r10\n    movq %r10, _tl_triple+16(%rip)\n")
-          ;; (iii) and `(set! g v)` copies the same bytes at the rebind.
+          ;; (iii) and `(set! g v)` copies the complete right-hand value once
+          ;; into the same home: the home address, then 16 and 24 bytes.
+          (and
+            (asm-has? asm "    leaq _tl_cell(%rip), %r10\n")
+            (asm-has? asm "    leaq _tl_triple(%rip), %r10\n"))
           (asm-has?
             asm
-            "    movq (%r10), %r11\n    movq %r11, _tl_cell(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_cell+8(%rip)\n")
-          (asm-has?
-            asm
-            "    movq (%r10), %r11\n    movq %r11, _tl_triple(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_triple+8(%rip)\n    movq 16(%r10), %r11\n    movq %r11, _tl_triple+16(%rip)\n")
+            "    movups %xmm2, (%r10)\n    movq 16(%r9), %r8\n    movq %r8, 16(%r10)\n")
           (asm-lacks? asm "    movq %rax, _tl_cell(%rip)\n")))]
     [(Err _) false]))
 
@@ -37887,32 +39222,32 @@ b_keep:
         (asm-has? asm "    movq _tl_cell+8(%rip), %r8\n")
         (asm-has? asm "    movq _tl_triple+16(%rip), %r8\n")
         (asm-has? asm "    movups %xmm0, _tl_cell(%rip)\n")
-        (asm-has? asm "    movq %r11, _tl_triple+16(%rip)\n")
+        (asm-has? asm "    movq %r10, _tl_triple+16(%rip)\n")
         (asm-lacks? asm "    movq _tl_cell(%rip), %"))]
     [(Err _) false]))
 
-;; A global whose raw alias or indirect reader can observe a rebind retains
-;; the boxed cell, pointer store, and cell load at every use.
+;; (v) SPEC 4.x: an initialized aggregate global is one storage home whose
+;; assignment keeps that home. Globals a reader's call graph can rebind, or
+;; that are read through an unenumerable indirect callee, therefore use the
+;; same inline home as any other: a whole-aggregate reservation, the home's
+;; address for a read, and a byte copy (never a box-pointer store) for the
+;; rebind. The escape program's safe borrow held across such a rebind is
+;; rejected (E0222, #7904); its raw-pointer form reads the updated home at
+;; every optimization level.
 (define (compiler-backend-inline-aggregate-global-excluded-shape-ok?
   [src : String]) : bool
   (match (backend.compiler-backend-emit-source src)
     [(Ok asm)
       (and
         (backend.backend-and4
-          ;; The cell is one word and holds a POINTER to the arena box.
-          (asm-has? asm "    .comm _tl_cell, 8, 8\n")
-          (asm-has? asm "    movq %rax, _tl_cell(%rip)\n")
-          ;; ... which the rebind replaces with a pointer store, never a byte
-          ;; copy, so the box identity the program can observe is preserved.
-          (asm-lacks? asm "    movups %xmm0, _tl_cell(%rip)\n")
-          (asm-lacks? asm "    .comm _tl_cell, 16, 8\n"))
+          (asm-has? asm "    .comm _tl_cell, 16, 8\n")
+          (asm-has? asm "    movups %xmm0, _tl_cell(%rip)\n")
+          (asm-lacks? asm "    movq %rax, _tl_cell(%rip)\n")
+          (asm-lacks? asm "    .comm _tl_cell, 8, 8\n"))
         (backend.backend-and4
-          ;; No inline-cell spelling anywhere: no field displacement operand,
-          ;; and no address materialisation standing in for a cell read.
-          (asm-lacks? asm "_tl_cell+8(%rip)")
-          (asm-lacks? asm "    leaq _tl_cell(%rip), ")
-          ;; ... and every read of the global is still the cell LOAD.
-          (asm-has? asm "    movq _tl_cell(%rip), ")
+          (asm-has? asm "    leaq _tl_cell(%rip), ")
+          (asm-lacks? asm "    movq _tl_cell(%rip), ")
+          true
           (not
             (let
               [needle (compiler-backend-todo-marker)]
@@ -38173,7 +39508,8 @@ b_keep:
                     alpha
                     beta)
                   (ast.ast-extern-link-input-list-new)
-                  false)))
+                  false
+                  (ir.CompilerIrReturnStorage.None))))
             profile)]
         [expected : String
           (if (= mode 2)
@@ -38324,7 +39660,7 @@ b_keep:
         (compiler-backend-any-arity-stack-arg-shape-ok?)
         (compiler-backend-emergency-vector-width-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
-        (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)
+        (compiler-backend-scavenge-internal-rsi-rdi-plan-mask-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)
         (compiler-backend-const-hoist-candidates-abi-ok?)
@@ -38342,6 +39678,7 @@ b_keep:
         (compiler-backend-swb-merge-ok?)
         (compiler-backend-swb-dup-tail-bound-ok?)
         (compiler-backend-swb-apply-dup-ok?)
+        (compiler-backend-swb-implicit-return-ok?)
         (compiler-backend-swb-fix-inside-refused-ok?)
         (compiler-backend-swb-fix-shared-refused-ok?)
         (compiler-backend-swb-fix-frontier-placed-ok?)
@@ -38354,6 +39691,13 @@ b_keep:
         (compiler-backend-phi-rotated-back-edge-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
+        (compiler-backend-param-entry-float-copy-linux-ok?)
+        (compiler-backend-param-entry-float-copy-windows-ok?)
+        (compiler-backend-param-entry-group-copy-linux-ok?)
+        (compiler-backend-spmd-entry-copy-linux-avx2-ok?)
+        (compiler-backend-spmd-entry-copy-windows-avx2-ok?)
+        (compiler-backend-spmd-entry-copy-linux-avx512-ok?)
+        (compiler-backend-spmd-entry-preservation-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)
@@ -38478,6 +39822,8 @@ b_keep:
       (and
         (compiler-backend-stack-args-ok?)
         (compiler-backend-direct-tail-call-ok?)
+        (compiler-backend-frame-tail-ok?)
+        (compiler-backend-identity-snapshot-proof-ok?)
         (compiler-backend-indirect-tail-call-ok?)
         (compiler-backend-known-function-indirect-call-ok?)))
     (backend.backend-and8
@@ -38556,6 +39902,7 @@ b_keep:
     (compiler-backend-c-abi-win64-enum-aggregate-ok?)
     (compiler-backend-c-abi-sysv-register-aggregate-arg-linux-ok?)
     (compiler-backend-c-abi-sysv-memory-aggregate-arg-linux-ok?)
+    (compiler-backend-c-abi-memory-outgoing-ok?)
     (compiler-backend-c-abi-sysv-two-register-return-linux-ok?)
     (backend.backend-and4
       (compiler-backend-string-ref-shape-ok?)
@@ -38794,11 +40141,9 @@ b_keep:
   [items : backend.BackendStringSeq]
   [needle : String]) : bool
   (let
-    [i : i64 0]
     [n : i64 items.len]
-    (while (< i n)
-      (when (string.eq (array-ref items.slots i) needle) (return true))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 n)]
+      (when (string.eq (array-ref items.slots i) needle) (return true)))
     false))
 
 (define (compiler-backend-program-collections-new) : backend.CompilerBackendProgramCollections
@@ -38943,7 +40288,9 @@ b_keep:
     [slot : i64
       (backend_i64_i64_map.get-value-or (& tables.functions) name-id -1)]
     (if (>= slot 0)
-      (array-ref tables.function-signatures slot)
+      (owned_view.compiler-owned-element-view
+        (& tables.function-signatures)
+        slot)
       (No))))
 
 (define (compiler-backend-index-extern-signature-id
@@ -38955,7 +40302,9 @@ b_keep:
     [slot : i64
       (backend_i64_i64_map.get-value-or (& tables.extern-signatures) name-id -1)]
     (if (>= slot 0)
-      (array-ref tables.extern-signature-values slot)
+      (owned_view.compiler-owned-element-view
+        (& tables.extern-signature-values)
+        slot)
       (No))))
 
 (define (compiler-backend-index-function-defines-id?
@@ -39083,7 +40432,7 @@ b_keep:
           (begin
             (set! found i)
             (set! done true))
-          (set! i (+ i 1)))
+          (+= i 1))
         (set! done true)))
     found))
 
@@ -39257,7 +40606,7 @@ b_keep:
           (if (< end n)
             (+ end 1)
             end))
-        (set! k (+ k 1))))
+        (+= k 1)))
     (if (and (< result 0) (< i n))
       (cfg
         test
@@ -39319,8 +40668,7 @@ b_keep:
     (text_buf.chunks-fill-array-rev chunks (&mut items) (- chunk-count 1))
     (let
       [state : CompilerBackendPeepholeChunkState initial]
-      [i : i64 0]
-      (while (< i chunk-count)
+      (for [i (iterator.range 0 chunk-count)]
         (let
           [chunk : String
             (backend.compiler-backend-global-array-element-shared-view items i)]
@@ -39335,8 +40683,7 @@ b_keep:
               (owned_view.compiler-owned-shared-view state))]
           [group : text_buf.TextBuf
             (in-arena group-arena (text_buf.append at-boundary.group chunk))]
-          (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))
-          (set! i (+ i 1))))
+          (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))))
       (let
         [flushed : CompilerBackendPeepholeChunkState
           (compiler-backend-peephole-chunk-state-flush
@@ -39373,14 +40720,10 @@ b_keep:
       (unsafe
         (string-data asm))]
     [total : i64 0]
-    [k : i64 0]
-    (while (< k len)
+    (for [k (iterator.range 0 len)]
       (let
         [line : i64 (array-ref plan k)]
-        (set!
-          total
-          (+ total (- (array-ref starts (+ line 1)) (array-ref starts line))))
-        (set! k (+ k 1))))
+        (+= total (- (array-ref starts (+ line 1)) (array-ref starts line)))))
     (if (= total 0)
       ""
       (let
@@ -39392,8 +40735,7 @@ b_keep:
         [run-start : i64 0]
         [run-end : i64 0]
         [active : bool false]
-        [j : i64 0]
-        (while (< j len)
+        (for [j (iterator.range 0 len)]
           (let
             [line : i64 (array-ref plan j)]
             [s : i64 (array-ref starts line)]
@@ -39410,11 +40752,10 @@ b_keep:
                       (- run-end run-start)
                       dst
                       pos)
-                    (set! pos (+ pos (- run-end run-start)))))
+                    (+= pos (- run-end run-start))))
                 (set! active true)
                 (set! run-start s)
-                (set! run-end e)))
-            (set! j (+ j 1))))
+                (set! run-end e)))))
         (when
           active
           (begin
@@ -39424,7 +40765,7 @@ b_keep:
               (- run-end run-start)
               dst
               pos)
-            (set! pos (+ pos (- run-end run-start)))))
+            (+= pos (- run-end run-start))))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
@@ -39506,7 +40847,9 @@ b_keep:
   (let
     ;; IR payloads use the compiler's raw arena ABI; invalidate that exact
     ;; owner after emission before inspecting the caller-owned records.
-    [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+    [owner : arena.Arena
+      (unsafe
+        (arena.Arena (arena.tl_arena_make_small)))]
     [items : backend.BackendStringSeq
       (in-arena
         owner
@@ -39822,7 +41165,8 @@ b_keep:
       (ir.compiler-ir-extern-default-id
         cbi.compiler-builtin-id-tl-str-view
         "tl_str_view"
-        (I64)))))
+        (I64)))
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-unused-str-view-extern-ok?) : bool
   (asm-ok?
@@ -39860,7 +41204,9 @@ b_keep:
           (C)
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
-          false)))))
+          false
+          (ir.CompilerIrReturnStorage.None)))
+      (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
   (asm-ok?
@@ -39906,7 +41252,9 @@ b_keep:
           (C)
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
-          false)))))
+          false
+          (ir.CompilerIrReturnStorage.None)))
+      (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
   (asm-ok?
@@ -40017,7 +41365,8 @@ b_keep:
                     (Return (Some (Var 0))))))
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-user-helper-name-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -40071,7 +41420,8 @@ b_keep:
       (ir.compiler-ir-extern-default-id
         cbi.compiler-builtin-id-tl-substring
         "tl_substring"
-        (I64)))))
+        (I64)))
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool
   (match (backend.compiler-backend-emit-program-linux
@@ -40126,7 +41476,8 @@ b_keep:
                     (Return (Some (Var 0))))))
               Ordinary))
           (& (ir.compiler-ir-function-seq-empty)))))
-    (ir.compiler-ir-extern-seq-empty)))
+    (ir.compiler-ir-extern-seq-empty)
+    (ir.CompilerIrReturnStorageAuthority.None)))
 
 (define (compiler-backend-module-symbol-ok?) : bool
   (asm-ok?
@@ -41420,11 +42771,9 @@ b_keep:
         (ci.intern-compat-state-capture-active))]
     [function-state : backend.CompilerBackendFunctionState
       (backend.compiler-backend-state-function-state backend-state)]
-    [forwarded : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [forwarded : (__tl_dyn-array i64) (__tl_make-array -1 -1 1)]
     [_forward : unit
       (begin
-        (backend.compiler-backend-addr-of-forwarding-fill! (&mut forwarded) 0)
-        (set! (array-ref forwarded 2) 1)
         (backend.compiler-backend-function-state-set-i64-array!
           function-state
           backend.compiler-backend-function-i64-array-addr-of-forwarding-src
@@ -41608,7 +42957,7 @@ b_keep:
         [(Bytes value) (and byte-payload? (string.eq value text))]
         [_ false])
         (set! found true)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (compiler-object-data-record-list-contains-f64?
@@ -41623,8 +42972,8 @@ b_keep:
         [(F64 value)
           (if (= value bits)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-contains-f32?
@@ -41639,8 +42988,8 @@ b_keep:
         [(F32 value)
           (if (= value bits)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-contains-align?
@@ -41655,8 +43004,8 @@ b_keep:
         [(Align value)
           (if (= value align)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-contains-i64?
@@ -41671,8 +43020,8 @@ b_keep:
         [(I64 found-value)
           (if (= found-value value)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-data-record-list-label-has-i64-pair?
@@ -41699,12 +43048,12 @@ b_keep:
                     [(I64 second-found)
                       (if (= second-found second)
                         (set! found true)
-                        (set! index (+ index 1)))]
-                    [_ (set! index (+ index 1))])
-                  (set! index (+ index 1)))]
-              [_ (set! index (+ index 1))])
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+                        (+= index 1))]
+                    [_ (+= index 1)])
+                  (+= index 1))]
+              [_ (+= index 1)])
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-string?
@@ -41773,8 +43122,8 @@ b_keep:
         [(Call value)
           (if (string.eq value target)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-call?
@@ -41796,8 +43145,8 @@ b_keep:
         [(XorpdRip value)
           (if (string.eq value target)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-xorpd-rip?
@@ -41810,7 +43159,7 @@ b_keep:
 (define (compiler-backend-collect-program-collections
   [program : ir.CompilerIrProgram]) : backend.CompilerBackendProgramCollections
   (match program
-    [(Program globals functions _)
+    [(Program globals functions _ _authority)
       (backend.compiler-backend-collect-program-collections-with-iag
         globals
         functions
@@ -42128,7 +43477,8 @@ user_fn:
           (C)
           c-name
           (ast.ast-extern-link-input-list-new)
-          false))]
+          false
+          (ir.CompilerIrReturnStorage.None)))]
     [_pointer : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -42140,7 +43490,8 @@ user_fn:
           (TypeLisp)
           pointer-name
           (ast.ast-extern-link-input-list-new)
-          false))]
+          false
+          (ir.CompilerIrReturnStorage.None)))]
     [_value : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -42154,12 +43505,14 @@ user_fn:
             (TypeLisp))
           name
           (ast.ast-extern-link-input-list-new)
-          false))]
+          false
+          (ir.CompilerIrReturnStorage.None)))]
     [program : ir.CompilerIrProgram
       (Program
         (ir.compiler-ir-global-seq-empty)
         (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-builder-snapshot-seq (& externs)))]
+        (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
+        (ir.CompilerIrReturnStorageAuthority.None))]
     [state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
@@ -42299,7 +43652,8 @@ user_fn:
             [else (C)])
           link
           (ast.ast-extern-link-input-list-new)
-          (>= kind 5)))
+          (>= kind 5)
+          (ir.CompilerIrReturnStorage.None)))
       (let
         [index : backend.CompilerBackendProgramIndex
           (compiler-backend-program-index-build
@@ -42404,6 +43758,33 @@ user_fn:
 (test
   backend-call-convention-facts-parity
   (for [target (iterator.range 0 2)]
+    (let
+      [abi : cabi.CompilerRegTargetAbi
+        (if (= target 0)
+          (Linux)
+          (Windows))]
+      (test.assert-owned-string-eq
+        (cabi.compiler-abi-internal-link-symbol abi "entry$typelisp")
+        (if (= target 0)
+          "entry"
+          "entry$typelisp")
+        "package C-export body identity must follow the physical ABI")
+      (for [kind (iterator.range 0 4)]
+        (let
+          [symbol : String
+            (cond
+              [(= kind 0) ""]
+              [(= kind 1) "$typelisp"]
+              [(= kind 2) "entry"]
+              [else "entry$typelisp_more"])]
+          (test.assert-owned-string-eq
+            (cabi.compiler-abi-internal-link-symbol
+              abi
+              (string.copy (& symbol)))
+            (string.copy (& symbol))
+            "ordinary and malformed body identities must remain unchanged")))))
+  ;; System V retains identical physical facts at both boundaries.
+  (for [target (iterator.range 0 1)]
     (let
       [abi : cabi.CompilerRegTargetAbi
         (if (= target 0)
@@ -42520,6 +43901,225 @@ user_fn:
                     position))
                 "internal and platform stack placement differs"))))))))
 
+(test
+  backend-windows-internal-convention
+  (for [entry (iterator.range 0 2)]
+    (let
+      [internal? : bool (= entry 0)]
+      [convention : cabi.CompilerCallConvention
+        (if internal?
+          (Internal)
+          (Platform))]
+      [slots : i64
+        (if internal?
+          6
+          4)]
+      [volatile : i64
+        (if internal?
+          9
+          7)]
+      [preserved : i64
+        (if internal?
+          5
+          7)]
+      (test.assert-true
+        (and
+          (=
+            (cabi.compiler-abi-gp-arg-register-count (Windows) convention)
+            slots)
+          (=
+            (cabi.compiler-abi-float-arg-register-count (Windows) convention)
+            slots)
+          (=
+            (cabi.compiler-abi-caller-saved-gp-register-count
+              (Windows)
+              convention)
+            volatile)
+          (=
+            (cabi.compiler-abi-callee-saved-gp-register-count
+              (Windows)
+              convention)
+            preserved)
+          (= (cabi.compiler-abi-outgoing-shadow-space (Windows) convention) 32)
+          (not (cabi.compiler-abi-arg-banks-independent? (Windows) convention))
+          (not
+            (cabi.compiler-abi-aggregate-eightbyte-classes?
+              (Windows)
+              convention))
+          (not
+            (cabi.compiler-abi-varargs-vector-count-in-al? (Windows) convention))
+          (=
+            (cabi.compiler-abi-caller-saved-xmm-register-count
+              (Windows)
+              convention)
+            6)
+          (=
+            (cabi.compiler-abi-callee-saved-xmm-register-count
+              (Windows)
+              convention)
+            10))
+        "Windows Internal or Platform contract changed")
+      (for [index (iterator.range -1 50)]
+        (let
+          [expected-gp : i64
+            (cond
+              [(= index 0) cabi.compiler-reg-id-rcx]
+              [(= index 1) cabi.compiler-reg-id-rdx]
+              [(= index 2) cabi.compiler-reg-id-r8]
+              [(= index 3) cabi.compiler-reg-id-r9]
+              [(and internal? (= index 4)) cabi.compiler-reg-id-rsi]
+              [(and internal? (= index 5)) cabi.compiler-reg-id-rdi]
+              [else cabi.compiler-reg-id-invalid])]
+          [expected-float : i64
+            (if (and (>= index 0) (< index slots))
+              (cabi.compiler-abi-xmm-register-id index)
+              cabi.compiler-reg-id-invalid)]
+          (test.assert-true
+            (and
+              (=
+                (cabi.compiler-abi-gp-arg-register-id
+                  (Windows)
+                  convention
+                  index)
+                expected-gp)
+              (=
+                (cabi.compiler-abi-float-arg-register-id
+                  (Windows)
+                  convention
+                  index)
+                expected-float)
+              (=
+                (cabi.compiler-abi-caller-saved-xmm-register-id
+                  (Windows)
+                  convention
+                  index)
+                (if (and (>= index 0) (< index 6))
+                  (cabi.compiler-abi-xmm-register-id index)
+                  cabi.compiler-reg-id-invalid))
+              (=
+                (cabi.compiler-abi-callee-saved-xmm-register-id
+                  (Windows)
+                  convention
+                  index)
+                (if (and (>= index 0) (< index 10))
+                  (cabi.compiler-abi-xmm-register-id (+ index 6))
+                  cabi.compiler-reg-id-invalid)))
+            "Windows argument or XMM preservation boundary changed"))
+        (let
+          [reg : i64
+            (cabi.compiler-abi-callee-saved-gp-register-id
+              (Windows)
+              convention
+              index)]
+          (test.assert-true
+            (if (and (>= index 0) (< index preserved))
+              (and
+                (not (= reg cabi.compiler-reg-id-invalid))
+                (not
+                  (cabi.compiler-abi-caller-saved-gp-register?
+                    (Windows)
+                    convention
+                    reg)))
+              (= reg cabi.compiler-reg-id-invalid))
+            "Windows GP preserved and volatile sets overlap or exceed their bounds"))
+        (let
+          [reg : i64
+            (cabi.compiler-abi-caller-saved-gp-register-id
+              (Windows)
+              convention
+              index)]
+          (test.assert-true
+            (if (and (>= index 0) (< index volatile))
+              (and
+                (not (= reg cabi.compiler-reg-id-invalid))
+                (cabi.compiler-abi-caller-saved-gp-register?
+                  (Windows)
+                  convention
+                  reg))
+              (= reg cabi.compiler-reg-id-invalid))
+            "Windows GP volatile set exceeds its bounds")))
+      (for [reg
+        (iterator.range cabi.compiler-reg-id-rsi (+ cabi.compiler-reg-id-rdi 1))]
+        (test.assert-true
+          (=
+            (cabi.compiler-abi-caller-saved-gp-register?
+              (Windows)
+              convention
+              reg)
+            internal?)
+          "RSI/RDI preservation crossed the C boundary"))
+      (for [ints (iterator.range 0 10)]
+        (for [floats (iterator.range 0 10)]
+          (for [position (iterator.range -1 10)]
+            (for [bank (iterator.range 0 2)]
+              (test.assert-true
+                (=
+                  (cabi.compiler-abi-stack-call-arg-for-banks?
+                    (Windows)
+                    convention
+                    (= bank 1)
+                    ints
+                    floats
+                    position)
+                  (>= position slots))
+                "Windows arguments do not share the declared positional slots")))))))
+  (let
+    [pool : regalloc.CompilerRegIdSeq
+      (regalloc.compiler-reg-greedy-integer-pool-for-abi (Windows))]
+    [volatile : i64
+      (regalloc.compiler-reg-greedy-caller-saved-count-for-abi (Windows))]
+    (test.assert-i64-eq volatile 9 "Windows Internal allocator boundary")
+    (for [index (iterator.range 0 (regalloc.compiler-reg-id-seq-count pool))]
+      (test.assert-true
+        (=
+          (cabi.compiler-abi-caller-saved-gp-register?
+            (Windows)
+            (Internal)
+            (regalloc.compiler-reg-id-seq-ref pool index))
+          (< index volatile))
+        "Windows allocator pool does not match its volatile prefix"))))
+
+(test
+  backend-call-convention-caller-saved-membership
+  (for [target (iterator.range 0 2)]
+    (let
+      [abi : cabi.CompilerRegTargetAbi
+        (if (= target 0)
+          (Linux)
+          (Windows))]
+      (for [boundary (iterator.range 0 2)]
+        (let
+          [convention : cabi.CompilerCallConvention
+            (if (= boundary 0)
+              (Internal)
+              (Platform))]
+          ;; Include every register family, gaps, and invalid GP ids.
+          (for [reg (iterator.range -2 106)]
+            (let
+              [listed : bool false]
+              (for [index
+                (iterator.range
+                  0
+                  (cabi.compiler-abi-caller-saved-gp-register-count
+                    abi
+                    convention))]
+                (when
+                  (=
+                    reg
+                    (cabi.compiler-abi-caller-saved-gp-register-id
+                      abi
+                      convention
+                      index))
+                  (set! listed true)))
+              (test.assert-true
+                (=
+                  (cabi.compiler-abi-caller-saved-gp-register?
+                    abi
+                    convention
+                    reg)
+                  listed)
+                "caller-saved membership and ABI enumeration disagree"))))))))
+
 ;; Six-argument calls of each kind for `backend-call-convention-emission-sites`.
 ;; Runtime helper and TLS rows use their builtin ids with a synthetic arity:
 ;; only a fifth and sixth argument separate the two conventions' placement.
@@ -42537,7 +44137,8 @@ user_fn:
       abi
       id
       (ast.ast-extern-link-input-list-new)
-      false)))
+      false
+      (ir.CompilerIrReturnStorage.None))))
 
 (define (compiler-backend-convention-site-builtin-call
   [symbol : String]
@@ -42645,7 +44246,8 @@ user_fn:
                return %0")
             Ordinary))
         (& functions))
-      (ir.compiler-ir-extern-builder-snapshot-seq (& externs)))))
+      (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
+      (ir.CompilerIrReturnStorageAuthority.None))))
 
 ;; The text from `label` through the end of its function's first `ret`.
 (define (compiler-backend-convention-site-body
@@ -42665,7 +44267,7 @@ user_fn:
       ""
       (string.substring asm start (- end start)))))
 
-;; With the test-only Windows Internal registers, a Platform call passes its
+;; With Windows Internal registers, a Platform call passes its
 ;; fifth and sixth arguments at 32/40(%rsp) and an Internal call passes them in
 ;; RSI/RDI. Adapters forward register values; the other rows pass 14 and 15.
 (define (compiler-backend-convention-site-ok?
@@ -42717,13 +44319,11 @@ user_fn:
           (< kind 4))
         "runtime helper selected the wrong calling convention"))
     (backend.compiler-backend-state-release-final-arenas! index.backend-state))
-  (cabi.compiler-abi-test-windows-internal-six-gp-args! true)
   (let
     [emitted : backend.ResultCompilerBackend
       (backend.compiler-backend-emit-program-for-target
         (compiler-backend-convention-site-program)
         (backend.CompilerBackendTarget.Windows))]
-    (cabi.compiler-abi-test-windows-internal-six-gp-args! false)
     (match emitted
       [(Ok asm)
         (for [kind (iterator.range 0 8)]
@@ -42754,7 +44354,9 @@ user_fn:
   [values : (__tl_dyn-array String)]
   [maximum-bytes : i64]) : bool
   (let
-    [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+    [owner : arena.Arena
+      (unsafe
+        (arena.Arena (arena.tl_arena_make_small)))]
     [items : backend.BackendStringSeq
       (in-arena
         owner
@@ -42903,3 +44505,313 @@ user_fn:
   (test.assert-true
     (compiler-backend-packed-literal-records-ok?)
     "packed literal bytes, terminal zeros and aligned pointer/length headers"))
+
+(test
+  backend-c-export-backtrace
+  (test.assert-true
+    (compiler-backend-backtrace-metadata-shape-ok?)
+    "debug backtraces omit shared and dedicated C-entry frames; release emits no map"))
+
+(test
+  backend-c-export-entries
+  (test.assert-true
+    (compiler-backend-export-symbol-tests-ok?)
+    "C export names and collision diagnostics")
+  (let
+    [source : String
+      "(extern address (:symbol \"tl_entry_address\") : u8)
+(define (entry [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) (:export-symbol \"tl_entry_address\") : i64 (+ a b c d e f))
+(define (main) : i64 (cast (unsafe (ptr->int (ptr-addr-of address))) : i64))"]
+    (test.assert-true
+      (match (backend.compiler-backend-emit-source-for-target
+        (clone source)
+        (Windows))
+        [(Ok _) true]
+        [(Err _) false])
+      "a data alias may take the provided C entry address")
+    (test.assert-true
+      (match (backend.compiler-backend-emit-source-object-image-for-target
+        source
+        (Windows))
+        [(Err _) false]
+        [(Ok image)
+          (let
+            [entries : i64 0]
+            (for [slot (iterator.range 0 image.symbols.len)]
+              (match (& (array-ref image.symbols.slots slot))
+                [(Symbol name _ _ _)
+                  (when (string.eq name "tl_entry_address") (+= entries 1))]))
+            (test.assert-i64-eq
+              entries
+              1
+              "one defined C entry, no undefined alias row"))
+          (match (coff.compiler-object-coff-render image)
+            [(Ok _) true]
+            [(Err _) false])])
+      "the C entry and its address alias resolve in direct COFF"))
+  (test.assert-true
+    (match (backend.compiler-backend-emit-source-for-target
+      "(extern address (:symbol \"_tl_storage\") : u8)
+(define storage : i64 42)
+(define (main) : i64 (cast (unsafe (ptr->int (ptr-addr-of address))) : i64))"
+      (Windows))
+      [(Err _) true]
+      [(Ok _) false])
+    "data aliases cannot bypass ordinary global collision guards")
+  (let
+    [source : String
+      (str_cat.str-cat
+        (compiler-backend-export-symbol-source)
+        "\n(define (zero) (:export-symbol \"tl_zero\") : i64 0)")]
+    (match (backend.compiler-backend-emit-source-for-target
+      (clone source)
+      (Windows))
+      [(Err _) (test.assert-true false "small C entries assembly")]
+      [(Ok asm)
+        (let
+          [marker : String ".seh_proc __tl$c_entry\n"]
+          [first : i64 (backend.compiler-backend-string-find-from asm marker 0)]
+          (test.assert-true
+            (and
+              (>= first 0)
+              (<
+                (backend.compiler-backend-string-find-from
+                  asm
+                  marker
+                  (+ first 1))
+                0)
+              (asm-has?
+                asm
+                "tl_exported_value:\n    leaq tl_exported_value$typelisp(%rip), %r11\n    jmp __tl$c_entry\n"
+                "tl_zero:\n    leaq tl_zero$typelisp(%rip), %r11\n    jmp __tl$c_entry\n"))
+            "small C entries tail-enter one local preservation frame"))])
+    (match (backend.compiler-backend-emit-source-object-image-for-target
+      source
+      (Windows))
+      [(Err _) (test.assert-true false "small C entries object")]
+      [(Ok image)
+        (match (coff.compiler-object-coff-render image)
+          [(Err _) (test.assert-true false "small C entries COFF")]
+          [(Ok bytes)
+            (let
+              [offset : i64
+                (+
+                  (layout.compiler-object-layout-u32-at
+                    bytes
+                    (+
+                      (coff.compiler-object-coff-section-header-offset (Text))
+                      20))
+                  (layout.compiler-object-layout-section-label-offset
+                    image
+                    (Text)
+                    "__tl$c_entry"))]
+              (test.assert-owned-string-eq
+                (string.substring bytes offset 16)
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "56574883ec2841ffd34883c4285f5ec3")
+                "shared C bridge preserves SI/DI, calls through R11, and restores its frame")
+              (test.assert-true
+                (and
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (RipAddress)
+                    "tl_exported_value$typelisp")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Branch)
+                    "__tl$c_entry")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "__tl$c_entry")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "__tl$c_entry$end")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "__tl$c_entry$unwind"))
+                "small C entries own body/bridge relocations and one complete unwind range"))])]))
+  ;; Assembler SEH goldens include both ALLOC_LARGE encodings and the probe.
+  (let
+    [frames : (Array i64 5) (array 40 56 136 4104 524296)]
+    [prologues : (Array i64 5) (array 6 6 9 15 15)]
+    [expected : (Array String 5)
+      (array
+        "010603000642027001600000"
+        "010603000662027001600000"
+        "010904000901110002700160"
+        "010f04000f01010202700160"
+        "010f05000f1108000800027001600000")]
+    (for [i (iterator.range 0 5)]
+      (test.assert-owned-string-eq
+        (object_windows.compiler-backend-object-entry-range-unwind-bytes
+          (array-ref frames i)
+          (array-ref prologues i)
+          true)
+        (object_target.compiler-backend-object-bytes-from-hex
+          (clone (array-ref expected i)))
+        "C entry unwind agrees with assembler saves/allocation")))
+  (let
+    [counts : (Array i64 8) (array 0 4 5 6 7 8 513 514)]
+    [frames : (Array i64 8) (array 40 40 40 40 40 56 4088 4104)]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    (for [i (iterator.range 0 8)]
+      (let
+        [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+        (for [arg (iterator.range 0 (array-ref counts i))]
+          (set!
+            params
+            (ir.compiler-ir-param-seq-prepend (Param "arg" (I64) arg) params)))
+        (test.assert-i64-eq
+          (backend.compiler-backend-c-entry-plan
+            (ast.ast-node-pool-reader-type-segment-bases)
+            index
+            params).frame
+          (array-ref frames i)
+          "C entry frame at register, padding and guard-page boundaries")))
+    (backend.compiler-backend-state-release-final-arenas! index.backend-state))
+  (let
+    [provided : ir.CompilerIrExtern
+      (Extern
+        (compiler-backend-test-symbol "bridge")
+        (compiler-backend-test-symbol "bridge")
+        "bridge"
+        (ast.ast-ty-func (compiler-backend-type-list-of "iiiiiiii") (& (I64)))
+        (C)
+        (compiler-backend-test-symbol "bridge_c")
+        (ast.ast-extern-link-input-list-new)
+        true
+        (ir.CompilerIrReturnStorage.None))]
+    [program : ir.CompilerIrProgram
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-function-seq-prepend
+          (&
+            (irt.func
+              "function @bridge(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64) -> i64 vars 8 {
+          entry:
+            return %7
+          }"))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (irt.func
+                  "function @main() -> i64 vars 1 {
+            entry:
+              %0 = call bridge(1, 2, 3, 4, 5, 6, 7, 8) : i64
+              return %0
+            }"))
+              (& (ir.compiler-ir-function-seq-empty)))))
+        (ir.compiler-ir-extern-seq1 provided)
+        (ir.CompilerIrReturnStorageAuthority.None))]
+    (match (backend.compiler-backend-emit-program-object-image-target
+      (clone program)
+      (backend.CompilerBackendTarget.Windows)
+      (ir.compiler-source-spans-empty)
+      false)
+      [(Err diag)
+        (test.assert-true
+          false
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]
+      [(Ok image)
+        (match (coff.compiler-object-coff-render image)
+          [(Err _) (test.assert-true false "C entry COFF rendering")]
+          [(Ok bytes)
+            (let
+              [entry : i64
+                (+
+                  (layout.compiler-object-layout-u32-at
+                    bytes
+                    (+
+                      (coff.compiler-object-coff-section-header-offset (Text))
+                      20))
+                  (layout.compiler-object-layout-section-label-offset
+                    image
+                    (Text)
+                    "bridge_c"))]
+              [unwind : i64
+                (+
+                  (layout.compiler-object-layout-u32-at
+                    bytes
+                    (+
+                      (coff.compiler-object-coff-section-header-offset (Xdata))
+                      20))
+                  (layout.compiler-object-layout-section-label-offset
+                    image
+                    (Xdata)
+                    "bridge_c$unwind"))]
+              [prefix : String
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "56574883ec38488b4424704889c6488b4424784889c7488b8424800000004889442420488b8424880000004889442428")]
+              [xdata : String
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "010603000662027001600000")]
+              (test.assert-owned-string-eq
+                (string.substring bytes entry (string.string-length prefix))
+                prefix
+                "COFF C entry forwards all four incoming stack words")
+              (test.assert-owned-string-eq
+                (string.substring bytes unwind (string.string-length xdata))
+                xdata
+                "COFF unwind describes allocation and both Platform saves")
+              (test.assert-true
+                (and
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Call)
+                    "bridge_c$typelisp")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "bridge_c")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "bridge_c$end")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "bridge_c$unwind"))
+                "C entry owns its call and complete runtime-function range"))])])
+    (match (backend.compiler-backend-emit-program-target-with-mode
+      program
+      (backend.CompilerBackendTarget.Windows)
+      (Scalar)
+      (ir.compiler-source-spans-empty)
+      false)
+      [(Err diag)
+        (test.assert-true
+          false
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]
+      [(Ok asm)
+        (let
+          [body : String
+            (compiler-backend-convention-site-body (& asm) "bridge_c")]
+          (test.assert-true
+            (and
+              (asm-has? body "pushq %rsi\n" "pushq %rdi\n" "subq $56, %rsp\n")
+              (asm-has?
+                body
+                "movq 112(%rsp), %rax\n    movq %rax, %rsi\n"
+                "movq 120(%rsp), %rax\n    movq %rax, %rdi\n")
+              (asm-has?
+                body
+                "movq 128(%rsp), %rax\n    movq %rax, 32(%rsp)\n"
+                "movq 136(%rsp), %rax\n    movq %rax, 40(%rsp)\n")
+              (asm-has?
+                body
+                "call bridge_c$typelisp\n"
+                "popq %rdi\n"
+                "popq %rsi\n")
+              (asm-has?
+                asm
+                ".seh_proc bridge_c\n"
+                ".seh_pushreg %rsi\n"
+                ".seh_pushreg %rdi\n"))
+            "C entry must preserve registers, forward stack words and describe its own frame"))])))

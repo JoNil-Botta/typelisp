@@ -2,12 +2,86 @@
 ;; out of the production module. The inline test below runs the self-test; the
 ;; loader tests, the inspect tests and tests/tlci/corpus_emit.tl reuse the
 ;; fixtures.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_owned_view as owned_view)
 (import tlci_core as tlci)
+(import stdlib.comptime)
+(import stdlib.test)
+
+(defmacro (tlci-test-count-callback-rows [offset : Expr] [rows : Expr ...]) : i64
+  `(+ ,offset ,(comptime.expr-int (expr-list-length rows))))
+
+(defmacro (tlci-test-declare-callback-rows [rows : Expr ...]) : Decls
+  `(define (tlci-test-declared-callback-count) : i64
+    ,(comptime.expr-int (expr-list-length rows))))
+
+;; A declaration consumer cannot enter through the expression-only adapter.
+(tlci.tlci-host-callback-declarations tlci-test-declare-callback-rows)
+
+(defmacro (tlci-test-callback-row-indices [rows : Expr ...]) : Expr
+  (let
+    [checks : ExprList (expr-list-empty)]
+    [row : i64 (expr-list-length rows)]
+    [prefix-length : i64
+      (string.string-length "compiler-comptime-host-callback-")]
+    (while (> row 0)
+      (set! row (- row 1))
+      (match (expr-list-nth rows row)
+        [(comptime.Expr.Var text)
+          (let
+            [name : Expr
+              (comptime.expr-string
+                (comptime.string-slice
+                  text
+                  prefix-length
+                  (- (string.string-length text) prefix-length)))]
+            (set!
+              checks
+              (expr-list-cons
+                `(test.assert-i64-eq
+                  (tlci.tlci-host-callback-row-index ,name)
+                  ,(comptime.expr-int row)
+                  "callback row hint preserves inventory order")
+                checks)))]
+        [_ (comptime-error "callback table rows must be bare names")]))
+    `(begin
+      ,@checks)))
+
+(test
+  tlci-host-callback-row-indices
+  (tlci.tlci-host-callback-table tlci-test-callback-row-indices)
+  (test.assert-i64-eq (tlci.tlci-host-callback-row-index "") -1 "empty name")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "fuel-check\n")
+    -1
+    "a delimiter is not part of a callback name")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "fuel-check\0")
+    -1
+    "names are compared at their full length")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "expr-list")
+    -1
+    "a callback prefix is not a row")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "not-a-callback")
+    -1
+    "unknown names do not resolve"))
+
+(test
+  tlci-host-callback-declaration-table
+  (test.assert-i64-eq
+    (tlci-test-declared-callback-count)
+    (tlci.tlci-host-callback-table tlci-test-count-callback-rows 0)
+    "declaration and expression consumers see the same ordered inventory")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-table tlci-test-count-callback-rows 7)
+    (+ 7 (tlci-test-declared-callback-count))
+    "expression contexts precede the shared callback rows"))
 
 (define (tlci-test-metadata) : tlci.TlciMetadata
   (tlci.tlci-make-metadata "v1" "demo" "0.1.0"))
@@ -202,6 +276,8 @@
 
 (define (tlci-test-host-abi-layout-ok?) : bool
   (and
+    (= tlci.tlci-callback-abi-version 3)
+    (= tlci.tlci-host-abi-version 3)
     (= tlci.tlci-host-abi-version tlci.tlci-callback-abi-version)
     (string.eq tlci.tlci-image-entry-symbol "tlci_image_entry")
     (= tlci.tlci-image-entry-param-count 2)
@@ -358,7 +434,10 @@
         "tlci host ABI: bad host callback table magic")
       (tlci-test-table-rejects?
         (tlci-test-table magic (+ version 1) size 0 1 1)
-        "tlci host ABI: unsupported callback ABI version 3")
+        "tlci host ABI: unsupported callback ABI version 4")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic 2 size 0 0 1)
+        "tlci host ABI: unsupported callback ABI version 2")
       (tlci-test-table-rejects?
         (tlci-test-table magic version (- size 1) 0 1 1)
         "tlci host ABI: host callback table byte-size is smaller than v2")
@@ -394,7 +473,10 @@
           0
           0
           0)
-        "tlci host ABI: unsupported callback ABI version 3")
+        "tlci host ABI: unsupported callback ABI version 4")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration registration-magic 2 registration-size 0 0 0)
+        "tlci host ABI: unsupported callback ABI version 2")
       (tlci-test-registration-rejects?
         (tlci-test-registration
           registration-magic
@@ -509,10 +591,9 @@
     [specializations : tlci.TlciSpmdSpecializations
       (tlci.tlci-spmd-specializations-empty)]
     [callables : tlci.TlciSpmdCallables (tlci.tlci-spmd-callables-empty)]
-    [index : i64 0]
     [ok : bool true]
     ;; Cross several vector growth boundaries for both metadata sequences.
-    (while (< index 33)
+    (for [index (iterator.range 0 33)]
       (tlci.tlci-spmd-specializations-push!
         (&mut specializations)
         (&
@@ -530,10 +611,8 @@
           (tlci.tlci-make-spmd-callable
             (str_cat.str-cat "helper-" (string.int->string index))
             "(-> i64 i64)"
-            (tlci.tlci-spmd-specializations-empty))))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index 33)
+            (tlci.tlci-spmd-specializations-empty)))))
+    (for [index (iterator.range 0 33)]
       (let
         [specialization : tlci.TlciSpmdSpecialization
           (tlci.tlci-spmd-specializations-ref specializations index)]
@@ -548,8 +627,7 @@
             (string.eq
               callable.name
               (str_cat.str-cat "helper-" (string.int->string index))))
-          (set! ok false))
-        (set! index (+ index 1))))
+          (set! ok false))))
     (and
       ok
       (= (tlci.tlci-spmd-specializations-len specializations) 33)
@@ -1043,6 +1121,115 @@
                     [_ false])))]
             [_ false])]))))
 
+;; A directory checked once answers every kind as `tlci-aux-find` does, and the
+;; check reports what `tlci-aux-find` reports for absent or corrupt sections.
+(define (tlci-test-aux-checked-directory-ok?) : bool
+  (let
+    [identity : (__tl_dyn-array u8) (tlci.tlci-string->bytes "identity")]
+    [sections : (__tl_dyn-array tlci.TlciAuxSection)
+      (__tl_make-array tlci.TlciAuxSection 2)]
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-identity
+        1
+        (clone identity)))
+    (set!
+      (array-ref sections 1)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-frontend-ast
+        3
+        (tlci.tlci-string->bytes "ast")))
+    (and
+      (match (tlci.tlci-aux-checked-directory (& (tlci.tlci-empty-bytes)))
+        [(Missing) true]
+        [_ false])
+      (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
+        [(Err _) false]
+        [(Ok packed)
+          (match (tlci.tlci-aux-checked-directory (& packed))
+            [(Ok checked)
+              (let
+                [corrupt : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
+                [record : i64 checked.directory.directory-offset]
+                [payload-offset : i64
+                  (tlci.tlci-read-u64 corrupt (+ record 16))]
+                (set! (array-ref corrupt payload-offset) 0)
+                (and
+                  (match (tlci.tlci-aux-checked-find
+                    (& packed)
+                    (& checked)
+                    tlci.tlci-aux-kind-package-identity)
+                    [(Ok version payload)
+                      (and (= version 1) (tlci.tlci-bytes-eq? payload identity))]
+                    [_ false])
+                  (match (tlci.tlci-aux-checked-find
+                    (& packed)
+                    (& checked)
+                    tlci.tlci-aux-kind-frontend-ast)
+                    [(Ok version _) (= version 3)]
+                    [_ false])
+                  (match (tlci.tlci-aux-checked-find
+                    (& packed)
+                    (& checked)
+                    tlci.tlci-aux-kind-frontend-facts)
+                    [(Missing) true]
+                    [_ false])
+                  (match (tlci.tlci-aux-checked-directory (& corrupt))
+                    [(Err message)
+                      (string.eq
+                        message
+                        "tlci: malformed or corrupt auxiliary section directory")]
+                    [_ false])
+                  (match (tlci.tlci-aux-find
+                    corrupt
+                    tlci.tlci-aux-kind-frontend-ast)
+                    [(Err message)
+                      (string.eq
+                        message
+                        "tlci: malformed or corrupt auxiliary section directory")]
+                    [_ false])))]
+            [_ false])]))))
+
+;; The table check is the header check, then the registry check, with the same
+;; messages: a bad header wins over a bad registry, and a good header with a
+;; duplicate name fails only the registry part.
+(define (tlci-test-host-validation-split-ok?) : bool
+  (let
+    [duplicate : tlci.TlciHostCallbackTable
+      (tlci-test-registry-table
+        (__tl_make-array "fuel-check" "fuel-check")
+        (__tl_make-array 1 2)
+        2)]
+    [bad-magic : tlci.TlciHostCallbackTable
+      (tlci.TlciHostCallbackTable
+        0
+        tlci.tlci-host-abi-version
+        tlci.tlci-host-callback-table-size
+        0
+        0
+        0
+        0
+        1
+        (__tl_make-array "fuel-check" "fuel-check")
+        (__tl_make-array 1 2)
+        2)]
+    (and
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-host-callback-header (& duplicate)))
+      (tlci-test-host-abi-rejects?
+        (tlci.tlci-validate-host-callback-registry (& duplicate))
+        "tlci host ABI: duplicate host callback registry name")
+      (tlci-test-host-abi-rejects?
+        (tlci.tlci-validate-host-callback-table (& duplicate))
+        "tlci host ABI: duplicate host callback registry name")
+      (tlci-test-host-abi-rejects?
+        (tlci.tlci-validate-host-callback-table (& bad-magic))
+        "tlci host ABI: bad host callback table magic")
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-host-callback-registry
+          (& (tlci-test-host-callback-table)))))))
+
 (define (tlci-test-producer-identity-admission-ok?) : bool
   (let
     [current : String "0123456789abcdef0123456789abcdef01234567"]
@@ -1195,15 +1382,13 @@
   (let
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [state : i64 seed]
-    [i : i64 0]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (set! state (+ (* state 6364136223846793005) 1442695040888963407))
       (set!
         (array-ref bytes i)
         (if (< seed 0)
           (cast 255 : u8)
-          (cast (bit-and (shr state 33) 255) : u8)))
-      (set! i (+ i 1)))
+          (cast (bit-and (shr state 33) 255) : u8))))
     bytes))
 
 (define (tlci-test-range-hash-bytewise
@@ -1212,12 +1397,10 @@
   [len : i64]) : i64
   (let
     [hash : i64 1]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (set!
         hash
-        (% (+ (* hash 131) (tlci.tlci-byte-at bytes (+ offset i))) 2147483647))
-      (set! i (+ i 1)))
+        (% (+ (* hash 131) (tlci.tlci-byte-at bytes (+ offset i))) 2147483647)))
     hash))
 
 (define (tlci-test-hash-blocks-ok?) : bool
@@ -1242,7 +1425,7 @@
               (=
                 (tlci.tlci-range-hash (& random) 2 (- n 5))
                 (tlci-test-range-hash-bytewise (& random) 2 (- n 5))))))
-        (set! n (+ n 1))))
+        (+= n 1)))
     ok))
 
 (define (tlci-core-self-test-status) : i64
@@ -1267,6 +1450,8 @@
     [(not (tlci-test-host-platform-admission-ok?)) 19]
     [(not (tlci-test-aux-directory-shapes-ok?)) 20]
     [(not (tlci-test-hash-blocks-ok?)) 21]
+    [(not (tlci-test-aux-checked-directory-ok?)) 22]
+    [(not (tlci-test-host-validation-split-ok?)) 23]
     [else 0]))
 
 (test

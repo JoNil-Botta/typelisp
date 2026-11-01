@@ -49,7 +49,7 @@
     [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [index : i64 names.len]
     (while (> index 0)
-      (set! index (- index 1))
+      (-= index 1)
       (set!
         env
         (compiler-cfg-bind
@@ -193,11 +193,23 @@
     [(SymI64ViewBind name-id value rest)
       (sym_i64_env.sym-i64-bind-id (compiler-cfg-merge base rest) name-id value)]))
 
+;; A cfg name this compiler enables whatever its `--cfg` flags.
+;; `compiler-reborrow-bound` marks the rule that a borrow reached through a
+;; reference lives no longer than that reference (#8449). Library code that the
+;; bootstrap seed must also build selects its form with it (as Rust's
+;; `cfg(bootstrap)` does); drop it and those forms once the seed has the rule.
+(define (compiler-cfg-builtin? [name-id : i64]) : bool
+  (= name-id (ci.intern "compiler-reborrow-bound")))
+
 (define (compiler-cfg-enabled?
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : i64]) : bool
   (if (ci.intern-renderable-id? name-id)
-    (compiler-cfg-enabled-key? dispatch (compiler-cfg-key-from-name-id name-id))
+    (or
+      (compiler-cfg-builtin? name-id)
+      (compiler-cfg-enabled-key?
+        dispatch
+        (compiler-cfg-key-from-name-id name-id)))
     false))
 
 (define (compiler-cfg-enabled-key?

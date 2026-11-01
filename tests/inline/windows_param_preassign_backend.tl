@@ -85,7 +85,8 @@
       (ir.compiler-ir-function-seq-prepend
         (& (win-param-preassign-function function-name pa pb pc pd))
         (& (ir.compiler-ir-function-seq-empty)))
-      (ir.compiler-ir-extern-seq-empty))))
+      (ir.compiler-ir-extern-seq-empty)
+      (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (win-param-preassign-safe-div-function) : ir.CompilerIrFunction
   (Function

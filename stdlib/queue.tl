@@ -9,8 +9,8 @@
 ;# explicit `&mut` call to their `*-ref!` helper. Growth allocates a larger
 ;# backing array, copies the live logical range starting at index 0, and resets
 ;# `head` to 0. Empty pops return `Pop.Empty`; successful pops return `Pop.Ok`
-;# with only the removed value. Peeks and indexed reads use caller-supplied
-;# fallbacks.
+;# with only the removed value. Peeks and indexed reads return a clone of the
+;# element (the deque keeps its own) or the caller-supplied fallback.
 ;#
 ;# Cleanup-owning element types are rejected at the macro boundary. The
 ;# current circular buffer initializes every capacity slot and overwrites
@@ -111,7 +111,8 @@
         (if (if (>= index 0)
           (< index (len q))
           false)
-          (array-ref (slots q) (physical-index q index))
+          ;; The deque keeps its element; the caller gets a clone.
+          (clone (array-ref (slots q) (physical-index q index)))
           fallback))
       (define (peek-front [q : (& q ,deque-name)] [fallback : ,T]) : ,T
         (get q 0 fallback))
@@ -127,9 +128,11 @@
         (if (>= index count)
           unit
           (begin
+            ;; `src` stays borrowed (the old storage is dropped whole), so each
+            ;; live element is cloned into the new storage.
             (set!
               (array-ref dst index)
-              (array-ref src (physical-index-from head capacity index)))
+              (clone (array-ref src (physical-index-from head capacity index))))
             (copy-live! dst src head capacity count (+ index 1)))))
       (define (grow [q : (&mut q ,deque-name)]) : unit
         (let

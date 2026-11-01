@@ -17,7 +17,12 @@
 
 (define (main) : i64
   (if (and
-    (= (qualified-length (arena.Arena 0) "abc") 3)
+    (=
+      (qualified-length
+        (unsafe
+          (arena.Arena 0))
+        "abc")
+      3)
     (= (size (cat.str-cat "o" "k")) 2)
     (= (text.string-length "import") 6)
     (cfg linux (= selected-target 41) (= selected-target 43)))

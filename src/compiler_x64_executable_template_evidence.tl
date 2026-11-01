@@ -35,7 +35,8 @@
   (CopyFwd)
   (Copy8Fwd)
   (MemFill8)
-  (GlobalAlloc))
+  (GlobalAlloc)
+  (ArenaSanitizer))
 
 (defenum CompilerX64TemplateContributionKind
   (RuntimeFunctions)
@@ -82,6 +83,10 @@
 (define (compiler-x64-template-related-data
   [id : x64.CompilerX64ExecutableTemplateId]) : String
   (match id
+    [(WindowsObjectTlciImageContribution)
+      ".pdata:tl_tlci_call_image_entry..tl_tlci_call_image_entry$end->tl_tlci_call_image_entry$unwind|xdata-size=8|xdata-hash=1528956653"]
+    [(WindowsObjectTlciMacroContribution)
+      ".pdata:tl_tlci_call_macro_entry..tl_tlci_call_macro_entry$end->tl_tlci_call_macro_entry$unwind|xdata-size=8|xdata-hash=2142101564"]
     [(WindowsObjectStartContribution)
       ".pdata:_tl_start..L_tl_start_end->.L_tl_start_xdata|xdata-size=8|xdata-hash=2141552412"]
     [(WindowsObjectMainFiberContribution)
@@ -111,11 +116,11 @@
                   (set! (array-ref out write-at) (cast '\\' : u8))]
                 [else
                   (io.panic "x64 executable template: unknown catalog escape")])
-              (set! read-at (+ read-at 2))))
+              (+= read-at 2)))
           (begin
             (set! (array-ref out write-at) (cast current : u8))
-            (set! read-at (+ read-at 1))))
-        (set! write-at (+ write-at 1))))
+            (+= read-at 1)))
+        (+= write-at 1)))
     (unsafe
       (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) write-at))))
 
@@ -130,7 +135,7 @@
 (define (compiler-x64-template-feature-from-catalog [value : (& value str)]) : CompilerX64TemplateFeature
   (let
     [tag : i64 (catalog.compiler-x64-template-catalog-tag value)]
-    (if (or (< tag 0) (>= tag 25))
+    (if (or (< tag 0) (>= tag 26))
       (io.panic "x64 executable template: evidence enum tag is out of range")
       (unsafe
         (ptr-read

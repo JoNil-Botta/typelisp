@@ -3,7 +3,9 @@
 ;; unsafe only where it proves their pointer validity and concurrent-use policy.
 (import stdlib.runtime)
 
-(define (main) : i64
+;; The export keeps an out-of-line body for the cross-target shape assertions.
+(define (atomic-raw-result)
+  (:export-symbol "tl_atomic_raw_result") : i64
   (let
     [wide : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [narrow : (__tl_dyn-array i32) (__tl_make-array i32 1)]
@@ -47,3 +49,6 @@
       (= narrow-final (cast 23 : i32)))
       42
       1)))
+
+(define (main) : i64
+  (atomic-raw-result))

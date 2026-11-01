@@ -2,8 +2,9 @@
 ;; with described callee-register saves for scripts/verify-win64-seh-unwind.sh,
 ;; which assembles them and compares the unwind rows llvm-readobj decodes with
 ;; tests/fixtures/win64-seh/savereg-oracle.expected. The layouts cover the full
-;; GP save set, a probed frame with XMM saves, and a frame whose save offsets
-;; need the far encoding.
+;; Internal GP save set, a probed frame with XMM saves, and a frame whose save
+;; offsets need the far encoding. Platform RSI/RDI saves are checked separately
+;; on the C entries that the virtual-unwind driver calls.
 (import compiler_abi as cabi)
 (import compiler_backend as backend)
 (import compiler_diagnostic as cdiag)
@@ -73,13 +74,7 @@
           (seh-oracle-home
             (seh-oracle-home
               (seh-oracle-home
-                (seh-oracle-home
-                  (seh-oracle-home
-                    (regalloc.compiler-reg-assignment-table-empty)
-                    6
-                    "%rdi")
-                  5
-                  "%rsi")
+                (regalloc.compiler-reg-assignment-table-empty)
                 4
                 "%rbx")
               3
@@ -106,7 +101,7 @@
         (seh-oracle-home
           (regalloc.compiler-reg-assignment-table-empty)
           1
-          "%rdi")
+          "%r13")
         0
         "%r12")]
     [full-text : String

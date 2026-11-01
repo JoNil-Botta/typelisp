@@ -1,5 +1,6 @@
 ;; compiler_source_overlay_tests.tl - checks against one admitted source overlay
 ;; generation, and the read ledgers they return (#7455).
+(import stdlib.iterator)
 (import compiler_check_core as check_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_load)
@@ -76,14 +77,12 @@
         (& cwd)
         "target/check_overlay")]
     [inputs (source_overlay.compiler-source-overlay-inputs)]
-    [index : i64 0]
-    (while (< index (svec.len (& paths)))
+    (for [index (iterator.range 0 (svec.len (& paths)))]
       (source_overlay.compiler-source-overlay-inputs-push!
         (&mut inputs)
         (svec.get (& paths) index "")
         (svec.get (& texts) index "")
-        (Any))
-      (set! index (+ index 1)))
+        (Any)))
     (source_overlay.compiler-source-overlay-admit
       generation
       root
@@ -94,13 +93,11 @@
 (define (overlay-test-canonical-names [names : svec.Vec]) : svec.Vec
   (let
     [out : svec.Vec (svec.new)]
-    [index : i64 0]
-    (while (< index (svec.len (& names)))
+    (for [index (iterator.range 0 (svec.len (& names)))]
       (svec.push-ref!
         (&mut out)
         (overlay-test-canonical
-          (overlay-test-path (svec.get (& names) index ""))))
-      (set! index (+ index 1)))
+          (overlay-test-path (svec.get (& names) index "")))))
     out))
 
 (define (overlay-test-admit [names : svec.Vec] [texts : svec.Vec]) : source_overlay.ResultCompilerSourceOverlay
@@ -202,13 +199,11 @@
   [ledger : (& ledger source_overlay.CompilerSourceLedger)]) : bool
   (let
     [count : i64 (source_overlay.compiler-source-ledger-count ledger)]
-    [index : i64 0]
     [found : bool false]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (source_overlay.compiler-source-ledger-get ledger index).class
         [(Embedded) (set! found true)]
-        [_ unit])
-      (set! index (+ index 1)))
+        [_ unit]))
     found))
 
 ;; The ledger of a successful overlay check of fixture `root`, or an empty one.
@@ -283,9 +278,8 @@
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
         [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
-        [index : i64 0]
         [text : String ""]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [diag : cdiag.CompilerDiagnostic
               (cdiag.compiler-diagnostic-list-get diagnostics index)]
@@ -296,8 +290,7 @@
                 (string.int->string (cdiag.compiler-diagnostic-line diag))
                 ":"
                 (cdiag.compiler-diagnostic-message diag)
-                "\n"))
-            (set! index (+ index 1))))
+                "\n"))))
         text)]))
 
 ;; With an empty overlay a failing check reports exactly what it reports

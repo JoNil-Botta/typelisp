@@ -132,8 +132,11 @@
             (unsafe
               (cast (ptr->int (__tl_array-data cell)) : i64))]
           (set! (array-ref cell 0) result)
-          (ids.insert-ref! (&mut graph.summaries) global address))
-        result))))
+          (ids.insert-ref! (&mut graph.summaries) global address)
+          ;; The cache keeps the array; hand out the same handle, as a hit does.
+          (unsafe
+            (ptr-read
+              (int->ptr (cast address : u64) : (Ptr (__tl_dyn-array i64))))))))))
 
 (define (witness! [graph : (&mut graph Graph)] [callee : i64] [global : i64]) : words.Vec
   ;; No call path can write a global without a direct writer. Recheck this

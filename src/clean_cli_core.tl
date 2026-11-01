@@ -4,6 +4,7 @@
 ;; experiment subtree. Source-file cleanup targets default source-adjacent
 ;; outputs; package cleanup targets the manifest's package output directory;
 ;; experiment cleanup is constrained to the manifest's target/exp directory.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.fs)
@@ -132,17 +133,14 @@
 
 (define (clean-remove-tree-entries
   [root : (& root str)]
-  [entries : fs.FsStringVector]
-  [index : i64]) : i64
-  (if (>= index (fs.string-vector-len (& entries)))
-    0
+  [entries : fs.FsStringVector]) : i64
+  (for [index (iterator.range 0 (fs.string-vector-len (& entries)))]
     (let
       [name : String (fs.string-vector-get (& entries) index "")]
       [path : String (fs.path-join root (& name))]
       [status : i64 (clean-remove-tree-entry path)]
-      (if (= status 0)
-        (clean-remove-tree-entries root entries (+ index 1))
-        status))))
+      (unless (= status 0) (return status))))
+  0)
 
 (define (clean-remove-tree-dir [path : String]) : i64
   (match (fs.try-read-dir (& path))
@@ -150,7 +148,7 @@
       (clean-report-error "clean: failed to read directory " path error)]
     [(OkIoStringVector entries)
       (let
-        [status : i64 (clean-remove-tree-entries path entries 0)]
+        [status : i64 (clean-remove-tree-entries path entries)]
         (if (not (= status 0))
           status
           (match (build_run.source-tool-try-remove-dir-if-exists path)

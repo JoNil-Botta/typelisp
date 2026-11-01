@@ -3761,12 +3761,6 @@
                   (match (& actual)
                     [(ast.AstType.Never) true]
                     [_ false])]
-                ;; A tag the coercion kept is provenance on the same value
-                ;; (`tc-selected-retained-tag?`), not a read under a region.
-                [retained? : bool
-                  (and
-                    tc-invalidate-scope-seen?
-                    (tc-selected-retained-tag? env (& actual) (& ty)))]
                 [beneath? : bool
                   (tc-selected-same-type?
                     (tc-selected-strip-regions actual)
@@ -3774,7 +3768,7 @@
                 (cond
                   [(or
                       never?
-                      (and beneath? (or retained? (= expected-tagged? actual-tagged?))))
+                      (and beneath? (= expected-tagged? actual-tagged?)))
                     (TcSelectedResult.Ok ty occurrence sink)]
                   [(or widening? (and beneath? expected-tagged?))
                     (tc-selected-widening ty occurrence sink)]
@@ -18450,7 +18444,7 @@
                   (tc-selected-retained-same-type?
                     env
                     (tc-global-shared-view actual)
-                    (& ty))]
+                    (tc-global-shared-view ty))]
                 (if (or
                   (tc-selected-arena-erasure?
                     ctx
@@ -37470,7 +37464,7 @@
     Ok))
 
 (define (tc-type-strip-region [ty : ast.AstType]) : ast.AstType
-  (match (tc-global-shared-view ty)
+  (match (& ty)
     [(or (Region _ inner) (Invalidate _ inner))
       (tc-type-strip-region (ast.ty-node-get inner))]
     ;; An `:invalidate` parameter wrapper is structurally its inner type; code
@@ -37490,7 +37484,7 @@
 
 ;; A parameter type without its `(:invalidate r T)` wrapper.
 (define (tc-type-strip-invalidate [ty : ast.AstType]) : ast.AstType
-  (match (tc-global-shared-view ty)
+  (match (& ty)
     [(Invalidate _ inner) (ast.ty-node-get inner)]
     [_ ty]))
 
@@ -53963,49 +53957,38 @@
       (+= index 2))
     out))
 
-;; Whether `ty`'s outer region tag, on a value whose own type `actual` has
-;; none, is a brand of the enclosing `:invalidate` list: provenance a coercion
-;; kept (`tc-coercion-retain-invalidated-brands`) on the same value, not a read
-;; under a region, so the value keeps its ownership-graph occurrence.
-(define (tc-selected-retained-tag?
-  [env : TcTypeEnv]
-  [actual : (& actual ast.AstType)]
-  [ty : (& ty ast.AstType)]) : bool
-  (match actual
-    [(ast.AstType.Region _ _) false]
-    [_
-      (match ty
-        [(ast.AstType.Region region _)
-          (let
-            [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
-            [index : i64 0]
-            [found : bool false]
-            (while (and
-              (not found)
-              (< index (ast.ast-lifetime-list-len (& pairs))))
-              (set!
-                found
-                (=
-                  region
-                  (ast.ast-lifetime-list-get
-                    (& pairs)
-                    index
-                    (ast.ast-lifetime-fallback))))
-              (+= index 2))
-            found)]
-        [_ false])]))
+;; Whether `region` is a brand of the enclosing `:invalidate` list.
+(define (tc-invalidate-brand? [env : TcTypeEnv] [region : i64]) : bool
+  (let
+    [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index (ast.ast-lifetime-list-len (& pairs))))
+      (set!
+        found
+        (=
+          region
+          (ast.ast-lifetime-list-get (& pairs) index (ast.ast-lifetime-fallback))))
+      (+= index 2))
+    found))
 
-;; Whether `ty` is `actual` under the brand tag a coercion kept.
+;; Whether `ty` is `actual` under the brand tag a coercion kept: provenance on
+;; the same value (`tc-coercion-retain-invalidated-brands`), not a read under a
+;; region, so the value keeps its ownership-graph occurrence.
 (define (tc-selected-retained-same-type?
   [env : TcTypeEnv]
   [actual : ast.AstType]
-  [ty : (& ty ast.AstType)]) : bool
+  [ty : ast.AstType]) : bool
   (and
     tc-invalidate-scope-seen?
-    (tc-selected-retained-tag? env (& actual) ty)
-    (match ty
-      [(ast.AstType.Region _ inner)
-        (tc-selected-same-type? actual (ast.ty-node-get inner))]
+    (match (& actual)
+      [(ast.AstType.Region _ _) false]
+      [_ true])
+    (match (& ty)
+      [(ast.AstType.Region region inner)
+        (and
+          (tc-invalidate-brand? env region)
+          (tc-selected-same-type? actual (ast.ty-node-get inner)))]
       [_ false])))
 
 ;; `tc-contextual-result-type` that keeps the brands the coercion would drop.

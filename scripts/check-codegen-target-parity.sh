@@ -59,6 +59,8 @@ fi
 corpus() {
     cat <<'EOF'
 arithmetic tests/integration/arithmetic.tl
+stdlib_net tests/integration/stdlib_net.tl
+stdlib_net_owner tests/integration/stdlib_net_owner.tl
 control_flow tests/integration/control_flow.tl
 enum_match tests/integration/enum_match.tl
 enum_constructor_owner_layout tests/integration/enum_constructor_owner_layout.tl

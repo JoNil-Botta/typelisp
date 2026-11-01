@@ -9824,7 +9824,10 @@
         (tc_core.tc-context-new-with-source-names-and-job-state
           program
           symbols
-          (tc_core.macro-live-registries-shared-view state)
+          (clone
+            (array-ref
+              (tc_core.tc-macro-walk-field state macro-live-registries-cell)
+              0))
           "alias-retain"
           module-id
           pools

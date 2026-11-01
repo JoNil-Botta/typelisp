@@ -170,6 +170,8 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   ServerHello key derivation; the construct/project/escape rejection fixtures
   protect the opaque hash constructor, contents and arena lifetime. Both the
   native fixture and inline tests share the complete corpus.
+  `net_tls_transcript_parity.tl` is the pure import/ABI witness at opt0/1/2
+  on both targets, without host-specific assertion I/O.
 - `net_tls_wire_api.tl` checks the TLS 1.3 wire codec against RFC 8448's
   traces: every handshake message decodes to the expected fields and
   re-encodes to the same bytes. It feeds every two-piece split of record

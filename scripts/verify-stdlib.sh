@@ -348,6 +348,7 @@ stdlib/tests/net_api.tl|42|-|-|-
 stdlib/tests/net_owner_api.tl|42|-|-|-
 stdlib/tests/net_tls_wire_api.tl|42|-|-|-
 stdlib/tests/net_tls_transcript_api.tl|42|-|-|-
+stdlib/tests/net_tls_transcript_parity.tl|42|-|-|-
 stdlib/tests/net_tls_wire_encode_reject.tl|134|-|printf:tl: array index out of bounds\n|-
 stdlib/tests/net_url_api.tl|42|-|-|-
 stdlib/tests/ssh_known_hosts_parse_api.tl|42|-|-|-

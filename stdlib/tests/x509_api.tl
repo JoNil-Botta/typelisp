@@ -80,13 +80,16 @@
 
 ; Synthetic signatures/keys deliberately carry no authenticity. These exercise
 ; encoding only, alongside the independently signed pinned fixtures below.
-(define (synthetic [extension : byte_buf.ByteBuf]) : byte_buf.ByteBuf
+(define (synthetic-profile
+  [extension : byte_buf.ByteBuf]
+  [prefix : String]
+  [unique : String]) : byte_buf.ByteBuf
   (let
     [algorithm : String "300506032b6570"]
     [name : String "300c310a300806035504030c0141"]
     [start : String "500101000000Z"]
     [end : String "491231235959Z"]
-    [tbs : byte_buf.ByteBuf (hex "a003020102020101")]
+    [tbs : byte_buf.ByteBuf (hex prefix)]
     (set! tbs (append tbs (hex (clone algorithm))))
     (set! tbs (append tbs (hex (clone name))))
     (set!
@@ -102,10 +105,14 @@
     (set!
       tbs
       (append tbs (tlv 48 (append (hex (clone algorithm)) (tlv 3 (zeros 33))))))
+    (set! tbs (append tbs (hex unique)))
     (when
       (> (byte_buf.len extension) 0)
       (set! tbs (append tbs (tlv 163 (tlv 48 extension)))))
     (tlv 48 (append (append (tlv 48 tbs) (hex algorithm)) (tlv 3 (zeros 65))))))
+
+(define (synthetic [extension : byte_buf.ByteBuf]) : byte_buf.ByteBuf
+  (synthetic-profile extension "a003020102020101" ""))
 
 (define (extension [suffix : i64] [critical : bool] [value : String]) : byte_buf.ByteBuf
   (let
@@ -130,6 +137,53 @@
 (define (reject-extension [suffix : i64] [value : String]) : unit
   (let
     [bytes : byte_buf.ByteBuf (synthetic (extension suffix true value))]
+    (expect-rejected (byte_buf.as-bytes (& bytes)))
+    unit))
+
+(define (version-tests) : unit
+  (let
+    [version : i64 1]
+    (while (<= version 3)
+      (let
+        [prefix : String
+          (cond
+            [(= version 1) "020101"]
+            [(= version 2) "a003020101020101"]
+            [else "a003020102020101"])]
+        [unique : String
+          (if (= version 1)
+            ""
+            "8102008082020001")]
+        [bytes : byte_buf.ByteBuf
+          (synthetic-profile (byte_buf.new) prefix unique)]
+        (match (x509.parse-der
+          (byte_buf.as-bytes (& bytes))
+          (x509.default-limits))
+          [(x509.CertificateErr _)
+            (test.assert-true false "certificate version/unique IDs rejected")]
+          [(x509.CertificateOk certificate)
+            (test.assert-i64-eq certificate.version version "version/default")]))
+      (set! version (+ version 1))))
+  (let
+    [prefixes : (Array String 3)
+      (array
+        "a003020100020101"
+        "a003020103020101"
+        "a0030201020215008000000000000000000000000000000000000000")]
+    [index : i64 0]
+    (while (< index 3)
+      (let
+        [bytes : byte_buf.ByteBuf
+          (synthetic-profile
+            (byte_buf.new)
+            (clone (array-ref prefixes index))
+            "")]
+        (expect-rejected (byte_buf.as-bytes (& bytes)))
+        unit)
+      (set! index (+ index 1))))
+  (let
+    [bytes : byte_buf.ByteBuf
+      (synthetic-profile (byte_buf.new) "020101" "81020080")]
     (expect-rejected (byte_buf.as-bytes (& bytes)))
     unit))
 
@@ -164,7 +218,11 @@
 (define (other-names) : unit
   (let
     [bytes : byte_buf.ByteBuf
-      (synthetic (extension 17 false "301181016186016188022a03a505a1030c0141"))]
+      (synthetic
+        (extension
+          17
+          false
+          "302b81016186016188022a03a505a1030c0141a00806022a03a0020500a40e300c310a300806035504030c0141"))]
     (match (x509.parse-der (byte_buf.as-bytes (& bytes)) (x509.default-limits))
       [(x509.CertificateErr error)
         (test.assert-i64-eq
@@ -174,7 +232,7 @@
       [(x509.CertificateOk certificate)
         (test.assert-i64-eq
           (names.len (& certificate.subject-alt-names))
-          4
+          6
           "non-DNS CHOICE identity")])))
 
 (define (unsupported-name) : unit
@@ -753,6 +811,7 @@
       859
       "2a9eea703a50934b911d577d64aa1b76d9e7139f350083169da3bb017d604226")
     (schema-negatives)
+    (version-tests)
     (other-names)
     (unsupported-name)
     (der-negatives)

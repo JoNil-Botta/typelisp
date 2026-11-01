@@ -60,11 +60,15 @@
   (oid der.Range)
   (parameters der.Range))
 
-;: One distinguished-name attribute, retaining RDN grouping and value type.
+;: One AttributeTypeAndValue, retaining RDN grouping, complete encoding and
+;: the exact ANY value identifier/content; unknown attribute types stay opaque.
 (defstruct Attribute
   (rdn i64)
   (oid der.Range)
+  (encoded der.Range)
+  (tag-class i64)
   (tag i64)
+  (constructed bool)
   (value der.Range))
 
 (import (vector.vector Attribute core) as attributes)
@@ -128,6 +132,7 @@
   (version i64)
   (serial der.Range)
   (tbs der.Range)
+  (tbs-signature-algorithm Algorithm)
   (signature-algorithm Algorithm)
   (issuer Name)
   (subject Name)
@@ -514,29 +519,19 @@
             [field : i64 pair.content]
             [oid : der.Tlv (take! input state (&mut field) pair.end 0 6 false)]
             [text : der.Tlv (take-any! input state (&mut field) pair.end)]
-            (when
-              (or
-                (!= text.tag-class 0)
-                text.constructed
-                (not
-                  (or
-                    (= text.tag 12)
-                    (= text.tag 18)
-                    (= text.tag 19)
-                    (= text.tag 20)
-                    (= text.tag 22)
-                    (= text.tag 28)
-                    (= text.tag 30))))
-              (der.fail! state (der.InvalidTag) text.start))
-            (when
-              (= text.content text.end)
-              (der.fail! state (der.InvalidValue) text.content))
             (complete! state field pair.end)
             (when
               (not state.failed)
               (attributes.push!
                 out
-                (Attribute rdn (der.contents oid) text.tag (der.contents text)))))))
+                (Attribute
+                  rdn
+                  (der.contents oid)
+                  (der.encoded pair)
+                  text.tag-class
+                  text.tag
+                  text.constructed
+                  (der.contents text)))))))
       (set! rdn (+ rdn 1)))
     (Name (der.encoded value) out)))
 
@@ -982,6 +977,7 @@
       range
       range
       algorithm
+      algorithm
       (Name range (attributes.with-capacity 0))
       (Name range (attributes.with-capacity 0))
       range
@@ -1246,6 +1242,7 @@
     (let
       [inner-algorithm : Algorithm
         (next-algorithm! input (&mut state) (&mut field) tbs.end)]
+      (set! out.tbs-signature-algorithm inner-algorithm)
       (when
         (and
           (not state.failed)

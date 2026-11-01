@@ -13,6 +13,7 @@
 (import (vector.vector x509.GeneralName core) as names)
 (import (vector.vector x509.Constraint core) as constraints)
 (import (vector.vector x509.Certificate core) as certificates)
+(import (vector.vector x509.Attribute core) as attributes)
 (import (vector.vector der.Range core) as ranges)
 (import (vector.vector pem.Block core) as blocks)
 
@@ -590,6 +591,79 @@
       (cast value : u8))
     out))
 
+(define (custom-attribute) : unit
+  (let
+    [original : byte_buf.ByteBuf (synthetic (byte_buf.new))]
+    (match (x509.parse-der
+      (byte_buf.as-bytes (& original))
+      (x509.default-limits))
+      [(x509.CertificateErr _)
+        (test.assert-true false "custom attribute baseline")]
+      [(x509.CertificateOk certificate)
+        (let
+          [start : i64 certificate.subject.encoded.start]
+          [bytes : byte_buf.ByteBuf
+            (byte_buf.from-bytes (byte_buf.as-bytes (& original)))]
+          ; Private OID 1.2.3.4, INTEGER 65. AttributeValue is ANY, so a
+          ; well-encoded unknown attribute must retain its value unchanged.
+          (byte_buf.bytes-set!
+            (byte_buf.as-mut-bytes (&mut bytes))
+            (+ start 8)
+            (cast 42 : u8))
+          (byte_buf.bytes-set!
+            (byte_buf.as-mut-bytes (&mut bytes))
+            (+ start 9)
+            (cast 3 : u8))
+          (byte_buf.bytes-set!
+            (byte_buf.as-mut-bytes (&mut bytes))
+            (+ start 10)
+            (cast 4 : u8))
+          (byte_buf.bytes-set!
+            (byte_buf.as-mut-bytes (&mut bytes))
+            (+ start 11)
+            (cast 2 : u8))
+          (match (x509.parse-der
+            (byte_buf.as-bytes (& bytes))
+            (x509.default-limits))
+            [(x509.CertificateErr error)
+              (test.assert-i64-eq
+                error.offset
+                -1
+                "valid custom AttributeValue rejected")]
+            [(x509.CertificateOk parsed)
+              (let
+                [attribute : x509.Attribute
+                  (attributes.get
+                    (& parsed.subject.attributes)
+                    0
+                    (x509.Attribute
+                      0
+                      (der.Range 0 0)
+                      (der.Range 0 0)
+                      0
+                      0
+                      false
+                      (der.Range 0 0)))]
+                (test.assert-i64-eq
+                  attribute.tag
+                  2
+                  "custom attribute value tag")
+                (test.assert-i64-eq
+                  attribute.tag-class
+                  0
+                  "custom attribute value class")
+                (test.assert-false
+                  attribute.constructed
+                  "custom attribute primitive")
+                (test.assert-i64-eq
+                  (cast
+                    (byte_buf.bytes-ref
+                      (x509.view (& parsed) attribute.value)
+                      0)
+                    : i64)
+                  65
+                  "custom attribute exact value"))]))])))
+
 (define (field-negatives) : unit
   (let
     [bytes : byte_buf.ByteBuf (hex-bytes (& rsa-hex))]
@@ -732,6 +806,13 @@
         (test.assert-i64-eq certificate.not-after.year 2027 "validity end")
         (test.assert-i64-eq certificate.tbs.start 4 "independent TBS offset")
         (test.assert-i64-eq
+          (der.compare-ranges
+            (byte_buf.as-bytes (& bytes))
+            certificate.tbs-signature-algorithm.encoded
+            certificate.signature-algorithm.encoded)
+          0
+          "both exact signature identifiers")
+        (test.assert-i64-eq
           certificate.tbs.length
           tbs-length
           "independent TBS length")
@@ -820,4 +901,5 @@
     (budget-tests)
     (mutation-corpus)
     (field-negatives)
+    (custom-attribute)
     42))

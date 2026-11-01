@@ -4,7 +4,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.net)
-(import stdlib.net.ip as ip)
+(import stdlib.net.ip)
 (import stdlib.test)
 
 ;: Hooks describe deterministic injection and observation, never host policy.

@@ -1,9 +1,9 @@
 (import stdlib.byte_buf)
 (import stdlib.net)
-(import stdlib.net.ip as ip)
+(import stdlib.net.ip)
 (import stdlib.net_fake as fake)
 (import stdlib.test)
-(import stdlib.profile)
+(cfg compile-profile (import stdlib.profile))
 (import stdlib.tests.net_conformance as c)
 
 (define (fixture) : c.Fixture

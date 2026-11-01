@@ -6,7 +6,7 @@
 ;# uses the shared queue. Script queues repeat their final entry when exhausted.
 (import stdlib.byte_buf)
 (import stdlib.net)
-(import stdlib.net.ip as ip)
+(import stdlib.net.ip)
 (import stdlib.local_ipc)
 
 ;: Maximum independent fixtures in one process.

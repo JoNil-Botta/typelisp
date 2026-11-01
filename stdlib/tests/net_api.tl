@@ -1,5 +1,5 @@
 (import stdlib.net)
-(import stdlib.net.ip as ip)
+(import stdlib.net.ip)
 (import stdlib.test)
 (import stdlib.net_fake as fake)
 (import stdlib.tests.net_conformance as conformance)

@@ -12,7 +12,7 @@
 ;# ```
 (import stdlib.byte_buf)
 (import stdlib.local_ipc)
-(import stdlib.net.ip as ip)
+(import stdlib.net.ip)
 (import stdlib.string)
 
 ;: IPv4 endpoint. Ports are checked before dispatch, including forged records.

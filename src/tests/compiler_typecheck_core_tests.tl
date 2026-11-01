@@ -4345,7 +4345,11 @@
     [owner : i64 (ci.intern "phase-cache-boundary-owner")]
     [token : i64 (ci.intern "phase-cache-boundary-token")]
     [other : i64 (ci.intern "phase-cache-boundary-other")]
-    [base : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+    [base : tc_core.TcTypeEnv
+      (tc_core.tc-env-with-cache
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) other (I64)))]
+    [threshold : i64 (tc_core.tc-local-cache-threshold)]
+    [layer-cap : i64 (tc_core.tc-local-cache-partial-layer-cap)]
     [region : i64 (tc_core.tc-arena-phase-region-id base owner token)]
     [owner-marker : i64
       (tc_core.tc-arena-phase-token-owner-marker-id base token)]
@@ -4353,19 +4357,27 @@
       (tc_core.tc-arena-phase-token-region-marker-id base token)]
     ;; Sweep automatic compaction through every marker/binding boundary and
     ;; past the partial-layer collapse, retaining the original snapshot.
-    (for [count
-      (iterator.range
-        0
-        (+
-          (*
-            (tc_core.tc-local-cache-threshold)
-            (+ (tc_core.tc-local-cache-partial-layer-cap) 1))
-          4))]
+    (for [count (iterator.range 0 (+ (* threshold (+ layer-cap 1)) 4))]
       (let
         [prefix : tc_core.TcTypeEnv (tc-type-env-bind-many base count)]
         [marked : tc_core.TcTypeEnv
           (tc_core.tc-bind-arena-phase-token prefix token owner)]
         [bound : tc_core.TcTypeEnv (tc_core.tc-bind-id marked token (I64))]
+        ;; Compaction needs the explicit cache below this prefix. Check every
+        ;; full window, including depth reset with wider coverage on collapse.
+        (when
+          (and (> count 0) (= (% count threshold) 0))
+          (unless
+            (and
+              (tc-type-env-cache-partial-head? prefix)
+              (=
+                (tc_core.tc-env-partial-layer-depth prefix)
+                (if (> count (* threshold layer-cap))
+                  1
+                  (/ count threshold)))
+              (= (tc_core.tc-env-partial-local-covered-count prefix) count))
+            (io.panic
+              "typecheck: phase boundary sweep did not compact or collapse")))
         (unless
           (tc-arena-phase-cache-pair? bound token owner region)
           (return false))))

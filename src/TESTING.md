@@ -2,7 +2,9 @@
 
 `tc-arena-phase-token-cache-boundaries` sweeps every local-binding count from
 zero through the partial-cache layer collapse, placing automatic compaction at
-each boundary between a phase token and its owner/region markers. It also
+each boundary between a phase token and its owner/region markers. Its explicit
+base cache enables compaction; partial-layer depth and covered-count checks at
+each full window require actual cache creation and collapse. It also
 inserts explicit transparent caches between those records, checks nested
 owner/region identity and re-reads the original environment after constructing
 shadows. Same-spelled shadows, opaque caches and unrelated intervening bindings

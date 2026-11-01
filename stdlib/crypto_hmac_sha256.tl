@@ -23,6 +23,39 @@
 ;# side-channel certification or erasure of registers, caches, dumps or swap.
 ;#
 ;# Usage: `(import stdlib.crypto_hmac_sha256)`
+;#
+;# ```typelisp
+;# (import stdlib.byte_buf)
+;# (import stdlib.crypto_hmac_sha256 as hmac)
+;# (import stdlib.crypto_secret)
+;# (import stdlib.string)
+;# (define (main) : i64
+;#   (let
+;#     [key-text : String "Jefe"]
+;#     [message : String "what do ya want for nothing?"]
+;#     (match
+;#       (crypto_secret.bytes-from-bytes
+;#         (byte_buf.str-as-bytes (& key-text))
+;#         4)
+;#       [(crypto_secret.SecretBytesOk key)
+;#         (with ([owner key crypto_secret.close-bytes])
+;#           (match
+;#             (hmac.authenticate
+;#               (& owner)
+;#               (byte_buf.str-as-bytes (& message))
+;#               (hmac.default-limits))
+;#             [(hmac.HmacSha256TagOk tag)
+;#               (let
+;#                 [actual : String (hmac.to-hex (& tag))]
+;#                 (if
+;#                   (string.eq
+;#                     actual
+;#                     "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+;#                   42
+;#                   1))]
+;#             [(hmac.HmacSha256TagErr _) 1]))]
+;#       [(crypto_secret.SecretBytesErr _) 1])))
+;# ```
 (import stdlib.byte_buf as buf)
 (import stdlib.crypto_secret as secret)
 (import stdlib.crypto_sha256 as sha)

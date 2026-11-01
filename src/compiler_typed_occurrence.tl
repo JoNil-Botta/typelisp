@@ -226,7 +226,10 @@
   (Indirect i64)
   ;; A call of its argument type's declared cleanup function (key as for
   ;; Declared): it discharges that value's cleanup obligation.
-  (Discharge i64))
+  (Discharge i64)
+  ;; A checked arena make/make-atomic (key as for Declared). An operation
+  ;; tag, not an arena identity: normalization mints its lender.
+  (ArenaOwner i64))
 
 (defenum TypedMode
   (Executable)
@@ -460,7 +463,11 @@
   ;; first, a `with` cleanup owner holding values of that arena, must no
   ;; longer hold them (its scope-exit cleanup would read freed storage). No
   ;; child, and the result is unit.
-  (RequireUnheld TypedBinderId TypedBinderId i64))
+  (RequireUnheld TypedBinderId TypedBinderId i64)
+  ;; A committed scoped arena (with-arena, scratch, escape): one child, the
+  ;; scoped body, as a one-child Sequence. The region only locates the
+  ;; innermost structural scope; normalization mints the lender identity.
+  (ArenaScope i64))
 
 (defstruct TypedOccurrence
   (serial u64)
@@ -574,7 +581,12 @@
   (lease-serial u64)
   ;; The record capacity charged so far, shared by the seven record tables
   ;; (`typed-reserve-records!`).
-  (record-capacity i64))
+  (record-capacity i64)
+  ;; Committed arena lender publications (ArenaOwner calls, ArenaScope
+  ;; occurrences, InvalidateParameter binders). Sticky: a rollback never
+  ;; decrements it, so it may overcount but never misses a mint. Zero means
+  ;; the body has no lender and normalization skips all lender work.
+  (lender-sites i64))
 
 (defenum TypedStoreResult
   (Ok TypedStore)
@@ -769,7 +781,8 @@
           ;; Bound at open: the checks above validated this lease, and the
           ;; store's identity is copied from it.
           lease.serial
-          capacity.records))]))
+          capacity.records
+          0))]))
 
 ;; The full check of a store against a lease, run once when a store binds a
 ;; lease: liveness, every identity the store pinned at open (body,
@@ -1317,6 +1330,7 @@
     [(TypedOperation.Pattern (TypedPattern.Literal literal))
       (typed-literal-ok! store lease literal)]
     ;; The remaining operations carry scalar IDs/operators, not leased bytes.
+    ;; ArenaScope (as Sequence) takes this arm.
     [_ (TypedResult.Ok unit)]))
 
 ;; Resolved declarations are supplied by inference, never looked up by surface
@@ -1525,6 +1539,8 @@
       (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))]
     [(TypedCallKind.Indirect _) unit]
     [(TypedCallKind.Discharge key)
+      (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))]
+    [(TypedCallKind.ArenaOwner key)
       (unless (>= key 0) (return (TypedCallResult.Err TypedError.Unknown)))])
   (unless
     (=
@@ -1595,6 +1611,7 @@
                   [(TypedCallKind.Construct) 0]
                   [(TypedCallKind.Foreign _) 0]
                   [(TypedCallKind.Discharge _) 0]
+                  [(TypedCallKind.ArenaOwner _) 0]
                   [_ 1]))))]
         [(TypedOperation.Unary _) (= count 1)]
         [(TypedOperation.Binary _) (= count 2)]
@@ -1635,7 +1652,9 @@
             [(TypedPattern.Literal _) (<= count 1)]
             [(TypedPattern.Or) (<= count 1)]
             [(TypedPattern.Alternatives) (>= count 2)]
-            [_ true])])]
+            [_ true])]
+        ;; The scoped body, as a one-child Sequence.
+        [(TypedOperation.ArenaScope _) (= count 1)])]
     (if shape
       (TypedResult.Ok unit)
       (TypedResult.Err TypedError.Shape))))
@@ -1663,6 +1682,7 @@
         [(TypedOccurrenceCategory.Value) false])
         (TypedResult.Ok unit)
         (TypedResult.Err TypedError.Shape))]
+    ;; ArenaScope (as Sequence) takes this arm.
     [_
       (if (match (& node.category)
         [(TypedOccurrenceCategory.Value) true]
@@ -1708,6 +1728,7 @@
           [(TypedOccurrenceCategory.Place _) false]))
         (TypedResult.Ok unit)
         (TypedResult.Err TypedError.Shape))]
+    ;; ArenaScope (as Sequence) takes this arm.
     [_
       (if (match (& child.category)
         [(TypedOccurrenceCategory.Value) true]
@@ -1741,6 +1762,7 @@
       (try (typed-place-operation-type-ok (& store) place (& type)))]
     [(TypedOperation.MovePlace place)
       (try (typed-place-operation-type-ok (& store) place (& type)))]
+    ;; ArenaScope (as Sequence) takes this arm.
     [_ unit])
   (match (& syntax)
     [(TypedSyntax.Source index)
@@ -1779,6 +1801,7 @@
           [(TypedOperation.FormPlace place)
             (TypedOccurrenceCategory.Place
               (TypedPlaceId (typed-handle-copy (& place.handle))))]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ TypedOccurrenceCategory.Value])]
       [handle : TypedHandle (typed-fresh! store store.occurrence-count)]
       [index : i64 0]

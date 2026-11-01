@@ -8,6 +8,7 @@
 (import compiler_ownership_core as own)
 (cfg ownership-mir-dump (import compiler_ownership_dump as ownership_dump))
 (cfg ownership-mir-dump (import stdlib.io))
+(cfg arena-lender-dump (import stdlib.io))
 (import stdlib.string)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as normalize_transfer_map)
@@ -267,14 +268,33 @@
   (names (__tl_dyn-array i64))
   (starts (__tl_dyn-array i64))
   (counts (__tl_dyn-array i64))
-  (covariant (__tl_dyn-array bool)))
+  (covariant (__tl_dyn-array bool))
+  ;; The arena lender inputs of a body with a lender site.
+  (lenders OwnershipNormalizeLenderInput))
 
 (define (ownership-normalize-variances-empty) : OwnershipNormalizeVariances
   (OwnershipNormalizeVariances
     (normalize-no-i64s)
     (normalize-no-i64s)
     (normalize-no-i64s)
-    (normalize-no-bools)))
+    (normalize-no-bools)
+    OwnershipNormalizeLenderInput.Clear))
+
+;; Arena lender inputs (#9256 G1), from typing's original, unerased records:
+;; per typed record a flag (1 arena-tagged, 2 an arena `Region` head, 4 an
+;; arena owner) and its head's region (-1), and per `covariant` entry whether
+;; that nominal lifetime is bivariant. The lender lane omits bivariant
+;; positions; ordinary shapes keep them.
+(defstruct OwnershipNormalizeArena
+  (records (__tl_dyn-array i64))
+  (heads (__tl_dyn-array i64))
+  (bivariant (__tl_dyn-array bool)))
+
+;; Clear for a body without a committed lender site
+;; (`TypedStore.lender-sites` = 0): it does no lender work at all.
+(defenum OwnershipNormalizeLenderInput
+  (Clear)
+  (Gated (__tl_dyn-array OwnershipNormalizeArena)))
 
 ;; The globals the body's calls may assign (#7904), from typing's global
 ;; effect graph: typed call record `calls[i]` may assign the module value
@@ -1547,6 +1567,10 @@
       (NormalizeOperationResult.Ok NormalizeOperation.AssignPlace)]
     [(typed.TypedOperation.ReplacePlace _)
       (NormalizeOperationResult.Ok NormalizeOperation.ReplacePlace)]
+    ;; A scoped arena's body: the lender pass finds the wrapper again by its
+    ;; retained node (`normalize-lender-scopes!`).
+    [(typed.TypedOperation.ArenaScope _)
+      (NormalizeOperationResult.Ok NormalizeOperation.Sequence)]
     [_
       (normalize-operation-unsupported
         "ownership normalization: projection requires representation semantics")]))
@@ -1635,7 +1659,9 @@
   (mutable-views (__tl_dyn-array i64))
   ;; The `Invalidate`s that end a binder's storage (`normalize-retire!`), as
   ;; `block * 4294967296 + instruction`, unlike an invalidation the body makes.
-  (storage-ends (__tl_dyn-array i64)))
+  (storage-ends (__tl_dyn-array i64))
+  ;; The arena lender lane (`normalize-lenders!`), Clear without a site.
+  (lenders OwnershipNormalizedLenders))
 
 (defstruct NormalizeState
   (body own.OwnershipBody)
@@ -2046,6 +2072,7 @@
                 [_
                   (match (& node.operation)
                     [(typed.TypedOperation.FormPlace _) unit]
+                    ;; ArenaScope (as Sequence) takes this arm.
                     [_
                       (return
                         (normalize-header-unsupported
@@ -2070,6 +2097,7 @@
             (match (& node.operation)
               [(typed.TypedOperation.Call record)
                 (set! record-handle (normalize-handle-copy record.handle))]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ unit])
             (when
               (< record-handle.index 0)
@@ -2116,6 +2144,7 @@
             [(typed.TypedCallKind.Declared key) key]
             [(typed.TypedCallKind.Foreign key) key]
             [(typed.TypedCallKind.Discharge key) key]
+            [(typed.TypedCallKind.ArenaOwner key) key]
             [_ -1])]
         ;; A call through a function value has the callee as child 0.
         [indirect? : bool
@@ -4749,6 +4778,7 @@
               [(typed.TypedOperation.Borrow true)
                 (set! reserve? true)
                 NormalizeBinderLookup.No]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ NormalizeBinderLookup.No])]
           [(typed.TypedNodeResult.Err error)
             (return (normalize-value-typed error))])
@@ -5942,6 +5972,7 @@
             [(typed.TypedOperation.FormPlace place)
               (NormalizeMaybePlace.Some
                 (typed.TypedPlaceId (typed.typed-handle-copy (& place.handle))))]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ NormalizeMaybePlace.No])]
         [(typed.TypedNodeResult.Err _) NormalizeMaybePlace.No])]
     [step : NormalizeMaybeProjection
@@ -7296,6 +7327,7 @@
           [(typed.TypedOperation.Primitive
               (typed.TypedPrimitive.Builtin code _))
             (= code 151)]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ false]))]
     [(typed.TypedNodeResult.Err error) (normalize-bool-typed error)]))
 
@@ -7308,6 +7340,7 @@
       (NormalizeBool.Ok
         (match (& view.operation)
           [(typed.TypedOperation.Borrow true) true]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ false]))]
     [(typed.TypedNodeResult.Err error) (normalize-bool-typed error)]))
 
@@ -9171,8 +9204,10 @@
                   (set! row (+ row 1))))))))
       out)))
 
+;; `keep` names the places to split (the lender lane's); empty splits all.
 (define (normalize-split-reassigned!
   [state : (&mut state NormalizeState)]
+  [keep : (& keep (__tl_dyn-array bool))]
   [alt-start : (&mut alt-start (__tl_dyn-array i64))]
   [alt-count : (&mut alt-count (__tl_dyn-array i64))]
   [alt-places : (&mut alt-places (__tl_dyn-array i64))]) : NormalizeUnit
@@ -9263,6 +9298,7 @@
           (when
             (and
               (>= (array-ref def-total place) 2)
+              (or (= (array-length keep) 0) (array-ref keep place))
               (not (array-ref opaque place))
               ;; Some other operation writes it too.
               (= (array-ref flow-total place) (array-ref def-total place)))
@@ -9741,7 +9777,9 @@
   (cache-plain (__tl_dyn-array i64))
   (cache-deref (__tl_dyn-array i64))
   ;; The shared shape without names (`normalize-empty-shape!`), or -1.
-  (empty i64))
+  (empty i64)
+  ;; The arena lender lane's shapes: bivariant lifetimes take no position.
+  (lender? bool))
 
 (defenum NormalizeShapesResult
   (Ok NormalizeShapes)
@@ -9757,7 +9795,8 @@
 (defstruct NormalizeShapeOut
   (names (__tl_dyn-array i64))
   (vars (__tl_dyn-array bool))
-  (outers (__tl_dyn-array i64)))
+  (outers (__tl_dyn-array i64))
+  (lender? bool))
 
 (define (normalize-shape-push!
   [out : (&mut out NormalizeShapeOut)]
@@ -9903,6 +9942,10 @@
   [inv? : bool]
   [out : (&mut out NormalizeShapeOut)]
   [outer : i64]) : unit
+  (when
+    out.lender?
+    (return
+      (normalize-lender-lifetimes variances name lifetimes inv? out outer)))
   (let
     [index : i64 0]
     (while (< index (ast.ast-lifetime-list-len (& lifetimes)))
@@ -9911,6 +9954,28 @@
         (ast.ast-lifetime-list-get (& lifetimes) index -1)
         (or inv? (not (normalize-nominal-covariant? variances name index)))
         outer)
+      (set! index (+ index 1)))))
+
+;; The lender lane's nominal lifetimes: a bivariant one takes no position.
+(define (normalize-lender-lifetimes
+  [variances : (& variances OwnershipNormalizeVariances)]
+  [name : i64]
+  [lifetimes : ast.AstLifetimeList]
+  [inv? : bool]
+  [out : (&mut out NormalizeShapeOut)]
+  [outer : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast.ast-lifetime-list-len (& lifetimes)))
+      (let
+        [variance : i64 (normalize-lender-variance variances name index)]
+        (when
+          (< variance 2)
+          (normalize-shape-push!
+            out
+            (ast.ast-lifetime-list-get (& lifetimes) index -1)
+            (or inv? (= variance 0))
+            outer)))
       (set! index (+ index 1)))))
 
 (define (normalize-shape-list
@@ -9989,7 +10054,8 @@
       (NormalizeShapeOut
         (normalize-no-i64s)
         (normalize-no-bools)
-        (normalize-no-i64s))]
+        (normalize-no-i64s)
+        shapes.lender?)]
     [index : i64 0]
     [view? : bool
       (match (& ty)
@@ -10115,7 +10181,8 @@
   [state : (& state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [return-type : i64]) : NormalizeShapesResult
+  [return-type : i64]
+  [lender? : bool]) : NormalizeShapesResult
   (let
     [shapes : NormalizeShapes
       (NormalizeShapes
@@ -10133,7 +10200,8 @@
         (normalize-no-i64s)
         (__tl_make-array i64 (normalize-shape-cache-size state))
         (__tl_make-array i64 (normalize-shape-cache-size state))
-        -1)]
+        -1
+        lender?)]
     [place : i64 0]
     [index : i64 0]
     (while (< place state.place-count)
@@ -11171,6 +11239,7 @@
       (try
         (normalize-split-reassigned!
           state
+          (& (normalize-no-bools))
           (&mut alt-start)
           (&mut alt-count)
           (&mut alt-places)))
@@ -13186,6 +13255,1268 @@
     [b : i64 (normalize-class-find classes right)]
     (when (!= a b) (set! (array-ref classes a) b))))
 
+;; The arena lender lane (#9256 G1): the lenders of a body with a committed
+;; lender site, the places that may hold each, and the lenders each use
+;; demands. Nothing in the core body, ordinary origins, points-to or
+;; MayUseLoan emission consumes it in G1; G2 connects it to arena ends.
+;; Lender `i` is its committed typed site, never a region name; its loan bit
+;; is `i` in the lane's own rows.
+(defstruct OwnershipArenaLender
+  (site typed.TypedHandle)
+  ;; The place it is minted on (a scope's or brand's is -1).
+  (anchor i64)
+  ;; 0 an owner creation, 1 a scoped arena, 2 an invalidated brand.
+  (kind i64)
+  (region i64))
+
+(defstruct OwnershipNormalizedArena
+  (lenders (__tl_dyn-array OwnershipArenaLender))
+  (words i64)
+  ;; Per place, the lenders its value may hold (`words` words each).
+  (rows (__tl_dyn-array i64))
+  ;; Per use of the lane, at its coordinates before ordinary demand
+  ;; insertion: the used root (`-2 - place` a retirement, demanding none)
+  ;; and the lenders it demands.
+  (use-blocks (__tl_dyn-array i64))
+  (use-indices (__tl_dyn-array i64))
+  (use-places (__tl_dyn-array i64))
+  (use-rows (__tl_dyn-array i64)))
+
+(defenum OwnershipNormalizedLenders
+  (Clear)
+  ;; The lane ran out of its budget: its lenders are unknown, never absent.
+  (Exhausted)
+  (Gated (__tl_dyn-array OwnershipNormalizedArena)))
+
+;; The ordinary notes, kept while the lane extends and splits them in place.
+(defstruct NormalizeLenderSaved
+  (from (__tl_dyn-array i64))
+  (to (__tl_dyn-array i64))
+  (from-place (__tl_dyn-array i64))
+  (to-place (__tl_dyn-array i64))
+  (outlives (__tl_dyn-array bool))
+  (contents (__tl_dyn-array bool))
+  (blocks (__tl_dyn-array i64))
+  (indices (__tl_dyn-array i64))
+  (places (__tl_dyn-array i64))
+  (origins (__tl_dyn-array i64))
+  (loans (__tl_dyn-array i64))
+  (kinds (__tl_dyn-array i64)))
+
+;; The lender lane's variance of nominal `name`'s lifetime `index`: 2
+;; bivariant (no position), 1 covariant, 0 invariant (also when undeclared).
+(define (normalize-lender-variance
+  [variances : (& variances OwnershipNormalizeVariances)]
+  [name : i64]
+  [index : i64]) : i64
+  (match (& variances.lenders)
+    [(OwnershipNormalizeLenderInput.Gated inputs)
+      (let
+        [at : i64 0]
+        (while (< at (array-length variances.names))
+          (when
+            (and
+              (= (array-ref variances.names at) name)
+              (< index (array-ref variances.counts at)))
+            (let
+              [slot : i64 (+ (array-ref variances.starts at) index)]
+              (return
+                (cond
+                  [(array-ref (array-ref inputs 0).bivariant slot) 2]
+                  [(array-ref variances.covariant slot) 1]
+                  [else 0]))))
+          (set! at (+ at 1)))
+        0)]
+    [_ 0]))
+
+(define (normalize-lender-flag
+  [state : (& state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]
+  [place : i64]) : i64
+  (let
+    [record : i64
+      (if (>= place 0)
+        (array-ref state.place-typed place)
+        -1)]
+    (if (and (>= record 0) (< record (array-length input.records)))
+      (array-ref input.records record)
+      0)))
+
+;; An arena-provenance place: its region root, or the reference it stands
+;; behind, has an arena record (per original record, never per class).
+(define (normalize-lender-arena?
+  [state : (& state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]
+  [place : i64]) : bool
+  (let
+    [root : i64 (normalize-region-root state place)]
+    (or
+      (> (normalize-lender-flag state input root) 0)
+      (>
+        (normalize-lender-flag state input (array-ref state.place-deref root))
+        0))))
+
+;; A transport of a place the ordinary notes drop (reference kind 0) that the
+;; lane keeps: a non-primitive value or an arena-provenance place.
+(define (normalize-lender-admits?
+  [state : (& state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]
+  [place : i64]) : bool
+  (and
+    (>= place 0)
+    (= (normalize-reference-kind state place) 0)
+    (or
+      (>=
+        (array-ref state.body.places (normalize-region-root state place)).type.index
+        normalize-first-value-type)
+      (normalize-lender-arena? state input place))))
+
+(define (normalize-lender-use!
+  [state : (&mut state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]
+  [block : i64]
+  [index : i64]
+  [place : i64]) : unit
+  (when
+    (normalize-lender-admits? (& state) input place)
+    ;; Amortized growth (`normalize-record-use!`), not a copy per push.
+    (normalize-reserve-i64! state.use-blocks state.use-count)
+    (normalize-reserve-i64! state.use-indices state.use-count)
+    (normalize-reserve-i64! state.use-places state.use-count)
+    (set! (array-ref state.use-blocks state.use-count) block)
+    (set! (array-ref state.use-indices state.use-count) index)
+    (set!
+      (array-ref state.use-places state.use-count)
+      (normalize-place-root (& state) place))
+    (set! state.use-count (+ state.use-count 1))))
+
+(define (normalize-lender-flow!
+  [state : (&mut state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]
+  [from : i64]
+  [to : i64]
+  [contents? : bool]) : unit
+  (when
+    (and (>= to 0) (normalize-lender-admits? (& state) input from))
+    (__tl_array-push! state.flow-from (normalize-place-root (& state) from))
+    (__tl_array-push! state.flow-to (normalize-place-root (& state) to))
+    ;; These two keep spare capacity past the count (`normalize-trim!`).
+    (normalize-reserve-i64! state.flow-from-place state.flow-count)
+    (normalize-reserve-i64! state.flow-to-place state.flow-count)
+    (set! (array-ref state.flow-from-place state.flow-count) from)
+    (set! (array-ref state.flow-to-place state.flow-count) to)
+    (__tl_array-push! state.flow-outlives false)
+    (__tl_array-push! state.flow-contents contents?)
+    (set! state.flow-count (+ state.flow-count 1))))
+
+;; Retained node `node`'s child `child`: its node index, or the node count.
+(define (normalize-lender-child
+  [state : (& state NormalizeState)]
+  [node : i64]
+  [child : i64]) : i64
+  (let
+    [children : (& state (__tl_dyn-array typed.TypedOccurrenceId))
+      (& (array-ref state.nodes node).children)]
+    [slot : i64
+      (if (and (>= child 0) (< child (array-length children)))
+        (array-ref children child).handle.index
+        -1)]
+    (if (and (>= slot 0) (< slot (array-length state.retained-at)))
+      (- (array-ref state.retained-at slot) 1)
+      state.node-count)))
+
+(define (normalize-lender-place
+  [state : (& state NormalizeState)]
+  [node : i64]
+  [child : i64]) : i64
+  (let
+    [at : i64 (normalize-lender-child state node child)]
+    (if (and (>= at 0) (< at state.node-count))
+      (array-ref state.nodes at).result-place
+      -1)))
+
+;; The transport the ordinary notes drop, derived after the walk from the
+;; ownership CFG itself, as `normalize-emit!`, `normalize-terminate!`,
+;; `normalize-borrow!` and the reservation activations note it for reference
+;; places. A Read right before a Copy or Move into its place is that
+;; destination's initialization check, which reads nothing. A part read or
+;; consumed straight into the next Assign (a boxed pattern binder, a moved
+;; part) flows into it; a borrow flows its place's contents into the
+;; reference the next Assign makes and uses that place after it. A reference
+;; parameter's entry loan pairs with no Assign: the parameter already holds
+;; its reference, and the next Assign is the body's first, unrelated, value.
+;; Every operation kind is matched explicitly.
+(define (normalize-lender-cfg-notes!
+  [state : (&mut state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]) : unit
+  (let
+    [block : i64 0]
+    (while (< block state.block-count)
+      (let
+        [count : i64 (array-ref state.instruction-counts block)]
+        [index : i64 0]
+        ;; The last Read awaiting its init-check test, the last read or
+        ;; consumed place and the last loan borrowed, each -1 when none.
+        [pending : i64 -1]
+        [read : i64 -1]
+        [loan : i64 -1]
+        (while (<= index count)
+          (let
+            ;; 1 Read, 2 Consume, 3 Copy/Move, 4 Assign, 5 Borrow, else 0.
+            [kind : i64 0]
+            [first : i64 -1]
+            [second : i64 -1]
+            (when
+              (< index count)
+              (match (&
+                (array-ref
+                  (array-ref state.body.blocks block).instructions
+                  index).operation)
+                [(own.OwnershipOperation.Read place)
+                  (set! kind 1)
+                  (set! first place.index)]
+                [(own.OwnershipOperation.Assign place)
+                  (set! kind 4)
+                  (set! first place.index)]
+                [(own.OwnershipOperation.Consume place)
+                  (set! kind 2)
+                  (set! first place.index)]
+                [(or (own.OwnershipOperation.Copy from to)
+                     (own.OwnershipOperation.Move from to))
+                  (set! kind 3)
+                  (set! first from.index)
+                  (set! second to.index)]
+                [(or (own.OwnershipOperation.Borrow id)
+                     (own.OwnershipOperation.Reborrow id))
+                  (set! kind 5)
+                  (set! first id.index)]
+                ;; No transport (listed so a new kind must be decided here).
+                [(or (own.OwnershipOperation.Initialize _)
+                     (own.OwnershipOperation.RequireEmpty _)
+                     (own.OwnershipOperation.BindFresh _)
+                     (own.OwnershipOperation.BeginConstruction _)
+                     (own.OwnershipOperation.BindComplete _)
+                     (own.OwnershipOperation.BindMove _ _)
+                     (own.OwnershipOperation.Leave _)
+                     (own.OwnershipOperation.Cleanup _ _)
+                     (own.OwnershipOperation.CleanupPlace _ _)
+                     (own.OwnershipOperation.CleanupFailure _)
+                     (own.OwnershipOperation.Invalidate _)
+                     (own.OwnershipOperation.UseLoan _)
+                     (own.OwnershipOperation.MayUseLoan _ _)
+                     (own.OwnershipOperation.AccessThrough _ _ _)
+                     (own.OwnershipOperation.EndLoan _)
+                     (own.OwnershipOperation.Unsupported _))
+                  unit]))
+            (when
+              (and (>= pending 0) (not (and (= kind 3) (= second pending))))
+              (normalize-lender-use! state input block (- index 1) pending))
+            (when
+              (and
+                (= kind 4)
+                (>= read 0)
+                (>=
+                  (own.ownership-parent (& (array-ref state.body.places read)))
+                  0))
+              (normalize-lender-flow! state input read first false))
+            (when
+              (and (= kind 4) (>= loan 0))
+              (let
+                [borrowed : i64 (array-ref state.body.loans loan).place.index]
+                (normalize-lender-flow! state input borrowed first true)
+                (normalize-lender-use! state input block (+ index 1) borrowed)))
+            (when
+              (or (= kind 2) (= kind 3))
+              (normalize-lender-use! state input block index first))
+            (when
+              (= kind 3)
+              (normalize-lender-flow! state input first second false))
+            (set!
+              pending
+              (if (= kind 1)
+                first
+                -1))
+            (set!
+              read
+              (if (or (= kind 1) (= kind 2))
+                first
+                -1))
+            (set!
+              loan
+              (if (and
+                (= kind 5)
+                (not (normalize-lender-parameter-loan? (& state) first)))
+                first
+                -1)))
+          (set! index (+ index 1)))
+        ;; A returned value is used at the exit edge.
+        (let
+          [at : i64 0]
+          (while (>= (normalize-lender-returned (& state) block at) 0)
+            (normalize-lender-use!
+              state
+              input
+              block
+              count
+              (normalize-lender-returned (& state) block at))
+            (set! at (+ at 1)))))
+      (set! block (+ block 1)))))
+
+;; Whether `loan` is a reference parameter's entry loan
+;; (`normalize-parameter-entry!`).
+(define (normalize-lender-parameter-loan?
+  [state : (& state NormalizeState)]
+  [loan : i64]) : bool
+  (let
+    [index : i64 0]
+    (while (< index (array-length state.parameter-loans))
+      (when (= (array-ref state.parameter-loans index) loan) (return true))
+      (set! index (+ index 1)))
+    false))
+
+;; Block `block`'s returned operand `at`, -1 past the last (or no return).
+(define (normalize-lender-returned
+  [state : (& state NormalizeState)]
+  [block : i64]
+  [at : i64]) : i64
+  (match (& (array-ref state.body.blocks block).terminator)
+    [(or (own.OwnershipTerminator.Return operands)
+         (own.OwnershipTerminator.ReturnOwned operands))
+      (if (< at (array-length operands.items))
+        (array-ref operands.items at).index
+        -1)]
+    [(or (own.OwnershipTerminator.Goto _) (own.OwnershipTerminator.Branch _ _ _)
+         (own.OwnershipTerminator.Abort)
+         (own.OwnershipTerminator.Unsupported _))
+      -1]))
+
+;; The lane's lenders and seeds, its in-arena transport and the transport
+;; `normalize-call!` and the place forms note between a node's operands and
+;; result, from the retained nodes (each retained after its children): an
+;; operation without a signature may put any operand in its result, a stored
+;; value goes into each place its store's receiver borrows, and a place form
+;; moves values in or out. A value whose original record is allocated in a
+;; region is seeded with the innermost enclosing scope of that region, or,
+;; inside an `in-arena` (form 116) whose matching scope is outside it, takes
+;; the form's owner operand's lenders (K9: a call result tagged by its caller
+;; is seeded the same way).
+(define (normalize-lender-sites!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [input : (& input OwnershipNormalizeArena)]
+  [lenders : (&mut lenders (__tl_dyn-array OwnershipArenaLender))]
+  [seeds : (&mut seeds (__tl_dyn-array i64))]
+  [loans : (&mut loans (__tl_dyn-array i64))]) : NormalizeUnit
+  (let
+    [count : i64 state.node-count]
+    ;; Per node: its retained parent and its scope's lender (-1 each).
+    [parents : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [scopes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (while (< index (array-length state.binders))
+      (when
+        (and
+          (array-ref state.binders index).parameter?
+          (>= (array-ref state.binders index).lifetime 0))
+        (__tl_array-push! seeds (array-ref state.binders index).place)
+        (__tl_array-push!
+          loans
+          (normalize-lender-mint!
+            lenders
+            (& (array-ref state.binders index).handle)
+            -1
+            2
+            (array-ref state.binders index).lifetime)))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index count)
+      (set! (array-ref parents index) -1)
+      (let
+        [child : i64 0]
+        [result : i64 (array-ref state.nodes index).result-place]
+        [site : typed.TypedHandle
+          (typed.typed-handle-copy (& (array-ref state.nodes index).handle))]
+        (while (< child (array-length (array-ref state.nodes index).children))
+          (let
+            [at : i64 (normalize-lender-child (& state) index child)]
+            (when
+              (and (>= at 0) (< at index))
+              (set! (array-ref parents at) index)))
+          (set! child (+ child 1)))
+        (set! (array-ref scopes index) -1)
+        (match (typed.typed-occurrence-get!
+          store
+          lease
+          (typed.TypedOccurrenceId (typed.typed-handle-copy (& site))))
+          [(typed.TypedNodeResult.Ok view)
+            (match (& view.operation)
+              [(typed.TypedOperation.ArenaScope region)
+                (set!
+                  (array-ref scopes index)
+                  (normalize-lender-mint! lenders (& site) -1 1 region))]
+              [(typed.TypedOperation.Call record)
+                (match (typed.typed-call-get!
+                  store
+                  lease
+                  (typed.TypedCallId (normalize-handle-copy record.handle)))
+                  [(typed.TypedCallView.Ok call)
+                    (when
+                      (and
+                        (>= result 0)
+                        (match (& call.kind)
+                          [(typed.TypedCallKind.ArenaOwner _) true]
+                          [_ false]))
+                      (__tl_array-push! seeds result)
+                      (__tl_array-push!
+                        loans
+                        (normalize-lender-mint! lenders (& site) result 0 -1)))]
+                  [(typed.TypedCallView.Err error)
+                    (return
+                      (NormalizeUnit.Err
+                        (OwnershipNormalizeFailure.Typed error)))])]
+              [_ unit])]
+          [(typed.TypedNodeResult.Err error)
+            (return (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))]))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index count)
+      (let
+        [result : i64 (array-ref state.nodes index).result-place]
+        [children : i64 (array-length (array-ref state.nodes index).children)]
+        ;; Bits: 1 operands into the result, 2 a store, 4 seeded by its
+        ;; region, 8 take, 16 assign, 48 replace.
+        [kind : i64
+          (match (& (array-ref state.nodes index).operation)
+            [(NormalizeOperation.Call _ _ _ _ signature _)
+              (if (< signature 0)
+                5
+                4)]
+            [(NormalizeOperation.Literal _) 4]
+            [(NormalizeOperation.Primitive
+                (typed.TypedPrimitive.Builtin code _))
+              (bit-or
+                (if (or (= code 150) (= code 151))
+                  0
+                  1)
+                (bit-or
+                  (if (or
+                    (= code 104)
+                    (= code 105)
+                    (= code 111)
+                    (= code 125)
+                    (= code 126))
+                    2
+                    0)
+                  (if (or (= code 116) (= code 123))
+                    0
+                    4)))]
+            [(NormalizeOperation.Primitive _) 5]
+            [(NormalizeOperation.TakePlace) 8]
+            [(NormalizeOperation.AssignPlace) 16]
+            [(NormalizeOperation.ReplacePlace) 48]
+            [_ 0])]
+        [name : i64
+          (if (and
+            (> (bit-and kind 4) 0)
+            (>= result 0)
+            (>= (array-ref state.nodes index).typed 0)
+            (< (array-ref state.nodes index).typed (array-length input.heads)))
+            (array-ref input.heads (array-ref state.nodes index).typed)
+            -1)]
+        [first : i64 (normalize-lender-place (& state) index 0)]
+        [second : i64 (normalize-lender-place (& state) index 1)]
+        [child : i64 0]
+        (when
+          (and (> (bit-and kind 1) 0) (>= result 0))
+          (while (< child children)
+            (normalize-lender-flow!
+              state
+              input
+              (normalize-lender-place (& state) index child)
+              result
+              false)
+            (set! child (+ child 1))))
+        (when
+          (and (> (bit-and kind 2) 0) (> children 1))
+          (normalize-lender-store!
+            state
+            input
+            first
+            (normalize-lender-place (& state) index (- children 1))))
+        (when
+          (> (bit-and kind 16) 0)
+          (normalize-lender-flow! state input second first false))
+        (when
+          (> (bit-and kind 40) 0)
+          (normalize-lender-flow! state input first result false))
+        (when
+          (>= name 0)
+          ;; Up the enclosing nodes: the innermost scope of the region and
+          ;; in-arena form whose owner operand is not this node's ancestor.
+          (let
+            [scope : i64 -1]
+            [form : i64 -1]
+            [from : i64 index]
+            [at : i64 (array-ref parents index)]
+            (while (>= at 0)
+              (when
+                (and
+                  (< scope 0)
+                  (>= (array-ref scopes at) 0)
+                  (= (array-ref lenders (array-ref scopes at)).region name))
+                (set! scope at))
+              (when
+                (and
+                  (< form 0)
+                  (normalize-builtin-code? (& (array-ref state.nodes at)) 116)
+                  (!= from (normalize-lender-child (& state) at 0)))
+                (set! form at))
+              (set! from at)
+              (set! at (array-ref parents at)))
+            (if (and (>= form 0) (or (< scope 0) (> scope form)))
+              (normalize-lender-flow!
+                state
+                input
+                (normalize-lender-place (& state) form 0)
+                result
+                false)
+              (when
+                (>= scope 0)
+                (__tl_array-push! seeds result)
+                (__tl_array-push! loans (array-ref scopes scope)))))))
+      (set! index (+ index 1)))
+    (NormalizeUnit.Ok unit)))
+
+(define (normalize-lender-mint!
+  [lenders : (&mut lenders (__tl_dyn-array OwnershipArenaLender))]
+  [site : (& site typed.TypedHandle)]
+  [anchor : i64]
+  [kind : i64]
+  [region : i64]) : i64
+  (__tl_array-push!
+    lenders
+    (OwnershipArenaLender (typed.typed-handle-copy site) anchor kind region))
+  (- (array-length lenders) 1))
+
+;; A stored value goes into the place each loan of its store's receiver
+;; borrows (through an implicit reborrow, the binder's referent).
+(define (normalize-lender-store!
+  [state : (&mut state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]
+  [receiver : i64]
+  [stored : i64]) : unit
+  (let
+    [root : i64
+      (if (>= receiver 0)
+        (normalize-place-root (& state) receiver)
+        -1)]
+    [at : i64 0]
+    (while (< at (array-length state.origin-places))
+      (let
+        [loan : i64 (array-ref state.origin-loans at)]
+        [place : i64 (array-ref state.body.loans loan).place.index]
+        (when
+          (= (array-ref state.origin-places at) root)
+          (normalize-lender-flow!
+            state
+            input
+            stored
+            (if (or
+              (normalize-i64-member? (& state.reborrow-loans) loan)
+              (and
+                (normalize-i64-member? (& state.reservation-loans) loan)
+                (normalize-i64-member? (& state.reborrow-loans) (- loan 1))))
+              (normalize-direct-referent-place (& state) place)
+              place)
+            false)))
+      (set! at (+ at 1)))))
+
+;; The lender lane of a body with a lender site, between the walk and the
+;; ordinary solve. It extends the state's own notes, solves them with the
+;; shared reassignment split, region graph and closure, then restores the
+;; ordinary notes and work budget whatever happens: no ordinary note,
+;; solution, verdict or diagnostic depends on it, and running out of its
+;; budget leaves its lenders unknown, never a failure.
+(define (normalize-lenders!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [inputs : (__tl_dyn-array OwnershipNormalizeArena)]
+  [return-type : i64]) : OwnershipNormalizedLenders
+  (let
+    [records : i64 state.records]
+    [work : i64 state.work]
+    [bytes : i64 state.bytes]
+    [flows : i64 state.flow-count]
+    [uses : i64 state.use-count]
+    [saved : NormalizeLenderSaved
+      (NormalizeLenderSaved
+        (clone state.flow-from)
+        (clone state.flow-to)
+        (clone state.flow-from-place)
+        (clone state.flow-to-place)
+        (clone state.flow-outlives)
+        (clone state.flow-contents)
+        (clone state.use-blocks)
+        (clone state.use-indices)
+        (clone state.use-places)
+        (clone state.origin-places)
+        (clone state.origin-loans)
+        (clone state.type-references))]
+    [_inputs : unit
+      (set!
+        state.variances.lenders
+        (OwnershipNormalizeLenderInput.Gated inputs))]
+    [solved : NormalizeLendersResult
+      (normalize-lenders-solve! state store lease return-type)]
+    (set! state.variances.lenders OwnershipNormalizeLenderInput.Clear)
+    (set! state.flow-from saved.from)
+    (set! state.flow-to saved.to)
+    (set! state.flow-from-place saved.from-place)
+    (set! state.flow-to-place saved.to-place)
+    (set! state.flow-outlives saved.outlives)
+    (set! state.flow-contents saved.contents)
+    (set! state.use-blocks saved.blocks)
+    (set! state.use-indices saved.indices)
+    (set! state.use-places saved.places)
+    (set! state.origin-places saved.origins)
+    (set! state.origin-loans saved.loans)
+    (set! state.type-references saved.kinds)
+    (set! state.flow-count flows)
+    (set! state.use-count uses)
+    (set! state.records records)
+    (set! state.work work)
+    (set! state.bytes bytes)
+    (match solved
+      [(NormalizeLendersResult.Ok arena)
+        (OwnershipNormalizedLenders.Gated (__tl_make-array arena))]
+      [(NormalizeLendersResult.Err _) OwnershipNormalizedLenders.Exhausted])))
+
+(defenum NormalizeLendersResult
+  (Ok OwnershipNormalizedArena)
+  (Err OwnershipNormalizeFailure))
+
+;; The lane's solve: sites and transport, the reassignment split (every
+;; definition and redirect admitted), lender shapes and nodes (R2 bivariant
+;; positions omitted, C3 arena allocations not views, C4 bare owners'
+;; nameless nodes), lender edges with R4/C4, the seeded liveness closure,
+;; per-place rows with the exit brand cleared, and per-use demand.
+(define (normalize-lenders-solve!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [return-type : i64]) : NormalizeLendersResult
+  (let
+    [input : OwnershipNormalizeArena
+      (match (& state.variances.lenders)
+        [(OwnershipNormalizeLenderInput.Gated inputs)
+          (OwnershipNormalizeArena
+            (clone (array-ref inputs 0).records)
+            (clone (array-ref inputs 0).heads)
+            (normalize-no-bools))]
+        [_
+          (return
+            (NormalizeLendersResult.Err OwnershipNormalizeFailure.Resource))])]
+    [lenders : (__tl_dyn-array OwnershipArenaLender)
+      (__tl_make-array OwnershipArenaLender 0)]
+    [seeds : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [seeded : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [_sites : unit
+      (try
+        (normalize-lender-sites!
+          state
+          store
+          lease
+          (& input)
+          (&mut lenders)
+          (&mut seeds)
+          (&mut seeded)))]
+    [loans : i64 (array-length lenders)]
+    [words : i64 (shr (+ loans 63) 6)]
+    [_notes : unit (normalize-lender-cfg-notes! state (& input))]
+    [uses : i64 state.use-count]
+    ;; Exact use columns, as `normalize-trim!` leaves them for the split.
+    [_trim : unit
+      (begin
+        (set!
+          state.use-blocks
+          (normalize-trimmed-i64s
+            (replace! state.use-blocks (normalize-no-i64s))
+            uses))
+        (set!
+          state.use-indices
+          (normalize-trimmed-i64s
+            (replace! state.use-indices (normalize-no-i64s))
+            uses))
+        (set!
+          state.use-places
+          (normalize-trimmed-i64s
+            (replace! state.use-places (normalize-no-i64s))
+            uses)))]
+    [alt-start : (__tl_dyn-array i64) (__tl_make-array i64 uses)]
+    [alt-count : (__tl_dyn-array i64) (__tl_make-array i64 uses)]
+    [alt-places : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [index : i64 0]
+    (when
+      (= loans 0)
+      (return
+        (NormalizeLendersResult.Ok
+          (OwnershipNormalizedArena
+            lenders
+            0
+            (normalize-no-i64s)
+            (normalize-no-i64s)
+            (normalize-no-i64s)
+            (normalize-no-i64s)
+            (normalize-no-i64s)))))
+    (let
+      [rows : (__tl_dyn-array i64)
+        (__tl_make-array i64 (* state.place-count words))]
+      [pointed : (__tl_dyn-array i64)
+        (__tl_make-array i64 (* state.place-count words))]
+      [demand : (__tl_dyn-array i64) (__tl_make-array i64 (* uses words))]
+      [one : (__tl_dyn-array i64) (__tl_make-array i64 words)]
+      [keep : (__tl_dyn-array bool) (__tl_make-array bool state.place-count)]
+      [split? : bool false]
+      (try
+        (normalize-lender-rows!
+          state
+          store
+          lease
+          (& input)
+          (& seeds)
+          (& seeded)
+          return-type
+          uses
+          words
+          (&mut rows)
+          (&mut pointed)))
+      ;; Splitting a reassigned place redirects its reads and uses to its
+      ;; definitions' values. Where the unsplit lane gives neither the place
+      ;; nor any value it is defined from a lender, that changes no row, so
+      ;; only the other places are split, and the lane is solved again.
+      (while (< index state.place-count)
+        (set!
+          (array-ref keep index)
+          (normalize-lender-row? (& rows) (& pointed) index words))
+        (set! split? (or split? (array-ref keep index)))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (array-length state.body.blocks))
+        (let
+          [at : i64 0]
+          (while (< at (array-ref state.instruction-counts index))
+            (let
+              [value : i64 -1]
+              [target : i64
+                (normalize-whole-transfer-target
+                  (& state)
+                  (&
+                    (array-ref
+                      (array-ref state.body.blocks index).instructions
+                      at).operation)
+                  (&mut value))]
+              (when
+                (and
+                  (>= target 0)
+                  (>= value 0)
+                  (normalize-lender-row? (& rows) (& pointed) value words))
+                (set! (array-ref keep target) true)
+                (set! split? true)))
+            (set! at (+ at 1))))
+        (set! index (+ index 1)))
+      (when
+        split?
+        (let
+          [kinds : (__tl_dyn-array i64)
+            (replace!
+              state.type-references
+              (__tl_make-array i64 (array-length state.type-references)))]
+          (set! index 0)
+          (while (< index (array-length kinds))
+            (set! (array-ref state.type-references index) 1)
+            (set! index (+ index 1)))
+          (try
+            (normalize-split-reassigned!
+              state
+              (& keep)
+              (&mut alt-start)
+              (&mut alt-count)
+              (&mut alt-places)))
+          (set! state.type-references kinds))
+        (try
+          (normalize-lender-rows!
+            state
+            store
+            lease
+            (& input)
+            (& seeds)
+            (& seeded)
+            return-type
+            uses
+            words
+            (&mut rows)
+            (&mut pointed))))
+      ;; An invalidated parameter's brand is discharged at its exit.
+      (set! index 0)
+      (while (and (>= state.exit-holder 0) (< index loans))
+        (when
+          (= (array-ref lenders index).kind 2)
+          (let
+            [slot : i64 (+ (* state.exit-holder words) (shr index 6))]
+            (set!
+              (array-ref rows slot)
+              (bit-and
+                (array-ref rows slot)
+                (bit-not (shl 1 (bit-and index 63)))))))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index uses)
+        (when
+          (>= (array-ref state.use-places index) 0)
+          (normalize-use-loans!
+            (& state)
+            (& rows)
+            words
+            (& alt-start)
+            (& alt-count)
+            (& alt-places)
+            index
+            (&mut one))
+          (let
+            [word : i64 0]
+            (while (< word words)
+              (set!
+                (array-ref demand (+ (* index words) word))
+                (array-ref one word))
+              (set! word (+ word 1)))))
+        (set! index (+ index 1)))
+      (NormalizeLendersResult.Ok
+        (OwnershipNormalizedArena
+          lenders
+          words
+          rows
+          (clone state.use-blocks)
+          (clone state.use-indices)
+          (clone state.use-places)
+          demand)))))
+
+;; Whether place `place` may hold a lender (`normalize-lender-rows!`).
+(define (normalize-lender-row?
+  [rows : (& rows (__tl_dyn-array i64))]
+  [pointed : (& pointed (__tl_dyn-array i64))]
+  [place : i64]
+  [words : i64]) : bool
+  (let
+    [word : i64 (* place words)]
+    (while (< word (* (+ place 1) words))
+      (when
+        (!= (bit-or (array-ref rows word) (array-ref pointed word)) 0)
+        (return true))
+      (set! word (+ word 1)))
+    false))
+
+;; The lane's per-place rows (`rows`, and `pointed` for referents) over the
+;; current notes, solved with the lane's seeds as the origins; the notes'
+;; own origins are kept.
+(define (normalize-lender-rows!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [input : (& input OwnershipNormalizeArena)]
+  [seeds : (& seeds (__tl_dyn-array i64))]
+  [seeded : (& seeded (__tl_dyn-array i64))]
+  [return-type : i64]
+  [uses : i64]
+  [words : i64]
+  [rows : (&mut rows (__tl_dyn-array i64))]
+  [pointed : (&mut pointed (__tl_dyn-array i64))]) : NormalizeUnit
+  (let
+    [index : i64 0]
+    [shapes : NormalizeShapes
+      (try (normalize-compute-shapes! (& state) store lease return-type true))]
+    [nodes : NormalizeNodes (normalize-build-nodes (& state) (& shapes) true)]
+    ;; C3: an arena allocation's Region head is no view in the lane. C4: a
+    ;; bare arena owner (no lifetime position) has a nameless node.
+    [_c3c4 : unit
+      (while (< index state.place-count)
+        (let
+          [shape : i64 (array-ref shapes.place-shapes index)]
+          [record : i64 (array-ref state.place-typed index)]
+          (when
+            (and
+              (>= shape 0)
+              (>= record 0)
+              (< record (array-length input.heads))
+              (>= (array-ref input.heads record) 0))
+            (set! (array-ref shapes.views.items shape) false))
+          (when
+            (and
+              (<
+                (own.ownership-parent (& (array-ref state.body.places index)))
+                0)
+              (< (array-ref state.region-roots index) 0)
+              (= (array-ref nodes.place-count index) 0)
+              (> (bit-and (normalize-lender-flag (& state) input index) 4) 0))
+            (set! (array-ref nodes.place-first index) nodes.keys.len)
+            (set! (array-ref nodes.place-count index) 1)
+            (normalize-node-add! (&mut nodes) index -1)))
+        (set! index (+ index 1)))]
+    [edges : NormalizeRegionEdges
+      (normalize-region-edges (& state) (& shapes) (& nodes))]
+    [_extra : unit
+      (normalize-lender-edges!
+        (& state)
+        input
+        (& shapes)
+        (& nodes)
+        (&mut edges))]
+    [_bound : unit
+      (unless
+        (and
+          (not edges.exhausted)
+          (<= (+ nodes.keys.len state.place-count uses 1) (/ 16777216 words)))
+        (return (normalize-unit-resource)))]
+    [_charge : unit
+      (try
+        (normalize-charge!
+          state
+          0
+          (+
+            edges.from.len
+            (* (+ nodes.keys.len state.place-count uses 1) words))
+          0))]
+    [places : (__tl_dyn-array i64)
+      (replace! state.origin-places (clone (deref seeds)))]
+    [loans : (__tl_dyn-array i64)
+      (replace! state.origin-loans (clone (deref seeded)))]
+    [bits : NormalizeWords
+      (normalize-region-loans! state (& shapes) (& nodes) (& edges) words true)]
+    (set! state.origin-places places)
+    (set! state.origin-loans loans)
+    (match bits
+      [(NormalizeWords.Ok bits)
+        (set! index 0)
+        (while (< index (array-length rows))
+          (set! (array-ref rows index) 0)
+          (set! (array-ref pointed index) 0)
+          (set! index (+ index 1)))
+        (set! index 0)
+        (while (< index state.place-count)
+          (normalize-place-rows-or!
+            (& state)
+            (& shapes)
+            (& nodes)
+            (& bits)
+            (& nodes)
+            (& bits)
+            index
+            words
+            rows
+            pointed)
+          (set! index (+ index 1)))
+        (NormalizeUnit.Ok unit)]
+      [(NormalizeWords.Err failure) (NormalizeUnit.Err failure)])))
+
+;; Lender-only edges: R4, a borrow of an arena root's interior (a scalar
+;; read through an allocation) keeps the root's lenders while the reference
+;; lives; C4, a copy between bare owners relates their nameless nodes both
+;; ways, as `Arena r`'s invariant brand does.
+(define (normalize-lender-edges!
+  [state : (& state NormalizeState)]
+  [input : (& input OwnershipNormalizeArena)]
+  [shapes : (& shapes NormalizeShapes)]
+  [nodes : (& nodes NormalizeNodes)]
+  [edges : (&mut edges NormalizeRegionEdges)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index state.flow-count)
+      (let
+        [from : i64 (array-ref state.flow-from index)]
+        [to : i64
+          (normalize-region-root state (array-ref state.flow-to-place index))]
+        [shape : i64
+          (array-ref shapes.place-shapes (array-ref state.flow-to-place index))]
+        [roots : (__tl_dyn-array i64) (normalize-no-i64s)]
+        [at : i64 0]
+        (when
+          (>= from 0)
+          (set! from (normalize-region-root state from))
+          (cond
+            [(and
+                (array-ref state.flow-contents index)
+                (normalize-lender-arena? state input from)
+                (>= shape 0)
+                (> (array-ref shapes.lens.items shape) 0))
+              (let
+                [outer : i64
+                  (normalize-node-of
+                    nodes
+                    shapes
+                    to
+                    (array-ref
+                      shapes.names.items
+                      (array-ref shapes.starts.items shape)))]
+                (normalize-key-nodes-into!
+                  nodes
+                  shapes
+                  from
+                  (array-ref shapes.place-shapes from)
+                  (&mut roots))
+                (while (and (>= outer 0) (< at (array-length roots)))
+                  (normalize-region-edge-kind!
+                    edges
+                    (array-ref roots at)
+                    outer
+                    true)
+                  (set! at (+ at 1))))]
+            [(and
+              (not (array-ref state.flow-contents index))
+              (= (array-ref nodes.place-count from) 1)
+              (= (array-ref nodes.place-count to) 1)
+              (=
+                (array-ref nodes.names.items (array-ref nodes.place-first from))
+                -1)
+              (=
+                (array-ref nodes.names.items (array-ref nodes.place-first to))
+                -1))
+              (normalize-region-edge-kind!
+                edges
+                (array-ref nodes.place-first from)
+                (array-ref nodes.place-first to)
+                false)
+              (normalize-region-edge-kind!
+                edges
+                (array-ref nodes.place-first to)
+                (array-ref nodes.place-first from)
+                false)]
+            [else unit])))
+      (set! index (+ index 1)))))
+
+;; Test builds check the gate: a body whose typed store counts no lender site
+;; mints no lender (`TypedStore.lender-sites`).
+(cfg
+  test
+  (define (normalize-lender-gate-check!
+    [state : (&mut state NormalizeState)]
+    [store : (&mut store typed.TypedStore)]
+    [lease : (& lease (typed.TypedBodyLease intern))]
+    [return-type : i64]) : NormalizeUnit
+    (match (normalize-lenders!
+      state
+      store
+      lease
+      (__tl_make-array
+        (OwnershipNormalizeArena
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (__tl_make-array bool (array-length state.variances.covariant))))
+      return-type)
+      [(OwnershipNormalizedLenders.Gated arenas)
+        (if (and
+          (> (array-length (array-ref arenas 0).lenders) 0)
+          (<= store.lender-sites 0))
+          (NormalizeUnit.Err
+            (OwnershipNormalizeFailure.Structural
+              "ownership normalization: an arena lender without a lender site"))
+          (NormalizeUnit.Ok unit))]
+      [_ (NormalizeUnit.Ok unit)])))
+
+;; Test builds log each lane's lender kinds and, per use, its source line,
+;; the lenders it demands, its coordinates and its place, for the arena lender
+;; tests: a body is `-1 count kind...`, a use `line mask block index root`
+;; (lender `i` is mask bit `i`; the use of place root `root` comes before
+;; instruction `index` of `block`), and an Invalidate `line -2-mask block
+;; index root` with the lenders its place holds.
+;; Entry 0 is the logged length; a full log drops later lanes.
+(cfg
+  test
+  (define normalize-lender-test-log : (__tl_dyn-array i64)
+    (__tl_make-array i64 65536)))
+
+(cfg
+  test
+  (define (normalize-lender-test-push! [value : i64]) : unit
+    (let
+      [at : i64 (+ (array-ref normalize-lender-test-log 0) 1)]
+      (when
+        (< at (array-length normalize-lender-test-log))
+        (set! (array-ref normalize-lender-test-log at) value)
+        (set! (array-ref normalize-lender-test-log 0) at)))))
+
+(cfg
+  test
+  (define (normalize-lender-test-record!
+    [state : (& state NormalizeState)]
+    [arena : (& arena OwnershipNormalizedArena)]) : unit
+    (let
+      [index : i64 0]
+      (normalize-lender-test-push! -1)
+      (normalize-lender-test-push! (array-length arena.lenders))
+      (while (< index (array-length arena.lenders))
+        (normalize-lender-test-push! (array-ref arena.lenders index).kind)
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (array-length arena.use-places))
+        (let
+          [block : i64 (array-ref arena.use-blocks index)]
+          [at : i64 (array-ref arena.use-indices index)]
+          (when
+            (>= (array-ref arena.use-places index) 0)
+            (normalize-lender-test-push!
+              (if (< at (array-ref state.instruction-counts block))
+                (array-ref (array-ref state.body.blocks block).instructions at).source.line
+                (array-ref state.body.blocks block).source.line))
+            (normalize-lender-test-push!
+              (array-ref arena.use-rows (* index arena.words)))
+            (normalize-lender-test-push! block)
+            (normalize-lender-test-push! at)
+            (normalize-lender-test-push! (array-ref arena.use-places index))))
+        (set! index (+ index 1)))
+      (let
+        [block : i64 0]
+        (while (< block state.block-count)
+          (set! index 0)
+          (while (< index (array-ref state.instruction-counts block))
+            (match (&
+              (array-ref (array-ref state.body.blocks block).instructions index).operation)
+              [(own.OwnershipOperation.Invalidate place)
+                (normalize-lender-test-push!
+                  (array-ref
+                    (array-ref state.body.blocks block).instructions
+                    index).source.line)
+                (normalize-lender-test-push!
+                  (-
+                    -2
+                    (array-ref
+                      arena.rows
+                      (* (normalize-place-root state place.index) arena.words))))
+                (normalize-lender-test-push! block)
+                (normalize-lender-test-push! index)
+                (normalize-lender-test-push!
+                  (normalize-place-root state place.index))]
+              [_ unit])
+            (set! index (+ index 1)))
+          (set! block (+ block 1)))))))
+
+;; The log so far, which is then emptied.
+(cfg
+  test
+  (define (normalize-lender-test-take!) : (__tl_dyn-array i64)
+    (let
+      [count : i64 (array-ref normalize-lender-test-log 0)]
+      [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [index : i64 0]
+      (while (< index count)
+        (set!
+          (array-ref out index)
+          (array-ref normalize-lender-test-log (+ index 1)))
+        (set! index (+ index 1)))
+      (set! (array-ref normalize-lender-test-log 0) 0)
+      out)))
+
+;; A compiler built with `--cfg arena-lender-dump` prints each lender lane
+;; with a lender to stderr (lenders by kind and typed site, per-place rows
+;; and per-use demand): a test aid that compares lanes across builds.
+(cfg
+  arena-lender-dump
+  (define (normalize-lender-dump
+    [body : (& body own.OwnershipBody)]
+    [arena : (& arena OwnershipNormalizedArena)]) : unit
+    (cfg
+      arena-lender-dump
+      (when
+        (> (array-length arena.lenders) 0)
+        (io.print-error "lenders ")
+        (io.print-error (string.int->string (cast body.id.owner : i64)))
+        (io.print-error " ")
+        (io.print-error (string.int->string (cast body.id.generation : i64)))
+        (io.print-error " ")
+        (io.print-error (string.int->string (array-length body.places)))
+        (io.print-error " ")
+        (io.print-error (string.copy (& (array-ref body.blocks 0).source.path)))
+        (io.print-error ":")
+        (io.print-error
+          (string.int->string (array-ref body.blocks 0).source.line))
+        (io.print-error "\n")
+        (let
+          [index : i64 0]
+          (while (< index (array-length arena.lenders))
+            (io.print-error "L")
+            (normalize-lender-dump-one arena index)
+            (io.print-error " ")
+            (io.print-error
+              (string.int->string (array-ref arena.lenders index).region))
+            (io.print-error "\n")
+            (set! index (+ index 1)))
+          (set! index 0)
+          (while (< (* index arena.words) (array-length arena.rows))
+            (io.print-error "R ")
+            (io.print-error (string.int->string index))
+            (normalize-lender-dump-row
+              arena
+              (& arena.rows)
+              (* index arena.words))
+            (set! index (+ index 1)))
+          (set! index 0)
+          (while (< index (array-length arena.use-places))
+            (when
+              (>= (array-ref arena.use-places index) 0)
+              (io.print-error "U ")
+              (io.print-error
+                (string.int->string (array-ref arena.use-blocks index)))
+              (io.print-error " ")
+              (io.print-error
+                (string.int->string (array-ref arena.use-indices index)))
+              (io.print-error " ")
+              (io.print-error
+                (string.int->string (array-ref arena.use-places index)))
+              (normalize-lender-dump-row
+                arena
+                (& arena.use-rows)
+                (* index arena.words)))
+            (set! index (+ index 1))))))
+    unit))
+
+(cfg
+  arena-lender-dump
+  (define (normalize-lender-dump-one
+    [arena : (& arena OwnershipNormalizedArena)]
+    [loan : i64]) : unit
+    (cfg
+      arena-lender-dump
+      (begin
+        (io.print-error " ")
+        (io.print-error
+          (string.int->string (array-ref arena.lenders loan).kind))
+        (io.print-error ":")
+        (io.print-error
+          (string.int->string (array-ref arena.lenders loan).site.index))))
+    unit))
+
+(cfg
+  arena-lender-dump
+  (define (normalize-lender-dump-row
+    [arena : (& arena OwnershipNormalizedArena)]
+    [rows : (& rows (__tl_dyn-array i64))]
+    [row : i64]) : unit
+    (cfg
+      arena-lender-dump
+      (let
+        [loan : i64 0]
+        (while (< loan (array-length arena.lenders))
+          (when
+            (!=
+              (bit-and
+                (array-ref rows (+ row (/ loan 64)))
+                (shl 1 (bit-and loan 63)))
+              0)
+            (normalize-lender-dump-one arena loan))
+          (set! loan (+ loan 1)))
+        (io.print-error "\n")))
+    unit))
+
 ;; A compiler built with `--cfg ownership-mir-dump` prints every normalized
 ;; body's ownership graph to stderr before the core checks it (a debugging
 ;; aid; other builds print nothing).
@@ -13454,97 +14785,136 @@
       (try (normalize-note-exit-referent-uses! (&mut state)))
       (normalize-trim! (&mut state))
       (let
-        [shapes : NormalizeShapes
-          (match (normalize-compute-shapes!
-            (& state)
-            store
-            lease
-            return-type.handle.index)
-            [(NormalizeShapesResult.Ok shapes) shapes]
-            [(NormalizeShapesResult.Err failure)
-              (return (OwnershipNormalizeResult.Err failure))])]
-        (try (normalize-solve-origins! (&mut state) (& shapes))))
-      (normalize-trim-instructions! (&mut state))
-      (normalize-mir-dump (& state.body))
-      (match (own.ownership-check (& state.body) state.limits.core)
-        [(own.OwnershipResult.Ok)
-          (let
-            [_charged : unit
-              (try
-                (normalize-charge!
-                  (&mut state)
-                  0
+        [lenders : OwnershipNormalizedLenders
+          (match (replace!
+            state.variances.lenders
+            OwnershipNormalizeLenderInput.Clear)
+            [(OwnershipNormalizeLenderInput.Clear)
+              (cfg
+                test
+                (try
+                  (normalize-lender-gate-check!
+                    (&mut state)
+                    store
+                    lease
+                    return-type.handle.index)))
+              OwnershipNormalizedLenders.Clear]
+            [(OwnershipNormalizeLenderInput.Gated inputs)
+              (normalize-lenders!
+                (&mut state)
+                store
+                lease
+                inputs
+                return-type.handle.index)])]
+        (cfg
+          arena-lender-dump
+          (match (& lenders)
+            [(OwnershipNormalizedLenders.Gated arenas)
+              (normalize-lender-dump (& state.body) (& (array-ref arenas 0)))]
+            [_ unit]))
+        (cfg
+          test
+          (match (& lenders)
+            [(OwnershipNormalizedLenders.Gated arenas)
+              (normalize-lender-test-record! (& state) (& (array-ref arenas 0)))]
+            [_ unit]))
+        (let
+          [shapes : NormalizeShapes
+            (match (normalize-compute-shapes!
+              (& state)
+              store
+              lease
+              return-type.handle.index
+              false)
+              [(NormalizeShapesResult.Ok shapes) shapes]
+              [(NormalizeShapesResult.Err failure)
+                (return (OwnershipNormalizeResult.Err failure))])]
+          (try (normalize-solve-origins! (&mut state) (& shapes))))
+        (normalize-trim-instructions! (&mut state))
+        (normalize-mir-dump (& state.body))
+        (match (own.ownership-check (& state.body) state.limits.core)
+          [(own.OwnershipResult.Ok)
+            (let
+              [_charged : unit
+                (try
+                  (normalize-charge!
+                    (&mut state)
+                    0
+                    (+
+                      (normalize-deferred-work (& state))
+                      (* state.binder-count (array-length state.body.loans)))
+                    0))]
+              [deferred : OwnershipNormalizeDeferred
+                (match (normalize-deferred-effects (& state) state.limits.core)
+                  [(NormalizeDeferredEffectsResult.Ok value) value]
+                  [(NormalizeDeferredEffectsResult.Err failure)
+                    (return (OwnershipNormalizeResult.Err failure))])]
+              [borrowed-globals : (__tl_dyn-array i64)
+                (normalize-borrowed-globals (& state))]
+              [mutable-views : (__tl_dyn-array i64)
+                (normalize-mutable-views (& state))]
+              [storage-ends : (__tl_dyn-array i64)
+                (__tl_make-array i64 state.retired-blocks.len)]
+              [ended : i64 0]
+              (while (< ended state.retired-blocks.len)
+                (set!
+                  (array-ref storage-ends ended)
                   (+
-                    (normalize-deferred-work (& state))
-                    (* state.binder-count (array-length state.body.loans)))
-                  0))]
-            [deferred : OwnershipNormalizeDeferred
-              (match (normalize-deferred-effects (& state) state.limits.core)
-                [(NormalizeDeferredEffectsResult.Ok value) value]
-                [(NormalizeDeferredEffectsResult.Err failure)
-                  (return (OwnershipNormalizeResult.Err failure))])]
-            [borrowed-globals : (__tl_dyn-array i64)
-              (normalize-borrowed-globals (& state))]
-            [mutable-views : (__tl_dyn-array i64)
-              (normalize-mutable-views (& state))]
-            [storage-ends : (__tl_dyn-array i64)
-              (__tl_make-array i64 state.retired-blocks.len)]
-            [ended : i64 0]
-            (while (< ended state.retired-blocks.len)
-              (set!
-                (array-ref storage-ends ended)
-                (+
-                  (* (array-ref state.retired-blocks.items ended) 4294967296)
-                  (array-ref state.retired-indices.items ended)))
-              (set! ended (+ ended 1)))
-            (OwnershipNormalizeResult.Ok
-              (OwnershipNormalizedBody
-                state.body
-                state.nodes
-                state.binders
-                root
-                result-type
-                state.records
-                state.work
-                state.bytes
-                deferred
-                borrowed-globals
-                mutable-views
-                storage-ends)))]
-        ;; The core's own bounds and unsupported shapes are this route's
-        ;; limits, not the program's: such a body is unsupported here.
-        [(own.OwnershipResult.Err failure)
-          (OwnershipNormalizeResult.Err
-            (match (normalize-core-limit (& failure))
-              [(NormalizeCoreLimit.Resource) (return (normalize-body-resource))]
-              [(NormalizeCoreLimit.Unsupported)
-                (return
-                  (normalize-body-unsupported
-                    "ownership normalization: core unsupported shape"))]
-              [(NormalizeCoreLimit.No)
-                (match (normalize-escape-diagnostic (& state) (& failure))
-                  [(NormalizeEscapeResult.Some diagnostic)
-                    (return
-                      (OwnershipNormalizeResult.Err
-                        (OwnershipNormalizeFailure.Escaped diagnostic)))]
-                  [(NormalizeEscapeResult.No) unit])
-                (match (normalize-obligation-diagnostic (& state) (& failure))
-                  [(NormalizeObligationDiagnosticResult.Some diagnostic)
-                    (return
-                      (OwnershipNormalizeResult.Err
-                        (OwnershipNormalizeFailure.Obligation diagnostic)))]
-                  [(NormalizeObligationDiagnosticResult.No) unit])
-                (match (normalize-move-diagnostic (& state) (& failure))
-                  [(NormalizeMoveDiagnosticResult.Some diagnostic)
-                    (OwnershipNormalizeFailure.Moved failure diagnostic)]
-                  [(NormalizeMoveDiagnosticResult.No)
-                    (match (normalize-borrow-diagnostic (& state) (& failure))
-                      [(NormalizeBorrowDiagnosticResult.Some diagnostic source)
-                        (let
-                          [located : own.OwnershipFailure failure]
-                          (set! located.source source)
-                          (OwnershipNormalizeFailure.Borrowed
-                            located
-                            diagnostic))]
-                      [(NormalizeBorrowDiagnosticResult.No)
-                        (OwnershipNormalizeFailure.Core failure)])])]))]))))
+                    (* (array-ref state.retired-blocks.items ended) 4294967296)
+                    (array-ref state.retired-indices.items ended)))
+                (set! ended (+ ended 1)))
+              (OwnershipNormalizeResult.Ok
+                (OwnershipNormalizedBody
+                  state.body
+                  state.nodes
+                  state.binders
+                  root
+                  result-type
+                  state.records
+                  state.work
+                  state.bytes
+                  deferred
+                  borrowed-globals
+                  mutable-views
+                  storage-ends
+                  lenders)))]
+          ;; The core's own bounds and unsupported shapes are this route's
+          ;; limits, not the program's: such a body is unsupported here.
+          [(own.OwnershipResult.Err failure)
+            (OwnershipNormalizeResult.Err
+              (match (normalize-core-limit (& failure))
+                [(NormalizeCoreLimit.Resource)
+                  (return (normalize-body-resource))]
+                [(NormalizeCoreLimit.Unsupported)
+                  (return
+                    (normalize-body-unsupported
+                      "ownership normalization: core unsupported shape"))]
+                [(NormalizeCoreLimit.No)
+                  (match (normalize-escape-diagnostic (& state) (& failure))
+                    [(NormalizeEscapeResult.Some diagnostic)
+                      (return
+                        (OwnershipNormalizeResult.Err
+                          (OwnershipNormalizeFailure.Escaped diagnostic)))]
+                    [(NormalizeEscapeResult.No) unit])
+                  (match (normalize-obligation-diagnostic (& state) (& failure))
+                    [(NormalizeObligationDiagnosticResult.Some diagnostic)
+                      (return
+                        (OwnershipNormalizeResult.Err
+                          (OwnershipNormalizeFailure.Obligation diagnostic)))]
+                    [(NormalizeObligationDiagnosticResult.No) unit])
+                  (match (normalize-move-diagnostic (& state) (& failure))
+                    [(NormalizeMoveDiagnosticResult.Some diagnostic)
+                      (OwnershipNormalizeFailure.Moved failure diagnostic)]
+                    [(NormalizeMoveDiagnosticResult.No)
+                      (match (normalize-borrow-diagnostic (& state) (& failure))
+                        [(NormalizeBorrowDiagnosticResult.Some
+                            diagnostic
+                            source)
+                          (let
+                            [located : own.OwnershipFailure failure]
+                            (set! located.source source)
+                            (OwnershipNormalizeFailure.Borrowed
+                              located
+                              diagnostic))]
+                        [(NormalizeBorrowDiagnosticResult.No)
+                          (OwnershipNormalizeFailure.Core failure)])])]))])))))

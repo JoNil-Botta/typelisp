@@ -5,7 +5,7 @@ offline Python zlib 1.3.2 oracle also accepts each valid source and rejects each
 negative mutation; it is not a test or build dependency.
 
 - `050000240000`: BFINAL1/BTYPE2, HLIT257/HDIST1/HCLEN4; the four code-length
-  lengths in order 16/17/18/0 are 0/0/1/0. A singleton code-length alphabet is
+  lengths in order 16/17/18/0 are 0/0/0/1, making symbol 0 the singleton. The alphabet is
   incomplete, so `MalformedTree` occurs after 29 bits, at input 4/output 0. The
   one-bit singleton exception applies only to literal/distance alphabets.
 - `731c0500`: fixed literal A, length258/distance1, EOB. The match has consumed

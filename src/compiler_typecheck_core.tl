@@ -41406,6 +41406,7 @@
           unit)))))
 
 (define (tc-lazy-import-stubs-reset-for-state! [state : TcMacroState]) : unit
+  (macro-alias-index-invalidate! state)
   (let
     [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
     [_storage : unit (tc-lazy-import-stub-storage-ensure-for-state! lazy-state)]
@@ -41498,6 +41499,7 @@
       (tc-lazy-import-state-ptr lazy-state)]
     (unsafe
       (tc-top-env-resolution-inputs-changed!)
+      (macro-alias-index-invalidate! macro-state)
       (if (< (deref data).record-count tc-lazy-import-stub-capacity)
         (let
           [index : i64 (deref data).record-count]
@@ -96144,10 +96146,12 @@
           decls
           paths
           storage))]
+    (macro-alias-index-invalidate! macro-state)
     (tc-job-state-set-macro-program-view-address! state address)))
 
 (define (macro-segmented-program-end! [state : TcJobState]) : unit
-  (tc-job-state-set-macro-program-view-address! state 0))
+  (tc-job-state-set-macro-program-view-address! state 0)
+  (macro-alias-index-invalidate! (tc-job-state-macro-state state)))
 
 (define (macro-segmented-program-active? [state : TcJobState]) : bool
   (> (tc-job-state-macro-program-view-address state) 0))
@@ -96416,6 +96420,18 @@
       (set! data.cursor 0)
       (set! data.queue-len (+ (- data.queue-len 1) middle-count))
       (+= data.generation 1)
+      ;; The old table is not queryable until the splice commit proves that
+      ;; its relation is unchanged. Keep its payload and proof stamps intact.
+      (when
+        (>
+          (tc-macro-state-slot-address
+            (tc-job-state-macro-state state)
+            tc-macro-state-slot-import-index)
+          0)
+        (tc-macro-import-index-control-set!
+          (tc-job-state-macro-state state)
+          4
+          0))
       (macro-segmented-program-view-data-set! address data))))
 
 (define (macro-segmented-program-splice-current!
@@ -105908,12 +105924,13 @@
   (flat-values (__tl_dyn-array MacroFlatImportTargetList))
   ;; Scalar slots, kept in shared storage so nested index builders can update
   ;; them without a process-global selector or copying the state carrier.
-  ;; 0..10 alias, 11..14 unqualified, 15..22 flat-import targets.
+  ;; 0..10 alias, 11..14 unqualified, 15..22 flat-import targets;
+  ;; 23..26 alias segmented view, splice generation, resolution and stub count.
   (control (__tl_dyn-array i64)))
 
 (define (tc-macro-import-index-state-new) : TcMacroImportIndexStateData
   (let
-    [control : (__tl_dyn-array i64) (__tl_make-array i64 23)]
+    [control : (__tl_dyn-array i64) (__tl_make-array i64 27)]
     (set! (array-ref control 1) -1)
     (set! (array-ref control 2) -1)
     (set! (array-ref control 7) -1)
@@ -106068,9 +106085,17 @@
 ;; A splice that keeps the context's flat program keeps its module decl index:
 ;; the index covers exactly that list, while the import-derived caches below
 ;; also read the segmented view the splice changed.
+(define (macro-alias-index-invalidate! [state : TcMacroState]) : unit
+  (when
+    (> (tc-macro-state-slot-address state tc-macro-state-slot-import-index) 0)
+    (tc-macro-import-index-control-set! state 3 0)))
+
 (define (macro-import-derived-cache-reset-for-state! [state : TcMacroState]) : unit
+  (macro-alias-index-invalidate! state)
+  (macro-import-derived-cache-reset-except-alias! state))
+
+(define (macro-import-derived-cache-reset-except-alias! [state : TcMacroState]) : unit
   (tc-program-enum-index-reset!)
-  (tc-macro-import-index-control-set! state 3 0)
   (tc-macro-import-index-control-set! state 14 0)
   (tc-macro-import-index-control-set! state 18 0)
   (macro-surface-call-decl-cache-reset! state)
@@ -106614,7 +106639,8 @@
             (set! (array-ref (deref data).control 3) 1)
             (set! (array-ref (deref data).control 4) 0)
             (set! (array-ref (deref data).control 5) 0)
-            (set! (array-ref (deref data).control 6) 0)))))))
+            (set! (array-ref (deref data).control 6) 0)
+            (set! (array-ref (deref data).control 23) 0)))))))
 
 (define (macro-alias-cache-ensure! [state : TcMacroState]) : unit
   (let
@@ -106830,10 +106856,9 @@
 
 ;; One-pass eager index over the program's aliased imports: record every
 ;; (module, alias) -> target mapping in program order (first import wins,
-;; matching macro-import-alias-target-ids' first-match scan). The cache is
-;; reset at every in-pass splice rebuild, so a per-pair miss that rescanned the
-;; whole declaration list would repeat that scan after every splice. One pass
-;; makes every later query O(1); if the table's
+;; matching macro-import-alias-target-ids' first-match scan). An incompatible
+;; splice rebuilds this index; an event-free function commit can retain it.
+;; One pass makes every later query O(1); if the table's
 ;; half-load insert cap is ever hit, complete stays false and misses fall back
 ;; to the exact scan, so only memoization -- never correctness -- degrades.
 (define (macro-alias-cache-build!
@@ -106853,6 +106878,7 @@
         cbi.compiler-builtin-id-fix-empty))
     (tc-macro-import-index-control-set! state 4 1)
     (tc-macro-import-index-control-set! state 5 0)
+    (tc-macro-import-index-control-set! state 23 0)
     (tc-macro-import-index-control-set! state 7 count)
     (tc-macro-import-index-control-set! state 8 decls.offset)
     (tc-macro-import-index-control-set!
@@ -106865,6 +106891,10 @@
   [refresh-selected? : bool]) : unit
   (let
     [state : TcMacroState (tc-job-state-macro-state job-state)]
+    [stub-count : i64
+      (if refresh-selected?
+        -1
+        (tc-lazy-import-stub-count-for-state state))]
     [count : i64 (macro-segmented-program-decl-count job-state)]
     [data : MacroSegmentedProgramViewData
       (macro-segmented-prefix-events-sync! job-state)]
@@ -106873,7 +106903,12 @@
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [node-address : i64 data.head]
     [start : i64 data.cursor]
-    (unless refresh-selected? (tc-macro-import-index-control-set! state 6 1))
+    (unless
+      refresh-selected?
+      ;; Ensuring the stub owner may have invalidated an earlier source's
+      ;; table. Initialize after that boundary, before publishing any rows.
+      (macro-alias-cache-ensure! state)
+      (tc-macro-import-index-control-set! state 6 1))
     ;; Only event rows carry what the index reads (macro-decl-list-events).
     (for [event (iterator.range 0 data.prefix-event-count)]
       (set!
@@ -106924,7 +106959,55 @@
       (tc-macro-import-index-control-set! state 5 1)
       (tc-macro-import-index-control-set! state 7 count)
       (tc-macro-import-index-control-set! state 8 -1)
-      (tc-macro-import-index-control-set! state 9 0))))
+      (tc-macro-import-index-control-set! state 9 0)
+      (tc-macro-import-index-control-set!
+        state
+        23
+        (tc-job-state-macro-program-view-address job-state))
+      (tc-macro-import-index-control-set! state 24 data.generation)
+      (tc-macro-import-index-control-set!
+        state
+        25
+        tc-top-env-resolution-generation)
+      (tc-macro-import-index-control-set! state 26 stub-count))))
+
+;; The table belongs to this macro state, not to a segment or a declaration
+;; generation. Source identity and the exact view/splice stamp protect both
+;; complete and half-full indexes. Resolution/stub stamps also protect negative
+;; and lazy-derived answers, which are not determined by event rows alone.
+(define (macro-alias-cache-segmented-current?
+  [job-state : TcJobState]
+  [splice-delta : i64]) : bool
+  (let
+    [state : TcMacroState (tc-job-state-macro-state job-state)]
+    [address : i64 (tc-job-state-macro-program-view-address job-state)]
+    (and
+      (> address 0)
+      (= (tc-macro-import-index-control state 3) 1)
+      (=
+        (tc-macro-import-index-control state 4)
+        (if (= splice-delta 0)
+          1
+          0))
+      (= (tc-macro-import-index-control state 5) 1)
+      (=
+        (tc-macro-import-index-control state 1)
+        (tc-macro-state-source-name-table-id state))
+      (=
+        (tc-macro-import-index-control state 2)
+        (tc-macro-state-source-name-reset-generation state))
+      (= (tc-macro-import-index-control state 23) address)
+      (=
+        (+ (tc-macro-import-index-control state 24) splice-delta)
+        (__tl-project-field
+          (macro-segmented-program-view-data address)
+          generation))
+      (=
+        (tc-macro-import-index-control state 25)
+        tc-top-env-resolution-generation)
+      (=
+        (tc-macro-import-index-control state 26)
+        (tc-lazy-import-stub-count-for-state state)))))
 
 ;; Macro expansion appends generated declarations to the active program view.
 ;; Keep the eager index synchronized once per larger view. When the backing
@@ -117644,13 +117727,60 @@
         (tc-top-env-reresolve-caches! ctx marker-env)
         (Ok (tc-env-with-cache-layer-over-explicit marker-env)))]))
 
+;; Only an unaliased Decls placeholder can disappear without changing an alias
+;; event's meaning. Fresh undotted functions add no events; successful live
+;; symbol/registry insertion below proves the additions committed. Root names
+;; keep the conservative shadowing boundary, as do all other declaration forms.
+(define (macro-alias-cache-splice-inert?
+  [ctx : TcContext]
+  [decls : (& decls ast.AstDeclList)]
+  [module-id : i64]) : bool
+  (let
+    [job-state : TcJobState (tc-context-job-state ctx)]
+    [symbols (tc-context-symbols ctx)]
+    (when
+      (or
+        (csym.compiler-symbol-root-module-id? module-id)
+        (not (macro-segmented-program-active? job-state)))
+      (return false))
+    (unless
+      (match (macro-segmented-program-current-decl job-state)
+        [(Import _ (Spec (MacroDecls _ _) _ _ (No) _)) true]
+        [_ false])
+      (return false))
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+      (unless
+        (match (ast.ast-decl-unwrapped
+          (ast.ast-decl-list-ref-borrowed decls index))
+          [(DefFn _ name _ _ _ _)
+            (and
+              (not (ci.intern-dotted? name))
+              (<
+                (csym.compiler-symbols-lookup-value-in-module-id-or
+                  symbols
+                  cbi.compiler-builtin-id-fix-empty
+                  name
+                  -1)
+                0)
+              (<
+                (csym.compiler-symbols-lookup-type-in-module-id-or
+                  symbols
+                  cbi.compiler-builtin-id-fix-empty
+                  name
+                  -1)
+                0))]
+          [_ false])
+        (return false)))
+    true))
+
 (define (macro-expand-rebuild-context-for-splice
   [cur-ctx : TcContext]
   [next-decls : ast.AstDeclList]
   [next-paths : ast.AstDeclPathList]
   [module : String]
   [module-id : i64]
-  [env-plan : MacroSpliceEnvPlan]) : ResultMacroSpliceRebuild
+  [env-plan : MacroSpliceEnvPlan]
+  [alias-inert? : bool]) : ResultMacroSpliceRebuild
   (let
     [state : TcMacroState (tc-context-macro-state cur-ctx)]
     [pools : ast.AstNodePoolContext (tc-context-pools cur-ctx)]
@@ -117671,13 +117801,31 @@
     ;; per-splice reset cannot change its state.
     (tc-resolve-type-name-cache-reset-for-state!
       (tc-job-state-nominal-cache (tc-context-job-state cur-ctx)))
-    ;; Program-position and import-derived alias indexes can contain negative
-    ;; answers and refer to the replaced flat program view. Keep their shared
-    ;; invalidation until they gain an insert API of their own. A reused
-    ;; segmented context keeps its flat program, and with it the module decl
-    ;; index.
+    ;; Retain only the exact segmented alias relation across one committed
+    ;; inert splice. Its completeness and final-module metadata stay intact;
+    ;; only the declaration count and splice stamp change. Every other derived
+    ;; cache keeps its independent invalidation, including negative answers.
     (if reuse-segmented?
-      (macro-import-derived-cache-reset-for-state! state)
+      (if (and
+        alias-inert?
+        (macro-alias-cache-segmented-current? (tc-context-job-state cur-ctx) 1)
+        (=
+          (+
+            (tc-macro-import-index-control state 7)
+            (- (ast.ast-decl-list-len (& next-decls)) 1))
+          (macro-segmented-program-decl-count (tc-context-job-state cur-ctx))))
+        (begin
+          (tc-macro-import-index-control-set! state 4 1)
+          (tc-macro-import-index-control-set!
+            state
+            7
+            (macro-segmented-program-decl-count (tc-context-job-state cur-ctx)))
+          (tc-macro-import-index-control-set!
+            state
+            24
+            (+ (tc-macro-import-index-control state 24) 1))
+          (macro-import-derived-cache-reset-except-alias! state))
+        (macro-import-derived-cache-reset-for-state! state))
       (macro-alias-derived-cache-reset-for-state! state))
     (tc-job-state-reset-derived-caches! (tc-context-job-state cur-ctx))
     ;; Do not reset ctfe-module-macro-export here: the export set is stable
@@ -117994,6 +118142,11 @@
                                   ;; over the spliced body itself (nested placeholders
                                   ;; and generated file imports included).
                                   (let
+                                    [alias-inert? : bool
+                                      (macro-alias-cache-splice-inert?
+                                        cur-ctx
+                                        (& expanded)
+                                        cur-module-id)]
                                     [_update-materialize-seen : unit
                                       (set!
                                         cur-materialize-seen
@@ -118134,7 +118287,8 @@
                                             (ExtendGeneratedModule
                                               cur-top-env
                                               summary
-                                              marker)]))
+                                              marker)])
+                                        alias-inert?)
                                         [(Ok next-ctx next-top-env)
                                           ;; Extend the reused CTFE metadata
                                           ;; with the spliced module's nominal
@@ -118338,7 +118492,8 @@
                                     cur-module-id
                                     (Extend
                                       cur-top-env
-                                      (tc-global-shared-view materialized-decls)))
+                                      (tc-global-shared-view materialized-decls))
+                                    false)
                                     [(Ok next-ctx next-top-env)
                                       (if extend-ctfe-metadata?
                                         (match (compiler-typecheck-ctfe-env-extend-for-splice!

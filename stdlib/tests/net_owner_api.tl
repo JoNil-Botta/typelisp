@@ -197,36 +197,50 @@
   -1)
 (define corrupt-shape : i64
   0)
+(define corrupt-injected : bool
+  false)
+(define corrupt-token : i64
+  -1)
 
 ;; Supply a real independent fake token in a reply shape the operation forbids.
 (define (corrupt-dispatch
   [context : i64]
   [req : net.NetRequest]
   [buffer : byte_buf.ByteBuf]) : net.NetReply
-  (if (= (fake.operation-code req.operation) corrupt-operation)
-    (if (= corrupt-shape 3)
-      (net.NetReply (net.Created req.token) buffer 1)
-      (let
-        [creation : net.NetRequest
-          (net.request
-            (net.Create)
-            (if (= corrupt-shape 2)
-              (net.Stream)
-              req.kind)
-            -1)]
-        (set! creation.value net.listener-backlog)
+  (if (and
+    (not corrupt-injected)
+    (= (fake.operation-code req.operation) corrupt-operation))
+    (begin
+      (set! corrupt-injected true)
+      (if (= corrupt-shape 3)
+        (net.NetReply (net.Created req.token) buffer 1)
         (let
-          [created : net.NetReply (fake.dispatch context creation buffer)]
-          (match created.step
-            [(Created token)
-              (net.NetReply
-                (cond
-                  [(= corrupt-shape 0) (net.Created token)]
-                  [(= corrupt-shape 1) (net.PendingConnect token)]
-                  [else (net.Accepted token (net.empty-address))])
-                created.buffer
-                1)]
-            [_ created]))))
+          [returned : net.NetReply
+            (match req.operation
+              [(Close) (fake.dispatch context req buffer)]
+              [_ (net.NetReply (net.Complete) buffer 0)])]
+          [creation : net.NetRequest
+            (net.request
+              (net.Create)
+              (if (or (= corrupt-shape 1) (= corrupt-shape 2))
+                (net.Stream)
+                req.kind)
+              -1)]
+          (set! creation.value net.listener-backlog)
+          (let
+            [created : net.NetReply
+              (fake.dispatch context creation returned.buffer)]
+            (match created.step
+              [(Created token)
+                (set! corrupt-token token)
+                (net.NetReply
+                  (cond
+                    [(= corrupt-shape 0) (net.Created token)]
+                    [(= corrupt-shape 1) (net.PendingConnect token)]
+                    [else (net.Accepted token (net.empty-address))])
+                  created.buffer
+                  (+ returned.calls 1))]
+              [_ created])))))
     (fake.dispatch context req buffer)))
 
 (define (corrupt-resource-cases) : unit
@@ -240,6 +254,8 @@
             unit
             (let
               [f : c.Fixture (fixture)]
+              (set! corrupt-injected false)
+              (set! corrupt-token -1)
               (set! corrupt-shape shape)
               (set!
                 corrupt-operation
@@ -323,6 +339,18 @@
                       [(Address _) true]
                       [_ false])
                     "original owner survives bad resource reply")))
+              (if (!= shape 3)
+                (test.assert-true
+                  (<
+                    (fake.token-slot
+                      f.adapter.context
+                      corrupt-token
+                      (if (or (>= shape 1) (!= path 2))
+                        (net.Stream)
+                        (net.Listener)))
+                    0)
+                  "independent resource token invalidated")
+                unit)
               (test.assert-i64-eq
                 (fake.calls f.adapter.context (net.Close))
                 (if (= shape 3)
@@ -331,6 +359,78 @@
                 "returned token and original owner each cleaned once")))
           (set! path (+ path 1))))
       (set! shape (+ shape 1)))))
+
+(define (pending-listener-case [path : i64]) : unit
+  (let
+    [f : c.Fixture (fixture)]
+    (set! corrupt-shape 1)
+    (set! corrupt-injected false)
+    (set! corrupt-token -1)
+    (set!
+      corrupt-operation
+      (fake.operation-code
+        (cond
+          [(= path 0) (net.Create)]
+          [(= path 1) (net.WaitRead)]
+          [else (net.Close)])))
+    (set!
+      f.adapter
+      (net.NetAdapter f.adapter.context fake.now-ms corrupt-dispatch))
+    (if (= path 0)
+      (match (net.tcp-listener-bind f.adapter (c.endpoint) (net.default-limits))
+        [(ListenerError failure)
+          (c.assert-kind
+            (net.Err failure)
+            (net.AdapterCorrupt)
+            "listener construction rejects pending stream")]
+        [(ListenerOk listener)
+          (net.cleanup-tcp-listener listener)
+          (test.assert-true false "unexpected listener construction")])
+      (with
+        ([listener (c.open-listener f) net.cleanup-tcp-listener])
+        (if (= path 1)
+          (begin
+            (fake.script! f.adapter.context (net.Accept) 0 -1)
+            (match (net.tcp-listener-accept!
+              (&mut listener)
+              (net.default-limits))
+              [(AcceptError failure)
+                (c.assert-kind
+                  (net.Err failure)
+                  (net.AdapterCorrupt)
+                  "accept wait rejects pending stream")]
+              [(AcceptOk stream _)
+                (net.cleanup-tcp-stream stream)
+                (test.assert-true false "unexpected accepted stream")])
+            (test.assert-true
+              (match (net.tcp-listener-local-address! (&mut listener))
+                [(Address _) true]
+                [_ false])
+              "listener survives malformed pending stream"))
+          (begin
+            (c.assert-kind
+              (net.tcp-listener-close! (&mut listener))
+              (net.AdapterCorrupt)
+              "close rejects pending stream")
+            (c.assert-kind
+              (net.tcp-listener-close! (&mut listener))
+              (net.Closed)
+              "original close is not retried")))))
+    (test.assert-true (>= corrupt-token 0) "independent stream was issued")
+    (test.assert-true
+      (< (fake.token-slot f.adapter.context corrupt-token (net.Stream)) 0)
+      "malformed pending stream token invalidated")
+    (test.assert-i64-eq
+      (fake.calls f.adapter.context (net.Close))
+      (if (= path 0)
+        1
+        2)
+      "original owner and returned stream each closed once")))
+
+(define (pending-listener-cases) : unit
+  (pending-listener-case 0)
+  (pending-listener-case 1)
+  (pending-listener-case 2))
 
 (define (send-truncation-cases) : unit
   (let
@@ -369,6 +469,7 @@
           "connected send has no receive truncation flag")))))
 
 (define (main) : i64
+  (pending-listener-cases)
   (corrupt-resource-cases)
   (send-truncation-cases)
   (null-owners)

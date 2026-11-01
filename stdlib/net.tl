@@ -251,6 +251,7 @@
 ;: independent cleanup obligation. Corrupt accept metadata must still return
 ;: that token so the contract can consume it. Address metadata is decoded in
 ;: scratch; malformed flowinfo/scope is reported with MetadataFailure.
+;: PendingConnect and Accepted always own Stream tokens, even in invalid replies.
 (defenum NetStep
   (Complete)
   (Created i64)
@@ -608,7 +609,7 @@
         unit)]
     [(PendingConnect token)
       (if (!= token protected-token)
-        (abandon adapter kind token)
+        (abandon adapter (Stream) token)
         unit)]
     [(Accepted token _)
       (if (!= token protected-token)
@@ -796,7 +797,7 @@
                     (< token 0)
                     (!= (kind-code kind) 1))
                     (begin
-                      (abandon adapter kind token)
+                      (abandon adapter (Stream) token)
                       (OwnerError (error (AdapterCorrupt))))
                     (let
                       [owner : SocketOwner

@@ -777,8 +777,7 @@
                   input
                   state
                   (take! input state (&mut position) value.end 0 2 false)))))
-          (begin
-            (der.fail! state (der.InvalidValue) field.start)))))
+          (der.fail! state (der.InvalidValue) field.start))))
     (complete! state position value.end)
     (BasicConstraints true ca path)))
 

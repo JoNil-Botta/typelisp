@@ -307,9 +307,9 @@ mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/muta
 # where an edge leaves its scope (a parameter's and a temporary's at the
 # return), and the caller's lifetimes and the result are live at every return,
 # so a loan of that storage stored into caller storage or returned conflicts
-# with its retirement, whatever its spelling. `call_inference_order_ok` stays
-# rejected by order-dependent call inference (Rust accepts it; see its
-# comment), `shadowed_let_result_reject` by typing's `let`-result spelling
+# with its retirement, whatever its spelling. `call_inference_order_ok` is an
+# accepted control for call lifetime inference in either argument order.
+# `shadowed_let_result_reject` stays rejected by typing's `let`-result spelling
 # check (Rust accepts it too), and `pointer_store_same_name_ok` holds no loan.
 caller_lifetime_parameter_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_store_same_name_reject.tl|-|`a` does not live long enough
 caller_lifetime_local_store_same_name_reject|check-fail|tests/safety/caller_lifetime_local_store_same_name_reject.tl|-|`a` does not live long enough

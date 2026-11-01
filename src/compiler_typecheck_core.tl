@@ -53853,27 +53853,31 @@
               lifetime))
           (+= index 1))
         found)]
+    ;; An arena handle names its brand as the owner it is, not as storage it
+    ;; borrows: erasing it to a bare `Arena` moves the owner (#8172).
     [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
-      (let
-        [index : i64 0]
-        [found : bool false]
-        (while (and
-          (not found)
-          (< index (ast.ast-lifetime-list-len (& (deref lifetimes)))))
-          (when
-            (=
-              lifetime
-              (ast.ast-lifetime-list-get
-                (& (deref lifetimes))
-                index
-                (ast.ast-lifetime-fallback)))
-            (set!
-              found
-              (match (tc-nominal-lifetime-coercion-variance-at ctx name index)
-                [(TcVarianceBivariant) false]
-                [_ true])))
-          (+= index 1))
-        found)]
+      (and
+        (not (tc-arena-nominal-name-id? name))
+        (let
+          [index : i64 0]
+          [found : bool false]
+          (while (and
+            (not found)
+            (< index (ast.ast-lifetime-list-len (& (deref lifetimes)))))
+            (when
+              (=
+                lifetime
+                (ast.ast-lifetime-list-get
+                  (& (deref lifetimes))
+                  index
+                  (ast.ast-lifetime-fallback)))
+              (set!
+                found
+                (match (tc-nominal-lifetime-coercion-variance-at ctx name index)
+                  [(TcVarianceBivariant) false]
+                  [_ true])))
+            (+= index 1))
+          found))]
     [(VarArgs _ lifetimes)
       (tc-lifetime-list-contains-at? (& (deref lifetimes)) lifetime 0)]
     [_ false]))

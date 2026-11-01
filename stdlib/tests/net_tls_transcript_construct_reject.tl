@@ -3,7 +3,7 @@
 
 (define (main) : i64
   (let
-    [forged : transcript.TlsTranscriptHash
+    [_forged : transcript.TlsTranscriptHash
       (transcript.TlsTranscriptHash
         (transcript.ThroughServerHello)
         (sha.Sha256Digest (make-array u8 32)))]

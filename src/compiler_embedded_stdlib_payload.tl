@@ -39,6 +39,8 @@
 
 (include-str-lzss payload-crypto-aes-core "../stdlib/crypto_aes_core.tl")
 
+(include-str-lzss payload-crypto-hmac-sha256 "../stdlib/crypto_hmac_sha256.tl")
+
 (include-str-lzss payload-crypto-secret "../stdlib/crypto_secret.tl")
 
 (include-str-lzss payload-crypto-sha1-git "../stdlib/crypto_sha1_git.tl")
@@ -224,6 +226,8 @@
       (compiler-embedded-stdlib-payload-copy payload-core-macros)]
     [(string.eq suffix "crypto_aes_core.tl")
       (compiler-embedded-stdlib-payload-copy payload-crypto-aes-core)]
+    [(string.eq suffix "crypto_hmac_sha256.tl")
+      (compiler-embedded-stdlib-payload-copy payload-crypto-hmac-sha256)]
     [(string.eq suffix "crypto_secret.tl")
       (compiler-embedded-stdlib-payload-copy payload-crypto-secret)]
     [(string.eq suffix "crypto_sha1_git.tl")

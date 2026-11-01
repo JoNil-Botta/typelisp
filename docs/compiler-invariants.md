@@ -8,6 +8,16 @@ This page describes the compiler pipeline and command-line surface. Run
 
 ## Architecture
 
+Source string literal admission validates the completed unescaped bytes with
+`stdlib.string_utf8`, before interning a string token. Compiler and strict
+formatter share that boundary; formatter/LSP recovery retains raw spelling
+for incomplete or malformed editing buffers. Diagnostic offsets translate
+through escapes back to the original byte column. Runtime `include-str`
+uses the same validator before constructing its generated literal and reports
+the included file's failure byte. Binary, compressed and compiler-owned
+comptime includes retain their raw-byte contracts. This does not impose a
+UTF-8 invariant on runtime-created `String`, borrowed `str`, or `ByteBuf`.
+
 Ownership (moves, borrows, lifetimes of loans, cleanup obligations) has one
 authority, the [ownership IR](ownership-ir.md) (#8449): the type checker
 records each body's typed occurrences, the normalizer builds the body's

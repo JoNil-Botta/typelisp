@@ -1,5 +1,19 @@
 # Selfhost compiler testing
 
+`utf8_literals.tl` checks completed literal bytes, every malformed UTF-8
+class, escape-to-source diagnostic offsets, and strict formatter agreement.
+`compiler_load_includes.tl` retains the four include-kind matrix: runtime text
+rejects malformed bytes while binary/comptime/compressed forms preserve them;
+valid Unicode text retains its bytes. `string_utf8_api.tl` shares the decoder,
+forward/reverse, count, boundary, scalar-slice and encoding corpus on both hosts,
+including exact allocation assertions for traversal/range/encoding. Borrowed
+slice views retain the ordinary view-header cost. `utf8_process_api.tl` checks
+non-ASCII paths, cwd, quoted argv and environment names/values; on Windows,
+both parent and copied child require `GetACP() == 65001` from their manifests.
+The exact Unicode command-line golden retains the literal backslash/quote
+regression; captured child stderr is checked before status so failures retain
+the child assertion.
+
 `tc-arena-phase-token-cache-boundaries` sweeps every local-binding count from
 zero through the partial-cache layer collapse, placing automatic compaction at
 each boundary between a phase token and its owner/region markers. Its explicit

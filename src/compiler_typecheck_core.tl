@@ -117521,7 +117521,9 @@
         (let
           [module-ctx : TcContext
             (tc-context-with-module-id ctx module module-id)]
-          [seen (& (array-ref (deref data).macro-cache-seen index))]
+          [seen-maps : (__tl_dyn-array tc_i64_i64_map.Map)
+            (deref data).macro-cache-seen]
+          [seen (& (array-ref seen-maps index))]
           [view : TcTypeEnv (array-ref (deref data).macro-cache-values index)]
           [owned? : bool
             (= (array-ref (deref data).macro-cache-carry-state index) 2)]
@@ -117576,7 +117578,9 @@
               ;; Eligibility only borrows the map. Move its descriptor out
               ;; at publication, before any mutation, and retire the old row.
               [continued : tc_i64_i64_map.Map
-                (array-ref (deref data).macro-cache-seen index)]
+                (replace!
+                  (array-ref seen-maps index)
+                  (tc-macro-module-env-empty-seen base))]
               (set! (deref data).macro-cache-store top-env.store)
               (set! (deref data).macro-cache-head top-env.head)
               (set! (deref data).macro-cache-len 0)
@@ -117610,6 +117614,7 @@
         unit)
       (let
         [carry-module : String (clone module)]
+        [carry-splice : ast.AstDeclList (clone splice)]
         [top-env : TcTypeEnv
           (try
             (tc-extend-top-env-for-splice ctx base-env splice module module-id))]
@@ -117617,7 +117622,7 @@
           ctx
           base-env
           top-env
-          splice
+          carry-splice
           carry-module
           module-id)
         (Ok top-env))]

@@ -2031,6 +2031,16 @@ summaries. It also fails if target-specific tokens appear in
 separate target-cfg probe confirms that `compile --emit-ir --target` is actually
 honoring the requested target.
 
+The socket entries use `stdlib_net_parity.tl` and
+`stdlib_net_owner_parity.tl`: injected TCP/UDP transfers, bounded readiness,
+duplication, accept, addresses, options, pending errors and shutdown return a
+checked exit score without importing host diagnostic implementations. The full
+`stdlib_net.tl` and `stdlib_net_owner.tl` conformance drivers retain their
+assertion diagnostics and run in the native manifest at opt0/1/2 on both hosts,
+alongside both parity workloads. Explicit `stdlib.io`, `stdlib.test` or
+`stdlib.runtime` imports contain target-cfg host code and do not belong in this
+target-independent IR comparison.
+
 The same gate runs the target-dispatch boundary guard,
 [`../scripts/check-codegen-target-dispatch.sh`](../scripts/check-codegen-target-dispatch.sh),
 first with `--self-test` and then against the tree. The design it enforces:

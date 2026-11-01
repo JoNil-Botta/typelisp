@@ -102,6 +102,9 @@ so this section only maps the modules by area. Import a module with
   (bounded cursor with a sticky error and a work limit), `leb128` (LEB128
   variable-length integers), `base64` (strict bounded RFC 4648 standard-alphabet
   bytes with length planning and caller-owned decode/encode forms).
+  `asn1_der` validates bounded canonical certificate DER and preserves exact
+  source ranges; `pem` extracts bounded RFC 7468 `CERTIFICATE` bundles through
+  the shared base64 decoder.
 - Compression: `compress/deflate` implements bounded incremental RFC 1951
   decoding over borrowed input and caller-owned output chunks, plus a bounded
   one-shot wrapper. See [the API and bounds](../docs/deflate.md).
@@ -125,7 +128,9 @@ so this section only maps the modules by area. Import a module with
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,
   `crypto_sha1_git`,
   `crypto_sha256`, `crypto_sha512`, `crypto_rsa_core`, `crypto_rsa_verify`,
-  `crypto_p256`, `crypto_secret`.
+  `crypto_p256`, `crypto_secret`, `x509_time`, `x509` (owned certificate models,
+  exact signed bytes and parsed extensions; no trust/signature decisions).
+  See [certificate parsing](../docs/x509.md) for limits and the supported profile.
 
 `net/dns_name` is the shared checked ASCII DNS-name value for resolver keys
 and policy. `parse`/`parse-bytes` lowercase LDH labels, retain an optional final
@@ -356,6 +361,8 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `push-*!`, `set-*!`, and `read-*` helpers in `byte_le.tl` | `push-u16!`, `push-u32!`, and `push-u64!` append through `byte_buf_core.byte-buf-builder-push` and allocate only when the builder grows in the active arena. `set-*!` overwrites existing private dynamic-buffer bytes in place and `read-*` decodes them; neither allocates, and both use ordinary bounds-checked indexing. |
 | `ByteReader` helpers in `byte_reader.tl` | `new` shares the caller's private dynamic-buffer storage without copying it. Reads, `consume!`, `skip!`, and `fail!` only update the reader's scalar cursor, work counter, and first-failure record; the reader's own failure messages are static strings, so nothing allocates. |
 | `leb128.tl` | `decode-unsigned`, `decode-signed`, `unsigned-size`, and `signed-size` read the caller's private dynamic-buffer bytes or a scalar and allocate nothing. `push-unsigned!` and `push-signed!` append the minimal encoding through `byte_buf_core.byte-buf-builder-push` and allocate only when the builder grows in the active arena. |
+| `asn1_der.tl`, `x509_time.tl` | DER validation and Gregorian conversion allocate no payload storage, using fixed stack arrays and scalar limits. Borrowed ranges keep the original owner alive. |
+| `pem.tl`, `x509.tl` | Validated budgets bound active-arena payload/decoded buffers and metadata vectors before growth. Successful certificates own one exact DER copy; range views borrow it without copying. Errors expose no partial result, though internal arena allocations live until their arena is reset. |
 | `base64.tl` | Every planner and codec takes a nonnegative `max-output-bytes` as its last argument and rejects excess output before allocation or mutation. `encoded-length-count`, `encoded-length`, and `decoded-length` use checked scalar arithmetic without allocating; decoding rejects oversized input lengths before scanning, then validates canonical syntax and the exact output limit. `encode` and `decode` allocate one exact active-arena `ByteBuf`. `encode-into` and `decode-into` allocate nothing: after validating limits, syntax, destination capacity, and non-overlap, they write from offset zero into caller-owned backing storage. Every failure preserves its length and physical bytes. |
 | `compress/deflate.tl` | `decoder-new` validates limits and initial work before initializing fixed inline tables and allocating at most 32 KiB of history backing bytes in the active arena. `step!` allocates nothing and retains no chunk borrow; it reuses that workspace across blocks and suspensions. `decode` uses the same engine and grows its output only within the caller's bound. Retired geometric backing arrays and the decoder's history backing remain in the owning arena until it is dropped; the retired arrays' combined capacity is less than three times `max-output`. |
 | `compress/adler32.tl` and `compress/zlib.tl` | Adler-32 is scalar arithmetic over borrowed bytes and allocates nothing. `zlib.decoder-new` allocates only the raw decoder's bounded history; `step!` and `set-dictionary!` allocate nothing, retain no chunk or dictionary borrow, and copy at most `window-bytes` dictionary bytes into that history. `decode` and `decode-with-dictionary` grow output exactly as `deflate.decode` does, within the caller's bound. |
@@ -497,7 +504,7 @@ contracts, and intentional panic/exit-status checks.
 12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
 13. Link user-facing docs or tests to the new module when appropriate.
 
-Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 71 explicit
+Run `scripts/verify-embedded-stdlib-payload.sh` to validate all explicit
 build inputs, prove deterministic one-byte mutation propagation, and decode
 every embedded module against its source with the inline tests blanked and
 prose comments cut. It also re-lexes both texts and proves the blanking

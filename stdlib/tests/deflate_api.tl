@@ -1343,6 +1343,380 @@
           (test.assert-i64-eq state.preset 0 "refused priming keeps no history")
           (test.assert-i64-eq state.phase 11 "refused priming keeps the phase")))]))
 
+;; RFC fixed headers (3 bits) and EOB (7 bits), with no inter-block padding.
+(define (fixed-empty-chain [count : i64]) : byte_buf.ByteBuf
+  (let
+    [slots : (__tl_dyn-array u8) (__tl_make-array u8 (/ (+ (* count 10) 7) 8))]
+    (for [index (iterator.range 0 count)]
+      (for [bit (iterator.range 0 2)]
+        (when
+          (or (= bit 1) (= index (- count 1)))
+          (let
+            [position : i64 (+ (* index 10) bit)]
+            [byte : i64 (/ position 8)]
+            (set!
+              (array-ref slots byte)
+              (cast
+                (bit-or
+                  (cast (array-ref slots byte) : i64)
+                  (shl 1 (% position 8)))
+                : u8))))))
+    (byte_buf.from-array slots)))
+
+(define (assert-fixed-reuse) : unit
+  (let
+    [empty : byte_buf.ByteBuf (hex-bytes "")]
+    (for [count (iterator.range 1 34)]
+      (with-arena
+        fixed-chain
+        (let
+          [input : byte_buf.ByteBuf (fixed-empty-chain count)]
+          [expected : i64 (+ 34543 (+ (* count 10) input.len))]
+          (for [split (iterator.range 0 (+ input.len 1))]
+            (test.assert-i64-eq
+              (stream-case
+                (byte_buf.as-bytes (& input))
+                (byte_buf.as-bytes (& empty))
+                split
+                1
+                true
+                input.len)
+              expected
+              "fixed preparation charged once across splits")))))
+    ;; Two blocks formerly needed 35620 units. The new exact budget is 34566.
+    (let
+      [input : byte_buf.ByteBuf (fixed-empty-chain 2)]
+      (for [budget (iterator.range 0 4)]
+        (let
+          [limits : deflate.DeflateLimits (deflate.default-limits)]
+          (set!
+            limits.max-work
+            (cond
+              [(= budget 0) 34565]
+              [(= budget 1) 34566]
+              [(= budget 2) 35619]
+              [else 35620]))
+          (for [split (iterator.range 0 (+ input.len 1))]
+            (if (= budget 0)
+              (test.assert-i64-eq
+                (error-stream (byte_buf.as-bytes (& input)) (& limits) split 12)
+                34565
+                "one below new fixed budget fails exactly")
+              (let
+                [actual : RunObservation
+                  (observe-run (byte_buf.as-bytes (& input)) (& limits) split 1)]
+                (test.assert-i64-eq
+                  actual.kind
+                  -1
+                  "fixed reuse meets exact budget")
+                (test.assert-i64-eq
+                  actual.input
+                  3
+                  "new and old fixed budgets complete")
+                (test.assert-i64-eq actual.work 34566 "fixed exact budget work")))))))))
+
+;; Empty fixed, the 92 significant bits of fixture 6, then final empty fixed.
+;; Only the last header has BFINAL; block boundaries have no padding.
+(define (mixed-fixed-dynamic) : byte_buf.ByteBuf
+  (let
+    [dynamic : byte_buf.ByteBuf (fixture-input 6)]
+    [slots : (__tl_dyn-array u8) (__tl_make-array u8 14)]
+    (for [bit (iterator.range 0 112)]
+      (let
+        [value : i64
+          (cond
+            [(and (>= bit 10) (< bit 102))
+              (if (= bit 10)
+                0
+                (bit-and
+                  (shr
+                    (cast (byte_buf.ref dynamic (/ (- bit 10) 8)) : i64)
+                    (% (- bit 10) 8))
+                  1))]
+            [(or (= bit 1) (= bit 102) (= bit 103)) 1]
+            [else 0])]
+        (set!
+          (array-ref slots (/ bit 8))
+          (cast
+            (bit-or
+              (cast (array-ref slots (/ bit 8)) : i64)
+              (shl value (% bit 8)))
+            : u8))))
+    (byte_buf.from-array slots)))
+
+(define (assert-mixed-tables) : unit
+  (let
+    [input : byte_buf.ByteBuf (mixed-fixed-dynamic)]
+    [empty : byte_buf.ByteBuf (hex-bytes "")]
+    (for [split (iterator.range 0 15)]
+      (test.assert-i64-eq
+        (stream-case
+          (byte_buf.as-bytes (& input))
+          (byte_buf.as-bytes (& empty))
+          split
+          1
+          true
+          14)
+        35641
+        "fixed constants survive dynamic table mutation"))))
+
+(defstruct RunObservation
+  (kind i64)
+  (input i64)
+  (output i64)
+  (work i64)
+  (bytes byte_buf.ByteBuf))
+
+(define (observe-run
+  [input : (& input bytes)]
+  [limits : (& limits deflate.DeflateLimits)]
+  [split : i64]
+  [capacity : i64]) : RunObservation
+  (match (deflate.decoder-new limits)
+    [(deflate.DeflateNewErr error)
+      (RunObservation
+        (kind-code (& error.kind))
+        error.input
+        error.output
+        0
+        (byte_buf.new))]
+    [(deflate.DeflateNewOk state)
+      (let
+        [out : byte_buf.ByteBuf (repeat-byte capacity (cast 204 : u8))]
+        [collected : byte_buf.ByteBuf (byte_buf.new)]
+        [position : i64 0]
+        [front : bool true]
+        (for [_call (iterator.range 0 2048)]
+          (let
+            [end : i64
+              (if front
+                split
+                (byte_buf.bytes-length input))]
+            [result : deflate.DeflateStep
+              (deflate.step!
+                (&mut state)
+                (byte_buf.bytes-slice-view input position (- end position))
+                (byte_buf.as-mut-bytes (&mut out))
+                (not front))]
+            (set! position (+ position result.consumed))
+            (set!
+              collected
+              (byte_buf.append-bytes-range
+                collected
+                (byte_buf.as-bytes (& out))
+                0
+                result.produced))
+            (test.assert-true
+              (<= position limits.max-input)
+              "run input bounded")
+            (test.assert-true
+              (<= collected.len limits.max-output)
+              "run output bounded")
+            (test.assert-true
+              (<= state.work limits.max-work)
+              "run work bounded")
+            (match result.status
+              [(deflate.NeedInput)
+                (test.assert-true front "explicit EOF is terminal")
+                (set! front false)]
+              [(deflate.NeedOutput) unit]
+              [(deflate.Done)
+                (return
+                  (RunObservation
+                    -1
+                    position
+                    collected.len
+                    state.work
+                    collected))]
+              [(deflate.Error error)
+                (return
+                  (RunObservation
+                    (kind-code (& error.kind))
+                    error.input
+                    error.output
+                    state.work
+                    collected))])))
+        (test.assert-true false "bounded run terminates")
+        (RunObservation -2 position collected.len state.work collected))]))
+
+(define (assert-observation
+  [actual : (& actual RunObservation)]
+  [expected : (& expected RunObservation)]) : unit
+  (test.assert-i64-eq actual.kind expected.kind "split failure kind")
+  (test.assert-i64-eq actual.input expected.input "split failure input")
+  (test.assert-i64-eq actual.output expected.output "split failure output")
+  (test.assert-i64-eq actual.work expected.work "split exact work")
+  (test.assert-i64-eq
+    actual.bytes.len
+    expected.bytes.len
+    "split partial output size")
+  (for [index (iterator.range 0 actual.bytes.len)]
+    (test.assert-i64-eq
+      (cast (byte_buf.ref actual.bytes index) : i64)
+      (cast (byte_buf.ref expected.bytes index) : i64)
+      "split partial output byte")))
+
+(define (assert-run-splits
+  [input : (& input bytes)]
+  [limits : (& limits deflate.DeflateLimits)]) : unit
+  (with-arena
+    reference
+    (let
+      [expected : RunObservation
+        (observe-run input limits (byte_buf.bytes-length input) 512)]
+      (match (deflate.decode input limits)
+        [(deflate.DeflateDecodeOk decoded)
+          (test.assert-i64-eq expected.kind -1 "one-shot and stream finish")
+          (test.assert-i64-eq
+            decoded.consumed
+            expected.input
+            "one-shot exact input")
+          (test.assert-i64-eq
+            decoded.bytes.len
+            expected.output
+            "one-shot exact output")
+          (for [index (iterator.range 0 decoded.bytes.len)]
+            (test.assert-i64-eq
+              (cast (byte_buf.ref decoded.bytes index) : i64)
+              (cast (byte_buf.ref expected.bytes index) : i64)
+              "one-shot bytes"))]
+        [(deflate.DeflateDecodeErr error)
+          (test.assert-i64-eq
+            (kind-code (& error.kind))
+            expected.kind
+            "one-shot failure kind")
+          (test.assert-i64-eq
+            error.input
+            expected.input
+            "one-shot failure input")
+          (test.assert-i64-eq
+            error.output
+            expected.output
+            "one-shot failure output")])
+      (for [split (iterator.range 0 (+ (byte_buf.bytes-length input) 1))]
+        (for [mode (iterator.range 0 3)]
+          (with-arena
+            split-case
+            (let
+              [actual : RunObservation
+                (observe-run
+                  input
+                  limits
+                  split
+                  (cond [(= mode 0) 1] [(= mode 1) 7] [else 512]))]
+              (assert-observation (& actual) (& expected)))))))))
+
+(define (assert-work-boundaries [input : (& input bytes)] [end : i64]) : unit
+  (for [budget (iterator.range 0 end)]
+    (with-arena
+      work-boundary
+      (let
+        [limits : deflate.DeflateLimits (deflate.default-limits)]
+        (set! limits.window-bytes 1)
+        (set! limits.max-work (+ 722 budget))
+        (assert-run-splits input (& limits))))))
+
+(define (assert-resource-boundaries [input : (& input bytes)] [end : i64]) : unit
+  (for [mode (iterator.range 0 4)]
+    (for [bound (iterator.range 0 end)]
+      (with-arena
+        resource-boundary
+        (let
+          [limits : deflate.DeflateLimits (deflate.default-limits)]
+          (set! limits.window-bytes 1)
+          (cond
+            [(= mode 0) (set! limits.max-input bound)]
+            [(= mode 1) (set! limits.max-output bound)]
+            [(= mode 2)
+              (set! limits.ratio 0)
+              (set! limits.startup-bytes bound)]
+            [else
+              (set! limits.ratio 1)
+              (set! limits.startup-bytes bound)])
+          (assert-run-splits input (& limits)))))))
+
+(define (assert-run-boundaries) : unit
+  (let
+    [stored : byte_buf.ByteBuf (hex-bytes "010500faff68656c6c6f")]
+    [matched : byte_buf.ByteBuf (hex-bytes "731c0500")]
+    (assert-work-boundaries (byte_buf.as-bytes (& stored)) 100)
+    (assert-work-boundaries (byte_buf.as-bytes (& matched)) 1352)
+    (assert-resource-boundaries (byte_buf.as-bytes (& stored)) 12)
+    (assert-resource-boundaries (byte_buf.as-bytes (& matched)) 261)))
+
+(define (assert-run-mutations) : unit
+  (let
+    [seed : i64 9531]
+    (for [case (iterator.range 0 96)]
+      (with-arena
+        mutation
+        (let
+          [input : byte_buf.ByteBuf
+            (fixture-input
+              (cond
+                [(= (% case 4) 0) 3]
+                [(= (% case 4) 1) 4]
+                [(= (% case 4) 2) 7]
+                [else 9]))]
+          [limits : deflate.DeflateLimits
+            (deflate.DeflateLimits 64 512 32 100000 8 32)]
+          (set! seed (% (+ (* seed 1664525) 1013904223) 4294967296))
+          (let
+            [index : i64 (% seed (- input.len 2))]
+            (set!
+              (array-ref input.slots index)
+              (cast
+                (bit-xor
+                  (cast (array-ref input.slots index) : i64)
+                  (shl 1 (% (shr seed 16) 8)))
+                : u8)))
+          (assert-run-splits (byte_buf.as-bytes (& input)) (& limits)))))))
+
+(define (credit-edge [index : i64]) : i64
+  (cond
+    [(= index 0) 0]
+    [(= index 1) 1]
+    [(= index 2) 2]
+    [else 9223372036854775807]))
+
+(define (assert-credit-ceiling) : unit
+  (for [ratio (iterator.range 0 4)]
+    (for [startup (iterator.range 0 4)]
+      (for [input (iterator.range 0 4)]
+        (let
+          [limits : deflate.DeflateLimits (deflate.default-limits)]
+          (set! limits.max-output 9223372036854775807)
+          (set! limits.ratio (credit-edge ratio))
+          (set! limits.startup-bytes (credit-edge startup))
+          (let
+            [ceiling : i64
+              (deflate.deflate-output-ceiling (& limits) (credit-edge input))]
+            (test.assert-true
+              (deflate.deflate-ratio-allows?
+                (& limits)
+                (credit-edge input)
+                ceiling)
+              "saturated ceiling satisfies division-based ratio")
+            (when
+              (< ceiling 9223372036854775807)
+              (test.assert-true
+                (not
+                  (deflate.deflate-ratio-allows?
+                    (& limits)
+                    (credit-edge input)
+                    (+ ceiling 1)))
+                "first byte above ceiling exceeds ratio"))))))))
+
+(test deflate-credit-ceiling (assert-credit-ceiling))
+
+(test deflate-run-boundaries (assert-run-boundaries))
+
+(test deflate-run-mutations (assert-run-mutations))
+
+(test deflate-fixed-reuse (assert-fixed-reuse))
+
+(test deflate-mixed-tables (assert-mixed-tables))
+
 (test deflate-valid-splits (assert-corpus))
 
 (test deflate-malformed-and-truncated (assert-errors))
@@ -1388,4 +1762,9 @@
   (assert-random-bounds)
   (assert-all-codes)
   (assert-preset-history)
+  (assert-fixed-reuse)
+  (assert-mixed-tables)
+  (assert-run-boundaries)
+  (assert-run-mutations)
+  (assert-credit-ceiling)
   42)

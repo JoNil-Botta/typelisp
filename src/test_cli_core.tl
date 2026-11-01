@@ -25,6 +25,7 @@
 (import compiler_ast_types as ast)
 (import compiler_backend)
 (import compiler_builtin_ids as cbi)
+(import compiler_check_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_driver_core as driver)
 (import compiler_intern as ci)
@@ -3465,6 +3466,54 @@
         (+ inline-test-count integration-test-count)
         inline-failed-file-count)]))
 
+(define (tltest-package-check-entry
+  [source-set : (& source-set package_source_core.PackageSourceSet)]
+  [roots : (& roots cli_svec.Vec)]
+  [backend-target : compiler_backend.CompilerBackendTarget]) : i64
+  (let
+    [entry : TlTestEntry (tltest-entry-new)]
+    [status : i64
+      (in-arena
+        entry.owner
+        (driver.compiler-driver-reset-file-state!)
+        (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
+          (compiler_load.compiler-load-normalize-path
+            (compiler_load.compiler-load-join-root-path
+              (string.copy (& source-set.manifest-dir))
+              (string.copy (& source-set.manifest.entry))))
+          (clone (deref roots))
+          (string.copy (& source-set.manifest-dir))
+          (clone source-set.manifest.deps)
+          (match source-set.manifest.kind
+            [(CompilerPkgKindBin) true]
+            [(CompilerPkgKindLib) false])
+          ;; Production checking uses the same target/user cfgs as `check`;
+          ;; automatic `test` cfg belongs only to the following harnesses.
+          (driver.compiler-driver-target-cfgs
+            backend-target
+            (target_cfg.compiler-target-user-cfgs (& tltest-user-cfg-slots)))
+          (tc_core.tc-serial-job-state))
+          [(Ok _ _ advisories)
+            (driver.compiler-driver-print-advisories (& advisories))
+            0]
+          [(Err diagnostics advisories)
+            (driver.compiler-driver-print-advisories (& advisories))
+            (let
+              [sources : driver.CompilerDriverDiagnosticSources
+                (driver.compiler-driver-diagnostic-sources-new)]
+              (for [index
+                (iterator.range
+                  0
+                  (cdiag.compiler-diagnostic-list-count (deref diagnostics)))]
+                (io.print-error
+                  (driver.compiler-driver-render-source-diagnostic-from
+                    (&mut sources)
+                    (cdiag.compiler-diagnostic-list-get
+                      (deref diagnostics)
+                      index)))))
+            1]))]
+    (tltest-entry-finish entry status)))
+
 (define (tltest-run-package
   [manifest-path : String]
   [has-manifest : bool]
@@ -3496,63 +3545,72 @@
             [tests-prefix : String
               (tltest-package-tests-prefix
                 (owned_view.compiler-owned-shared-view manifest-dir))]
-            (match (package_source_core.package-source-discover-tests-for
-              "test"
-              (owned_view.compiler-owned-shared-view source-set))
-              [(Err message)
-                (io.print-error message)
-                1]
-              [(Ok integration-sources)
-                (match (tltest-package-run-sources
-                  source-set.sources
-                  tests-prefix
-                  (owned_view.compiler-owned-shared-view target)
-                  (owned_view.compiler-owned-shared-view roots)
-                  opt-level
-                  backend-mode
-                  test-mode
-                  backend-target
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view package-owner)
-                  (owned_view.compiler-owned-shared-view manifest.deps)
-                  0
-                  0)
-                  [(Err status) status]
-                  [(Failed
-                      inline-file-count
-                      inline-test-count
-                      inline-failed-file-count)
-                    (tltest-run-package-integrations
-                      integration-sources
-                      tests-prefix
-                      target
-                      roots
-                      opt-level
-                      backend-mode
-                      test-mode
-                      backend-target
-                      manifest-dir
-                      package-owner
-                      manifest.deps
-                      inline-file-count
-                      inline-test-count
-                      inline-failed-file-count)]
-                  [(Ok inline-file-count inline-test-count)
-                    (tltest-run-package-integrations
-                      integration-sources
-                      tests-prefix
-                      target
-                      roots
-                      opt-level
-                      backend-mode
-                      test-mode
-                      backend-target
-                      manifest-dir
-                      package-owner
-                      manifest.deps
-                      inline-file-count
-                      inline-test-count
-                      0)])]))])]))
+            [production-status : i64
+              (if tltest-list-only
+                0
+                (tltest-package-check-entry
+                  (& source-set)
+                  (& roots)
+                  backend-target))]
+            (if (not (= production-status 0))
+              production-status
+              (match (package_source_core.package-source-discover-tests-for
+                "test"
+                (owned_view.compiler-owned-shared-view source-set))
+                [(Err message)
+                  (io.print-error message)
+                  1]
+                [(Ok integration-sources)
+                  (match (tltest-package-run-sources
+                    source-set.sources
+                    tests-prefix
+                    (owned_view.compiler-owned-shared-view target)
+                    (owned_view.compiler-owned-shared-view roots)
+                    opt-level
+                    backend-mode
+                    test-mode
+                    backend-target
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    (owned_view.compiler-owned-shared-view package-owner)
+                    (owned_view.compiler-owned-shared-view manifest.deps)
+                    0
+                    0)
+                    [(Err status) status]
+                    [(Failed
+                        inline-file-count
+                        inline-test-count
+                        inline-failed-file-count)
+                      (tltest-run-package-integrations
+                        integration-sources
+                        tests-prefix
+                        target
+                        roots
+                        opt-level
+                        backend-mode
+                        test-mode
+                        backend-target
+                        manifest-dir
+                        package-owner
+                        manifest.deps
+                        inline-file-count
+                        inline-test-count
+                        inline-failed-file-count)]
+                    [(Ok inline-file-count inline-test-count)
+                      (tltest-run-package-integrations
+                        integration-sources
+                        tests-prefix
+                        target
+                        roots
+                        opt-level
+                        backend-mode
+                        test-mode
+                        backend-target
+                        manifest-dir
+                        package-owner
+                        manifest.deps
+                        inline-file-count
+                        inline-test-count
+                        0)])])))])]))
 
 (define (tltest-check-file-loaded
   [source : String]

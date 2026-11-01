@@ -75,6 +75,16 @@
 
 (include-str-lzss payload-net-ip "../stdlib/net/ip.tl")
 
+(include-str-lzss payload-net-dns-name "../stdlib/net/dns_name.tl")
+
+(include-str-lzss
+  payload-net-resolver-config
+  "../stdlib/net/resolver_config.tl")
+
+(include-str-lzss
+  payload-net-resolver-config-linux
+  "../stdlib/net/resolver_config_linux.tl")
+
 (include-str-lzss payload-io-core "../stdlib/io_core.tl")
 
 (include-str-lzss payload-io "../stdlib/io.tl")
@@ -224,6 +234,12 @@
       (compiler-embedded-stdlib-payload-copy payload-net-http-types)]
     [(string.eq suffix "net/ip.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-ip)]
+    [(string.eq suffix "net/dns_name.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-dns-name)]
+    [(string.eq suffix "net/resolver_config.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-resolver-config)]
+    [(string.eq suffix "net/resolver_config_linux.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-resolver-config-linux)]
     [(string.eq suffix "io_core.tl")
       (compiler-embedded-stdlib-payload-copy payload-io-core)]
     [(string.eq suffix "io.tl")

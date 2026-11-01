@@ -305,6 +305,7 @@ include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bi
 compiler_load_includes|all|-|src/tests/compiler_load_includes.tl|42|-|-|compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|-
 include_str_comptime|all|-|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl|-
 embedded_stdlib_exact_include|all|-|tests/integration/embedded_stdlib_exact_include.tl|42|-|-|stdlib/string.tl|-
+embedded_resolver_config|all|-|tests/integration/embedded_resolver_config.tl|42|-|-|stdlib/net/resolver_config_linux.tl|-
 c_abi_aggregate_color|all|-|tests/integration/c_abi_aggregate_color.tl|42|color=104:36\n|-|benchmarks/c_abi_aggregate_color/baseline.c stdlib/io.tl stdlib/string.tl|-
 cross_mode_internal_color|all|-|tests/integration/cross_mode_internal_color.tl|42|color=104:36\n|-|stdlib/io.tl stdlib/string.tl|-
 c_abi_f32_scalar|all|-|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c|-

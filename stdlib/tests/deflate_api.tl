@@ -387,6 +387,7 @@
       [(= index 17) "0dc2010100000080906dfe9f2a0000"]
       [(= index 18) "0dc0010100000080906dfe9faa04"]
       [(= index 19) "0dc1010100000080906dfe9f2a09"]
+      [(= index 22) "050000240000"]
       [(= index 20)
         "05200444fdffffffffffffffffffffffffffffffffffffffff0f8282828282828282"]
       [else "0dc1010900000080a06df57f54211e0000"])))
@@ -417,6 +418,7 @@
 ;; -1 leaves the position to the chunk-split consistency checks.
 (define (malformed-position [index : i64]) : i64
   (cond
+    [(= index 22) 4]
     [(= index 14) 12]
     [(= index 15) 13]
     [(= index 20) 26]
@@ -536,7 +538,7 @@
 (define (assert-errors) : unit
   (let
     [limits : deflate.DeflateLimits (deflate.default-limits)]
-    (for [fixture (iterator.range 0 22)]
+    (for [fixture (iterator.range 0 23)]
       (with-arena
         malformed
         (let
@@ -696,17 +698,14 @@
         [_ (test.assert-true false "initial allocation work bounded")]))))
 
 (define (assert-public-state) : unit
-  (for [mode (iterator.range 0 12)]
+  (for [mode (iterator.range 0 13)]
     (match (new-decoder)
       [(deflate.DeflateNewErr _) (test.assert-true false "forged state setup")]
       [(deflate.DeflateNewOk state)
         (let
           [input : byte_buf.ByteBuf (hex-bytes "0300")]
           [output : byte_buf.ByteBuf (repeat-byte 4 (cast 204 : u8))]
-          [expected : i64
-            (if (>= mode 9)
-              8
-              1)]
+          [expected : i64 (cond [(= mode 12) 7] [(>= mode 9) 8] [else 1])]
           (cond
             [(= mode 0) (set! state.phase -1)]
             [(= mode 1) (set! state.bit-count 64)]
@@ -730,9 +729,18 @@
               (set! state.total-output 9223372036854775807)
               (set! state.phase 15)
               (set! state.pending-value 65)]
-            [else
+            [(= mode 11)
               (set! state.limits.max-work 9223372036854775807)
-              (set! state.work 9223372036854775807)])
+              (set! state.work 9223372036854775807)]
+            [else
+              ;; Finishing forged distance extra bits gives InvalidDistance;
+              ;; the resulting distance exceeds the active scalar range.
+              (set! state.phase 14)
+              (set! state.pending-length 3)
+              (set! state.pending-distance 32768)
+              (set! state.repeat-extra 13)
+              (set! state.field-read 13)
+              (set! state.field-value 8191)])
           (let
             [result : deflate.DeflateStep
               (deflate.step!
@@ -746,7 +754,38 @@
                 (test.assert-i64-eq
                   (kind-code (& error.kind))
                   expected
-                  "forged/overflow state typed error")]
+                  "forged/overflow state typed error")
+                (for [retry (iterator.range 0 2)]
+                  (let
+                    [work : i64 state.work]
+                    [again : deflate.DeflateStep
+                      (deflate.step!
+                        (&mut state)
+                        (byte_buf.as-bytes (& input))
+                        (byte_buf.bytes-mut-slice-view
+                          (byte_buf.as-mut-bytes (&mut output))
+                          0
+                          retry)
+                        (= retry 0))]
+                    (test.assert-i64-eq again.consumed 0 "forged retry input")
+                    (test.assert-i64-eq again.produced 0 "forged retry output")
+                    (test.assert-i64-eq state.work work "forged retry work")
+                    (match again.status
+                      [(deflate.Error repeated)
+                        (test.assert-i64-eq
+                          (kind-code (& repeated.kind))
+                          expected
+                          "forged sticky kind")
+                        (test.assert-i64-eq
+                          repeated.input
+                          error.input
+                          "forged sticky input")
+                        (test.assert-i64-eq
+                          repeated.output
+                          error.output
+                          "forged sticky output")]
+                      [_
+                        (test.assert-true false "forged failure stays terminal")])))]
               [_ (test.assert-true false "forged state refused")])))])))
 
 (define (stored-boundary-input) : byte_buf.ByteBuf
@@ -1416,6 +1455,7 @@
                 (test.assert-i64-eq actual.work 34566 "fixed exact budget work")))))))))
 
 ;; Empty fixed, the 92 significant bits of fixture 6, then final empty fixed.
+;; Work33489+1054+14+112+19+85+258+(94+2*258)=35641; fixed prep once.
 ;; Only the last header has BFINAL; block boundaries have no padding.
 (define (mixed-fixed-dynamic) : byte_buf.ByteBuf
   (let
@@ -1707,6 +1747,258 @@
                     (+ ceiling 1)))
                 "first byte above ceiling exceeds ratio"))))))))
 
+;; A fixed literal A, length258/distance1 and EOB. The match has accepted
+;; three bytes: ratio2/startup253 permits exactly259 output bytes; 252 permits258.
+(define (assert-ratio-precision) : unit
+  (let
+    [input : byte_buf.ByteBuf (hex-bytes "731c0500")]
+    (for [startup (iterator.range 252 254)]
+      (let
+        [limits : deflate.DeflateLimits (deflate.default-limits)]
+        (set! limits.ratio 2)
+        (set! limits.startup-bytes startup)
+        (for [split (iterator.range 0 5)]
+          (let
+            [actual : RunObservation
+              (observe-run (byte_buf.as-bytes (& input)) (& limits) split 7)]
+            (test.assert-i64-eq
+              actual.output
+              (+ startup 6)
+              "ratio2 exact emission boundary")
+            (test.assert-i64-eq
+              actual.input
+              (if (= startup 252)
+                3
+                4)
+              "ratio2 input offset")
+            (test.assert-i64-eq
+              actual.kind
+              (if (= startup 252)
+                13
+                -1)
+              "ratio2 first excess byte")
+            (if (= startup 252)
+              (match (deflate.decode (byte_buf.as-bytes (& input)) (& limits))
+                [(deflate.DeflateDecodeErr error)
+                  (test.assert-i64-eq
+                    (kind-code (& error.kind))
+                    13
+                    "one-shot ratio2 kind")
+                  (test.assert-i64-eq error.input 3 "one-shot ratio2 input")
+                  (test.assert-i64-eq error.output 258 "one-shot ratio2 output")]
+                [_ (test.assert-true false "ratio2 excess must fail")])
+              (match (deflate.decode (byte_buf.as-bytes (& input)) (& limits))
+                [(deflate.DeflateDecodeOk decoded)
+                  (test.assert-i64-eq
+                    decoded.bytes.len
+                    259
+                    "ratio2 equality succeeds")]
+                [_ (test.assert-true false "ratio2 equality must pass")]))))))))
+
+;; Independent RFC count: init33489 + input16 + significant bits122 + output3
+;; + clear19 + code tree85 + materialize258 + final trees(94+2*258) =34602.
+;; Repeat codes16/17/18 materialize6,6,138,99,3 lengths, respectively.
+(define (assert-dynamic-work) : unit
+  (let
+    [input : byte_buf.ByteBuf (hex-bytes "0500370900302c7b27f52ff62870ef03")]
+    [expected : byte_buf.ByteBuf (hex-bytes "000e0f")]
+    (for [split (iterator.range 0 17)]
+      (test.assert-i64-eq
+        (stream-case
+          (byte_buf.as-bytes (& input))
+          (byte_buf.as-bytes (& expected))
+          split
+          1
+          true
+          16)
+        34602
+        "absolute dynamic repeat work")
+      (for [budget (iterator.range 34601 34603)]
+        (let
+          [limits : deflate.DeflateLimits (deflate.default-limits)]
+          (set! limits.max-work budget)
+          (let
+            [actual : RunObservation
+              (observe-run (byte_buf.as-bytes (& input)) (& limits) split 1)]
+            (test.assert-i64-eq
+              actual.kind
+              (if (= budget 34601)
+                12
+                -1)
+              "dynamic N/N-1 budget")
+            (test.assert-i64-eq
+              actual.work
+              budget
+              "dynamic exact charged budget")
+            (test.assert-i64-eq actual.input 16 "dynamic budget input")
+            (test.assert-i64-eq actual.output 3 "dynamic budget output")))))))
+
+;; RFC dynamic alphabet: literal0=10, EOB=11, length285=0; distance0=0.
+;; 106 header bits, literal0, 16384 length258/distance1 pairs and EOB:
+;; 32878 significant bits, 4110 input bytes, 4227073 zero output bytes.
+(define (near-maximum-ratio-input) : byte_buf.ByteBuf
+  (let
+    [prefix : byte_buf.ByteBuf (hex-bytes "edc0010900000080a0feafee8806")]
+    [out : byte_buf.ByteBuf (repeat-byte 4112 (cast 0 : u8))]
+    (for [index (iterator.range 0 prefix.len)]
+      (set! (array-ref out.slots index) (byte_buf.ref prefix index)))
+    (set! (array-ref out.slots 4109) (cast 48 : u8))
+    (set! (array-ref out.slots 4110) (cast 165 : u8))
+    (set! (array-ref out.slots 4111) (cast 90 : u8))
+    out))
+
+(define (assert-default-ratio-policy) : unit
+  (with-arena
+    ratio-policy
+    (let
+      [input : byte_buf.ByteBuf (near-maximum-ratio-input)]
+      [limits : deflate.DeflateLimits (deflate.default-limits)]
+      (test.assert-i64-eq limits.ratio 1024 "deliberate default ratio")
+      (test.assert-i64-eq limits.startup-bytes 1024 "default startup")
+      (match (deflate.decode (byte_buf.as-bytes (& input)) (& limits))
+        [(deflate.DeflateDecodeErr error)
+          (test.assert-i64-eq
+            (kind-code (& error.kind))
+            13
+            "valid high ratio is a typed limit error")
+          ;; Match7426 has consumed14960 bits and accepted1870 bytes.
+          (test.assert-i64-eq error.input 1870 "default ratio input offset")
+          (test.assert-i64-eq
+            error.output
+            1915904
+            "default ratio output offset")]
+        [_ (test.assert-true false "default rejects near-maximum ratio")])
+      (for [choice (iterator.range 0 4)]
+        (let
+          [actual : RunObservation
+            (observe-run
+              (byte_buf.as-bytes (& input))
+              (& limits)
+              (cond
+                [(= choice 0) 0]
+                [(= choice 1) 13]
+                [(= choice 2) 1870]
+                [else 4109])
+              4096)]
+          (test.assert-i64-eq actual.kind 13 "stream default ratio error")
+          (test.assert-i64-eq actual.input 1870 "stream default input offset")
+          (test.assert-i64-eq
+            actual.output
+            1915904
+            "stream default output offset")))
+      (set! limits.ratio 1032)
+      (match (deflate.decode (byte_buf.as-bytes (& input)) (& limits))
+        [(deflate.DeflateDecodeOk decoded)
+          (test.assert-i64-eq
+            decoded.consumed
+            4110
+            "raised ratio preserves suffix")
+          (test.assert-i64-eq
+            decoded.bytes.len
+            4227073
+            "raised ratio accepts whole member")
+          (for [index (iterator.range 0 decoded.bytes.len)]
+            (test.assert-i64-eq
+              (cast (byte_buf.ref decoded.bytes index) : i64)
+              0
+              "high ratio oracle byte"))]
+        [_
+          (test.assert-true false "explicit raised ratio accepts valid stream")]))))
+
+(defstruct NegativeFixture
+  (hex String)
+  (kind i64)
+  (input i64)
+  (output i64))
+
+;; Fixed seed9532: checked field mutations of valid stored/fixed members.
+;; Expected kinds and byte offsets follow RFC bit positions, independently of
+;; this decoder. Every base decodes and every mutation is rejected by zlib1.3.2.
+(define (negative-fixture [index : i64]) : NegativeFixture
+  (cond
+    [(= index 0) (NegativeFixture "010100faff6ba55a" 2 5 0)]
+    [(= index 1) (NegativeFixture "010200fdfbce4da55a" 2 5 0)]
+    [(= index 2) (NegativeFixture "010300f8ffd5fa72a55a" 2 5 0)]
+    [(= index 3) (NegativeFixture "010400f3ff308e0382a55a" 2 5 0)]
+    [(= index 4) (NegativeFixture "010500eaffcf4bf423cfa55a" 2 5 0)]
+    [(= index 5) (NegativeFixture "010600fdffe24642cde246a55a" 2 5 0)]
+    [(= index 6) (NegativeFixture "010700f8efd9981cfdd9981ca55a" 2 5 0)]
+    [(= index 7) (NegativeFixture "010800f7fb642cfa68642cfa68a55a" 2 5 0)]
+    [(= index 8) (NegativeFixture "731c0700a55a" 6 3 1)]
+    [(= index 9) (NegativeFixture "73741c0300a55a" 6 4 2)]
+    [(= index 10) (NegativeFixture "7374741c0700a55a" 6 5 3)]
+    [(= index 11) (NegativeFixture "737474741c0300a55a" 6 6 4)]
+    [(= index 12) (NegativeFixture "73747474741c0700a55a" 6 7 5)]
+    [(= index 13) (NegativeFixture "7374747474741c0300a55a" 6 8 6)]
+    [(= index 14) (NegativeFixture "737474747474741c0700a55a" 6 9 7)]
+    [(= index 15) (NegativeFixture "73747474747474741c0300a55a" 6 10 8)]
+    [(= index 16) (NegativeFixture "73047e00a55a" 6 3 1)]
+    [(= index 17) (NegativeFixture "7374043e00a55a" 6 4 2)]
+    [(= index 18) (NegativeFixture "737474047e00a55a" 6 5 3)]
+    [(= index 19) (NegativeFixture "73747474043e00a55a" 6 6 4)]
+    [(= index 20) (NegativeFixture "7374747474047e00a55a" 6 7 5)]
+    [(= index 21) (NegativeFixture "737474747474043e00a55a" 6 8 6)]
+    [(= index 22) (NegativeFixture "73747474747474047e00a55a" 6 9 7)]
+    [else (NegativeFixture "7374747474747474043e00a55a" 6 10 8)]))
+
+(define (assert-negative-corpus) : unit
+  (let
+    [limits : deflate.DeflateLimits (deflate.default-limits)]
+    (for [case (iterator.range 0 24)]
+      (let
+        [fixture : NegativeFixture (negative-fixture case)]
+        (with-arena
+          negative
+          (let
+            [input : byte_buf.ByteBuf (hex-bytes fixture.hex)]
+            (match (deflate.decode (byte_buf.as-bytes (& input)) (& limits))
+              [(deflate.DeflateDecodeErr error)
+                (test.assert-i64-eq
+                  (kind-code (& error.kind))
+                  fixture.kind
+                  "oracle negative kind")
+                (test.assert-i64-eq
+                  error.input
+                  fixture.input
+                  "oracle negative input")
+                (test.assert-i64-eq
+                  error.output
+                  fixture.output
+                  "oracle negative output")]
+              [_ (test.assert-true false "oracle mutation cannot succeed")])
+            (for [split (iterator.range 0 (+ input.len 1))]
+              (let
+                [actual : RunObservation
+                  (observe-run (byte_buf.as-bytes (& input)) (& limits) split 1)]
+                (test.assert-i64-eq
+                  actual.kind
+                  fixture.kind
+                  "split oracle kind")
+                (test.assert-i64-eq
+                  actual.input
+                  fixture.input
+                  "split oracle input")
+                (test.assert-i64-eq
+                  actual.output
+                  fixture.output
+                  "split oracle output")
+                (test.assert-i64-eq
+                  (error-stream
+                    (byte_buf.as-bytes (& input))
+                    (& limits)
+                    split
+                    fixture.kind)
+                  actual.work
+                  "oracle terminal repetition and work")))))))))
+
+(test deflate-ratio-precision (assert-ratio-precision))
+
+(test deflate-dynamic-work (assert-dynamic-work))
+
+(test deflate-default-ratio-policy (assert-default-ratio-policy))
+
+(test deflate-negative-oracle-corpus (assert-negative-corpus))
+
 (test deflate-credit-ceiling (assert-credit-ceiling))
 
 (test deflate-run-boundaries (assert-run-boundaries))
@@ -1767,4 +2059,8 @@
   (assert-run-boundaries)
   (assert-run-mutations)
   (assert-credit-ceiling)
+  (assert-ratio-precision)
+  (assert-dynamic-work)
+  (assert-default-ratio-policy)
+  (assert-negative-corpus)
   42)

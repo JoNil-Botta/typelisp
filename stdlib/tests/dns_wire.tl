@@ -1,7 +1,8 @@
 (import stdlib.byte_buf)
 (import stdlib.net.dns.wire)
-(import stdlib.string)
+(import stdlib.str_cat)
 (import stdlib.test)
+(import stdlib.text_buf)
 
 (define (u16 [out : byte_buf.ByteBuf] [value : i64]) : byte_buf.ByteBuf
   (byte_buf.push
@@ -163,21 +164,21 @@
   (let
     [label : String (repeated-text 63 97)]
     [last : String (repeated-text 61 98)]
-    [max : String
-      (string.concat
-        (string.concat (string.concat label ".") (string.concat label "."))
-        (string.concat (string.concat label ".") last))]
+    [prefix : String (str_cat.str-cat label ".")]
+    [max : String (str_cat.str-cat prefix prefix prefix last)]
     (assert-name max 255)
-    (assert-name (string.concat max ".") 255)
-    (assert-name-error (string.concat max "x") true))
+    (assert-name (str_cat.str-cat max ".") 255)
+    (assert-name-error (str_cat.str-cat max "x") true))
   (let
-    [text : String "a"]
+    [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "a")]
     [i : i64 1]
     (while (< i 127)
-      (set! text (string.concat text ".a"))
+      (text_buf.append! buf ".a")
       (set! i (+ i 1)))
-    (assert-name text 255)
-    (assert-name-error (string.concat text ".a") true)))
+    (let
+      [text : String (text_buf.render buf)]
+      (assert-name text 255)
+      (assert-name-error (str_cat.str-cat text ".a") true))))
 
 (test
   dns-typed-sections-and-opaque-skipping

@@ -90,6 +90,7 @@ NO_ROOT_DIR="$ROOT/target/stage0-smoke-no-root"
 rm -rf "$NO_ROOT_DIR"
 mkdir -p "$NO_ROOT_DIR"
 cp tests/integration/embedded_stdlib_exact_include.tl "$NO_ROOT_DIR/exact_include.tl"
+cp tests/integration/embedded_resolver_config.tl "$NO_ROOT_DIR/resolver_config.tl"
 cp tests/integration/embedded_stdlib_diagnostic_parity.tl \
     "$NO_ROOT_DIR/diagnostic_parity.tl"
 (
@@ -100,6 +101,14 @@ cp tests/integration/embedded_stdlib_diagnostic_parity.tl \
     set -e
     if [ "$status" -ne 42 ]; then
         echo "embedded stdlib exact include smoke exited $status, expected 42" >&2
+        exit 1
+    fi
+    set +e
+    "$TL_ABS" run resolver_config.tl
+    status=$?
+    set -e
+    if [ "$status" -ne 42 ]; then
+        echo "embedded resolver snapshot smoke exited $status, expected 42" >&2
         exit 1
     fi
 )

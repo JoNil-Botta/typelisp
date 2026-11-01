@@ -237,6 +237,9 @@ net/http_trailer.tl
 net/http_trailer_policy.tl
 net/http_types.tl
 net/ip.tl
+net/dns_name.tl
+net/resolver_config.tl
+net/resolver_config_linux.tl
 net/tls_wire.tl
 net/url.tl
 net_windows_winsock.tl
@@ -343,6 +346,7 @@ stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-
 stdlib/tests/http_trailer_policy.tl|42|-|-|-
 stdlib/tests/net_ip_api.tl|42|-|-|-
+stdlib/tests/net_resolver_config_api.tl|42|-|-|-
 stdlib/tests/net_api.tl|42|-|-|-
 stdlib/tests/net_owner_api.tl|42|-|-|-
 stdlib/tests/net_tls_wire_api.tl|42|-|-|-

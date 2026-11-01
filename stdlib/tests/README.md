@@ -12,6 +12,14 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+`x509_api.tl` is a cross-module DER/PEM/certificate integration witness with
+separate pinned fixture files loaded through the stdlib-root include path. It
+checks independently generated RSA, RSA-PSS, P-256 and Ed25519 certificates,
+exact signed-byte hashes, required extensions and typed IPs, unsupported versus
+malformed X.400 names, schema and budget errors, every RSA truncation, fixed-seed
+DER/PEM mutations, and Gregorian conversion across years 0001–9999. It exits 42
+without output. Fixture provenance and hashes live in `fixtures/x509/README.md`.
+
 `string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second
 byte in each constrained range, every truncation/continuation position, scalar

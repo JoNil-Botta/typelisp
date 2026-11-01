@@ -309,9 +309,9 @@ mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/muta
 # where an edge leaves its scope (a parameter's and a temporary's at the
 # return), and the caller's lifetimes and the result are live at every return,
 # so a loan of that storage stored into caller storage or returned conflicts
-# with its retirement, whatever its spelling. `call_inference_order_ok` stays
-# rejected by order-dependent call inference (Rust accepts it; see its
-# comment), `shadowed_let_result_reject` by typing's `let`-result spelling
+# with its retirement, whatever its spelling. `call_inference_order_ok` is an
+# accepted control for call lifetime inference in either argument order.
+# `shadowed_let_result_reject` stays rejected by typing's `let`-result spelling
 # check (Rust accepts it too), and `pointer_store_same_name_ok` holds no loan.
 caller_lifetime_parameter_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_store_same_name_reject.tl|-|`a` does not live long enough
 caller_lifetime_local_store_same_name_reject|check-fail|tests/safety/caller_lifetime_local_store_same_name_reject.tl|-|`a` does not live long enough
@@ -367,7 +367,7 @@ caller_lifetime_parameter_slice_store_same_name_reject|check-fail|tests/safety/c
 caller_lifetime_call_literal_args_ok|check-ok|tests/safety/caller_lifetime_call_literal_args_ok.tl|-|-
 caller_lifetime_array_literal_order_ok|check-ok|tests/safety/caller_lifetime_array_literal_order_ok.tl|-|-
 caller_lifetime_constructor_region_flow_ok|check-ok|tests/safety/caller_lifetime_constructor_region_flow_ok.tl|-|-
-caller_lifetime_call_inference_order_ok|check-fail|tests/safety/caller_lifetime_call_inference_order_ok.tl|-|call `put` argument 2 (parameter `m`) type mismatch
+caller_lifetime_call_inference_order_ok|check-ok|tests/safety/caller_lifetime_call_inference_order_ok.tl|-|-
 caller_lifetime_constructor_tuple_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_tuple_arg_same_name_reject.tl|-|`a` does not live long enough
 caller_lifetime_constructor_array_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_array_arg_same_name_reject.tl|-|cannot return a reference to parameter `a`
 caller_lifetime_call_mut_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_call_mut_arg_same_name_reject.tl|-|`a` does not live long enough
@@ -2356,3 +2356,7 @@ legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref
 legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+call_lifetime_invariant_order_ok|run-exit|tests/safety/call_lifetime_invariant_order_ok.tl|42|-
+call_lifetime_invariant_value_first_escape_reject|check-fail|tests/safety/call_lifetime_invariant_value_first_escape_reject.tl|-|error[E0206]: typecheck: call `put` argument 2 (parameter `target`) type mismatch: expected (&mut r (RefBox local)), found (&mut a (RefBox a)); source lifetime `a` cannot satisfy required lifetime `local` because mutable reference referent type is invariant
+call_lifetime_invariant_box_first_escape_reject|check-fail|tests/safety/call_lifetime_invariant_box_first_escape_reject.tl|-|error[E0206]: typecheck: call `put-swapped` argument 1 (parameter `target`) type mismatch: expected (&mut a (RefBox local)), found (&mut a (RefBox a)); source lifetime `a` cannot satisfy required lifetime `local` because mutable reference referent type is invariant
+call_lifetime_distinct_invariants_reject|check-fail|tests/safety/call_lifetime_distinct_invariants_reject.tl|-|error[E0206]: typecheck: call `put-pair` argument 3 (parameter `second`) type mismatch: expected (&mut s (RefBox outer)), found (&mut second (RefBox inner)); source lifetime `inner` cannot satisfy required lifetime `outer` because mutable reference referent type is invariant

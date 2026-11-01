@@ -62,7 +62,7 @@
               (>= (array-ref log (+ at 1)) 0)
               (!= (bit-and (array-ref log (+ at 1)) mask) 0))
             (__tl_array-push! lines (array-ref log at)))
-          (set! at (+ at 4)))))
+          (set! at (+ at 5)))))
     bodies))
 
 ;; The number of `kind` lenders minted.
@@ -81,7 +81,7 @@
           (set! index (+ index 1)))
         (set! at (+ at 2 count))
         (while (and (< at (array-length log)) (>= (array-ref log at) 0))
-          (set! at (+ at 4)))))
+          (set! at (+ at 5)))))
     minted))
 
 ;; Whether a use on `line` demands a `kind` lender.
@@ -128,7 +128,7 @@
         (when
           (and (= (array-ref log at) line) (>= (array-ref log (+ at 1)) 0))
           (set! mask (bit-or mask (array-ref log (+ at 1)))))
-        (set! at (+ at 4))))
+        (set! at (+ at 5))))
     mask))
 
 ;; The log offset of the first body with a `kind` lender, or -1.
@@ -144,7 +144,7 @@
           (set! index (+ index 1)))
         (set! at (+ at 2 count))
         (while (and (< at (array-length log)) (>= (array-ref log at) 0))
-          (set! at (+ at 4)))))
+          (set! at (+ at 5)))))
     -1))
 
 ;; The mask of body `body`'s `kind` lenders (lender `i` is bit `i`).
@@ -183,7 +183,7 @@
           (> (array-ref log (+ at 3)) from)
           (!= (bit-and (- -2 (array-ref log (+ at 1))) mask) 0))
         (return (array-ref log (+ at 3))))
-      (set! at (+ at 4)))
+      (set! at (+ at 5)))
     -1))
 
 ;; The exact lenders demanded by body `body`'s uses before instruction `index`
@@ -207,7 +207,7 @@
           (if (< mask 0)
             (array-ref log (+ at 1))
             (bit-or mask (array-ref log (+ at 1))))))
-      (set! at (+ at 4)))
+      (set! at (+ at 5)))
     mask))
 
 ;; The number of body `body`'s uses that demand a lender of `mask` in block 0
@@ -233,7 +233,48 @@
               (< (array-ref log (+ at 3)) to))
             other?))
         (set! count (+ count 1)))
-      (set! at (+ at 4)))
+      (set! at (+ at 5)))
+    count))
+
+;; The place root of body `body`'s Invalidate at block-0 index `index`, or -1.
+(define (lender-test-end-place
+  [log : (& log (__tl_dyn-array i64))]
+  [body : i64]
+  [index : i64]) : i64
+  (let
+    [at : i64 (lender-test-records log body)]
+    (while (and (< at (array-length log)) (>= (array-ref log at) 0))
+      (when
+        (and
+          (< (array-ref log (+ at 1)) 0)
+          (= (array-ref log (+ at 2)) 0)
+          (= (array-ref log (+ at 3)) index))
+        (return (array-ref log (+ at 4))))
+      (set! at (+ at 5)))
+    -1))
+
+;; The number of body `body`'s uses of place root `place` on `line` that
+;; demand exactly `mask` in block 0 before instruction `end`.
+(define (lender-test-place-uses
+  [log : (& log (__tl_dyn-array i64))]
+  [body : i64]
+  [place : i64]
+  [line : i64]
+  [mask : i64]
+  [end : i64]) : i64
+  (let
+    [at : i64 (lender-test-records log body)]
+    [count : i64 0]
+    (while (and (< at (array-length log)) (>= (array-ref log at) 0))
+      (when
+        (and
+          (= (array-ref log at) line)
+          (= (array-ref log (+ at 1)) mask)
+          (= (array-ref log (+ at 2)) 0)
+          (< (array-ref log (+ at 3)) end)
+          (= (array-ref log (+ at 4)) place))
+        (set! count (+ count 1)))
+      (set! at (+ at 5)))
     count))
 
 ;; The block-0 index of body `body`'s first use on `line` that demands exactly
@@ -252,7 +293,7 @@
           (= (array-ref log (+ at 1)) mask)
           (= (array-ref log (+ at 2)) 0))
         (return (array-ref log (+ at 3))))
-      (set! at (+ at 4)))
+      (set! at (+ at 5)))
     -1))
 
 ;; Whether typing `src` fails with `want`.
@@ -912,7 +953,9 @@
         "nothing demands either brand after the last end"))))
 
 ;; An owner-arena box borrowed into a call that invalidates the owner: the
-;; borrow's use demands exactly the owner lender, before the call's ends.
+;; call invalidates the owner, then the box. The borrow `(&mut (deref b))`
+;; uses the box itself, demanding exactly the owner lender, before the
+;; first of those ends (the box's own place, not another use on its line).
 (cfg
   test
   (test
@@ -922,9 +965,14 @@
       [body : i64 (lender-test-body (& log) lender-test-owner)]
       [owner : i64 (lender-test-kind-mask (& log) body lender-test-owner)]
       [end : i64 (lender-test-end (& log) body owner -1)]
-      [use : i64 (lender-test-use-index (& log) body 7 owner)]
+      [box-end : i64 (lender-test-end (& log) body owner end)]
+      [box : i64 (lender-test-end-place (& log) body box-end)]
       (test.assert-true (> end 0) "the call ends the owner")
-      (test.assert-true (and (>= use 0) (< use end)) "the borrow's use first")
+      (test.assert-true (and (> box-end end) (>= box 0)) "then the box")
+      (test.assert-i64-eq
+        (lender-test-place-uses (& log) body box 7 owner end)
+        1
+        "the borrow uses the box, demanding exactly the owner, first")
       (test.assert-i64-eq
         (lender-test-demands-between (& log) body owner (+ end 1) 65536 true)
         0

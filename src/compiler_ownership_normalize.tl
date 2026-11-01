@@ -14324,10 +14324,11 @@
       [_ (NormalizeUnit.Ok unit)])))
 
 ;; Test builds log each lane's lender kinds and, per use, its source line,
-;; the lenders it demands and its coordinates, for the arena lender tests: a
-;; body is `-1 count kind...`, a use `line mask block index` (lender `i` is
-;; mask bit `i`; the use comes before instruction `index` of `block`), and an
-;; Invalidate `line -2-mask block index` with the lenders its place holds.
+;; the lenders it demands, its coordinates and its place, for the arena lender
+;; tests: a body is `-1 count kind...`, a use `line mask block index root`
+;; (lender `i` is mask bit `i`; the use of place root `root` comes before
+;; instruction `index` of `block`), and an Invalidate `line -2-mask block
+;; index root` with the lenders its place holds.
 ;; Entry 0 is the logged length; a full log drops later lanes.
 (cfg
   test
@@ -14370,7 +14371,8 @@
             (normalize-lender-test-push!
               (array-ref arena.use-rows (* index arena.words)))
             (normalize-lender-test-push! block)
-            (normalize-lender-test-push! at)))
+            (normalize-lender-test-push! at)
+            (normalize-lender-test-push! (array-ref arena.use-places index))))
         (set! index (+ index 1)))
       (let
         [block : i64 0]
@@ -14380,19 +14382,20 @@
             (match (&
               (array-ref (array-ref state.body.blocks block).instructions index).operation)
               [(own.OwnershipOperation.Invalidate place)
-                (begin
-                  (normalize-lender-test-push!
+                (normalize-lender-test-push!
+                  (array-ref
+                    (array-ref state.body.blocks block).instructions
+                    index).source.line)
+                (normalize-lender-test-push!
+                  (-
+                    -2
                     (array-ref
-                      (array-ref state.body.blocks block).instructions
-                      index).source.line)
-                  (normalize-lender-test-push!
-                    (-
-                      -2
-                      (array-ref
-                        arena.rows
-                        (* (normalize-place-root state place.index) arena.words))))
-                  (normalize-lender-test-push! block)
-                  (normalize-lender-test-push! index))]
+                      arena.rows
+                      (* (normalize-place-root state place.index) arena.words))))
+                (normalize-lender-test-push! block)
+                (normalize-lender-test-push! index)
+                (normalize-lender-test-push!
+                  (normalize-place-root state place.index))]
               [_ unit])
             (set! index (+ index 1)))
           (set! block (+ block 1)))))))

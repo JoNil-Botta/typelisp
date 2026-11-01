@@ -4,4 +4,4 @@
     [r : (&mut items i64) (&mut (array-ref items 0))]
     (let
       [s : (&mut items i64) (&mut (array-ref items 0))]
-      unit)))
+      (set! (deref r) 1))))

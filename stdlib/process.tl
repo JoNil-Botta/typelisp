@@ -18,6 +18,12 @@
 ;# never read: duplicate names are rejected (byte-equal on Linux, ASCII
 ;# case-insensitive on Windows), Linux passes the rows in row order and Windows
 ;# in the case-folded name order `CreateProcess` requires.
+;# Windows captured and inherited execution encode arguments under the
+;# Microsoft C argv rules, preserving empty strings, tabs, quotes and
+;# backslashes. The encoded command including its NUL is capped at 32767
+;# bytes; an executable path containing a quote is rejected. These failures
+;# return `ProcessInvalidCommand` before creating a child. Linux keeps direct
+;# `execve` argv storage and its existing limits.
 ;#
 ;# Usage: `(import stdlib.process)`
 ;#

@@ -15,8 +15,8 @@
       (vec.push! values 7)
       (let
         [iter : (vec.IterMut values) (vec.iterator-mut (&mut values))]
-        [first : (vec.IterMutNext values) (vec.next-mut (&mut iter))]
+        [first : (vec.IterMutNext iter) (vec.next-mut (&mut iter))]
         (begin
           (consume first)
-          (vec.next-mut (&mut iter))))
+          (consume (vec.next-mut (&mut iter)))))
       (vec.push! values 9))))

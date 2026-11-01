@@ -9,6 +9,14 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+# Audit every Linux PR, including changes outside the selector's own inputs.
+case "$(uname -s)" in
+    Linux*)
+        echo "[public-tools] ci-affected map freshness"
+        scripts/ci-affected.sh --self-test
+        ;;
+esac
+
 GATE_FAIL_PREFIX='FAIL: '
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler

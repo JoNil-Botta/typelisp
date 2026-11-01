@@ -1,0 +1,17 @@
+do none
+case comptime_type_expr_worklist
+source tests/integration/comptime_type_expr_worklist.tl
+case c_abi_win64_nested_aggregate
+source tests/integration/c_abi_win64_nested_aggregate.tl
+case c_abi_sysv_register_aggregate_args
+source tests/integration/c_abi_sysv_register_aggregate_args.tl
+case factored_addresses
+source tests/integration/factored_addresses.tl
+case stdlib_hash_generated
+source tests/integration/stdlib_hash_generated.tl
+case nested_tuple_array_projection
+source tests/integration/nested_tuple_array_projection.tl
+case generated_option_result_families
+source tests/integration/generated_option_result_families.tl
+case aggregate_return_no_alloc
+source tests/integration/aggregate_return_no_alloc.tl

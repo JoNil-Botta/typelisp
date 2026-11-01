@@ -1,5 +1,6 @@
 ;; reader_tests.tl - White-box tests for the reader (read.tl), the lexer
 ;; (lex.tl) and token spans (token.tl).
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.arena)
 (import stdlib.io)
@@ -23,13 +24,10 @@
   (let
     [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
     [old-cap : i64 (reader.sp-node-pool-capacity)]
-    [i : i64 0]
-    (while (<= i old-cap)
-      (begin
-        (reader.sp-node-push
-          (Int i (reader.sp-text-id "__tl_pool_growth_marker") span))
-        unit)
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 (+ old-cap 1))]
+      (reader.sp-node-push
+        (Int i (reader.sp-text-id "__tl_pool_growth_marker") span))
+      unit)
     (let
       [grew : bool (> (reader.sp-node-pool-capacity) old-cap)]
       [first-ok : bool
@@ -1100,14 +1098,12 @@
 (define (sp-node-pool-test-list [count : i64] [span : token.SourceSpan]) : i64
   (let
     [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set!
         builder
         (reader.spanned-sexpr-builder-push
           builder
-          (Int i (reader.sp-text-id "") span)))
-      (set! i (+ i 1)))
+          (Int i (reader.sp-text-id "") span))))
     (match (reader.spanned-sexpr-list-from-builder builder span)
       [(List start length _)
         (if (= length count)
@@ -1123,7 +1119,7 @@
       (match (reader.sp-node-get (+ start i))
         [(Int value _ _) (set! ok (= value i))]
         [_ (set! ok false)])
-      (set! i (+ i 1)))
+      (+= i 1))
     ok))
 
 (define (sp-node-pool-segment-placement-ok?) : bool
@@ -1183,8 +1179,7 @@
     [bytes : i64
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes
         (reader.sp-node-pool-base-arena-handle-value))]
-    [round : i64 0]
-    (while (< round 32)
+    (for [round (iterator.range 0 32)]
       (reader.sp-node-pool-truncate! 0)
       (unless
         (and
@@ -1195,8 +1190,7 @@
             bytes
             (allocation_profile.compiler-allocation-profile-arena-bump-bytes
               (reader.sp-node-pool-base-arena-handle-value))))
-        (io.panic "reader: repeated long lists must reuse dead storage"))
-      (set! round (+ round 1)))
+        (io.panic "reader: repeated long lists must reuse dead storage")))
     ;; Reuse a suffix while the first segment remains live.
     (reader.sp-node-pool-truncate! rows)
     (unless
@@ -1225,8 +1219,7 @@
       bytes
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes
         (reader.sp-node-pool-base-arena-handle-value)))
-    (set! round 0)
-    (while (< round 32)
+    (for [round (iterator.range 0 32)]
       (reader.sp-node-pool-truncate! 0)
       (unless
         (and
@@ -1243,8 +1236,7 @@
             bytes
             (allocation_profile.compiler-allocation-profile-arena-bump-bytes
               (reader.sp-node-pool-base-arena-handle-value))))
-        (io.panic "reader: alternating long-list shapes did not reuse storage"))
-      (set! round (+ round 1))))
+        (io.panic "reader: alternating long-list shapes did not reuse storage"))))
   (reader.sp-node-pool-reset!)
   (reader.sp-node-pool-compact-retained!))
 
@@ -1255,9 +1247,8 @@
   (let
     [rows : i64 reader.sp-node-segment-rows]
     [span : token.SourceSpan (token.SourceSpan 1 1 1 1)]
-    [round : i64 0]
     [max-length : i64 (+ (* 32 rows) 1)]
-    (while (< round 32)
+    (for [round (iterator.range 0 32)]
       (reader.sp-node-pool-truncate! 0)
       (let
         [length : i64 (+ (* (+ round 1) rows) 1)]
@@ -1265,8 +1256,7 @@
           (and
             (= (sp-node-pool-test-list length span) 0)
             (sp-node-pool-test-list-reads? 0 length))
-          (io.panic "reader: increasing long lists changed child rows")))
-      (set! round (+ round 1)))
+          (io.panic "reader: increasing long lists changed child rows"))))
     ;; Both the builder and long-list arrays grow geometrically. Their
     ;; retained generations must remain bounded by the largest live form.
     (unless
@@ -1378,10 +1368,8 @@
 (define (reader-test-int-list-text [base : i64] [count : i64]) : String
   (let
     [text : String "("]
-    [index : i64 0]
-    (while (< index count)
-      (set! text (str_cat.str-cat text " " (string.int->string (+ base index))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! text (str_cat.str-cat text " " (string.int->string (+ base index)))))
     (str_cat.str-cat text ")")))
 
 ;; Whether LIST's slice view holds exactly COUNT ints counting up from BASE.
@@ -1398,7 +1386,7 @@
           (match (array-ref items index)
             [(Int n _ _) (unless (= n (+ base index)) (set! ok false))]
             [_ (set! ok false)])
-          (set! index (+ index 1)))
+          (+= index 1))
         ok)]
     [_ false]))
 

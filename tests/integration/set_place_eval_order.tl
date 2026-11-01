@@ -71,10 +71,46 @@
           (set! a b)
           0))
       7)
+    ;; A by-value receiver is the variable's storage (SPEC 5.10): the
+    ;; assignment copies `b` into it, and the store then updates it.
     (test.assert-i64-eq
       (array-ref a 0)
-      30
-      "receiver value precedes index effects")))
+      7
+      "a by-value receiver is its variable's storage")
+    (test.assert-i64-eq (array-ref b 0) 30 "assignment does not share storage")))
+
+;; The same holds when the variable is assigned in the value and the place
+;; projects through an element of it.
+(define (projected-receiver-rebind) : unit
+  (let
+    [a : (Array i64 2) (array 10 20)]
+    (set!
+      (array-ref a 0)
+      (begin
+        (set! a (array 30 40))
+        7))
+    (test.assert-i64-eq (array-ref a 0) 7 "element store after rebind")
+    (test.assert-i64-eq (array-ref a 1) 40 "element sibling after rebind"))
+  (let
+    [a : (Array Pair 2) (array (Pair 1 2) (Pair 3 4))]
+    (set!
+      (array-ref a 0).a
+      (begin
+        (set! a (array (Pair 7 8) (Pair 9 10)))
+        5))
+    (test.assert-i64-eq (array-ref a 0).a 5 "element field store after rebind")
+    (test.assert-i64-eq (array-ref a 0).b 8 "element field sibling")
+    (test.assert-i64-eq (array-ref a 1).a 9 "element sibling"))
+  (let
+    [t : (Tuple Pair i64) (tuple (Pair 1 2) 9)]
+    (set!
+      (tuple-ref t 0).a
+      (begin
+        (set! t (tuple (Pair 7 8) 11))
+        5))
+    (test.assert-i64-eq (tuple-ref t 0).a 5 "tuple field store after rebind")
+    (test.assert-i64-eq (tuple-ref t 0).b 8 "tuple field sibling")
+    (test.assert-i64-eq (tuple-ref t 1) 11 "tuple sibling")))
 
 (define (growth-in-value) : unit
   (let
@@ -127,6 +163,7 @@
   (aggregate-growth-in-value)
   (growth-in-value)
   (receiver-index-rebind)
+  (projected-receiver-rebind)
   (let
     [a : (Array i64 2) (array 10 20)]
     [index : i64 0]

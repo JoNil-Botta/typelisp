@@ -1,4 +1,5 @@
 ;; Independent canonical, mutation, and resource coverage for #7265.
+(import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_incremental_identity as identity)
 (import compiler_owned_view as owned_view)
@@ -303,10 +304,8 @@
   [length : i64]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-    [index : i64 0]
-    (while (< index length)
-      (set! (array-ref out index) (array-ref bytes index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref out index) (array-ref bytes index)))
     out))
 
 (define (incremental-test-append-zero [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
@@ -316,7 +315,7 @@
     [index : i64 0]
     (while (< index (array-length bytes))
       (set! (array-ref out index) (array-ref bytes index))
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! (array-ref out index) (cast 0 : u8))
     out))
 
@@ -446,7 +445,7 @@
             (= (array-ref mutated (+ index 3)) (cast 104 : u8))
             (= (array-ref mutated (+ index 4)) (cast 98 : u8)))
             (set! found index)
-            (set! index (+ index 1))))
+            (+= index 1)))
         (if (< found 0)
           false
           (begin
@@ -471,7 +470,7 @@
                 (& baseline.fingerprint)
                 (& changed.fingerprint))
                 (set! all-differ? false)
-                (set! variant (+ variant 1)))]))
+                (+= variant 1))]))
         all-differ?)]))
 
 (define (incremental-test-request-materiality?) : bool
@@ -490,7 +489,7 @@
                 (& baseline.fingerprint)
                 (& changed.fingerprint))
                 (set! all-differ? false)
-                (set! variant (+ variant 1)))]))
+                (+= variant 1))]))
         all-differ?)]))
 
 (define (incremental-test-compare-category?
@@ -562,7 +561,7 @@
                     (if (=
                       (identity.compiler-incremental-input-tag (& input))
                       (+ index 1))
-                      (set! index (+ index 1))
+                      (+= index 1)
                       (set! tags? false))))
                 tags?)])]
         (while (and mutations-differ? (<= variant 10))
@@ -574,7 +573,7 @@
                 (& baseline.fingerprint)
                 (& changed.fingerprint))
                 (set! mutations-differ? false)
-                (set! variant (+ variant 1)))]))
+                (+= variant 1))]))
         (and round-trip? mutations-differ?))]))
 
 (define (incremental-test-content-domains?) : bool
@@ -1021,13 +1020,13 @@
       (let
         [first : i64 (cast (array-ref bytes index) : i64)]
         (cond
-          [(and (>= first 1) (<= first 0x7f)) (set! index (+ index 1))]
+          [(and (>= first 1) (<= first 0x7f)) (+= index 1)]
           [(and (>= first 0xc2) (<= first 0xdf))
             (if (and
               (< (+ index 1) end)
               (incremental-test-utf8-reference-continuation?
                 (cast (array-ref bytes (+ index 1)) : i64)))
-              (set! index (+ index 2))
+              (+= index 2)
               (set! ok? false))]
           [(and (>= first 0xe0) (<= first 0xef))
             (if (< (+ index 2) end)
@@ -1041,7 +1040,7 @@
                     (if (= first 0xed)
                       (and (>= second 0x80) (<= second 0x9f))
                       (incremental-test-utf8-reference-continuation? second))))
-                  (set! index (+ index 3))
+                  (+= index 3)
                   (set! ok? false)))
               (set! ok? false))]
           [(and (>= first 0xf0) (<= first 0xf4))
@@ -1058,7 +1057,7 @@
                     (if (= first 0xf4)
                       (and (>= second 0x80) (<= second 0x8f))
                       (incremental-test-utf8-reference-continuation? second))))
-                  (set! index (+ index 4))
+                  (+= index 4)
                   (set! ok? false)))
               (set! ok? false))]
           [else (set! ok? false)])))
@@ -1081,7 +1080,7 @@
         (=
           (binary.compiler-incremental-binary-utf8-range-valid? bytes 1 cut)
           (incremental-test-utf8-reference-valid? bytes 1 cut)))
-      (set! cut (+ cut 1)))
+      (+= cut 1))
     same))
 
 (define (incremental-test-utf8-table-matches-reference?) : bool
@@ -1111,8 +1110,8 @@
       (while (and same (< b 256))
         (set! (array-ref bytes 2) (cast b : u8))
         (set! same (incremental-test-utf8-agree? (& bytes) 2))
-        (set! b (+ b 1)))
-      (set! a (+ a 1)))
+        (+= b 1))
+      (+= a 1))
     ;; 3-byte inputs.
     (set! a 0xc0)
     (while (and same (< a 256))
@@ -1124,9 +1123,9 @@
         (while (and same (< c 256))
           (set! (array-ref bytes 3) (cast c : u8))
           (set! same (incremental-test-utf8-agree? (& bytes) 3))
-          (set! c (+ c 1)))
-        (set! b (+ b 1)))
-      (set! a (+ a 1)))
+          (+= c 1))
+        (+= b 1))
+      (+= a 1))
     ;; 4-byte inputs, then a trailing ASCII byte so a valid sequence is
     ;; followed by more input.
     (set! a 0xf0)
@@ -1143,10 +1142,10 @@
             (set! (array-ref bytes 4) (array-ref edges d))
             (set! (array-ref bytes 5) (cast 0x41 : u8))
             (set! same (incremental-test-utf8-agree? (& bytes) 5))
-            (set! d (+ d 1)))
-          (set! c (+ c 1)))
-        (set! b (+ b 1)))
-      (set! a (+ a 1)))
+            (+= d 1))
+          (+= c 1))
+        (+= b 1))
+      (+= a 1))
     ;; Ranges the buffer does not hold.
     (and
       same

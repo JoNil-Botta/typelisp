@@ -4,12 +4,14 @@ set -eu
 # Cross-host fail-closed process-tree memory cap with a stable report.
 #
 # Linux requires the user-systemd cgroup backend of lib-linux-memory-limit.sh
-# (MemoryMax with swap disabled). Its delegated workload child retains the exact
+# (MemoryMax with swap disabled). Its delegated workload node retains the exact
 # requested cap; a separate sampler leaf has 64 MiB of bounded headroom. The
-# sampler provides the observed process-tree peak, plus a monotonic wall clock. Windows
-# delegates to the suspended-start Job Object wrapper. A missing
-# enforcement/measurement backend is a wrapper failure, never an unbounded
-# fallback.
+# sampler provides the observed process-tree peak, plus a monotonic wall clock.
+# A run started from inside another bounded workload nests in that workload's
+# cgroup, so every enclosing cap also bounds it (see the library). Windows
+# delegates to the suspended-start Job Object wrapper, whose jobs nest inside
+# an enclosing job. A missing enforcement/measurement backend is a wrapper
+# failure, never an unbounded fallback.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
@@ -32,34 +34,6 @@ if [ "${1:-}" = --linux-rss-measure ]; then
     measure_status=0
     linux_memory_limit_sample_process_group "$limit_bytes" "$@" || measure_status=$?
     exit "$measure_status"
-fi
-
-if [ "${1:-}" = --linux-exec ]; then
-    shift
-    limit_bytes=$1
-    timeout_seconds=$2
-    metrics_file=$3
-    shift 3
-    . "$ROOT/scripts/lib-linux-memory-limit.sh"
-    LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup
-    TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE=$metrics_file
-    export LINUX_MEMORY_LIMIT_BACKEND
-    export TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
-    # systemd's MemoryPeak summary can account only the service launcher on
-    # some managers. Keep the hard cgroup cap, and measure the isolated
-    # descendant group from inside that same cgroup for trustworthy RSS.
-    set -- "$ROOT/scripts/run-memory-bounded.sh" --linux-rss-measure \
-        "$limit_bytes" "$metrics_file" "$@"
-    if [ "$timeout_seconds" -gt 0 ]; then
-        exec_status=0
-        linux_memory_limit_run_sampled "$limit_bytes" \
-            timeout --signal=TERM --kill-after=5s "$timeout_seconds" \
-            "$@" || exec_status=$?
-        exit "$exec_status"
-    fi
-    exec_status=0
-    linux_memory_limit_run_sampled "$limit_bytes" "$@" || exec_status=$?
-    exit "$exec_status"
 fi
 
 limit_mib=
@@ -257,15 +231,23 @@ export LINUX_MEMORY_LIMIT_BACKEND
 metrics_file="$report.memory"
 rm -f "$report.time" "$metrics_file"
 
-set +e
-(
-    cd "$working_directory"
-    "$ROOT/scripts/run-memory-bounded.sh" \
-        --linux-exec "$limit_bytes" "$timeout_seconds" \
-        "$metrics_file" "$@"
-)
-status=$?
-set -e
+# Keep the library's result reason in this process: exit 2 alone cannot tell a
+# real workload failure from invalid completion evidence. Metrics still belong
+# to this wrapper, and only the explicit sampler receives their destination.
+TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE=$metrics_file
+export TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
+set -- "$ROOT/scripts/run-memory-bounded.sh" --linux-rss-measure \
+    "$limit_bytes" "$metrics_file" "$@"
+if [ "$timeout_seconds" -gt 0 ]; then
+    set -- timeout --signal=TERM --kill-after=5s "$timeout_seconds" "$@"
+fi
+cd "$working_directory" || {
+    write_wrapper_failure_report "$backend"
+    exit 2
+}
+status=0
+linux_memory_limit_run_sampled "$limit_bytes" "$@" || status=$?
+reason=$LINUX_MEMORY_LIMIT_REASON
 
 end_wall_ms=$(linux_wall_now_ms) || {
     echo "bounded-run Linux wall-time measurement disappeared" >&2
@@ -294,15 +276,10 @@ else
     exit 2
 fi
 
-reason=success
 if [ "$status" -eq 124 ]; then
-    reason=timeout
     echo "[bounded] timeout after ${timeout_seconds}s; terminated complete process tree" >&2
 elif [ "$status" -eq 137 ]; then
-    reason=memory-limit
     echo "[bounded] memory limit exceeded under $backend (cap ${limit_bytes} bytes)" >&2
-elif [ "$status" -ne 0 ]; then
-    reason=command-failure
 fi
 
 cat > "$report" <<EOF

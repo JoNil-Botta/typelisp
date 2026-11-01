@@ -91,9 +91,11 @@
   (extern (windows-query-performance-counter [arg0 : (MutPtr i64)]) : i32 (:symbol "QueryPerformanceCounter")))
 
 ;: Windows kernel32 `GetSystemTimeAsFileTime` binding used for seed variation.
+;: Declared exactly as `stdlib.time` declares it (the FILETIME's low and high
+;: `u32` halves): every declaration of a foreign symbol must agree.
 (cfg
   windows
-  (extern (windows-get-system-time-as-file-time [arg0 : (MutPtr i64)]) : unit (:symbol "GetSystemTimeAsFileTime")))
+  (extern (windows-get-system-time-as-file-time [arg0 : (MutPtr u32)]) : unit (:symbol "GetSystemTimeAsFileTime")))
 
 ;: Windows kernel32 `GetCurrentProcessId` binding used for seed variation.
 (cfg
@@ -347,7 +349,7 @@
   (define (windows-system-seed) : ResultSystemSeed
     (let
       [counter : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [file-time : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [file-time : (__tl_dyn-array u32) (__tl_make-array u32 2)]
       [_counter-ok : i32
         (windows-query-performance-counter
           (unsafe
@@ -357,7 +359,11 @@
           (unsafe
             (__tl_array-data file-time)))]
       [counter-seed : u64 (cast (array-ref counter 0) : u64)]
-      [time-seed : u64 (rotl64-17 (cast (array-ref file-time 0) : u64))]
+      [time-seed : u64
+        (rotl64-17
+          (bit-or
+            (cast (array-ref file-time 0) : u64)
+            (shl (cast (array-ref file-time 1) : u64) 32)))]
       [pid-seed : u64 (shl (cast (windows-get-current-process-id) : u64) 32)]
       [thread-seed : u64 (cast (windows-get-current-thread-id) : u64)]
       [mixed : u64

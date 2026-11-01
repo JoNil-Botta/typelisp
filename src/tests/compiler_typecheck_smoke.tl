@@ -272,7 +272,7 @@
         [borrowed : (& items i64) (& (array-ref items 0))]
         unit)
       (write-i64-ref exclusive))))"
-      "typecheck: cannot read mutably borrowed place `items[0]`")
+      "typecheck: cannot immutably borrow mutably borrowed place `items[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       "(define (borrow-text [source : (& source str)]) : (& source str)
   source)
@@ -341,7 +341,7 @@
       [first : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
       [second : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
       (write-array-ref first))))"
-      "typecheck: cannot read mutably borrowed place `bags.left`")
+      "typecheck: cannot mutably borrow borrowed place `bags.left`")
     (compiler-typecheck-labeled-borrow-error-ok?
       "(defstruct Bags
   (left (__tl_dyn-array i64))
@@ -355,7 +355,7 @@
       [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
       [first-item : (&mut bags i64) (&mut (array-ref bags.left 0))]
       (set! (array-ref whole-left 0) 1))))"
-      "typecheck: cannot read mutably borrowed place `bags.left[0]`")
+      "typecheck: cannot mutably borrow borrowed place `bags.left[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       "(define (touch [slot : (&mut items i64)]) : unit unit)
 (define (bad [items : (&mut items (__tl_dyn-array i64))]) : unit
@@ -376,7 +376,7 @@
     (begin
       (set! (array-ref borrowed 0) 41)
       (+ n 1))))"
-      "typecheck: cannot read mutably borrowed place `items`")
+      "typecheck: cannot immutably borrow mutably borrowed place `items`")
     (compiler-typecheck-labeled-borrow-error-ok?
       "(define (main) : i64
   (let
@@ -400,7 +400,7 @@
     (begin
       (set! (array-ref borrowed 0) 41)
       (array-length copy))))"
-      "typecheck: cannot read mutably borrowed place `bag.left`")
+      "typecheck: cannot move borrowed place `bag.left`")
     (tc_tests.compiler-typecheck-ok?
       "(define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
@@ -606,17 +606,27 @@
 (define (compiler-typecheck-reference-return-container-tests-ok?) : bool
   (and
     (tc_tests.compiler-typecheck-ok?
-      "(define (main [n : i64]) : (Tuple (& n i64) i64)
-  (tuple (& n) 1))")
+      "(define (main [r : (& n i64)]) : (Tuple (& n i64) i64)
+  (tuple r 1))")
     (tc_tests.compiler-typecheck-ok?
-      "(define (main [n : i64]) : (Array (& n i64) 1)
-  (array (& n)))")
+      "(define (main [r : (& n i64)]) : (Array (& n i64) 1)
+  (array r))")
+    ;; A by-value parameter's storage belongs to the call.
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [n : i64]) : (Tuple (& n i64) i64)
+  (tuple (& n) 1))"
+      (tc_tests.compiler-typecheck-reference-return-by-value-param-message))
+    (tc_tests.compiler-typecheck-error-ok?
+      "(define (main [n : i64]) : (Array (& n i64) 1)
+  (array (& n)))"
+      (tc_tests.compiler-typecheck-reference-return-by-value-param-message))
+    ;; A local named like the signature's lifetime is still a local.
+    (tc_tests.compiler-typecheck-error-ok?
+      "(define (main [r : (& n i64)]) : (Tuple (& n i64) i64)
   (let [n : i64 1] (tuple (& n) 1)))"
       "typecheck: reference value would escape lexical scope")
     (tc_tests.compiler-typecheck-error-ok?
-      "(define (main [n : i64]) : (Array (& n i64) 1)
+      "(define (main [r : (& n i64)]) : (Array (& n i64) 1)
   (let [n : i64 1] (array (& n))))"
       "typecheck: reference value would escape lexical scope")
     (tc_tests.compiler-typecheck-error-ok?
@@ -995,9 +1005,12 @@
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (set! (array-ref items 0) (& x))))"
       "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-    (tc_tests.compiler-typecheck-ok?
+    ;; A by-value parameter is storage of the call: a borrow of it pushed
+    ;; into the caller's array would outlive it (Rust E0597; #8890).
+    (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
-  (__tl_array-push! items (& x)))")
+  (__tl_array-push! items (& x)))"
+      "typecheck: `x` does not live long enough")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (__tl_array-push! items (& x))))"
@@ -5457,7 +5470,18 @@
       (if (compiler-typecheck-smoke-macro-profile-storage-ok?)
         (return 0)
         (return 1)))
+    ;; The self-test first proves the serial job's tables are allocated lazily,
+    ;; so it must run before any other check touches that job state.
     (tc_tests.compiler-typecheck-self-test)
+    (unless
+      (core_tests.compiler-typecheck-selected-inference-ok?)
+      (io.panic "typecheck: selected inference transaction smoke failed"))
+    (unless
+      (core_tests.tc-free-names-hygienic-binder-ok?)
+      (io.panic "typecheck: hygienic binder free-name smoke failed"))
+    (unless
+      (core_tests.tc-dotted-identity-boundary-self-test)
+      (io.panic "typecheck: dotted identity diagnostic boundary smoke failed"))
     (unless
       (core_tests.tc-module-index-state-isolation-self-test)
       (io.panic "typecheck: module index job ownership smoke failed"))

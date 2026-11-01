@@ -72,7 +72,7 @@
     [i : i64 0]
     (while (< i size)
       (when
-        (< (+ at i) (array-length data))
+        (< (+ at i) (array-length (& data)))
         (set! (array-ref out i) (array-ref data (+ at i))))
       (set! i (+ i 1)))
     out))
@@ -99,7 +99,7 @@
           "every independent readelf record")
         (test.assert-i64-eq
           (array-length object.bytes)
-          (array-length data)
+          (array-length (& data))
           "borrowed complete input")
         (test.assert-true
           (= object.identity.content (cast 7 : u64))
@@ -676,12 +676,35 @@
       (byte_buf.to-array (byte_buf.from-string "NO_VERSION"))]
     [empty : (__tl_dyn-array u8) (__tl_make-array u8 0)]
     [embedded : (__tl_dyn-array u8)
-      (byte_buf.to-array (byte_buf.from-string "api\0tail"))]
+      (byte_buf.to-array
+        (byte_buf.append-string
+          (byte_buf.push (byte_buf.from-string "api") (cast 0 : u8))
+          "tail"))]
+    (test.assert-i64-eq (array-length embedded) 8 "embedded NUL query length")
+    (test.assert-true (= (array-ref embedded 3) (cast 0 : u8)) "real NUL byte")
     (match (dso.read-dso (& gcc-both) (& req))
       [(ReadFailed _) (test.assert-true false "version boundary control")]
       [(ReadDso object)
         (assert-lookup (& object) (& api) (& wrong) -1 (& (dso.PreferGnu)))
         (assert-lookup (& object) (& embedded) (& empty) -1 (& (dso.PreferGnu)))
+        (assert-lookup (& object) (& embedded) (& empty) -1 (& (dso.SysvHash)))
+        ;; Exercise comparison independently of hashing: a hash mismatch must
+        ;; not hide a matcher that incorrectly truncates the query at NUL.
+        (let
+          [index : i64 (linear-index (& object) (& api) -1)]
+          [query : (dso.DsoLookupRequest embedded empty)
+            (dso.DsoLookupRequest
+              (& embedded)
+              (& empty)
+              (dso.PreferGnu)
+              1048576)]
+          [check : dso.DsoCheck (dso.new-check (& req))]
+          (test.assert-true (>= index 0) "plain api lookup control")
+          (assert-lookup (& object) (& api) (& empty) index (& (dso.PreferGnu)))
+          (test.assert-true
+            (not (dso.lookup-match? (& object) index (& query) (&mut check)))
+            "embedded NUL does not match its exported prefix")
+          (test.assert-true check.ok "NUL comparison is within work budget"))
         (test.assert-true (= object.flags (cast 8 : u64)) "DT_FLAGS retained")
         (test.assert-true
           (= object.flags-1 (cast 9 : u64))
@@ -814,19 +837,19 @@
                 [(ReadDso object)
                   (test.assert-true
                     (elf.file-range?
-                      (array-length data)
+                      (array-length (& data))
                       (cast object.strings.offset : u64)
                       (cast object.strings.size : u64))
                     "accepted string span bounded")
                   (test.assert-true
                     (elf.file-range?
-                      (array-length data)
+                      (array-length (& data))
                       (cast object.symbol-span.offset : u64)
                       (cast object.symbol-span.size : u64))
                     "accepted symbol span bounded")
                   (test.assert-true
                     (elf.file-range?
-                      (array-length data)
+                      (array-length (& data))
                       (cast object.dynamic-span.offset : u64)
                       (cast object.dynamic-span.size : u64))
                     "accepted dynamic span bounded")])))

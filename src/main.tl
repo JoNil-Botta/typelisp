@@ -17,6 +17,10 @@
 ;; (`compiler_check_core` ->
 ;; `compiler_typecheck_api`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
+(cfg
+  compiler-arena-sanitizer
+  (extern (cli-arena-sanitize-enable) : unit (:symbol "tl_arena_sanitize_enable")))
+
 (import stdlib.str_cat_runtime as str_cat)
 (cfg
   compile-startup-profile
@@ -437,7 +441,7 @@ Options:
 (define (cli-print-producer-identity) : i64
   (io.print-format
     "{}"
-    (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
+    (cli-cat (build_identity.compiler-build-producer-identity) "\n"))
   0)
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
@@ -455,7 +459,7 @@ Options:
         (build_cli_core.build-run-from
           2
           count
-          (build_identity.compiler-build-git-hash-shared-view)))]
+          (build_identity.compiler-build-producer-identity)))]
     [(cli-eq? command "clean")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-clean-help-text) 0)
@@ -466,7 +470,7 @@ Options:
         (run_cli_core.run-run-from
           2
           count
-          (build_identity.compiler-build-git-hash-shared-view)))]
+          (build_identity.compiler-build-producer-identity)))]
     [(cli-eq? command "check")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-check-help-text) 0)
@@ -526,6 +530,7 @@ Options:
 
 (define (main) : i64
   (begin
+    (cfg compiler-arena-sanitizer (cli-arena-sanitize-enable) unit)
     (cfg
       compile-startup-profile
       (startup_profile.compiler-startup-profile-mark-main-entry!)

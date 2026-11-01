@@ -64,7 +64,9 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (set! (array-ref dst index) (array-ref src index))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))
     (format-cst-vec-copy-range! dst src (+ index 1) count)))
 
 (define (format-cst-vec-grow! [v : (&mut v FormatCstVec)]) : unit

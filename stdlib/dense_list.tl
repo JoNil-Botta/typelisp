@@ -241,17 +241,26 @@
               [index : i64]
               [fallback-value : ,T]) : ,T
               (if (and (>= index 0) (< index v.len))
-                (array-ref v.slots index)
+                ;; A representation copy read in place (bounds checked
+                ;; above): the list keeps owning the element.
+                (unsafe
+                  (ptr-read (ptr-offset (__tl_array-data v.slots) index)))
                 fallback-value))
+            ;; Moves `count` live elements from the old backing at `src` into
+            ;; `dst`: each is read bitwise exactly once, and the caller
+            ;; replaces the old backing without reading it again.
             (define (,copy-range-name
               [dst : (&mut dst (__tl_dyn-array ,T))]
-              [src : (& src (__tl_dyn-array ,T))]
+              [src : (MutPtr ,T)]
               [index : i64]
               [count : i64]) : unit
               (if (>= index count)
                 unit
                 (begin
-                  (set! (array-ref dst index) (array-ref src index))
+                  (set!
+                    (array-ref dst index)
+                    (unsafe
+                      (ptr-read (ptr-offset src index))))
                   (,copy-range-name dst src (+ index 1) count))))
             (define (,grow-name [v : (&mut v ,list-type)]) : unit
               (let
@@ -262,16 +271,24 @@
                     1
                     (* old-cap 2))]
                 [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
-                (,copy-range-name (&mut bigger) (& v.slots) 0 n)
-                (set! v.slots bigger)))
+                (begin
+                  (,copy-range-name
+                    (&mut bigger)
+                    (unsafe
+                      (__tl_array-data v.slots))
+                    0
+                    n)
+                  (set! v.slots bigger))))
             (define (,push-name [v : (&mut v ,list-type)] [value : ,T]) : unit
-              (if (< v.len (array-length v.slots))
-                unit
-                (,grow-name v))
-              (let
-                [index : i64 v.len]
-                (set! (array-ref v.slots index) value)
-                (set! v.len (+ index 1))))
+              (begin
+                (if (< v.len (array-length v.slots))
+                  unit
+                  (,grow-name v))
+                (let
+                  [index : i64 v.len]
+                  (begin
+                    (set! (array-ref v.slots index) value)
+                    (set! v.len (+ index 1))))))
             ,@append-decls)
           (comptime-error
             "compiler-dense-list-operations: expected caller-provided fallback and unique `len`, `empty?`, or `append-from` capabilities"))

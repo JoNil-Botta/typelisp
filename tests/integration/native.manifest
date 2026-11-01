@@ -4,7 +4,8 @@
 #
 # hosts: all, linux or windows. Linux-only rows are the System V C ABI
 #   fixtures, raw Linux syscalls (syscall_arg_alias, dead_frame_store), the
-#   poison-on-reclaim trap Windows cannot fire (arena_poison_stale_array_trap)
+#   poison-on-reclaim trap Windows cannot fire (arena_poison_stale_array_trap),
+#   the arena sanitizer's PROT_NONE fault modes (arena_sanitizer_*)
 #   and lsp_position_edit_smoke; Windows-only rows are the Win64 C ABI
 #   fixtures, the VirtualAlloc abort transcript and the rooted NtCreateFile
 #   boundary.
@@ -19,13 +20,32 @@
 # extra: "-", stage-stdlib, expected-stderr:<printf escapes> or
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
+# Expected text may use @loc{path;column;exact source line}; the unique line
+#   is resolved from that compiled input, then the complete stream is compared.
 # suite-members: space-separated smoke drivers the row's source runs.
+stdlib_deflate|all|0,1,2|tests/integration/stdlib_deflate.tl|42|-|-|-|stage-stdlib
+deflate_embedded_example|all|0,1,2|examples/deflate_decode.tl|42|deflate decode score: 42\n|-|-|-
+mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
+enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner_layout.tl|42|-|-|enum_constructor_owner_defs.tl|-
+enum_constructor_owner_root|all|0,1,2|tests/integration/enum_constructor_owner_root.tl|42|-|-|enum_constructor_owner_defs.tl|-
+global_mut_borrow_field|all|0,1,2|tests/integration/global_mut_borrow_field.tl|5|-|-|-|-
+global_mut_borrow_storage|all|0,1,2|tests/integration/global_mut_borrow_storage.tl|42|-|-|-|-
+nested_mut_borrow_pointer|all|0,1,2|tests/integration/nested_mut_borrow_pointer.tl|5|-|-|-|-
+nested_mut_borrow_receiver|all|0,1,2|tests/integration/nested_mut_borrow_receiver.tl|5|-|-|-|-
+nested_mut_borrow_storage|all|0,1,2|tests/integration/nested_mut_borrow_storage.tl|42|-|-|-|-
 git_object_smoke|all|0,1,2|tests/integration/git_object_smoke.tl|42|-|-|git_object_core.tl git_object_tests.tl|stage-stdlib
+hidden_sret_source_name|all|0,1,2|tests/integration/hidden_sret_source_name.tl|42|-|-|-|-
+recursive_aggregate_return|all|0,1,2|tests/integration/recursive_aggregate_return.tl|42|-|-|-|-
+recursive_aggregate_return_variants|all|0,1,2|tests/integration/recursive_aggregate_return_variants.tl|42|-|-|-|-
+fixed_array_result_tailrec|all|0,1,2|tests/integration/fixed_array_result_tailrec.tl|42|-|-|-|-
 packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
 inline_helper_composition|all|0,1,2|tests/integration/spmd_inline_helper_composition.tl|42|-|-|spmd_inline_helper_composition_provider.tl|-
 packed_narrow_bitwise_fold|all|0,1,2|tests/integration/packed_narrow_bitwise_fold.tl|42|-|-|-|-
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+unit_struct_fields|all|0,1,2|tests/integration/unit_struct_fields.tl|42|-|-|-|stage-stdlib
 macro_body_splice|all|0,1,2|tests/integration/macro_body_splice.tl|42|-|-|-|stage-stdlib
+macro_struct_pattern|all|0,1,2|tests/integration/macro_struct_pattern.tl|42|-|-|macro_struct_pattern_defs.tl stdlib/string.tl|stage-stdlib
+macro_struct_pattern_root|all|0,1,2|tests/integration/macro_struct_pattern_root.tl|42|-|-|stdlib/string.tl|stage-stdlib
 ubound_self_call_inbounds|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|6\n|3 3 2 1 1|stdlib/io.tl stdlib/string.tl|-
 ubound_self_call_first_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|0 1 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=0 length=0\n
 ubound_self_call_mid_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 3 2 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=2 length=2\n
@@ -59,6 +79,8 @@ global_cell_stored_address_raw|all|0,1,2|tests/integration/global_cell_stored_ad
 global_cell_stored_address_twice|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|3 0|-|stage-stdlib
 extern_callback_global|all|0,1,2|tests/integration/extern_callback_global.tl|42|-|-|benchmarks/extern_callback_global/baseline.c|stage-stdlib
 extern_callback_global_more|all|0,1,2|tests/integration/extern_callback_global.tl|42|-|a b|benchmarks/extern_callback_global/baseline.c|stage-stdlib
+internal_abi_six_positions|all|0,1,2|tests/integration/internal_abi_six_positions.tl|42|-|-|benchmarks/internal_abi_six_positions/baseline.c|stage-stdlib
+internal_abi_six_positions_more|all|0,1,2|tests/integration/internal_abi_six_positions.tl|42|-|a b|benchmarks/internal_abi_six_positions/baseline.c|stage-stdlib
 hash_length_chain|all|2|tests/integration/hash_length_chain.tl|42|-|-|-|stage-stdlib
 aggregate_globals|all|-|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl|-
 static_scalar_array_globals|all|0,1,2|tests/integration/static_scalar_array_globals.tl|42|-|-|stdlib/math.tl static_scalar_array_unused_provider.tl|-
@@ -171,6 +193,27 @@ implicit_core_prelude|all|-|tests/integration/implicit_core_prelude.tl|42|-|-|-|
 core_macros_headerless_prelude_import|all|-|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-|-
 implicit_scratch_loop|all|-|tests/integration/implicit_scratch_loop.tl|42|-|-|-|-
 macro_forward_order|all|-|tests/integration/macro_forward_order.tl|42|-|-|-|-
+macro_body_sequence|all|0,1,2|tests/integration/macro_body_sequence.tl|42|-|-|macro_body_sequence_dep.tl|-
+macro_replace_hygiene|all|0,1,2|tests/integration/macro_replace_hygiene.tl|42|-|-|stdlib/comptime.tl|-
+macro_dotted_global|all|0,1,2|tests/integration/macro_dotted_global.tl|2|-|-|global_field_macro_dep.tl|-
+macro_dotted_global_inside|all|0,1,2|tests/integration/macro_dotted_global_inside.tl|2|-|-|global_field_macro_dep.tl|-
+macro_dotted_global_matrix|all|0,1,2|tests/integration/macro_dotted_global_matrix.tl|42|-|-|global_field_macro_dep.tl|-
+macro_dotted_root_borrow|all|0,1,2|tests/integration/macro_dotted_root_borrow.tl|2|-|-|-|-
+macro_dotted_root_layout|all|0,1,2|tests/integration/macro_dotted_root_layout.tl|2|-|-|-|-
+macro_dotted_root_mut_borrow|all|0,1,2|tests/integration/macro_dotted_root_mut_borrow.tl|2|-|-|-|-
+macro_dotted_root_nested|all|0,1,2|tests/integration/macro_dotted_root_nested.tl|6|-|-|-|-
+macro_dotted_root_nested_borrow|all|0,1,2|tests/integration/macro_dotted_root_nested_borrow.tl|6|-|-|-|-
+macro_dotted_root_ref_borrow|all|0,1,2|tests/integration/macro_dotted_root_ref_borrow.tl|2|-|-|-|-
+macro_dotted_root_same|all|0,1,2|tests/integration/macro_dotted_root_same.tl|2|-|-|-|-
+macro_dotted_root_scalar|all|0,1,2|tests/integration/macro_dotted_root_scalar.tl|2|-|-|-|-
+macro_dotted_root_small|all|0,1,2|tests/integration/macro_dotted_root_small.tl|2|-|-|-|-
+macro_dotted_root_narrow_borrow|all|0,1,2|tests/integration/macro_dotted_root_narrow_borrow.tl|42|-|-|-|-
+macro_dotted_root_wide_borrow|all|0,1,2|tests/integration/macro_dotted_root_wide_borrow.tl|42|-|-|-|-
+macro_dotted_root_write_borrow|all|0,1,2|tests/integration/macro_dotted_root_write_borrow.tl|42|-|-|-|-
+macro_dotted_root_scalar_borrow|all|0,1,2|tests/integration/macro_dotted_root_scalar_borrow.tl|42|-|-|-|-
+macro_dotted_root_noncall_borrow|all|0,1,2|tests/integration/macro_dotted_root_noncall_borrow.tl|42|-|-|-|-
+macro_dotted_root_replace|all|0,1,2|tests/integration/macro_dotted_root_replace.tl|42|-|-|-|-
+macro_try_operand|all|0,1,2|tests/integration/macro_try_operand.tl|42|-|-|stdlib/comptime.tl|-
 macro_value_same_spelling|all|-|tests/integration/macro_value_same_spelling.tl|42|-|-|-|-
 macro_module_local_shadow_provider|all|-|tests/integration/macro_module_local_shadow_provider.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-
 macro_module_local_shadow|all|-|tests/integration/macro_module_local_shadow.tl|42|-|-|macro_module_local_shadow_provider.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl stdlib/hash.tl stdlib/byte_buf_core.tl stdlib/option.tl stdlib/text_buf.tl stdlib/str_cat_runtime.tl|-
@@ -201,10 +244,59 @@ decls_macro_nested_arguments|all|-|tests/integration/decls_macro_nested_argument
 compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/profile.tl|-
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
-call_eval_order|all|-|tests/integration/call_eval_order.tl|42|-|-|-|-
+call_eval_order|all|-,0,1,2|tests/integration/call_eval_order.tl|42|-|-|-|-
+devirt_address_taken_callee|all|0,1,2|tests/integration/devirt_address_taken_callee.tl|42|-|-|-|-
+# By-value memory-class operands keep the value they had before later operands
+# write their storage (#8433, #7900); each proof that omits a snapshot has a
+# witness here: field/borrow/projection/macro writes, globals, raw addresses.
+call_aggregate_snapshot|all|0,1,2|tests/integration/call_aggregate_snapshot.tl|42|8191\n|-|-|stage-stdlib
+# A let may adopt storage its own initializer reserved, never storage another
+# binding, global, or branch can still reach; a forwarded result slot returns
+# the callee's result in that slot, and a boxed call result is built in the box.
+let_aggregate_home|all|0,1,2|tests/integration/let_aggregate_home.tl|42|524287\n|-|-|stage-stdlib
+# A call whose result becomes a field of the caller's own result may build it
+# in place (optimizer `slot_fwd`): tag stores, sibling calls and `try` exits.
+result_slot_forwarding|all|0,1,2|tests/integration/result_slot_forwarding.tl|42|15\n|-|-|stage-stdlib
+# By-value pattern bindings, parameters and captures own their values: each
+# case pins a route where a binding could alias storage it does not own.
+binding_ownership|all|0,1,2|tests/integration/binding_ownership.tl|42|16383\n|-|-|stage-stdlib
+pointer_eval_order|all|0,1,2|tests/integration/pointer_eval_order.tl|42|-|-|-|-
+byte_buf_live_full|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|0|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_mut_full|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|1|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|2|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_maximum|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|3|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_negative|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|4|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_empty_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|5|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|6|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_maximum|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|13|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_negative|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|7|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_empty_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_empty|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|9|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_mut_empty|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|10|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_append_negative|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|11|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_append_overflow|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|12|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+cleanup_vec_live_valid|all|0,1,2|tests/integration/cleanup_vec_live_bounds.tl|42|-|0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+cleanup_vec_live_oversize|all|0,1,2|tests/integration/cleanup_vec_live_bounds.tl|134|-|1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: array index out of bounds\n
+cleanup_vec_live_negative|all|0,1,2|tests/integration/cleanup_vec_live_bounds.tl|134|-|2|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: array index out of bounds\n
+cleanup_vec_live_short_bitmap|all|0,1,2|tests/integration/cleanup_vec_live_bounds.tl|134|-|3|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: array index out of bounds\n
+tls_buffer_live_negative|all|0,1,2|tests/integration/tls_buffer_live_bounds.tl|134|-|-|stdlib/byte_buf.tl stdlib/net/tls_wire.tl|expected-stderr:tl: array index out of bounds\n
+raw_copy_api|all|0,1,2|stdlib/tests/raw_copy_api.tl|42|-|-|stdlib/string.tl stdlib/format.tl|-
+array_set_eval_order|all|0,1,2|tests/integration/array_set_eval_order.tl|42|-|-|-|-
+array_store_place|all|0,1,2|tests/integration/array_store_place.tl|42|-|-|-|-
+array_store_scope|all|0,1,2|tests/integration/array_store_scope.tl|42|-|-|stdlib/arena.tl|-
+array_set_bounds_order|all|0,1,2|tests/integration/array_set_bounds_order.tl|134|RHS ran\n|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:26: array index out of bounds: index=1 length=1\n
+array_set_zero_bounds_order|all|0,1,2|tests/integration/array_set_zero_bounds_order.tl|134|RHS ran\n|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:26: array index out of bounds: index=1 length=1\n
 operator_operand_snapshot|all|0,1,2|tests/integration/operator_operand_snapshot.tl|42|-|-|stdlib/test.tl|-
 set_place_eval_order|all|0,1,2|tests/integration/set_place_eval_order.tl|42|-|-|stdlib/test.tl stdlib/string.tl|-
 array_field_store_growth|all|0,1,2|tests/integration/array_field_store_growth.tl|42|-|-|stdlib/test.tl|-
+inline_array_field_store_growth|all|0,1,2|tests/integration/inline_array_field_store_growth.tl|42|-|-|stdlib/test.tl|-
+zero_array_field_growth|all|0,1,2|tests/integration/zero_array_field_growth.tl|42|-|-|stdlib/test.tl|-
+zero_array_field_explicit_init|all|0,1,2|tests/integration/zero_array_field_explicit_init.tl|42|-|-|stdlib/test.tl|-
+two_field_array_growth|all|0,1,2|tests/integration/two_field_array_growth.tl|42|-|-|stdlib/test.tl|-
+set_inline_array_value_before_bounds_trap|all|0,1,2|tests/safety/set_inline_array_value_before_bounds_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:11:47: shift count out of range: count=-1 width=64\n
+set_inline_array_field_value_before_bounds_trap|all|0,1,2|tests/safety/set_inline_array_field_value_before_bounds_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:14:49: shift count out of range: count=-1 width=64\n
+set_inline_array_bounds_after_growth_trap|all|0,1,2|tests/safety/set_inline_array_bounds_after_growth_trap.tl|134|RHS grew\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:13:40: array index out of bounds: index=3 length=3\n
+set_inline_array_field_bounds_after_growth_trap|all|0,1,2|tests/safety/set_inline_array_field_bounds_after_growth_trap.tl|134|RHS grew\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:16:5: array index out of bounds: index=3 length=3\n
 call_arg_snapshot|all|0,1,2|tests/integration/call_arg_snapshot.tl|42|-|-|-|-
 call_arg_snapshot_c_abi|all|0,1,2|tests/integration/call_arg_snapshot_c_abi.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
@@ -223,14 +315,20 @@ c_abi_int8_struct|all|-|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks
 c_abi_sysv_register_aggregate_args|linux|-|tests/integration/c_abi_sysv_register_aggregate_args.tl|42|-|-|benchmarks/c_abi_sysv_register_aggregate_args/baseline.c|-
 c_abi_sysv_two_register_return|linux|-|tests/integration/c_abi_sysv_two_register_return.tl|42|-|-|benchmarks/c_abi_sysv_two_register_return/baseline.c|-
 c_abi_sysv_memory_aggregate|linux|-|tests/integration/c_abi_sysv_memory_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_memory_aggregate/baseline.c|-
+c_abi_sret_cfunc_only|all|0,1,2|tests/integration/c_abi_sret_cfunc_only.tl|42|-|-|benchmarks/c_abi_sret_cfunc_only/baseline.c|-
 c_abi_sysv_memory_tail|linux|0|tests/integration/c_abi_sysv_memory_tail.tl|42|-|-|benchmarks/c_abi_sysv_memory_tail/baseline.c|stage-stdlib
 c_abi_sysv_tag_only_enum|linux|-|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|benchmarks/c_abi_sysv_tag_only_enum/baseline.c|-
 c_abi_sysv_enum_aggregate|linux|-|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_enum_aggregate/baseline.c|-
 c_abi_slice_ptr_len|all|-|tests/integration/c_abi_slice_ptr_len.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 arena_escape_stress|all|-|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_growth_stable_handle|all|-|tests/integration/arena_growth_stable_handle.tl|42|-|-|stdlib/arena.tl|-
+arena_raw_authority|all|0,1,2|tests/integration/arena_raw_authority.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+arena_borrowed_target|all|0,1,2|tests/integration/arena_borrowed_target.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_pool_context_escape|all|-|tests/integration/arena_pool_context_escape.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_lazy_singleton_raw_addr_escape|all|-|tests/integration/arena_lazy_singleton_raw_addr_escape.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+with_arena_scalar_borrow|all|0,1,2|tests/integration/with_arena_scalar_borrow.tl|42|-|-|-|-
+borrow_local_frame_storage|all|0,1,2|tests/integration/borrow_local_frame_storage.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl|-
+capture_borrow_storage|all|0,1,2|tests/integration/capture_borrow_storage.tl|42|-|-|-|-
 argv|all|-|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl|-
 # Backend/regalloc campaign fixtures recovered from llvm-inlining.
 arg_register_swap_cycle|all|-|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdlib/io.tl|-
@@ -305,11 +403,17 @@ cpuid_operand_homes|all|-|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib
 global_cell_writer_loop_reads|all|-|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl|-
 lftr_counter_retire|all|-|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl|-
 licm_alias_stress|all|-|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl|-
+replace_handle_element|all|-,0,2|tests/integration/replace_handle_element.tl|42|-|-|stdlib/string.tl|-
+let_move_elision|all|-,0,2|tests/integration/let_move_elision.tl|42|-|-|-|-
+nested_array_element_push|all|-,0,2|tests/integration/nested_array_element_push.tl|42|-|-|-|-
+param_storage_not_adopted|all|-,0,2|tests/integration/param_storage_not_adopted.tl|42|-|-|-|-
 licm_element_bound|all|-|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|stage-stdlib
 licm_addr_taken_local|all|0,1,2|tests/integration/licm_addr_taken_local.tl|42|-|-|-|-
 licm_addr_taken_reset|all|0,1,2|tests/integration/licm_addr_taken_reset.tl|42|-|-|-|-
 fold_addr_taken_local|all|0,1,2|tests/integration/fold_addr_taken_local.tl|42|-|-|-|-
+sink_addr_taken_ptr_write|all|0,1,2|tests/integration/sink_addr_taken_ptr_write.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
+sink_addr_taken_local|all|0,1,2|tests/integration/sink_addr_taken_local.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 addr_taken_frame_slots|all|0,1,2|tests/integration/addr_taken_frame_slots.tl|42|-|-|-|-
 addr_taken_frame_join|all|0,1|tests/integration/addr_taken_frame_join.tl|42|-|-|-|-
 bounds_dom_addr_taken_local|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|42|-|0 2 0|stdlib/io.tl stdlib/string.tl|-
@@ -363,7 +467,7 @@ synth_tail_wrapper|all|-|tests/integration/synth_tail_wrapper.tl|42|-|-|-|-
 tail_borrowed_enum_match|all|-,0,2|tests/integration/tail_borrowed_enum_match.tl|42|-|-|-|-
 tail_borrow_param|all|-,0,2|tests/integration/tail_borrow_param.tl|42|-|-|-|-
 tail_reborrow_param|all|-,0,2|tests/integration/tail_reborrow_param.tl|42|-|-|-|-
-tail_call_frame_provenance|all|-,0,2|tests/integration/tail_call_frame_provenance.tl|42|-|-|-|-
+tail_call_frame_provenance|all|-,0,2|tests/integration/tail_call_frame_provenance.tl|42|-|-|stdlib/string.tl|-
 tail_stack_arg_permute|all|-,0,1,2|tests/integration/tail_stack_arg_permute.tl|42|-|-|-|-
 tail_call_stack_forward|all|0,1,2|tests/integration/tail_call_stack_forward.tl|42|-|-|-|-
 tail_call_parallel_gp_cycles|all|0,1,2|tests/integration/tail_call_parallel_gp_cycles.tl|42|-|-|-|-
@@ -378,6 +482,7 @@ tail_param_indirect_overflow|all|0,1,2|tests/integration/tail_param_indirect_ove
 tail_param_indirect_group_swap|all|0,1,2|tests/integration/tail_param_indirect_group_swap.tl|42|-|-|-|-
 tail_call_parallel_xmm_cycle|all|0,1,2|tests/integration/tail_call_parallel_xmm_cycle.tl|42|-|-|-|-
 tail_call_parallel_xmm_overflow|all|0,1,2|tests/integration/tail_call_parallel_xmm_overflow.tl|42|-|-|-|-
+param_float_stack_pin|all|0,1,2|tests/integration/param_float_stack_pin.tl|42|-|-|-|-
 synth_tail_wrapper_abort|all|-,2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n
 synth_struct_accessor|all|-|tests/integration/synth_struct_accessor.tl|42|-|-|-|-
 synth_struct_accessor_abort|all|-|tests/integration/synth_struct_accessor_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:38:32: array index out of bounds: index=71 length=64\n
@@ -393,7 +498,13 @@ rmw_mem_operand_fold|all|-|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7
 rmw_mem_operand_fold|linux|0,1,2|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl|-
 mem_dest_rmw_fold|all|-|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-|-
 copy_call_word|all|-|tests/integration/copy_call_word.tl|42|-|-|-|-
+copy_call_shifted_step_zero|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|0|-|-
+copy_call_shifted_step_one|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|1|-|-
+copy_call_shifted_step_four|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|4|-|-
+copy_call_shifted_step_nine|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|9|-|-
 copy_call_next_index|all|-,2|tests/integration/copy_call_next_index.tl|42|-|-|-|-
+deref_place_forms|all|0,1,2|tests/integration/deref_place_forms.tl|42|-|-|-|-
+unsafe_scaled_index_views|all|0,1,2|tests/integration/unsafe_scaled_index_views.tl|42|-|-|-|-
 load_sink_trap_parity|all|-|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:33:37: array index out of bounds: index=4 length=4\n
 mem_dest_rmw_trap_parity|all|-|tests/integration/mem_dest_rmw_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:27:68: array index out of bounds: index=4 length=4\n
 gep_value_direct|all|-|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
@@ -410,8 +521,19 @@ constant_divisor_strength|all|-|tests/integration/constant_divisor_strength.tl|4
 constructor_alias_two_phase|all|-,0,2|tests/integration/constructor_alias_two_phase.tl|42|-|-|stdlib/string.tl|-
 arena_poison_clone_survives|all|-|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_poison_stale_array_trap|linux|-|tests/integration/arena_poison_stale_array_trap.tl|139|-|-|stdlib/arena.tl stdlib/string.tl|-
+# Arena sanitizer quarantine (#7872). The fixture enables the runtime through
+# tl_arena_sanitize_enable. Destroyed chunks, a dropped later segment and a
+# fully rewound page fault (Linux PROT_NONE); a rewound partial page shared
+# with live data keeps its poison, and repeated valid rewinds keep the prefix.
+arena_sanitizer_destroyed|linux|0,1,2|tests/integration/arena_sanitizer.tl|139|-|1|-|stage-stdlib
+arena_sanitizer_dropped_segment|linux|0,1,2|tests/integration/arena_sanitizer.tl|139|-|2|-|stage-stdlib
+arena_sanitizer_rewound_page|linux|0,1,2|tests/integration/arena_sanitizer.tl|139|-|3|-|stage-stdlib
+arena_sanitizer_partial_page_poison|all|0,1,2|tests/integration/arena_sanitizer.tl|42|-|4|-|stage-stdlib
+arena_sanitizer_repeated_rewind|all|0,1,2|tests/integration/arena_sanitizer.tl|42|-|5|-|stage-stdlib
 calc|all|-|tests/integration/calc.tl|14|-|-|token.tl|-
 clone_reference_referent|all|0,1,2|tests/integration/clone_reference_referent.tl|42|-|-|-|-
+clone_read_receiver_retained|all|0,1,2|tests/integration/clone_read_receiver_retained.tl|7|-|-|-|-
+clone_read_receiver_lent|all|0,1,2|tests/integration/clone_read_receiver_lent.tl|42|-|-|-|-
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
@@ -521,6 +643,13 @@ global_initializer|all|-|tests/integration/global_initializer.tl|120|-|-|-|-
 hello|all|-|tests/integration/hello.tl|42|-|-|-|-
 parameter_set_rebind|all|-|tests/integration/parameter_set_rebind.tl|42|-|-|-|-
 by_value_memory_aggregate_explicit_mut|all|-|tests/integration/by_value_memory_aggregate_explicit_mut.tl|42|-|-|-|-
+aggregate_local_value_snapshot|all|0,1,2|tests/integration/aggregate_local_value_snapshot.tl|42|-|-|-|-
+aggregate_assignment_storage|all|0,1,2|tests/integration/aggregate_assignment_storage.tl|42|-|-|-|-
+aggregate_constructor_loop_snapshot|all|0,1,2|tests/integration/aggregate_constructor_loop_snapshot.tl|42|-|-|-|-
+aggregate_parameter_storage|all|0,1,2|tests/integration/aggregate_parameter_storage.tl|42|-|-|-|-
+borrowed_pattern_descriptor|all|0,1,2|tests/integration/borrowed_pattern_descriptor.tl|42|-|-|-|-
+tail_call_aggregate_storage|all|0,1,2|tests/integration/tail_call_aggregate_storage.tl|42|-|-|-|-
+shrinkwrap_parameter_return|all|0,1,2|tests/integration/shrinkwrap_parameter_return.tl|42|-|-|stdlib/string.tl|-
 by_value_param_private_storage|all|-,0,1,2|tests/integration/by_value_param_private_storage.tl|42|-|-|-|-
 by_value_aggregate_abi|all|-|tests/integration/by_value_aggregate_abi.tl|42|-|-|stdlib/string.tl|-
 i16_min_div_neg1_trap|all|-|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
@@ -561,17 +690,18 @@ integer_literal_default_i32_and_wide_cast|all|-|tests/integration/integer_litera
 integer_literal_boundary_matrix|all|-,0,2|tests/integration/integer_literal_boundary_matrix.tl|42|-|-|stdlib/comptime.tl|-
 integer_literal_u64_full_range|all|-|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-|-
 if_literal_branch_join|all|-,0,2|tests/integration/if_literal_branch_join.tl|42|-|-|-|-
+if_literal_tail_branch_join|all|-,0,2|tests/integration/if_literal_tail_branch_join.tl|42|-|-|-|-
 inline_alloc_scavenge_live_through|all|-,2|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl|-
 parser|all|-|tests/integration/parser.tl|14|-|-|-|-
 process_runtime|all|-|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
-read_file_missing_trap|all|-|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1547:8: panic: tl: read-file failed\n
+read_file_missing_trap|all|-|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;8;      (panic "tl: read-file failed\n")}: panic: tl: read-file failed\n
 write_file_invalid_trap|all|-|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
-selfhost_argv_oob|all|-|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1464:8: panic: tl: argv index out of bounds\n
+selfhost_argv_oob|all|-|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;8;      (panic "tl: argv index out of bounds\n")}: panic: tl: argv index out of bounds\n
 tl_alloc_huge_trap|all|-|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 tl_alloc_aligned_invalid|all|-|tests/integration/tl_alloc_aligned_invalid.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 tl_alloc_aligned_overflow|all|-|tests/integration/tl_alloc_aligned_overflow.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 windows_allocation_abort|windows|-|tests/integration/windows_allocation_abort.tl|134|-|-|-|expected-stderr:tl: allocation failed: arena=atomic operation=growth-commit requested=18446744073709551615 reserved=18446744073709551614 committed=9223372036854775808 windows-error=4294967295\n
-stdin_bytes_negative_trap|all|-|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1821:6: panic: tl: stdin failed\n
+stdin_bytes_negative_trap|all|-|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;6;    (panic "tl: stdin failed\n")}: panic: tl: stdin failed\n
 region_mark_zero|all|-|tests/integration/region_mark_zero.tl|42|-|-|-|-
 region_reset_zero|all|-|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl|-
 region_reset_discard|all|-|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl|-
@@ -669,6 +799,9 @@ stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib
 vector_alias_field|all|0,1,2|tests/integration/vector_alias_field.tl|42|-|-|vector_alias_field_provider.tl stdlib/vector.tl stdlib/option.tl stdlib/eq.tl|-
 stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-
 stdlib_json|all|-|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl|-
+json_control_escapes|all|0,1,2|tests/integration/json_control_escapes.tl|42|-|-|-|stage-stdlib
+json_unicode_escapes|all|0,1,2|tests/integration/json_unicode_escapes.tl|42|-|-|-|stage-stdlib
+json_unicode_escapes_embedded|all|0,1,2|tests/integration/json_unicode_escapes.tl|42|-|-|-|-
 stdlib_serialize_json|all|-|tests/integration/stdlib_serialize_json.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl serialize_enum_fixture.tl|-
 tlci_native_template_nodes|all|-|tests/integration/tlci_native_template_nodes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
 tlci_identity_owned_views|all|-|tests/integration/tlci_identity_owned_views.tl|42|-|-|stdlib/comptime.tl stdlib/msvc.tl stdlib/process.tl stdlib/process_runtime.tl|-
@@ -741,10 +874,15 @@ arena_lifetimes_example|all|-|examples/arena_lifetimes.tl|42|arena lifetime scor
 tl_alloc|all|-|tests/integration/tl_alloc.tl|0|-|-|-|-
 tl_alloc_aligned|all|-|tests/integration/tl_alloc_aligned.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl|-
 tree|all|-|tests/integration/tree.tl|3|-|-|-|-
-tuple_values|all|-|tests/integration/tuple_values.tl|42|-|-|-|-
+tuple_values|all|-,0,1,2|tests/integration/tuple_values.tl|42|-|-|-|-
+# Moving a Box out of a nested tuple place leaves its Copy sibling readable.
+tuple_nested_place_move|all|0,1,2|tests/integration/tuple_nested_place_move.tl|42|-|-|-|-
 tuple_match_pattern|all|-|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl|-
+tuple_reference_reads|all|0,1,2|tests/integration/tuple_reference_reads.tl|42|-|-|stdlib/string.tl stdlib/test.tl|-
+borrowed_enum_struct_pattern|all|0,1,2|tests/integration/borrowed_enum_struct_pattern.tl|42|-|-|struct_match_pattern_geom.tl stdlib/string.tl|-
 borrowed_struct_pattern_string|all|0,1,2|tests/integration/borrowed_struct_pattern_string.tl|42|-|-|stdlib/string.tl stdlib/io.tl|stage-stdlib
 string_literal_eq|all|0,1,2|tests/integration/string_literal_eq.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-
+packed_string_literals|all|0,1,2|tests/integration/packed_string_literals.tl|42|prefix/abcabcbcccabdababbprefixλλbprefix/abc|-|packed_string_literals.in stdlib/io.tl stdlib/byte_buf.tl|stage-stdlib
 borrow_temporary_call_arg|all|0,1,2|tests/safety/borrow_temporary_call_arg_ok.tl|42|-|-|stdlib/string.tl|-
 borrow_temporary_cleanup|all|0,1,2|tests/safety/borrow_temporary_cleanup_ok.tl|42|-|-|-|-
 borrowed_pattern_copy_binding|all|0,1,2|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-|-|stdlib/string.tl|-
@@ -768,55 +906,73 @@ composed_place_projection|all|-|tests/integration/composed_place_projection.tl|4
 unit_functions|all|-|tests/integration/unit_functions.tl|7|-|-|-|-
 unit_main|all|-|tests/integration/unit_main.tl|0|-|-|-|-
 valid_shift_counts|all|-|tests/integration/valid_shift_counts.tl|42|-|-|-|-
+arena_early_exits|all|0,1,2|tests/integration/arena_early_exits.tl|42|-|-|-|-
+arena_scratch_owner_activation|all|0,1,2|tests/integration/arena_scratch_owner_activation.tl|42|42\n|-|-|-
+arena_escape_owner_activation|all|0,1,2|tests/integration/arena_escape_owner_activation.tl|42|42\n|-|-|-
+arena_tied_early_exits|all|0,1,2|tests/integration/arena_tied_early_exits.tl|42|42\n|-|-|-
 with_arena_builtin_alloc|all|-|tests/integration/with_arena_builtin_alloc.tl|2|-|-|stdlib/string.tl|-
 with_arena_loop|all|-|tests/integration/with_arena_loop.tl|42|-|-|stdlib/string.tl|-
 with_arena_mark_stress|all|-|tests/integration/with_arena_mark_stress.tl|42|-|-|stdlib/string.tl|-
 with_escape_clone_out|all|-|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+compiler_abort_intern|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|intern|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: compiler_intern.intern-id-from-renderable: invalid renderable name ID\n
+compiler_abort_session|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|session|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: compiler_intern_state.intern-structural-session-key: invalid structural session handle or kind\n
+compiler_abort_optimizer|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|optimizer|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: compiler_optimize.opt-ssa-env-rollback: invalid SSA rename change checkpoint\n
+compiler_abort_token|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|token|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: token.sym-id: unexpected token kind for symbol ID\n
+compiler_abort_revision|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|revision|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: type pool revision exhausted\n
+compiler_abort_retired|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|retired|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: append to retired type pool\n
+compiler_abort_valid|all|0,1,2|src/tests/compiler_abort_sites.tl|42|-|valid|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib
 scratch_body_region|all|0,1,2|tests/integration/scratch_body_region.tl|42|-|-|stdlib/arena.tl stdlib/string.tl stdlib/vector.tl|-
 compiler_ast_types_smoke|all|-|src/tests/compiler_ast_types_smoke.tl|42|-|-|compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/arena.tl stdlib/hash.tl stdlib/string.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|-
 compiler_parse_smoke|all|-|src/tests/compiler_parse_smoke.tl|42|-|-|compiler_diagnostic_tests.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl stdlib/hash.tl stdlib/test.tl compiler_parse_core_tests.tl reader_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|-
-compiler_typecheck_smoke|all|-|src/tests/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck_tests.tl compiler_typecheck_core_tests.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_clone_tests.tl compiler_ast_types_tests.tl compiler_intern_state_tests.tl compiler_intern_tests.tl compiler_module_name.tl|stage-stdlib
-compiler_macro_diagnostic_smoke|all|-|src/tests/compiler_macro_diagnostic_smoke.tl|42|-|-|compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/byte_buf.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl|stage-stdlib
+compiler_typecheck_smoke|all|-|src/tests/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck_tests.tl compiler_typecheck_core_tests.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_clone_tests.tl compiler_ast_types_tests.tl compiler_intern_state_tests.tl compiler_intern_tests.tl compiler_module_name.tl|stage-stdlib
+compiler_macro_diagnostic_smoke|all|-|src/tests/compiler_macro_diagnostic_smoke.tl|42|-|-|compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/byte_buf.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl|stage-stdlib
 canonical_import_default_first_smoke|all|-|src/tests/canonical_import_default_first_smoke.tl|42|-|-|canonical_import_shared.tl|-
 canonical_import_alias_first_smoke|all|-|src/tests/canonical_import_alias_first_smoke.tl|42|-|-|canonical_import_shared.tl|-
-compiler_load_decls_nil_smoke|all|-|src/tests/compiler_load_decls_nil_smoke.tl|42|-|-|compiler_load.tl compiler_embedded_stdlib.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl tlci_core.tl compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|-
-compiler_load_lazy_smoke|all|-|src/tests/compiler_load_lazy_smoke.tl|42|-|-|compiler_load.tl compiler_embedded_stdlib.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl tlci_core.tl compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|-
-lsp_frame_smoke|all|-|src/tests/lsp_frame_smoke.tl|42|-|-|lsp_frame_core.tl compiler_incremental_binary.tl source_text_core.tl lsp_vector_families.tl compiler_semantic_index.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/json.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl format_rules.tl format_tokens.tl format_cst.tl format_render_buf.tl lint_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl tlci_core.tl compiler_semantic_index_tests.tl lsp_frame_core_tests.tl compiler_load_tests.tl lint_core_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|-
-compiler_lower_smoke|all|-|src/tests/compiler_lower_smoke.tl|42|-|-|compiler_driver_core.tl compiler_abi.tl compiler_backend.tl compiler_parallel_move.tl compiler_object.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_optimize.tl compiler_float.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_lower_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/msvc.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl|stage-stdlib
-compiler_pointer_proof_smoke|all|-|src/tests/compiler_pointer_proof_smoke.tl|42|-|-|compiler_driver_core.tl compiler_abi.tl compiler_backend.tl compiler_parallel_move.tl compiler_object.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_optimize.tl compiler_float.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_lower_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/msvc.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl|stage-stdlib
-compiler_codegen_smoke_suite|all|-|src/tests/compiler_codegen_smoke_suite.tl|42|-|-|compiler_abi.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_backend_tests.tl compiler_backend.tl compiler_builtin_ids.tl compiler_check_core.tl compiler_clone.tl compiler_ctfe.tl compiler_diagnostic.tl compiler_driver_core.tl compiler_driver_smoke_tests.tl compiler_embedded_stdlib.tl compiler_float.tl compiler_intern.tl compiler_ir_types.tl compiler_liveness.tl compiler_load.tl compiler_lower_package_tests.tl compiler_lower_tests.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_object.tl compiler_optimize.tl compiler_parallel_move.tl compiler_parse_core.tl compiler_regalloc.tl compiler_regalloc_tests.tl compiler_specialize.tl compiler_symbols.tl compiler_typecheck_api.tl compiler_typecheck_core.tl lex.tl read.tl stdlib/arena.tl stdlib/env.tl stdlib/fs.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/io.tl stdlib/msvc.tl stdlib/process_runtime.tl stdlib/process.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl sym_i64_env.tl tlci_core.tl token.tl compiler_module_name.tl compiler_backend_source_tests.tl compiler_target_cfg_core.tl tests/fixtures/backend_source_import_payload.tl tests/fixtures/backend_source_import_aliases.tl tests/fixtures/backend_source_import_wildcard.tl tests/fixtures/backend_source_import_str_cat.tl|stage-stdlib|suite-members:compiler_spmd_call_lower_scalar_smoke.tl compiler_spmd_call_lower_avx512_smoke.tl compiler_spmd_imported_selection_smoke.tl compiler_spmd_package_callable_smoke.tl compiler_spmd_package_validation_smoke.tl compiler_spmd_package_recursion_smoke.tl compiler_spmd_package_mutual_recursion_smoke.tl compiler_spmd_package_abi_smoke.tl compiler_backend_smoke.tl compiler_lower_symbol_identity_smoke.tl compiler_driver_pic_smoke.tl compiler_driver_base_transients_smoke.tl
-compiler_bounds_check_smoke|all|-|src/tests/compiler_bounds_check_smoke.tl|42|-|-|compiler_abi.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_backend_tests.tl compiler_backend.tl compiler_builtin_ids.tl compiler_check_core.tl compiler_clone.tl compiler_ctfe.tl compiler_diagnostic.tl compiler_driver_core.tl compiler_driver_smoke_tests.tl compiler_embedded_stdlib.tl compiler_float.tl compiler_intern.tl compiler_ir_types.tl compiler_liveness.tl compiler_load.tl compiler_lower_package_tests.tl compiler_lower_tests.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_object.tl compiler_optimize.tl compiler_parallel_move.tl compiler_parse_core.tl compiler_regalloc.tl compiler_regalloc_tests.tl compiler_specialize.tl compiler_symbols.tl compiler_typecheck_api.tl compiler_typecheck_core.tl lex.tl read.tl stdlib/arena.tl stdlib/env.tl stdlib/fs.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/io.tl stdlib/msvc.tl stdlib/process_runtime.tl stdlib/process.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl sym_i64_env.tl tlci_core.tl token.tl compiler_module_name.tl|stage-stdlib
-compiler_ir_types_smoke|all|-|src/tests/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl stdlib/hash.tl|-
+compiler_load_decls_nil_smoke|all|-|src/tests/compiler_load_decls_nil_smoke.tl|42|-|-|compiler_load.tl compiler_symbols.tl compiler_embedded_stdlib.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl tlci_core.tl compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|-
+compiler_load_lazy_smoke|all|-|src/tests/compiler_load_lazy_smoke.tl|42|-|-|compiler_load.tl compiler_symbols.tl compiler_embedded_stdlib.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl tlci_core.tl compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|-
+lsp_frame_smoke|all|-|src/tests/lsp_frame_smoke.tl|42|-|-|lsp_frame_core.tl compiler_incremental_binary.tl source_text_core.tl lsp_vector_families.tl compiler_semantic_index.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/json.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl format_rules.tl format_tokens.tl format_cst.tl format_render_buf.tl lint_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl tlci_core.tl compiler_semantic_index_tests.tl lsp_frame_core_tests.tl compiler_load_tests.tl lint_core_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl|-
+compiler_lower_smoke|all|-|src/tests/compiler_lower_smoke.tl|42|-|-|compiler_driver_core.tl compiler_abi.tl compiler_backend.tl compiler_parallel_move.tl compiler_object.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_optimize.tl compiler_float.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_lower_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/msvc.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_ir_return_storage.tl|stage-stdlib
+compiler_pointer_proof_smoke|all|-|src/tests/compiler_pointer_proof_smoke.tl|42|-|-|compiler_driver_core.tl compiler_abi.tl compiler_backend.tl compiler_parallel_move.tl compiler_object.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_optimize.tl compiler_float.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_lower_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/msvc.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_ir_return_storage.tl|stage-stdlib
+compiler_codegen_smoke_suite|all|-|src/tests/compiler_codegen_smoke_suite.tl|42|-|-|compiler_abi.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_backend_tests.tl compiler_backend.tl compiler_builtin_ids.tl compiler_check_core.tl compiler_clone.tl compiler_ctfe.tl compiler_diagnostic.tl compiler_driver_core.tl compiler_driver_smoke_tests.tl compiler_embedded_stdlib.tl compiler_float.tl compiler_intern.tl compiler_ir_types.tl compiler_liveness.tl compiler_load.tl compiler_lower_package_tests.tl compiler_lower_tests.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_object.tl compiler_optimize.tl compiler_parallel_move.tl compiler_parse_core.tl compiler_regalloc.tl compiler_regalloc_tests.tl compiler_specialize.tl compiler_symbols.tl compiler_typecheck_api.tl compiler_typecheck_core.tl lex.tl read.tl stdlib/arena.tl stdlib/env.tl stdlib/fs.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/io.tl stdlib/msvc.tl stdlib/process_runtime.tl stdlib/process.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl sym_i64_env.tl tlci_core.tl token.tl compiler_module_name.tl compiler_backend_source_tests.tl compiler_target_cfg_core.tl tests/fixtures/backend_source_import_payload.tl tests/fixtures/backend_source_import_aliases.tl tests/fixtures/backend_source_import_wildcard.tl tests/fixtures/backend_source_import_str_cat.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_ir_return_storage.tl|stage-stdlib|suite-members:compiler_spmd_call_lower_scalar_smoke.tl compiler_spmd_call_lower_avx512_smoke.tl compiler_spmd_imported_selection_smoke.tl compiler_spmd_package_callable_smoke.tl compiler_spmd_package_validation_smoke.tl compiler_spmd_package_recursion_smoke.tl compiler_spmd_package_mutual_recursion_smoke.tl compiler_spmd_package_abi_smoke.tl compiler_backend_smoke.tl compiler_lower_symbol_identity_smoke.tl compiler_driver_pic_smoke.tl compiler_driver_base_transients_smoke.tl
+compiler_bounds_check_smoke|all|-|src/tests/compiler_bounds_check_smoke.tl|42|-|-|compiler_abi.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_backend_tests.tl compiler_backend.tl compiler_builtin_ids.tl compiler_check_core.tl compiler_clone.tl compiler_ctfe.tl compiler_diagnostic.tl compiler_driver_core.tl compiler_driver_smoke_tests.tl compiler_embedded_stdlib.tl compiler_float.tl compiler_intern.tl compiler_ir_types.tl compiler_liveness.tl compiler_load.tl compiler_lower_package_tests.tl compiler_lower_tests.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_object.tl compiler_optimize.tl compiler_parallel_move.tl compiler_parse_core.tl compiler_regalloc.tl compiler_regalloc_tests.tl compiler_specialize.tl compiler_symbols.tl compiler_typecheck_api.tl compiler_typecheck_core.tl lex.tl read.tl stdlib/arena.tl stdlib/env.tl stdlib/fs.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/io.tl stdlib/msvc.tl stdlib/process_runtime.tl stdlib/process.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl sym_i64_env.tl tlci_core.tl token.tl compiler_module_name.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_ir_return_storage.tl|stage-stdlib
+compiler_ir_types_smoke|all|-|src/tests/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl stdlib/hash.tl compiler_optimize.tl compiler_float.tl compiler_regalloc.tl compiler_liveness.tl compiler_parallel_move.tl compiler_abi.tl compiler_ir_return_storage.tl|-
+compiler_ir_return_storage_smoke|all|0,1,2|src/tests/compiler_ir_return_storage_smoke.tl|42|-|-|compiler_ir_return_storage.tl compiler_ir_return_storage_tests.tl compiler_ir_types.tl compiler_ir_text.tl compiler_ast_types.tl compiler_intern.tl compiler_owned_view.tl|stage-stdlib
+compiler_ownership_core_smoke|all|0,1,2|src/tests/compiler_ownership_core_smoke.tl|42|-|-|compiler_ownership_core.tl compiler_ownership_dump.tl compiler_ownership_core_tests.tl|stage-stdlib
+compiler_ownership_loan_smoke|all|0,1,2|src/tests/compiler_ownership_loan_smoke.tl|42|-|-|compiler_ownership_core.tl compiler_ownership_dump.tl compiler_ownership_core_tests.tl compiler_ownership_loan_tests.tl|stage-stdlib
+compiler_ownership_cleanup_smoke|all|0,1,2|src/tests/compiler_ownership_cleanup_smoke.tl|42|-|-|compiler_ownership_core.tl compiler_ownership_dump.tl compiler_ownership_cleanup_tests.tl|stage-stdlib
+compiler_typed_occurrence_smoke|all|0,1,2|src/tests/compiler_typed_occurrence_smoke.tl|42|-|-|compiler_typed_occurrence.tl compiler_typed_occurrence_tests.tl compiler_ownership_core.tl|stage-stdlib
+compiler_ownership_normalize_smoke|all|0,1,2|src/tests/compiler_ownership_normalize_smoke.tl|42|-|-|compiler_ownership_normalize.tl compiler_ownership_normalize_tests.tl compiler_typed_occurrence.tl compiler_typed_occurrence_tests.tl compiler_ownership_core.tl compiler_ownership_dump.tl|stage-stdlib
 ir_sequence_borrow_instr_valid|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|42|-|0 0|-|-
 ir_sequence_borrow_instr_negative|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 -1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=-1 length=1\n
 ir_sequence_borrow_instr_end|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=1 length=1\n
 ir_sequence_borrow_phi_offset_valid|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|42|-|1 0|-|-
-ir_sequence_borrow_phi_negative_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt0/compiler_ir_types.tl:5078:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt1/compiler_ir_types.tl:5078:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt2/compiler_ir_types.tl:5078:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt0/compiler_ir_types.tl:5078:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt1/compiler_ir_types.tl:5078:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt2/compiler_ir_types.tl:5078:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_end_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt0/compiler_ir_types.tl:5078:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt1/compiler_ir_types.tl:5078:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt2/compiler_ir_types.tl:5078:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt0/compiler_ir_types.tl:5078:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt1/compiler_ir_types.tl:5078:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt2/compiler_ir_types.tl:5078:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_end_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
 ir_sequence_borrow_block_empty|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|2 0|-|expected-stderr:tl: $SRC:32:55: array index out of bounds: index=0 length=0\n
 compiler_liveness_smoke|all|-|src/tests/compiler_liveness_smoke.tl|42|-|-|compiler_liveness_tests.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl|-
-compiler_regalloc_smoke|all|-|src/tests/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc_tests.tl compiler_abi.tl compiler_regalloc.tl compiler_parallel_move.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl|-
+compiler_stack_traffic_smoke|all|0,1,2|src/tests/compiler_stack_traffic_smoke.tl|42|-|-|compiler_stack_traffic_tests.tl compiler_stack_traffic.tl compiler_ir_text.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl|-
+compiler_regalloc_smoke|all|-|src/tests/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc_tests.tl compiler_abi.tl compiler_regalloc.tl compiler_parallel_move.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_ir_return_storage.tl|-
 lex_span_smoke|all|-|src/tests/lex_span_smoke.tl|42|-|-|lex.tl token.tl compiler_intern.tl stdlib/arena.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl reader_tests.tl|-
 read_pool_arena_smoke|all|-|src/tests/read_pool_arena_smoke.tl|42|-|-|read.tl token.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl reader_tests.tl|-
 doc_extract_smoke|all|-|src/tests/doc_extract_smoke.tl|42|-|-|doc_extract.tl source_text_core.tl format_tokens.tl|-
-doc_expand_smoke|all|-|src/tests/doc_expand_smoke.tl|42|-|-|doc_expand.tl source_text_core.tl doc_render.tl doc_extract.tl format_tokens.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl|-
+doc_expand_smoke|all|-|src/tests/doc_expand_smoke.tl|42|-|-|doc_expand.tl source_text_core.tl doc_render.tl doc_extract.tl format_tokens.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl compiler_module_name.tl|-
 tlci_loader_smoke|all|-|src/tests/tlci_loader_smoke.tl|42|-|-|tlci_loader_tests.tl tlci_core_tests.tl tlci_loader.tl tlci_core.tl tlci_pages.tl read.tl lex.tl token.tl compiler_intern.tl stdlib/arena.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/string.tl stdlib/str_cat_runtime.tl stdlib/str_cat.tl stdlib/byte_buf_core.tl|-
 tlci_native_source_owners|all|0,1,2|src/tests/compiler_tlci_native_source_owners.tl|42|||||
-compiler_frontend_smoke_suite|all|-|src/tests/compiler_frontend_smoke_suite.tl|42|-|-|build_run_core.tl compiler_abi.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_backend.tl compiler_builtin_ids.tl compiler_check_core.tl compiler_check_tests.tl compiler_clone.tl compiler_ctfe.tl compiler_ctfe_tests.tl compiler_diagnostic.tl compiler_driver_core.tl compiler_embedded_stdlib.tl compiler_float.tl compiler_intern.tl compiler_ir_types.tl compiler_liveness.tl compiler_load.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_object.tl compiler_optimize.tl compiler_parallel_move.tl compiler_parse_core.tl compiler_regalloc.tl compiler_semantic_index.tl compiler_specialize.tl compiler_symbols.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_typecheck_tests.tl compiler_typecheck_core_tests.tl compiler_windows_coff_core.tl doc_test.tl source_text_core.tl lex.tl read.tl stdlib/arena.tl stdlib/env.tl stdlib/fs.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/io.tl stdlib/msvc.tl stdlib/process_runtime.tl stdlib/process.tl stdlib/profile.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl sym_i64_env.tl tlci_core.tl token.tl compiler_semantic_index_tests.tl compiler_load_tests.tl doc_test_tests.tl build_run_core_tests.tl compiler_symbols_tests.tl compiler_clone_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|-|suite-members:compiler_symbols_smoke.tl compiler_check_smoke.tl compiler_ctfe_smoke.tl compiler_typecheck_reflection_smoke.tl doc_test_smoke.tl
+compiler_frontend_smoke_suite|all|-|src/tests/compiler_frontend_smoke_suite.tl|42|-|-|build_run_core.tl compiler_abi.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_backend.tl compiler_builtin_ids.tl compiler_check_core.tl compiler_check_tests.tl compiler_clone.tl compiler_ctfe.tl compiler_ctfe_tests.tl compiler_diagnostic.tl compiler_driver_core.tl compiler_embedded_stdlib.tl compiler_float.tl compiler_intern.tl compiler_ir_types.tl compiler_liveness.tl compiler_load.tl compiler_lower.tl compiler_pointer_proof_input.tl compiler_object_coff.tl compiler_object_elf.tl compiler_object_layout.tl compiler_object.tl compiler_optimize.tl compiler_parallel_move.tl compiler_parse_core.tl compiler_regalloc.tl compiler_semantic_index.tl compiler_specialize.tl compiler_symbols.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_typecheck_tests.tl compiler_typecheck_core_tests.tl compiler_windows_coff_core.tl doc_test.tl source_text_core.tl lex.tl read.tl stdlib/arena.tl stdlib/env.tl stdlib/fs.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/io.tl stdlib/msvc.tl stdlib/process_runtime.tl stdlib/process.tl stdlib/profile.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl sym_i64_env.tl tlci_core.tl token.tl compiler_semantic_index_tests.tl compiler_load_tests.tl doc_test_tests.tl build_run_core_tests.tl compiler_symbols_tests.tl compiler_clone_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_ir_return_storage.tl|-|suite-members:compiler_symbols_smoke.tl compiler_check_smoke.tl compiler_ctfe_smoke.tl compiler_typecheck_reflection_smoke.tl doc_test_smoke.tl
 doc_render_smoke|all|-|src/tests/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl source_text_core.tl format_tokens.tl|-
 doc_html_smoke|all|-|src/tests/doc_html_smoke.tl|42|-|-|doc_html.tl source_text_core.tl doc_render.tl doc_extract.tl format_tokens.tl|-
 lint_smoke|all|-|src/tests/lint_smoke.tl|42|-|-|lint_policy_core_tests.tl lint_core_tests.tl lint_policy_core.tl lint_core.tl source_text_core.tl lex.tl token.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/arena.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|-
-lint_driver_smoke|all|-|src/tests/lint_driver_smoke.tl|42|target/lint_unsafe_surface/safe.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/shadow.tl:5:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/local_value.tl:2:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/callable_value.tl:4:5: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\n|-|lint_driver_core_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl lint_core.tl source_text_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl lint_core_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|expected-stderr:target/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\n
+lint_driver_smoke|all|-|src/tests/lint_driver_smoke.tl|42|target/lint_unsafe_surface/safe.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/shadow.tl:5:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/local_value.tl:2:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/callable_value.tl:4:5: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\ntarget/lint_unsafe_surface/arena_lookalike.tl:3:15: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/arena_local.tl:4:15: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/arena_moduleless.tl:3:15: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\n|-|lint_driver_core_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl lint_core.tl source_text_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl lint_core_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl compiler_module_name.tl|expected-stderr:target/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\n
 package_cache_smoke|all|-|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/string.tl|-
 array_push_aggregate|all|-|tests/integration/array_push_aggregate.tl|42|-|-|-|-
 nested_repr_c_aggregate|all|-|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-|-
@@ -824,6 +980,7 @@ repr_c_explicit_alignment|all|-,0,2|tests/integration/repr_c_explicit_alignment.
 nested_tuple_array_projection|all|-|tests/integration/nested_tuple_array_projection.tl|0|7\n3\n|-|stdlib/io.tl|-
 lambda_capture_lifetime_aggregate|all|-|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|stdlib/string.tl|-
 register_resident_enum|all|-|tests/integration/register_resident_enum.tl|42|-|-|-|-
+gep_large_displacement|all|0,1,2|tests/integration/gep_large_displacement.tl|42|-|-|-|-
 register_pair_struct|all|-|tests/integration/register_pair_struct.tl|42|-|-|-|-
 register_group_phi_return|all|-|tests/integration/register_group_phi_return.tl|42|-|-|-|-
 register_group_phi_swap_cycle|all|-|tests/integration/register_group_phi_swap_cycle.tl|42|-|-|-|-
@@ -857,6 +1014,7 @@ arena_branded_place_destroy|all|-|tests/integration/arena_branded_place_destroy.
 arena_invalidate_effect|all|-,0,1,2|tests/integration/arena_invalidate_effect.tl|42|-|-|stdlib/arena.tl stdlib/string.tl stdlib/test.tl|-
 arena_invalidate_reflection|all|-,0,1,2|tests/integration/arena_invalidate_reflection.tl|42|-|-|stdlib/arena.tl stdlib/comptime.tl|-
 arena_invalidate_exits|all|0,1,2|tests/integration/arena_invalidate_exits.tl|42|-|-|stdlib/arena.tl stdlib/io.tl|stage-stdlib
+arena_invalidate_with_owner|all|0,1,2|tests/integration/arena_invalidate_with_owner.tl|42|-|-|-|-
 arena_rewind_make_array_zero|all|-|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-|-
 make_array_default_reads_zero|all|-|tests/integration/make_array_default_reads_zero.tl|42|-|-|stdlib/arena.tl|-
 mem_fill8_runtime_contract|all|-|tests/integration/mem_fill8_runtime_contract.tl|42|-|-|stdlib/arena.tl stdlib/runtime.tl|-
@@ -876,7 +1034,7 @@ sync_mutex_wrong_family_lock_abort|all|-|tests/integration/sync_mutex_wrong_fami
 sync_mutex_stolen_token_guard_abort|all|-|tests/integration/sync_mutex_stolen_token_guard_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 sync_mutex_closed_alias_lock_abort|all|-|tests/integration/sync_mutex_closed_alias_lock_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 box_take_set|all|-|tests/integration/box_take_set.tl|42|-|-|-|-
-lsp_position_edit_smoke|linux|-|src/tests/lsp_position_edit_smoke.tl|42|-|-|lsp_frame_core.tl compiler_incremental_binary.tl source_text_core.tl lsp_vector_families.tl compiler_semantic_index.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/json.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl format_rules.tl format_tokens.tl format_cst.tl format_render_buf.tl lint_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl tlci_core.tl compiler_semantic_index_tests.tl lsp_frame_core_tests.tl compiler_load_tests.tl format_tests.tl compiler_module_name.tl|-
+lsp_position_edit_smoke|linux|-|src/tests/lsp_position_edit_smoke.tl|42|-|-|lsp_frame_core.tl compiler_incremental_binary.tl source_text_core.tl lsp_vector_families.tl compiler_semantic_index.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_typed_occurrence.tl compiler_ownership_core.tl compiler_ownership_normalize.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/json.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl format_rules.tl format_tokens.tl format_cst.tl format_render_buf.tl lint_core.tl lint_policy_core.tl lint_driver_core.tl package_source_core.tl tlci_core.tl compiler_semantic_index_tests.tl lsp_frame_core_tests.tl compiler_load_tests.tl format_tests.tl compiler_module_name.tl|-
 function_lifetime_elision|all|-|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl|-
 consume_parameters|all|-|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl|-
 comptime_module_value_reflection|all|-|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl|-
@@ -1009,6 +1167,8 @@ replayed_loop_call_lagged_65|all|0,1,2|tests/integration/replayed_loop_call_lagg
 linker_archive_container|all|-|src/linker_archive_core_tests.tl|42|-|-|linker_archive_core.tl linker_archive_output.tl|stage-stdlib
 
 global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-
+selected_inference_dotted|all|0,1,2|tests/integration/selected_inference_dotted.tl|42|-|-|-|stage-stdlib
+ownership_certified_scalar_control|all|0,1,2|tests/integration/ownership_certified_scalar_control.tl|42|-|-|-|-
 
 packed_field_receiver|all|-|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
 packed_field_receiver_levels|all|0,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
@@ -1029,6 +1189,9 @@ store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|4
 literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
 exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
+replace_place_paths|all|0,1,2|tests/integration/replace_place_paths.tl|42|-|-|-|-
+view_mut_write|all|0,1,2|tests/integration/view_mut_write.tl|42|-|-|-|-
+view_match_binder_write|all|0,1,2|tests/integration/view_match_binder_write.tl|42|-|-|-|-
 
 decls_module_scopes|all|0,1,2|tests/integration/decls_module_scopes.tl|42|-|-|decls_generated_import_dep.tl|-
 serialize_module_scopes|all|0,1,2|tests/integration/serialize_module_scopes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl|-
@@ -1043,3 +1206,35 @@ backend_source_import_payload|all|0,1,2|tests/fixtures/backend_source_import_pay
 backend_source_import_aliases|all|0,1,2|tests/fixtures/backend_source_import_aliases.tl|42|-|-|-|stage-stdlib
 backend_source_import_wildcard|all|0,1,2|tests/fixtures/backend_source_import_wildcard.tl|42|-|-|-|stage-stdlib
 backend_source_import_str_cat|all|0,1,2|tests/fixtures/backend_source_import_str_cat.tl|42|-|-|-|stage-stdlib
+lambda_identical_capture|all|0,1,2|tests/integration/lambda_identical_capture.tl|42|-|-|-|-
+lambda_identical_capture_ref|all|0,1,2|tests/integration/lambda_identical_capture_ref.tl|42|-|-|-|-
+lambda_identical_capture_nested|all|0,1,2|tests/integration/lambda_identical_capture_nested.tl|42|-|-|-|-
+lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_noncapturing.tl|42|-|-|-|-
+legacy_box_get_public_deref|all|0,1,2|tests/integration/legacy_box_get_public_deref.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
+legacy_box_get_owned_template|all|0,1,2|tests/integration/legacy_box_get_owned_template.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
+legacy_box_get_owned_places|all|0,1,2|tests/integration/legacy_box_get_owned_places.tl|42|-|-|-|-
+bce_addr_taken_bound|all|0,1,2|tests/integration/bce_addr_taken_bound.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_index|all|0,1,2|tests/integration/bce_addr_taken_index.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_base|all|0,1,2|tests/integration/bce_addr_taken_snapshot_base.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:18:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_base_mb|all|0,1,2|tests/integration/bce_addr_taken_snapshot_base_mb.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:43: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_seed|all|0,1,2|tests/integration/bce_addr_taken_snapshot_seed.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:41: array index out of bounds: index=-1 length=8\n
+bce_addr_taken_fusion|all|0,1,2|tests/integration/bce_addr_taken_fusion.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:25:37: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten|all|0,1,2|tests/integration/bce_addr_taken_tighten.tl|4|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:....
+bce_addr_taken_tighten_raise|all|0,1,2|tests/integration/bce_addr_taken_tighten_raise.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten_lower|all|0,1,2|tests/integration/bce_addr_taken_tighten_lower.tl|4|-|-|stdlib/io.tl stdlib/string.tl|-
+unroll_addr_taken_bound|all|0,1,2|tests/integration/unroll_addr_taken_bound.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+lftr_addr_taken_bound|all|0,1,2|tests/integration/lftr_addr_taken_bound.tl|56|-|-|stdlib/io.tl stdlib/string.tl|-
+
+byte_le_read_tail_trap|all|0,1,2|tests/integration/byte_le_read_tail_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_read_max_offset_trap|all|0,1,2|tests/integration/byte_le_read_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_set_tail_trap|all|0,1,2|tests/integration/byte_le_set_tail_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_set_max_offset_trap|all|0,1,2|tests/integration/byte_le_set_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+lambda_capture_atomic_arena_alloc|all|0,1,2|tests/integration/lambda_capture_atomic_arena_alloc.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+lambda_capture_atomic_arena_destroy|all|0,1,2|tests/integration/lambda_capture_atomic_arena_destroy.tl|42|-|-|stdlib/arena.tl|-
+lambda_capture_lifetime_enum|all|0,1,2|tests/integration/lambda_capture_lifetime_enum.tl|42|-|-|-|-
+lambda_capture_lifetime_enum_variants|all|0,1,2|tests/integration/lambda_capture_lifetime_enum_variants.tl|42|-|-|stdlib/string.tl|-
+divrem_addr_taken|all|0,1,2|tests/integration/divrem_addr_taken.tl|135|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:14:12: integer division or remainder error: dividend=10 divisor=0\n
+mul_shift_addr_taken|all|0,1,2|tests/integration/mul_shift_addr_taken.tl|3|-|-|stdlib/io.tl stdlib/string.tl|-
+pure_call_addr_taken|all|0,1,2|tests/integration/pure_call_addr_taken.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
+gep_offset_addr_taken|all|0,1,2|tests/integration/gep_offset_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+induction_addr_taken|all|0,1,2|tests/integration/induction_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-

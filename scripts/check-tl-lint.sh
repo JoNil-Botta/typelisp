@@ -44,6 +44,79 @@ NAME_CASE_PROBE="$WORKDIR/name-case-probe.tl"
 NAME_CASE_PROBE_STDOUT="$WORKDIR/name-case-probe.stdout"
 NAME_CASE_PROBE_STDERR="$WORKDIR/name-case-probe.stderr"
 
+# Explicit compiler table failures must identify their operation. Scan tokens
+# rather than lines so comments, strings and a split call cannot fool the guard.
+# Extern declarations remain legal for test fixtures importing the old symbol.
+ABORT_GUARD="$WORKDIR/located-abort.awk"
+cat > "$ABORT_GUARD" <<'EOF'
+function token(value) {
+    if (value ~ /(^|\.)tl_oob_abort$/ &&
+        !(previous == "(" && before_previous == "extern")) {
+        print FILENAME ":" FNR ": compiler abort lacks table/caller identity"
+        failed = 1
+    }
+    before_previous = previous
+    previous = value
+}
+function flush() {
+    if (word != "") token(word)
+    word = ""
+}
+FNR == 1 {
+    previous = before_previous = word = ""
+    quoted = escaped = 0
+}
+{
+    for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (quoted) {
+            if (escaped) escaped = 0
+            else if (c == "\\") escaped = 1
+            else if (c == "\"") quoted = 0
+        } else if (c == ";") {
+            flush()
+            break
+        } else if (c == "\"") {
+            flush()
+            token("string")
+            quoted = 1
+        } else if (c ~ /[[:space:]()\[\]]/) {
+            flush()
+            if (c !~ /[[:space:]]/) token(c)
+        } else word = word c
+    }
+    flush()
+}
+END { exit failed }
+EOF
+ABORT_SOURCES="$WORKDIR/located-abort-sources.txt"
+git ls-files --cached --others --exclude-standard 'src/*.tl' \
+    | grep -v '^src/tests/' | grep -v '_tests\.tl$' \
+    | sort -u > "$ABORT_SOURCES"
+[ -s "$ABORT_SOURCES" ] || fail "compiler abort guard selected no sources"
+if ! xargs awk -f "$ABORT_GUARD" < "$ABORT_SOURCES"; then
+    fail "Use compiler_abort with a table/caller message for compiler invariant failures."
+fi
+ABORT_PROBE="$WORKDIR/located-abort-probe.tl"
+cat > "$ABORT_PROBE" <<'EOF'
+;; A comment mentioning (tl_oob_abort) is not a call.
+(extern (tl_oob_abort) : never)
+(define (message) : String "(tl_oob_abort)")
+EOF
+awk -f "$ABORT_GUARD" "$ABORT_PROBE" \
+    || fail "compiler abort guard rejected a comment, string or declaration"
+cat >> "$ABORT_PROBE" <<'EOF'
+(define (bad) : never (ci.tl_oob_abort
+))
+EOF
+if awk -f "$ABORT_GUARD" "$ABORT_PROBE" \
+    > "$WORKDIR/located-abort-probe.stdout"; then
+    fail "compiler abort guard missed the split-call rejection probe"
+fi
+grep -F ': compiler abort lacks table/caller identity' \
+    "$WORKDIR/located-abort-probe.stdout" >/dev/null \
+    || fail "compiler abort guard rejection probe returned the wrong diagnostic"
+
 # Lint every git-tracked TypeLisp source that is expected to parse as a source
 # unit. The excluded paths are fixture harness inputs rather than direct source
 # units:

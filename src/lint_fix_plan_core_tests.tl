@@ -1,5 +1,6 @@
 ;; Executable snapshot/edit planner conformance and the redundant-begin fix
 ;; round trip, discovered by inline-test CI.
+(import stdlib.iterator)
 (import compiler_diagnostic as diag)
 (import lint_fix_plan_core as planner)
 (import lint_core)
@@ -326,14 +327,12 @@
       (planner.snapshot "many.tl" "aaaaaaaaaaaaaaaaa" 1 true)]
     [edits : (__tl_dyn-array diag.CompilerDiagnosticTextEdit)
       (__tl_make-array diag.CompilerDiagnosticTextEdit 17)]
-    [at : i64 0]
-    (while (< at 17)
+    (for [at (iterator.range 0 17)]
       (set!
         (array-ref edits at)
         (diag.compiler-diagnostic-text-edit-new
           (diag.CompilerDiagnosticSpan "" 1 (+ at 1) 1 (+ at 2))
-          "b"))
-      (set! at (+ at 1)))
+          "b")))
     (let
       [fix : diag.CompilerDiagnosticFix
         (diag.compiler-diagnostic-fix-new
@@ -517,8 +516,7 @@
     [snap : planner.LintFixSnapshot (planner.snapshot "fix.tl" source 1 true)]
     [slots : (__tl_dyn-array planner.LintFixCandidate)
       (__tl_make-array planner.LintFixCandidate count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [finding : lint_core.LintFinding
           (lint_core.lint-findings-ref (& findings) index)]
@@ -536,8 +534,7 @@
                   (& fix))
                 (one-identity (planner.source-identity (clone snap)))))]
           [(lint_core.LintFixUnavailable _ _)
-            (io.panic "redundant-begin finding without a fix")])
-        (set! index (+ index 1))))
+            (io.panic "redundant-begin finding without a fix")])))
     (planner.plan
       (one-snapshot snap)
       (planner.LintFixCandidateSeq slots count)
@@ -844,10 +841,16 @@
     (let [x : i64 1] '(begin x x))
     1))
 
-(defmacro (single-body [xs : Expr ...]) : Expr
-  (begin
-    (comptime.expr-list-length xs)
-    (comptime.expr-int 2)))
 "))
       0)
     "lint redundant-begin must keep required begins"))
+
+(test
+  lint-redundant-begin-macro-body
+  (assert
+    (redundant-begin-round-trip-ok?
+      "(defmacro (multi-body [xs : Expr ...]) : Expr\n  (begin\n    (comptime.expr-list-length xs)\n    (comptime.expr-int 42)))\n"
+      1
+      "(defmacro (multi-body [xs : Expr ...]) : Expr\n    (comptime.expr-list-length xs)\n    (comptime.expr-int 42))\n"
+      "(defmacro (multi-body [xs : Expr ...]) : Expr\n  (comptime.expr-list-length xs)\n  (comptime.expr-int 42))")
+    "lint redundant-begin macro body fix round trip"))

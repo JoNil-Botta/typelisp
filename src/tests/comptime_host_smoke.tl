@@ -8,6 +8,7 @@
 ;; panic/abort without partial commit. The builders themselves are shared with
 ;; interpreted CTFE (compiler_ctfe) and tested there. Refs #5212, #5475, #5503,
 ;; #4870, #6609.
+(import stdlib.iterator)
 (import compiler_embedded_stdlib_tlci as host)
 (import tlci_core as tlci)
 (import compiler_tlci_native_producer as producer)
@@ -18,6 +19,7 @@
 (import compiler_intern_state as cis)
 (import stdlib.io)
 (import stdlib.string)
+(import compiler_owned_view as owned_view)
 
 (define host-smoke-cookie : i64
   0x5151)
@@ -235,12 +237,10 @@
       (host-smoke-one "expr-list-empty" (host-smoke-zero-record 0))]
     [len : i64 (string.string-length text)]
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 len)]
-    [index : i64 0]
-    (while (< index len)
+    (for [index (iterator.range 0 len)]
       (set!
         (array-ref bytes index)
-        (cast (cast (string.string-ref text index) : i64) : u8))
-      (set! index (+ index 1)))
+        (cast (cast (string.string-ref text index) : i64) : u8)))
     (let
       [base : i64
         (cast
@@ -292,7 +292,7 @@
       (set!
         (array-ref bytes index)
         (cast (cast (string.string-ref first index) : i64) : u8))
-      (set! index (+ index 1)))
+      (+= index 1))
     (let
       [base : i64
         (cast
@@ -307,7 +307,7 @@
         (set!
           (array-ref bytes index)
           (cast (cast (string.string-ref second index) : i64) : u8))
-        (set! index (+ index 1)))
+        (+= index 1))
       (let
         [ran-second : i64 (host-smoke-run-ops-outcome-at base len)]
         [replayed-second : i64 (host-smoke-run-ops-outcome-at base len)]
@@ -1069,7 +1069,7 @@
     (host-smoke-open! pools operands 1 128)
     (while (and ok (< index 65))
       (set! ok (host-smoke-push? 0))
-      (set! index (+ index 1)))
+      (+= index 1))
     (host-smoke-close
       (and
         ok
@@ -1242,7 +1242,7 @@
               (and
                 (= actual scrutinee)
                 (= arms.len 1)
-                (match (array-ref arms.slots 0)
+                (match (owned_view.compiler-owned-element-view arms.slots 0)
                   [(Arm pattern actual-body)
                     (and
                       (= actual-body body)
@@ -1255,13 +1255,17 @@
                                 (host-smoke-syntax-name-text name)
                                 "Some")
                               (= args.len 2)
-                              (match (array-ref args.slots 0)
+                              (match (owned_view.compiler-owned-element-view
+                                args.slots
+                                0)
                                 [(Binding first)
                                   (string.eq
                                     (host-smoke-syntax-name-text first)
                                     "p0")]
                                 [_ false])
-                              (match (array-ref args.slots 1)
+                              (match (owned_view.compiler-owned-element-view
+                                args.slots
+                                1)
                                 [(Binding second)
                                   (string.eq
                                     (host-smoke-syntax-name-text second)

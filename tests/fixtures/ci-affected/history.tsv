@@ -1,0 +1,6 @@
+# Paths are the PR diff at the failed run head, before the hosted failure fixes.
+# Reconstruct with: git diff --name-only --no-renames BASE...HEAD
+pr	run	base	head	missed_gate
+9310	40323496535	8e523d678dc08c5c4592860bd54c889744133c20	120d3f225edb9773f92086b27312eb1371c6a4c2	stage2-codegen-target-parity
+9326	40339169585	191f5093c94179e111deddef690594beae04c473	d0b36276d2b60453690481e33a89ec8cbfdd6795	stage2-codegen-target-parity
+9327	40361778732	191f5093c94179e111deddef690594beae04c473	d525128775fcfa526f224edb0545b128665b00cd	stage2-safety-corpus

@@ -23,7 +23,9 @@
 (define (fresh-pair) : Pair
   (Pair (byte_buf.from-string "hello") (byte_buf.from-string "zz")))
 
-; Must reject: the checker cannot type the stored `item` outside the loop.
+; Must reject: the stored `item` holds the loan of `pair.left`, which `step`
+; keeps live across the mutable borrow (#8449: a `for` item holds its array's
+; loans).
 (define (main) : i64
   (let
     [pair : Pair (fresh-pair)]

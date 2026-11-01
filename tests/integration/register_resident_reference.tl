@@ -29,12 +29,13 @@
     [(Some _) 2]
     [None 1]))
 
-(define (make-tagged [owner : i64] [x : i64] [y : i64]) : (TaggedPair owner)
+(define (make-tagged [owner : (& owner i64)] [x : i64] [y : i64]) : (TaggedPair
+    owner)
   (TaggedPair x y))
 
 (define (sum-tagged [owner : i64]) : i64
   (let
-    [p : (TaggedPair owner) (make-tagged owner 4 7)]
+    [p : (TaggedPair owner) (make-tagged (& owner) 4 7)]
     (+ p.x p.y)))
 
 (define (local-pair-score [x : i64]) : i64

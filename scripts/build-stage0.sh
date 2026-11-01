@@ -58,6 +58,8 @@ VERSION_STDOUT="$WORKDIR/version.stdout"
 VERSION_STDERR="$WORKDIR/version.stderr"
 BUILD_GIT_HASH=$(build_provenance_hash "$0")
 BUILD_GIT_HASH_FILE="$WORKDIR/git-hash.txt"
+BUILD_TREE_HASH=$(build_provenance_hash "$0" 'HEAD^{tree}')
+BUILD_TREE_HASH_FILE="$WORKDIR/tree-hash.txt"
 BUILD_DATE=$(date -u +%Y-%m-%d)
 BUILD_DATE_FILE="$WORKDIR/build-date.txt"
 RUN_OUT=$OUT
@@ -66,6 +68,7 @@ case "$RUN_OUT" in
     *) RUN_OUT="./$RUN_OUT" ;;
 esac
 printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
+printf '%s' "$BUILD_TREE_HASH" > "$BUILD_TREE_HASH_FILE"
 printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 
 # Iterate to the converged stage and publish that. The seed is the previously

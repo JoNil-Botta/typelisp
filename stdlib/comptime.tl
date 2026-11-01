@@ -547,11 +547,10 @@
 
 ;: Return an expression list item by index.
 (define (expr-list-nth [items : ExprList] [index : i64]) : Expr
-  (if (< index 0)
-    (comptime-error "expr-list-nth index out of range")
-    (if (>= index (__tl_struct-get items len))
-      (comptime-error "expr-list-nth index out of range")
-      (__tl_array-ref (__tl_struct-get items items) index))))
+  ;; A bootstrap stub: macro CTFE evaluates this accessor natively, index
+  ;; check included. An element of the owned list cannot be moved out of
+  ;; its array here.
+  (expr-list-nth items index))
 
 ;: Resolve a captured type-literal expression list item as a type operand.
 (define (expr-list-type-nth [items : ExprList] [index : i64]) : Expr
@@ -573,11 +572,10 @@
 
 ;: Return a clause list item by index.
 (define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
-  (if (< index 0)
-    (comptime-error "expr-clause-list-nth index out of range")
-    (if (>= index (__tl_struct-get items len))
-      (comptime-error "expr-clause-list-nth index out of range")
-      (__tl_array-ref (__tl_struct-get items items) index))))
+  ;; A bootstrap stub: macro CTFE evaluates this accessor natively, index
+  ;; check included. An element of the owned list cannot be moved out of
+  ;; its array here.
+  (expr-clause-list-nth items index))
 
 ;: Convert clause first expressions into an expression list.
 ;: This remains intrinsic because conversion rebuilds bracket-clause syntax
@@ -626,11 +624,10 @@
 (define (expr-binding-clause-list-nth
   [items : ExprBindingClauseList]
   [index : i64]) : ExprBindingClause
-  (if (< index 0)
-    (comptime-error "expr-binding-clause-list-nth index out of range")
-    (if (>= index (__tl_struct-get items len))
-      (comptime-error "expr-binding-clause-list-nth index out of range")
-      (__tl_array-ref (__tl_struct-get items items) index))))
+  ;; A bootstrap stub: macro CTFE evaluates this accessor natively, index
+  ;; check included. An element of the owned list cannot be moved out of
+  ;; its array here.
+  (expr-binding-clause-list-nth items index))
 
 ;: Convert binding clauses back into bracket-clause operand syntax.
 ;: This remains intrinsic because conversion rebuilds bracket-clause syntax

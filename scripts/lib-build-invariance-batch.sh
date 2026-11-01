@@ -4,6 +4,24 @@
 # optimization and ordered roots). Only equal input paths inside that invocation
 # may share an output. Keep the original case records for every byte comparison.
 # There is no cross-chunk, cross-producer or on-disk cache lookup.
+build_invariance_chunk_is_selfhost() {
+    [ "$(wc -l < "$1" | tr -d ' ')" -eq 1 ] || return 1
+    case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$1")" in
+        selfhost_main_opt1 | selfhost_main_opt2) return 0 ;;
+    esac
+    return 1
+}
+
+build_invariance_chunk_timeout_seconds() {
+    # Selfhost compiles previously had only the workflow deadline. Give these
+    # larger workloads their own bound when admitting them to the pool.
+    if build_invariance_chunk_is_selfhost "$1"; then
+        printf '1200\n'
+    else
+        printf '600\n'
+    fi
+}
+
 build_invariance_plan_chunk() {
     _bib_cases=$1
     _bib_entries=$2
@@ -52,7 +70,7 @@ build_invariance_require_plan() {
         echo "[build-invariance] chunk plan differs from logical coverage" >&2
         return 1
     fi
-    rm -f "$_bib_require_entries.expected" "$_bib_require_aliases.expected"
+    # Retain the reconstructed plans as evidence beside the executed plans.
 }
 
 # Compare the multiset of executed logical records with the complete prepared
@@ -108,4 +126,57 @@ build_invariance_copy_aliases() {
             return 1
         fi
     done < "$_bib_alias_file"
+}
+
+# A large source remains the only unique input in its process. Consecutive
+# logical aliases of that input share the fresh output through the ordinary
+# chunk planner; they still count toward the logical-case ceiling.
+build_invariance_write_chunks() {
+    _bib_chunk_records=$1
+    _bib_chunk_dir=$2
+    _bib_chunk_size=$3
+    # A new invocation gets a fresh directory. Reject stale plans rather than
+    # deleting a caller-supplied path or accidentally reusing earlier chunks.
+    if ! mkdir "$_bib_chunk_dir"; then
+        echo "[build-invariance] chunk directory must be fresh: $_bib_chunk_dir" >&2
+        return 1
+    fi
+    awk -F'|' -v chunk_dir="$_bib_chunk_dir" -v chunk_size="$_bib_chunk_size" '
+        function singleton(name, source) {
+            return name ~ /^selfhost_main_/ || source ~ /^src\/tests\/compiler_[^/]*\.tl$/
+        }
+        function finish_chunk() {
+            if (chunk_entries > 0) {
+                close(cases_path)
+                chunk_index += 1
+                chunk_entries = 0
+            }
+        }
+        $1 != "" {
+            alone = singleton($1, $2)
+            if (chunk_entries > 0 && (alone || chunk_alone) &&
+                !(alone && chunk_alone && $3 == chunk_source && $5 == chunk_opt)) {
+                finish_chunk()
+            }
+            if (chunk_entries == 0) {
+                cases_path = chunk_dir "/cases." sprintf("%04d", chunk_index) ".txt"
+                chunk_source = $3
+                chunk_opt = $5
+                chunk_alone = alone
+            }
+            print $0 >> cases_path
+            chunk_entries += 1
+            if (chunk_entries >= chunk_size) finish_chunk()
+        }
+        END { finish_chunk() }
+    ' "$_bib_chunk_records"
+}
+
+# Several logical aliases still represent one complete smoke compilation.
+# Classify every row so an unrelated input cannot borrow its memory class.
+build_invariance_chunk_is_codegen_smoke() {
+    awk -F'|' '
+        NF != 5 || $3 != "src/tests/compiler_codegen_smoke_suite.tl" { exit 1 }
+        END { if (NR == 0) exit 1 }
+    ' "$1"
 }

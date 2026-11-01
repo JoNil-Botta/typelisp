@@ -1,6 +1,7 @@
 ;; Malformed-frame coverage for the compiler-owned LZSS envelope. Keeping the
 ;; fixtures outside `compiler_lzss` avoids shipping test constructors in the
 ;; compiler that decodes the production payloads.
+(import stdlib.iterator)
 (import compiler_lzss as lzss)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -14,24 +15,16 @@
     [header-len : i64 (string.string-length header)]
     [out : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ prefix-len header-len (array-length tokens)))]
-    [index : i64 0]
-    (while (< index prefix-len)
-      (set! (array-ref out index) (cast (string.string-ref prefix index) : u8))
-      (set! index (+ index 1)))
-    (let
-      [header-index : i64 0]
-      (while (< header-index header-len)
-        (set!
-          (array-ref out (+ prefix-len header-index))
-          (cast (string.string-ref header header-index) : u8))
-        (set! header-index (+ header-index 1))))
-    (let
-      [token-index : i64 0]
-      (while (< token-index (array-length tokens))
-        (set!
-          (array-ref out (+ prefix-len header-len token-index))
-          (array-ref tokens token-index))
-        (set! token-index (+ token-index 1))))
+    (for [index (iterator.range 0 prefix-len)]
+      (set! (array-ref out index) (cast (string.string-ref prefix index) : u8)))
+    (for [header-index (iterator.range 0 header-len)]
+      (set!
+        (array-ref out (+ prefix-len header-index))
+        (cast (string.string-ref header header-index) : u8)))
+    (for [token-index (iterator.range 0 (array-length tokens))]
+      (set!
+        (array-ref out (+ prefix-len header-len token-index))
+        (array-ref tokens token-index)))
     out))
 
 (define (compiler-lzss-test-rejects?
@@ -177,7 +170,7 @@
         (let
           [flags : i64 (cast (array-ref payload (+ start index)) : i64)]
           [bit : i64 0]
-          (set! index (+ index 1))
+          (+= index 1)
           (while (and (string.eq error "") (< bit 8) (< out-index raw-len))
             (cond
               [(!= (bit-and flags (shl 1 bit)) 0)
@@ -187,8 +180,8 @@
                     (set!
                       (array-ref out out-index)
                       (array-ref payload (+ start index)))
-                    (set! index (+ index 1))
-                    (set! out-index (+ out-index 1))))]
+                    (+= index 1)
+                    (+= out-index 1)))]
               [(< (- compressed-len index) 2)
                 (set! error "compiler lzss: truncated backreference token")]
               [else
@@ -199,21 +192,19 @@
                       (cast (array-ref payload (+ start index 1)) : i64))]
                   [offset : i64 (+ (shr packed 4) 1)]
                   [length : i64 (+ (bit-and packed 15) 3)]
-                  [copied : i64 0]
-                  (set! index (+ index 2))
+                  (+= index 2)
                   (cond
                     [(> offset out-index)
                       (set! error "compiler lzss: backreference before output")]
                     [(> length (- raw-len out-index))
                       (set! error "compiler lzss: token exceeds raw length")]
                     [else
-                      (while (< copied length)
+                      (for [copied (iterator.range 0 length)]
                         (set!
                           (array-ref out (+ out-index copied))
-                          (array-ref out (- (+ out-index copied) offset)))
-                        (set! copied (+ copied 1)))
-                      (set! out-index (+ out-index length))]))])
-            (set! bit (+ bit 1))))))
+                          (array-ref out (- (+ out-index copied) offset))))
+                      (+= out-index length)]))])
+            (+= bit 1)))))
     (cond
       [(not (string.eq error "")) (Err error)]
       [(!= out-index raw-len) (Err "compiler lzss: expanded length mismatch")]
@@ -250,7 +241,7 @@
                 [same : bool true]
                 (while (and same (< index (array-length got)))
                   (set! same (= (array-ref got index) (array-ref want index)))
-                  (set! index (+ index 1)))
+                  (+= index 1))
                 same))]
           [(Err _) false])]
       [(Err got)
@@ -274,22 +265,21 @@
     [len : i64 0]
     [state : i64 seed]
     [out-len : i64 0]
-    [token : i64 0]
     [flag-at : i64 0]
     [flags : i64 0]
-    (while (< token count)
+    (for [token (iterator.range 0 count)]
       (when
         (= (bit-and token 7) 0)
         (set! flag-at len)
-        (set! len (+ len 1))
+        (+= len 1)
         (set! flags 0))
       (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
       (if (or (= out-len 0) (and (not long) (< (bit-and (shr state 16) 3) 1)))
         (begin
           (set! flags (bit-or flags (shl 1 (bit-and token 7))))
           (set! (array-ref buf len) (cast (bit-and (shr state 8) 255) : u8))
-          (set! len (+ len 1))
-          (set! out-len (+ out-len 1)))
+          (+= len 1)
+          (+= out-len 1))
         (let
           [length : i64
             (if long
@@ -306,16 +296,13 @@
           [packed : i64 (bit-or (shl (- offset 1) 4) (- length 3))]
           (set! (array-ref buf len) (cast (shr packed 8) : u8))
           (set! (array-ref buf (+ len 1)) (cast (bit-and packed 255) : u8))
-          (set! len (+ len 2))
-          (set! out-len (+ out-len length))))
-      (set! (array-ref buf flag-at) (cast flags : u8))
-      (set! token (+ token 1)))
+          (+= len 2)
+          (+= out-len length)))
+      (set! (array-ref buf flag-at) (cast flags : u8)))
     (let
       [tokens : (__tl_dyn-array u8) (__tl_make-array u8 len)]
-      [index : i64 0]
-      (while (< index len)
-        (set! (array-ref tokens index) (array-ref buf index))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 len)]
+        (set! (array-ref tokens index) (array-ref buf index)))
       (CompilerLzssTestStream tokens out-len))))
 
 (define (compiler-lzss-test-prefix
@@ -323,10 +310,8 @@
   [len : i64]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 len)]
-    [index : i64 0]
-    (while (< index len)
-      (set! (array-ref out index) (array-ref tokens index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 len)]
+      (set! (array-ref out index) (array-ref tokens index)))
     out))
 
 ;; 0 when the decoder agrees with the reference on the stream from SEED and
@@ -363,7 +348,7 @@
         (unless
           (compiler-lzss-test-agrees? (clone tokens) (- raw-len short))
           (set! status (+ 100 short)))
-        (set! short (+ short 1))))
+        (+= short 1)))
     (while (and (= status 0) (< index len))
       (let
         [flipped : (__tl_dyn-array u8) (clone tokens)]
@@ -385,7 +370,7 @@
           [(not (compiler-lzss-test-agrees? high raw-len))
             (set! status (+ 10000000 index))]
           [else unit]))
-      (set! index (+ index 1)))
+      (+= index 1))
     status))
 
 ;; The fast group path must reproduce the checked loop: long streams that use

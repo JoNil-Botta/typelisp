@@ -62,7 +62,7 @@
       (let
         [ok : bool
           (match program
-            [(Program _ functions _)
+            [(Program _ functions _ _authority)
               (and
                 (=
                   (lower_tests.lower-test-count functions "fill" (VectorLoad))
@@ -140,7 +140,7 @@
       (let
         [ok : bool
           (match program
-            [(Program _ functions _)
+            [(Program _ functions _ _authority)
               (and
                 (= (lower_tests.lower-test-count functions "fill" (TailMask)) 1)
                 (=
@@ -197,7 +197,7 @@
       (let
         [ok : bool
           (match program
-            [(Program _ functions _)
+            [(Program _ functions _ _authority)
               (and
                 (=
                   (lower_tests.lower-test-function-binop-op-count
@@ -621,7 +621,7 @@
           (let
             [result : unit
               (match lowered
-                [(Program _ functions _)
+                [(Program _ functions _ _authority)
                   (unless
                     (lower_tests.lower-test-function-defined? functions "main")
                     (io.panic "lower: module entry main function missing"))
@@ -724,7 +724,7 @@
           (let
             [ok : bool
               (match lowered
-                [(Program _ functions _)
+                [(Program _ functions _ _authority)
                   (and
                     (not
                       (compiler-lower-smoke-stdlib-runtime-substring-defined?

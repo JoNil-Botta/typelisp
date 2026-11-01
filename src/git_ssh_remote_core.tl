@@ -5,6 +5,7 @@
 ;; DNS, socket, SSH, Git protocol, process, credential, or cache operation.
 ;; Rejected input is represented by payload-free error variants so a password
 ;; or raw URI authority can never survive in a diagnostic value.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.string)
 
@@ -113,11 +114,9 @@
   [out : (&mut out byte_buf.ByteBufBuilder)]
   [text : (& text str)]) : unit
   (let
-    [index : i64 0]
     [length : i64 (string.string-length text)]
-    (while (< index length)
-      (git-ssh-builder-push! out (git-ssh-byte text index))
-      (set! index (+ index 1)))))
+    (for [index (iterator.range 0 length)]
+      (git-ssh-builder-push! out (git-ssh-byte text index)))))
 
 (define (git-ssh-ascii-alpha? [code : i64]) : bool
   (or (and (>= code 65) (<= code 90)) (and (>= code 97) (<= code 122))))
@@ -152,7 +151,7 @@
       (if (git-ssh-control-code? (git-ssh-byte text index))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (git-ssh-find-byte [text : (& text str)] [start : i64] [wanted : i64]) : i64
@@ -164,19 +163,17 @@
       (if (= (git-ssh-byte text index) wanted)
         (set! found index)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (git-ssh-count-byte [text : (& text str)] [wanted : i64]) : i64
   (let
-    [index : i64 0]
     [length : i64 (string.string-length text)]
     [count : i64 0]
-    (while (< index length)
+    (for [index (iterator.range 0 length)]
       (if (= (git-ssh-byte text index) wanted)
-        (set! count (+ count 1))
-        unit)
-      (set! index (+ index 1)))
+        (+= count 1)
+        unit))
     count))
 
 (define (git-ssh-has-scheme-separator? [text : (& text str)]) : bool
@@ -191,7 +188,7 @@
         (= (git-ssh-byte text (+ index 2)) 47))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (git-ssh-uri-prefix? [text : (& text str)]) : bool
@@ -208,13 +205,11 @@
   (let
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity (string.string-length text))]
-    [index : i64 0]
     [length : i64 (string.string-length text)]
-    (while (< index length)
+    (for [index (iterator.range 0 length)]
       (git-ssh-builder-push!
         (&mut out)
-        (git-ssh-ascii-lower (git-ssh-byte text index)))
-      (set! index (+ index 1)))
+        (git-ssh-ascii-lower (git-ssh-byte text index))))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (git-ssh-user-valid? [user : (& user str)]) : bool
@@ -233,7 +228,7 @@
           (= code 43))
           unit
           (set! valid false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     valid))
 
 (define (git-ssh-userinfo-password-marker? [userinfo : (& userinfo str)]) : bool
@@ -256,7 +251,7 @@
                 (set! found true)
                 unit))]
           [else unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (git-ssh-host-name-valid? [host : (& host str)]) : bool
@@ -281,7 +276,7 @@
               unit)]
           [else (set! valid false)])
         (set! previous code)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (and valid (!= previous 46) (!= previous 45))))
 
 ;; Pure hexadecimal IPv6 validation. Dotted IPv4 tails and zone identifiers
@@ -312,11 +307,11 @@
           (if (< (git-ssh-ascii-hex-value (git-ssh-byte host index)) 0)
             (set! valid false)
             unit)
-          (set! digits (+ digits 1))
-          (set! index (+ index 1)))
+          (+= digits 1)
+          (+= index 1))
         (if (or (not valid) (= digits 0) (> digits 4) (= group-start index))
           (set! valid false)
-          (set! groups (+ groups 1)))
+          (+= groups 1))
         (if (and valid (< index length))
           (if (and
             (< (+ index 1) length)
@@ -325,9 +320,9 @@
               (set! valid false)
               (begin
                 (set! compressed true)
-                (set! index (+ index 2))))
+                (+= index 2)))
             (begin
-              (set! index (+ index 1))
+              (+= index 1)
               (if (= index length)
                 (set! valid false)
                 unit)))
@@ -354,7 +349,7 @@
             (if (> value (/ (- 65535 digit) 10))
               (set! valid false)
               (set! value (+ (* value 10) digit)))))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if (and valid (>= value 1) (<= value 65535))
       (Ok value)
       (Err (InvalidPort)))))
@@ -492,12 +487,12 @@
                       (set! valid false)
                       (begin
                         (git-ssh-builder-push! (&mut out) decoded)
-                        (set! index (+ index 2))))))))]
+                        (+= index 2)))))))]
           [(or (= code 63) (= code 35) (= code 92))
             (set! error (AmbiguousSyntax))
             (set! valid false)]
           [else (git-ssh-builder-push! (&mut out) code)])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if (not valid)
       (Err error)
       (let
@@ -567,7 +562,7 @@
           [(and (< delimiter 0) (or (= code 47) (= code 92)))
             (set! valid false)]
           [else unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if (or (not valid) bracketed)
       -1
       delimiter)))
@@ -594,7 +589,7 @@
       (if (< (git-ssh-ascii-hex-value (git-ssh-byte remote index)) 0)
         (set! host-hex false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! index (+ delimiter 1))
     (while (and tail-hex (< index length) (!= (git-ssh-byte remote index) 47))
       (let
@@ -603,7 +598,7 @@
           [(= code 58) (set! extra-colon true)]
           [(>= (git-ssh-ascii-hex-value code) 0) unit]
           [else (set! tail-hex false)])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (and host-hex tail-hex extra-colon)))
 
 (define (git-ssh-parse-scp [remote : (& remote str)]) : ResultGitSshRemote
@@ -686,7 +681,7 @@
         (git-ssh-ascii-lower (git-ssh-byte host index)))
         (set! normalized false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     normalized))
 
 (define (git-ssh-structured-remote-valid? [remote : (& remote GitSshRemote)]) : bool
@@ -716,10 +711,9 @@
   [out : (&mut out byte_buf.ByteBufBuilder)]
   [path : (& path str)]) : unit
   (let
-    [index : i64 0]
     [length : i64 (string.string-length path)]
     (git-ssh-builder-push! out 39)
-    (while (< index length)
+    (for [index (iterator.range 0 length)]
       (let
         [code : i64 (git-ssh-byte path index)]
         (if (or (= code 39) (= code 33))
@@ -728,8 +722,7 @@
             (git-ssh-builder-push! out 92)
             (git-ssh-builder-push! out code)
             (git-ssh-builder-push! out 39))
-          (git-ssh-builder-push! out code))
-        (set! index (+ index 1))))
+          (git-ssh-builder-push! out code))))
     (git-ssh-builder-push! out 39)))
 
 ;: Encode exactly `git-upload-pack` and one opaque repository argument.

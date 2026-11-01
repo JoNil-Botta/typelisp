@@ -1,5 +1,10 @@
 [
   [
+    "src/compiler_abort.tl",
+    "support",
+    "Dependency-free out-of-line fatal diagnostic for compiler invariants (one extern, no imports)."
+  ],
+  [
     "src/compiler_ast_types.tl",
     "support",
     "Canonical source types and pooled node representation used by IR."
@@ -153,6 +158,11 @@
     "src/compiler_backend.tl",
     "forbidden",
     "Consumer implementation must depend on shared IR, never the reverse."
+  ],
+  [
+    "src/compiler_stack_traffic.tl",
+    "forbidden",
+    "Post-regalloc census and CFG proof consume core IR; shared IR must not depend on these late facts."
   ],
   [
     "src/compiler_driver_core.tl",

@@ -7,6 +7,7 @@
 ;; positions for the token-level tests; no compiler path reads it. The token
 ;; model (`token.Token`, its accessors and tag constants) stays behind the
 ;; `token.` qualifier.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 
 (module lex)
@@ -146,7 +147,7 @@
     (while keep
       (if (< j n)
         (if (is-digit (__tl_string_ref src j))
-          (set! j (+ j 1))
+          (+= j 1)
           (set! keep false))
         (set! keep false)))
     j))
@@ -166,7 +167,7 @@
           (if (if (= base 16)
             (is-hex-digit c)
             (is-binary-digit c))
-            (set! j (+ j 1))
+            (+= j 1)
             (set! keep false)))
         (set! keep false)))
     j))
@@ -198,7 +199,7 @@
             (if (or
               (= (__tl_string_ref src exp-digits) '+')
               (= (__tl_string_ref src exp-digits) '-'))
-              (set! exp-digits (+ exp-digits 1))
+              (+= exp-digits 1)
               unit)
             unit)
           ;; Leave an exponent marker with no digits unconsumed.  The
@@ -285,11 +286,9 @@
   [end : i64]
   [base : i64]) : i64
   (let
-    [j : i64 start]
     [value : i64 0]
-    (while (< j end)
-      (set! value (+ (* value base) (hex-digit-value (__tl_string_ref src j))))
-      (set! j (+ j 1)))
+    (for [j (iterator.range start end)]
+      (set! value (+ (* value base) (hex-digit-value (__tl_string_ref src j)))))
     value))
 
 (define (parse-prefixed-int [src : (& src str)] [start : i64] [end : i64]) : i64
@@ -323,7 +322,7 @@
       (if (= (__tl_string_ref src i) '0')
         unit
         (set! zero? false))
-      (set! i (+ i 1)))
+      (+= i 1))
     zero?))
 
 (define (number-int-text-needed?
@@ -363,7 +362,7 @@
           (if (or (= c '.') (= c 'e') (= c 'E'))
             (set! found true)
             unit)
-          (set! i (+ i 1))))
+          (+= i 1)))
       found)))
 
 (define (negative-number-start? [src : (& src str)] [start : i64] [n : i64]) : bool
@@ -418,7 +417,7 @@
               (> j start)
               (not (symbol-slice-eq? src start j "pkg")))
               (set! keep false)
-              (set! j (+ j 1)))
+              (+= j 1))
             (set! keep false)))
         (set! keep false)))
     j))
@@ -438,7 +437,7 @@
         (let
           [c : char (__tl_string_ref src j)]
           (if (is-space c)
-            (set! j (- j 1))
+            (-= j 1)
             (begin
               (set! result (= c '('))
               (set! keep false))))))
@@ -473,11 +472,11 @@
             (set! keep false)
             (if (= c '\\')
               (if (< (+ j 1) n)
-                (set! j (+ j 2))
+                (+= j 2)
                 (begin
                   (set! message "lexer: unterminated string escape")
                   (set! keep false)))
-              (set! j (+ j 1)))))
+              (+= j 1))))
         (begin
           (set! message "lexer: unterminated string literal")
           (set! keep false))))
@@ -507,13 +506,13 @@
           (if (< (+ i 1) end)
             (begin
               (set! buf (text_buf.append buf (string-escape-piece src (+ i 1))))
-              (set! i (+ i 2)))
+              (+= i 2))
             (begin
               (set! buf (text_buf.append buf "\\"))
-              (set! i (+ i 1))))
+              (+= i 1)))
           (begin
             (set! buf (text_buf.append buf (string.substring src i 1)))
-            (set! i (+ i 1))))))
+            (+= i 1)))))
     (text_buf.render buf)))
 
 ;; Every current escape contributes exactly one byte. Translate a decoded
@@ -573,7 +572,7 @@
       (if (< j n)
         (if (= (__tl_string_ref src j) '\n')
           (set! keep false)
-          (set! j (+ j 1)))
+          (+= j 1))
         (set! keep false)))
     j))
 
@@ -634,16 +633,14 @@
   [line : i64]
   [col : i64]) : LexPosition
   (let
-    [j : i64 start]
     [next-line : i64 line]
     [next-col : i64 col]
-    (while (< j end)
+    (for [j (iterator.range start end)]
       (if (= (__tl_string_ref src j) '\n')
         (begin
-          (set! next-line (+ next-line 1))
+          (+= next-line 1)
           (set! next-col 1))
-        (set! next-col (+ next-col 1)))
-      (set! j (+ j 1)))
+        (+= next-col 1)))
     (Position next-line next-col)))
 
 ;; Scan `src` into the shared spanned-token buffer, growing it on demand.
@@ -677,38 +674,38 @@
             [(is-space c)
               (if (= c '\n')
                 (begin
-                  (set! line (+ line 1))
+                  (+= line 1)
                   (set! col 1))
-                (set! col (+ col 1)))
-              (set! i (+ i 1))]
+                (+= col 1))
+              (+= i 1)]
             [(= c '(')
               (set!
                 (array-ref lex-spanned-token-buffer count)
                 (token.spanned-token-new LParen line col))
-              (set! count (+ count 1))
-              (set! i (+ i 1))
-              (set! col (+ col 1))]
+              (+= count 1)
+              (+= i 1)
+              (+= col 1)]
             [(= c '[')
               (set!
                 (array-ref lex-spanned-token-buffer count)
                 (token.spanned-token-new LBracket line col))
-              (set! count (+ count 1))
-              (set! i (+ i 1))
-              (set! col (+ col 1))]
+              (+= count 1)
+              (+= i 1)
+              (+= col 1)]
             [(= c ')')
               (set!
                 (array-ref lex-spanned-token-buffer count)
                 (token.spanned-token-new RParen line col))
-              (set! count (+ count 1))
-              (set! i (+ i 1))
-              (set! col (+ col 1))]
+              (+= count 1)
+              (+= i 1)
+              (+= col 1)]
             [(= c ']')
               (set!
                 (array-ref lex-spanned-token-buffer count)
                 (token.spanned-token-new RBracket line col))
-              (set! count (+ count 1))
-              (set! i (+ i 1))
-              (set! col (+ col 1))]
+              (+= count 1)
+              (+= i 1)
+              (+= col 1)]
             [(= c '\'')
               (let
                 [token-line : i64 line]
@@ -721,8 +718,8 @@
                         (Char value)
                         token-line
                         token-col))
-                    (set! count (+ count 1))
-                    (set! col (+ col (- end i)))
+                    (+= count 1)
+                    (+= col (- end i))
                     (set! i end)]
                   [(Err err)
                     (set! ok false)
@@ -732,16 +729,16 @@
                     (set!
                       (array-ref lex-spanned-token-buffer count)
                       (token.spanned-token-new Quote line col))
-                    (set! count (+ count 1))
-                    (set! i (+ i 1))
-                    (set! col (+ col 1))]))]
+                    (+= count 1)
+                    (+= i 1)
+                    (+= col 1)]))]
             [(= c '`')
               (set!
                 (array-ref lex-spanned-token-buffer count)
                 (token.spanned-token-new Backtick line col))
-              (set! count (+ count 1))
-              (set! i (+ i 1))
-              (set! col (+ col 1))]
+              (+= count 1)
+              (+= i 1)
+              (+= col 1)]
             [(= c ',')
               (if (< (+ i 1) n)
                 (if (= (__tl_string_ref src (+ i 1)) '@')
@@ -749,21 +746,21 @@
                     (set!
                       (array-ref lex-spanned-token-buffer count)
                       (token.spanned-token-new CommaAt line col))
-                    (set! i (+ i 2))
-                    (set! col (+ col 2)))
+                    (+= i 2)
+                    (+= col 2))
                   (begin
                     (set!
                       (array-ref lex-spanned-token-buffer count)
                       (token.spanned-token-new Comma line col))
-                    (set! i (+ i 1))
-                    (set! col (+ col 1))))
+                    (+= i 1)
+                    (+= col 1)))
                 (begin
                   (set!
                     (array-ref lex-spanned-token-buffer count)
                     (token.spanned-token-new Comma line col))
-                  (set! i (+ i 1))
-                  (set! col (+ col 1))))
-              (set! count (+ count 1))]
+                  (+= i 1)
+                  (+= col 1)))
+              (+= count 1)]
             [(= c '"')
               (let
                 [start : i64 (+ i 1)]
@@ -786,7 +783,7 @@
                               (Str (token.token-intern-payload string-id))
                               token-line
                               token-col))
-                          (set! count (+ count 1))
+                          (+= count 1)
                           (match (advance-position src i (+ end 1) line col)
                             [(Position next-line next-col)
                               (set! line next-line)
@@ -803,7 +800,7 @@
             [(= c ';')
               (let
                 [end : i64 (scan-comment-end src (+ i 1) n)]
-                (set! col (+ col (- end i)))
+                (+= col (- end i))
                 (set! i end))]
             [(or (is-digit c) (negative-number-start? src i n))
               (match (scan-number-end-result src i n)
@@ -826,8 +823,8 @@
                             (number-int-source-text src i end n))
                           token-line
                           token-col)))
-                    (set! count (+ count 1))
-                    (set! col (+ col (- end i)))
+                    (+= count 1)
+                    (+= col (- end i))
                     (set! i end))]
                 [(Err err)
                   (set! ok false)
@@ -846,8 +843,8 @@
                             (lexer-intern-source-slice-id owner src i (- end i))))
                         line
                         col))
-                    (set! count (+ count 1))
-                    (set! col (+ col (- end i)))
+                    (+= count 1)
+                    (+= col (- end i))
                     (set! i end))
                   (begin
                     (set!
@@ -858,9 +855,9 @@
                             (colon-intern-id owner src i)))
                         line
                         col))
-                    (set! count (+ count 1))
-                    (set! col (+ col 1))
-                    (set! i (+ i 1)))))]
+                    (+= count 1)
+                    (+= col 1)
+                    (+= i 1))))]
             [(is-symbol-char c)
               (let
                 [end : i64 (scan-symbol-end src i n)]
@@ -872,8 +869,8 @@
                         (lexer-intern-source-slice-id owner src i (- end i))))
                     line
                     col))
-                (set! count (+ count 1))
-                (set! col (+ col (- end i)))
+                (+= count 1)
+                (+= col (- end i))
                 (set! i end))]
             [else
               (set! ok false)
@@ -899,12 +896,10 @@
 (define (index-line [src : (& src str)] [idx : i64]) : i64
   (let
     [line : i64 1]
-    [k : i64 0]
-    (while (< k idx)
+    (for [k (iterator.range 0 idx)]
       (if (= (__tl_string_ref src k) '\n')
-        (set! line (+ line 1))
-        unit)
-      (set! k (+ k 1)))
+        (+= line 1)
+        unit))
     line))
 
 ;; 1-based column of byte index `idx`: characters since the last newline (the
@@ -912,12 +907,10 @@
 (define (index-col [src : (& src str)] [idx : i64]) : i64
   (let
     [col : i64 1]
-    [k : i64 0]
-    (while (< k idx)
+    (for [k (iterator.range 0 idx)]
       (if (= (__tl_string_ref src k) '\n')
         (set! col 1)
-        (set! col (+ col 1)))
-      (set! k (+ k 1)))
+        (+= col 1)))
     col))
 
 (define (source-error-at [src : (& src str)] [idx : i64] [message : String]) : token.SourceError
@@ -987,7 +980,8 @@
     [storage-root : i64 (arena.tl_arena_make)]
     [new-buffer : (__tl_dyn-array token.SpannedToken)
       (in-arena
-        (arena.Arena storage-root)
+        (unsafe
+          (arena.Arena storage-root))
         (__tl_make-array
           token.SpannedToken
           (spanned-token-buffer-next-capacity required)))]
@@ -1108,7 +1102,7 @@
               (token.spanned-token-tok (array-shared-view spanned index))]
             (set! more (!= (token.tag-ref (& tok)) (token.tag-end)))
             (set! (array-ref toks index) tok)
-            (set! index (+ index 1))))
+            (+= index 1)))
         (Ok toks))]))
 
 (define (result [src : String]) : ResultTokens

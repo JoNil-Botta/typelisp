@@ -1,5 +1,6 @@
 ;; format_tests.tl - White-box tests for the formatter: token and CST shape,
 ;; rule rendering fixtures, and the fmt CLI error paths.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.string)
@@ -468,9 +469,13 @@
       (__tl_make-array cst.FormatCst 3)]
     [offset-slots : (__tl_dyn-array cst.FormatCst)
       (__tl_make-array cst.FormatCst 5)]
-    (set! (array-ref dense-slots 0) head)
-    (set! (array-ref dense-slots 1) colon)
-    (set! (array-ref dense-slots 2) typ)
+    (set!
+      (array-ref dense-slots 0)
+      (owned_view.compiler-owned-shared-view head))
+    (set!
+      (array-ref dense-slots 1)
+      (owned_view.compiler-owned-shared-view colon))
+    (set! (array-ref dense-slots 2) (owned_view.compiler-owned-shared-view typ))
     (set! (array-ref offset-slots 1) head)
     (set! (array-ref offset-slots 2) colon)
     (set! (array-ref offset-slots 3) typ)
@@ -593,13 +598,11 @@
   [stream : (& stream tokens.FormatTokenStream)]
   [wanted : i64]) : i64
   (let
-    [i : i64 0]
     [hits : i64 0]
-    (while (< i stream.count)
+    (for [i (iterator.range 0 stream.count)]
       (if (= (tokens.format-token-tag (tokens.format-token-at stream i)) wanted)
-        (set! hits (+ hits 1))
-        (set! hits hits))
-      (set! i (+ i 1)))
+        (+= hits 1)
+        (set! hits hits)))
     hits))
 
 (define (format-lex [src : String]) : tokens.FormatTokenStream

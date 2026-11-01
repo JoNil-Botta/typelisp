@@ -14,7 +14,7 @@
       (if (= (string.string-ref left index) (string.string-ref right index))
         unit
         (set! same false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 (define (git-ssh-test-syntax-code
@@ -66,7 +66,7 @@
         (string.string-ref (& prefix) index))
         unit
         (set! same false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 ;; Decode the deliberately tiny grammar emitted by git-ssh-upload-pack-command:
@@ -98,12 +98,12 @@
             (= (cast (string.string-ref command (+ index 3)) : i64) 39))
             (begin
               (set! code (cast (string.string-ref command (+ index 2)) : i64))
-              (set! index (+ index 4)))
+              (+= index 4))
             (set! valid false))
-          (set! index (+ index 1)))
+          (+= index 1))
         (if (and valid (< expected-index expected-length))
           (if (= code (cast (string.string-ref expected expected-index) : i64))
-            (set! expected-index (+ expected-index 1))
+            (+= expected-index 1)
             (set! valid false))
           (set! valid false))))
     (and valid (= index (- length 1)) (= expected-index expected-length))))
@@ -339,7 +339,7 @@
           (if (git-ssh-test-command-roundtrip? (& path))
             unit
             (set! valid false))))
-      (set! code (+ code 1)))
+      (+= code 1))
     valid))
 
 (define (git-ssh-test-control-bytes-rejected?) : bool
@@ -356,7 +356,7 @@
               unit
               (set! valid false))]
           [(Ok _) (set! valid false)])
-        (set! code (+ code 1))))
+        (+= code 1)))
     (let
       [path : String (git-ssh-test-path-with-byte 127)]
       [remote : git_ssh.GitSshRemote (git-ssh-test-structured-remote path)]

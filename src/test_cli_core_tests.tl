@@ -65,7 +65,7 @@
         (set! state next-state)
         (set! (array-ref items index) (array-ref items other))
         (set! (array-ref items other) saved)
-        (set! index (- index 1))))
+        (-= index 1)))
     (and
       (= (array-ref items 0) 3)
       (= (array-ref items 1) 0)
@@ -418,7 +418,7 @@
             (&mut owner)
             (& (string.int->string index)))
           unit)
-        (set! index (+ index 1)))]
+        (+= index 1))]
     [field-id : i64 (ci.intern-compat-state-intern (&mut owner) "owner.field")]
     [session : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names
@@ -1155,14 +1155,14 @@
     [index : i64 0]
     [found : bool false]
     (while (and (< index funcs.len) (not found))
-      (match (array-ref funcs.slots index)
+      (match (owned_view.compiler-owned-element-view funcs.slots index)
         [(Function name _ _ _ _ _)
           (let
             [name-text : String (ir.compiler-ir-symbol-text name)]
             (if (string.contains (& name-text) (& base))
               (set! found true)
               unit))])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (tltest-nested-module-macro-vector-lower-roots-ok?
@@ -1186,7 +1186,7 @@
         (tltest.tltest-cfgs target)))
       [(Ok lowered _ _lower-owner)
         (match lowered
-          [(Program _ functions _)
+          [(Program _ functions _ _authority)
             (tltest-function-base-defined? functions "clone$Pair")])]
       [(Err _) false])))
 

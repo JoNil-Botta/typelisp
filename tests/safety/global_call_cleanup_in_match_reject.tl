@@ -1,3 +1,6 @@
+;: The `with` cleanup `close-handle` assigns `g` (through `drop-word`) at the
+;: scope's exit while `text`, a borrow of `g`'s payload, is still read after
+;: it (#7904).
 (import stdlib.string)
 
 (defenum Slot
@@ -17,5 +20,7 @@
 (define (main) : i64
   (match (& g)
     [(Slot.Text text)
-      (with ([h (Handle 9) close-handle]) (string.string-length text))]
+      (let
+        [k : i64 (with ([h (Handle 9) close-handle]) 0)]
+        (+ k (string.string-length text)))]
     [(Slot.Number n) n]))

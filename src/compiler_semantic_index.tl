@@ -368,7 +368,10 @@
   (let
     [index : i64 0]
     (while (< index (array-length state.semantic-origin-cursors))
-      (set! (array-ref state.semantic-origin-cursors index) 0)
+      (owned_view.compiler-owned-cell-set!
+        state.semantic-origin-cursors
+        index
+        0)
       (+= index 1))))
 
 (define (compiler-semantic-origin-take!
@@ -392,9 +395,15 @@
             (+= cursor 1)
             (when
               (= (compiler-semantic-origin-kind-tag origin.kind) tag)
-              (set! (array-ref state.semantic-origin-cursors tag) cursor)
+              (owned_view.compiler-owned-cell-set!
+                state.semantic-origin-cursors
+                tag
+                cursor)
               (return (Some origin)))))
-        (set! (array-ref state.semantic-origin-cursors tag) cursor)
+        (owned_view.compiler-owned-cell-set!
+          state.semantic-origin-cursors
+          tag
+          cursor)
         None)]))
 
 (define (compiler-semantic-origin-take-before!
@@ -506,7 +515,8 @@
     [owner : i64 (arena.tl_arena_make)]
     (+= compiler-semantic-source-index-live-owners 1)
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (CompilerSemanticSourceIndex
         owner
         (__tl_make-array CompilerSemanticRecord 0)
@@ -550,8 +560,10 @@
 (define (compiler-semantic-binding-vec-grow!
   [bindings : (&mut bindings CompilerSemanticBindingVec)]) : unit
   (let
-    [old-items : (__tl_dyn-array CompilerSemanticBinding) bindings.items]
-    [old-live : (__tl_dyn-array bool) bindings.live]
+    [old-items : (__tl_dyn-array CompilerSemanticBinding)
+      (replace! bindings.items (__tl_make-array CompilerSemanticBinding 0))]
+    [old-live : (__tl_dyn-array bool)
+      (replace! bindings.live (__tl_make-array bool 0))]
     [old-capacity : i64 (array-length old-items)]
     [new-capacity : i64
       (if (< old-capacity 1)
@@ -601,8 +613,10 @@
 (define (compiler-semantic-scope-event-vec-grow!
   [events : (&mut events CompilerSemanticScopeEventVec)]) : unit
   (let
-    [old-items : (__tl_dyn-array CompilerSemanticScopeEvent) events.items]
-    [old-live : (__tl_dyn-array bool) events.live]
+    [old-items : (__tl_dyn-array CompilerSemanticScopeEvent)
+      (replace! events.items (__tl_make-array CompilerSemanticScopeEvent 0))]
+    [old-live : (__tl_dyn-array bool)
+      (replace! events.live (__tl_make-array bool 0))]
     [old-capacity : i64 (array-length old-items)]
     [new-capacity : i64
       (if (< old-capacity 1)
@@ -670,18 +684,16 @@
           (__tl-project-field (__tl-box-place state.visibility-storage) modules)))
         -1
         (begin
-          (set!
-            (array-ref
-              (__tl-project-field
-                (__tl-box-place state.visibility-storage)
-                modules)
-              module-len)
+          (owned_view.compiler-owned-cell-set!
+            (__tl-project-field
+              (__tl-box-place state.visibility-storage)
+              modules)
+            module-len
             (CompilerSemanticModuleInfo module-id 0 0))
-          (set!
-            (deref
-              (__tl-project-field
-                (__tl-box-place state.visibility-storage)
-                module-len))
+          (owned_view.compiler-owned-box-cell-set!
+            (__tl-project-field
+              (__tl-box-place state.visibility-storage)
+              module-len)
             (+ module-len 1))
           module-len)))))
 
@@ -734,22 +746,20 @@
                   module-events)
                 (- event-index 1)).module-index
               module-index))
-          (set!
-            (array-ref
-              (__tl-project-field
-                (__tl-box-place state.visibility-storage)
-                module-events)
-              event-index)
+          (owned_view.compiler-owned-cell-set!
+            (__tl-project-field
+              (__tl-box-place state.visibility-storage)
+              module-events)
+            event-index
             (CompilerSemanticModuleEvent
               path-index
               byte-offset
               module-index
               event-index))
-          (set!
-            (deref
-              (__tl-project-field
-                (__tl-box-place state.visibility-storage)
-                module-event-len))
+          (owned_view.compiler-owned-box-cell-set!
+            (__tl-project-field
+              (__tl-box-place state.visibility-storage)
+              module-event-len)
             (+ event-index 1)))))))
 
 (define (compiler-semantic-path-index-ensure!
@@ -783,12 +793,11 @@
           (when
             (> source-len info.source-len)
             (set! info.source-len source-len)
-            (set!
-              (array-ref
-                (__tl-project-field
-                  (__tl-box-place state.visibility-storage)
-                  paths)
-                found)
+            (owned_view.compiler-owned-cell-set!
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                paths)
+              found
               info))
           found)
         (if (>=
@@ -797,12 +806,11 @@
             (__tl-project-field (__tl-box-place state.visibility-storage) paths)))
           -1
           (begin
-            (set!
-              (array-ref
-                (__tl-project-field
-                  (__tl-box-place state.visibility-storage)
-                  paths)
-                path-len)
+            (owned_view.compiler-owned-cell-set!
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                paths)
+              path-len
               (CompilerSemanticSourcePathInfo
                 (string.copy (& normalized))
                 source-len
@@ -811,11 +819,10 @@
                 0
                 0
                 0))
-            (set!
-              (deref
-                (__tl-project-field
-                  (__tl-box-place state.visibility-storage)
-                  path-len))
+            (owned_view.compiler-owned-box-cell-set!
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                path-len)
               (+ path-len 1))
             (compiler-semantic-module-event-push! state path-len 0 module-index)
             path-len))))))
@@ -842,37 +849,43 @@
               (__tl-box-place state.visibility-storage)
               scope-events))
           len)]
-      (compiler-semantic-scope-event-vec-push!
-        (&mut
-          (__tl-box-place
-            (__tl-project-field
-              (__tl-box-place state.visibility-storage)
-              scope-events)))
-        (CompilerSemanticScopeEvent
-          state.path-index
-          start-byte
-          child.head
-          (compiler-semantic-scope-event-kind-start)
-          child.head
-          start-sequence))
-      (compiler-semantic-scope-event-vec-push!
-        (&mut
-          (__tl-box-place
-            (__tl-project-field
-              (__tl-box-place state.visibility-storage)
-              scope-events)))
-        (CompilerSemanticScopeEvent
-          state.path-index
-          end-byte
-          parent.head
-          (compiler-semantic-scope-event-kind-end)
-          child.head
-          (+ start-sequence 1)))
-      (set!
-        (deref
-          (__tl-project-field
-            (__tl-box-place state.visibility-storage)
-            scope-region-count))
+      (let
+        ;; The boxed vector's by-value view shares its contents.
+        [events : (Box CompilerSemanticScopeEventVec)
+          (owned_view.compiler-owned-reference-shared-view
+            (&
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                scope-events)))]
+        (compiler-semantic-scope-event-vec-push!
+          (&mut (deref events))
+          (CompilerSemanticScopeEvent
+            state.path-index
+            start-byte
+            child.head
+            (compiler-semantic-scope-event-kind-start)
+            child.head
+            start-sequence)))
+      (let
+        [events : (Box CompilerSemanticScopeEventVec)
+          (owned_view.compiler-owned-reference-shared-view
+            (&
+              (__tl-project-field
+                (__tl-box-place state.visibility-storage)
+                scope-events)))]
+        (compiler-semantic-scope-event-vec-push!
+          (&mut (deref events))
+          (CompilerSemanticScopeEvent
+            state.path-index
+            end-byte
+            parent.head
+            (compiler-semantic-scope-event-kind-end)
+            child.head
+            (+ start-sequence 1))))
+      (owned_view.compiler-owned-box-cell-set!
+        (__tl-project-field
+          (__tl-box-place state.visibility-storage)
+          scope-region-count)
         (+
           (__tl-box-place
             (__tl-project-field
@@ -916,8 +929,10 @@
 (define (compiler-semantic-record-vec-grow!
   [records : (&mut records CompilerSemanticRecordVec)]) : unit
   (let
-    [old-items : (__tl_dyn-array CompilerSemanticRecord) records.items]
-    [old-live : (__tl_dyn-array bool) records.live]
+    [old-items : (__tl_dyn-array CompilerSemanticRecord)
+      (replace! records.items (__tl_make-array CompilerSemanticRecord 0))]
+    [old-live : (__tl_dyn-array bool)
+      (replace! records.live (__tl_make-array bool 0))]
     [old-capacity : i64 (array-length old-items)]
     [new-capacity : i64
       (if (< old-capacity 1)
@@ -964,7 +979,7 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [record-index : i64]) : CompilerSemanticRecord
   (if (and (>= record-index 0) (< record-index index.len))
-    (array-ref index.records record-index)
+    (owned_view.compiler-owned-element-view (& index.records) record-index)
     (compiler-semantic-record-fallback)))
 
 (define (compiler-semantic-source-index-complete?
@@ -979,7 +994,9 @@
   (if (and
     (>= canonical-index 0)
     (< canonical-index index.canonical-symbol-len))
-    (array-ref index.canonical-symbols canonical-index)
+    (owned_view.compiler-owned-element-view
+      (& index.canonical-symbols)
+      canonical-index)
     ""))
 
 (define (compiler-semantic-source-index-record-canonical-key
@@ -1183,14 +1200,18 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [binding-index : i64]) : CompilerSemanticVisibleBinding
   (if (and (>= binding-index 0) (< binding-index index.binding-len))
-    (array-ref index.bindings binding-index).visible
+    (__tl-project-field
+      (owned_view.compiler-owned-element-view (& index.bindings) binding-index)
+      visible)
     (compiler-semantic-visible-binding-fallback)))
 
 (define (compiler-semantic-source-index-top-visible-binding-get
   [index : (& index CompilerSemanticSourceIndex)]
   [candidate-index : i64]) : CompilerSemanticVisibleBinding
   (if (and (>= candidate-index 0) (< candidate-index index.top-candidate-len))
-    (array-ref index.top-visible-bindings candidate-index)
+    (owned_view.compiler-owned-element-view
+      (& index.top-visible-bindings)
+      candidate-index)
     (compiler-semantic-visible-binding-fallback)))
 
 (define (compiler-semantic-scope-has-name?
@@ -1414,23 +1435,20 @@
   [offset : i64]
   [line : i64]
   [col : i64]) : unit
-  (set!
-    (deref
-      (__tl-project-field
-        (__tl-box-place state.visibility-storage)
-        source-anchor-offset))
+  (owned_view.compiler-owned-box-cell-set!
+    (__tl-project-field
+      (__tl-box-place state.visibility-storage)
+      source-anchor-offset)
     offset)
-  (set!
-    (deref
-      (__tl-project-field
-        (__tl-box-place state.visibility-storage)
-        source-anchor-line))
+  (owned_view.compiler-owned-box-cell-set!
+    (__tl-project-field
+      (__tl-box-place state.visibility-storage)
+      source-anchor-line)
     line)
-  (set!
-    (deref
-      (__tl-project-field
-        (__tl-box-place state.visibility-storage)
-        source-anchor-col))
+  (owned_view.compiler-owned-box-cell-set!
+    (__tl-project-field
+      (__tl-box-place state.visibility-storage)
+      source-anchor-col)
     col))
 
 (define (compiler-semantic-source-position
@@ -2066,7 +2084,7 @@
     [decls : (__tl_dyn-array ast.AstDecl)
       (csym.compiler-symbols-decls (tc.tc-context-symbols ctx))]
     (if (and (>= index 0) (< index (array-length decls)))
-      (array-ref decls index)
+      (owned_view.compiler-owned-element-view decls index)
       (ast.ast-decl-fallback))))
 
 (define (compiler-semantic-symbol-for-decl
@@ -3176,7 +3194,7 @@
             (set!
               cursor
               (compiler-semantic-binding-clause-end
-                state.source
+                (owned_view.compiler-owned-shared-view state.source)
                 bound.next-search
                 search-limit)))]))
     (CompilerSemanticBindResult next-scope next-env cursor)))
@@ -3218,7 +3236,7 @@
             (set!
               cursor
               (compiler-semantic-binding-clause-end
-                state.source
+                (owned_view.compiler-owned-shared-view state.source)
                 bound.next-search
                 search-limit)))]))
     (CompilerSemanticBindResult next-scope next-env cursor)))
@@ -6412,7 +6430,8 @@
     [owner : i64 (arena.tl_arena_make)]
     (+= compiler-semantic-source-index-live-owners 1)
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (let
         [decls : ast.AstDeclList
           (match (tc.tc-context-program ctx)
@@ -6557,7 +6576,9 @@
                 (owned_view.compiler-owned-shared-view path)
                 (owned_view.compiler-owned-shared-view decl)))
             (set! walk-state.generated generated)
-            (set! walk-state.provenance provenance)
+            (set!
+              walk-state.provenance
+              (owned_view.compiler-owned-shared-view provenance))
             (set! (deref walk-state.next-local-ordinal) 0)
             (set!
               walk-state.semantic-origin-run

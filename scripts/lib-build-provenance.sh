@@ -1,8 +1,8 @@
 # lib-build-provenance.sh — the git identity stamped into build outputs.
 #
-# stage0 binaries, the bootstrap fixpoint, and the embedded stdlib tlci image
-# each stamp `git rev-parse HEAD` into their output so an artifact is traceable
-# to a commit. Every one of those scripts runs under `set -e`, so a git failure
+# Stage0 binaries and the bootstrap fixpoint record `git rev-parse HEAD` for
+# commit provenance; producer admission and embedded images use `HEAD^{tree}`
+# for source-content identity. Those scripts run under `set -e`, so a git failure
 # already aborts the run — but what reaches the terminal is git's bare
 # `fatal: not a git repository: <path>`, which names neither the script that
 # needed the commit nor a way forward, and the reader is left to work out that
@@ -39,22 +39,23 @@ build_provenance_explain() {
     } >&2
 }
 
-# build_provenance_hash CONTEXT
-#   Echo the HEAD commit that CONTEXT should stamp into its output, or explain
+# build_provenance_hash CONTEXT [REVISION]
+#   Echo the requested Git identity (HEAD by default), or explain
 #   why it cannot be read and return non-zero. Callers assign the result under
 #   `set -e`, so the failure aborts the build rather than stamping an empty or
 #   stale identity.
 build_provenance_hash() {
-    _bp_hash=$(git rev-parse --verify HEAD 2>/dev/null || true)
+    _bp_revision=${2:-HEAD}
+    _bp_hash=$(git rev-parse --verify "$_bp_revision" 2>/dev/null || true)
     if [ -n "$_bp_hash" ]; then
         printf '%s\n' "$_bp_hash"
         return 0
     fi
     build_provenance_explain \
         "$1" \
-        "the build provenance commit" \
-        "git rev-parse --verify HEAD"
-    echo "  The build output stamps that commit, so continuing would produce" >&2
+        "the build provenance identity $_bp_revision" \
+        "git rev-parse --verify $_bp_revision"
+    echo "  The build output stamps that identity, so continuing would produce" >&2
     echo "  an artifact that cannot be traced to a source revision." >&2
     return 1
 }

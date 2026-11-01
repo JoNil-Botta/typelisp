@@ -18,6 +18,12 @@ the included file's failure byte. Binary, compressed and compiler-owned
 comptime includes retain their raw-byte contracts. This does not impose a
 UTF-8 invariant on runtime-created `String`, borrowed `str`, or `ByteBuf`.
 
+Ownership (moves, borrows, lifetimes of loans, cleanup obligations) has one
+authority, the [ownership IR](ownership-ir.md) (#8449): the type checker
+records each body's typed occurrences, the normalizer builds the body's
+ownership MIR from them, and the core certifies it; a body the core does not
+certify is rejected.
+
 ```
 Source (.tl)
     ↓  Lexer, reader → spanned s-expressions (lex.tl, read.tl)
@@ -87,7 +93,9 @@ Codegen Parity*) describes its rules.
 
 `CompilerCallConvention` is independent of the target: every register, bank,
 clobber, stack-placement, shadow-space and aggregate-classification query
-receives `Internal` or `Platform`. Both currently return the same facts. IR
+receives `Internal` or `Platform`. Windows Internal calls have six positional
+GP/float slots, with RSI/RDI volatile; Platform retains four slots and preserves
+RSI/RDI. SysV facts coincide. IR
 function bodies, closure descriptors and private SPMD calls use `Internal`; C
 externs (including varargs), C function pointers and C store-result calls use
 `Platform`. TypeLisp package externs retain `Internal`. Helpers the backend
@@ -103,7 +111,19 @@ both. These facts share the existing reset and suppression lifetime with
 memory-transport facts. These are independent bits: a private by-value
 TypeLisp parameter needs memory transport without selecting the platform ABI.
 C exports retain `Platform` for their raw link entry, while their IR function
-name uses `Internal`; TypeLisp exports use `Internal` for both names. Inlined
+name uses `Internal`. Package metadata appends `$typelisp` to the validated C
+identifier; the backend resolves this identity to a distinct body on Windows
+and to the existing C symbol on SysV. Windows emits a C entry that saves RSI/RDI, forwards the actual lowered physical words
+(including hidden sret and register groups). Up to four physical words need
+no moves: a leaf entry tail-enters one object-local bridge via volatile R11;
+that bridge owns the shadow area, RSI/RDI saves and SEH record. Wider entries
+own their forwarding frame and unwind record. The assembly and object routes
+share the same lowered-word admission and forwarding plan. SysV needs no
+bridge or additional symbol because both conventions coincide. Reserved atomic and
+volatile helper leaves share their raw C and Internal entry bytes on both
+targets: their at-most-three GP slots coincide, their literal templates use
+only common volatile registers, and Windows RSI/RDI stay untouched. TypeLisp exports use
+`Internal` for both names. Inlined
 atomic, volatile and TLS-arena operations read the same convention as their
 argument setup. A closure entry adapter is entered with `Internal` and forwards
 with its target's convention, so a C extern used as a function value receives
@@ -113,10 +133,14 @@ classification and outgoing frame sizing. Incoming parameter and saved-register
 facts use the function's `Internal` contract; caller-clobber allocation remains
 conservative across the call family. `backend-call-conventions` pins
 classification and fact lifetime, `backend-call-convention-facts-parity` checks
-both targets, register boundaries and mixed argument banks, and
+SysV parity, `backend-windows-internal-convention` checks register boundaries,
+clobbers and mixed argument banks, and
 `backend-call-convention-emission-sites` pins each emission site's convention.
-Full before/after assembly and bootstrap comparisons guard the no-output-change
-invariant.
+Full bootstrap and cross-mode comparisons guard convergence. Windows thread
+and macro trampolines preserve RSI/RDI for their C callers. TLCI host callbacks
+use explicit C exports rather than Internal closure entries on Windows;
+callback/host ABI version 3 rejects preceding images before invocation.
+Package runtime input schema v2 invalidates old Windows Internal archives.
 
 The freestanding Linux runtime installs a zeroed TLS mapping before global
 initializers and at each native worker entry. FS:0 holds the mapping's thread
@@ -380,7 +404,9 @@ when one of them can write that storage. For a read through a name, that is a
 `set!`, `replace!`, field or element store, push, take, mutable borrow or
 `ptr-addr-of` rooted at the name. Other local storage, such as a block result,
 counts any such form. An address-taken local counts any later argument that
-is not a plain read. A global read is not copied yet (#8680). The typed, untyped, call-aware and C ABI
+is not a plain read. A global read has no local root, so it is copied whenever
+a later argument has any effect: lowering has no call write facts yet to prove
+a call leaves it alone (#8680). The typed, untyped, call-aware and C ABI
 argument collectors all apply it (#8433). The write scan skips closure bodies.
 Once a call's remaining arguments are found free of writes, the collectors
 pass that on, so the arguments after them are not scanned again. Memory-class
@@ -402,26 +428,41 @@ store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.
 
-Store lowering uses the operand's actual flow type independently of its
-contextual value type. `Never` from a receiver, index or value stops evaluation
-before further operands, bounds checks, writes or packed-local refreshes.
-Annotations preserve that flow. Argument collectors carry an explicit `Exit`
-state, which callers propagate without snapshots, remaining arguments, calls
-or writebacks. Direct constructors and array-literal builders return their
-flow type so an exit cannot become a successful store through a state-only
-result. Box and tuple literals preserve the same flow before allocation,
-stores, later elements or result materialization. Tuple element builders carry
-that flow in `ResultLowerExpr`. Conditional exits still leave the surviving
-path available to commit.
+Every element step of a store place is a `LowerStorePlace` that owes its
+bounds check (`LowerPendingBounds`): a fixed array or slice element carries its
+index and length, and a dynamic element checks the current length when the
+store resolves the live buffer. Inline field and tuple projections
+(`lower-store-place-project`) read no element bytes, so they carry the pending
+check: `(set! (array-ref a i).f v)` checks `i` after `v`, as
+`(set! (array-ref a i) v)` does. `lower-store-place-address` emits it at the
+store, after the value and before any address of the element exists. A step
+that reads the element first runs it then, through
+`lower-store-place-check-now`: an indirection through a reference field, an
+element step into an inline array (`set_intermediate_bounds_before_value_trap`)
+and a branch arm publishing its place. An element step whose receiver still
+owes a check, and a merge of such places, are internal errors rather than
+dropped checks. A dynamic place's base is the typed descriptor snapshot, and
+its length and buffer reads are the typed descriptor words that
+`lower-array-element-addr` uses, so the optimizer keeps distinguishing element
+stores from header loads. Dynamic and pending places evaluate the value first;
+a direct constructor builds into them through a deferred
+`LowerStoreDestination.Place`.
 
-An exiting constructor or annotation reports `Never` with no value, so every
-consumer of an operand follows the same rule. Let and `with` bindings stop
-before later initializers and the body (`ResultLowerLetBindings` and
-`LowerResourceBindings` carry an `Exit` state). Match scrutinees, field, tuple
-and array projections, `deref`, casts, unary and binary operands, `if`
-conditions and owned `for` sources return the exit's state as `Never` instead
-of dispatching on the missing value. The exit itself cleans earlier `with`
-resources.
+Store lowering follows an operand's flow, not its contextual type: `Never`
+from a receiver, index or value ends the store there, before later operands,
+bounds checks, writes or packed-local refreshes, and annotations keep that
+flow. Call arguments, constructor fields and box, tuple and array literal
+elements end at an exiting operand the same way: later operands, snapshots,
+the call and its writebacks are never emitted, so an exit never becomes a
+store or a result. Let and `with` bindings stop before later initializers and
+the body (`LowerResourceBindings.Diverged`), and the exit itself cleans the
+earlier `with` resources. Match scrutinees, projections, `deref`, casts,
+unary and binary operands, `if` conditions and owned `for` sources return the
+exit as `Never` without dispatching on a missing value. Conditional exits
+leave the surviving path to commit. `compiler-lower-store-exits`,
+`compiler-lower-literal-constructor-exits` and
+`compiler-lower-operand-consumer-exits` check that no instruction follows a
+terminator in its block.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
@@ -617,6 +658,30 @@ expression dispatcher. Each expansion frame pairs its invocation span with the
 current origin path, so an imported template's nested call keeps the template
 file while a forwarded caller operand keeps the caller file.
 
+`compiler_stack_traffic.tl` defines the #9242 post-regalloc fact boundary for
+#7236. Its producer must supply final emitted-operation keys, logical homes,
+closed ownership and register-bank facts, and source-owned region membership;
+neither a stack offset nor a mnemonic proves them. Region parents precede
+children. The existing liveness CFG supplies indexed forward/reverse edges.
+The verifier rejects malformed extents, references, duplicate operations and
+missing reverse edges. Recurring-access counts describe header SCC membership
+only; they do not prove a round trip. An ordered witness names a same-home write
+and later read on a path which returns to the reachable full-gang header without
+visiting it between those events. In one block, operation/access keys give
+execution order. A `ReadWrite` access reads before writing and cannot witness
+itself without a nonempty inner cycle. Child control flow participates while
+child traffic retains its own region. The proof selects no owner or bank;
+allocator/vector/mask warning policy belongs to #7294.
+Facts borrow their function/job owner. Emitted and source function identities
+are distinct: inlined regions retain the callee's canonical source site. Both
+display names are owned snapshots, so rendering never consults another
+installed symbol table. Ordinary cold traps carry `NoSite`; full-gang and tail
+regions require a typed `Site`. Retention
+must escape all arrays and strings into the receiving owner. The v1 JSON schema
+uses canonical array order and explicit compiler digest/source identity.
+The module is groundwork with #7236 as its named next production consumer;
+retire it if that consumer is retired. It adds no default compiler-path hooks.
+
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,
 then the body, so binding order and ordinal survive every AST walker. The
@@ -756,6 +821,22 @@ Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;
 at opt0 those headers and bytes can belong to lower IR until emission finishes.
+Immutable String literals use one canonical record plan for assembly and direct
+objects. Reverse-byte sorting groups terminated suffixes behind a complete
+owner; labels may share suffix bytes, while every distinct String keeps its own
+eight-byte-aligned pointer/length header and exact bytes through its final zero.
+The plan copies all fragments and labels into the destination arena before the
+input owner retires. Mutable binary constants retain separate storage. Sorting
+uses the shared stable vector sort and temporary scalar keys into live,
+immutable input slots throughout sorting.
+No key escapes the planner: every returned fragment and label is owned by its
+destination arena before the caller may retire the input. The sort therefore
+copies only scalar keys, while String byte copies remain confined to the output
+records. Layout tests pin bytes, aligned headers and absolute relocations after input
+retirement, and native opt0/1/2 tests pin complete writer output on both hosts.
+The assembly sink reuses the backend's byte-exact quoted escaping for compact
+`.ascii` fragments and NUL-terminated `.string` records; the direct-object sink
+retains the same physical records without depending on textual directive size.
 Globals, externs and source spans live outside the dedicated function-IR arena.
 
 The lowerer's checked expression dispatcher delegates complete families to
@@ -1182,6 +1263,22 @@ retirement, preserving composite-prefix status and clone observations. Cfg snaps
 `sym-i64-copy` detaches the import environment's backing chain while its symbol
 IDs remain valid. Linker strings are deep-copied into the caller's arena.
 
+Composite dependency facts cover the declarations copied from admitted fragments,
+not every declaration before the last fragment. The reusable span can also contain
+context-only module/import markers and stdlib source with embedded provenance.
+It ends before the first entry-owned semantic declaration, and for the macro walk
+before the first source expression that still needs macro expansion, using the
+same structural and call gates as the ordinary expander. That declaration and
+all later ones take the ordinary walks. Typechecking, and any later macro plan
+in the same use, reuses no more than the first macro plan hydrated and stops at
+the module marker governing that plan's cut, identified by its ordinal among
+all module markers. Generated-declaration normalization and template
+specialization run
+between the walks and may drop or replace declarations, but they keep module
+markers in order, so no declaration the expander changed reaches the
+typecheck prefix. An empty span clears the composite facts before either walk
+can skip them.
+
 Runtime lowering shares the ordinary/PIC checked-pool handoff. Both ordinary
 functions and generated package SPMD specializations escape through
 `lower-function-seq-escape-to-ir-arena` before checked frontend retirement.
@@ -1222,17 +1319,31 @@ by surface identity order. Exact package-root lint detects uncalled producer
 declarations, while embedded-stdlib and package-surface parity gates exercise
 the real producer entries.
 
-Multi-entry `compile --batch` commands retain the immutable decoded embedded
-image in the batch driver's surface arena. Initialization expands those fixed
-bytes before the first entry's live-allocation baseline; source-only entries
-still use their normal source fallback. The byte slot becomes readable only
-after expansion completes. Decoder scratch storage retires immediately; only
-the byte result escapes into the surface arena. Nested surfaces borrow the
-enclosing owner's bytes. Both assembly and Windows object batches forget their
-owner after successful or failed entry execution, before that owner retires.
-Empty and singleton batches keep their existing lazy path. This retains no
-parsed AST or macro result. Fresh source provenance checks and each native
-session's admission, W^X mapping, registration and release remain independent.
+The embedded TLCI deployment uses independently compressed ordinary images:
+one prelude surface and one native image per macro identity, with one shared
+canonical Huffman model. Its authenticated index fixes all names, bounds,
+lengths and model bytes before lookup or allocation; sorted unique identities
+permit binary search. A requested body is decoded under the total output bound
+and admitted by the ordinary TLCI integrity, platform, ABI and host-import
+checks. Each native image must contain the requested identity. A decoded
+surface is not an executable catalog.
+
+The immutable index and decode tables have a dedicated process-lifetime arena.
+Multi-entry `compile --batch` retains only the decoded prelude surface in the
+batch driver surface arena, before the first entry allocation baseline. Nested
+surfaces borrow that owner, and both successful and failed batches unpublish
+it before retirement. Native frames map independently within each expansion
+pass; cached handles retain their loader generation across intervening frame
+lookups. Pass close releases every mapping, revokes those handles and clears
+terminal-shell and failure state. Fresh source provenance remains mandatory
+for every use. No AST or macro result enters either byte/model cache.
+
+Inspection reconstructs the canonical ordinary catalog by joining independent
+code regions and rebasing their pointer fixups and host-import slots. The
+builder emits that same ordinary catalog separately. Exact reconstruction,
+source mutation, producer provenance, the complete identity census and the
+payload compression bound remain required gates; indexing does not retire any
+of those checks.
 
 The runtime lifetime tests cover repeated checked errors, macro errors, failed
 imports after a successful import, parent restoration, bounded direct-object
@@ -1374,40 +1485,42 @@ loop. `lower-make-array-zero-fill-supported?` decides which applies:
 Types outside that list, such as `String` and `Box`, keep the loop. A `Box`
 default, for one, is a live allocation.
 
-Packed struct field assignment keeps the receiver selected before the RHS
-without restoring stale sibling fields afterward. When the existing operand
-write scan proves the RHS cannot mutate or alias the local, lowering keeps the
-packed temporary path. Otherwise it takes the local's real frame address, so
-RHS field writes and mutable-reference calls reach the same selected value.
-A compiler-side guard stack records that local's IR identity while lowering the
-RHS. Whole-local `set!` clears each active matching runtime flag; projected or
-reference writes leave it live. The final field store is conditional on that
-flag, and the current local value is reloaded from its home. Rebinding makes the
-old unaliased receiver dead, so omitting its unit-valued store preserves the new
-binding. Equal contents do not imply equal receiver identity, and shadowed
-locals have different IR identities. Guards allocate only compiler data and
-runtime scalar flags, not program heap objects. Control-flow state copies share
-the immutable guard links until the corresponding RHS finishes; nested guards
-are popped in lowering order. This rule is specific to unit-valued field stores;
-`replace!`, which returns the old value, retains its separate place lowering.
+A field store into a packed (register-resident) struct local writes through
+the local's frame address and then reloads the packed value
+(`lower-refresh-register-resident-root-after-store`). RHS field writes and
+mutable-reference calls therefore reach the same selected value, and no stale
+sibling field is restored afterward. A by-value array, struct or tuple receiver is its variable's own storage
+(SPEC 5.10). While the value of a store into a captured place is lowered, the
+receiver's root binding (`lower-store-receiver-home-var`) is pinned to that home
+(`lower-state-home-pinned?`): a whole-variable `set!` in the value copies into
+the home instead of repointing the binding at the value's fresh storage, and the
+store then lands in the variable. Field, tuple-element and array-element places
+share this path (`lower-store-expr-into-receiver-place-result`), so the rule needs
+no runtime flag or guard. `replace!`, which returns the old value, retains its
+separate place lowering.
 
-Memory-class aggregate expressions carry addresses into inline storage.
-Whole-global assignment copies the shallow container through the private
-`tl_alloc_global` entry before emitting the ordinary IR `Store`. Keeping that
-store preserves the backend's global-writer and inline-storage eligibility
-analysis; mutating one permanent home would incorrectly retarget a receiver
-captured before the replacement. A private atomic arena starts with one static
-page and uses ordinary arena growth after it fills. Constant allocations up to
-64 bytes reserve space with an inline compare-and-swap; other allocations
-temporarily select the private root, then restore the caller's current arena.
-Every segment has program lifetime, so an allocation can finish on an older
-head while another thread grows the arena. The root and its segments are never
-exposed to source reset or destruction. Payloads retain their checked source lifetimes;
-this transport does not clone them. Global initialization and ordinary heap
-allocation continue to use `tl_alloc`. The existing runtime-leaf mask selects
-this helper and its private arena only when referenced on either target. Each
-platform wrapper has its own catalog row; ordinary allocator variants keep
-their original payloads. Internal mutable diagnostic state keeps its latest
+Zero-sized struct-field reads produce the canonical unit value after evaluating
+the receiver exactly once. They emit no field address, memory load or packed-word
+extraction, including trailing fields beyond a register group's final word and
+projections through checked/raw references. Named lookup still validates the
+field. A pattern binding materializes a non-variable result only when the local
+environment requires a variable. Unit equality evaluates both operands in order
+and chooses its boolean result without a machine comparison; an operand's exit
+still stops subsequent evaluation. This does not change structural tuple/array
+call-transport admission.
+Borrowed patterns bind zero-sized Copy fields to that same canonical value;
+non-Copy fields retain the reference-valued place and ownership path.
+
+Memory-class aggregate expressions carry addresses into inline storage. An
+initialized inline aggregate global keeps one static home: whole-global
+assignment copies the value's bytes into it (`lower-global-storage-assignment`),
+as an assignment to a local or parameter does. A place captured before the
+replacement therefore still names that binding, and the store allocates
+nothing, so a temporary arena cannot own any part of a global. The private
+`tl_alloc_global` runtime entry and its atomic arena remain available to the
+runtime-leaf mask, which emits them only when referenced; no compiler-generated
+global store references them. Global initialization and ordinary heap
+allocation use `tl_alloc`. Internal mutable diagnostic state keeps its latest
 unbound-name snapshot in one fixed array slot, avoiding a new retained global
 container for every lookup and reset.
 
@@ -1421,19 +1534,20 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
-`lower-store-place` retains a selected array descriptor, index and inline
-field offset until the replacement value has been evaluated. The shared
-`lower-array-store-place` snapshot rules prevent later receiver/index writes
-from retargeting the store. `lower-store-destination-address` then checks the
-current length and uses the descriptor's current buffer. Struct and tuple
-projections add their `lower-inline-field-info` offsets without reading the
-element. A projection through a box or reference reads that indirection before
-the value runs, so its intermediate bounds checks remain eager. An inline
-fixed-array field of an element, as in
-`(set! (array-ref (array-ref a i).cells j) v)`, is still lowered as an eager
-array receiver: when `v` grows `a`, that store targets the buffer selected
-before the value ran (#9057). Borrow and `replace!` address selection
-continues to use `lower-mutable-place-address`.
+A field or tuple store into an array element (#8932) retains the selected
+array descriptor, index and inline field offset until the replacement value
+has been evaluated (`lower-capture-array-store-place`). The snapshot rules of
+`lower-store-index` and the descriptor capture prevent later receiver/index
+writes from retargeting the store. `lower-store-place-address` then checks the
+current length and uses the descriptor's current buffer. A projection through
+a box or reference reads that indirection before the value runs, so its
+intermediate bounds checks remain eager. An inline fixed-array field of a
+dynamic-array element, as in `(set! (array-ref (array-ref a i).cells j) v)`,
+keeps `a`'s descriptor as its root: indexing `cells` checks `i` before `v`,
+and the store checks `i` against the live length again and addresses the
+buffer current after `v`, so growth of `a` in `v` does not strand the store in
+the old buffer (#9057). Borrow and `replace!` address selection continues to
+use `lower-mutable-place-address`.
 
 A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
 the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).
@@ -1473,8 +1587,17 @@ References, slices, strings-as-views and inline aggregates require a proof:
 an unchanged parameter, a reference-parameter reborrow, caller-owned
 memory-class parameter storage, a typed global binding without a local IR
 binding, or a supported heap projection. A shared
-borrow of a plain scalar variable is safe because lowering copies it into
-`tl_alloc` storage. Local reference/view aliases, unknown call results and
+borrow of a dynamic-array or String variable is safe because it lends the
+variable's heap handle. A shared borrow of a scalar or register-resident
+variable is not: lowering copies the value into a frame slot of the borrowing
+function, never into the current arena, which a `with-arena` or `in-arena`
+around the borrow may rewind or destroy while the reference still borrows the
+live variable (#9297). The frame slot is sound because the borrow never
+outlives the borrowed binder's storage, which ends no later than the frame:
+for a lambda's capture the ownership graph retires the capture at every
+return of the lambda, as it does a by-value parameter, so a borrow of the
+capture cannot be returned or stored past the call. Such a call stays an
+ordinary call, like a borrow of a local aggregate. Local reference/view aliases, unknown call results and
 Copy aggregates materialized from heap elements do not acquire a proof.
 Slice-pattern rest views inherit a proven external scrutinee's storage;
 their IR IDs are retained in a persistent set so lowering-state forks do not
@@ -1831,6 +1954,20 @@ variable extent. Wide homes can move IDs above the original plan count, while
 register-only IDs can remain above the compacted frame. Final liveness, type and
 home tables, use facts and scavenger contexts cover the maximum of both domains;
 frame layout continues to use only the physical slot count.
+Private AVX2 parameter entry stores participate in the full-width stack-home
+census even when optimization removes every body use and liveness interval.
+An empty body still needs disjoint YMM homes inside its accepted frame.
+Debug SIMD callers and private helpers use this same census and coloring path;
+their instruction-span keys are remapped with the IR. Spanned values retain
+private homes so distinct instruction locations cannot acquire one key.
+A program-owned instruction-span link index selects each function's entries
+in original insertion order before pinning, remapping and emission; duplicate
+keys retain newest-entry precedence without rescanning other functions' spans.
+Non-debug emission keeps its existing span path, and scalar debug keeps its
+original variable identities.
+Post-emission block layout treats debug/backtrace end labels and `.cfi_endproc`
+as function boundaries, using the same closing-line classifier as abort-stub
+placement. Outlined blocks remain inside the function's debug and unwind range.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes
@@ -1892,6 +2029,13 @@ storage-origin check does not establish the callee's return convention or the
 output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
 those proofs and their enforcement before stack coloring, including mutable IR.
 
+Return-storage provenance ignores full-width `%v = mov %v : u64` definitions
+of the incoming hidden pointer in mutable final IR: that parameter has an
+initial value at every use and the copy preserves all address bits. Other
+variables retain their definition checks. This does not allow a narrowing
+write or relax the required root, extent, output type or callee contract;
+ordinary-function facts used for storage coloring are unchanged.
+
 Inline-storage coloring tracks addresses through its known alias forms. A
 `Pack` can retain such an address in a register group after the original pointer
 dies; its operands therefore participate in the shared escape visitor. Without
@@ -1904,6 +2048,14 @@ same-type casts and phi copies must therefore materialize it even when source
 and destination have the same allocator home. Parallel-copy scheduling treats
 it as reading no home, and cycle saves must not replace it with the nominal
 home's contents. Address formation still uses the backing local's storage.
+The recipe applies to the whole emitted function and requires one use. An
+immediately preceding definition in the same block certifies which address
+reaches that use, even when other definitions or a parameter share its id.
+This local certificate excludes phi edge inputs and `AddrOf` storage operands.
+Remaining candidates require one definition in the emitted function, counting
+parameters too; only functions with unproven candidates need that count.
+Stack-slot coloring can reuse an id for a dead address and a later pointer, so
+a single use alone does not prove that the use still denotes the address.
 
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it
@@ -1919,6 +2071,40 @@ constant fact naming such a var, as destination or source.
   LICM once it has found a loop, and `optimize-block-list-for-function-pass`
   before its block walk. `fold` keeps it out of its constant environments and
   its copy environment (#7973).
+- Code motion treats an operand naming such a var as a load of its storage
+  (`opt-addr-taken-operand?`) and a def of one as a store
+  (`opt-addr-taken-write?`). Successor sinking and store address sinking move
+  such a read only past instructions a load may cross: no store, call or def
+  of an address-taken var. Successor sinking never rematerializes a read or a
+  def of one in the target, guard sinking and gep splitting never move or
+  re-evaluate such a read, and load sinking stops a moving load at such a def.
+  The passes install the function's set or, for gep splitting, collect local
+  marks over the whole function before filtering candidates (#8913). Standalone
+  collectors borrow instructions and keep functions without `addr_of`
+  allocation-free; integrated pass walks collect the same marks in place (#9436).
+- BCE versioning and its clone-free hoist and bound tightening, ubound,
+  unrolling, fill/copy-call recognition and LFTR refuse, at their entry, a
+  loop that reads or writes a TAINTED value: an address-taken local, or a
+  value whose definition reads a tainted one, transitively and through phis.
+  An `addr_of` result carries no taint, but a load through a tainted pointer
+  does. Every fact these transforms use concerns a value the loop reads or one
+  it was computed from, so with nothing tainted no fact names mutable storage,
+  whichever rule derives it. Branch facts are the one source outside the loop:
+  a rule reads a condition's definition. In a function that branches or
+  switches on a tainted value, every loop is refused, so a definition read for
+  a branch fact is the value that branch tested. Each transform installs the
+  set for its own function before its first gate (#9420).
+- Div/rem safety, global multiply-to-shift and pure-call deduplication gate
+  individual rewrites and the value facts they consume. Operands, destinations,
+  copy roots and available call results must be outside the same taint closure.
+  A pre-inline call site's arguments and result are checked again before its
+  Mov/Phi seeds availability. Direct address-taken writes invalidate the call
+  cache. The tainted-branch rule still refuses all rewrite regions of such a
+  function. Gep offset splitting and induction refuse tainted natural loops,
+  with gep preheader synthesis gated too. Gep also rejects a candidate if any
+  affected Gep base is tainted, including uses outside the loop whose bases
+  would otherwise be read early in the preheader. Each pass installs its own
+  function's set before its first fact or rewrite gate (#9420).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
 - Stack-only and scalar register plans both use
@@ -2233,6 +2419,32 @@ key indexes that context's body-fact table and a colliding view in another pool
 is a valid but different key. The key stays the immediate source-view payload,
 and an unwrapped view is keyed without reading any pool. The
 `tc-call-arg-fact-key-pool-isolation` inline test covers it.
+
+### SSA renaming
+
+SSA construction keeps the current definition and presence bit in a compact
+slot for each candidate variable. A dominator child checkpoints the scalar
+undo log; leaving that child restores the previous values before its sibling
+runs. Fresh variable numbering and the dominator child order remain stable.
+
+Block exits capture only versions requested by inserted or pre-existing phi
+inputs. Predecessor-indexed rows retain scalar versions and presence bits,
+so later stack rollback cannot change an earlier edge. Constants and
+non-candidate inputs are preserved; an unavailable candidate version becomes
+the existing typed undef value. No block retains a full rename environment.
+
+Phi sites keep their newest-first logical order over physical append storage.
+A label-head index and links visit exactly that label's sites in the original
+order. The renamed-block index likewise translates physical positions back to
+logical positions, preserving materialization and value numbering. The
+definition-block table owns its membership arrays and updates a consumed entry
+in place; it must not clone the whole membership array for each definition.
+
+These tables own their storage and label keys rather than retaining a borrowed
+CFG index. The existing 4,096-block admission limit and conservative refusals
+remain unchanged. `ssa-indexed-label-links-preserve-newest-first` and the
+optimizer smoke's `dense-storage` test cover indexed ordering, duplicates,
+growth, missing edges, unbound variables and sibling rollback.
 
 ### Package direct-object routing
 
@@ -2641,6 +2853,29 @@ Loader-owned failures enter `compiler-diagnostic-load` with a typed cause when
 source context is attached. Resolver helpers keep plain internal messages;
 forwarded parser/typechecker diagnostics retain their own codes and provenance.
 The `E03..` inventory lists every loader conversion, including package imports.
+Ordinary and package loads validate nested module bodies at the shared module
+identity boundary. A repeated body, including bodies under different parents,
+reports E0307 at the source-file start before either walker transforms it.
+An unresolved local dotted import retains its candidate path so normal source
+loading reports E0301; dependency declarations control alias routing, while
+an unknown explicit `pkg:` include alias remains an E0303 resolution failure.
+
+## Windows argument transport
+
+Both synchronous process paths use one bounded Microsoft C argv encoder.
+Validation rejects a quote in the program pathname and an encoded command
+exceeding 32767 bytes including its NUL before allocating native resources or
+creating a child. Argument escaping doubles backslashes only before quotes
+and the closing delimiter; program-name quoting leaves them literal.
+
+Text and direct-object startup compact the command-line copy in place with
+the write cursor never ahead of the read cursor. Spaces and tabs delimit
+only outside quotes; odd/even backslash runs and doubled quotes inside a
+quoted argument follow the same rules as the encoder. The first token uses
+the distinct program-name rule. The OS limit of 32767 UTF-16 code units bounds
+both the UTF-8 byte copy and 32768 pointers inside the existing 512 KiB boot
+pool. Public process builders retain their separate 4096-argument limit.
+`process_argv.tl` exercises exact count/bytes through both native spawn modes.
 
 ## Async process ownership
 

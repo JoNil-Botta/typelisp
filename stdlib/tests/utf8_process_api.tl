@@ -3,6 +3,7 @@
 (import stdlib.fs)
 (import stdlib.io)
 (import stdlib.process)
+(import stdlib.process_runtime)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -19,6 +20,17 @@
 
 (define (payload) : String
   "é_日本_😀 é with spaces \\\" end")
+
+(define (check-windows-command-line) : unit
+  (let
+    [command : process.ProcessCommand
+      (process.command "tool é_日本_😀" (process.args-single (payload)))]
+    [encoded : String
+      (process_runtime.windows-cmdline (process.runtime-command command))]
+    (test.assert-string-eq
+      (& encoded)
+      "\"tool é_日本_😀\" \"é_日本_😀 é with spaces \\\\\\\" end\""
+      "Unicode payload preserves a backslash and a literal quote")))
 
 (define (child) : i64
   (test.assert-i64-eq (io.arg-count) 4 "Unicode child argv length")
@@ -55,6 +67,7 @@
     (> (io.arg-count) 1)
     (test.assert-string-eq (io.arg 1) "--utf8-child" "child mode marker")
     (return (child)))
+  (check-windows-command-line)
   (let
     [directory : String
       (match (fs.try-create-temp-dir "typelisp UTF8 é_日本_😀")
@@ -93,6 +106,10 @@
           (payload))
         (string.copy (& directory))))
       [(OkProcessOutput output)
+        (test.assert-string-eq
+          (process.output-stderr output)
+          ""
+          "Unicode child stderr")
         (test.assert-i64-eq
           (process.output-status output)
           42
@@ -100,11 +117,7 @@
         (test.assert-string-eq
           (process.output-stdout output)
           (payload)
-          "Unicode child stdout bytes")
-        (test.assert-string-eq
-          (process.output-stderr output)
-          ""
-          "Unicode child stderr")]
+          "Unicode child stdout bytes")]
       [(ErrProcessOutput error) (io.panic (process.error-message error))])
     (test.assert-i64-eq
       (fs.remove-file-status (& path))

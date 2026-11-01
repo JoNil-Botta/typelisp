@@ -3,6 +3,7 @@
 ;; The renderer stays in TypeLisp and consumes the same extracted documentation
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.vector)
@@ -27,14 +28,12 @@
 
 (define (doc-html-escape [text : (& text str)]) : String
   (let
-    [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (byte_buf.byte-buf-builder-append-string
         (&mut out)
-        (doc-html-escape-one text i))
-      (set! i (+ i 1)))
+        (doc-html-escape-one text i)))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-escape-text-one [text : (& text str)] [idx : i64]) : String
@@ -48,14 +47,12 @@
 
 (define (doc-html-escape-text [text : (& text str)]) : String
   (let
-    [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (byte_buf.byte-buf-builder-append-string
         (&mut out)
-        (doc-html-escape-text-one text i))
-      (set! i (+ i 1)))
+        (doc-html-escape-text-one text i)))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-page-open [title : String]) : String
@@ -197,7 +194,7 @@
     (while (and (not done) (< i n))
       (if (doc-html-syntax-token-delim? (string.string-ref source i))
         (set! done true)
-        (set! i (+ i 1))))
+        (+= i 1)))
     i))
 
 (define (doc-html-syntax-number-start? [source : (& source str)] [start : i64]) : bool
@@ -230,12 +227,12 @@
       (let
         [c : char (string.string-ref source i)]
         (if (= c '\\')
-          (set! i (+ i 2))
+          (+= i 2)
           (if (= c '"')
             (begin
               (set! done true)
-              (set! i (+ i 1)))
-            (set! i (+ i 1))))))
+              (+= i 1))
+            (+= i 1)))))
     i))
 
 (define (doc-html-syntax-valid-escape-end
@@ -294,12 +291,12 @@
               (byte_buf.byte-buf-builder-append-string
                 (&mut out)
                 (doc-html-escape-one source i))
-              (set! i (+ i 1)))))
+              (+= i 1))))
         (begin
           (byte_buf.byte-buf-builder-append-string
             (&mut out)
             (doc-html-escape-one source i))
-          (set! i (+ i 1)))))
+          (+= i 1))))
     (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
@@ -369,7 +366,7 @@
     [done : bool false]
     (while (and (not done) (>= i 0))
       (if (doc-html-syntax-space? (string.string-ref source i))
-        (set! i (- i 1))
+        (-= i 1)
         (set! done true)))
     i))
 
@@ -379,7 +376,7 @@
     [done : bool false]
     (while (and (not done) (>= i 0))
       (if (doc-html-syntax-ident-part? (string.string-ref source i))
-        (set! i (- i 1))
+        (-= i 1)
         (set! done true)))
     (+ i 1)))
 
@@ -495,7 +492,7 @@
                   (byte_buf.byte-buf-builder-append-string
                     (&mut out)
                     (doc-html-escape-one source i))
-                  (set! i (+ i 1)))))]
+                  (+= i 1))))]
           [(doc-html-syntax-number-start? source i)
             (let
               [end : i64 (doc-html-syntax-token-end source i)]
@@ -524,7 +521,7 @@
             (byte_buf.byte-buf-builder-append-string
               (&mut out)
               (doc-html-escape-one source i))
-            (set! i (+ i 1))])))
+            (+= i 1)])))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-code-block-with-info
@@ -692,16 +689,14 @@
 
 (define (doc-html-json-string [text : (& text str)]) : String
   (let
-    [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity (+ n 2))]
     (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (byte_buf.byte-buf-builder-append-string
         (&mut out)
-        (doc-html-json-escape-one text i))
-      (set! i (+ i 1)))
+        (doc-html-json-escape-one text i)))
     (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
     (byte_buf.byte-buf-builder-finish-string (& out))))
 

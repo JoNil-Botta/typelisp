@@ -230,6 +230,13 @@
 
 (define (main) : i64
   (cond
+    [(not
+        (and
+          (string.eq (format.ftoa-render-fixed false "0" 0 0) "0")
+          (string.eq (format.ftoa-render-fixed true "0" 0 0) "-0")
+          (string.eq (format.ftoa-render-fixed false "0" 0 2) "0.00")
+          (string.eq (format.ftoa-render-fixed true "42" 0 0) "-42")))
+      8]
     [(not (f64-fixed-table-ok?)) 1]
     [(not (f32-fixed-table-ok?)) 2]
     [(not (half-even-property-ok?)) 3]

@@ -231,6 +231,7 @@ ffi.tl
 hash.tl
 hashmap.tl
 leb128.tl
+net/dns/wire.tl
 net/http_head_codec.tl
 net/http_trailer.tl
 net/http_trailer_policy.tl
@@ -370,6 +371,7 @@ EOF
 # appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
+stdlib/tests/dns_wire.tl|pass
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/comptime_api.tl|pass|-

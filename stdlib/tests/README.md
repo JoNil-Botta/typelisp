@@ -12,6 +12,12 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+`dns_wire.tl` runs inline hermetic DNS codec fixtures: exact A/AAAA query
+bytes, EDNS0, all supported response records, unknown type/class skipping,
+canonical names, legal compression boundaries and cycles, every byte prefix,
+all hard limits, and 512 fixed-seed mutation cases. Its TC prefix/mutation
+matrix requires an envelope-only result regardless of incomplete RR bytes.
+
 `string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second
 byte in each constrained range, every truncation/continuation position, scalar

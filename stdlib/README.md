@@ -117,12 +117,35 @@ so this section only maps the modules by area. Import a module with
   `process_runtime`, `local_ipc`, `local_ipc_fake`, `local_ipc_linux`, `msvc`.
 - Unicode protocol data: `idna_unicode12`, with immutable tables in
   `generated/idna_unicode12_data` ([offline generation and profile contract](../tools/idna-unicode12-data/README.md)).
-- Networking and security: `net/http_types`, `net/http_head_codec`,
+- Networking and security: `net/dns/wire`, `net/http_types`, `net/http_head_codec`,
   `net/http_trailer`, `net/http_trailer_policy`, `net/ip`, `net/tls_wire`,
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,
   `crypto_sha1_git`,
   `crypto_sha256`, `crypto_sha512`, `crypto_rsa_core`, `crypto_rsa_verify`,
   `crypto_p256`, `crypto_secret`.
+
+`net/dns/wire` is the pure DNS codec for the future stub resolver (Refs #7472).
+It encodes one IN/A or IN/AAAA question with caller ID/RD and optional EDNS0
+advertising 1232 UDP bytes. `decode-response` returns `DnsComplete` only after
+validating every declared section and consuming the whole input. `DnsTruncated`
+contains only a validated header and exactly one complete question; no RR bytes
+are inspected when TC is set, so a datagram ending inside a declared RR can
+trigger transport fallback. Matching ID, QR/opcode, question, server and socket
+identity remains the resolver's responsibility.
+
+Canonical names retain lowercase ASCII length-prefixed wire bytes, preserving
+label boundaries. Empty text and `.` mean root; one final dot is accepted.
+Unicode and IDNA are unsupported. Limits are 63 bytes/label, 253 text bytes
+excluding a final dot, 255 expanded wire bytes, 127 labels and 32 compression
+hops/name; each message allows 65535 bytes, 256 RRs, 256 decoded names, 4096
+total hops and 64 addresses. `DnsLimitExceeded` is distinct from `DnsMalformed`,
+and each reports its first failure offset. Compression targets must be backward
+label boundaries already validated in a question, owner, CNAME or SOA name.
+Opaque RDATA is skipped, so speculative names inside unknown types/classes
+cannot become compression targets. Returned A/AAAA bytes, CNAME, SOA and OPT
+metadata retain message order and section identity. OPT tuples are checked and
+skipped; the resolver owns version/RCODE policy. The codec performs no host or
+network calls and retains no input borrow.
 
 ## Backend Runtime Helper Ownership
 
@@ -310,6 +333,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `compress/adler32.tl` and `compress/zlib.tl` | Adler-32 is scalar arithmetic over borrowed bytes and allocates nothing. `zlib.decoder-new` allocates only the raw decoder's bounded history; `step!` and `set-dictionary!` allocate nothing, retain no chunk or dictionary borrow, and copy at most `window-bytes` dictionary bytes into that history. `decode` and `decode-with-dictionary` grow output exactly as `deflate.decode` does, within the caller's bound. |
 | `net/http_types.tl`, `net/http_head_codec.tl`, `net/http_trailer.tl`, and `net/http_trailer_policy.tl` | Checked protocol tokens, retained field bytes, ordered header/trailer-name storage, policy entries, incremental parser buffering, response-head/trailer results, and serialized request heads allocate in the active arena. Head parsing copies only the bounded head prefix; trailer parsing retains only approved name/value bytes plus reusable current-line scratch. Both stop before a coalesced suffix and never rescan completed lines. Field-line range validation, header lookup, syntax/framing inspection, trailer-policy lookup/list validation, sensitivity checks, and body-plan selection are otherwise non-allocating over retained bytes. Policy construction copies normalized approved names in deterministic insertion order. Request serialization validates all fields and the complete bounded output length before allocating its final `ByteBuf`; framing fields are emitted once in canonical form. |
 | `net/ip.tl` | Address construction, byte access, equality, ordering, hashing, and strict borrowed-text parsing are non-allocating. IPv4 and IPv6 formatting use bounded stack scratch storage, then allocate exactly the returned active-arena `String` backing bytes and handle; no growable intermediate buffer is allocated. |
+| `net/dns/wire.tl` | Names occupy fixed inline storage. Query encoding allocates one active-arena `ByteBuf` of at most 282 bytes. Response decoding checks the 65535-byte cap before allocating a 16384-byte compression-boundary table, then checks the RR cap before allocating at most 256 fixed-size record slots. TC allocates no record array. Parsing never allocates per hop or copies opaque RDATA; errors expose no partial records. Per-call scratch and returned arrays live in the caller's active arena. |
 | `net/tls_wire.tl` | The record and handshake readers own their buffers and fill them in place: once they have grown to the largest record and message, reading records, reassembling messages and returning each message's exact bytes as a borrowed view allocate nothing. Record headers, handshake message headers, extension blocks and every list are checked against the protocol maximum and `TlsWireLimits` before anything is copied. Typed decoders validate a whole list before allocating its exact array and copy each opaque field into its own `ByteBuf`; encoders append to the caller's `ByteBuf`, filling length prefixes in place. |
 | `net/url.tl` | Parsing first checks the whole input against `UrlLimits.max-input` and each component against its own limit before copying it; each component is then normalized into one buffer of exactly its input length. Bracketed IPv6 text is copied only after its length is checked against the longest IPv6 spelling. Formatting and the origin, identity and complete keys allocate their returned `String`s and the intermediate component strings they concatenate. Nothing allocates in proportion to a length the input declares. |
 | `ssh_wire_core.tl` | `SshDecoder` reads over the caller's borrowed view and allocates only the exact array of name spans for a `name-list`, after the whole list is validated; `string`, `mpint` and nested blob values are returned as spans into the view, never copied or converted to text. Every length prefix is checked against `SshWireLimits` before anything is taken. `SshIdentReader` and `SshPacketReader` own one buffer each and fill it in place, holding at most one line or one packet; a packet's buffer is reserved only after its length field passed the limit. Encoders append to the caller's `ByteBuf`; `encode-frame` copies the caller's payload and padding once. |

@@ -1831,9 +1831,8 @@
     [(Some span) (= (ast.ast-source-span-start-line span) line)]
     [(No) false]))
 
-;; Shallow pool snapshots share the dense span-slot table and the record table
-;; but keep their own record counts. A slot past a snapshot's canonical count
-;; must be treated as missing rather than read as one of its records.
+;; A malformed dense slot beyond the shared canonical count must be treated
+;; as missing provenance rather than reading an unwritten record.
 (define (compiler-ast-stale-canonical-span-slot-recovery-smoke?) : bool
   (match (ast.ast-expr-node-pool-state-push
     (ast.ast-expr-node-pool-state-create 1)
@@ -2108,6 +2107,8 @@
         (ast.ast-node-pool-context-snapshot pools)]
       [early-first-segment : i64
         (compiler-ast-canonical-first-segment (& early))]
+      [early-count : i64
+        (ast.ast-node-pool-context-expr-canonical-span-count early)]
       (for [index (iterator.range early-total total)]
         (set!
           (array-ref views index)
@@ -2119,18 +2120,17 @@
               (=
                 (compiler-ast-canonical-first-segment (& early))
                 early-first-segment))
+            (= early-count early-total)
             (=
               (ast.ast-node-pool-context-expr-canonical-span-count early)
-              early-total)
+              total)
+            (compiler-ast-span-segment-view-ok? (& early) (& views) (- total 1))
             (compiler-ast-span-segment-view-ok? (& early) (& views) 0)
             (compiler-ast-span-segment-view-ok?
               (& early)
               (& views)
               (- early-total 1))
-            ;; Every copy of a pool state shares the live node count (one
-            ;; cursor, so a stale copy appends instead of overwriting), so
-            ;; the early snapshot's oracle would read nodes past its own span
-            ;; records; the live pool's oracle is checked here instead.
+            (ast.ast-node-pool-context-expr-span-oracle-ok? early)
             (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
         [snapshot : ast.AstNodePoolContext
           (ast.ast-node-pool-context-snapshot pools)]
@@ -2220,6 +2220,7 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot pools)]
     [size : i64 ast.ast-expr-span-record-segment-size]
     [total : i64 (+ size 2)]
     [literal : i64
@@ -2233,10 +2234,14 @@
     (for [index (iterator.range 0 total)]
       (let
         [line : i64 (+ index 100)]
+        [writer : ast.AstNodePoolContext
+          (if (= (bit-and index 1) 0)
+            pools
+            alias)]
         (set!
           (array-ref views index)
           (ast.ast-expr-spanned-with-pools
-            pools
+            writer
             literal
             (ast.ast-source-span line 3 line 4)))))
     (let
@@ -2256,10 +2261,11 @@
             (& views)
             (+ size 1)
             100)
-          (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? alias))]
       [_rollback : unit
         (ast.ast-node-pool-context-reset-to!
-          pools
+          alias
           (array-ref views (- size 1))
           (ast.ast-node-pool-context-type-len pools))]
       [rolled-count : i64 (ast.ast-node-pool-context-expr-respan-count pools)]
@@ -2274,11 +2280,14 @@
               (ast.ast-source-span line 3 line 4)))))
       (and
         (= filled-count total)
+        (= (ast.ast-node-pool-context-expr-respan-count alias) total)
         (= filled-capacity (* 2 size))
         filled-ok
         (= rolled-count (- size 1))
         (= (ast.ast-node-pool-context-expr-respan-count pools) total)
         (= (compiler-ast-respan-capacity (& pools)) filled-capacity)
+        (compiler-ast-respan-segment-view-ok? (& alias) (& views) size 500000)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? alias)
         (compiler-ast-respan-segment-view-ok? (& pools) (& views) 0 100)
         (compiler-ast-respan-segment-view-ok?
           (& pools)
@@ -3473,63 +3482,224 @@
 
 (define (compiler-ast-expr-stale-alias-smoke?) : bool
   (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
-    ;; A snapshot has its own state cell (and cached length) over the same
-    ;; expression storage.
     [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot pools)]
     [first : i64
       (ast.ast-node-pool-context-expr-push
         pools
         (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [first-view : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        first
+        (ast.ast-source-span 10 1 10 2))]
     [second : i64
       (ast.ast-node-pool-context-expr-push
         alias
         (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [second-view : i64
+      (ast.ast-expr-spanned-with-pools
+        alias
+        second
+        (ast.ast-source-span 20 1 20 2))]
     [i : i64 0]
     [ok : bool
       (and
         (= first 0)
-        (= second 1)
-        (= (ast.ast-node-pool-context-expr-len pools) 2)
-        (= (ast.ast-node-pool-context-expr-len alias) 2)
-        (match (ast.ast-node-pool-context-expr-get (& pools) first)
-          [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 1)]
-          [_ false])
-        (match (ast.ast-node-pool-context-expr-get (& pools) second)
-          [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 2)]
-          [_ false]))]
-    ;; Alternating writers across segment growth never reuse an id.
+        (= first-view 1)
+        (= second 2)
+        (= second-view 3)
+        (= (ast.ast-node-pool-context-expr-len pools) 4)
+        (= (ast.ast-node-pool-context-expr-len alias) 4)
+        (compiler-ast-context-expr-int-lit? pools first 1)
+        (compiler-ast-context-expr-int-lit? alias second 2)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& alias) first-view)
+          10)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& pools) second-view)
+          20)
+        (=
+          (ast.ast-node-pool-context-expr-source-owner (& alias) first-view)
+          first-view)
+        (=
+          (ast.ast-node-pool-context-expr-source-owner (& pools) second-view)
+          second-view))]
+    ;; Alternate writers across both expression and span segment boundaries.
     (while (and ok (< i 70000))
       (let
         [a : i64
           (ast.ast-node-pool-context-expr-push
             pools
             (ast.AstExpr.Literal (ast.ast-lit-int i)))]
+        [av : i64
+          (ast.ast-expr-spanned-with-pools
+            pools
+            a
+            (ast.ast-source-span (+ i 100) 1 (+ i 100) 2))]
         [b : i64
           (ast.ast-node-pool-context-expr-push
             alias
             (ast.AstExpr.Literal (ast.ast-lit-int (+ i 1))))]
+        [bv : i64
+          (ast.ast-expr-spanned-with-pools
+            alias
+            b
+            (ast.ast-source-span (+ i 101) 1 (+ i 101) 2))]
         (set!
           ok
           (and
-            (= b (+ a 1))
-            (match (ast.ast-node-pool-context-expr-get (& pools) a)
-              [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value i)]
-              [_ false])))
-        (set! i (+ i 2))))
-    ;; Truncation is explicit and cannot extend the live length.
+            ok
+            (= av (+ a 1))
+            (= b (+ a 2))
+            (= bv (+ b 1))
+            (compiler-ast-context-expr-int-lit? pools a i)
+            (compiler-ast-context-expr-int-lit? alias b (+ i 1))
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-view-span (& alias) av)
+              (+ i 100))
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-view-span (& pools) bv)
+              (+ i 101))))
+        (+= i 2)))
+    (let
+      [re-a : i64
+        (ast.ast-expr-spanned-with-pools
+          alias
+          first
+          (ast.ast-source-span 900001 1 900001 2))]
+      [re-b : i64
+        (ast.ast-expr-spanned-with-pools
+          pools
+          first
+          (ast.ast-source-span 900002 1 900002 2))]
+      (set!
+        ok
+        (and
+          ok
+          (= i 70000)
+          (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 70002)
+          (= (ast.ast-node-pool-context-expr-canonical-span-count alias) 70002)
+          (= (ast.ast-node-pool-context-expr-respan-count pools) 2)
+          (= (ast.ast-node-pool-context-expr-respan-count alias) 2)
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span (& pools) re-a)
+            900001)
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span (& alias) re-b)
+            900002)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? alias))))
+    ;; A suffix rewind retires the same metadata through either state cell.
+    (ast.ast-node-pool-context-expr-truncate! alias 4)
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ast-node-pool-context-expr-len pools) 4)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 2)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count alias) 2)
+        (= (ast.ast-node-pool-context-expr-respan-count pools) 0)
+        (= (ast.ast-node-pool-context-expr-respan-count alias) 0)))
+    ;; Rewriting an older view makes record order non-monotonic. An alias
+    ;; must use that ordering fact when it retires the view's owner slot.
+    (ast.ast-node-pool-context-expr-set!
+      pools
+      first-view
+      (& (ast.AstExpr.Spanned first (ast.ast-source-span 30 1 30 2))))
+    (set!
+      ok
+      (and
+        ok
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& alias) first-view)
+          30)))
     (ast.ast-node-pool-context-expr-truncate! alias 1)
     (set!
       ok
       (and
         ok
         (= (ast.ast-node-pool-context-expr-len pools) 1)
+        (= (ast.ast-node-pool-context-expr-source-owner (& alias) first) -1)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 2)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count alias) 2)
+        (= (ast.ast-node-pool-context-expr-respan-count pools) 1)
+        (= (ast.ast-node-pool-context-expr-respan-count alias) 1)
         (=
           (ast.ast-node-pool-context-expr-push
             pools
             (ast.AstExpr.Literal (ast.ast-lit-int 3)))
           1)))
+    (let
+      [view : i64
+        (ast.ast-expr-spanned-with-pools
+          pools
+          1
+          (ast.ast-source-span 42 1 42 2))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span (& alias) view)
+            42)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? alias))))
+    ;; Whole reset clears both cursors even after a non-monotonic rewrite.
+    (ast.ast-node-pool-context-expr-truncate! alias 0)
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ast-node-pool-context-expr-len pools) 0)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 0)
+        (= (ast.ast-node-pool-context-expr-respan-count pools) 0)))
+    (ast.ast-node-pool-context-install! pools)
+    (let
+      [literal : i64
+        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 4)))]
+      [view : i64
+        (ast.ast-expr-spanned literal (ast.ast-source-span 43 1 43 2))]
+      [fresh : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      (set!
+        ok
+        (and
+          ok
+          (= literal 0)
+          (= view 1)
+          (= (ast.ast-node-pool-context-expr-canonical-span-count alias) 1)
+          (= (ast.ast-node-pool-context-expr-canonical-span-count fresh) 1)
+          (compiler-ast-maybe-span-start-line?
+            (ast.ast-node-pool-context-expr-view-span (& alias) view)
+            43)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? alias))))
+    (ast.ast-node-pool-context-install! saved)
+    (let
+      [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
+      [invalid : i64
+        (ast.ast-node-pool-context-expr-push
+          alias
+          (ast.AstExpr.Spanned -1 (ast.ast-source-span 99 1 99 2)))]
+      (set!
+        ok
+        (and
+          ok
+          (match (ast.ast-node-pool-context-expr-view-span (& pools) invalid)
+            [(No) true]
+            [_ false])
+          (= (ast.ast-node-pool-context-expr-canonical-span-count alias) 1)
+          (not (ast.ast-node-pool-context-expr-span-oracle-ok? pools))))
+      (ast.ast-node-pool-context-expr-truncate! pools mark)
+      (set!
+        ok
+        (and
+          ok
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+          (ast.ast-node-pool-context-expr-span-oracle-ok? alias))))
     (ast.ast-node-pool-context-destroy-storage! pools)
     ok))
 
@@ -3537,7 +3707,7 @@
   compiler-ast-expr-stale-alias
   (tl_test.assert-true
     (compiler-ast-expr-stale-alias-smoke?)
-    "expression aliases share one cursor: appends never overwrite, truncation is explicit"))
+    "expression aliases share node and span cursors across growth, rewrites, truncation and installed writers"))
 
 (test
   compiler-ast-type-stale-dedup
@@ -3570,16 +3740,22 @@
       (= live.segment-count active.segment-count)
       (= live.span-slot-segment-bases active.span-slot-segment-bases)
       (= live.canonical-span-records active.canonical-span-records)
-      (= live.canonical-span-count active.canonical-span-count)
+      (=
+        (ast.ast-expr-span-table-count live.canonical-span-records)
+        (ast.ast-expr-span-table-count active.canonical-span-records))
       (= live.respan-records active.respan-records)
-      (= live.respan-count active.respan-count)
+      (=
+        (ast.ast-expr-span-table-count live.respan-records)
+        (ast.ast-expr-span-table-count active.respan-records))
       (=
         (ast.ast-expr-span-table-capacity live.canonical-span-records)
         (ast.ast-expr-span-table-capacity active.canonical-span-records))
       (=
         (ast.ast-expr-span-table-capacity live.respan-records)
         (ast.ast-expr-span-table-capacity active.respan-records))
-      (= live.span-records-monotonic? active.span-records-monotonic?))))
+      (=
+        (ast.ast-expr-span-table-monotonic? live.canonical-span-records)
+        (ast.ast-expr-span-table-monotonic? active.canonical-span-records)))))
 
 (define (compiler-ast-installed-span-capture? [wide? : bool]) : bool
   (let
@@ -3649,7 +3825,7 @@
       (and
         (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 65)
         (= (ast.ast-node-pool-context-expr-respan-count pools) 65)
-        (= (ast.ast-node-pool-context-expr-respan-count old) 64)
+        (= (ast.ast-node-pool-context-expr-respan-count old) 65)
         (>=
           (ast.ast-expr-span-table-capacity
             (__tl-project-field
@@ -3659,6 +3835,7 @@
         (compiler-ast-maybe-span-start-line?
           (ast.ast-node-pool-context-expr-view-span old view)
           100)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? old)
         (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))
     (let
       [mark : i64 (ast.ast-node-pool-context-expr-len pools)]

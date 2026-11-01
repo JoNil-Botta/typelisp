@@ -11,6 +11,8 @@ records below and the [testing contract](../src/TESTING.md).
 The lexer/reader and parser produce `AstProgram`. The loader resolves source
 identities and imports; macro expansion can produce more declarations and
 imports. Typechecking supplies checked expression and ownership facts.
+Source literal and runtime text-include admission share the checked stdlib
+UTF-8 decoder; ordinary runtime byte strings keep their byte semantics.
 Lowering produces typed three-address IR, optimization transforms that IR,
 and the backend emits native code for the selected target. CLI, package,
 batch and LSP services orchestrate these stages.

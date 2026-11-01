@@ -17,7 +17,11 @@ function selected(name) {
 /^[[:space:]]*\.globl / {
     name = $2
     active = selected(name)
-    if (active) { file = output "/" name ".body"; print name > (output "/symbols") }
+    if (active) {
+        if (name !~ /^[A-Za-z0-9_$]+$/) exit 1
+        file = output "/" name ".body"
+        print name > (output "/symbols")
+    }
     next
 }
 /^[[:space:]]*\.(size|section)[[:space:]]/ { active = 0; next }
@@ -35,12 +39,14 @@ done
 : > "$work/actual.sha256"
 LC_ALL=C sort "$work/symbols" > "$work/sorted-symbols"
 while IFS= read -r symbol; do
-    hash=$(sha256sum "$work/$symbol.body")
-    hash=
-    printf '%s  %s\n' "$hash" "$symbol" >> "$work/actual.sha256"
+    sha256sum "$work/$symbol.body" > "$work/hash-output"
+    read -r shape_hash shape_path < "$work/hash-output"
+    printf '%s  %s\n' "$shape_hash" "$symbol" >> "$work/actual.sha256"
 done < "$work/sorted-symbols"
 if [ ! -f "$pins" ]; then
     echo "missing reviewed AES shape pins: $pins" >&2
     exit 1
 fi
+awk 'NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-f]/ { exit 1 }' "$pins" \
+    || { echo 'malformed AES shape pins' >&2; exit 1; }
 diff -u "$pins" "$work/actual.sha256"

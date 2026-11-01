@@ -249,3 +249,7 @@ directory listing and its inspection is skipped rather than failing the scan;
 every other inspection failure still fails it.
 Package `check`/`build` validate the entry's reachable import closure;
 package `lint` checks every discovered source.
+Package `test` validates the same production entry closure before checking or
+running its inline/integration harnesses, including zero-test runs and selectors
+that match no tests. `test --list` skips this production preflight. Disconnected
+production modules without inline tests remain outside that closure.

@@ -161,6 +161,15 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   positive and negative text tables with byte offsets, RFC 5952 formatting,
   all 65,536 IPv4 suffixes, generated IPv6 round trips, and parser/formatter
   allocation contracts.
+- `net_tls_transcript_api.tl` checks the public transcript across every RFC
+  8448 section 3 and 5 handshake boundary, with independently pinned SHA-256
+  digests, every two-fragment split, coalesced and byte-at-a-time input. It
+  checks the atomic single HRR replacement, snapshot independence, typed
+  lifecycle/counter/resource failures and bounded fixed-seed frame mutations.
+  Boundary tags validate the local last kind, including HRR exclusion from
+  ServerHello key derivation; the construct/project/escape rejection fixtures
+  protect the opaque hash constructor, contents and arena lifetime. Both the
+  native fixture and inline tests share the complete corpus.
 - `net_tls_wire_api.tl` checks the TLS 1.3 wire codec against RFC 8448's
   traces: every handshake message decodes to the expected fields and
   re-encodes to the same bytes. It feeds every two-piece split of record

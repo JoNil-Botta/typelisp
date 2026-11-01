@@ -367,7 +367,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
 | `try-append-file` | Appends a borrowed `bytes` view through the recoverable stdlib status helper. It preserves existing contents, creates missing files, allocates no concatenated temporary, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque stdlib-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, `OpenWriteAppend`, and exclusive `OpenWriteCreateNew`. The stdlib copies the path into active-arena storage for the host call and tracks handle state in a process-global table. Create-new never opens an existing path. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
-| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with an active-arena `ByteBuf` plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
+| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with an active-arena `ByteBuf` plus the sticky EOF flag. For a valid read-mode handle, a positive request allocates its full byte count before host I/O; a short read or host error does not reclaim that storage. Repeated readers should use the [bounded scratch pattern](#streaming-file-read-allocation). Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `file-write`, `file-flush` | `file-write` writes a borrowed `bytes` view to a write-mode handle, retrying host short writes until complete or an error is reported. `file-flush` calls `fsync` on Linux and `FlushFileBuffers` on Windows. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. Flushing a file does not flush its containing directory. |
 | `read-file-or` | Returns a successful `ByteBuf` or the caller-provided `ByteBuf` fallback for every structured error. `io_caller_result.tl` provides an explicitly textual result shape for callers that deliberately materialize file bytes as `String`. |
 | `append-file` | Panic-on-error borrowed-`bytes` wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
@@ -448,6 +448,41 @@ helpers (`file-open`, `file-close`, `file-read-chunk`, `file-write`,
 `file-flush`). v1 requires an explicit close. All handle helpers reuse the
 `IoError` model: mode violations, closed or invalid handles, and unsupported
 operations return structured `IoError` results rather than panicking.
+
+### Streaming file read allocation
+
+`file-read-chunk` allocates the full positive request in the active arena
+before host I/O. A short read exposes only the returned prefix, without
+shrinking its backing allocation; a host error also leaves that storage in
+the arena. Dropping or replacing the result does not reclaim it. Repeatedly
+requesting the remaining capacity can therefore retain nearly the whole
+capacity on every one-byte read, until that arena ends.
+
+For a reader with a total byte limit, use this bounded scratch pattern:
+
+1. Allocate one output `ByteBuf` with the required fixed capacity outside the
+   loop. Include one overflow-detection byte if the reader must distinguish
+   an exact-limit file from an oversized file.
+2. On each iteration, request at most `min(8192, remaining)` bytes inside
+   `(with-arena scratch ...)`. The per-read cap must be independent of the
+   total remaining capacity.
+3. Copy only the returned live bytes into the already allocated outer slots,
+   then update the outer live length. Check the available capacity first;
+   never grow the outer buffer while scratch is active, since growth would
+   allocate its replacement storage in scratch.
+4. Let only scalar byte counts, EOF, and error facts leave scratch. Neither
+   the read buffer nor a scratch-owned error message may escape it. Construct
+   any retained error in the outer arena, with the consumed-byte offset when
+   needed. Scratch ends before the next read, reclaiming the entire request.
+5. Stop on error, EOF, or the total limit. A positive short read is progress,
+   not EOF; reject zero progress without EOF. Do not retry a zero-count
+   request, which preserves EOF. Close the handle on every exit path and
+   return an error without publishing partial data on failure.
+
+A fixed chunk size alone still retains one chunk allocation per iteration
+when used in a long-lived arena. Both the cap and scratch lifetime matter.
+The [caller audit](../docs/file-read-chunk-audit.md) records existing uses and
+the resolver loader's tested implementation of this pattern.
 
 ## Importing Stdlib Modules
 

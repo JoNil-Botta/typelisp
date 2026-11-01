@@ -334,10 +334,9 @@
       (set! target (+ target 1))))
   (let
     [owner : byte_buf.ByteBuf (u16 (text-label (byte_buf.new) "a") 49169)]
-    (let
-      [packet : byte_buf.ByteBuf
-        (rr (message 1 0 0) owner 65000 1 0 (byte_buf.new))]
-      (assert-error (byte_buf.as-bytes (& packet)) false)))
+    [packet : byte_buf.ByteBuf
+      (rr (message 1 0 0) owner 65000 1 0 (byte_buf.new))]
+    (assert-error (byte_buf.as-bytes (& packet)) false))
   (let
     [tag : i64 64]
     (while (< tag 192)

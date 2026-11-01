@@ -13,6 +13,12 @@ into a generated harness and runs it (imported files contribute declarations,
 not tests); with no file, it runs the nearest package's inline tests plus
 `tests/**/*.tl` integration programs (exit 0 passes). `typelisp test --check`
 type-checks harnesses and integration programs without linking.
+Before running or checking package harnesses, `test` also checks the manifest
+entry's production import closure, with the same target/user cfgs as package
+`check`/`build` and without automatic `test` cfg. This happens even with zero
+tests or no selector matches; production errors prevent harness execution.
+Disconnected production modules without inline tests remain unchecked, matching
+package `check`/`build`. `--list` does not run this production preflight.
 The runner announces every selected runnable test, continues after assertion
 failures, prints `ok` or `FAILED` for each executed test, and finishes with
 passed, failed, ignored, slow-skipped, and total counts. Tests may begin with

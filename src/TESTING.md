@@ -849,6 +849,19 @@ The paired `generated_cfg_missing_decls_import_reject.tl` and
 `generated_cfg_missing_module_import_reject.tl` safety fixtures require enabled,
 unused generated imports to reach the resolver for both result kinds.
 
+`decls_module_env_carry` runs repeated function-only declaration splices at
+opt0/1/2, retaining predecessor calls, a root-name collision, generated-import
+types and unsafe markers. The
+`macro-module-env-carry-rebuild-fallback-and-scratch-ownership` inline test
+compares carried lookups, missing names and unsafety with a fresh canonical
+row walk. It also checks name-map growth across scratch retirement and the
+collision, dotted-name, nominal, pending-alias, flat-view, changed-store,
+unresolved-overlay and foreign-arena rebuild boundaries.
+It then carries three further deltas through the owned view, comparing every
+old and new local/qualified binding and unsafe marker with the canonical
+rebuild, and rejects qualified-local collisions, unresolved/detached top
+deltas and changed resolution generations.
+
 ## Global call borrow effects
 
 The original `inline_aggregate_global_live_borrow_reject.tl` escape shape
@@ -2017,6 +2030,16 @@ summaries. It also fails if target-specific tokens appear in
 `src/compiler_optimize.tl`, keeping the optimizer target-independent. A
 separate target-cfg probe confirms that `compile --emit-ir --target` is actually
 honoring the requested target.
+
+The socket entries use `stdlib_net_parity.tl` and
+`stdlib_net_owner_parity.tl`: injected TCP/UDP transfers, bounded readiness,
+duplication, accept, addresses, options, pending errors and shutdown return a
+checked exit score without importing host diagnostic implementations. The full
+`stdlib_net.tl` and `stdlib_net_owner.tl` conformance drivers retain their
+assertion diagnostics and run in the native manifest at opt0/1/2 on both hosts,
+alongside both parity workloads. Explicit `stdlib.io`, `stdlib.test` or
+`stdlib.runtime` imports contain target-cfg host code and do not belong in this
+target-independent IR comparison.
 
 The same gate runs the target-dispatch boundary guard,
 [`../scripts/check-codegen-target-dispatch.sh`](../scripts/check-codegen-target-dispatch.sh),

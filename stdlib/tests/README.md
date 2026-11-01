@@ -589,3 +589,12 @@ Other cases cover:
 - arena lifetimes and cancellation.
 
 Adler-32 vectors cover the empty string through an 80-byte string, each at every two-chunk split, and a 1 MiB run checked whole and in uneven chunks. Fixture provenance and the offline generator are in [`tests/fixtures/zlib/README.md`](../../tests/fixtures/zlib/README.md). The integration manifest runs this driver and the embedded-module example at opt0/1/2 on Linux and Windows.
+- `net_api.tl` runs `net_conformance.run` against the host-free socket fake.
+  Shared fixture hooks let platform leaves run the same partial/interrupted,
+  would-block/zero/EOF/error, deadline/cancellation/work, peek/truncation,
+  duplicate/shutdown and accept-cleanup cases over injected host adapters.
+  `net_owner_api.tl` checks portable endpoint/option bounds, pending-error
+  consumption, native token generation reuse and duplicate isolation after
+  descriptor-slot reuse. `net_owner_copy_reject.tl`,
+  `net_owner_forge_reject.tl` and `net_raw_helper_reject.tl` pin the static
+  move-only and unsafe raw-state boundaries. These tests use no network.

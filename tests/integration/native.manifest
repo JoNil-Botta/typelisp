@@ -26,6 +26,10 @@
 stdlib_deflate|all|0,1,2|tests/integration/stdlib_deflate.tl|42|-|-|-|stage-stdlib
 deflate_embedded_example|all|0,1,2|examples/deflate_decode.tl|42|deflate decode score: 42\n|-|-|-
 stdlib_zlib|all|0,1,2|tests/integration/stdlib_zlib.tl|42|-|-|-|stage-stdlib
+stdlib_net|all|0,1,2|tests/integration/stdlib_net.tl|42|-|-|-|stage-stdlib
+stdlib_net_owner|all|0,1,2|tests/integration/stdlib_net_owner.tl|42|-|-|-|stage-stdlib
+stdlib_net_parity|all|0,1,2|tests/integration/stdlib_net_parity.tl|42|-|-|-|stage-stdlib
+stdlib_net_owner_parity|all|0,1,2|tests/integration/stdlib_net_owner_parity.tl|42|-|-|-|stage-stdlib
 zlib_embedded_example|all|0,1,2|examples/zlib_decode.tl|42|zlib decode score: 42\n|-|-|-
 mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
 enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner_layout.tl|42|-|-|enum_constructor_owner_defs.tl|-
@@ -1197,6 +1201,7 @@ view_mut_write|all|0,1,2|tests/integration/view_mut_write.tl|42|-|-|-|-
 view_match_binder_write|all|0,1,2|tests/integration/view_match_binder_write.tl|42|-|-|-|-
 
 decls_module_scopes|all|0,1,2|tests/integration/decls_module_scopes.tl|42|-|-|decls_generated_import_dep.tl|-
+decls_module_env_carry|all|0,1,2|tests/integration/decls_module_env_carry.tl|42|-|-|decls_module_env_carry_dep.tl|-
 serialize_module_scopes|all|0,1,2|tests/integration/serialize_module_scopes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl|-
 decls_explicit_module_scopes|all|0,1,2|tests/integration/decls_explicit_module_scopes.tl|42|-|-|-|-
 decls_self_target_scopes|all|0,1,2|tests/integration/decls_self_target_scopes.tl|42|-|-|-|-

@@ -6,6 +6,18 @@
 ;# required fields, DEFAULT omission and the contents of encapsulated values.
 ;# Errors contain only a category and a source byte offset. Ranges are offsets
 ;# into the original bytes, including headers when returned by `encoded`.
+;#
+;# ```typelisp
+;# (import stdlib.asn1_der as der)
+;# (import stdlib.byte_buf)
+;# (define (main) : i64
+;#   (let [null : byte_buf.ByteBuf (byte_buf.new)]
+;#     (set! null (byte_buf.push null (cast 5 : u8)))
+;#     (set! null (byte_buf.push null (cast 0 : u8)))
+;#     (match (der.validate (byte_buf.as-bytes (& null)) (der.default-limits))
+;#       [(der.Valid) 42]
+;#       [(der.Invalid _) 1])))
+;# ```
 (import stdlib.byte_buf)
 (import stdlib.x509_time as time)
 

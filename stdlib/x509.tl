@@ -11,6 +11,16 @@
 ;# otherName, directoryName and ediPartyName. x400Address is unsupported and
 ;# fails the whole certificate with UnsupportedGeneralName(3), never a partial
 ;# SAN/constraint list. Invalid encodings retain malformed-DER/schema errors.
+;#
+;# ```typelisp
+;# (import stdlib.x509)
+;# (import stdlib.byte_buf)
+;# (define (main) : i64
+;#   (let [empty : byte_buf.ByteBuf (byte_buf.new)]
+;#     (match (x509.parse-der (byte_buf.as-bytes (& empty)) (x509.default-limits))
+;#       [(x509.CertificateOk _) 1]
+;#       [(x509.CertificateErr error) (if (= error.offset 0) 42 1)])))
+;# ```
 (import stdlib.asn1_der as der)
 (import stdlib.byte_buf)
 (import stdlib.net.ip)

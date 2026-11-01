@@ -9,6 +9,17 @@
 ;#
 ;# Limits are checked before payload or decoded storage is allocated. Failures
 ;# return no blocks and use original PEM byte offsets, including base64 errors.
+;#
+;# ```typelisp
+;# (import stdlib.pem)
+;# (import stdlib.byte_buf)
+;# (define (main) : i64
+;#   (let [input : String "-----BEGIN CERTIFICATE-----\nBQA=\n-----END CERTIFICATE-----\n"]
+;#     ; Framing/base64 only: X.509 must separately validate the decoded DER.
+;#     (match (pem.decode-certificates (byte_buf.str-as-bytes (& input)) (pem.default-limits))
+;#       [(pem.PemOk _) 42]
+;#       [(pem.PemErr _) 1])))
+;# ```
 (import stdlib.asn1_der as der)
 (import stdlib.base64)
 (import stdlib.byte_buf)

@@ -1,4 +1,14 @@
 ;# RFC 5280 UTC certificate times, independent of locale and host timezone.
+;#
+;# ```typelisp
+;# (import stdlib.x509_time as time)
+;# (import stdlib.byte_buf)
+;# (define (main) : i64
+;#   (let [text : String "700101000000Z"]
+;#     (match (time.parse (byte_buf.str-as-bytes (& text)) 23 0)
+;#       [(time.TimeOk instant) (if (= instant.epoch-ms 0) 42 1)]
+;#       [(time.TimeErr _) 1])))
+;# ```
 (import stdlib.byte_buf)
 
 ;: Time failure categories independent of DER framing.

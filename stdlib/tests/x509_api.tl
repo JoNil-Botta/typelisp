@@ -16,11 +16,11 @@
 (import (vector.vector der.Range core) as ranges)
 (import (vector.vector pem.Block core) as blocks)
 
-(include-str rsa-hex "fixtures/x509/rsa.hex.in")
-(include-str ec-hex "fixtures/x509/ec.hex.in")
-(include-str ed-hex "fixtures/x509/ed.hex.in")
-(include-str pss-hex "fixtures/x509/pss.hex.in")
-(include-str rsa-pem "fixtures/x509/rsa.pem.in")
+(include-str rsa-hex "stdlib/tests/fixtures/x509/rsa.hex.in")
+(include-str ec-hex "stdlib/tests/fixtures/x509/ec.hex.in")
+(include-str ed-hex "stdlib/tests/fixtures/x509/ed.hex.in")
+(include-str pss-hex "stdlib/tests/fixtures/x509/pss.hex.in")
+(include-str rsa-pem "stdlib/tests/fixtures/x509/rsa.pem.in")
 
 (define (hex-nibble [code : char]) : i64
   (let

@@ -195,6 +195,12 @@ reject_diag() {
             printf 'cleanup-required resource already has a cleanup owner' ;;
         stdlib/tests/local_ipc_raw_helper_reject.tl)
             printf 'local_ipc/io-once requires unsafe context' ;;
+        stdlib/tests/net_owner_copy_reject.tl)
+            printf 'cleanup-required resource already has a cleanup owner' ;;
+        stdlib/tests/net_owner_forge_reject.tl)
+            printf 'int->ptr requires unsafe context' ;;
+        stdlib/tests/net_raw_helper_reject.tl)
+            printf 'net/publish requires unsafe context' ;;
         stdlib/tests/math_sqrt_non_float_reject.tl)
             printf 'math.sqrt: expected f64 or f32, found i64' ;;
         stdlib/tests/math_exp_non_float_reject.tl)

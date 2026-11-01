@@ -245,6 +245,8 @@ json.tl
 local_ipc.tl
 local_ipc_fake.tl
 local_ipc_linux.tl
+net.tl
+net_fake.tl
 math.tl
 msvc.tl
 option.tl
@@ -336,6 +338,8 @@ stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-
 stdlib/tests/http_trailer_policy.tl|42|-|-|-
 stdlib/tests/net_ip_api.tl|42|-|-|-
+stdlib/tests/net_api.tl|42|-|-|-
+stdlib/tests/net_owner_api.tl|42|-|-|-
 stdlib/tests/net_tls_wire_api.tl|42|-|-|-
 stdlib/tests/net_tls_wire_encode_reject.tl|134|-|printf:tl: array index out of bounds\n|-
 stdlib/tests/net_url_api.tl|42|-|-|-
@@ -371,6 +375,7 @@ EOF
 # appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
+stdlib/tests/net_conformance.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/comptime_api.tl|pass|-
@@ -399,6 +404,9 @@ stdlib/tests/env_api.tl|pass|-
 stdlib/tests/local_ipc_forged_connection_reject.tl|fail|int->ptr requires unsafe context
 stdlib/tests/local_ipc_connection_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
 stdlib/tests/local_ipc_raw_helper_reject.tl|fail|local_ipc/io-once requires unsafe context
+stdlib/tests/net_owner_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
+stdlib/tests/net_owner_forge_reject.tl|fail|int->ptr requires unsafe context
+stdlib/tests/net_raw_helper_reject.tl|fail|net/publish requires unsafe context
 stdlib/tests/local_ipc_linux_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_println_nonliteral_template_reject.tl|fail|format: template must be a string literal

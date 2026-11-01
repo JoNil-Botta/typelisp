@@ -61,6 +61,10 @@
 
 (include-str-lzss payload-hashmap "../stdlib/hashmap.tl")
 
+(include-str-lzss payload-local-ipc "../stdlib/local_ipc.tl")
+
+(include-str-lzss payload-net "../stdlib/net.tl")
+
 (include-str-lzss
   payload-net-http-head-codec
   "../stdlib/net/http_head_codec.tl")
@@ -214,6 +218,10 @@
       (compiler-embedded-stdlib-payload-copy payload-hash)]
     [(string.eq suffix "hashmap.tl")
       (compiler-embedded-stdlib-payload-copy payload-hashmap)]
+    [(string.eq suffix "local_ipc.tl")
+      (compiler-embedded-stdlib-payload-copy payload-local-ipc)]
+    [(string.eq suffix "net.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net)]
     [(string.eq suffix "net/http_head_codec.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-http-head-codec)]
     [(string.eq suffix "net/http_trailer.tl")

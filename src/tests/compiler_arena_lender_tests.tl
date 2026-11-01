@@ -58,9 +58,11 @@
         (set! at (+ first count))
         (while (and (< at (array-length log)) (>= (array-ref log at) 0))
           (when
-            (!= (bit-and (array-ref log (+ at 1)) mask) 0)
+            (and
+              (>= (array-ref log (+ at 1)) 0)
+              (!= (bit-and (array-ref log (+ at 1)) mask) 0))
             (__tl_array-push! lines (array-ref log at)))
-          (set! at (+ at 2)))))
+          (set! at (+ at 4)))))
     bodies))
 
 ;; The number of `kind` lenders minted.
@@ -79,7 +81,7 @@
           (set! index (+ index 1)))
         (set! at (+ at 2 count))
         (while (and (< at (array-length log)) (>= (array-ref log at) 0))
-          (set! at (+ at 2)))))
+          (set! at (+ at 4)))))
     minted))
 
 ;; Whether a use on `line` demands a `kind` lender.
@@ -124,10 +126,134 @@
       (set! at (+ at 2 (array-ref log (+ at 1))))
       (while (and (< at (array-length log)) (>= (array-ref log at) 0))
         (when
-          (= (array-ref log at) line)
+          (and (= (array-ref log at) line) (>= (array-ref log (+ at 1)) 0))
           (set! mask (bit-or mask (array-ref log (+ at 1)))))
-        (set! at (+ at 2))))
+        (set! at (+ at 4))))
     mask))
+
+;; The log offset of the first body with a `kind` lender, or -1.
+(define (lender-test-body [log : (& log (__tl_dyn-array i64))] [kind : i64]) : i64
+  (let
+    [at : i64 0]
+    (while (< at (array-length log))
+      (let
+        [count : i64 (array-ref log (+ at 1))]
+        [index : i64 0]
+        (while (< index count)
+          (when (= (array-ref log (+ at 2 index)) kind) (return at))
+          (set! index (+ index 1)))
+        (set! at (+ at 2 count))
+        (while (and (< at (array-length log)) (>= (array-ref log at) 0))
+          (set! at (+ at 4)))))
+    -1))
+
+;; The mask of body `body`'s `kind` lenders (lender `i` is bit `i`).
+(define (lender-test-kind-mask
+  [log : (& log (__tl_dyn-array i64))]
+  [body : i64]
+  [kind : i64]) : i64
+  (let
+    [mask : i64 0]
+    [index : i64 0]
+    (while (< index (array-ref log (+ body 1)))
+      (when
+        (= (array-ref log (+ body 2 index)) kind)
+        (set! mask (bit-or mask (shl 1 index))))
+      (set! index (+ index 1)))
+    mask))
+
+;; The offset of body `body`'s first use or end record.
+(define (lender-test-records [log : (& log (__tl_dyn-array i64))] [body : i64]) : i64
+  (+ body 2 (array-ref log (+ body 1))))
+
+;; The index in block 0 of body `body`'s first Invalidate after instruction
+;; `from` whose place holds a lender of `mask`, or -1.
+(define (lender-test-end
+  [log : (& log (__tl_dyn-array i64))]
+  [body : i64]
+  [mask : i64]
+  [from : i64]) : i64
+  (let
+    [at : i64 (lender-test-records log body)]
+    (while (and (< at (array-length log)) (>= (array-ref log at) 0))
+      (when
+        (and
+          (< (array-ref log (+ at 1)) 0)
+          (= (array-ref log (+ at 2)) 0)
+          (> (array-ref log (+ at 3)) from)
+          (!= (bit-and (- -2 (array-ref log (+ at 1))) mask) 0))
+        (return (array-ref log (+ at 3))))
+      (set! at (+ at 4)))
+    -1))
+
+;; The exact lenders demanded by body `body`'s uses before instruction `index`
+;; of `block`, or -1 when no use is there.
+(define (lender-test-demand-at
+  [log : (& log (__tl_dyn-array i64))]
+  [body : i64]
+  [block : i64]
+  [index : i64]) : i64
+  (let
+    [at : i64 (lender-test-records log body)]
+    [mask : i64 -1]
+    (while (and (< at (array-length log)) (>= (array-ref log at) 0))
+      (when
+        (and
+          (>= (array-ref log (+ at 1)) 0)
+          (= (array-ref log (+ at 2)) block)
+          (= (array-ref log (+ at 3)) index))
+        (set!
+          mask
+          (if (< mask 0)
+            (array-ref log (+ at 1))
+            (bit-or mask (array-ref log (+ at 1))))))
+      (set! at (+ at 4)))
+    mask))
+
+;; The number of body `body`'s uses that demand a lender of `mask` in block 0
+;; at an index in [`from`, `to`), or in any other block when `other?`.
+(define (lender-test-demands-between
+  [log : (& log (__tl_dyn-array i64))]
+  [body : i64]
+  [mask : i64]
+  [from : i64]
+  [to : i64]
+  [other? : bool]) : i64
+  (let
+    [at : i64 (lender-test-records log body)]
+    [count : i64 0]
+    (while (and (< at (array-length log)) (>= (array-ref log at) 0))
+      (when
+        (and
+          (>= (array-ref log (+ at 1)) 0)
+          (!= (bit-and (array-ref log (+ at 1)) mask) 0)
+          (if (= (array-ref log (+ at 2)) 0)
+            (and
+              (>= (array-ref log (+ at 3)) from)
+              (< (array-ref log (+ at 3)) to))
+            other?))
+        (set! count (+ count 1)))
+      (set! at (+ at 4)))
+    count))
+
+;; The block-0 index of body `body`'s first use on `line` that demands exactly
+;; `mask`, or -1.
+(define (lender-test-use-index
+  [log : (& log (__tl_dyn-array i64))]
+  [body : i64]
+  [line : i64]
+  [mask : i64]) : i64
+  (let
+    [at : i64 (lender-test-records log body)]
+    (while (and (< at (array-length log)) (>= (array-ref log at) 0))
+      (when
+        (and
+          (= (array-ref log at) line)
+          (= (array-ref log (+ at 1)) mask)
+          (= (array-ref log (+ at 2)) 0))
+        (return (array-ref log (+ at 3))))
+      (set! at (+ at 4)))
+    -1))
 
 ;; Whether typing `src` fails with `want`.
 (define (lender-test-error? [src : String] [want : String]) : bool
@@ -635,3 +761,185 @@
       (fixture.typed-test-finish! (&mut store) (& lease) attempt false)
       (test.assert-i64-eq fresh 0 "a fresh store has no site")
       (test.assert-i64-eq store.lender-sites 1 "rollback keeps the site"))))
+
+;; e1: safe, straight-line: the brand reference is read before the end; a
+;; reference parameter's entry loan pairs with no body Assign.
+(define (lender-test-e1-source) : String
+  "(import stdlib.arena)
+(define (exercise [owner : (arena.Arena r) (:invalidate r)] [x : (& r i64)]) : i64
+  (let
+    [k : i64 5]
+    [v : i64 (+ k (deref x))]
+    (arena.destroy-safe! owner)
+    v))
+(define (main) : i64 0)")
+
+;; mb: two brands; the live one is read after the other ends, the ended one
+;; after its own end.
+(define (lender-test-mb-source) : String
+  "(import stdlib.arena)
+(define (exercise
+  [first : (arena.Arena r) (:invalidate r)]
+  [second : (arena.Arena s) (:invalidate s)]
+  [x : (& r i64)]
+  [y : (& s i64)]) : i64
+  (let
+    [k : i64 0]
+    [ax : (& k i64) x]
+    [ay : (& k i64) y]
+    (arena.destroy-safe! first)
+    (let
+      [v : i64 (deref ay)]
+      [w : i64 (deref ax)]
+      (arena.destroy-safe! second)
+      (+ v w))))
+(define (main) : i64 0)")
+
+;; ob: an aggregate owner of two brands (owner_secondary_brand).
+(define (lender-test-ob-source) : String
+  "(import stdlib.arena)
+(defstruct Owner
+  (:lifetimes a b)
+  (arena (arena.Arena a))
+  (p (& b i64)))
+(define (exercise
+  [o : (Owner r s) (:invalidate r)]
+  [other : (arena.Arena s) (:invalidate s)]) : i64
+  (let
+    [k : i64 0]
+    [moved : (Owner r k) o]
+    (arena.destroy-safe! other)
+    (let
+      [n : i64 (deref moved.p)]
+      (arena.destroy-safe! moved.arena)
+      n)))
+(define (main) : i64 0)")
+
+;; oc: an owner-arena box borrowed into a call that invalidates the owner.
+(define (lender-test-oc-source) : String
+  "(import stdlib.arena)
+(define (take [owner : (arena.Arena r) (:invalidate r)] [x : (&mut r i64)]) : i64
+  (let [v : i64 (deref x)] (arena.destroy-safe! owner) v))
+(define (main) : i64
+  (let [seed : i64 41] [owner (arena.make)]
+    [b (in-arena owner (box seed))]
+    (take owner (&mut (deref b)))))")
+
+;; kd: a match result whose type holds no lender, defined in each arm from a
+;; value that holds the scratch scope, is used at the scope's exit. The first
+;; keep-filter draft split only places whose own unsplit row held a lender,
+;; so it left this one unsplit and dropped the demand (the definition-value
+;; test keeps it; build_cli_core.tl and four other self-compile bodies).
+(define (lender-test-kd-source) : String
+  "(import stdlib.arena)
+(import stdlib.string)
+(defenum Outcome (Fail String) (Done String))
+(define (mk [n : i64]) : Outcome
+  (if (> n 0) (Outcome.Done (string.int->string n)) (Outcome.Fail (string.int->string n))))
+(define (pick [n : i64]) : Outcome
+  (let [home : arena.Arena (arena.current)]
+    (with-scratch
+      (match (mk n)
+        [(Outcome.Fail message) (in-arena home (Outcome.Fail (string.copy message)))]
+        [(Outcome.Done text) (in-arena home (Outcome.Done (string.copy text)))]))))
+(define (main) : i64 0)")
+
+;; A reference parameter's entry loan pairs with no body Assign, so the entry
+;; makes no use of its referent; the read before the end demands the brand,
+;; and nothing demands it after the end (instruction order, block 0).
+(cfg
+  test
+  (test
+    arena-lender-parameter-entry-loan
+    (let
+      [log : (__tl_dyn-array i64) (lender-test-log (lender-test-e1-source))]
+      [body : i64 (lender-test-body (& log) lender-test-brand)]
+      [brand : i64 (lender-test-kind-mask (& log) body lender-test-brand)]
+      [end : i64 (lender-test-end (& log) body brand -1)]
+      [read : i64 (lender-test-use-index (& log) body 5 brand)]
+      (test.assert-i64-eq
+        (lender-test-demands-between (& log) body brand 0 3 false)
+        0
+        "no entry use of the referent")
+      (test.assert-true (> end 0) "destroy-safe! ends the brand")
+      (test.assert-true (and (>= read 0) (< read end)) "read before the end")
+      (test.assert-i64-eq
+        (lender-test-demands-between (& log) body brand (+ end 1) 65536 true)
+        0
+        "no demand after the end"))))
+
+;; Two brands: after `first` (lender 0) ends, the read of the live brand
+;; demands exactly `second` (lender 1), and the shortened `first` alias
+;; demands exactly `first`; nothing demands `second` after its own end.
+(cfg
+  test
+  (test
+    arena-lender-two-brands
+    (let
+      [log : (__tl_dyn-array i64) (lender-test-log (lender-test-mb-source))]
+      [body : i64 (lender-test-body (& log) lender-test-brand)]
+      [first : i64 (lender-test-end (& log) body 1 -1)]
+      [second : i64 (lender-test-end (& log) body 2 -1)]
+      [live : i64 (lender-test-use-index (& log) body 13 2)]
+      [ended : i64 (lender-test-use-index (& log) body 14 1)]
+      (test.assert-true (and (> first 0) (> second first)) "end order")
+      (test.assert-true
+        (and (> live first) (< live second))
+        "the live brand alone, between the ends")
+      (test.assert-true (> ended first) "the ended brand at its post-end use")
+      (test.assert-i64-eq
+        (lender-test-demands-between (& log) body 2 (+ second 1) 65536 true)
+        0
+        "nothing demands the second brand after its end"))))
+
+;; An owner aggregate of two brands (lender 0 `r`, lender 1 `s`), shortened
+;; in `s`: the field read after `other` ends `s` demands exactly both.
+(cfg
+  test
+  (test
+    arena-lender-owner-aggregate
+    (let
+      [log : (__tl_dyn-array i64) (lender-test-log (lender-test-ob-source))]
+      [body : i64 (lender-test-body (& log) lender-test-brand)]
+      [s : i64 (lender-test-end (& log) body 2 -1)]
+      [read : i64 (lender-test-use-index (& log) body 14 3)]
+      [r : i64 (lender-test-end (& log) body 1 read)]
+      (test.assert-true (and (> s 0) (> read s)) "both brands after `s` ends")
+      (test.assert-true (> r read) "`r` ends after the read")
+      (test.assert-i64-eq
+        (lender-test-demands-between (& log) body 3 (+ r 1) 65536 true)
+        0
+        "nothing demands either brand after the last end"))))
+
+;; An owner-arena box borrowed into a call that invalidates the owner: the
+;; borrow's use demands exactly the owner lender, before the call's ends.
+(cfg
+  test
+  (test
+    arena-lender-owner-borrow-call
+    (let
+      [log : (__tl_dyn-array i64) (lender-test-log (lender-test-oc-source))]
+      [body : i64 (lender-test-body (& log) lender-test-owner)]
+      [owner : i64 (lender-test-kind-mask (& log) body lender-test-owner)]
+      [end : i64 (lender-test-end (& log) body owner -1)]
+      [use : i64 (lender-test-use-index (& log) body 7 owner)]
+      (test.assert-true (> end 0) "the call ends the owner")
+      (test.assert-true (and (>= use 0) (< use end)) "the borrow's use first")
+      (test.assert-i64-eq
+        (lender-test-demands-between (& log) body owner (+ end 1) 65536 true)
+        0
+        "no demand after the end"))))
+
+;; The match result's use at the scratch scope's exit (block 1, its join's
+;; first instruction) demands exactly the scope.
+(cfg
+  test
+  (test
+    arena-lender-definition-value
+    (let
+      [log : (__tl_dyn-array i64) (lender-test-log (lender-test-kd-source))]
+      [body : i64 (lender-test-body (& log) lender-test-scope)]
+      (test.assert-i64-eq
+        (lender-test-demand-at (& log) body 1 0)
+        (lender-test-kind-mask (& log) body lender-test-scope)
+        "the scope's exit use"))))

@@ -9881,7 +9881,7 @@
       (tc-selected-wrap-arena-scope
         (tc-scratch-body-region body)
         typed.TypedSyntax.Generated
-        (tc-global-shared-view source)
+        (ownership.ownership-source-copy (& source))
         (tc-infer-selected-begin
           ctx
           (tc-push-region env (tc-scratch-body-region body))
@@ -123958,10 +123958,7 @@
         (set!
           (array-ref records index)
           (bit-or
-            (if (tc-selected-arena-tagged?
-              ctx
-              (& table.arena-regions)
-              (tc-global-shared-view ty))
+            (if (tc-selected-arena-tagged? ctx (& table.arena-regions) ty)
               1
               0)
             (bit-or

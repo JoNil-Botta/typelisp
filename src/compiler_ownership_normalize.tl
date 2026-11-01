@@ -13442,8 +13442,10 @@
 ;; destination's initialization check, which reads nothing. A part read or
 ;; consumed straight into the next Assign (a boxed pattern binder, a moved
 ;; part) flows into it; a borrow flows its place's contents into the
-;; reference the next Assign makes and uses that place after it. Every
-;; operation kind is matched explicitly.
+;; reference the next Assign makes and uses that place after it. A reference
+;; parameter's entry loan pairs with no Assign: the parameter already holds
+;; its reference, and the next Assign is the body's first, unrelated, value.
+;; Every operation kind is matched explicitly.
 (define (normalize-lender-cfg-notes!
   [state : (&mut state NormalizeState)]
   [input : (& input OwnershipNormalizeArena)]) : unit
@@ -13541,7 +13543,9 @@
                 -1))
             (set!
               loan
-              (if (= kind 5)
+              (if (and
+                (= kind 5)
+                (not (normalize-lender-parameter-loan? (& state) first)))
                 first
                 -1)))
           (set! index (+ index 1)))
@@ -13557,6 +13561,18 @@
               (normalize-lender-returned (& state) block at))
             (set! at (+ at 1)))))
       (set! block (+ block 1)))))
+
+;; Whether `loan` is a reference parameter's entry loan
+;; (`normalize-parameter-entry!`).
+(define (normalize-lender-parameter-loan?
+  [state : (& state NormalizeState)]
+  [loan : i64]) : bool
+  (let
+    [index : i64 0]
+    (while (< index (array-length state.parameter-loans))
+      (when (= (array-ref state.parameter-loans index) loan) (return true))
+      (set! index (+ index 1)))
+    false))
 
 ;; Block `block`'s returned operand `at`, -1 past the last (or no return).
 (define (normalize-lender-returned
@@ -14307,9 +14323,11 @@
           (NormalizeUnit.Ok unit))]
       [_ (NormalizeUnit.Ok unit)])))
 
-;; Test builds log each lane's lender kinds and, per use, its source line
-;; and the lenders it demands, for the arena lender tests: a body is
-;; `-1 count kind...`, a use `line mask` (lender `i` is mask bit `i`).
+;; Test builds log each lane's lender kinds and, per use, its source line,
+;; the lenders it demands and its coordinates, for the arena lender tests: a
+;; body is `-1 count kind...`, a use `line mask block index` (lender `i` is
+;; mask bit `i`; the use comes before instruction `index` of `block`), and an
+;; Invalidate `line -2-mask block index` with the lenders its place holds.
 ;; Entry 0 is the logged length; a full log drops later lanes.
 (cfg
   test
@@ -14350,8 +14368,34 @@
                 (array-ref (array-ref state.body.blocks block).instructions at).source.line
                 (array-ref state.body.blocks block).source.line))
             (normalize-lender-test-push!
-              (array-ref arena.use-rows (* index arena.words)))))
-        (set! index (+ index 1))))))
+              (array-ref arena.use-rows (* index arena.words)))
+            (normalize-lender-test-push! block)
+            (normalize-lender-test-push! at)))
+        (set! index (+ index 1)))
+      (let
+        [block : i64 0]
+        (while (< block state.block-count)
+          (set! index 0)
+          (while (< index (array-ref state.instruction-counts block))
+            (match (&
+              (array-ref (array-ref state.body.blocks block).instructions index).operation)
+              [(own.OwnershipOperation.Invalidate place)
+                (begin
+                  (normalize-lender-test-push!
+                    (array-ref
+                      (array-ref state.body.blocks block).instructions
+                      index).source.line)
+                  (normalize-lender-test-push!
+                    (-
+                      -2
+                      (array-ref
+                        arena.rows
+                        (* (normalize-place-root state place.index) arena.words))))
+                  (normalize-lender-test-push! block)
+                  (normalize-lender-test-push! index))]
+              [_ unit])
+            (set! index (+ index 1)))
+          (set! block (+ block 1)))))))
 
 ;; The log so far, which is then emptied.
 (cfg

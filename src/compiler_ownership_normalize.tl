@@ -2072,6 +2072,7 @@
                 [_
                   (match (& node.operation)
                     [(typed.TypedOperation.FormPlace _) unit]
+                    ;; ArenaScope (as Sequence) takes this arm.
                     [_
                       (return
                         (normalize-header-unsupported
@@ -2096,6 +2097,7 @@
             (match (& node.operation)
               [(typed.TypedOperation.Call record)
                 (set! record-handle (normalize-handle-copy record.handle))]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ unit])
             (when
               (< record-handle.index 0)
@@ -4776,6 +4778,7 @@
               [(typed.TypedOperation.Borrow true)
                 (set! reserve? true)
                 NormalizeBinderLookup.No]
+              ;; ArenaScope (as Sequence) takes this arm.
               [_ NormalizeBinderLookup.No])]
           [(typed.TypedNodeResult.Err error)
             (return (normalize-value-typed error))])
@@ -5969,6 +5972,7 @@
             [(typed.TypedOperation.FormPlace place)
               (NormalizeMaybePlace.Some
                 (typed.TypedPlaceId (typed.typed-handle-copy (& place.handle))))]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ NormalizeMaybePlace.No])]
         [(typed.TypedNodeResult.Err _) NormalizeMaybePlace.No])]
     [step : NormalizeMaybeProjection
@@ -7323,6 +7327,7 @@
           [(typed.TypedOperation.Primitive
               (typed.TypedPrimitive.Builtin code _))
             (= code 151)]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ false]))]
     [(typed.TypedNodeResult.Err error) (normalize-bool-typed error)]))
 
@@ -7335,6 +7340,7 @@
       (NormalizeBool.Ok
         (match (& view.operation)
           [(typed.TypedOperation.Borrow true) true]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ false]))]
     [(typed.TypedNodeResult.Err error) (normalize-bool-typed error)]))
 
@@ -14138,6 +14144,70 @@
           (NormalizeUnit.Ok unit))]
       [_ (NormalizeUnit.Ok unit)])))
 
+;; Test builds log each lane's lender kinds and, per use, its source line
+;; and the lenders it demands, for the arena lender tests: a body is
+;; `-1 count kind...`, a use `line mask` (lender `i` is mask bit `i`).
+;; Entry 0 is the logged length; a full log drops later lanes.
+(cfg
+  test
+  (define normalize-lender-test-log : (__tl_dyn-array i64)
+    (__tl_make-array i64 65536)))
+
+(cfg
+  test
+  (define (normalize-lender-test-push! [value : i64]) : unit
+    (let
+      [at : i64 (+ (array-ref normalize-lender-test-log 0) 1)]
+      (when
+        (< at (array-length normalize-lender-test-log))
+        (set! (array-ref normalize-lender-test-log at) value)
+        (set! (array-ref normalize-lender-test-log 0) at)))))
+
+(cfg
+  test
+  (define (normalize-lender-test-record!
+    [state : (& state NormalizeState)]
+    [arena : (& arena OwnershipNormalizedArena)]) : unit
+    (let
+      [index : i64 0]
+      (normalize-lender-test-push! -1)
+      (normalize-lender-test-push! (array-length arena.lenders))
+      (while (< index (array-length arena.lenders))
+        (normalize-lender-test-push! (array-ref arena.lenders index).kind)
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (array-length arena.use-places))
+        (let
+          [block : i64 (array-ref arena.use-blocks index)]
+          [at : i64 (array-ref arena.use-indices index)]
+          (when
+            (>= (array-ref arena.use-places index) 0)
+            (normalize-lender-test-push!
+              (if (< at (array-ref state.instruction-counts block))
+                (array-ref
+                  (array-ref state.body.blocks block).instructions
+                  at).source.line
+                (array-ref state.body.blocks block).source.line))
+            (normalize-lender-test-push!
+              (array-ref arena.use-rows (* index arena.words)))))
+        (set! index (+ index 1))))))
+
+;; The log so far, which is then emptied.
+(cfg
+  test
+  (define (normalize-lender-test-take!) : (__tl_dyn-array i64)
+    (let
+      [count : i64 (array-ref normalize-lender-test-log 0)]
+      [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [index : i64 0]
+      (while (< index count)
+        (set!
+          (array-ref out index)
+          (array-ref normalize-lender-test-log (+ index 1)))
+        (set! index (+ index 1)))
+      (set! (array-ref normalize-lender-test-log 0) 0)
+      out)))
+
 ;; A compiler built with `--cfg arena-lender-dump` prints each lender lane
 ;; with a lender to stderr (lenders by kind and typed site, per-place rows
 ;; and per-use demand): a test aid that compares lanes across builds.
@@ -14526,6 +14596,12 @@
         (match (& lenders)
           [(OwnershipNormalizedLenders.Gated arenas)
             (normalize-lender-dump (& state.body) (& (array-ref arenas 0)))]
+          [_ unit]))
+      (cfg
+        test
+        (match (& lenders)
+          [(OwnershipNormalizedLenders.Gated arenas)
+            (normalize-lender-test-record! (& state) (& (array-ref arenas 0)))]
           [_ unit]))
       (let
         [shapes : NormalizeShapes

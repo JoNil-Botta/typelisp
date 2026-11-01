@@ -3921,6 +3921,7 @@
     ;; An arm or pattern is entered only through its match.
     [(typed.TypedOperation.Arm) (TcSelectedBoolResult.Ok false)]
     [(typed.TypedOperation.Pattern _) (TcSelectedBoolResult.Ok false)]
+    ;; ArenaScope (as Sequence) takes this arm.
     [_
       (let
         [index : i64 0]
@@ -4021,6 +4022,7 @@
                 [(typed.TypedChildResult.Ok body) body]
                 [(typed.TypedChildResult.Err error)
                   (return (TcSelectedMaybeTypeId.Err error))])]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ child])]
         (match (tc-selected-occurrence-live-type! store lease result)
           [(TcSelectedMaybeTypeId.No) (set! index (+ index 1))]
@@ -18760,6 +18762,7 @@
           (if mutable?
             (replace! bindings.write-verb "")
             "")]
+        ;; ArenaScope (as Sequence) takes this arm.
         [_ ""])]
     (if (= (array-length bindings.foreign-globals) 0)
       TcMaybeString.No
@@ -18779,13 +18782,16 @@
                   [(typed.TypedNodeResult.Ok node)
                     (match (& node.operation)
                       [(typed.TypedOperation.FormPlace id) id.handle.index]
+                      ;; ArenaScope (as Sequence) takes this arm.
                       [_ -1])]
                   [(typed.TypedNodeResult.Err _) -1])
                 -1)]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ -1])]
         [binder : i64
           (match operation
             [(typed.TypedOperation.Assign id) id.handle.index]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ -1])]
         [verb : String
           (match operation
@@ -18794,6 +18800,7 @@
               (if (> (string.string-length (& pending)) 0)
                 pending
                 "mutably borrow")]
+            ;; ArenaScope (as Sequence) takes this arm.
             [_ "assign to"])]
         ;; Walk the written place up to its root binder.
         (let
@@ -18829,6 +18836,7 @@
                       first?
                       (match operation
                         [(typed.TypedOperation.AssignPlace _) true]
+                        ;; ArenaScope (as Sequence) takes this arm.
                         [_ false]))
                     (match (typed.typed-projection-get! store lease step)
                       [(typed.TypedProjectionView.Ok projection)
@@ -123330,6 +123338,7 @@
                       [(typed.TypedSyntax.Source expr) expr]
                       [(typed.TypedSyntax.Generated) -2])
                     -1)]
+                ;; ArenaScope (as Sequence) takes this arm.
                 [_ -1])]
             [(typed.TypedNodeResult.Err _) -1])]
         [(typed.TypedOccurrenceResult.Err _) -1])]
@@ -123887,10 +123896,27 @@
                       (set! (array-ref table.products referent-key) product))))))))
         (set! index (+ index 1))))
     (tc-selected-classify! ctx store lease (&mut table) false)
+    ;; A test drops the body's lender sites to check the normalizer's
+    ;; mint-implies-site assertion (`normalize-lender-gate-check!`).
+    (cfg
+      test
+      (when
+        (array-ref tc-lender-test-drop-sites 0)
+        (set! store.lender-sites 0)))
     (when
       (> store.lender-sites 0)
       (tc-selected-arena-input! ctx store lease (&mut table)))
     table))
+
+(cfg
+  test
+  (define tc-lender-test-drop-sites : (__tl_dyn-array bool)
+    (__tl_make-array bool 1)))
+
+(cfg
+  test
+  (define (tc-lender-test-drop-sites! [drop? : bool]) : unit
+    (set! (array-ref tc-lender-test-drop-sites 0) drop?)))
 
 ;; The arena lender inputs of a body with a committed lender site (#9256
 ;; G1), from each typed record's original type before its class erases it:

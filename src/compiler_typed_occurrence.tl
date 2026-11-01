@@ -1330,6 +1330,7 @@
     [(TypedOperation.Pattern (TypedPattern.Literal literal))
       (typed-literal-ok! store lease literal)]
     ;; The remaining operations carry scalar IDs/operators, not leased bytes.
+    ;; ArenaScope (as Sequence) takes this arm.
     [_ (TypedResult.Ok unit)]))
 
 ;; Resolved declarations are supplied by inference, never looked up by surface
@@ -1681,6 +1682,7 @@
         [(TypedOccurrenceCategory.Value) false])
         (TypedResult.Ok unit)
         (TypedResult.Err TypedError.Shape))]
+    ;; ArenaScope (as Sequence) takes this arm.
     [_
       (if (match (& node.category)
         [(TypedOccurrenceCategory.Value) true]
@@ -1726,6 +1728,7 @@
           [(TypedOccurrenceCategory.Place _) false]))
         (TypedResult.Ok unit)
         (TypedResult.Err TypedError.Shape))]
+    ;; ArenaScope (as Sequence) takes this arm.
     [_
       (if (match (& child.category)
         [(TypedOccurrenceCategory.Value) true]
@@ -1759,6 +1762,7 @@
       (try (typed-place-operation-type-ok (& store) place (& type)))]
     [(TypedOperation.MovePlace place)
       (try (typed-place-operation-type-ok (& store) place (& type)))]
+    ;; ArenaScope (as Sequence) takes this arm.
     [_ unit])
   (match (& syntax)
     [(TypedSyntax.Source index)
@@ -1797,6 +1801,7 @@
           [(TypedOperation.FormPlace place)
             (TypedOccurrenceCategory.Place
               (TypedPlaceId (typed-handle-copy (& place.handle))))]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ TypedOccurrenceCategory.Value])]
       [handle : TypedHandle (typed-fresh! store store.occurrence-count)]
       [index : i64 0]

@@ -125,6 +125,7 @@
             (match literal
               [(ast.AstLiteral.Int actual _) (= actual value)]
               [_ false])]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ false]))]
     [(typed.TypedNodeResult.Err _) false]))
 
@@ -1046,6 +1047,7 @@
               [(ast.AstLiteral.String id)
                 (string.eq (ci.intern-compat-state-str state id) "owner-a")]
               [_ false])]
+          ;; ArenaScope (as Sequence) takes this arm.
           [_ false])]
       [(typed.TypedNodeResult.Err _) false])))
 

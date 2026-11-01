@@ -9820,14 +9820,17 @@
           (& paths))
           [(Ok value) value]
           [_ (io.panic "alias retention symbols failed")])]
+      [registries : csym.CompilerRegistries
+        (match (csym.build-compiler-registries-with-symbols
+          (& program)
+          (& symbols))
+          [(Ok value) value]
+          [_ (io.panic "alias retention registries failed")])]
       [ctx : tc_core.TcContext
         (tc_core.tc-context-new-with-source-names-and-job-state
           program
           symbols
-          (clone
-            (array-ref
-              (tc_core.tc-macro-walk-field state macro-live-registries-cell)
-              0))
+          registries
           "alias-retain"
           module-id
           pools

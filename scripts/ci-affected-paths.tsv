@@ -539,6 +539,8 @@ tests/safety/borrow_temporary_cleanup_ok.tl	stage2-native-integration-corpus	@co
 tests/safety/borrowed_pattern_copy_binding_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/borrowed_pattern_copy_deferred_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/box_deref_copy_projection_reuse_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/call_lifetime_invariant_order_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/caller_lifetime_call_inference_order_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/dead_frame_abort_only_trap.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/decls_generated_conflicting_import_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/decls_generated_missing_import_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

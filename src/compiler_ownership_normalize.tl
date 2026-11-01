@@ -9,6 +9,8 @@
 (cfg ownership-mir-dump (import compiler_ownership_dump as ownership_dump))
 (cfg ownership-mir-dump (import stdlib.io))
 (import stdlib.string)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as normalize_transfer_map)
 
 (defstruct OwnershipNormalizeLimits
   (records i64)
@@ -9083,15 +9085,91 @@
 ;; The root place an operation reads by copy or move, or -1; `target`
 ;; receives the destination's root.
 (define (normalize-transfer-source
-  [state : (& state NormalizeState)]
+  [body : (& body own.OwnershipBody)]
   [operation : (& operation own.OwnershipOperation)]
   [target : (&mut target i64)]) : i64
   (match operation
     [(or (own.OwnershipOperation.Copy from to)
          (own.OwnershipOperation.Move from to))
-      (set! (deref target) (normalize-place-root state to.index))
-      (normalize-place-root state from.index)]
+      (set! (deref target) (own.ownership-place-root body to.index))
+      (own.ownership-place-root body from.index)]
     [_ -1]))
+
+;; Copy/move coordinates, grouped by (source root, target root). Heads and
+;; links are one-based; reverse construction preserves block/instruction order.
+;; The solver bounds places to 2^24, so the pair identity fits in i64.
+;; Splitting changes flow edges, never instructions or place parents.
+(defstruct NormalizeTransfers
+  (heads normalize_transfer_map.Map)
+  (blocks (__tl_dyn-array i64))
+  (indices (__tl_dyn-array i64))
+  (next (__tl_dyn-array i64)))
+
+;; Bijective 64-bit finalizer: odd multiplies and logical xor-shifts preserve
+;; full pair equality while spreading source bits into the map's low buckets.
+(define (normalize-transfer-key [source : i64] [target : i64] [places : i64]) : i64
+  (let
+    [key : u64 (cast (+ (* source places) target) : u64)]
+    (set!
+      key
+      (*
+        (bit-xor key (shr key (cast 30 : u64)))
+        (cast 0xbf58476d1ce4e5b9 : u64)))
+    (set!
+      key
+      (*
+        (bit-xor key (shr key (cast 27 : u64)))
+        (cast 0x94d049bb133111eb : u64)))
+    (cast (bit-xor key (shr key (cast 31 : u64))) : i64)))
+
+(define (normalize-transfer-index
+  [body : (& body own.OwnershipBody)]
+  [instruction-counts : (& instruction-counts (__tl_dyn-array i64))]) : NormalizeTransfers
+  (let
+    [blocks : i64 (array-length body.blocks)]
+    [places : i64 (array-length body.places)]
+    [total : i64 0]
+    [block : i64 0]
+    (while (< block blocks)
+      (set! total (+ total (array-ref instruction-counts block)))
+      (set! block (+ block 1)))
+    (let
+      [out : NormalizeTransfers
+        (NormalizeTransfers
+          (normalize_transfer_map.new)
+          (__tl_make-array i64 total)
+          (__tl_make-array i64 total)
+          (__tl_make-array i64 total))]
+      [row : i64 0]
+      (while (> block 0)
+        (set! block (- block 1))
+        (let
+          [index : i64 (array-ref instruction-counts block)]
+          (while (> index 0)
+            (set! index (- index 1))
+            (let
+              [target : i64 -1]
+              [source : i64
+                (normalize-transfer-source
+                  body
+                  (&
+                    (array-ref (array-ref body.blocks block).instructions index).operation)
+                  (&mut target))]
+              (when
+                (>= source 0)
+                (let
+                  [key : i64 (normalize-transfer-key source target places)]
+                  (set! (array-ref out.blocks row) block)
+                  (set! (array-ref out.indices row) index)
+                  (set!
+                    (array-ref out.next row)
+                    (normalize_transfer_map.get-value-or (& out.heads) key 0))
+                  (normalize_transfer_map.insert-ref!
+                    (&mut out.heads)
+                    key
+                    (+ row 1))
+                  (set! row (+ row 1))))))))
+      out)))
 
 (define (normalize-split-reassigned!
   [state : (&mut state NormalizeState)]
@@ -9173,27 +9251,35 @@
       (set! block (+ block 1)))
     (let
       [place : i64 0]
-      [preds : NormalizePredecessors (normalize-block-predecessors (& state))]
-      (while (< place places)
-        (when
-          (and
-            (>= (array-ref def-total place) 2)
-            (not (array-ref opaque place))
-            ;; Some other operation writes it too.
-            (= (array-ref flow-total place) (array-ref def-total place)))
-          (try
-            (normalize-split-place!
-              state
-              place
-              (& preds)
-              (& def-place)
-              (& def-block)
-              (& def-index)
-              (& def-value)
-              alt-start
-              alt-count
-              alt-places)))
-        (set! place (+ place 1))))
+      ;; Avoid an index (and predecessors) when no place has two definitions.
+      (while (and (< place places) (< (array-ref def-total place) 2))
+        (set! place (+ place 1)))
+      (when (= place places) (return (NormalizeUnit.Ok unit)))
+      (let
+        [transfers : NormalizeTransfers
+          (normalize-transfer-index (& state.body) (& state.instruction-counts))]
+        [preds : NormalizePredecessors (normalize-block-predecessors (& state))]
+        (while (< place places)
+          (when
+            (and
+              (>= (array-ref def-total place) 2)
+              (not (array-ref opaque place))
+              ;; Some other operation writes it too.
+              (= (array-ref flow-total place) (array-ref def-total place)))
+            (try
+              (normalize-split-place!
+                state
+                place
+                (& transfers)
+                (& preds)
+                (& def-place)
+                (& def-block)
+                (& def-index)
+                (& def-value)
+                alt-start
+                alt-count
+                alt-places)))
+          (set! place (+ place 1)))))
     (NormalizeUnit.Ok unit)))
 
 ;; Predecessors of every block, flat: block `b`'s are `list` entries
@@ -9256,6 +9342,7 @@
 (define (normalize-split-place!
   [state : (&mut state NormalizeState)]
   [place : i64]
+  [transfers : (& transfers NormalizeTransfers)]
   [preds : (& preds NormalizePredecessors)]
   [def-place : (& def-place (__tl_dyn-array i64))]
   [def-block : (& def-block (__tl_dyn-array i64))]
@@ -9338,51 +9425,44 @@
               ;; A read no definition reaches (a value bound without one)
               ;; keeps the binding's own origin.
               [unreached : bool false]
-              [b : i64 0]
-              (while (< b blocks)
+              ;; Redirects can append edges rooted in a later split place.
+              ;; Query the current pair, including those appended edges; the
+              ;; indexed instruction coordinates remain unchanged throughout.
+              [read : i64
+                (normalize_transfer_map.get-value-or
+                  (& transfers.heads)
+                  (normalize-transfer-key
+                    place
+                    to
+                    (array-length state.body.places))
+                  0)]
+              (while (> read 0)
                 (let
-                  [instructions : i64 (array-ref state.instruction-counts b)]
-                  [i : i64 0]
-                  (while (< i instructions)
-                    (let
-                      [target : i64 -1]
-                      [source : i64
-                        (normalize-transfer-source
-                          (& state)
-                          (&
-                            (array-ref
-                              (array-ref state.body.blocks b).instructions
-                              i).operation)
-                          (&mut target))]
-                      (when
-                        (and (= source place) (= target to))
-                        (let
-                          [reaching : (__tl_dyn-array i64)
-                            (normalize-reaching-at
-                              (& entry)
-                              count
-                              (& defs)
-                              def-block
-                              def-index
-                              b
-                              i)]
-                          [r : i64 0]
-                          (set! matched true)
-                          (when
-                            (= (array-length reaching) 0)
-                            (set! unreached true))
-                          (while (< r (array-length reaching))
-                            (try
-                              (normalize-note-redirect!
-                                state
-                                (array-ref state.flow-from-place edge)
-                                (array-ref
-                                  def-value
-                                  (array-ref defs (array-ref reaching r)))
-                                (array-ref state.flow-to-place edge)))
-                            (set! r (+ r 1))))))
-                    (set! i (+ i 1))))
-                (set! b (+ b 1)))
+                  [b : i64 (array-ref transfers.blocks (- read 1))]
+                  [i : i64 (array-ref transfers.indices (- read 1))]
+                  [reaching : (__tl_dyn-array i64)
+                    (normalize-reaching-at
+                      (& entry)
+                      count
+                      (& defs)
+                      def-block
+                      def-index
+                      b
+                      i)]
+                  [r : i64 0]
+                  (set! matched true)
+                  (when (= (array-length reaching) 0) (set! unreached true))
+                  (while (< r (array-length reaching))
+                    (try
+                      (normalize-note-redirect!
+                        state
+                        (array-ref state.flow-from-place edge)
+                        (array-ref
+                          def-value
+                          (array-ref defs (array-ref reaching r)))
+                        (array-ref state.flow-to-place edge)))
+                    (set! r (+ r 1))))
+                (set! read (array-ref transfers.next (- read 1))))
               (when
                 (and matched (not unreached))
                 (set! (array-ref state.flow-from edge) -1))))

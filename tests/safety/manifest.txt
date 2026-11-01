@@ -2339,3 +2339,80 @@ legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref
 legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+# Refs #9503/#9508 (root repair R): a lifetime-shortening coercion keeps every
+# `:invalidate` brand its value still stores as a region tag, so the brand's end
+# invalidates the shortened binding, join, projection, deref, constructor or
+# call result. Unsafe bodies are check-only and never executed.
+invalidate_param_shortened_read_after_end_reject|check-fail|tests/safety/invalidate_param_shortened_read_after_end_reject.tl|tests/safety/invalidate_param_shortened_read_after_end_reject.tl:12:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_read_after_end_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_read_after_end_reject.tl|tests/safety/invalidate_param_shortened_read_after_end_reject.tl:12:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_unrelated_param_reject|check-fail|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl:15:12|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_unrelated_param_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl:15:12|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_nested_reject|check-fail|tests/safety/invalidate_param_shortened_nested_reject.tl|tests/safety/invalidate_param_shortened_nested_reject.tl:15:13|error[E0208]: typecheck: use of moved value `alias2`
+invalidate_param_shortened_nested_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_nested_reject.tl|tests/safety/invalidate_param_shortened_nested_reject.tl:15:13|error[E0208]: typecheck: use of moved value `alias2`
+invalidate_param_shortened_lambda_reject|check-fail|tests/safety/invalidate_param_shortened_lambda_reject.tl|tests/safety/invalidate_param_shortened_lambda_reject.tl:14:9|error[E0208]: typecheck: use of moved value `f`
+invalidate_param_shortened_lambda_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_lambda_reject.tl|tests/safety/invalidate_param_shortened_lambda_reject.tl:14:9|error[E0208]: typecheck: use of moved value `f`
+invalidate_param_shortened_mut_reject|check-fail|tests/safety/invalidate_param_shortened_mut_reject.tl|tests/safety/invalidate_param_shortened_mut_reject.tl:10:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_mut_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_mut_reject.tl|tests/safety/invalidate_param_shortened_mut_reject.tl:10:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_join_reject|check-fail|tests/safety/invalidate_param_shortened_join_reject.tl|tests/safety/invalidate_param_shortened_join_reject.tl:15:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_join_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_join_reject.tl|tests/safety/invalidate_param_shortened_join_reject.tl:15:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_join_mixed_reject|check-fail|tests/safety/invalidate_param_shortened_join_mixed_reject.tl|tests/safety/invalidate_param_shortened_join_mixed_reject.tl:14:7|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_join_mixed_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_join_mixed_reject.tl|tests/safety/invalidate_param_shortened_join_mixed_reject.tl:14:7|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_match_reject|check-fail|tests/safety/invalidate_param_shortened_match_reject.tl|tests/safety/invalidate_param_shortened_match_reject.tl:16:7|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_match_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_match_reject.tl|tests/safety/invalidate_param_shortened_match_reject.tl:16:7|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_nominal_reject|check-fail|tests/safety/invalidate_param_shortened_nominal_reject.tl|tests/safety/invalidate_param_shortened_nominal_reject.tl:16:9|error[E0208]: typecheck: use of moved value `w`
+invalidate_param_shortened_nominal_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_nominal_reject.tl|tests/safety/invalidate_param_shortened_nominal_reject.tl:16:9|error[E0208]: typecheck: use of moved value `w`
+invalidate_param_shortened_tuple_reject|check-fail|tests/safety/invalidate_param_shortened_tuple_reject.tl|tests/safety/invalidate_param_shortened_tuple_reject.tl:13:9|error[E0208]: typecheck: use of moved value `t`
+invalidate_param_shortened_tuple_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_tuple_reject.tl|tests/safety/invalidate_param_shortened_tuple_reject.tl:13:9|error[E0208]: typecheck: use of moved value `t`
+invalidate_param_shortened_two_brands_reject|check-fail|tests/safety/invalidate_param_shortened_two_brands_reject.tl|tests/safety/invalidate_param_shortened_two_brands_reject.tl:21:20|error[E0208]: typecheck: use of moved value `w`
+invalidate_param_shortened_two_brands_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_two_brands_reject.tl|tests/safety/invalidate_param_shortened_two_brands_reject.tl:21:20|error[E0208]: typecheck: use of moved value `w`
+invalidate_param_nested_storage_reject|check-fail|tests/safety/invalidate_param_nested_storage_reject.tl|tests/safety/invalidate_param_nested_storage_reject.tl:19:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_nested_storage_reject_windows|check-fail-windows|tests/safety/invalidate_param_nested_storage_reject.tl|tests/safety/invalidate_param_nested_storage_reject.tl:19:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_second_storage_brand_reject|check-fail|tests/safety/invalidate_param_second_storage_brand_reject.tl|tests/safety/invalidate_param_second_storage_brand_reject.tl:16:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_second_storage_brand_reject_windows|check-fail-windows|tests/safety/invalidate_param_second_storage_brand_reject.tl|tests/safety/invalidate_param_second_storage_brand_reject.tl:16:5|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_call_result_reject|check-fail|tests/safety/invalidate_param_shortened_call_result_reject.tl|tests/safety/invalidate_param_shortened_call_result_reject.tl:15:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_call_result_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_call_result_reject.tl|tests/safety/invalidate_param_shortened_call_result_reject.tl:15:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_callable_param_reject|check-fail|tests/safety/invalidate_param_shortened_callable_param_reject.tl|tests/safety/invalidate_param_shortened_callable_param_reject.tl:14:7|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_callable_param_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_callable_param_reject.tl|tests/safety/invalidate_param_shortened_callable_param_reject.tl:14:7|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_tuple_projection_reject|check-fail|tests/safety/invalidate_param_shortened_tuple_projection_reject.tl|tests/safety/invalidate_param_shortened_tuple_projection_reject.tl:14:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_tuple_projection_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_tuple_projection_reject.tl|tests/safety/invalidate_param_shortened_tuple_projection_reject.tl:14:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_field_projection_reject|check-fail|tests/safety/invalidate_param_shortened_field_projection_reject.tl|tests/safety/invalidate_param_shortened_field_projection_reject.tl:19:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_field_projection_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_field_projection_reject.tl|tests/safety/invalidate_param_shortened_field_projection_reject.tl:19:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_deref_reject|check-fail|tests/safety/invalidate_param_shortened_deref_reject.tl|tests/safety/invalidate_param_shortened_deref_reject.tl:14:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_deref_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_deref_reject.tl|tests/safety/invalidate_param_shortened_deref_reject.tl:14:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_constructor_reject|check-fail|tests/safety/invalidate_param_shortened_constructor_reject.tl|tests/safety/invalidate_param_shortened_constructor_reject.tl:16:9|error[E0208]: typecheck: use of moved value `c`
+invalidate_param_shortened_constructor_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_constructor_reject.tl|tests/safety/invalidate_param_shortened_constructor_reject.tl:16:9|error[E0208]: typecheck: use of moved value `c`
+# Main-parity controls: reads before the end, no end, an aggregate owner,
+# mutable-reference moves and helper calls (B1), helper calls on a shortened
+# binding, and phantom-only or still-live brands (B2) are accepted.
+invalidate_param_shortened_read_before_end_ok|run-exit|tests/safety/invalidate_param_shortened_read_before_end_ok.tl|42|-
+invalidate_param_shortened_read_before_end_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_read_before_end_ok.tl|-|-
+invalidate_param_shortened_no_end_ok|run-exit|tests/safety/invalidate_param_shortened_no_end_ok.tl|42|-
+invalidate_param_shortened_no_end_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_no_end_ok.tl|-|-
+invalidate_param_aggregate_owner_ok|run-exit|tests/safety/invalidate_param_aggregate_owner_ok.tl|39|-
+invalidate_param_aggregate_owner_ok_windows|check-ok-windows|tests/safety/invalidate_param_aggregate_owner_ok.tl|-|-
+invalidate_param_mut_moves_ok|run-exit|tests/safety/invalidate_param_mut_moves_ok.tl|42|-
+invalidate_param_mut_moves_ok_windows|check-ok-windows|tests/safety/invalidate_param_mut_moves_ok.tl|-|-
+invalidate_param_shortened_callable_before_end_ok|run-exit|tests/safety/invalidate_param_shortened_callable_before_end_ok.tl|41|-
+invalidate_param_shortened_callable_before_end_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_callable_before_end_ok.tl|-|-
+invalidate_param_shortened_join_before_end_ok|run-exit|tests/safety/invalidate_param_shortened_join_before_end_ok.tl|42|-
+invalidate_param_shortened_join_before_end_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_join_before_end_ok.tl|-|-
+invalidate_param_shortened_call_before_ok|check-ok|tests/safety/invalidate_param_shortened_call_before_ok.tl|-|-
+invalidate_param_shortened_call_before_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_call_before_ok.tl|-|-
+invalidate_param_phantom_ref_ok|check-ok|tests/safety/invalidate_param_phantom_ref_ok.tl|-|-
+invalidate_param_phantom_ref_ok_windows|check-ok-windows|tests/safety/invalidate_param_phantom_ref_ok.tl|-|-
+invalidate_param_mixed_brand_ok|check-ok|tests/safety/invalidate_param_mixed_brand_ok.tl|-|-
+invalidate_param_mixed_brand_ok_windows|check-ok-windows|tests/safety/invalidate_param_mixed_brand_ok.tl|-|-
+# Known conservative rejections (#9503; flow-sensitive kill: #9464, #9256): a
+# value that keeps a stored brand cannot be assigned or stored into an existing
+# body-local place, and a re-pointed shortened binding keeps its brand.
+invalidate_param_shortened_store_assign_reject|check-fail|tests/safety/invalidate_param_shortened_store_assign_reject.tl|tests/safety/invalidate_param_shortened_store_assign_reject.tl:12:9|error[E0205]: typecheck: cannot store region-tagged value into assignment; region value would escape
+invalidate_param_shortened_store_assign_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_store_assign_reject.tl|tests/safety/invalidate_param_shortened_store_assign_reject.tl:12:9|error[E0205]: typecheck: cannot store region-tagged value into assignment; region value would escape
+invalidate_param_shortened_field_store_reject|check-fail|tests/safety/invalidate_param_shortened_field_store_reject.tl|tests/safety/invalidate_param_shortened_field_store_reject.tl:13:5|error[E0205]: typecheck: cannot store region-tagged value into struct field; region value would escape
+invalidate_param_shortened_field_store_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_field_store_reject.tl|tests/safety/invalidate_param_shortened_field_store_reject.tl:13:5|error[E0205]: typecheck: cannot store region-tagged value into struct field; region value would escape
+invalidate_param_shortened_rebind_reject|check-fail|tests/safety/invalidate_param_shortened_rebind_reject.tl|tests/safety/invalidate_param_shortened_rebind_reject.tl:14:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_rebind_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_rebind_reject.tl|tests/safety/invalidate_param_shortened_rebind_reject.tl:14:9|error[E0208]: typecheck: use of moved value `alias`
+# Refs #9536: a region tag over a mutable reference is the reference itself.
+region_mut_param_move_ok|check-ok|tests/safety/region_mut_param_move_ok.tl|-|-
+region_mut_param_move_ok_windows|check-ok-windows|tests/safety/region_mut_param_move_ok.tl|-|-
+region_mut_param_move_after_end_reject|check-fail|tests/safety/region_mut_param_move_after_end_reject.tl|tests/safety/region_mut_param_move_after_end_reject.tl:10:5|error[E0208]: typecheck: use of moved value `alias`
+region_mut_param_move_after_end_reject_windows|check-fail-windows|tests/safety/region_mut_param_move_after_end_reject.tl|tests/safety/region_mut_param_move_after_end_reject.tl:10:5|error[E0208]: typecheck: use of moved value `alias`

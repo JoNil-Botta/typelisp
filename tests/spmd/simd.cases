@@ -1619,3 +1619,56 @@ opt 0 1 2
 exit 42
 stdout empty
 stderr empty
+
+case private-uniform-call-clamp
+source tests/spmd/private_uniform_call_clamp.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+in asm
+if-mode avx2 avx512
+match call _tl___tl_spmd_
+match vcmppd
+end-if
+
+case private-uniform-call-float
+source tests/spmd/private_uniform_call_float.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+in asm
+if-mode avx2 avx512
+match call _tl___tl_spmd_
+match vcmpp[sd]
+end-if
+
+# Opt2 legitimately inlines these small scalar min/max bodies. The numeric
+# pressure case below retains ordinary f32/f64 calls at every optimization.
+case private-uniform-call-float-minmax-calls
+source tests/spmd/private_uniform_call_float.tl
+mode avx2 avx512
+opt 0 1
+match call _tl_stdlib_math_stdlib_math_f64_(min|max)
+
+case private-uniform-call-numeric
+source tests/spmd/private_uniform_call_numeric.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+in asm
+if-mode avx2 avx512
+match call _tl___tl_spmd_
+match call _tl_private_uniform_call_numeric_uniform_bias_
+match call _tl_private_uniform_call_numeric_uniform_bias_f32
+match call _tl_private_uniform_call_numeric_uniform_bias_f64
+match vpadd[bwdq]|vaddp[sd]
+end-if

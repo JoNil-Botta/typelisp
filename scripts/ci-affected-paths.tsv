@@ -651,3 +651,6 @@ tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-publ
 tests/cli/public-git.cases	stage2-public-tool-surface	@corpus	Canonical Git revision admission and staged checkout/lock/offline cache transcript.
 scripts/shared-view-baseline.tsv	shared-view-count-ratchet	@compiler	Direct limit input read by the shared-view count gate; this change lowers the limit.
 stdlib/tests/crypto_secret_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier,stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@stdlib	Shared inline/native generation cleanup and full-capacity wipe controls.
+tests/spmd/private_uniform_call_clamp.tl	stage2-spmd-simd-comparison	@compiler	Private call clamp execution and packed codegen rows in the SPMD corpus.
+tests/spmd/private_uniform_call_float.tl	stage2-spmd-simd-comparison	@compiler	Private call float bit preservation execution and codegen rows in the SPMD corpus.
+tests/spmd/private_uniform_call_numeric.tl	stage2-spmd-simd-comparison	@compiler	Private call numeric pressure and nested call execution and codegen rows in the SPMD corpus.

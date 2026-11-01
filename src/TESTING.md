@@ -584,6 +584,16 @@ Keep the stack-float entry-copy regressions beside it. The required SPMD
 in scalar/AVX2/AVX-512 at opt0/1/2, including a partial gang and every lane's
 result. Missing execution routes remain unverified.
 
+`regalloc-private-parameters-keep-full-width-across-calls` checks private
+numeric and mask inputs across an entry call on both ABIs, including unused
+inputs and propagated copies. Wide homes must be disjoint and fit the accepted
+slot count. `backend-spmd-spilled-varying-entry-initialized` covers both implicit
+and explicit AVX-512 spills. The `private_uniform_call_*` SPMD fixtures run at
+opt0/1/2 in all modes: exact clamp, f32/f64 bit patterns and bound pairs, and
+eight-input pressure with nested private calls and ordinary uniform calls over
+every numeric lane width. Empty, singleton, full-gang and tail lengths retain
+inactive sentinels; shape rows require private gang calls and packed arithmetic.
+
 `spmd_uniform_index_write.tl` preserves unmasked uniform receiver/index/value
 writes across empty and tail domains in scalar, AVX2 and AVX-512 modes. The
 paired safety cases reject a uniform destination when the value is varying,

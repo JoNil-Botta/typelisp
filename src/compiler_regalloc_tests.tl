@@ -12792,6 +12792,163 @@
     (compiler-reg-empty-private-param-homes-ok?)
     "empty stack-only and ordinary plans keep disjoint full-width private parameter homes"))
 
+(define (compiler-reg-private-call-homes-ok? [force-spills? : bool]) : bool
+  (let
+    [types : (__tl_dyn-array String)
+      (__tl_make-array
+        "i8"
+        "u8"
+        "i16"
+        "u16"
+        "i32"
+        "u32"
+        "i64"
+        "u64"
+        "f32"
+        "f64")]
+    [sizes : (__tl_dyn-array i64) (__tl_make-array 1 1 2 2 4 4 8 8 4 8)]
+    (for [mode (iterator.range 0 2)]
+      (for [host (iterator.range 0 2)]
+        (for [kind (iterator.range 0 (array-length types))]
+          (let
+            [avx2? : bool (= mode 0)]
+            [words : i64
+              (if avx2?
+                4
+                8)]
+            [suffix : String
+              (if avx2?
+                "_avx2"
+                "")]
+            [ty : String (string.copy (& (array-ref types kind)))]
+            [lanes : String
+              (string.int->string (/ (* 8 words) (array-ref sizes kind)))]
+            [func : ir.CompilerIrFunction
+              (irt.func
+                (str_cat.str-cat
+                  "function @private_calls(__tl_spmd_active_mask"
+                  (clone suffix)
+                  "=%0:bool, __tl_spmd_varying_arg"
+                  (clone suffix)
+                  "_a=%1:"
+                  (clone ty)
+                  ", __tl_spmd_varying_arg"
+                  (clone suffix)
+                  "_b=%2:"
+                  (clone ty)
+                  ", __tl_spmd_varying_arg"
+                  suffix
+                  "_unused=%3:"
+                  (clone ty)
+                  ", u=%4:f64) -> unit vars 8 {\nentry:\n"
+                  "%5 = call uniform(%4) : f64\n"
+                  "%6 = mask_not %0 lanes "
+                  (clone lanes)
+                  "\n%7 = mov %1 : "
+                  (clone ty)
+                  "\nvector_store 0, 0, %7 lanes "
+                  (clone lanes)
+                  " : "
+                  (clone ty)
+                  "\nvector_store 0, 0, %2 lanes "
+                  lanes
+                  " : "
+                  ty
+                  "\nreturn\n}"))]
+            [target : cabi.CompilerRegTargetAbi
+              (if (= host 0)
+                (Linux)
+                (Windows))]
+            [allocated : reg.CompilerRegPlan
+              (if avx2?
+                (compiler-reg-plan-function-avx2-for-abi target (clone func))
+                (compiler-reg-plan-function-for-abi target (clone func)))]
+            ;; A spill-only control exercises width admission independently
+            ;; from call-span exclusions, with the same real scalar types.
+            [plan : reg.CompilerRegPlan
+              (if force-spills?
+                (match allocated
+                  [(Plan _ _ intervals types _)
+                    (Plan
+                      (reg.compiler-reg-assignment-table-empty)
+                      (live.compiler-live-set-empty)
+                      intervals
+                      types
+                      (reg.compiler-reg-call-split-empty))])
+                allocated)]
+            ;; Neither ABI preserves a full vector or mask across an ordinary call.
+            (for [var (iterator.range 0 3)]
+              (match (reg.compiler-reg-assignment-lookup
+                (reg.compiler-reg-plan-assignments (& plan))
+                var)
+                [(Some (Spill _)) unit]
+                [(No) unit]
+                [_ (return false)]))
+            (match func
+              [(Function _ params _ vars blocks _)
+                (match (compiler-reg-color-stack-slots
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  plan
+                  (live.compiler-live-set-empty)
+                  params
+                  blocks
+                  vars
+                  vars
+                  (live.compiler-live-set-empty))
+                  [(Remap remap slots)
+                    (for [var (iterator.range 0 4)]
+                      (let
+                        [end : i64 (array-ref remap var)]
+                        [home-words : i64
+                          (if (= var 0)
+                            (if avx2?
+                              4
+                              1)
+                            words)]
+                        [start : i64 (- end (- home-words 1))]
+                        (unless (and (>= start 0) (< end slots)) (return false))
+                        (for [other (iterator.range 0 var)]
+                          (let
+                            [other-end : i64 (array-ref remap other)]
+                            [other-words : i64
+                              (if (= other 0)
+                                (if avx2?
+                                  4
+                                  1)
+                                words)]
+                            (unless
+                              (or
+                                (< end (- other-end (- other-words 1)))
+                                (> start other-end))
+                              (return false))))
+                        (when
+                          (and
+                            (<= start (array-ref remap 4))
+                            (<= (array-ref remap 4) end))
+                          (return false))))
+                    (when
+                      force-spills?
+                      (let
+                        [end : i64 (array-ref remap 7)]
+                        [start : i64 (- end (- words 1))]
+                        [other : i64 (array-ref remap 2)]
+                        (unless
+                          (and
+                            (>= start 0)
+                            (< end slots)
+                            (or (< end (- other (- words 1))) (> start other)))
+                          (return false))))]
+                  [(None) (return false)])]))))))
+  true)
+
+(test
+  regalloc-private-parameters-keep-full-width-across-calls
+  (test.assert-true
+    (and
+      (compiler-reg-private-call-homes-ok? false)
+      (compiler-reg-private-call-homes-ok? true))
+    "private numeric and mask inputs need disjoint full-width call-spanning homes on both ABIs"))
+
 (define (compiler-reg-color-spill-hole-demand-ok?) : bool
   (match (compiler-reg-color-stack-slots
     (ast.ast-node-pool-reader-type-segment-bases)
@@ -14669,6 +14826,8 @@
     (compiler-reg-color-spill-param-pins-ok?)
     (compiler-reg-color-avx2-param-ranges-ok?)
     (compiler-reg-empty-private-param-homes-ok?)
+    (compiler-reg-private-call-homes-ok? false)
+    (compiler-reg-private-call-homes-ok? true)
     (compiler-reg-color-spill-hole-demand-ok?)
     (compiler-reg-color-spill-scratch-demand-ok?)
     (compiler-reg-color-vector-stack-slots-ok?)

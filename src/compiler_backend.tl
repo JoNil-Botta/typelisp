@@ -61721,36 +61721,39 @@
                 (compiler_diagnostic.compiler-diagnostic-at-start
                   ""
                   "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
-            (match (compiler-backend-emit-assignment-lookup
-              backend-state
+            (match (compiler-backend-vector-dst-reg
               assignments
-              var-id)
-              [(No) (Ok "")]
-              [(Some _)
-                (match (compiler-backend-vector-var-reg
-                  backend-state
-                  assignments
-                  var-id
-                  "private SPMD helper parameter"
-                  "zmm")
-                  [(Ok home)
-                    (Ok
-                      (if (string.eq incoming home)
-                        ""
-                        (str_cat.str-cat
-                          "    "
-                          (compiler-backend-avx512-vector-move ty)
-                          " "
-                          incoming
-                          ", "
-                          home
-                          "\n")))]
-                  [(Err message)
-                    (Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-at-start
-                          ""
-                          message)))])])))]
+              var-id
+              "private SPMD helper parameter"
+              "zmm"
+              (string.copy (& incoming))
+              backend-state)
+              [(Ok home)
+                (Ok
+                  (str_cat.str-cat
+                    (if (string.eq incoming home)
+                      ""
+                      (str_cat.str-cat
+                        "    "
+                        (compiler-backend-avx512-vector-move ty)
+                        " "
+                        incoming
+                        ", "
+                        (string.copy (& home))
+                        "\n"))
+                    (compiler-backend-vector-store-dst
+                      assignments
+                      var-id
+                      "zmm"
+                      ty
+                      home
+                      backend-state)))]
+              [(Err message)
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      message)))])))]
       [else
         ;; The opmask prepass owns all active/varying-bool entry moves as one
         ;; parallel graph. Emitting one here would reintroduce source-order
@@ -71580,8 +71583,7 @@
           (or
             (not (compiler_ir_types.compiler-debug-info-enabled?))
             (not (compiler-backend-mode-scalar? mode))
-            (compiler_regalloc.compiler-reg-spmd-avx2-special-params?
-              (& params)))]
+            (compiler_regalloc.compiler-reg-spmd-wide-params? (& params)))]
         [coloring-spans : compiler_ir_types.CompilerSourceSpans
           (if color-stack-slots?
             (compiler-backend-function-source-spans

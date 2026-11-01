@@ -37173,6 +37173,33 @@ entry:
       vars
       backend-state)))
 
+(define (compiler-backend-spmd-spilled-varying-entry-ok?) : bool
+  (for [host (iterator.range 0 2)]
+    (for [explicit (iterator.range 0 2)]
+      (unless
+        (asm-ok?
+          (compiler-backend-spmd-entry-copy-spills
+            (if (= host 0)
+              (backend.CompilerBackendTarget.Linux)
+              (backend.CompilerBackendTarget.Windows))
+            (Avx512)
+            "__tl_spmd_varying_arg_a=%7:f64, __tl_spmd_varying_arg_b=%15:f32"
+            (if (= explicit 0)
+              "%0=%r12"
+              "%7=spill:-64 %15=spill:-128")
+            16)
+          (has
+            "    vmovupd %zmm17, -64(%rbp)\n"
+            "    vmovups %zmm18, -128(%rbp)\n"))
+        (return false))))
+  true)
+
+(test
+  backend-spmd-spilled-varying-entry-initialized
+  (test.assert-true
+    (compiler-backend-spmd-spilled-varying-entry-ok?)
+    "AVX-512 varying frame homes must be initialized from incoming full-width registers"))
+
 ;; System V AVX2: the uniforms a..h fill %xmm0-%xmm7, so the f64 i and the f32
 ;; j arrive on the stack, and the varying x is loaded into %ymm2 -- the old
 ;; staging register. Both copies run through %xmm8 before the first
@@ -39601,6 +39628,9 @@ b_keep:
       "retiring the backend unpublishes program symbol authority")))
 
 (define (compiler-backend-self-test) : i64
+  (unless
+    (compiler-backend-spmd-spilled-varying-entry-ok?)
+    (io.panic "backend: private varying entry initialization failed"))
   (if (and
     (compiler-backend-packed-literal-records-ok?)
     (compiler-backend-signed-div-guard-shapes-ok?)

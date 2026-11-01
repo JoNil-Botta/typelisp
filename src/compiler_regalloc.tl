@@ -6333,9 +6333,9 @@
 ;; preserved across the call by the callee (TypeLisp prologue/epilogue, or a
 ;; runtime helper that push/pops the callee-saved set) -- exactly as on the scalar
 ;; path, where the same callee-saved-only argument keeps call-spanning integers
-;; register-homed. Float and vector candidates use the same ABI-aware clobber
-;; constraint: SysV has no nonvolatile XMM suffix, while Win64 can keep them in
-;; XMM6-XMM15. Aggregate handles and masks remain ineligible via
+;; register-homed. Scalar floats can use Win64's nonvolatile XMM6-XMM15 low
+;; halves; full-width vectors have no nonvolatile subset on either ABI.
+;; Aggregate handles and masks remain ineligible via
 ;; compiler-reg-ineligible-non-scalars (false), so only CPU scalars/pointers are
 ;; register eligible -- unchanged. The
 ;; caller-saved call-spanning RESCUE is deliberately NOT enabled here: the
@@ -6352,8 +6352,8 @@
   (match func
     [(Function _ params _ _ blocks _)
       ;; Mask registers have no ABI-nonvolatile subset and remain ineligible
-      ;; across calls. Float/vector call constraints are applied by their greedy
-      ;; allocators instead: SysV forces a spill, while Win64 admits XMM6-XMM15.
+      ;; across calls. Full vectors are volatile on both ABIs; Win64 preserves
+      ;; only scalar XMM low halves. Private inputs are initialized at entry.
       (let
         [vector-mask-defs : live.CompilerLiveUseDef
           (compiler-reg-function-vector-mask-defs func)]
@@ -6385,10 +6385,14 @@
                       types
                       (live.compiler-live-set-empty)
                       false)))))
-            private-param-vars)]
+            (clone private-param-vars))]
         (compiler-reg-mark-spanning-in-set
           (owned_view.compiler-owned-reference-shared-view intervals)
-          (& vector-mask-defs.defs)
+          (&
+            (live.compiler-live-set-union
+              vector-mask-defs.defs
+              (clone private-param-vars)))
+          (& private-param-vars)
           (& call-points)
           base-ineligible))]))
 
@@ -20551,12 +20555,14 @@
 
 ;; Mark every var that is a member of `member-set` AND whose live interval
 ;; spans a call point as ineligible. Used by the SIMD planner to keep
-;; call-spanning MASK values out of registers: opmask registers have no
-;; ABI-nonvolatile subset, so a value kept in one across a call would be
-;; clobbered by the callee (unsound).
+;; call-spanning masks and private inputs out of registers: neither full-width
+;; vectors nor opmasks have an ABI-nonvolatile home. Parameters are initialized
+;; before instruction zero, even when their first body use starts an interval
+;; later, so their call-spanning range starts inclusively at entry.
 (define (compiler-reg-mark-spanning-in-set
   [intervals : CompilerRegIntervalSeq]
   [member-set : (& live.CompilerLiveI64Set)]
+  [params : (& live.CompilerLiveI64Set)]
   [call-points : (& live.CompilerLiveI64Set)]
   [ineligible : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
@@ -20567,10 +20573,15 @@
           (compiler-reg-interval-seq-ref intervals index)]
         [var : i64 interval.var]
         (if (if (live.compiler-live-set-contains? member-set var)
-          (compiler-reg-call-set-in-range?
-            call-points
-            interval.start
-            interval.end)
+          (if (live.compiler-live-set-contains? params var)
+            (compiler-reg-param-pin-set-in-range-words?
+              call-points
+              0
+              interval.end)
+            (compiler-reg-call-set-in-range?
+              call-points
+              interval.start
+              interval.end))
           false)
           (set! out (live.compiler-live-set-insert out var))
           unit)))
@@ -27210,18 +27221,17 @@
         unit
         (set! (array-ref words var) 4)))))
 
-(define (compiler-reg-spmd-avx2-special-param? [name : (& name str)]) : bool
+(define (compiler-reg-spmd-wide-param? [name : (& name str)]) : bool
   (or
     (compiler-reg-string-prefix? name "__tl_spmd_active_mask_avx2")
-    (compiler-reg-string-prefix? name "__tl_spmd_varying_arg_avx2_")
+    (compiler-reg-spmd-varying-param? name)
     (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_avx2_")))
 
-(define (compiler-reg-spmd-avx2-special-params?
-  [params : (& ir.CompilerIrParamSeq)]) : bool
+(define (compiler-reg-spmd-wide-params? [params : (& ir.CompilerIrParamSeq)]) : bool
   (for [position (iterator.range 0 params.len)]
     (match (ir.compiler-ir-param-seq-borrow params position)
       [(Param name _ _)
-        (when (compiler-reg-spmd-avx2-special-param? name) (return true))]))
+        (when (compiler-reg-spmd-wide-param? name) (return true))]))
   false)
 
 (define (compiler-reg-vector-stack-words-params!
@@ -27230,11 +27240,19 @@
   (for [position (iterator.range 0 params.len)]
     (match (ir.compiler-ir-param-seq-borrow params position)
       [(Param name _ var)
-        (if (compiler-reg-spmd-avx2-special-param? name)
-          (compiler-reg-vector-stack-words-set-mask! words var)
+        (if (compiler-reg-spmd-wide-param? name)
+          (compiler-reg-vector-stack-words-set!
+            words
+            var
+            (if (or
+              (compiler-reg-string-prefix? name "__tl_spmd_varying_arg_avx2_")
+              (compiler-reg-spmd-mask-param? (& name)))
+              4
+              8)
+            (& (I64)))
           unit)])))
 
-(define (compiler-reg-spmd-avx2-special-param-references!
+(define (compiler-reg-spmd-wide-param-references!
   [params : (& ir.CompilerIrParamSeq)]
   [references : (&mut references (__tl_dyn-array bool))]) : unit
   ;; The backend materializes every private ABI parameter before instruction
@@ -27244,7 +27262,7 @@
     (match (ir.compiler-ir-param-seq-borrow params position)
       [(Param name _ var)
         (if (and
-          (compiler-reg-spmd-avx2-special-param? name)
+          (compiler-reg-spmd-wide-param? name)
           (>= var 0)
           (< var (array-length references)))
           (set! (array-ref references var) true)
@@ -28702,8 +28720,8 @@
 
 ;; Identity-pin scalar parameter variables: the prologue's param spill writes
 ;; each parameter to its remapped formula slot, and ordinary parameters keep
-;; their ids so those slots are never shared. AVX2 private SPMD parameters need
-;; a four-word YMM range, so leave those unpinned for the private-range pass.
+;; their ids so those slots are never shared. Wide private SPMD parameters
+;; instead need a complete YMM/ZMM range from the private-range pass.
 (define (compiler-reg-color-param-pins
   [params : (& ir.CompilerIrParamSeq)]
   [remap : (&mut remap (__tl_dyn-array i64))]
@@ -28716,11 +28734,11 @@
         [(Param name _ var-id)
           (when
             (and
-              (not (compiler-reg-spmd-avx2-special-param? name))
+              (not (compiler-reg-spmd-wide-param? name))
               (< var-id (array-length remap)))
             (set! (array-ref remap var-id) var-id)
             (set! (array-ref slot-ends var-id) 9223372036854775807))
-          (if (compiler-reg-spmd-avx2-special-param? name)
+          (if (compiler-reg-spmd-wide-param? name)
             unit
             (set! out (compiler-reg-max out (+ var-id 1))))]))
     out))
@@ -29060,7 +29078,7 @@
                   ends))]))
         out-point)]))
 
-;; Per-variable core of the scalar walk's admission test: colorable, not
+;; Per-variable core of the scalar walk's admission test: scalar and one-word, not
 ;; group- or ineligible-pinned, not already renumbered by the parameter pins,
 ;; and not register-homed. Nothing here changes between the scalar-web builder
 ;; and the walk itself, so it is decided ONCE per variable and read back as a
@@ -29074,12 +29092,16 @@
   [ineligible : (& ineligible live.CompilerLiveI64Set)]
   [assignment-index : CompilerRegAssignmentTable]
   [colorable : (& colorable (__tl_dyn-array bool))]
+  [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]
   [remap : (& remap (__tl_dyn-array i64))]) : unit
   (for [i (iterator.range 0 vars)]
     (set!
       (array-ref slot-eligible i)
       (and
         (array-ref colorable i)
+        ;; SIMD values retain their scalar element type in IR. The physical
+        ;; width census also follows copies, and overrides that type here.
+        (= (compiler-reg-vector-stack-words-for-var vector-stack-words i) 1)
         (not (live.compiler-live-set-contains? group-vars i))
         (not (live.compiler-live-set-contains? ineligible i))
         (< (array-ref remap i) 0)
@@ -29091,21 +29113,16 @@
           [(No) true])))))
 
 ;; One membership decision per variable, taken once so the per-pair test below
-;; is three array reads. The scalar walk's own admission test plus the two
-;; extra conditions a web member must meet.
+;; is three array reads. Web members additionally need a live hull.
 (define (compiler-reg-color-scalar-alias-eligible!
   [eligible : (&mut eligible (__tl_dyn-array bool))]
   [vars : i64]
   [slot-eligible : (& slot-eligible (__tl_dyn-array bool))]
-  [hull-starts : (& hull-starts (__tl_dyn-array i64))]
-  [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]) : unit
+  [hull-starts : (& hull-starts (__tl_dyn-array i64))]) : unit
   (for [i (iterator.range 0 vars)]
     (set!
       (array-ref eligible i)
-      (and
-        (array-ref slot-eligible i)
-        (>= (array-ref hull-starts i) 0)
-        (= (compiler-reg-vector-stack-words-for-var vector-stack-words i) 1)))))
+      (and (array-ref slot-eligible i) (>= (array-ref hull-starts i) 0)))))
 
 ;; Largest web the all-pairs admission test will build. Bounds every member walk
 ;; below and keeps a link attempt's worst case at a few hundred array reads; real
@@ -29951,9 +29968,7 @@
   [vars : i64]
   [slot-eligible : (& slot-eligible (__tl_dyn-array bool))]
   [var-tys : (& (__tl_dyn-array ast.AstType))]
-  [hull-starts : (& hull-starts (__tl_dyn-array i64))]
-  [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]) : (__tl_dyn-array
-    i64)
+  [hull-starts : (& hull-starts (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
   (let
     [alias : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [eligible : (__tl_dyn-array bool) (__tl_make-array bool vars)]
@@ -29963,8 +29978,7 @@
         (&mut eligible)
         vars
         slot-eligible
-        hull-starts
-        vector-stack-words)]
+        hull-starts)]
     (if (compiler-reg-color-scalar-alias-candidate-blocks? blocks eligible)
       (let
         [ep-starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -30149,7 +30163,7 @@
     ;; Entry stores still need full-width homes when the body has no uses.
     (if (and
       (compiler-reg-interval-seq-empty? intervals)
-      (not (compiler-reg-spmd-avx2-special-params? params)))
+      (not (compiler-reg-spmd-wide-params? params)))
       None
       (let
         [has-group-vars? : bool
@@ -30235,9 +30249,7 @@
             (if stack-only?
               unit
               (compiler-reg-ref-marks-blocks! (&mut references) blocks))
-            (compiler-reg-spmd-avx2-special-param-references!
-              params
-              (&mut references)))]
+            (compiler-reg-spmd-wide-param-references! params (&mut references)))]
         [var-tys : (__tl_dyn-array ast.AstType)
           (__tl_make-array ast.AstType vars)]
         [slot-tys : (__tl_dyn-array ast.AstType)
@@ -30265,6 +30277,7 @@
             ineligible
             assignment-index
             colorable
+            vector-stack-words
             remap)]
         ;; Conservative per-var hulls of the plan intervals, shared by the
         ;; scalar-web membership gate below and the group-Mov overlay further
@@ -30299,8 +30312,7 @@
               vars
               slot-eligible
               (& var-tys)
-              hull-starts
-              vector-stack-words))]
+              hull-starts))]
         [sorted : (__tl_dyn-array CompilerRegInterval)
           (__tl_make-array
             CompilerRegInterval

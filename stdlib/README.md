@@ -162,7 +162,9 @@ values and returns IPv6 then IPv4, each in network-byte order. `localhost?` and
 resolver consumers apply this policy before consulting hosts or DNS.
 
 `net/resolver_config_linux.load-system` (Linux only) reads `/etc/hosts` and
-`/etc/resolv.conf` with bounded streaming handles. Missing/unreadable files
+`/etc/resolv.conf` with bounded streaming handles. Temporary read buffers are
+limited to 8192 bytes and reclaimed after each read, so repeated short reads
+retain only the fixed output buffer. Missing/unreadable files
 return a structured error. `load-with-source` injects byte-source results for
 hermetic adapters/tests; `read-source-path` permits filesystem fixtures and
 reports the corresponding logical source path. A successful call returns one

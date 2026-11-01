@@ -11,7 +11,7 @@
   (ConfigBytesErr config.ConfigError))
 
 ;: Map a host error to a bounded numeric detail without copying its path.
-(define (host-error-code [error : io.IoError]) : i64
+(define (host-error-code [error : (& error io.IoError)]) : i64
   (match error
     [(IoNotFound _) 2]
     [(IoPermissionDenied _) 13]
@@ -25,60 +25,98 @@
 (define (unavailable [source : config.ConfigSource] [code : i64]) : config.ConfigError
   (config.ConfigError source 0 0 (ConfigUnavailable) code))
 
+;: Only scalar progress/error facts leave a temporary read arena.
+(defenum ConfigReadStep
+  (ConfigReadProgress i64 bool)
+  (ConfigReadFailure i64))
+
+;: Read one bounded chunk in a scratch arena, copy its live bytes into the
+;: preallocated outer buffer, and reclaim all temporary I/O allocations.
+;: Mutating only byte/scalar places cannot retain scratch-owned storage.
+(define (read-step!
+  [out : (&mut out byte_buf.ByteBuf)]
+  [handle : io.FileHandle]
+  [read : (-> io.FileHandle i64 io.ResultIoRead)]) : ConfigReadStep
+  (let
+    [remaining : i64 (- 1048577 (byte_buf.len out))]
+    [requested : i64
+      (if (< remaining 8192)
+        remaining
+        8192)]
+    (with-arena
+      scratch
+      (match (read handle requested)
+        [(ErrIoRead error) (ConfigReadFailure (host-error-code (& error)))]
+        [(OkIoRead chunk)
+          (let
+            [count : i64 (byte_buf.len (& chunk.bytes))]
+            (if (or (< count 0) (> count requested))
+              (ConfigReadFailure 5)
+              (let
+                [index : i64 0]
+                [old-length : i64 (byte_buf.len out)]
+                (while (< index count)
+                  (set!
+                    (array-ref out.slots (+ old-length index))
+                    (byte_buf.ref (& chunk.bytes) index))
+                  (set! index (+ index 1)))
+                (set! out.len (+ old-length count))
+                (ConfigReadProgress count chunk.eof))))]))))
+
+;: Read an already-open source through injected file operations. This owns
+;: exactly one close, including every failure path.
+(define (read-open-source
+  [source : config.ConfigSource]
+  [handle : io.FileHandle]
+  [read : (-> io.FileHandle i64 io.ResultIoRead)]
+  [close : (-> io.FileHandle io.ResultIoUnit)]) : ConfigBytesResult
+  (let
+    [out : byte_buf.ByteBuf (byte_buf.with-capacity 1048577)]
+    [done : bool false]
+    [failed : bool false]
+    [failure : config.ConfigError (unavailable source 0)]
+    (while (not done)
+      (match (read-step! (&mut out) handle read)
+        [(ConfigReadFailure code)
+          (set! failure (unavailable source code))
+          (set! failed true)
+          (set! done true)]
+        [(ConfigReadProgress count eof)
+          (cond
+            [(> (byte_buf.len (& out)) 1048576)
+              (set!
+                failure
+                (config.error-at source 0 1048576 (ConfigFileTooLarge)))
+              (set! failed true)
+              (set! done true)]
+            [(and (= count 0) (not eof))
+              (set! failure (unavailable source 5))
+              (set! failed true)
+              (set! done true)]
+            [else (set! done eof)])]))
+    (match (close handle)
+      [(ErrIoUnit error)
+        (when
+          (not failed)
+          (set! failure (unavailable source (host-error-code (& error))))
+          (set! failed true))]
+      [(OkIoUnit) unit])
+    (if failed
+      (ConfigBytesErr failure)
+      (ConfigBytesOk out))))
+
 ;: Read at most 1 MiB plus one overflow-detection byte. A bounded number of
 ;: short reads is guaranteed because every non-EOF success consumes >=1 byte.
+;: Each <=8192-byte temporary read is reclaimed before the next read.
 ;: Opened handles close exactly once on every success and failure path.
 ;: The path argument is for injected filesystem fixtures; errors identify the
 ;: logical source path returned by config.source-path.
 (define (read-source-path [source : config.ConfigSource] [path : (& path str)]) : ConfigBytesResult
   (match (io.file-open path (OpenRead))
     [(ErrIoFile error)
-      (ConfigBytesErr (unavailable source (host-error-code error)))]
+      (ConfigBytesErr (unavailable source (host-error-code (& error))))]
     [(OkIoFile handle)
-      (let
-        [out : byte_buf.ByteBuf (byte_buf.with-capacity 1048577)]
-        [done : bool false]
-        (while (not done)
-          (match (io.file-read-chunk handle (- 1048577 (byte_buf.len (& out))))
-            [(ErrIoRead error)
-              (let
-                [ignored : io.ResultIoUnit (io.file-close handle)]
-                (match ignored
-                  [(OkIoUnit) unit]
-                  [(ErrIoUnit _) unit]))
-              (return
-                (ConfigBytesErr (unavailable source (host-error-code error))))]
-            [(OkIoRead chunk)
-              (let
-                [count : i64 (byte_buf.len (& chunk.bytes))]
-                (set!
-                  out
-                  (byte_buf.append-bytes
-                    out
-                    (byte_buf.as-bytes (& chunk.bytes))))
-                (when
-                  (> (byte_buf.len (& out)) 1048576)
-                  (let
-                    [ignored : io.ResultIoUnit (io.file-close handle)]
-                    (match ignored
-                      [(OkIoUnit) unit]
-                      [(ErrIoUnit _) unit]))
-                  (return
-                    (ConfigBytesErr
-                      (config.error-at source 0 1048576 (ConfigFileTooLarge)))))
-                (when
-                  (and (= count 0) (not chunk.eof))
-                  (let
-                    [ignored : io.ResultIoUnit (io.file-close handle)]
-                    (match ignored
-                      [(OkIoUnit) unit]
-                      [(ErrIoUnit _) unit]))
-                  (return (ConfigBytesErr (unavailable source 5))))
-                (set! done chunk.eof))]))
-        (match (io.file-close handle)
-          [(ErrIoUnit error)
-            (ConfigBytesErr (unavailable source (host-error-code error)))]
-          [(OkIoUnit) (ConfigBytesOk out)]))]))
+      (read-open-source source handle io.file-read-chunk io.file-close)]))
 
 ;: System byte source with fixed path selection, no environment/libc resolver.
 (cfg

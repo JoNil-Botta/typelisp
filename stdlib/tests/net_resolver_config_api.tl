@@ -5,6 +5,7 @@
 (import stdlib.net.ip)
 (import stdlib.net.resolver_config as config)
 (import stdlib.net.resolver_config_linux as linux)
+(import stdlib.profile)
 (import stdlib.str_cat)
 (import stdlib.test)
 
@@ -421,6 +422,117 @@
     [(ConfigHosts) (fake-source source)]
     [_ (ConfigBytesErr (linux.unavailable source 13))]))
 
+(define short-read-position : i64
+  0)
+(define short-read-close-count : i64
+  0)
+
+(define (one-byte-read [handle : io.FileHandle] [requested : i64]) : io.ResultIoRead
+  (test.assert-i64-eq handle.id 777 "injected read handle")
+  (let
+    [bytes : byte_buf.ByteBuf (byte_buf.with-capacity requested)]
+    (if (= short-read-position 256)
+      (OkIoRead (io.FileRead bytes true))
+      (begin
+        (set! bytes (byte_buf.push bytes (cast short-read-position : u8)))
+        (set! short-read-position (+ short-read-position 1))
+        (OkIoRead (io.FileRead bytes false))))))
+
+(define (count-source-close [handle : io.FileHandle]) : io.ResultIoUnit
+  (test.assert-i64-eq handle.id 777 "injected close handle")
+  (set! short-read-close-count (+ short-read-close-count 1))
+  (OkIoUnit))
+
+(define (zero-progress-read [handle : io.FileHandle] [_requested : i64]) : io.ResultIoRead
+  (test.assert-i64-eq handle.id 777 "zero-progress handle")
+  (OkIoRead (io.FileRead (byte_buf.new) false)))
+
+(define (failed-read [handle : io.FileHandle] [_requested : i64]) : io.ResultIoRead
+  (test.assert-i64-eq handle.id 777 "failed-read handle")
+  (ErrIoRead (IoSystemCode 13 "injected")))
+
+(define (failed-close [handle : io.FileHandle]) : io.ResultIoUnit
+  (let
+    [result : io.ResultIoUnit (count-source-close handle)]
+    (match result
+      [(OkIoUnit) unit]
+      [(ErrIoUnit _) unit]))
+  (ErrIoUnit (IoSystemCode 5 "injected")))
+
+(define (short-read-checks) : unit
+  (set! short-read-position 0)
+  (set! short-read-close-count 0)
+  (profile.alloc-reset-peak)
+  (let
+    [before : i64 (profile.alloc-live)]
+    [result : linux.ConfigBytesResult
+      (linux.read-open-source
+        (ConfigHosts)
+        (io.FileHandle 777)
+        one-byte-read
+        count-source-close)]
+    [retained : i64 (- (profile.alloc-live) before)]
+    [peak : i64 (- (profile.alloc-peak) before)]
+    (test.assert-i64-eq
+      short-read-close-count
+      1
+      "short-reading source closes once")
+    (match result
+      [(ConfigBytesErr _) (io.panic "short-reading source failed")]
+      [(ConfigBytesOk bytes)
+        (test.assert-i64-eq (byte_buf.len (& bytes)) 256 "all short-read bytes")
+        (let
+          [index : i64 0]
+          (while (< index 256)
+            (test.assert-i64-eq
+              (cast (byte_buf.ref (& bytes) index) : i64)
+              index
+              "short-read byte identity")
+            (set! index (+ index 1))))])
+    (test.assert-i64-eq
+      (if (<= retained 2097152)
+        0
+        retained)
+      0
+      "bounded retained short-read memory")
+    (test.assert-i64-eq
+      (if (<= peak 4194304)
+        0
+        peak)
+      0
+      "bounded peak short-read memory"))
+  (set! short-read-close-count 0)
+  (match (linux.read-open-source
+    (ConfigHosts)
+    (io.FileHandle 777)
+    zero-progress-read
+    count-source-close)
+    [(ConfigBytesOk _) (io.panic "zero-progress read accepted")]
+    [(ConfigBytesErr error)
+      (test.assert-i64-eq error.host-code 5 "zero-progress failure")])
+  (test.assert-i64-eq short-read-close-count 1 "zero progress closes once")
+  (set! short-read-close-count 0)
+  (match (linux.read-open-source
+    (ConfigHosts)
+    (io.FileHandle 777)
+    failed-read
+    failed-close)
+    [(ConfigBytesOk _) (io.panic "failed read accepted")]
+    [(ConfigBytesErr error)
+      (test.assert-i64-eq error.host-code 13 "read error precedes close error")])
+  (test.assert-i64-eq short-read-close-count 1 "read failure closes once")
+  (set! short-read-position 0)
+  (set! short-read-close-count 0)
+  (match (linux.read-open-source
+    (ConfigHosts)
+    (io.FileHandle 777)
+    one-byte-read
+    failed-close)
+    [(ConfigBytesOk _) (io.panic "close failure accepted")]
+    [(ConfigBytesErr error)
+      (test.assert-i64-eq error.host-code 5 "close failure rejects replacement")])
+  (test.assert-i64-eq short-read-close-count 1 "close failure closes once"))
+
 (define (loader-checks) : unit
   (match (linux.load-with-source fake-source)
     [(ResolverConfigErr _) (io.panic "injected loader")]
@@ -517,6 +629,7 @@
                     "IPv6 first")))]))])))
 
 (define (run-suite) : i64
+  (short-read-checks)
   (name-checks)
   (name-boundary-checks)
   (snapshot-checks)

@@ -116,6 +116,7 @@ gate_compiler
 gate_require_compiler
 
 TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh tests/codegen/for-source-macro.cases
+TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh --only 'secret-generation-*' tests/codegen/crypto-secret.cases
 
 # The generated `(hashmap K V)` modules are the only supported scalar hashmap
 # surface. Keep the removed flat family spellings from returning in source,

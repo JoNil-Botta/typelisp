@@ -38,7 +38,8 @@
     [owner : secret.SecretFixed
       (vectors.fixed-hex (secret.Secret16) "000102030405060708090a0b0c0d0e0f")]
     [stale : secret.SecretFixed
-      (secret.SecretFixed owner.storage (+ owner.generation 1))]
+      (secret.SecretFixed
+        (secret.SecretHandle owner.handle.storage (+ owner.handle.generation 1)))]
     [before : i64 (profile.alloc-total)]
     (match (aes.new-128 stale)
       [(Aes128Err (AesSecret (SecretClosed))) unit]
@@ -63,7 +64,7 @@
       (vectors.fixed-hex
         (secret.Secret32)
         "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")]
-    [storage : (MutPtr secret.SecretStorage) key.storage]
+    [storage : (MutPtr secret.SecretStorage) key.handle.storage]
     [before : i64 (profile.alloc-total)]
     (match (aes.new-128 key)
       [(Aes128Err (AesSecret (SecretLengthMismatch 16 32))) unit]
@@ -85,7 +86,7 @@
         (if wide
           (secret.Secret32)
           (secret.Secret16)))]
-    [key-storage : (MutPtr secret.SecretStorage) key.storage]
+    [key-storage : (MutPtr secret.SecretStorage) key.handle.storage]
     [source : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [destination : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [before : i64 (profile.alloc-total)]
@@ -94,7 +95,7 @@
     (if wide
       (match (aes.new-256 key)
         [(Aes256Ok schedule)
-          (set! schedule-storage schedule.expanded.storage)
+          (set! schedule-storage schedule.expanded.handle.storage)
           (test.assert-i64-eq
             (- (profile.alloc-total) before)
             272
@@ -121,7 +122,7 @@
         [_ (test.assert-true false "AES-256 construction")])
       (match (aes.new-128 key)
         [(Aes128Ok schedule)
-          (set! schedule-storage schedule.expanded.storage)
+          (set! schedule-storage schedule.expanded.handle.storage)
           (test.assert-i64-eq
             (- (profile.alloc-total) before)
             208
@@ -153,7 +154,13 @@
           240
           176))
       "entire expanded schedule closes")
-    (secret.storage-close schedule-storage)
+    (secret.storage-close
+      (secret.SecretHandle
+        schedule-storage
+        (cast
+          (unsafe
+            (secret.storage-header schedule-storage)).generation
+          : i64)))
     (test.assert-true
       (wiped?
         schedule-storage
@@ -193,7 +200,7 @@
             (while (< index 8)
               (unsafe
                 (secret.storage-set-length!
-                  source.storage
+                  source.handle.storage
                   (array-ref lengths index)))
               (match (aes.encrypt-256!
                 (& schedule)
@@ -215,7 +222,7 @@
             (while (< index 8)
               (unsafe
                 (secret.storage-set-length!
-                  source.storage
+                  source.handle.storage
                   (array-ref lengths index)))
               (match (aes.encrypt-128!
                 (& schedule)
@@ -231,7 +238,7 @@
           (aes.close-128 schedule)]
         [_ (test.assert-true false "schedule")]))
     (unsafe
-      (secret.storage-set-length! source.storage 16))
+      (secret.storage-set-length! source.handle.storage 16))
     (secret.close-fixed source)
     (secret.close-fixed destination)
     (secret.close-fixed expected)))
@@ -248,9 +255,11 @@
     [source : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [destination : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [stale : secret.SecretFixed
-      (secret.SecretFixed source.storage (+ source.generation 1))]
-    [alias : secret.SecretFixed
-      (secret.SecretFixed source.storage source.generation)]
+      (secret.SecretFixed
+        (secret.SecretHandle
+          source.handle.storage
+          (+ source.handle.generation 1)))]
+    [alias : secret.SecretFixed (secret.SecretFixed source.handle)]
     (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
       [(Aes128Ok schedule)
         (match (aes.encrypt-128! (& schedule) (& source) (&mut alias))
@@ -293,8 +302,10 @@
         (ptr-cast (secret.storage-data storage) : (MutPtr u64))
         (cast 16 : u64)))
     (let
-      [source : secret.SecretFixed (secret.SecretFixed storage 0)]
-      [destination : secret.SecretFixed (secret.SecretFixed second 16)]
+      [source : secret.SecretFixed
+        (secret.SecretFixed (secret.SecretHandle storage 0))]
+      [destination : secret.SecretFixed
+        (secret.SecretFixed (secret.SecretHandle second 16))]
       [expected : secret.SecretFixed
         (vectors.fixed-hex (secret.Secret16) "10000000000000000000000000000000")]
       (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
@@ -318,8 +329,8 @@
   (let
     [key-128 : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [key-256 : secret.SecretFixed (secret.fixed-zero (secret.Secret32))]
-    [storage-128 : (MutPtr secret.SecretStorage) key-128.storage]
-    [storage-256 : (MutPtr secret.SecretStorage) key-256.storage]
+    [storage-128 : (MutPtr secret.SecretStorage) key-128.handle.storage]
+    [storage-256 : (MutPtr secret.SecretStorage) key-256.handle.storage]
     [before : i64 (profile.alloc-total)]
     (unsafe
       (secret.storage-set-length! storage-128 15))
@@ -366,10 +377,10 @@
       (let
         [owner : (MutPtr secret.SecretStorage)
           (if (= (% index 3) 0)
-            expanded.storage
+            expanded.handle.storage
             (if (= (% index 3) 1)
-              source.storage
-              destination.storage))]
+              source.handle.storage
+              destination.handle.storage))]
         [header : secret.SecretStorage
           (unsafe
             (secret.storage-header owner))]

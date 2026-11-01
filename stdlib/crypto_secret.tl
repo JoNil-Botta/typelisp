@@ -8,7 +8,8 @@
 ;# handles (storage address and stamp), never their bytes; compare contents
 ;# with `fixed-equal` or `bytes-equal`. Closing an owner, explicitly or by lexical cleanup,
 ;# poisons it and then wipes its whole capacity with volatile word stores;
-;# closing again does nothing.
+;# closing again does nothing. A null, non-live or generation-mismatched
+;# handle owns no live storage: its cleanup returns `unit` without mutation.
 ;#
 ;# The fixed-work helpers compare equal public lengths by visiting every byte
 ;# and select or swap through masks, with no branch or table lookup on secret
@@ -71,20 +72,24 @@
   (length u64)
   (capacity u64))
 
+;: Pointer and stamp passed together to cleanup. This is a checked handle,
+;: not a unique capability; copying it does not create a new storage generation.
+(defstruct SecretHandle
+  (storage (MutPtr SecretStorage))
+  (generation i64))
+
 ;: Exactly `size` secret bytes. Construct with `fixed-zero` or
 ;: `fixed-from-bytes`. The fields are not a capability: safe code can read
 ;: neither the storage nor a byte of the secret through them.
 (defstruct SecretFixed
   (:cleanup close-fixed)
-  (storage (MutPtr SecretStorage) (:cleanup storage-close))
-  (generation i64))
+  (handle SecretHandle (:cleanup storage-close)))
 
 ;: A bounded secret buffer whose initialized length is tracked exactly.
 ;: Construct with `bytes-new` or `bytes-from-bytes`.
 (defstruct SecretBytes
   (:cleanup close-bytes)
-  (storage (MutPtr SecretStorage) (:cleanup storage-close))
-  (generation i64))
+  (handle SecretHandle (:cleanup storage-close)))
 
 ;: A new fixed owner, or a public construction failure.
 (defenum SecretFixedResult
@@ -248,19 +253,21 @@
         (set! index (+ index 1))))))
 
 ;: Field cleanup of both owners: poison, wipe the whole capacity and the
-;: length, then mark closed. Null or non-live storage is left untouched, so
-;: closing twice does nothing.
-(define (storage-close [storage : (MutPtr SecretStorage)]) : unit
-  (if (ptr-null? storage)
+;: length, then mark closed. Null, non-live or mismatched-generation handles
+;: are no-ops. Check only public metadata before the first mutation.
+(define (storage-close [handle : SecretHandle]) : unit
+  (if (ptr-null? handle.storage)
     unit
     (let
       [header : SecretStorage
         (unsafe
-          (storage-header storage))]
+          (storage-header handle.storage))]
       [words : (MutPtr u64)
         (unsafe
-          (ptr-cast storage : (MutPtr u64)))]
-      (if (= header.state (state-live))
+          (ptr-cast handle.storage : (MutPtr u64)))]
+      (if (and
+        (= header.state (state-live))
+        (= header.generation (cast handle.generation : u64)))
         (begin
           (unsafe
             (volatile-store! words (state-poisoned)))
@@ -329,7 +336,7 @@
         (storage-new length generation))]
     (unsafe
       (storage-set-length! storage length))
-    (SecretFixed storage generation)))
+    (SecretFixed (SecretHandle storage generation))))
 
 ;: A fixed owner copied from exactly `size` public bytes, such as a test
 ;: vector or protocol constant. A length mismatch allocates nothing.
@@ -342,9 +349,10 @@
         [generation : i64 (next-generation)]
         (SecretFixedOk
           (SecretFixed
-            (unsafe
-              (storage-from-bytes source length generation))
-            generation)))
+            (SecretHandle
+              (unsafe
+                (storage-from-bytes source length generation))
+              generation))))
       (SecretFixedErr (SecretLengthMismatch length actual)))))
 
 ;: A live empty variable owner with room for `capacity` bytes, checked
@@ -355,9 +363,10 @@
       [generation : i64 (next-generation)]
       (SecretBytesOk
         (SecretBytes
-          (unsafe
-            (storage-new capacity generation))
-          generation)))
+          (SecretHandle
+            (unsafe
+              (storage-new capacity generation))
+            generation))))
     (SecretBytesErr (SecretBadLength capacity))))
 
 ;: A variable owner initialized from public bytes, with room for `capacity`.
@@ -374,24 +383,25 @@
           [generation : i64 (next-generation)]
           (SecretBytesOk
             (SecretBytes
-              (unsafe
-                (storage-from-bytes source capacity generation))
-              generation)))])))
+              (SecretHandle
+                (unsafe
+                  (storage-from-bytes source capacity generation))
+                generation))))])))
 
 ;: Public length of a live fixed owner, or 0 once its storage is closed.
 (define (fixed-length [owner : (& owner SecretFixed)]) : i64
   (unsafe
-    (live-length owner.storage owner.generation)))
+    (live-length owner.handle.storage owner.handle.generation)))
 
 ;: Initialized length of a live variable owner, or 0 once closed.
 (define (bytes-length [owner : (& owner SecretBytes)]) : i64
   (unsafe
-    (live-length owner.storage owner.generation)))
+    (live-length owner.handle.storage owner.handle.generation)))
 
 ;: Capacity of a live variable owner, or 0 once closed.
 (define (bytes-capacity [owner : (& owner SecretBytes)]) : i64
   (unsafe
-    (live-capacity owner.storage owner.generation)))
+    (live-capacity owner.handle.storage owner.handle.generation)))
 
 ;: OR of the byte differences over `count` bytes. The loop visits every byte
 ;: and has no data-dependent branch.
@@ -451,7 +461,11 @@
   [left : (& left SecretFixed)]
   [right : (& right SecretFixed)]) : SecretCompareResult
   (unsafe
-    (storage-equal left.storage left.generation right.storage right.generation)))
+    (storage-equal
+      left.handle.storage
+      left.handle.generation
+      right.handle.storage
+      right.handle.generation)))
 
 ;: Compare two live variable owners of the same initialized length, visiting
 ;: every byte.
@@ -459,7 +473,11 @@
   [left : (& left SecretBytes)]
   [right : (& right SecretBytes)]) : SecretCompareResult
   (unsafe
-    (storage-equal left.storage left.generation right.storage right.generation)))
+    (storage-equal
+      left.handle.storage
+      left.handle.generation
+      right.handle.storage
+      right.handle.generation)))
 
 ;: All ones when the low bit of `bit` is set, otherwise zero.
 (define (mask-u64 [bit : u64]) : u64
@@ -564,7 +582,7 @@
     [offset : i64]
     [count : i64]) : SecretReadResult
     (unsafe
-      (read-pointer owner.storage owner.generation offset count))))
+      (read-pointer owner.handle.storage owner.handle.generation offset count))))
 
 ;: A write pointer to `count` bytes at `offset` of a live fixed owner.
 (unsafe
@@ -574,11 +592,11 @@
     [count : i64]) : SecretWriteResult
     (unsafe
       (write-pointer
-        owner.storage
-        owner.generation
+        owner.handle.storage
+        owner.handle.generation
         offset
         count
-        (live-length owner.storage owner.generation)))))
+        (live-length owner.handle.storage owner.handle.generation)))))
 
 ;: A read pointer to `count` initialized bytes at `offset` of a live variable
 ;: owner.
@@ -588,7 +606,7 @@
     [offset : i64]
     [count : i64]) : SecretReadResult
     (unsafe
-      (read-pointer owner.storage owner.generation offset count))))
+      (read-pointer owner.handle.storage owner.handle.generation offset count))))
 
 ;: A write pointer to `count` bytes at `offset` within the capacity of a live
 ;: variable owner. Publish the written bytes with `bytes-set-length!`.
@@ -599,11 +617,11 @@
     [count : i64]) : SecretWriteResult
     (unsafe
       (write-pointer
-        owner.storage
-        owner.generation
+        owner.handle.storage
+        owner.handle.generation
         offset
         count
-        (live-capacity owner.storage owner.generation)))))
+        (live-capacity owner.handle.storage owner.handle.generation)))))
 
 ;: Set the initialized length of a live variable owner after a sink write.
 ;: Shrinking zeroes the released bytes, so bytes past the length stay zero.
@@ -611,25 +629,25 @@
   (define (bytes-set-length! [owner : (&mut owner SecretBytes)] [length : i64]) : SecretStatus
     (match (unsafe
       (range-check
-        owner.storage
-        owner.generation
+        owner.handle.storage
+        owner.handle.generation
         0
         length
-        (live-capacity owner.storage owner.generation)))
+        (live-capacity owner.handle.storage owner.handle.generation)))
       [(SecretErr error) (SecretErr error)]
       [(SecretOk)
         (let
           [data : (MutPtr u8)
             (unsafe
-              (storage-data owner.storage))]
+              (storage-data owner.handle.storage))]
           [index : i64 length]
           (while (<
             index
             (unsafe
-              (live-length owner.storage owner.generation)))
+              (live-length owner.handle.storage owner.handle.generation)))
             (unsafe
               (ptr-write! (ptr-offset data index) (cast 0 : u8)))
             (set! index (+ index 1)))
           (unsafe
-            (storage-set-length! owner.storage length))
+            (storage-set-length! owner.handle.storage length))
           (SecretOk))])))

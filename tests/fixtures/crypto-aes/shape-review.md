@@ -77,3 +77,19 @@ When a compiler change alters these bodies, inspect the entire affected
 retained/inlined production closure before replacing any pin. Do not accept a
 missing helper by skipping its work, and do not bless generated hashes without
 reviewing branch/address provenance, round completeness and final wipes.
+
+
+## Generation-aware secret cleanup
+
+The secret owners now contain one two-word `SecretHandle` field so that every
+cleanup call receives both the storage pointer and its stamp. The renewed pins
+retain the full inventory above. Cipher, expansion, field arithmetic, round
+helpers and exported production block roots are unchanged at both levels and
+on both targets. Changed bodies are the public metadata checks, constructors,
+close wrappers and main. Their conditional-edge counts and call-target sets
+are unchanged; argument passing and stack slots reflect the nested handle.
+Constructor raw-key cleanup still follows expansion and all live rejection
+paths, and stale rejection still precedes cleanup acquisition. Owner cleanup
+now checks the stamp before poisoning and wiping, as separately checked by the
+secret lifecycle and shape cases. No secret byte becomes a branch condition
+or address in the changed production closure.

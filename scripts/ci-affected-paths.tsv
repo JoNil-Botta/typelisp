@@ -65,7 +65,7 @@ tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus,integr
 tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	The stdlib verifier directly executes the for-source macro cases.
 tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	IR observability consumes golden snapshots and their guarded source fixtures.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
-tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@corpus	Exact case file named by the secret-wipe gate.
+tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate,stage2-stdlib-modules-and-fixtures	@corpus	Secret-wipe shapes and both-host native generation cleanup controls consumed by the stdlib verifier.
 tests/codegen/crypto-aes.cases	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Exact case file named by the AES fixed-work gate.
 tests/fixtures/crypto-aes/README.md	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
 tests/fixtures/crypto-aes/shape-*	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	AES shape-pin family, including target/optimization-templated references in the case inventory.
@@ -650,3 +650,4 @@ tests/safety/shared_mut_borrow_replace_call_location_reject.tl	stage2-public-too
 tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace index-call diagnostic contracts.
 tests/cli/public-git.cases	stage2-public-tool-surface	@corpus	Canonical Git revision admission and staged checkout/lock/offline cache transcript.
 scripts/shared-view-baseline.tsv	shared-view-count-ratchet	@compiler	Direct limit input read by the shared-view count gate; this change lowers the limit.
+stdlib/tests/crypto_secret_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier,stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@stdlib	Shared inline/native generation cleanup and full-capacity wipe controls.

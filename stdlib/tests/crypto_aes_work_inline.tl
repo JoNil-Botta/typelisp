@@ -25,8 +25,8 @@
         (let
           [storage : (MutPtr secret.SecretStorage)
             (if state-bit
-              source.storage
-              key.storage)]
+              source.handle.storage
+              key.handle.storage)]
           [data : (MutPtr u8)
             (unsafe
               (secret.storage-data storage))]

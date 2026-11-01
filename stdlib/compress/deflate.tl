@@ -48,6 +48,9 @@
   (startup-bytes i64))
 
 ;: Conservative defaults: 64 MiB input, 256 MiB output, full history.
+;: Ratio 1024/startup 1024 deliberately reject legitimate streams near the
+;: roughly 1032:1 DEFLATE maximum with RatioLimit and byte offsets. Trusted or
+;: highly compressible data (including Git packs) needs an explicit higher ratio.
 (define (default-limits) : DeflateLimits
   (DeflateLimits 67108864 268435456 32768 2147483647 1024 1024))
 
@@ -976,6 +979,9 @@
     [cursor : DeflateCursor (DeflateCursor 0 0)]
     [budget-input : i64 -1]
     [budget-output : i64 0]
+    ;; Failed states expose only the saved error. Active workspace validation
+    ;; must not replace it, even when forged state caused the first failure.
+    (when (= state.phase 18) (return (deflate-output-stop state (& cursor))))
     (unless
       (deflate-state-valid? state)
       (deflate-fail! state (InvalidState))

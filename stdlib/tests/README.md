@@ -564,12 +564,19 @@ Inline stdlib coverage:
 small RFC-derived corpus covers every input split with output chunks 1–8,
 zero-capacity calls, exact member consumption, terminal repetition and equal
 work across chunking. Other cases cover all length/distance codes and field
-boundaries, legal degenerate trees, oversubscribed/incomplete literal and
-distance trees, a missing end-of-block code, malformed/truncated streams, the
+boundaries, legal one-bit literal/distance singletons and empty distance
+alphabets, rejected singleton/incomplete/oversubscribed code-length trees,
+rejected incomplete/oversubscribed literal and distance alphabets, a missing
+end-of-block code, malformed/truncated streams, the
 maximum stored block and distance, overlapping/cross-block history, each
-resource limit, empty-block chains, corrupted public state, allocation-free
+resource limit (including exact ratio2 and absolute dynamic-work boundaries),
+the deliberate default rejection and raised-limit success of a valid near-maximum
+ratio stream, an independently checked fixed-seed negative mutation corpus,
+empty-block chains, sticky errors from corrupted public state, allocation-free
 stepping, and cancellation/chunk lifetimes across arenas. Fixture provenance
-is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md).
+is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md);
+limit boundaries and checked mutations are derived in
+[`docs/deflate-fixtures.md`](../../docs/deflate-fixtures.md).
 The integration manifest runs this driver and the embedded-module example at
 opt0/1/2 on Linux and Windows.
 The `deflate-preset-history` test covers `decoder-prime!`:

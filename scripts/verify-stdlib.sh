@@ -206,6 +206,7 @@ compress/deflate.tl
 compress/zlib.tl
 concurrency_registry.tl
 core_macros.tl
+crypto_hmac_sha256.tl
 crypto_p256.tl
 crypto_rsa_core.tl
 crypto_rsa_verify.tl
@@ -317,6 +318,8 @@ stdlib/tests/x509_api.tl|42|-|-|-
 stdlib/tests/deflate_api.tl|42|-|-|-
 stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
+stdlib/tests/crypto_hmac_sha256_api.tl|42|-|-|-
+stdlib/tests/crypto_hmac_sha256_parity.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_api.tl|42|-|-|-
@@ -402,6 +405,10 @@ stdlib/tests/crypto_sha1_git_inline.tl|pass|-
 stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha256_inline.tl|pass|-
 stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
+stdlib/tests/crypto_hmac_sha256_storage_reject.tl|fail|opaque type
+stdlib/tests/crypto_hmac_sha256_unsafe_reject.tl|fail|requires unsafe context
+stdlib/tests/crypto_hmac_sha256_clone_reject.tl|fail|clone unsupported type
+stdlib/tests/crypto_hmac_sha256_secret_tag_reject.tl|fail|type mismatch
 stdlib/tests/net_tls_transcript_construct_reject.tl|fail|opaque type
 stdlib/tests/net_tls_transcript_project_reject.tl|fail|opaque type
 stdlib/tests/net_tls_transcript_escape_reject.tl|fail|region-tagged value cannot escape with-arena

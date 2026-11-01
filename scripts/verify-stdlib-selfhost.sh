@@ -68,6 +68,14 @@ reject_diag() {
             printf 'requires unsafe context' ;;
         stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl)
             printf 'requires unsafe context' ;;
+        stdlib/tests/crypto_hmac_sha256_storage_reject.tl)
+            printf 'opaque type' ;;
+        stdlib/tests/crypto_hmac_sha256_unsafe_reject.tl)
+            printf 'requires unsafe context' ;;
+        stdlib/tests/crypto_hmac_sha256_clone_reject.tl)
+            printf 'clone unsupported type' ;;
+        stdlib/tests/crypto_hmac_sha256_secret_tag_reject.tl)
+            printf 'type mismatch' ;;
         stdlib/tests/crypto_secret_unsafe_accessor_reject.tl)
             printf 'crypto_secret/fixed-read-pointer requires unsafe context' ;;
         stdlib/tests/crypto_secret_storage_read_reject.tl)

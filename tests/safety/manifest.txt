@@ -2339,7 +2339,7 @@ legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref
 legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
-# Refs #9503: a reference parameter that names an `:invalidate` brand carries
+# Refs #9503: a shared reference with a real `:invalidate` brand dependency carries
 # the arena region an `(in r T)` parameter has, so a binding shortened to a
 # body-local lifetime ends with the brand.
 invalidate_param_shortened_read_after_end_reject|check-fail|tests/safety/invalidate_param_shortened_read_after_end_reject.tl|tests/safety/invalidate_param_shortened_read_after_end_reject.tl:13:9|error[E0208]: typecheck: use of moved value `alias`
@@ -2376,9 +2376,30 @@ invalidate_param_shortened_field_projection_known_open|check-ok|tests/safety/inv
 invalidate_param_shortened_deref_known_open|check-ok|tests/safety/invalidate_param_shortened_deref_known_open.tl|-|-
 invalidate_param_shortened_constructor_known_open|check-ok|tests/safety/invalidate_param_shortened_constructor_known_open.tl|-|-
 # KNOWN OPEN, pre-existing and unsafe (accepted, reads destroyed storage):
-# tracked in #9503. Only reference parameters carry the region, so a nominal
+# tracked in #9503. Only shared reference parameters carry the region, so a nominal
 # or tuple parameter shortened as a whole drops the brand, as on main. These
 # rows must flip to check-fail when such parameters keep provenance.
 invalidate_param_shortened_nominal_known_open|check-ok|tests/safety/invalidate_param_shortened_nominal_known_open.tl|-|-
 invalidate_param_shortened_two_brands_known_open|check-ok|tests/safety/invalidate_param_shortened_two_brands_known_open.tl|-|-
 invalidate_param_shortened_tuple_known_open|check-ok|tests/safety/invalidate_param_shortened_tuple_known_open.tl|-|-
+
+# D-C58r2-9507 PARTIAL recovery: valid mutable moves and phantom-only reference
+# dependencies remain accepted. Existing variance preserves real stored brands.
+invalidate_param_mut_moves_ok|run-exit|tests/safety/invalidate_param_mut_moves_ok.tl|42|-
+invalidate_param_mut_moves_ok_windows|check-ok-windows|tests/safety/invalidate_param_mut_moves_ok.tl|-|-
+invalidate_param_phantom_ref_ok|check-ok|tests/safety/invalidate_param_phantom_ref_ok.tl|-|-
+invalidate_param_phantom_ref_ok_windows|check-ok-windows|tests/safety/invalidate_param_phantom_ref_ok.tl|-|-
+invalidate_param_shortened_no_end_ok|run-exit|tests/safety/invalidate_param_shortened_no_end_ok.tl|42|-
+invalidate_param_shortened_no_end_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_no_end_ok.tl|-|-
+invalidate_param_nested_storage_reject|check-fail|tests/safety/invalidate_param_nested_storage_reject.tl|-|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_nested_storage_reject_windows|check-fail-windows|tests/safety/invalidate_param_nested_storage_reject.tl|-|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_second_storage_brand_reject|check-fail|tests/safety/invalidate_param_second_storage_brand_reject.tl|-|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_second_storage_brand_reject_windows|check-fail-windows|tests/safety/invalidate_param_second_storage_brand_reject.tl|-|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_call_before_reject|check-fail|tests/safety/invalidate_param_shortened_call_before_reject.tl|-|error[E0210]: typecheck: call `use-view` argument 1
+invalidate_param_shortened_call_before_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_call_before_reject.tl|-|error[E0210]: typecheck: call `use-view` argument 1
+# KNOWN OPEN (#9503): mutable references retain main's path; shortening joins
+# can still erase provenance. These unsafe accepted bodies are never executed.
+invalidate_param_shortened_mut_known_open|check-ok|tests/safety/invalidate_param_shortened_mut_known_open.tl|-|-
+invalidate_param_shortened_mut_known_open_windows|check-ok-windows|tests/safety/invalidate_param_shortened_mut_known_open.tl|-|-
+invalidate_param_shortened_join_known_open|check-ok|tests/safety/invalidate_param_shortened_join_known_open.tl|-|-
+invalidate_param_shortened_join_known_open_windows|check-ok-windows|tests/safety/invalidate_param_shortened_join_known_open.tl|-|-

@@ -49455,14 +49455,15 @@
     out))
 
 ;; A brand that this parameter list invalidates (`(:invalidate r T)`) can end in
-;; the body, so storage reached through a reference parameter whose type names
-;; `r` is that arena's storage. Such a reference is bound with the region tag
+;; the body, so a shared reference parameter with a storage dependency on `r`
+;; must retain that dependency. Such a reference is bound with the region tag
 ;; `(in r T)` gives it: provenance stays on every value bound or captured from
 ;; it, including one shortened to a body-local lifetime, and the existing end
 ;; operator and store rules apply as they do to `(in r T)` (#9503, D-C47 I2).
-;; Projections and call results drop it, as for `(in r T)` (#9508). The owner
-;; (`param-ty`) and every parameter that is not a reference keep their type.
+;; Projections, call results and shortening joins can drop it (#9508/#9503).
+;; The owner, mutable references and non-reference parameters keep main's type.
 (define (tc-param-with-invalidated-brand-region
+  [ctx : TcContext]
   [params : (& params ast.AstParamList)]
   [param-ty : (& param-ty ast.AstType)]
   [ty : ast.AstType]) : ast.AstType
@@ -49471,7 +49472,7 @@
     [_ unit])
   (unless
     (match (& ty)
-      [(or (Ref _ _) (MutRef _ _)) true]
+      [(Ref _ _) true]
       [_ false])
     (return ty))
   (let
@@ -49485,7 +49486,9 @@
             (& pairs)
             index
             (ast.ast-lifetime-fallback))]
-        (when (tc-type-names-lifetime? (& ty) lifetime) (set! brand lifetime)))
+        (when
+          (tc-type-names-lifetime? ctx (& ty) lifetime)
+          (set! brand lifetime)))
       (+= index 2))
     (if (< brand 0)
       ty
@@ -49508,18 +49511,22 @@
         (+= index 1)))
     found))
 
-;; Whether `ty` names `lifetime` outside function types: as a reference, region
-;; or `:invalidate` lifetime, or as a lifetime argument of a nominal.
-(define (tc-type-names-lifetime? [ty : (& ty ast.AstType)] [lifetime : i64]) : bool
+;; Storage dependencies outside function types: references/regions name their
+;; storage directly; nominal arguments count only when existing variance says
+;; they are used. Bivariant (phantom-only) arguments carry no stored borrow.
+(define (tc-type-names-lifetime?
+  [ctx : TcContext]
+  [ty : (& ty ast.AstType)]
+  [lifetime : i64]) : bool
   (match ty
     [(or (Ref name inner) (MutRef name inner) (Region name inner)
          (Invalidate name inner))
       (or
         (= name lifetime)
-        (tc-type-names-lifetime? (& (ast.ty-node-get inner)) lifetime))]
+        (tc-type-names-lifetime? ctx (& (ast.ty-node-get inner)) lifetime))]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem))
-      (tc-type-names-lifetime? (& (ast.ty-node-get elem)) lifetime)]
+      (tc-type-names-lifetime? ctx (& (ast.ty-node-get elem)) lifetime)]
     [(Tuple elems)
       (let
         [index : i64 0]
@@ -49530,6 +49537,7 @@
           (set!
             found
             (tc-type-names-lifetime?
+              ctx
               (&
                 (ast.ty-node-get
                   (ast.ast-type-list-get
@@ -49539,7 +49547,28 @@
               lifetime))
           (+= index 1))
         found)]
-    [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
+    [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
+      (let
+        [index : i64 0]
+        [found : bool false]
+        (while (and
+          (not found)
+          (< index (ast.ast-lifetime-list-len (& (deref lifetimes)))))
+          (when
+            (=
+              lifetime
+              (ast.ast-lifetime-list-get
+                (& (deref lifetimes))
+                index
+                (ast.ast-lifetime-fallback)))
+            (set!
+              found
+              (match (tc-nominal-lifetime-coercion-variance-at ctx name index)
+                [(TcVarianceBivariant) false]
+                [_ true])))
+          (+= index 1))
+        found)]
+    [(VarArgs _ lifetimes)
       (tc-lifetime-list-contains-at? (& (deref lifetimes)) lifetime 0)]
     [_ false]))
 
@@ -49580,6 +49609,7 @@
                     (tc-resolve-type ctx (tc-global-shared-view ty)))]
                 (if invalidates?
                   (tc-param-with-invalidated-brand-region
+                    ctx
                     params
                     (& ty)
                     resolved)
@@ -49747,7 +49777,11 @@
               (tc-resolve-type ctx (tc-global-shared-view ty)))]
           [resolved : ast.AstType
             (if invalidates?
-              (tc-param-with-invalidated-brand-region params (& ty) resolved)
+              (tc-param-with-invalidated-brand-region
+                ctx
+                params
+                (& ty)
+                resolved)
               resolved)]
           [next : TcTypeEnvScopedCarrier
             (tc-type-env-scoped-carrier-bind-id

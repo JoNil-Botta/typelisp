@@ -2,4 +2,4 @@
 (import stdlib.crypto_secret as secret)
 
 (define (bad [schedule : (& schedule aes.Aes128Schedule)]) : secret.SecretStorage
-  (ptr-read schedule.expanded.storage))
+  (ptr-read schedule.expanded.handle.storage))

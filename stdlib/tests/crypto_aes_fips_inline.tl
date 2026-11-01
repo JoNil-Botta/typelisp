@@ -126,11 +126,11 @@
             "3925841d02dc09fbdc118597196a0b32")]
         [data : (MutPtr u8)
           (unsafe
-            (secret.storage-data state.storage))]
+            (secret.storage-data state.handle.storage))]
         [keys : (Ptr u8)
           (unsafe
             (ptr-cast
-              (secret.storage-data schedule.expanded.storage)
+              (secret.storage-data schedule.expanded.handle.storage)
               : (Ptr u8)))]
         [round : i64 1]
         (unsafe

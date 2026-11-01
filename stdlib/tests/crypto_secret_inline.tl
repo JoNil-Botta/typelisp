@@ -116,12 +116,13 @@
     (unsafe
       (secret.storage-header storage))))
 
-;: Whether every one of the first `count` data bytes of `storage` is zero.
+;: Whether every retained byte equals the test sentinel or zero.
 (cfg
   test
-  (define (test-data-zero?
+  (define (test-data-byte?
     [storage : (MutPtr secret.SecretStorage)]
-    [count : i64]) : bool
+    [count : i64]
+    [expected : u8]) : bool
     (let
       [data : (MutPtr u8)
         (unsafe
@@ -134,10 +135,18 @@
             (=
               (unsafe
                 (ptr-read (ptr-offset data index)))
-              (cast 0 : u8)))
+              expected))
           (set! zero false))
         (set! index (+ index 1)))
       zero)))
+
+;: Existing wipe checks use the shared exact-byte observer.
+(cfg
+  test
+  (define (test-data-zero?
+    [storage : (MutPtr secret.SecretStorage)]
+    [count : i64]) : bool
+    (test-data-byte? storage count (cast 0 : u8))))
 
 ;: Unwrap a fixed construction the test expects to succeed.
 (cfg
@@ -633,8 +642,8 @@
             "fixed length wipes")
           (test-fill-capacity! handle.storage)
           (secret.close-fixed (secret.SecretFixed handle))
-          (test.assert-false
-            (test-data-zero? handle.storage 24)
+          (test.assert-true
+            (test-data-byte? handle.storage 24 (cast 165 : u8))
             "closed same-stamp cleanup does not wipe again"))
         (let
           [owner : secret.SecretBytes (test-bytes (secret.bytes-new 19))]
@@ -657,8 +666,8 @@
           (test-fill-capacity! handle.storage)
           (secret.close-bytes-result
             (secret.SecretBytesOk (secret.SecretBytes handle)))
-          (test.assert-false
-            (test-data-zero? handle.storage 24)
+          (test.assert-true
+            (test-data-byte? handle.storage 24 (cast 165 : u8))
             "closed variable same-stamp cleanup does not wipe again"))
         (set! path (+ path 1))))))
 
@@ -743,28 +752,12 @@
           (test.assert-true
             (test-header-same? bytes.handle.storage bytes-before)
             "stale variable leaves all header fields")
-          (let
-            [index : i64 0]
-            (while (< index 24)
-              (test.assert-true
-                (=
-                  (unsafe
-                    (ptr-read
-                      (ptr-offset
-                        (secret.storage-data fixed.handle.storage)
-                        index)))
-                  (cast 165 : u8))
-                "stale fixed leaves all data words")
-              (test.assert-true
-                (=
-                  (unsafe
-                    (ptr-read
-                      (ptr-offset
-                        (secret.storage-data bytes.handle.storage)
-                        index)))
-                  (cast 165 : u8))
-                "stale variable leaves all data words")
-              (set! index (+ index 1))))
+          (test.assert-true
+            (test-data-byte? fixed.handle.storage 24 (cast 165 : u8))
+            "stale fixed leaves all data words")
+          (test.assert-true
+            (test-data-byte? bytes.handle.storage 24 (cast 165 : u8))
+            "stale variable leaves all data words")
           (secret.close-fixed fixed)
           (secret.close-bytes bytes))
         (set! path (+ path 1))))))

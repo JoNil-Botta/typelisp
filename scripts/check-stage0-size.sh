@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# check-stage0-size.sh - the stage0 size ratchet (#6260's < 10,000,000-byte
-# target, #8277).
+# check-stage0-size.sh - the stage0 size ratchet (15,000,000-byte hard limit
+# per #9440, superseding #6260's earlier target; ratchet from #8277).
 #
 # The converged bootstrap compiler is the stage0-equivalent binary: it comes
 # from the same compile and native-link route as the published stage0. On
@@ -13,7 +13,8 @@ set -eu
 # scripts/stage0-size-policy.tsv is an append-only ledger per host. A host's
 # LAST row is its ceiling. An ordinary `ceiling` row may only lower the ceiling,
 # a `raise` row is the one way to raise it and must name the change that
-# authorizes the raise, and no ceiling may be below the final target.
+# authorizes the raise, and no ceiling may be below its row's target. Historical
+# targets are retained; each host's last row must use the current target.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -21,7 +22,7 @@ cd "$ROOT"
 POLICY=${TYPELISP_STAGE0_SIZE_POLICY:-scripts/stage0-size-policy.tsv}
 SCHEMA='# stage0-size-policy-schema	1'
 HEADER='kind	host	ceiling_bytes	target_bytes	change_ref	evidence_url'
-TARGET=10000000
+TARGET=15000000
 
 usage() {
     cat >&2 <<'EOF'
@@ -69,8 +70,9 @@ check_policy() {
                 fail("invalid byte count")
                 next
             }
-            if ($4 + 0 != target + 0) fail("target must be " target)
-            if ($3 + 0 < target + 0) fail("ceiling " $3 " is below the target " target)
+            if ($4 + 0 > target + 0) fail("target exceeds the current target " target)
+            if (($2 in host_target) && $4 + 0 < host_target[$2]) fail("target may not decrease")
+            if ($3 + 0 < $4 + 0) fail("ceiling " $3 " is below the target " $4)
             if ($5 !~ /^#[0-9]+$/) fail("change_ref must name an issue or PR")
             if ($6 !~ /^https:\/\/github.com\/JoNil-Botta\/typelisp\/(actions\/runs|issues|pull)\//) {
                 fail("evidence_url must link measured project evidence")
@@ -84,6 +86,7 @@ check_policy() {
                 fail($2 " raise row " $3 " does not raise the previous " ceiling[$2])
             }
             ceiling[$2] = $3 + 0
+            host_target[$2] = $4 + 0
         }
         END {
             if (FNR < 3) {
@@ -93,6 +96,12 @@ check_policy() {
             if (!("linux" in ceiling) || !("windows" in ceiling)) {
                 print "[stage0-size] policy must cover linux and windows" > "/dev/stderr"
                 bad = 1
+            }
+            for (host in host_target) {
+                if (host_target[host] != target + 0) {
+                    print "[stage0-size] final " host " target must be " target > "/dev/stderr"
+                    bad = 1
+                }
             }
             exit bad ? 1 : 0
         }
@@ -129,18 +138,26 @@ check_binary() {
         echo "[stage0-size] binary is missing: $binary" >&2
         return 1
     }
-    work=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-stage0-size.XXXXXX")
+    scratch_root=${TMPDIR:-"$ROOT/target/exp/stage0-size"}
+    mkdir -p "$scratch_root"
+    work=$(mktemp -d "$scratch_root/typelisp-stage0-size.XXXXXX")
+    case "$work" in
+        "$scratch_root"/typelisp-stage0-size.?*) ;;
+        *) echo "[stage0-size] invalid scratch path: $work" >&2; return 1 ;;
+    esac
     measured="$work/stage0"
     cp "$binary" "$measured"
     if [ "$host" = linux ]; then
         if ! strip "$measured"; then
-            rm -rf "$work"
+            rm -- "${measured:?}"
+            rmdir -- "${work:?}"
             echo "[stage0-size] could not strip a copy of $binary" >&2
             return 1
         fi
     fi
     bytes=$(wc -c < "$measured" | tr -d ' ')
-    rm -rf "$work"
+    rm -- "${measured:?}"
+    rmdir -- "${work:?}"
     ceiling=$(host_ceiling "$host")
     delta=$((bytes - ceiling))
     over_target=$((bytes - TARGET))
@@ -183,19 +200,45 @@ expect_policy_failure() {
 }
 
 self_test() {
-    work="$ROOT/target/stage0-size-self-test"
-    rm -rf "$work"
-    mkdir -p "$work"
+    mkdir -p "$ROOT/target/exp/stage0-size-self-test"
+    work=$(mktemp -d "$ROOT/target/exp/stage0-size-self-test/run.XXXXXX")
+    case "$work" in
+        "$ROOT"/target/exp/stage0-size-self-test/run.?*) ;;
+        *) echo "[stage0-size] invalid self-test scratch path: $work" >&2; return 1 ;;
+    esac
+    TMPDIR=$work
+    export TMPDIR
     evidence='https://github.com/JoNil-Botta/typelisp/issues/8277'
-    linux_row="ceiling	linux	11000000	10000000	#8277	$evidence"
-    windows_row="ceiling	windows	12000000	10000000	#8277	$evidence"
+    linux_row="ceiling	linux	16000000	15000000	#8277	$evidence"
+    windows_row="ceiling	windows	18000000	15000000	#8277	$evidence"
 
     check_policy
 
     write_policy_fixture "$work/good.tsv" "$linux_row" "$windows_row" \
-        "ceiling	windows	11500000	10000000	#8276	$evidence" \
-        "raise	windows	11600000	10000000	#8301	$evidence"
+        "ceiling	windows	17500000	15000000	#8276	$evidence" \
+        "raise	windows	17600000	15000000	#8301	$evidence"
     TYPELISP_STAGE0_SIZE_POLICY="$work/good.tsv" "$0" --check-policy
+
+    # Historical rows keep their own target; appended raises set the new one.
+    old_linux="ceiling	linux	10000000	10000000	#8400	$evidence"
+    old_windows="ceiling	windows	11000000	10000000	#8449	$evidence"
+    write_policy_fixture "$work/history.tsv" "$old_linux" "$old_windows" \
+        "raise	linux	15000000	15000000	#9440	$evidence" \
+        "raise	windows	15000000	15000000	#9440	$evidence"
+    TYPELISP_STAGE0_SIZE_POLICY="$work/history.tsv" "$0" --check-policy
+    write_policy_fixture "$work/stale.tsv" "$old_linux" "$windows_row"
+    expect_policy_failure stale "$work/stale.tsv"
+    grep -F 'final linux target must be 15000000' "$work/stale.out" >/dev/null
+    write_policy_fixture "$work/decreased-target.tsv" "$linux_row" "$windows_row" \
+        "ceiling	windows	17000000	10000000	#9440	$evidence" \
+        "raise	windows	17600000	15000000	#9440	$evidence"
+    expect_policy_failure decreased-target "$work/decreased-target.tsv"
+    grep -F 'target may not decrease' "$work/decreased-target.out" >/dev/null
+    write_policy_fixture "$work/future-target.tsv" "$linux_row" \
+        "ceiling	windows	18000000	15000001	#9440	$evidence" \
+        "ceiling	windows	17600000	15000000	#9440	$evidence"
+    expect_policy_failure future-target "$work/future-target.tsv"
+    grep -F 'target exceeds the current target' "$work/future-target.out" >/dev/null
 
     if TYPELISP_STAGE0_SIZE_POLICY="$work/absent.tsv" "$0" --check-policy \
             > "$work/absent.out" 2>&1; then
@@ -203,50 +246,70 @@ self_test() {
         return 1
     fi
     write_policy_fixture "$work/fields.tsv" "$linux_row" \
-        "ceiling	windows	12000000	10000000	#8277"
+        "ceiling	windows	18000000	15000000	#8277"
     expect_policy_failure fields "$work/fields.tsv"
     write_policy_fixture "$work/number.tsv" "$linux_row" \
-        "ceiling	windows	12e6	10000000	#8277	$evidence"
+        "ceiling	windows	18e6	15000000	#8277	$evidence"
     expect_policy_failure number "$work/number.tsv"
     write_policy_fixture "$work/below.tsv" "$linux_row" \
-        "ceiling	windows	9999999	10000000	#8277	$evidence"
+        "ceiling	windows	14999999	15000000	#8277	$evidence"
     expect_policy_failure below "$work/below.tsv"
     grep -F 'below the target' "$work/below.out" >/dev/null
     write_policy_fixture "$work/raised.tsv" "$linux_row" "$windows_row" \
-        "ceiling	windows	12000001	10000000	#8277	$evidence"
+        "ceiling	windows	18000001	15000000	#8277	$evidence"
     expect_policy_failure raised "$work/raised.tsv"
     grep -F 'only a raise row' "$work/raised.out" >/dev/null
     write_policy_fixture "$work/unnamed.tsv" "$linux_row" "$windows_row" \
-        "raise	windows	12500000	10000000	unnamed	$evidence"
+        "raise	windows	18500000	15000000	unnamed	$evidence"
     expect_policy_failure unnamed "$work/unnamed.tsv"
+    write_policy_fixture "$work/nonraise.tsv" "$linux_row" "$windows_row" \
+        "raise	windows	18000000	15000000	#9440	$evidence"
+    expect_policy_failure nonraise "$work/nonraise.tsv"
+    write_policy_fixture "$work/first-raise.tsv" \
+        "raise	linux	16000000	15000000	#9440	$evidence" "$windows_row"
+    expect_policy_failure first-raise "$work/first-raise.tsv"
     write_policy_fixture "$work/host.tsv" "$linux_row"
     expect_policy_failure host "$work/host.tsv"
 
     # The comparison, on windows so the fixture bytes are measured unstripped.
-    head -c 11500000 /dev/zero > "$work/under.exe"
+    head -c 17500000 /dev/zero > "$work/under.exe"
     TYPELISP_STAGE0_SIZE_POLICY="$work/good.tsv" "$0" "$work/under.exe" windows \
         > "$work/under.out"
-    grep -F 'bytes=11500000 ceiling=11600000' "$work/under.out" >/dev/null
-    head -c 11600001 /dev/zero > "$work/over.exe"
+    grep -F 'bytes=17500000 ceiling=17600000' "$work/under.out" >/dev/null
+    head -c 17600001 /dev/zero > "$work/over.exe"
     if TYPELISP_STAGE0_SIZE_POLICY="$work/good.tsv" "$0" "$work/over.exe" windows \
             > "$work/over.out" 2>&1; then
         echo "[stage0-size] over-ceiling binary unexpectedly passed" >&2
         return 1
     fi
-    grep -F 'stage0 is 11600001 bytes, 1 over its ceiling 11600000 (target 10000000)' \
+    grep -F 'stage0 is 17600001 bytes, 1 over its ceiling 17600000 (target 15000000)' \
         "$work/over.out" >/dev/null
     grep -F 'Reproduce: scripts/check-stage0-size.sh' "$work/over.out" >/dev/null
-    head -c 10200000 /dev/zero > "$work/shrunk.exe"
+    head -c 15200000 /dev/zero > "$work/shrunk.exe"
     TYPELISP_STAGE0_SIZE_POLICY="$work/good.tsv" "$0" "$work/shrunk.exe" windows \
         > "$work/shrunk.out"
-    grep -F 'ceiling may drop to 10302000' "$work/shrunk.out" >/dev/null
+    grep -F 'ceiling may drop to 15352000' "$work/shrunk.out" >/dev/null
+    head -c 14000000 /dev/zero > "$work/small.exe"
+    TYPELISP_STAGE0_SIZE_POLICY="$work/good.tsv" "$0" "$work/small.exe" windows \
+        > "$work/small.out"
+    grep -F 'ceiling may drop to 15000000' "$work/small.out" >/dev/null
+    head -c 15000000 /dev/zero > "$work/limit.exe"
+    TYPELISP_STAGE0_SIZE_POLICY="$work/history.tsv" "$0" "$work/limit.exe" windows \
+        > "$work/limit.out"
+    grep -F 'bytes=15000000 ceiling=15000000 target=15000000' "$work/limit.out" >/dev/null
+    head -c 15000001 /dev/zero > "$work/limit-over.exe"
+    if TYPELISP_STAGE0_SIZE_POLICY="$work/history.tsv" "$0" "$work/limit-over.exe" windows \
+            > "$work/limit-over.out" 2>&1; then
+        echo "[stage0-size] binary above the current limit unexpectedly passed" >&2
+        return 1
+    fi
     if TYPELISP_STAGE0_SIZE_POLICY="$work/good.tsv" "$0" "$work/missing.exe" windows \
             > "$work/missing.out" 2>&1; then
         echo "[stage0-size] missing binary unexpectedly passed" >&2
         return 1
     fi
 
-    rm -rf "$work"
+    rm -r -- "${work:?}"
     echo "stage0 size ratchet self-tests passed"
 }
 

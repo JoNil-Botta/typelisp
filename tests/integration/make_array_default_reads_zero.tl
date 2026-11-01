@@ -105,7 +105,7 @@
     [i : i64 0]
     [bad : i64 0]
     (while (< i n)
-      (match (array-ref items i)
+      (match (& (array-ref items i))
         [(Label text)
           (if (= (string-length text) 0)
             unit
@@ -119,7 +119,7 @@
     [i : i64 0]
     [bad : i64 0]
     (while (< i n)
-      (match (array-ref items i)
+      (match (& (array-ref items i))
         [(Has value)
           (if (= (deref value) 0)
             unit
@@ -147,7 +147,7 @@
     [i : i64 0]
     [bad : i64 0]
     (while (< i n)
-      (match (array-ref items i)
+      (match (& (array-ref items i))
         [(Wrap (Label text))
           (if (= (string-length text) 0)
             unit

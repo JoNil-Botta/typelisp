@@ -370,6 +370,7 @@ ci_verify_load_handoffs() {
 gate_bootstrap_fixpoint() {
     TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$CI_VERIFY_STAGE1_PATH_FILE \
         TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$CI_VERIFY_STAGE2_PATH_FILE \
+        TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
         scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
     # The cross-mode differential also runs the previous-stage compiler.
     ci_verify_load_handoffs bootstrap-fixpoint || return 1
@@ -390,6 +391,11 @@ gate_bootstrap_fixpoint() {
                 "safety, integration, and examples run-assert tiers depend on this probe"
         fi
         echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
+    fi
+    if [ -n "$CI_COMPILER_ENVELOPE_DIR" ]; then
+        ci_timing_run bootstrap-converged artifact-snapshot \
+            scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" \
+            "$HOST_OS" bootstrap-converged "$STAGE2_BIN" "$SEED_TYPELISP_BIN" "$STAGE1_BIN" || return $?
     fi
 }
 
@@ -418,7 +424,8 @@ stage2_safety_corpus_supported() {
         sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true
         return 1
     fi
-    if ! ld "$obj" -o "$bin" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
+    entry=$(linux_entry_symbol_for_asm "$asm") || exit $?
+    if ! ld "$obj" -o "$bin" -static -e "$entry" \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
         echo "[ci-verify] stage2 safety probe link failed"
         sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true
@@ -492,8 +499,14 @@ stage2_can_compile_native_windows() {
 # standalone reference compile there.
 gate_build_invariance() {
     TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE=$CI_VERIFY_OPT2_REFERENCE_PATH_FILE \
+        TYPELISP_CI_REFERENCE_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
         scripts/check-build-invariance.sh || return $?
-    ci_verify_load_handoffs stage2-opt1-opt2-build-invariance
+    ci_verify_load_handoffs stage2-opt1-opt2-build-invariance || return $?
+    if [ -n "$CI_COMPILER_ENVELOPE_DIR" ]; then
+        ci_timing_run build-invariance-opt1-reference artifact-snapshot \
+            scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" \
+            "$HOST_OS" build-invariance-opt1-reference "$OPT2_REFERENCE_ASM" "$TYPELISP_BIN"
+    fi
 }
 
 gate_opt2_cli_regression() {
@@ -536,11 +549,22 @@ gate_optimization_opt2_correctness() {
         --cases "$_ci_cases"
 }
 
-# check-instruction-counts.sh reports and skips without valgrind; required CI
-# must not, so ci-host-tools.tsv makes valgrind a host tool of both
-# instruction-count gates, required before any gate starts.
+# check-instruction-counts.sh reports and skips without valgrind outside GitHub
+# Actions; required CI must not, so ci-host-tools.tsv makes valgrind a host tool
+# of the instruction-count gates, required before any gate starts, and both
+# scripts fail in Actions without it. This gate and the self_compile gate both
+# keep their historical paths under target/instruction-count-check (measured
+# paths reach the counts, including a C benchmark's input path), so they share
+# the `instruction-count` lock.
 gate_instruction_counts() {
     TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh
+}
+
+# self_compile has no checked row: this gate records the measurement and its
+# identity, and in CI scripts/self-compile.sh check gates the PR's own cost
+# against main's reference for the tested base after ci-verify (perf/README.md).
+gate_self_compile_measurement() {
+    scripts/self-compile.sh measure --compiler "$STAGE2_BIN"
 }
 
 gate_heavy_instruction_counts() {
@@ -551,6 +575,50 @@ gate_heavy_instruction_counts() {
         --benchmarks-only \
         --runs 1 \
         --output target/instruction-count-heavy
+}
+
+# Hosts without native AVX-512 already ran every AVX-512 program of the SPMD,
+# gang-width, package-call and cross-mode gates under the pinned Intel SDE. A
+# native AVX-512 host repeats those four suites with SDE forced, after their
+# ordinary gates (its needs) consumed the native observations it overwrites.
+# The forced environment reaches only these commands. As in those harnesses,
+# CI=true requires every route and local runs report an unavailable one.
+gate_sde_fallback() {
+    _ci_sde_required=0
+    case "${CI:-false}" in true | 1) _ci_sde_required=1 ;; esac
+    _ci_sde_isas=$(sh scripts/detect-simd-isa.sh) || {
+        ci_verify_error "SIMD ISA detection failed, so the SDE fallback route is unknown"
+        return 1
+    }
+    _ci_sde_isas=$(printf '%s\n' "$_ci_sde_isas" | tr -d '\r' | tr '\n' ' ')
+    case " $_ci_sde_isas" in
+        *' avx512 '*)
+            if [ -z "${TYPELISP_SDE_BIN:-}" ] && [ "$_ci_sde_required" = 0 ]; then
+                echo "[sde-fallback] unavailable locally: native AVX-512 host without TYPELISP_SDE_BIN (scripts/fetch-sde.sh); CI=true runs the forced-SDE suites"
+                return 0
+            fi
+            env TYPELISP_AVX512_EXECUTION=sde TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" \
+                scripts/run-memory-bounded.sh --limit-mib 8192 \
+                --report target/sde-fallback.memory -- bash -e -c '
+                    scripts/verify-spmd-simd.sh
+                    scripts/verify-codegen-cases.sh tests/spmd/gang-width.cases
+                    scripts/verify-spmd-package-calls.sh
+                    scripts/verify-cross-mode-differential.sh
+                '
+            return $?
+            ;;
+    esac
+    # Not applicable only when the ordinary gates' route for AVX-512 is SDE.
+    if (. "$ROOT/scripts/lib-simd-execution.sh" && simd_execution_init &&
+        simd_execution_mode avx512 && [ "$SIMDEX_MODE" = sde ]); then
+        echo "[sde-fallback] not applicable: no native AVX-512 (native ISAs: ${_ci_sde_isas:-none}); every ordinary AVX-512 execution used Intel SDE 10.13.1"
+        return 0
+    fi
+    if [ "$_ci_sde_required" = 1 ]; then
+        ci_verify_error "no native AVX-512 and no Intel SDE route: the ordinary AVX-512 executions did not use SDE"
+        return 1
+    fi
+    echo "[sde-fallback] unavailable locally: neither native AVX-512 nor TYPELISP_SDE_BIN; the ordinary gates reported their AVX-512 executions skipped"
 }
 
 # Arguments and listing are read-only and must be handled before any runtime
@@ -678,6 +746,27 @@ case ",$CI_VERIFY_PLAN_IDS" in
         ;;
 esac
 
+# The plan (and, from the envelope, a CI lane's receipt) names exactly these gates.
+mkdir -p "$ROOT/target"
+CI_VERIFY_PLAN_FILE="$ROOT/target/ci-verify-plan.tsv"
+CI_VERIFY_RESULTS_FILE="$ROOT/target/ci-verify-results.tsv"
+printf '%s\n' "$CI_VERIFY_PLAN" > "$CI_VERIFY_PLAN_FILE"
+rm -f "$CI_VERIFY_RESULTS_FILE"
+
+CI_COMPILER_ENVELOPE_DIR=
+case "${TYPELISP_CI_COMPILER_ENVELOPES:-0}" in
+    0) ;;
+    1 | local)
+        CI_COMPILER_ENVELOPE_DIR=${TYPELISP_CI_COMPILER_ENVELOPE_DIR:-$ROOT/target/ci-stage-envelope}
+        envelope_init=init
+        if [ "$TYPELISP_CI_COMPILER_ENVELOPES" = local ]; then envelope_init=init-local; fi
+        ci_timing_run compiler-envelope artifact-init \
+            scripts/ci-compiler-artifact.sh "$envelope_init" "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" "$HOST_OS" \
+            "$CI_VERIFY_PLAN_FILE" "$CI_VERIFY_GATES"
+        ;;
+    *) ci_verify_error "invalid compiler envelope mode"; exit 2 ;;
+esac
+
 # Produced compilers and artifact paths are set only by the gate that produces
 # them. Until that gate passes they name a path that cannot exist, so a missing
 # need fails its consumer instead of falling back to some other compiler. A gate
@@ -686,7 +775,6 @@ esac
 CI_VERIFY_UNPRODUCED="$ROOT/target/ci-verify-unproduced"
 rm -rf "$CI_VERIFY_UNPRODUCED"
 CI_VERIFY_NO_COMPILER="$CI_VERIFY_UNPRODUCED/gate-names-no-compiler"
-mkdir -p "$ROOT/target"
 rm -f "$CI_VERIFY_STAGE1_PATH_FILE" "$CI_VERIFY_STAGE2_PATH_FILE" \
     "$CI_VERIFY_OPT2_REFERENCE_PATH_FILE" "$CI_VERIFY_PROFILE_PATH_FILE"
 
@@ -753,9 +841,7 @@ echo "[ci-verify] host=$HOST_OS seed=${SEED_TYPELISP_BIN:-<unused by this select
 # writes its output and timing rows to its own files; this shell prints each
 # gate's output whole when it finishes, and merges the timing rows in table
 # order.
-CI_VERIFY_PLAN_FILE="$ROOT/target/ci-verify-plan.tsv"
 CI_VERIFY_POOL="$ROOT/target/ci-verify-pool"
-printf '%s\n' "$CI_VERIFY_PLAN" > "$CI_VERIFY_PLAN_FILE"
 CI_VERIFY_QUEUE="$ROOT/target/ci-verify-queue.txt"
 CI_VERIFY_BUDGET_MIB=0
 : > "$CI_VERIFY_QUEUE"
@@ -857,6 +943,24 @@ if ci_timing_enabled; then
     done < "$CI_VERIFY_PLAN_FILE"
 fi
 
+# Every planned gate's outcome, in table order: its exit status, or
+# unfinished/not-started. A CI lane seals it into its envelope receipt.
+{
+    printf 'id\tstatus\telapsed_s\n'
+    while IFS=$TAB read -r result_id result_rest; do
+        result_status=not-started
+        result_elapsed=-
+        if [ -f "$CI_VERIFY_POOL/results/$result_id" ]; then
+            read -r result_status < "$CI_VERIFY_POOL/results/$result_id"
+            [ ! -f "$CI_VERIFY_POOL/elapsed/$result_id" ] ||
+                read -r result_elapsed < "$CI_VERIFY_POOL/elapsed/$result_id"
+        elif [ -d "$CI_VERIFY_POOL/claims/$result_id" ]; then
+            result_status=unfinished
+        fi
+        printf '%s\t%s\t%s\n' "$result_id" "$result_status" "$result_elapsed"
+    done < "$CI_VERIFY_PLAN_FILE"
+} > "$CI_VERIFY_RESULTS_FILE"
+
 if [ "$ci_verify_status" -ne 0 ]; then
     echo >&2
     ci_verify_error "CI verification failed; no further gate started after the first failure:"
@@ -878,7 +982,14 @@ fi
 
 # A selection that does not close over the whole inventory proves only its own
 # gates: it must not look like a verification to timing or log consumers.
+# A CI lane's aggregator merges these partial rows into the one
+# complete-verification row once every lane's gates are proven.
 if [ "$CI_VERIFY_COMPLETE" != 1 ]; then
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        TYPELISP_CI_TIMING_GATE='CI verification'
+        ci_timing_record_elapsed all partial-verification "$((CI_TIMING_NOW_MS - CI_VERIFY_STARTED_MS))" 0
+    fi
     echo
     echo "CI verification partial: $CI_VERIFY_SELECTED_COUNT of $CI_VERIFY_HOST_COUNT $HOST_OS gates passed; this is not a complete verification"
     exit 0

@@ -25,6 +25,7 @@
 ;; insensitively. Without a BOM every byte must be ASCII, because decoding with
 ;; a host ANSI code page would make results host-dependent; after a BOM every
 ;; token must be strict UTF-8.
+(import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.byte_reader)
@@ -236,7 +237,7 @@
         (unless
           (or done failed)
           (set! previous byte)
-          (set! pos (+ pos 1))
+          (+= pos 1)
           (when
             (> (- pos token-start) limits.max-token-bytes)
             (set! failed true)
@@ -282,12 +283,10 @@
   (let
     [out : bytes.ByteBufBuilder
       (bytes.byte-buf-builder-with-capacity (- to from))]
-    [index : i64 from]
-    (while (< index to)
+    (for [index (iterator.range from to)]
       (bytes.byte-buf-builder-push
         (&mut out)
-        (cast (ascii-upper (cast (string.string-ref text index) : i64)) : u8))
-      (set! index (+ index 1)))
+        (cast (ascii-upper (cast (string.string-ref text index) : i64)) : u8)))
     (bytes.byte-buf-builder-to-string (& out))))
 
 (define (admitted-directives) : String
@@ -514,7 +513,7 @@
     [failed : bool false]
     (while (and (not failed) (< pos size))
       (if (ws? (byte-at data (+ base pos)))
-        (set! pos (+ pos 1))
+        (+= pos 1)
         (match (scan-token section data base size pos bom limits)
           [(ScanFailed error)
             (set! failure error)

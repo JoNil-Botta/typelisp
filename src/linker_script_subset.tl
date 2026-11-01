@@ -516,7 +516,7 @@
       (when
         (= (cast (string.string-ref text index) : i64) byte)
         (set! found true))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (starts-with? [text : (& t str)] [prefix : (& p str)]) : bool
@@ -587,7 +587,7 @@
       [(Open) true]
       [_ false]))
     (begin
-      (set! parser.index (+ parser.index 1))
+      (+= parser.index 1)
       (Ok))
     (Err
       (script-error
@@ -614,7 +614,7 @@
     (while (and (not closed) (not failed) (< parser.index (token-count parser)))
       (let
         [token : Token (token-copy-at parser parser.index)]
-        (set! parser.index (+ parser.index 1))
+        (+= parser.index 1)
         (match token.kind
           [(Close)
             (if (and (= listed 0) separated)
@@ -664,7 +664,7 @@
                     as-needed
                     token.line
                     token.column))
-                (set! listed (+ listed 1))
+                (+= listed 1)
                 (set! separated false)))]
           [(Word)
             (cond
@@ -699,7 +699,7 @@
                             (set! failed true)
                             (set! failure error)]
                           [(Ok)
-                            (set! listed (+ listed 1))
+                            (+= listed 1)
                             (set! separated false)])])])]
               [(starts-with? token.text "-l")
                 (if (= (string.string-length token.text) 2)
@@ -726,7 +726,7 @@
                         as-needed
                         token.line
                         token.column))
-                    (set! listed (+ listed 1))
+                    (+= listed 1)
                     (set! separated false)))]
               [(starts-with? token.text "-")
                 (set! failed true)
@@ -751,7 +751,7 @@
                     as-needed
                     token.line
                     token.column))
-                (set! listed (+ listed 1))
+                (+= listed 1)
                 (set! separated false)])]
           [(Open)
             (set! failed true)
@@ -800,7 +800,7 @@
       [token : Token (token-copy-at parser parser.index)]
       (match token.kind
         [(Word)
-          (set! parser.index (+ parser.index 1))
+          (+= parser.index 1)
           (Ok (string.copy token.text))]
         [(Quoted)
           (if (= (string.string-length token.text) 0)
@@ -812,7 +812,7 @@
                 token.column
                 "empty quoted name"))
             (begin
-              (set! parser.index (+ parser.index 1))
+              (+= parser.index 1)
               (Ok (string.copy token.text))))]
         [_
           (Err
@@ -836,7 +836,7 @@
       [(Close) (not comma?)]
       [_ false]))
     (begin
-      (set! parser.index (+ parser.index 1))
+      (+= parser.index 1)
       true)
     false))
 
@@ -888,7 +888,7 @@
           (set! failure error)]
         [(Ok name)
           (set! (array-ref names count) name)
-          (set! count (+ count 1))
+          (+= count 1)
           (cond
             [(accept? parser false) (set! done true)]
             [(and (< count 3) (accept? parser true)) unit]
@@ -991,7 +991,7 @@
     (while (and (not failed) (< parser.index (token-count (& parser))))
       (let
         [token : Token (token-copy-at (& parser) parser.index)]
-        (set! parser.index (+ parser.index 1))
+        (+= parser.index 1)
         (let
           [result : ResultCommand
             (match token.kind

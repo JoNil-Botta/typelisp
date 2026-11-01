@@ -7,6 +7,7 @@
 (import stdlib.io)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
+(import compiler_symbols as csym)
 (import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
@@ -169,18 +170,18 @@
   (secondary-direct bool))
 
 (define (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-  [state : (& state load.CompilerLoadSessionState)]
+  [state : (&mut state load.CompilerLoadSessionState)]
   [root-id : i64]
   [secondary-root-id : i64]) : unit
+  ;; A top-level query may follow a completed batch entry whose inactive
+  ;; observer frame belonged to the reclaimed entry arena. Clear it before
+  ;; preserving the ordinary push/pop semantics used by the demand walker.
+  (if (load.compiler-load-session-state-lazy-qualified-observer-active? state)
+    unit
+    (load.compiler-load-session-state-lazy-qualified-observer-reset! state))
   (let
-    [observer : (& state load.CompilerLoadLazyQualifiedObserverState)
-      (load.compiler-load-session-state-lazy-qualified-observer state)]
-    ;; A top-level query may follow a completed batch entry whose inactive
-    ;; observer frame belonged to the reclaimed entry arena. Clear it before
-    ;; preserving the ordinary push/pop semantics used by the demand walker.
-    (if (load.compiler-load-session-state-lazy-qualified-observer-active? state)
-      unit
-      (load.compiler-load-session-state-lazy-qualified-observer-reset! state))
+    [observer : (&mut state load.CompilerLoadLazyQualifiedObserverState)
+      (&mut state.lazy-qualified-observer)]
     (set!
       (array-ref observer.stack 0)
       (compiler-load-lazy-qualified-observer-stack-push
@@ -213,18 +214,26 @@
     (load.compiler-load-lazy-qualified-observer-flag-set! observer 3 false)))
 
 (define (compiler-load-session-state-lazy-qualified-observer-end-pair!
-  [state : (& state load.CompilerLoadSessionState)]) : CompilerLoadLazyQualifiedObserverResult
+  [state : (&mut state load.CompilerLoadSessionState)]) : CompilerLoadLazyQualifiedObserverResult
   (let
-    [observer : (& state load.CompilerLoadLazyQualifiedObserverState)
-      (load.compiler-load-session-state-lazy-qualified-observer state)]
     [out : CompilerLoadLazyQualifiedObserverResult
       (CompilerLoadLazyQualifiedObserverResult
-        (load.compiler-load-lazy-qualified-observer-members observer 0)
-        (load.compiler-load-lazy-qualified-observer-members observer 1)
-        (load.compiler-load-lazy-qualified-observer-flag observer 2)
-        (load.compiler-load-lazy-qualified-observer-flag observer 3))]
+        (load.compiler-load-lazy-qualified-observer-members
+          (& state.lazy-qualified-observer)
+          0)
+        (load.compiler-load-lazy-qualified-observer-members
+          (& state.lazy-qualified-observer)
+          1)
+        (load.compiler-load-lazy-qualified-observer-flag
+          (& state.lazy-qualified-observer)
+          2)
+        (load.compiler-load-lazy-qualified-observer-flag
+          (& state.lazy-qualified-observer)
+          3))]
     [stack : load.CompilerLoadLazyQualifiedObserverStack
-      (load.compiler-load-global-array-element-shared-view observer.stack 0)]
+      (load.compiler-load-global-array-element-shared-view
+        state.lazy-qualified-observer.stack
+        0)]
     [len : i64 (compiler-load-lazy-qualified-observer-stack-count stack)]
     (if (= len 0)
       ;; Preserve the historical empty-pop behavior: return the current
@@ -233,6 +242,8 @@
       (let
         [frame : load.CompilerLoadLazyQualifiedObserverFrame
           (clone (array-ref stack.slots (- len 1)))]
+        [observer : (&mut state load.CompilerLoadLazyQualifiedObserverState)
+          (&mut state.lazy-qualified-observer)]
         (set!
           (array-ref observer.stack 0)
           (load.CompilerLoadLazyQualifiedObserverStack stack.slots (- len 1)))
@@ -470,7 +481,7 @@
               [_ false])
             (string.eq
               bytes
-              (ctfe.ctfe-embedded-stdlib-binary-data-bytes (& want-source))))]
+              (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2 (& want-source))))]
         [_ false])]
     [_ false]))
 
@@ -811,6 +822,8 @@
 (define (compiler-load-surface-summary-shape-ok?
   [summary : load.CompilerLoadSurfaceSummary]) : bool
   (let
+    ;; Read the whole summary before its lists move out of it.
+    [eager? : bool (compiler-load-surface-summary-requires-eager? summary)]
     [imports : load.CompilerLoadSurfaceImportList summary.imports]
     [decls : load.CompilerLoadSurfaceDeclList summary.decls]
     (and
@@ -887,7 +900,7 @@
       summary.has-export-metadata
       summary.has-generated-decls
       summary.has-decl-emitting-macro
-      (compiler-load-surface-summary-requires-eager? summary))))
+      eager?)))
 
 (define (compiler-load-surface-mark-generated-value! [program : ast.AstProgram]) : bool
   (match program
@@ -2645,6 +2658,8 @@
       "src/main.tl"
       "main"
       (& (Unavailable))
+      (& (csym.compiler-symbols-empty))
+      cbi.compiler-builtin-id-fix-empty
       decl)
       [(CompilerLoadSomeDecl transformed)
         (and
@@ -3011,6 +3026,26 @@
     [(CompilerEmbeddedStdlibNoSource) true]
     [(CompilerEmbeddedStdlibSomeSource _) false]))
 
+;; The decode-free presence checks agree with the decoding lookup: present,
+;; missing, an escaping suffix, and the path forms both loader sites pass.
+(define (compiler-load-embedded-stdlib-contains-ok?) : bool
+  (and
+    (load.compiler-load-embedded-stdlib-contains? "string.tl")
+    (not
+      (load.compiler-load-embedded-stdlib-contains? "definitely_missing_xyz.tl"))
+    (not (load.compiler-load-embedded-stdlib-contains? "../string.tl"))
+    (match (load.compiler-load-embedded-stdlib-path "net/ip.tl")
+      [(CompilerLoadSomePath path) (string.eq path "stdlib/net/ip.tl")]
+      [(CompilerLoadNoPath) false])
+    (match (load.compiler-load-embedded-stdlib-path "definitely_missing_xyz.tl")
+      [(CompilerLoadSomePath _) false]
+      [(CompilerLoadNoPath) true])
+    (load.compiler-load-embedded-stdlib-contains-path? "stdlib/string.tl")
+    (not
+      (load.compiler-load-embedded-stdlib-contains-path?
+        "stdlib/definitely_missing_xyz.tl"))
+    (not (load.compiler-load-embedded-stdlib-contains-path? "src/string.tl"))))
+
 ;; A parse error inside an imported file surfaces a diagnostic whose path is the
 ;; imported file (not the importer), preserving imported-file provenance.
 (define (compiler-load-imported-parse-error-path-ok?) : bool
@@ -3285,7 +3320,7 @@
 
 (define (compiler-load-manifest-github-deps-ok?) : bool
   (match (compiler-load-parse-manifest
-    "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"abc123\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
+    "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"0123456789abcdef0123456789abcdef01234567\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
     [(Ok m)
       (let
         [deps : load.CompilerPkgDeps m.deps]
@@ -3299,7 +3334,7 @@
           (compiler-load-manifest-dep-path-is?
             (ast.ast-place-shared-view deps)
             "math"
-            "https://github.com/JoNil-Botta/math.git#rev=abc123")
+            "https://github.com/JoNil-Botta/math.git#rev=0123456789abcdef0123456789abcdef01234567")
           (compiler-load-manifest-dep-path-is?
             (ast.ast-place-shared-view deps)
             "util"
@@ -3605,7 +3640,7 @@
       "manifest dependency `math` github pin must be rev, tag, or branch")
     (compiler-load-manifest-rejects?
       "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (rev \"\")))))"
-      "manifest dependency `math` github pin must not be empty")))
+      "manifest dependency `math` rev must be a full lowercase hexadecimal object ID (40 or 64 digits); use tag/branch or the full object ID")))
 
 (define (compiler-load-pkg-manifest-validation-ok?) : bool
   (and
@@ -4043,6 +4078,7 @@
         (ci.intern "helper")
         (& (ast.ast-param-list-new))
         (& (I64))
+        (No)
         (& (Unavailable)))]
     (match decl
       [(Extern decl-meta _ _ metadata _)
@@ -4054,21 +4090,36 @@
 ;; A dependency function reaches its consumer as an extern with the TypeLisp
 ;; ABI (#8485), so a TypeLisp-internal convention can tell it from a C extern.
 (define (compiler-load-package-extern-typelisp-abi-ok?) : bool
-  (match (load.compiler-load-package-def-fn-extern
-    "dep"
-    "C:/dep/"
-    (& (svec.new))
-    "C:/dep/src/lib.tl"
-    ""
-    (ci.intern "helper")
-    (& (ast.ast-param-list-new))
-    (& (I64))
-    (& (Unavailable)))
-    [(Extern _ _ _ metadata _)
-      (match (ast.ast-extern-metadata-abi (deref metadata))
-        [(TypeLisp) true]
-        [_ false])]
-    [_ false]))
+  (let
+    [ok : bool true]
+    (for [kind (iterator.range 0 2)]
+      (match (load.compiler-load-package-def-fn-extern
+        "dep"
+        "C:/dep/"
+        (& (svec.new))
+        "C:/dep/src/lib.tl"
+        ""
+        (ci.intern "helper")
+        (& (ast.ast-param-list-new))
+        (& (I64))
+        (if (= kind 0)
+          (No)
+          (Export (ci.intern-id-from-renderable (ci.intern "helper_c"))))
+        (& (Unavailable)))
+        [(Extern _ _ _ metadata _)
+          (unless
+            (and
+              (match (& (deref metadata))
+                [(Metadata (TypeLisp) _ _ _ _) true]
+                [_ false])
+              (string.eq
+                (ast.ast-extern-metadata-symbol (& (deref metadata)))
+                (if (= kind 0)
+                  "_tl_dep_src_lib_helper"
+                  "helper_c$typelisp")))
+            (set! ok false))]
+        [_ (set! ok false)]))
+    ok))
 
 (define (compiler-load-package-source-macro-preserved-ok?) : bool
   (let
@@ -4083,6 +4134,8 @@
       "C:/dep/src/lib.tl"
       "dep.module"
       (& (Unavailable))
+      (& (csym.compiler-symbols-empty))
+      cbi.compiler-builtin-id-fix-empty
       decl)
       [(CompilerLoadSomeDecl transformed)
         (match transformed
@@ -4241,7 +4294,7 @@
         (owned_view.compiler-owned-shared-view state-a))]
     [_admit : bool
       (load.compiler-load-session-state-program-admission-record
-        state-a
+        (&mut state-a)
         program-key)]
     [prelude-key : load.CompilerLoadPreludeCacheKey
       (load.CompilerLoadPreludeCacheKey
@@ -4774,7 +4827,7 @@
         (load.compiler-load-session-state-dotted-path-cache-reset!
           (owned_view.compiler-owned-shared-view state-b))
         (load.compiler-load-session-state-dotted-path-cache-store!
-          state-b
+          (&mut state-b)
           dotted-id
           "pkg/member.tl")
         (load.compiler-load-session-state-dotted-path-cache-reset!
@@ -4791,11 +4844,11 @@
         (load.compiler-load-session-state-lazy-import-record-skip!
           (owned_view.compiler-owned-shared-view state-a))
         (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-          state-a
+          (&mut state-a)
           alias-a-id
           secondary-root-id)
         (load.compiler-load-session-state-lazy-qualified-observer-note!
-          state-a
+          (&mut state-a)
           alias-a-member-id))]
     [_record-b : unit
       (begin
@@ -4807,18 +4860,20 @@
         (load.compiler-load-session-state-lazy-import-record-skip!
           (owned_view.compiler-owned-shared-view state-b))
         (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-          state-b
+          (&mut state-b)
           alias-b-id
           secondary-root-id)
         (load.compiler-load-session-state-lazy-qualified-observer-note!
-          state-b
+          (&mut state-b)
           alias-b-member-id))]
     [observed-b : CompilerLoadLazyQualifiedObserverResult
-      (compiler-load-session-state-lazy-qualified-observer-end-pair! state-b)]
+      (compiler-load-session-state-lazy-qualified-observer-end-pair!
+        (&mut state-b))]
     [a-still-active : bool
       (load.compiler-load-session-state-lazy-qualified-observer-active? state-a)]
     [observed-a : CompilerLoadLazyQualifiedObserverResult
-      (compiler-load-session-state-lazy-qualified-observer-end-pair! state-a)]
+      (compiler-load-session-state-lazy-qualified-observer-end-pair!
+        (&mut state-a))]
     [_finish : unit
       (begin
         (load.compiler-load-session-state-surface-summary-load-exit!
@@ -4998,12 +5053,12 @@
   (= (% level 4) 2))
 
 (define (compiler-load-lazy-qualified-observer-test-configure!
-  [state : (& state load.CompilerLoadSessionState)]
+  [state : (&mut state load.CompilerLoadSessionState)]
   [offset : i64]
   [level : i64]) : unit
   (let
-    [observer : (& state load.CompilerLoadLazyQualifiedObserverState)
-      (load.compiler-load-session-state-lazy-qualified-observer state)]
+    [observer : (&mut state load.CompilerLoadLazyQualifiedObserverState)
+      (&mut state.lazy-qualified-observer)]
     ;; Production begin-pair makes every active query exhaustive. Vary this
     ;; internal bit here so the frame test proves it is snapshotted rather
     ;; than accidentally derived from active state during a pop.
@@ -5154,7 +5209,7 @@
     (not result.secondary-direct)))
 
 (define (compiler-load-lazy-qualified-observer-test-push-depth!
-  [state : (& state load.CompilerLoadSessionState)]
+  [state : (&mut state load.CompilerLoadSessionState)]
   [offset : i64]
   [depth : i64]) : unit
   (for [level (iterator.range 0 depth)]
@@ -5183,23 +5238,23 @@
     [ok : bool true]
     (while (< level depth)
       (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-        state-a
+        (&mut state-a)
         (compiler-load-lazy-qualified-observer-test-root offset-a level)
         (compiler-load-lazy-qualified-observer-test-secondary-root
           offset-a
           level))
       (compiler-load-lazy-qualified-observer-test-configure!
-        state-a
+        (&mut state-a)
         offset-a
         level)
       (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-        state-b
+        (&mut state-b)
         (compiler-load-lazy-qualified-observer-test-root offset-b level)
         (compiler-load-lazy-qualified-observer-test-secondary-root
           offset-b
           level))
       (compiler-load-lazy-qualified-observer-test-configure!
-        state-b
+        (&mut state-b)
         offset-b
         level)
       (+= level 1))
@@ -5208,7 +5263,7 @@
       (let
         [result-b : CompilerLoadLazyQualifiedObserverResult
           (compiler-load-session-state-lazy-qualified-observer-end-pair!
-            state-b)]
+            (&mut state-b))]
         (set!
           ok
           (and
@@ -5228,7 +5283,7 @@
           (let
             [result-a : CompilerLoadLazyQualifiedObserverResult
               (compiler-load-session-state-lazy-qualified-observer-end-pair!
-                state-a)]
+                (&mut state-a))]
             (set!
               ok
               (and
@@ -5249,11 +5304,11 @@
     ;; A reset from a deep live stack must discard its backing slots rather
     ;; than leave an arena-owned array reachable through the session state.
     (compiler-load-lazy-qualified-observer-test-push-depth!
-      state-reset
+      (&mut state-reset)
       offset-reset
       depth)
     (load.compiler-load-session-state-lazy-qualified-observer-reset!
-      state-reset)
+      (&mut state-reset))
     (set!
       ok
       (and
@@ -5265,17 +5320,17 @@
           state-reset)))
     ;; The state remains reusable after that reset.
     (compiler-load-session-state-lazy-qualified-observer-begin-pair!
-      state-reset
+      (&mut state-reset)
       (compiler-load-lazy-qualified-observer-test-root offset-reset 0)
       (compiler-load-lazy-qualified-observer-test-secondary-root offset-reset 0))
     (compiler-load-lazy-qualified-observer-test-configure!
-      state-reset
+      (&mut state-reset)
       offset-reset
       0)
     (let
       [reset-result : CompilerLoadLazyQualifiedObserverResult
         (compiler-load-session-state-lazy-qualified-observer-end-pair!
-          state-reset)]
+          (&mut state-reset))]
       (set!
         ok
         (and
@@ -5291,9 +5346,11 @@
     ;; leave both independent states inactive.
     (let
       [underflow-a : CompilerLoadLazyQualifiedObserverResult
-        (compiler-load-session-state-lazy-qualified-observer-end-pair! state-a)]
+        (compiler-load-session-state-lazy-qualified-observer-end-pair!
+          (&mut state-a))]
       [underflow-b : CompilerLoadLazyQualifiedObserverResult
-        (compiler-load-session-state-lazy-qualified-observer-end-pair! state-b)]
+        (compiler-load-session-state-lazy-qualified-observer-end-pair!
+          (&mut state-b))]
       (and
         ok
         (compiler-load-lazy-qualified-observer-test-empty-result?
@@ -5604,7 +5661,8 @@
       (load.compiler-load-global-shared-view other-state)
       false)
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (let
         [outer-root : String
           (load.compiler-load-canonical-path
@@ -6106,6 +6164,9 @@
   (unless
     (compiler-load-embedded-stdlib-escape-rejected-ok?)
     (return (io.panic "compiler-load: embedded stdlib escape smoke mismatch")))
+  (unless
+    (compiler-load-embedded-stdlib-contains-ok?)
+    (return (io.panic "compiler-load: embedded stdlib presence smoke mismatch")))
   (unless
     (compiler-load-imported-parse-error-path-ok?)
     (return

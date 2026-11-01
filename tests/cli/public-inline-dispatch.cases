@@ -1,0 +1,133 @@
+# Inline harness pruning must keep retained dispatch variants and their closure.
+# The public-tool gate runs these command transcripts on both native hosts.
+do none
+target -
+opt 0 1 2
+mode scalar avx2 avx512
+
+file dispatch_test.tl
+(import stdlib.test)
+(define (twice-a [n : i64]) : i64 (* n 2))
+(define (twice-b [n : i64]) : i64 (+ n n))
+(defdispatch twice (scalar twice-a) (avx2 twice-b) (avx512 twice-b))
+(test twice-test
+  (test.assert-i64-eq (twice 21) 42 "twice"))
+end-file
+
+case inline-dispatch-reproduction
+run check "{{work}}/dispatch_test.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+run test --check "{{work}}/dispatch_test.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout contains TypeLisp test typecheck passed: 1 test(s)
+stderr empty
+if-isa {{mode}}
+run test "{{work}}/dispatch_test.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok twice-test
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+end-if
+
+case inline-dispatch-dependencies
+file dep.tl
+(define seed : i64 21)
+(define (add-seed [n : i64]) : i64 (+ n seed))
+(define (shared [n : i64]) : i64 (add-seed n))
+(define (scalar-body [n : i64]) : i64 (shared n))
+(define (simd-body [n : i64]) : i64 (shared n))
+(defdispatch twice (avx512 simd-body) (scalar scalar-body) (avx2 simd-body))
+end-file
+file entry.tl
+(import stdlib.test)
+(import dep)
+(cfg test (define offset : i64 1))
+(cfg test (define (test-helper [n : i64]) : i64 (+ n offset)))
+(cfg test (define (test-variant [n : i64]) : i64 (test-helper n)))
+(cfg test (defdispatch test-dispatch (scalar test-variant)))
+; Even an uncalled dispatch is retained and its variants must remain valid.
+(define (unused-variant [n : i64]) : i64 (dep.shared n))
+(defdispatch unused-dispatch (scalar unused-variant))
+(define (main) : i64 (dep.twice 21))
+(test dispatch-dependencies
+  (test.assert-i64-eq (dep.twice 21) 42 "imported variants and shared dependencies")
+  (test.assert-i64-eq (test-dispatch 41) 42 "cfg test variant dependencies"))
+end-file
+run check "{{dir}}/entry.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+run test --check "{{dir}}/entry.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout contains TypeLisp test typecheck passed: 1 test(s)
+stderr empty
+if-isa {{mode}}
+run test "{{dir}}/entry.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok dispatch-dependencies
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+end-if
+run compile "{{dir}}/entry.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/production.s"
+stderr empty
+in file {{dir}}/production.s
+not-contains __tl_inline_test
+not-contains test-variant
+not-contains test-dispatch
+not-contains unused-variant
+not-contains unused-dispatch
+
+case inline-dispatch-selection
+if-mode scalar
+sh CCV_width=1
+end-if
+if-mode avx2
+sh CCV_width=4
+end-if
+if-mode avx512
+sh CCV_width=8
+end-if
+file -x selection.tl
+(import stdlib.test)
+(import stdlib.cpu)
+(define (fill! [out : (&mut (Slice i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (program-count))))
+(defdispatch fill-auto! (avx512 fill!) (avx2 fill!) (scalar fill!))
+(test dispatch-selection
+  (let
+    [out : (Array i64 19) (make-array i64 19)]
+    [selected : i64 (if (cpu.runs-avx512?) 8 (if (cpu.runs-avx2?) 4 1))]
+    (fill-auto! (slice-mut-view out 0 19) 19)
+    (test.assert-i64-eq (array-ref out 0) selected "best runnable ISA")
+    (test.assert-i64-eq (array-ref out 18) selected "dispatch tail")
+    (fill! (slice-mut-view out 0 19) 19)
+    (test.assert-i64-eq (array-ref out 0) {{width}} "ordinary variant uses command backend")
+    (test.assert-i64-eq (array-ref out 18) {{width}} "ordinary tail")
+    (fill-auto! (slice-mut-view out 0 19) 19)
+    (test.assert-i64-eq (array-ref out 18) selected "cached dispatch")))
+end-file
+run check "{{dir}}/selection.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+run test --check "{{dir}}/selection.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout contains TypeLisp test typecheck passed: 1 test(s)
+stderr empty
+if-isa {{mode}}
+run test "{{dir}}/selection.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok dispatch-selection
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+end-if
+
+case inline-dispatch-prunes-unrelated
+file pruning.tl
+(define (unrelated) : i64 unbound-production-name)
+(define (variant) : i64 42)
+(defdispatch answer (scalar variant))
+(test dispatch-pruning unit)
+end-file
+run test --check "{{dir}}/pruning.tl" --target {{host-target}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout contains TypeLisp test typecheck passed: 1 test(s)
+stderr empty
+if-isa {{mode}}
+run test "{{dir}}/pruning.tl" --target {{host-target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok dispatch-pruning
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+end-if

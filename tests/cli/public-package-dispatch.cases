@@ -1,0 +1,147 @@
+# Staticlib imports bind the archive's logical dispatcher and ordinary variants.
+# Exercise signatures, values, cached ISA selection and SPMD rejection on both hosts.
+do none
+target -
+opt 0 1 2
+mode scalar avx2 avx512
+
+case package-dispatch-logical-imports
+file math/typelisp.pkg
+(package (name "math") (version "0.1.0") (kind "staticlib"))
+end-file
+file math/src/lib.tl
+(defdispatch twice (avx512 twice-b) (scalar twice-a) (avx2 twice-b))
+(define (twice-a [n : i64]) : i64 (* n 2))
+(define (twice-b [n : i64]) : i64 (+ n n))
+(define (plain [n : i64]) : i64 (* n 2))
+end-file
+file app/typelisp.pkg
+(package (name "dispatch_app") (version "0.1.0") (kind "bin")
+  (dependencies (math "../math")))
+end-file
+file app/src/main.tl
+(import math.src.lib as math)
+(define (apply-one [f : (-> i64 i64)] [x : i64]) : i64 (f x))
+(define (main) : i64
+  (let [f : (-> i64 i64) math.twice]
+    (if (and
+      (= (math.twice 21) 42)
+      (= (apply-one math.twice 21) 42)
+      (= (apply-one f 21) 42)
+      (= (math.plain 21) 42)
+      (= (math.twice-a 21) 42)
+      (= (math.twice-b 21) 42))
+      42 1)))
+end-file
+step dependency-build
+run build --manifest-path "{{dir}}/math/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+stderr empty
+step consumer-build
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+stderr empty
+step consumer-run
+exec "{{dir}}/app/target/release/dispatch_app{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step cached-build
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+stdout contains Fresh
+stderr empty
+step selected-build
+file app/src/main.tl
+(import math.src.lib.twice as selected-twice)
+(define (apply-one [f : (-> i64 i64)] [x : i64]) : i64 (f x))
+(define (main) : i64
+  (let [f : (-> i64 i64) selected-twice]
+    (if (and
+      (= (selected-twice 21) 42)
+      (= (apply-one selected-twice 21) 42)
+      (= (apply-one f 21) 42))
+      42 1)))
+end-file
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+stderr empty
+step selected-run
+exec "{{dir}}/app/target/release/dispatch_app{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step signature-rejection
+file app/src/main.tl
+(import math.src.lib as math)
+(define (main) : i64 (math.twice true))
+end-file
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+exit nonzero
+stderr contains argument 1 type mismatch
+stderr not-contains unbound name
+step spmd-rejection
+file app/src/main.tl
+(import math.src.lib as math)
+(define (main) : i64
+  (let [out : (Array i64 8) (make-array i64 8)]
+    (foreach ([i : i64 0 8]) (set! (array-ref out i) (math.twice i)))
+    (array-ref out 0)))
+end-file
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+exit nonzero
+stderr contains SPMD
+stderr not-contains unbound name
+
+case package-dispatch-isa-selection
+if-mode scalar
+sh CCV_width=1
+end-if
+if-mode avx2
+sh CCV_width=4
+end-if
+if-mode avx512
+sh CCV_width=8
+end-if
+file math/typelisp.pkg
+(package (name "math") (version "0.1.0") (kind "staticlib"))
+end-file
+file math/src/lib.tl
+(define (fill! [out : (&mut (Slice i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n]) (set! (array-ref out i) (+ n (program-count)))))
+(defdispatch fill-auto! (avx512 fill!) (scalar fill!) (avx2 fill!))
+(define (plain [n : i64]) : i64 (+ n 1))
+end-file
+file app/typelisp.pkg
+(package (name "dispatch_selection") (version "0.1.0") (kind "bin")
+  (dependencies (math "../math")))
+end-file
+file -x app/src/main.tl
+(import stdlib.cpu)
+(import math.src.lib as math)
+(define (apply-fill!
+  [f : (-> (&mut (Slice i64)) i64 unit)]
+  [out : (&mut (Slice i64))]
+  [n : i64]) : unit
+  (f out n))
+(define (main) : i64
+  (let
+    [out : (Array i64 19) (make-array i64 19)]
+    [selected : i64 (if (cpu.runs-avx512?) 8 (if (cpu.runs-avx2?) 4 1))]
+    (math.fill-auto! (slice-mut-view out 0 19) 19)
+    (if (not (and (= (array-ref out 0) (+ 19 selected)) (= (array-ref out 18) (+ 19 selected))))
+      (return 1) unit)
+    (math.fill-auto! (slice-mut-view out 0 19) 19)
+    (if (not (= (array-ref out 18) (+ 19 selected))) (return 2) unit)
+    (apply-fill! math.fill-auto! (slice-mut-view out 0 19) 19)
+    (if (not (= (array-ref out 18) (+ 19 selected))) (return 3) unit)
+    (math.fill! (slice-mut-view out 0 19) 19)
+    (if (and
+      (= (array-ref out 0) (+ 19 {{width}}))
+      (= (array-ref out 18) (+ 19 {{width}}))
+      (= (math.plain 41) 42))
+      42 4)))
+end-file
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+stderr empty
+sh simd_execution_record package-dispatch-isa-selection "{{mode}}"
+exec simd_execute "{{mode}}" "{{dir}}/app/target/release/dispatch_selection{{exe}}"
+exit 42
+stdout empty
+stderr empty

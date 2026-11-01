@@ -2,7 +2,7 @@
 (import (stdlib.vector.vector i64) as vec)
 
 ; Must fail: the returned slice is tied to `inner`, not `outer`.
-(define (main [outer : vec.Vec]) : (& outer (Slice i64))
+(define (main [outer : (& outer vec.Vec)]) : (& outer (Slice i64))
   (let
     [inner : vec.Vec (vec.new)]
     (vec.push-ref! (&mut inner) 10)

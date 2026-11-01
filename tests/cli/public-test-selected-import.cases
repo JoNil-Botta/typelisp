@@ -1,0 +1,132 @@
+# Selected imports survive inline harness pruning, so their targets must too.
+# Explicit roots use source CTFE; rootless runs use the embedded stdlib image.
+# The public-tool gate runs both routes on Linux and Windows.
+do none
+target -
+opt 0 1 2
+each source embedded
+
+file fbmod.tl
+(define table : (__tl_dyn-array i64) (__tl_make-array i64 4))
+(define (plus-one [x : i64]) : i64 (+ x 1))
+end-file
+
+file fbtest.tl
+(import fbmod as m)
+(import fbmod.table)
+(import stdlib.test)
+(test uses-table
+  (test.assert-i64-eq (array-length table) 4 "table"))
+(test only-plus-one
+  (test.assert-i64-eq (m.plus-one 1) 2 "plus one"))
+end-file
+
+case selected-global-test-selection
+sh CCV_roots=; if [ "{{each}}" = source ]; then CCV_roots="--stdlib-root {{root}}/stdlib"; fi
+cwd {{work}}
+step all
+run test "{{work}}/fbtest.tl" --target {{host-target}} --opt-level {{opt}} {{roots}}
+stdout empty
+stderr contains ok uses-table
+stderr contains ok only-plus-one
+stderr contains TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total
+step filter-user
+run test "{{work}}/fbtest.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} --filter uses-table
+stdout empty
+stderr contains ok uses-table
+stderr not-contains ok only-plus-one
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step filter-nonuser
+run test "{{work}}/fbtest.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} --filter only-plus-one
+stdout empty
+stderr contains ok only-plus-one
+stderr not-contains ok uses-table
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step exact-user
+run test "{{work}}/fbtest.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} --exact uses-table
+stdout empty
+stderr contains ok uses-table
+stderr not-contains ok only-plus-one
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step exact-nonuser
+run test "{{work}}/fbtest.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} --exact only-plus-one
+stdout empty
+stderr contains ok only-plus-one
+stderr not-contains ok uses-table
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+
+case selected-import-transitive-aliases
+sh CCV_roots=; if [ "{{each}}" = source ]; then CCV_roots="--stdlib-root {{root}}/stdlib"; fi
+file dep.tl
+(define seed : i64 4)
+(define (length) : i64 seed)
+(define table : (__tl_dyn-array i64) (__tl_make-array i64 (length)))
+(define (read-length) : i64 (array-length table))
+end-file
+file entry.tl
+(import dep as m)
+(import dep.table as slots)
+(import dep.table)
+(import dep.read-length as size)
+(import stdlib.test)
+(test uses-table
+  (test.assert-i64-eq (array-length slots) 4 "renamed global")
+  (test.assert-i64-eq (array-length table) 4 "duplicate global")
+  (test.assert-i64-eq (size) 4 "selected function"))
+(test unrelated unit)
+(define (main) : i64 (m.read-length))
+end-file
+cwd {{dir}}
+step check
+run check "{{dir}}/entry.tl" --target {{host-target}} {{roots}}
+stdout contains Type checking passed!
+stderr empty
+step compile
+run compile "{{dir}}/entry.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} -o "{{dir}}/entry.s"
+stderr empty
+step selected-import-closure
+run test "{{dir}}/entry.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} --exact unrelated
+stdout empty
+stderr contains ok unrelated
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step selected-import-users
+run test "{{dir}}/entry.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} --exact uses-table
+stdout empty
+stderr contains ok uses-table
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+
+case selected-import-real-missing-item
+opt -
+target linux-x86_64 windows-x86_64
+sh CCV_roots=; if [ "{{each}}" = source ]; then CCV_roots="--stdlib-root {{root}}/stdlib"; fi
+file missing.tl
+(import fbmod as m)
+(import fbmod.absent)
+(test unrelated unit)
+(define (main) : i64 (m.plus-one 1))
+end-file
+cwd {{work}}
+run check "{{dir}}/missing.tl" --target {{target}} {{roots}} --stdlib-root "{{work}}"
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'fbmod' has no selected item 'absent'
+stderr contains missing.tl:2:1
+run compile "{{dir}}/missing.tl" --target {{target}} {{roots}} --stdlib-root "{{work}}" -o "{{dir}}/missing.s"
+exit 1
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'fbmod' has no selected item 'absent'
+stderr contains missing.tl:2:1
+run test "{{dir}}/missing.tl" --target {{target}} {{roots}} --stdlib-root "{{work}}" --exact unrelated
+exit 2
+stdout empty
+stderr contains error[E0304]: compiler-load: module 'fbmod' has no selected item 'absent'
+stderr contains missing.tl:2:1
+
+case selected-import-optimizer-exact
+opt 2
+sh CCV_roots=; if [ "{{each}}" = source ]; then CCV_roots="--stdlib-root {{root}}/stdlib"; fi
+cwd {{work}}
+run test "{{root}}/src/compiler_optimize_tests.tl" --target {{host-target}} --opt-level {{opt}} {{roots}} --stdlib-root "{{root}}/src" --exact natural-loop-workspace-retains-independent-loops
+stdout empty
+stderr contains ok natural-loop-workspace-retains-independent-loops
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total

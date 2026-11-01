@@ -1,4 +1,5 @@
 ;; Focused semantic-cache tests live outside the unified CLI import closure.
+(cfg test (import stdlib.iterator))
 (cfg test (import stdlib.arena))
 (cfg test (import stdlib.io))
 (cfg test (import stdlib.string))
@@ -102,8 +103,7 @@
     [state : (& state lvf.LspServerState)]) : i64
     (let
       [count : i64 0]
-      [index : i64 0]
-      (while (< index (lsp_document_vec.len (& state.documents)))
+      (for [index (iterator.range 0 (lsp_document_vec.len (& state.documents)))]
         (if (__tl-project-field
           (__tl-project-field
             (lsp_document_vec.get
@@ -112,15 +112,12 @@
               (lsp.lsp-document-fallback))
             semantic)
           present)
-          (set! count (+ count 1))
-          unit)
-        (set! index (+ index 1)))
-      (set! index 0)
-      (while (< index state.semantic-cache.len)
+          (+= count 1)
+          unit))
+      (for [index (iterator.range 0 state.semantic-cache.len)]
         (if (> (array-ref state.semantic-cache.slots index).index.owner-arena 0)
-          (set! count (+ count 1))
-          unit)
-        (set! index (+ index 1)))
+          (+= count 1)
+          unit))
       count)))
 
 (cfg
@@ -129,8 +126,7 @@
     [state : (& state lvf.LspServerState)]) : i64
     (let
       [count : i64 0]
-      [index : i64 0]
-      (while (< index (lsp_document_vec.len (& state.documents)))
+      (for [index (iterator.range 0 (lsp_document_vec.len (& state.documents)))]
         (let
           [doc : lvf.LspDocument
             (lsp_document_vec.get
@@ -139,26 +135,19 @@
               (lsp.lsp-document-fallback))]
           [snapshot : lvf.LspSemanticSnapshot doc.semantic]
           (if snapshot.present
-            (set!
+            (+=
               count
-              (+
-                count
-                (sem.compiler-semantic-source-index-len (& snapshot.index))))
-            unit)
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index state.semantic-cache.len)
+              (sem.compiler-semantic-source-index-len (& snapshot.index)))
+            unit)))
+      (for [index (iterator.range 0 state.semantic-cache.len)]
         (let
           [entry : lvf.LspWorkspaceSemanticCacheEntry
             (owned_view.compiler-owned-array-element-shared-view
               state.semantic-cache.slots
               index)]
           (if (> entry.index.owner-arena 0)
-            (set!
-              count
-              (+ count (sem.compiler-semantic-source-index-len (& entry.index))))
-            unit)
-          (set! index (+ index 1))))
+            (+= count (sem.compiler-semantic-source-index-len (& entry.index)))
+            unit)))
       count)))
 
 (cfg
@@ -201,7 +190,7 @@
             (= (lsp-workspace-semantic-test-role-tag (& fact.role)) wanted-role))
             (set! found true)
             unit)
-          (set! index (+ index 1))))
+          (+= index 1)))
       found)))
 
 (cfg

@@ -5,4 +5,4 @@
     [score : i64
       (match pair
         [(tuple text number) (+ (string.string-length text) number)])]
-    (+ score (tuple-ref pair 1))))
+    (+ score (string.string-length (tuple-ref pair 0)))))

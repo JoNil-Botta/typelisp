@@ -1,5 +1,7 @@
-;; Reborrow array elements through reference-bearing iterator state. The item
-;; lifetime must be the stored source lifetime, not the iterator-state borrow.
+;; Reborrow array elements through reference-bearing iterator state. A shared
+;; stored reference is copied out, so its item keeps the stored source
+;; lifetime, not the iterator-state borrow; a mutable one lends from the
+;; iterator (#8449).
 (defstruct SharedIter
   (:lifetimes source)
   (slots (& source (__tl_dyn-array i64)))
@@ -41,11 +43,12 @@
   (index i64))
 
 (defenum MutNext
-  (:lifetimes source)
+  (:lifetimes item)
   (Done)
-  (Item (&mut source i64)))
+  (Item (&mut item i64)))
 
-(define (mut-next [iter : (&mut state (MutIter source))]) : (MutNext source)
+;; A mutable item borrows the iterator it was reborrowed through (#8449).
+(define (mut-next [iter : (&mut item (MutIter source))]) : (MutNext item)
   (let
     [index : i64 iter.index]
     (if (>= index 1)

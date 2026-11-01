@@ -8,9 +8,17 @@ prefix alone does not determine whether a script is required by CI.
 
 The workflow files are authoritative:
 
-- `.github/workflows/ci.yml` runs `check-implementation-languages.sh` and
-  `check-gitignore.sh`, then `ci-verify.sh`, and uploads the `ci-timing-<host>`
-  artifact.
+- `.github/workflows/ci.yml` runs each host's gates in two CI lane jobs
+  (`ci-lanes.tsv`, [CI lanes](#ci-lanes)): every lane runs
+  `ci-verify.sh --gates` with the gates it owns, and one lane per host also
+  runs `check-implementation-languages.sh` and `check-gitignore.sh`. The lane
+  that runs `linux-self-compile-measurement` then runs `self-compile.sh check`,
+  which gates the PR's own `self_compile` cost against main (`perf/README.md`).
+  The per-host aggregators keep the required-check names, prove every gate
+  passed in its owning lane, and upload the `ci-timing-<host>` artifact.
+- `.github/workflows/self-compile-reference.yml` runs on every push to main:
+  `ci-verify.sh --gates linux-self-compile-measurement` publishes the commit's
+  `self_compile` reference, and `self-compile.sh ledger` accounts for the merge.
 - `.github/workflows/bootstrap-stage0.yml` runs the stage0 fetch/build/smoke
   and bootstrap-fixpoint scripts.
 - `.github/workflows/docs-pages.yml` runs after a successful
@@ -38,6 +46,56 @@ A required gate is a row of `ci-gates.tsv`; `ci-verify.sh` rejects a row whose
 command names a missing script or `gate_*` function. Optional local tools
 should use a `benchmark-`, `measure-`, or `analyze-` name.
 
+## Linux instruction-count packages
+
+The shared `.github/actions/linux-instruction-count-tools` action installs
+valgrind and libc6-dbg in required Linux CI and the self-compile reference
+measurement. The ledger first runs `self-compile.sh ledger --prepare` to
+validate its reference and PR records. Only a required fallback or reproduction
+runs the shared action, before `self-compile.sh ledger` probes the installed
+runner identity or measures anything. The prepared inputs stay in this job's
+workspace, bound to its commit, run and attempt; they are never a package cache.
+Record-only ledgers skip package resolution, restore, transfer and installation.
+On Ubuntu noble, libc6-dbg is a hard dependency of valgrind;
+`--no-install-recommends` excludes gdb, not libc6-dbg. Windows is unchanged.
+
+`ci-linux-tools.sh` resolves exact versions against the runner's apt indexes.
+Its cache key hashes the distro release, dpkg architecture, runner OS,
+ImageOS, ImageVersion, both package versions and their SHA-256 hashes. There
+are no partial restore keys. Only the two archives are cached: the package
+plan, hashes and installed state are recreated on each runner. Restored files
+must match the apt-index SHA-256 hashes before entering fresh private staging.
+The pinned `apt-get --download-only` install authenticates the plan against
+apt's trusted indexes before a separate `--no-download` install; neither
+unauthenticated packages nor insecure repositories are permitted. Both
+installed versions must equal the resolution, and are logged.
+
+A missing, corrupt or mismatched archive uses the normal trusted apt download.
+A failed acquisition refreshes authenticated indexes and resolves again in
+fresh staging; failure of that attempt or installation fails the job. A new
+version or runner image gets a new key. Cache restore/save errors cannot skip
+installation. A corrupt immutable entry can be removed with GitHub's cache
+administration, or invalidated by changing the action's key schema version;
+until then each use falls back safely.
+
+The existing push-to-main self-compile measurement job populates the
+default-branch cache immediately after a successful package installation,
+before its measurement begins. The ledger and new PRs can restore that
+main-scoped entry; PR-scoped entries alone cannot serve another PR's first
+run. Every main push refreshes an absent version/image key, and ordinary cache
+eviction needs no special recovery. Initial cross-PR reach is verified after
+this population path lands, before closing #9305.
+
+Each invocation uploads `linux-instruction-tools-<job>` (CI lanes append
+`-<lane>-r<run>-a<attempt>`) with package identities,
+source URIs, trusted-index hashes, cache result and `timing.tsv`. Resolution,
+index refresh when needed, cache verification, apt package acquisition and
+installation have separate rows. Acquisition includes apt planning; apt's
+`Fetched` line reports transfer time itself. Restore/save wall timers also
+include intervening Actions step startup, so they conservatively measure cache
+overhead. GitHub job timestamps supply total step time, queue time, execution
+critical path and runner-minutes; these must be reported separately.
+
 ## AVX-512 test execution
 
 CI downloads Intel SDE 10.13.1 from Intel's distribution page through
@@ -58,11 +116,19 @@ still report unavailable execution explicitly. CLI transcript `if-isa` checks
 and runtime-dispatch selection continue to test the actual native host,
 including the CLI's unsupported-host diagnostics.
 
-On native AVX-512 CI hosts, the workflow additionally executes the SPMD,
-lane/broadcast and package corpus under SDE and checks the cross-mode oracle
-against those observations. Hosts without native support already use SDE in
-the canonical gates. Thus both operating systems exercise the fallback on
-every required run, while native dispatch and execution coverage is retained.
+On native AVX-512 hosts, the `stage2-sde-fallback` gate (#9460) additionally
+executes the SPMD, lane/broadcast and package corpus under SDE and checks the
+cross-mode oracle against those observations: the same four commands with
+`TYPELISP_AVX512_EXECUTION=sde`, under an 8192 MiB cap whose report is
+`target/sde-fallback.memory`. It needs those suites' ordinary gates, so it
+overwrites their native observations only after they were consumed, and it
+holds the `spmd-package` lock. Hosts without native support already use SDE in
+the canonical gates; there the gate passes as not applicable only after
+proving that the ordinary route for AVX-512 is SDE, and a failed ISA detection
+fails it. Thus both operating systems exercise the fallback on every required
+run, while native dispatch and execution coverage is retained. A local run
+without `TYPELISP_SDE_BIN` reports the forced-SDE suites as unavailable, as the
+other harnesses report unavailable execution; `CI=true` requires them.
 
 To validate the emulator route even on an AVX-512 host, run the existing corpus:
 
@@ -78,6 +144,31 @@ license, so local users should review that license before running the fetcher.
 
 ## Core development loop
 
+`analyze-stage0-size.sh BINARY` decodes v1 and fixed-Huffman v2 LZSS frames
+directly from the linked binary. It requires exact equality with the source
+declarations: the embedded-stdlib manifests plus all top-level
+`include-str-lzss` declarations in the production `src/*.tl` modules. The
+inventory is conservative: a declaration in an unlinked module fails the
+count rather than being silently excluded. A token walk recognizes whitespace,
+comments, strings and character delimiters; escaped or multiline input paths
+fail explicitly. `--compiler-sources "file ..."`
+can specify a known source set for a different compiler, together with
+`--embedded-stdlib "file ..."`. The report lists declaration categories and
+input paths; its aggregate LZSS byte totals include every counted stream,
+including the executable-template catalog. TLCH/TLCI accounting and the
+existing stdlib file buckets remain separate.
+
+Use the source checkout that built the binary. An older binary with a
+different declaration set (such as the 8d29 seed, whose catalog was not
+compressed) fails with an explicit expected/found count diagnostic against
+current sources. V1 framing remains supported when its declaration inventory
+matches. `verify-stage0-lzss-scanner.sh` covers both formats, malformed and
+truncated frames, and declaration/count/path failures. The required size gate
+runs these fixtures and the analyzer on the already bootstrapped compiler on
+Linux and Windows, without building another compiler. Payload/publication
+changes also trigger the Bootstrap Stage0 build, smoke and fixpoint jobs on
+the exact PR head; only a push to main can publish releases.
+
 | Purpose | Entry point |
 | --- | --- |
 | Fetch the published seed | `fetch-stage0.sh` / `fetch-stage0.ps1` |
@@ -86,6 +177,7 @@ license, so local users should review that license before running the fetcher.
 | Run the complete local CI suite | `ci-verify.sh` |
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `verify-format-large-crlf.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |
+| Check ownership semantics | `verify-safety-corpus.sh` (located source diagnostics and runtime twins), `verify-ownership-model.sh` (independent finite model and typed-core comparisons at opt0/1/2), `verify-arena-sanitizer-selfhost.sh` (the compiler's check, opt1 self-compile and a batch of inline-test sessions under an arena-sanitizer build, Linux) |
 | Check the shared IR dependency boundary | `verify-core-ir-dependencies.sh` (canonical resolved closure, explicit module policy, source and fact-stream fixtures; bounded on both hosts) |
 | Check process-tree memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`), `verify-windows-memory-limit.ps1` (covers `run-bounded-process.ps1`) |
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog), `check-compiler-state-schema.sh` (packed compiler state stays behind its schema's typed accessors), `check-shared-view-count.sh` (the `*-shared-view` call count may only fall, against `shared-view-baseline.tsv`; it also reports, without gating, the count weighted by the call sites of the function or macro that holds each view, with thin wrappers transparent so a copy weighs the same inside an accessor or at its call sites) |
@@ -98,7 +190,7 @@ license, so local users should review that license before running the fetcher.
 | Check ISPC corpus contracts | `verify-codegen-cases.sh tests/codegen/ispc.cases` (one gate per case) |
 | Check docs and stdlib | `verify-doc-site.sh`, `verify-doc-tests.sh`, `verify-stdlib.sh` (owns `check-stdlib-concat-lint.sh`), `verify-stdlib-selfhost.sh`, `verify-stdlib-docs.sh` |
 | Check handwritten x86-64 template ownership | `check-x64-executable-template-registry.sh` pins every runtime/startup composition gate, all target-owned opaque byte helpers, structured contribution boundaries, and Windows data-only unwind relations. |
-| Check performance policy | `check-instruction-counts.sh`, `check-compiler-scaling.sh` (compiler cost growth per input dimension against `perf/compiler-scaling-budgets.tsv`), `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `check-stage0-size.sh` (the stage0 size ratchet against `stage0-size-policy.tsv`), `bench.sh`, `run-optimization-benchmarks.sh` |
+| Check performance policy | `check-instruction-counts.sh` (exact benchmark rows), `self-compile.sh` (`self_compile` measurement, the main-relative PR check, the reference record and the ledger; logic in `lib-self-compile.sh`, fixtures in `self-compile-self-test.sh`), `check-compiler-scaling.sh` (compiler cost growth per input dimension against `perf/compiler-scaling-budgets.tsv`), `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `check-stage0-size.sh` (the stage0 size ratchet against `stage0-size-policy.tsv`), `bench.sh`, `run-optimization-benchmarks.sh` |
 
 `ci-gates.tsv` is the gate table: one row per gate, in run order, with its
 stable `id`, `hosts` (`all`, `linux` or `windows`), `label` (the display and
@@ -198,9 +290,10 @@ never run at once:
 
 | Lock | Shared path |
 | --- | --- |
-| `build-stamp` | `target/build-stage0/git-hash.txt`, which compiles with `compiler-build-identity` include and root package builds rewrite (the CLI smoke poisons it on purpose) |
+| `build-stamp` | `target/build-stage0/git-hash.txt` and `tree-hash.txt`, which compile with `compiler-build-identity` includes and root package builds rewrite (the CLI smoke poisons them on purpose) |
 | `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
 | `embedded-payload` | `target/embedded-stdlib-payload-verify/`, which the payload gate and the stdlib gate (through `verify-embedded-stdlib-payload.sh`) both reset |
+| `instruction-count` | `target/instruction-count-check/`, where the benchmark instruction-count gate (which resets it) and the `self_compile` gate both measure at their historical paths, because measured paths reach the counts |
 | `root-release` | `target/release/`, the root package build's output |
 | `spmd-package` | `tests/spmd/package_callable/target/` and `tests/spmd/package_consumer/target/` |
 
@@ -219,26 +312,49 @@ temporary file and `mv` is safe to share.
 
 Linux memory limits (`lib-linux-memory-limit.sh`, used directly by the focused
 inline profile-summary and large CRLF formatter probes) need a usable
-user-systemd manager: it provides a hard cgroup-v2 `MemoryMax` over the complete
-process tree with swap disabled. A host without one fails closed; there is no
-unbounded or RSS-polling fallback, and nothing uses `RLIMIT_AS` or treats
-virtual reservations as resident memory.
+user-systemd manager that delegates cgroup v2 memory, with systemd 254 or newer
+(`DelegateSubgroup=`, `--expand-environment=`). It provides a hard `memory.max`
+over the complete process tree with swap disabled. A host without one fails
+closed; there is no unbounded or RSS-polling fallback, and nothing uses
+`RLIMIT_AS` or treats virtual reservations as resident memory.
+
+Nested calls stay inside every enclosing cap. A top-level call is a transient
+service with memory delegated to it. Its command runs in the leaf
+`workload/tlmem-run`, and the `workload` node carries the requested
+`memory.max`, no swap and `memory.oom.group=1`. A library or wrapper call made
+from a `tlmem-run` leaf starts no unit of its own, because the user manager
+would place that unit beside the outer one, outside its cap. It creates a node
+`tlmem-<pid>-<n>` beside the caller's leaf with its own limits, runs its
+command there as an ordinary child, and kills and removes the node afterwards.
+The kernel charges every nested call, concurrent ones included, to every
+enclosing workload node. Inner limits still apply, and the outer cap bounds
+their aggregate. Each node's `memory.peak` is a measured peak of its whole
+subtree. An outer OOM, timeout or unit stop also ends the nested work. Units
+use `OOMPolicy=continue`, since systemd would count an inner node's OOM kill
+against the outer unit; `memory.oom.group` keeps an OOM at a workload node's
+own limit fatal to that whole node. Nesting is decided from the caller's own
+`/proc/self/cgroup`. The inherited `TYPELISP_LINUX_MEMORY_LIMIT_NODE` only
+detects a lost hierarchy: a caller that has it but has left its `tlmem-run`
+leaf fails closed, as does a workload node that cannot give a nested node
+memory limits. The Windows Job Object backend nests natively: a job created
+inside a bounded job stays under that job's limits.
 
 `run-memory-bounded.sh` gives gates one fail-closed interface to that Linux
-backend and the Windows Job Object wrapper. On Linux the sampled route requires
-cgroup v2 memory delegation and systemd 254 or newer (`DelegateSubgroup=`).
-The delegated unit contains separate sampler and workload leaves. The workload
-keeps the exact requested `memory.max`, with swap disabled; its entire cgroup
-is killed on OOM. The sampler has a separate 64 MiB limit, and the containing
-unit is capped at the requested bytes plus that monitor headroom. This headroom
-does not raise the workload's ceiling. Missing delegation fails before user
-code starts. The sampler measures the process group's RSS from outside its OOM
-domain, reads the workload's `oom_kill` and `memory.peak`, and terminates its
-complete cgroup with `cgroup.kill` on OOM before reporting exit 137. The unit
-uses `OOMPolicy=continue` so systemd does not kill the sampler with the workload.
-The stop-post hook and systemd summary remain additional peak evidence. Direct
-`lib-linux-memory-limit.sh` callers keep `OOMPolicy=kill`, and an
-`ExecStopPost` hook records their peak. The Windows helper tests retain a
+backend and the Windows Job Object wrapper. On Linux the sampled route's
+delegated unit, or nested node, contains a sampler leaf and the workload node.
+The workload keeps the exact requested `memory.max`, with swap disabled; its
+entire subtree is killed on OOM. The sampler has a separate 64 MiB limit, and
+the containing unit or node is capped at the requested bytes plus that monitor
+headroom. This headroom does not raise the workload's ceiling. Missing
+delegation fails before user code starts. The sampler measures the process
+group's RSS from outside its OOM domain and watches the `oom_kill` count of the
+workload's own leaf, which a nested call's OOM at its own limit leaves alone.
+On OOM it terminates the complete workload node with `cgroup.kill` and reports
+its `memory.peak` before exiting 137. Otherwise its peak is the larger of the
+RSS samples and that `memory.peak`, which also covers nested calls. The stop-post
+hook and systemd summary remain additional peak evidence. Direct
+`lib-linux-memory-limit.sh` callers start in a `launch` leaf that builds the
+same workload node, and an `ExecStopPost` hook records their peak. The Windows helper tests retain a
 one-second timeout classification case and separately check descendant cleanup
 with delayed child creation and a ten-second bounded startup/cleanup deadline.
 Its stable key/value record
@@ -246,6 +362,50 @@ distinguishes command failure, timeout, memory termination, wrapper/setup
 failure, and success. `verify-embedded-stdlib-tlci-resources.sh` runs its
 builds under that interface; `src/TESTING.md` (Embedded stdlib and TLCI gates)
 describes its caps and reports.
+
+Linux success also requires an invocation-owned terminal status: the unit's
+private waiter publishes it only after its command's wait completes. A zero
+`systemd-run --wait` status or a positive memory peak alone proves no workload
+completion. Missing, malformed or foreign terminal evidence reports
+`wrapper-failure` regardless of peak measurement, including direct library calls
+without metrics (`LINUX_MEMORY_LIMIT_REASON`). A zero launcher status becomes
+exit 2; an actual workload exit 2 remains `command-failure`. Known nonzero launcher statuses,
+OOM evidence (137) and timeouts (124) keep their established precedence. Nested
+calls use ordinary child waits inside their enclosing cap. Terminal records are
+fresh per invocation, passed to the waiter through arguments rather than the
+workload's environment, and removed with that invocation's stderr/peak scratch.
+Direct calls without metrics now also retain stop-post OOM evidence while
+streaming stderr directly. A known OOM returns 137;
+systemd's generic failure status alone does not identify an OOM.
+
+Integration, inline-test and selfhost-manifest pools validate the complete
+bounded report against the waited status, host and admitted cap before using
+outputs. Cancellation and invalid completion stop further pool admission and
+fail the gate. Integration may replay ordinary failures and known panic/crash
+exits (including `os-exit 134` and native Windows exceptions) for per-entry
+diagnostics. Replay is labelled diagnostic-only: every failed batch remains a
+gate failure even if all standalone entries succeed. Standalone compiles retain
+the chunk memory cap, swap policy and timeout, and their completion is checked
+before diagnostics are used. Replay assembly cannot supply passing native
+results. Refusal reasons reach the gate console even when
+compile streams are redirected. Interrupted chunks cannot supply passing
+evidence through replay.
+
+Linux pool self-tests exhaust both report encodings and all completion faults.
+Windows runs representative native reports through each real worker, reader and
+diagnostic path, retaining cancellation, invalid/missing completion, ordinary
+failure, panic, native exception and success cases. Native Ctrl-C and nonzero
+exits truncated to shell zero are included. Both hosts keep admission-stop,
+output-rejection, bounded-replay and console-reason assertions. Report parsing
+and fixture verdicts use the same host-independent shell/AWK code; the full
+Linux matrix includes Windows CRLF and native status mappings. Hosted Windows
+workloads additionally exercise actual MSYS launches and Job Object reports.
+Native exception replay remains conditional on the observed shell mapping.
+
+The existing pool self-tests print same-run cost attribution for the new
+completion matrices beside the unchanged fixture portion. With CI timing
+enabled these are sub-phase rows, preserving the canonical gate inventory;
+they are not a paired causal base/head measurement.
 
 `verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
 including the root opt0 build, at 8192 MiB and writes
@@ -259,10 +419,16 @@ On Linux, `TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE` is an invocation-local
 output destination for the limiting helper. The helper removes it from the
 workload's environment; its own sampler receives the destination explicitly.
 Nested callers can request their own metrics file or `--report` path. They do
-not inherit or remove their parent's evidence. Systemd stderr uses a unique
-temporary file per invocation, cleaned up after success or failure. The helper
-self-test covers nested library calls and explicit inner reports without
-building another compiler.
+not inherit or remove their parent's evidence. Systemd stderr uses a private
+temporary directory beside the metrics destination, cleaned up after success or
+failure. This preserves its filesystem: moving a large capture to tmpfs would
+charge it against the workload's memory cap. Without metrics only the tiny
+terminal/stop-post records use `TMPDIR`. The helper
+self-test covers nested library calls, explicit inner reports and the hierarchy
+cases without building another compiler: overlapping, concurrent and inner-OOM
+allocations, outer timeout and cancellation, and fail-closed hierarchies. Run
+from inside another bounded workload, every call it makes nests, and it names
+the top-level-only cases it could not run; hosted CI runs it at top level.
 
 On Windows, `verify-integration.sh` sends independent manifest links through
 `windows-integration-linker.ps1`. The measured default is four concurrent
@@ -273,11 +439,11 @@ Some gate-owned helpers deliberately retain measurement-oriented names:
 
 | Helper | Owning gate |
 | --- | --- |
-| `measure-instruction-counts.sh` | `check-instruction-counts.sh` and gate `c-measured-region-instruction-harness-self-tests` |
+| `measure-instruction-counts.sh` | `check-instruction-counts.sh`, `self-compile.sh` (gate `linux-self-compile-measurement`) and gate `c-measured-region-instruction-harness-self-tests` |
 | `measure-spmd-mode-instruction-counts.sh` | gate `spmd-mode-instruction-count-harness-self-tests` and SPMD baseline checks |
 | `measure-compile-batch-memory.ps1` | `verify-compile-profile.sh` |
 | `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` |
-| `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report |
+| `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report and required PR `stage0-size-ratchet` gate on both hosts |
 | `analyze-selfhost-build-asm-size.sh` | gate `selfhost-linked-size-attribution-parser-self-tests`; optional linked-size report |
 
 Keep these at the top level while their owning gate references them.
@@ -291,6 +457,9 @@ Keep these at the top level while their owning gate references them.
 - `lib-*` files are sourced support code and are not standalone commands.
   `lib-gate.sh` holds the `fail` helper (prefixed by `GATE_FAIL_PREFIX`) and
   the `TYPELISP_BIN`/stage0 compiler resolution most gate scripts share;
+  `lib-c-provenance.sh` owns C benchmark producer records, validation and
+  diagnostics. It is loaded only for benchmarks or their self-tests, keeping
+  the two-file `self_compile` procedure usable over older checkouts.
   `lib-benchmark.sh` holds the benchmark harnesses' metadata, build and
   Cachegrind helpers and the CI benchmark case manifest reader.
 - `generate-*` scripts refresh reviewed test vectors or other checked inputs.
@@ -317,3 +486,118 @@ Before moving or deleting a script:
 4. Run shell/PowerShell syntax checks for moved files and the focused gate for
    every changed live reference.
 5. Run `check-implementation-languages.sh` and `git diff --check`.
+
+## CI lanes
+
+Required CI runs each host's gates in two lane jobs, `CI lane linux-1`,
+`CI lane linux-2`, `CI lane windows-1` and `CI lane windows-2` (#7767 slice 2,
+council decision D-C42). `ci-lanes.tsv` is the one assignment: every gate of
+`ci-gates.tsv`, on each host it runs on, has exactly one owning lane. A lane
+runs `ci-verify.sh --gates` with the gates it owns, which adds their needs:
+the scheduler, its memory admission, locks and dependency closure are the same
+as in a local full run, which is unchanged. Each lane bootstraps its own
+compiler from the published stage0; no compiler passes between jobs. A gate
+that a lane runs only because its owned gates need it is a duplicate, and
+`ci-lanes.tsv` must declare it (`OWNER+LANE`); today only `bootstrap-fixpoint`
+runs in both lanes of each host.
+
+`ci-lane.sh check` fails when a gate is unassigned, assigned twice, unknown or
+assigned to a host it does not run on, when a duplicate is undeclared or a
+declaration is stale, when a host has more than two lanes, or when
+`SC_CI_JOB_NAME` (`lib-self-compile.sh`) does not name the lane that runs
+`linux-self-compile-measurement`. Every lane and aggregator runs it, so a new
+`ci-gates.tsv` row needs a lane before CI can pass. `ci-lane.sh setup LANE`
+gives the workflow a lane's gates and needs. Lane `linux-1` holds only
+build-invariance, its bootstrap and the opt2-CLI regression that needs it, so
+no other gate can run beside the build-invariance pool there: in that hosted
+lane only, `TYPELISP_BUILD_INVARIANCE_WORKERS=3` (per-chunk caps and the pool
+budget unchanged). Local runs keep their own worker settings.
+
+Each lane seals a receipt into its compiler stage envelope: its plan, its
+`--gates` request, every planned gate's result (`ci-verify.sh` writes
+`target/ci-verify-results.tsv`), its timing rows, its checkout path and its
+compilers' hashes. The
+aggregator of each host (the required checks `Test + Integration` and
+`Test + Integration (windows-latest)`, which run whatever happened to the
+lanes) runs `ci-lane.sh aggregate`. It requires every lane job to have
+succeeded, binds each lane to the attempt that executed its job (a
+"Re-run failed jobs" copy keeps the attempt that ran it), reads its envelope
+back against the trusted run context on the producing host, and requires the
+receipt to plan and pass exactly the lane's assignment and its closure. It
+requires one converged compiler across the lanes and records each lane's
+stage0 seed: a seed race between lanes is allowed only with an equal compiler,
+and a different compiler is a determinism defect, never re-run away. Both
+hosts compare the raw payload bytes: the bootstrap's Windows links write a
+COFF TimeDateStamp of 0 (`TYPELISP_WINDOWS_LINK_TIMESTAMP` in
+`lib-native-link.sh`) rather than the link time, so independent lanes link
+byte-identical compilers (#9470 covers the other Windows links). Lanes whose
+native toolchains differ (runner image skew) fail with that diagnosis. The
+converged compiler also embeds its checkout path (the embedded stdlib image
+records it), so the lanes of one host must share the workspace path: each
+receipt records it, and the aggregator fails when the lanes' paths differ. It
+then merges the lanes' timing
+into the host's `ci-timing-<host>` artifact: each gate's rows from its owning
+lane in table order, the lanes' ungated rows, and one complete-verification
+row timed as the slowest lane (`partial-verification` rows mark lane runs).
+
+The assignment follows the D-C42 scheduler replay of measured gate times
+(`ci-verify.sh --jobs 4 --memory-mib 14336`, validated against hosted runs).
+Rebalance by editing `ci-lanes.tsv`; keep a lane's duplicates small, because
+each duplicated gate costs runner time in every run.
+
+## Same-run compiler stage envelopes (D-C27 slice 1)
+
+`ci-compiler-artifact.sh` restores #6883's canonical provenance namespace
+(#6909, removed in #8118). The envelope is version 4 (version 3 plus the CI
+lane: its job, plan and receipt, [CI lanes](#ci-lanes)); its provenance key keeps
+#6883's schema-1 field order, LF framing and normalized `{root}` paths. There
+is no new producer identity: `lib-build-provenance.sh` still defines the commit
+stamp and `HEAD^{tree}` producer identity. A golden-vector fixture checks the
+legacy key. `ci-compiler-artifacts.tsv` lists only the two envelope roles;
+it does not claim to recreate the removed full producer census.
+The implementation uses the original POSIX shell provenance primitives and
+the existing `jq`/coreutils tools; it adds no implementation-language exception.
+
+When `TYPELISP_CI_COMPILER_ENVELOPES=1`, `ci-verify.sh` records the actual
+successful compiler argv and freezes the completed bootstrap compiler,
+previous-stage compiler and generated inputs before dependent gates can mutate
+shared files. Linux additionally freezes the fully compared opt1 reference.
+The source-set manifest conservatively binds tracked `src/`, `stdlib/` and
+`tests/`; generated stamps, image/surface/module files and invocation recipes
+are bound separately. Relevant environment values are hashed, not disclosed.
+Seed and independent fixpoint/parity proofs retain their distinct roles.
+
+Publication uses fresh owned directories and rename commit points. A final
+bundle index binds every file and role. A lane publishes each role whose
+producer gate is in its plan. Its digest travels through a distinct producer
+job output per lane, independently of artifact contents. The host's aggregator
+checks that digest, trusted checkout/event/workflow/run, the lane and the
+attempt that executed the lane's job, successful producer job metadata,
+artifact creation window and content/provenance keys. A later attempt can use
+an earlier attempt's bundle only when its lane job is a copy of the one that
+produced it; a lane that re-ran must supply its own. Missing or partial data
+fails. Each aggregator runs on its host and verifies its own exact checkout
+bytes, including text paths that Git can materialize as CRLF on Windows. This
+avoids a separate normalized-source identity. The workflow has six jobs: four
+lanes and two aggregators, whose setup cost counts toward the runner-minute
+budget. The complete fixture suite runs on Linux, including static Windows
+envelopes, both coreutils digest markers, planted LF/CRLF checkouts and the
+aggregator's assignment, coverage, attempt and identity cases. Real Windows
+publication and readback validate that host's bytes and native tool behavior.
+
+No compiler or gate consumes a transported envelope. All existing path-file
+handoffs, compiler choices, gate dependencies, comparisons and limits remain;
+the lanes' compilers are compared, not shared.
+Transport does not preserve executable permission bits, so readback is static:
+it verifies bytes and ELF/PE target headers and never runs a downloaded binary.
+A future consumer must restore its declared executable mode only after checking
+the entire envelope. Cross-run caching is outside this contract.
+
+`scripts/verify-ci-compiler-artifacts.sh [fresh-owned-output]` runs compiler-free
+fail-closed fixtures, including substitution, corruption, partial publication,
+path escape and stale attempts. Explicit `init-local`/`verify-local` modes
+support affected local preflight, are marked local and are forbidden as a CI
+fallback. The hosted verifier always derives expected context independently.
+Packaging has `artifact-record` and `artifact-snapshot` timing rows; sealing,
+upload/readback steps and per-role metadata report the additional cost. These
+are overhead observations, not a speed gain.

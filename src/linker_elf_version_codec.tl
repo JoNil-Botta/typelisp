@@ -1,6 +1,7 @@
 ;; Pure GNU ELF version sections for #8293 and #7042. Physical offsets belong
 ;; to the model: GNU ld interleaves headers and auxiliaries, while lld groups
 ;; Verneed headers first. Padding contains only bytes outside modeled records.
+(import stdlib.iterator)
 (import stdlib.byte_le as le)
 (import stdlib.byte_reader as reader)
 (import stdlib.vector)
@@ -103,7 +104,7 @@
   (require! check (and (>= amount 0) (<= amount check.left)) "work-limit" 0)
   (if check.ok
     (begin
-      (set! check.left (- check.left amount))
+      (-= check.left amount)
       true)
     false))
 
@@ -137,13 +138,11 @@
 (define (elf-hash [data : (& d (__tl_dyn-array u8))] [start : i64] [end : i64]) : i64
   (let
     [hash : i64 0]
-    [at : i64 start]
-    (while (< at end)
+    (for [at (iterator.range start end)]
       (set! hash (+ (shl hash 4) (cast (array-ref data at) : i64)))
       (let
         [high : i64 (bit-and hash 4026531840)]
-        (set! hash (bit-and (bit-xor hash (shr high 24)) 268435455)))
-      (set! at (+ at 1)))
+        (set! hash (bit-and (bit-xor hash (shr high 24)) 268435455))))
     hash))
 
 (define (check-dynstr!
@@ -179,7 +178,7 @@
         (charge! check 1)
         (if (= (array-ref dynstr at) (cast 0 : u8))
           (set! found true)
-          (set! at (+ at 1)))))
+          (+= at 1))))
     (require! check (and found (> at start)) field start)
     (if (and check.ok (charge! check (- at start)))
       (elf-hash dynstr start at)
@@ -201,7 +200,7 @@
       (while (and check.ok (< i (+ at width)))
         (require! check (not (array-ref used i)) field i)
         (when check.ok (set! (array-ref used i) true))
-        (set! i (+ i 1)))))
+        (+= i 1))))
   check.ok)
 
 (define (target
@@ -331,7 +330,7 @@
                   (if definitions
                     6
                     2)))
-              (set! total-aux (+ total-aux aux-count))
+              (+= total-aux aux-count)
               (unless
                 definitions
                 (let
@@ -419,22 +418,19 @@
                           (if definitions
                             "vd_cnt"
                             "vn_cnt"))))))
-                (set! i (+ i 1)))
+                (+= i 1))
               (record_vec.push-ref! (&mut out.records) record)
               (if (= (+ ordinal 1) count)
                 (require! check (= next 0) prefix at)
                 (set! at (target check size at next header-size prefix)))))
-          (set! ordinal (+ ordinal 1)))
+          (+= ordinal 1))
         (when
           (and check.ok (charge! check size))
           (set! out.padding (__tl_make-array u8 size))
-          (let
-            [i : i64 0]
-            (while (< i size)
-              (unless
-                (array-ref used i)
-                (set! (array-ref out.padding i) (array-ref data i)))
-              (set! i (+ i 1)))))))
+          (for [i (iterator.range 0 size)]
+            (unless
+              (array-ref used i)
+              (set! (array-ref out.padding i) (array-ref data i)))))))
     out))
 
 (define (map-index!
@@ -482,7 +478,7 @@
           "vd_ndx"
           (+ record.offset 4))
         (set! base (or base is-base)))
-      (set! i (+ i 1)))
+      (+= i 1))
     (require!
       check
       (or (not require-base) (= versions.definitions.records.len 0) base)
@@ -504,8 +500,8 @@
               false
               "vna_other"
               (+ aux.offset 6)))
-          (set! j (+ j 1))))
-      (set! i (+ i 1)))
+          (+= j 1)))
+      (+= i 1))
     (set! i 0)
     (while (and check.ok (< i (array-length versions.symbols)))
       (let
@@ -518,7 +514,7 @@
             (or (and (<= id 1) (= raw id)) (and (> id 1) (array-ref mapped id)))
             "versym"
             (* i 2))))
-      (set! i (+ i 1)))))
+      (+= i 1))))
 
 (define (decode [request : (& r DecodeRequest)]) : VersionDecodeResult
   (let
@@ -538,13 +534,10 @@
     (when
       (and check.ok (charge! (&mut check) size))
       (set! symbols (__tl_make-array u16 request.symbol-count))
-      (let
-        [i : i64 0]
-        (while (< i request.symbol-count)
-          (set!
-            (array-ref symbols i)
-            (cast (le.read-u16 (& request.bytes.symbols) (* i 2)) : u16))
-          (set! i (+ i 1)))))
+      (for [i (iterator.range 0 request.symbol-count)]
+        (set!
+          (array-ref symbols i)
+          (cast (le.read-u16 (& request.bytes.symbols) (* i 2)) : u16))))
     (let
       [definitions : VersionSection
         (decode-section
@@ -619,7 +612,7 @@
                 "vd_cnt"
                 "vn_cnt")
               at)
-            (set! total-aux (+ total-aux count))
+            (+= total-aux count)
             (when (= i 0) (require! check (= at 0) "first-record-offset" at))
             (require!
               check
@@ -754,8 +747,8 @@
                           (if definitions
                             "vda_next"
                             "vna_next"))))))
-                (set! j (+ j 1)))))
-          (set! i (+ i 1)))
+                (+= j 1))))
+          (+= i 1))
         (set! i 0)
         (while (and check.ok (< i size))
           (if (array-ref used i)
@@ -765,7 +758,7 @@
               "padding-overlap"
               i)
             (set! (array-ref data i) (array-ref section.padding i)))
-          (set! i (+ i 1)))))
+          (+= i 1))))
     data))
 
 (define (encode
@@ -788,14 +781,11 @@
     (when
       (and check.ok (charge! (&mut check) (* count 2)))
       (set! symbols (__tl_make-array u8 (* count 2)))
-      (let
-        [i : i64 0]
-        (while (< i count)
-          (le.set-u16!
-            (&mut symbols)
-            (* i 2)
-            (cast (array-ref versions.symbols i) : i64))
-          (set! i (+ i 1)))))
+      (for [i (iterator.range 0 count)]
+        (le.set-u16!
+          (&mut symbols)
+          (* i 2)
+          (cast (array-ref versions.symbols i) : i64))))
     (let
       [definitions : (__tl_dyn-array u8)
         (encode-section (&mut check) (& versions.definitions) dynstr true)]

@@ -180,6 +180,8 @@
       (= (fixture.package-increment 41) 42)
       (= (fixture.package-unsupported 42) 42)
       (= (fixture.package-unsupported 41) 41)
+      (= (fixture.probe (some-function 9)) 3)
+      (= (fixture.probe 9) 7)
       (= (fixture.package-first 38 1) 38)
       (= (package-first-answer) 39)
       (= (fixture-generated.answer) 41)

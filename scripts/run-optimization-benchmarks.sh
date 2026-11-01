@@ -635,7 +635,8 @@ for _metadata in "$ROOT"/benchmarks/*/optimization.tsv; do
         compile_tl_stage0 "$_tl_src" "$_tl_asm" "$WORKDIR/$_name.tl.compile.stdout" "$WORKDIR/$_name.tl.compile.stderr"
     fi
     as "$_tl_asm" -o "$_tl_obj"
-    ld "$_tl_obj" -o "$_tl_bin" -e "$(linux_entry_symbol_for_asm "$_tl_asm")"
+    _tl_entry=$(linux_entry_symbol_for_asm "$_tl_asm") || exit $?
+    ld "$_tl_obj" -o "$_tl_bin" -e "$_tl_entry"
 
     compile_c "$_c_src" "$_c_bin" "$_c_asm" "$WORKDIR/$_name.c.compile.stdout" "$WORKDIR/$_name.c.compile.stderr"
 

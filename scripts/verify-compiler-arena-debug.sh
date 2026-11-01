@@ -12,6 +12,9 @@ configure_toolchain
 COMPILER=${TYPELISP_BIN:?compiler arena debug requires TYPELISP_BIN}
 WORKDIR="$ROOT/target/compiler-arena-debug/$HOST_OS"
 mkdir -p "$WORKDIR"
+. "$ROOT/scripts/lib-fixture-inventory.sh"
+fixture_inventory_load tests/fixtures/arena-global-storage.fixtures.cases "$WORKDIR/global-storage.tsv"
+TAB=$(printf '\t')
 SUPPORT="$WORKDIR/emitter$BIN_EXT"
 FIXTURE="$WORKDIR/fixture$BIN_EXT"
 # native_target_cfg_args emits only fixed, whitespace-free flag tokens.
@@ -50,22 +53,26 @@ for operation in invalid-null invalid-address invalid-atomic retire-unprotected 
 done
 echo "compiler arena debug native matrix passed (15 cases, $HOST_OS)"
 
-# Exercise the private global allocator with all instrumentation enabled. The
-# fixtures check arena restoration, payload identity, and concurrent growth.
-for source in global_aggregate_storage_lifetime global_aggregate_storage_threads global_aggregate_storage_boundary; do
+# Exercise global aggregate stores with all instrumentation enabled. An inline
+# aggregate global keeps its static home (SPEC 5.10), so a store never reaches
+# the private global allocator. The fixtures check arena restoration, payload
+# identity, and concurrent stores.
+while IFS=$TAB read -r source primary; do
     for opt in 0 1 2; do
         asm="$WORKDIR/$source-opt$opt.s"
         binary="$WORKDIR/$source-opt$opt$BIN_EXT"
         # Match the native assembler, including on Windows-hosted emitters.
         # shellcheck disable=SC2046
-        "$SUPPORT" compile "tests/integration/$source.tl" \
+        "$SUPPORT" compile "$primary" \
             --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) \
             --stdlib-root stdlib --stdlib-root src --opt-level "$opt" \
             --cfg compiler-arena-debug --cfg compile-profile --backtrace -o "$asm"
-        for symbol in tl_alloc_global: tl_arena_debug_assert_pool_install: tl_profile_alloc_total_bytes: tl_backtrace_map_begin:; do
+        for symbol in tl_arena_debug_assert_pool_install: tl_profile_alloc_total_bytes: tl_backtrace_map_begin:; do
             grep -F "$symbol" "$asm" >/dev/null ||
                 fail "global storage $source opt$opt omitted $symbol"
         done
+        ! grep -F 'tl_alloc_global:' "$asm" >/dev/null ||
+            fail "global storage $source opt$opt copied a global into a container"
         assemble_and_link "global storage $source opt$opt" "$asm" \
             "$WORKDIR/$source-opt$opt.$OBJ_EXT" "$binary"
         status=0
@@ -74,7 +81,7 @@ for source in global_aggregate_storage_lifetime global_aggregate_storage_threads
         [ ! -s "$binary.stdout" ] && [ ! -s "$binary.stderr" ] ||
             fail "global storage $source opt$opt: unexpected output"
     done
-done
+done < "$WORKDIR/global-storage.tsv"
 echo "global storage debug/profile/backtrace matrix passed (9 cases, $HOST_OS)"
 
 # Linux's private TLS word must also work with the debug renderer enabled in

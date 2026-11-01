@@ -1,6 +1,9 @@
 ;; compiler_backend_object_target_windows.tl - Windows direct-object policy leaf.
 (import stdlib.byte_buf_core)
+(import stdlib.byte_le)
 (import stdlib.string)
+(import stdlib.iterator)
+(import stdlib.str_cat_runtime as str_cat)
 (import compiler_backend_object_target as object_target)
 (import compiler_object as cobj)
 (import compiler_x64_executable_template as x64_template)
@@ -66,7 +69,7 @@
 (define (compiler-backend-object-tlci-macro-entry-bytes) : String
   (compiler-backend-object-registered-bytes
     (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciMacroBytes)
-    "4889c84889d14c89c24d89c84c8b4c24284c8b5424304c8b5c24384883ec384c895424204c895c2428ffd04883c438c3"))
+    "4883ec384889c84889d14c89c24d89c84c8b4c24604c8b5424684c8b5c24704c895424204c895c2428ffd04883c438c3"))
 
 (define (compiler-backend-object-entry-gs-clear-bytes) : String
   (compiler-backend-object-registered-bytes
@@ -154,6 +157,128 @@
     (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
     (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
+
+(define (compiler-backend-object-unwind-push-u8!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
+  (byte_buf_core.byte-buf-builder-push out (cast (bit-and value 255) : u8)))
+
+(define (compiler-backend-object-entry-range-unwind-bytes
+  [frame : i64]
+  [prologue-size : i64]
+  [save-rsi-rdi? : bool]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [slots : i64
+      (if (<= frame 128)
+        1
+        (if (<= frame 524280)
+          2
+          3))]
+    [count : i64
+      (+
+        slots
+        (if save-rsi-rdi?
+          2
+          0))]
+    (compiler-backend-object-unwind-push-u8! (&mut out) 1)
+    (compiler-backend-object-unwind-push-u8! (&mut out) prologue-size)
+    (compiler-backend-object-unwind-push-u8! (&mut out) count)
+    (compiler-backend-object-unwind-push-u8! (&mut out) 0)
+    (compiler-backend-object-unwind-push-u8! (&mut out) prologue-size)
+    (cond
+      [(= slots 1)
+        (compiler-backend-object-unwind-push-u8!
+          (&mut out)
+          (+ 2 (* 16 (- (/ frame 8) 1))))]
+      [(= slots 2)
+        (compiler-backend-object-unwind-push-u8! (&mut out) 1)
+        (byte_le.push-u16! (&mut out) (/ frame 8))]
+      [else
+        (compiler-backend-object-unwind-push-u8! (&mut out) 0x11)
+        (byte_le.push-u32! (&mut out) frame)])
+    ;; Codes are in reverse prologue order: allocation, RDI, RSI.
+    (when
+      save-rsi-rdi?
+      (compiler-backend-object-unwind-push-u8! (&mut out) 2)
+      (compiler-backend-object-unwind-push-u8! (&mut out) 0x70)
+      (compiler-backend-object-unwind-push-u8! (&mut out) 1)
+      (compiler-backend-object-unwind-push-u8! (&mut out) 0x60))
+    (when (= (% count 2) 1) (byte_le.push-u16! (&mut out) 0))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+
+;; Every range supplies its own unwind bytes; related RVAs are emitted together
+;; so no generated entry can accidentally inherit another entry's frame plan.
+(define (compiler-backend-object-add-unwind
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [entry : String]
+  [end : String]
+  [bytes : String]) : object_target.CompilerBackendObjectTargetParts
+  (let
+    [with-entry : object_target.CompilerBackendObjectTargetParts
+      (if (or
+        (cobj.compiler-object-symbol-builder-contains?
+          (& parts.symbols)
+          entry
+          (Local)
+          (Function))
+        (cobj.compiler-object-symbol-builder-contains?
+          (& parts.symbols)
+          entry
+          (Export)
+          (Function)))
+        parts
+        (object_target.compiler-backend-object-symbol-local-section
+          parts
+          (string.copy (& entry))
+          (Text)
+          (Function)))]
+    [with-end : object_target.CompilerBackendObjectTargetParts
+      (if (cobj.compiler-object-symbol-builder-contains?
+        (& with-entry.symbols)
+        end
+        (Local)
+        (Function))
+        with-entry
+        (object_target.compiler-backend-object-symbol-local-section
+          with-entry
+          (string.copy (& end))
+          (Text)
+          (Function)))]
+    [unwind : String (str_cat.str-cat (string.copy (& entry)) "$unwind")]
+    [out : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-xdata
+        (object_target.compiler-backend-object-add-xdata
+          (object_target.compiler-backend-object-add-xdata
+            (object_target.compiler-backend-object-symbol-local-section
+              with-end
+              (string.copy (& unwind))
+              (Xdata)
+              (Data))
+            (Align 4))
+          (Label (string.copy (& unwind))))
+        (Bytes bytes))]
+    [targets : (Array String 3) (array (string.copy (& entry)) end unwind)]
+    (for [i (iterator.range 0 3)]
+      (let
+        [site : String
+          (str_cat.str-cat
+            (string.copy (& entry))
+            "$pdata"
+            (string.int->string i))]
+        [target : String (string.copy (& (array-ref targets i)))]
+        (set!
+          out
+          (object_target.compiler-backend-object-add-pdata
+            (object_target.compiler-backend-object-add-pdata-relocation
+              (object_target.compiler-backend-object-add-pdata
+                out
+                (Label (string.copy (& site))))
+              site
+              (Addr32Nb)
+              (string.copy (& target)))
+            (SymbolRva32 target)))))
+    out))
 
 (define compiler-backend-object-manifest-label : String
   ".L_tl_manifest")
@@ -1015,11 +1140,25 @@
         (WindowsX64)
         (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciImageContribution)
         (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciMacroContribution))]
+    [with-image-unwind : object_target.CompilerBackendObjectTargetParts
+      (compiler-backend-object-add-unwind
+        with-tlci
+        "tl_tlci_call_image_entry"
+        "tl_tlci_call_image_entry$end"
+        (compiler-backend-object-entry-range-unwind-bytes 40 13 false))]
+    [with-macro-unwind : object_target.CompilerBackendObjectTargetParts
+      (if macro-entry
+        (compiler-backend-object-add-unwind
+          with-image-unwind
+          "tl_tlci_call_macro_entry"
+          "tl_tlci_call_macro_entry$end"
+          (compiler-backend-object-entry-range-unwind-bytes 56 4 false))
+        with-image-unwind)]
     [emit-native-entry : bool (and emit-entry (not crt-entry))]
     [with-entry : object_target.CompilerBackendObjectTargetParts
       (if emit-native-entry
-        (compiler-backend-object-add-entry with-tlci)
-        with-tlci)]
+        (compiler-backend-object-add-entry with-macro-unwind)
+        with-macro-unwind)]
     [final-parts : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-bss with-entry (Zero 0))]
     (cobj.CompilerObjectImage

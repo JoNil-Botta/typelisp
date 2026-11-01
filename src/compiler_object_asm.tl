@@ -2,6 +2,7 @@
 ;; assembly. This is a cheap side-artifact path for direct object emission: it
 ;; preserves the already-selected instruction bytes and relocatable operations
 ;; without running lowering, optimization, or instruction selection again.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
@@ -55,9 +56,8 @@
           (if (< (- count index) 16)
             (- count index)
             16)]
-        [line-index : i64 0]
         (compiler-object-asm-append! out "    .byte ")
-        (while (< line-index line-count)
+        (for [line-index (iterator.range 0 line-count)]
           (if (> line-index 0)
             (compiler-object-asm-push-char! out ',')
             unit)
@@ -65,10 +65,9 @@
             out
             (bit-and
               (cast (string.string-ref bytes (+ index line-index)) : i64)
-              255))
-          (set! line-index (+ line-index 1)))
+              255)))
         (compiler-object-asm-push-char! out '\n')
-        (set! index (+ index line-count))))
+        (+= index line-count)))
     unit))
 
 (define (compiler-object-asm-append-label!
@@ -248,7 +247,7 @@
         (compiler-object-asm-render-instr!
           out
           (cobj.compiler-object-instr-list-ref instrs index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (compiler-object-asm-render-data-record!
@@ -294,12 +293,10 @@
   [records : cobj.CompilerObjectDataRecordList]) : unit
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-object-asm-render-data-record!
         out
-        (cobj.compiler-object-data-record-list-ref records index))
-      (set! index (+ index 1)))
+        (cobj.compiler-object-data-record-list-ref records index)))
     unit))
 
 (define (compiler-object-asm-section-header
@@ -318,8 +315,7 @@
   [symbols : cobj.CompilerObjectSymbolList]) : unit
   (let
     [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (cobj.compiler-object-symbol-list-ref symbols index)
         [(Symbol name binding _ _)
           (match binding
@@ -327,8 +323,7 @@
               (compiler-object-asm-append! out ".globl ")
               (compiler-object-asm-append! out name)
               (compiler-object-asm-push-char! out '\n')]
-            [_ unit])])
-      (set! index (+ index 1)))
+            [_ unit])]))
     (compiler-object-asm-push-char! out '\n')))
 
 (define (compiler-object-asm-render-sections!
@@ -347,7 +342,7 @@
           (compiler-object-asm-render-data-records! out records)
           (set! ok (compiler-object-asm-render-instrs! out instrs))
           (compiler-object-asm-push-char! out '\n')])
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (compiler-object-asm-render [image : cobj.CompilerObjectImage]) : ResultCompilerObjectAsm

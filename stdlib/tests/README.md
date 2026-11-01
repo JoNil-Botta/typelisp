@@ -12,11 +12,12 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
-`string_utf8_api.tl` runs the shared scalar decoder through both the native
+`string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second
 byte in each constrained range, every truncation/continuation position, scalar
 boundaries, original-input error offsets, first-error ordering, NUL, borrowed
-substrings, static/copied/arena input, and retained results.
+substrings, static/copied/arena input, and retained results. Encoding checks
+scalar boundaries, rejected non-scalars and independent byte construction.
 
 The package-lock inline transaction test exercises `io.OpenWriteCreateNew`,
 file flushing, atomic sibling replacement, advisory coordination locks,
@@ -318,6 +319,9 @@ Inline stdlib coverage:
   deterministic finite f64/f32 number conversion, serializer helpers, and
   end-to-end parse/stringify behavior for invalid input, escapes, nesting,
   arrays, objects, duplicate-key lookup, and number forms.
+  `tests/integration/json_unicode_escapes.tl` adds every BMP scalar, UTF-16 pair
+  boundaries, every high/low code unit, exact invalid-surrogate byte locations,
+  and stringify/parse round trips at opt0/1/2 with source and embedded stdlib.
 - `env_api.tl` owns standalone tests for missing, empty, and present environment
   variables; process-local set/replace/empty/unset round trips and invalid-name
   rejection; host-separator PATH splitting/joining; vector-backed PATH
@@ -534,3 +538,18 @@ Inline stdlib coverage:
 - `msvc_api.tl` owns standalone tests for pure MSVC discovery helpers with
   fake temp-directory toolset and SDK trees, including newest-usable candidate
   selection through the vector-backed scanners.
+
+### Bounded raw DEFLATE
+
+`deflate_api.tl` supplies both named compiler tests and a native driver. Its
+small RFC-derived corpus covers every input split with output chunks 1–8,
+zero-capacity calls, exact member consumption, terminal repetition and equal
+work across chunking. Other cases cover all length/distance codes and field
+boundaries, legal degenerate trees, oversubscribed/incomplete literal and
+distance trees, a missing end-of-block code, malformed/truncated streams, the
+maximum stored block and distance, overlapping/cross-block history, each
+resource limit, empty-block chains, corrupted public state, allocation-free
+stepping, and cancellation/chunk lifetimes across arenas. Fixture provenance
+is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md).
+The integration manifest runs this driver and the embedded-module example at
+opt0/1/2 on Linux and Windows.

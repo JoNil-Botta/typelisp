@@ -70,10 +70,10 @@ selfhost_stage2_path() {
 #   scripts/build-stage0.sh twice (SEED -> stage1 -> stage2); that script
 #   compiles src/main.tl at --opt-level 2, so the result is the same
 #   register-allocated, self-hosted compiler that the published stage0 and the
-#   check-instruction-counts.sh CI gate measure. Local self-compile measurement
-#   and profiling must run this compiler, not the raw seed: the seed is an older
+#   CI instruction-count gates measure. Local self-compile measurement and
+#   profiling must run this compiler, not the raw seed: the seed is an older
 #   build whose per-function codegen differs, so measuring it does not reflect
-#   the metric CI ratchets (self_compile/compile_cli_opt1). All build output goes
+#   the metric CI gates (self_compile/compile_cli_opt1). All build output goes
 #   to stderr; recover the resulting compiler path with selfhost_stage2_path.
 build_selfhost_stage2() {
     _bss_root=$1

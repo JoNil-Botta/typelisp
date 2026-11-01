@@ -1,9 +1,13 @@
 ;; Build-configured embedded stdlib comptime image and production loader path.
+(import compiler_abort as abort)
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg test (import compiler_embedded_stdlib_tlci_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_tlci_payload as payload))
 (import compiler_embedded_stdlib_tlci_codec as codec)
+(import compiler_embedded_stdlib_tlci_frames as frames)
 (import tlci_loader as loader)
+(cfg compile-profile (import compiler_allocation_profile as allocation_profile))
 
 ;; compiler_ctfe instantiates (hashmap i64 i64); the generated-module import
 ;; needs stdlib.hashmap in this program graph even though full compiler
@@ -52,13 +56,8 @@
   (Ok String String (__tl_dyn-array u8))
   (Unavailable String))
 
-(define (compiler-embedded-stdlib-tlci-compressed-shared-view) : (__tl_dyn-array
-    u8)
-  (unsafe
-    (ptr-read (ptr-addr-of payload.embedded-stdlib-tlci-bytes))))
-
-;; The compiler maps the image lazily on the first embedded-stdlib macro call
-;; and keeps it mapped through that macro-expansion pass. State values are
+;; The compiler maps each native frame lazily on its first macro call and
+;; keeps it mapped through that macro-expansion pass. Per-frame state values are
 ;; 0 = closed, 1 = loaded, and -1 = load failed. The separate cells avoid
 ;; requiring an artificial zero-value TlciLoadedImage enum variant.
 (define compiler-embedded-stdlib-tlci-session-state : (__tl_dyn-array i64)
@@ -117,19 +116,12 @@
       (= compiler-embedded-stdlib-tlci-stress-canary-a 610839776)
       (= compiler-embedded-stdlib-tlci-stress-canary-b 270544960))))
 
-(define (compiler-embedded-stdlib-tlci-session-image-shared-view) : loader.TlciLoadedImage
+(define (compiler-embedded-stdlib-tlci-session-image-shared-view [index : i64]) : loader.TlciLoadedImage
   (unsafe
     (ptr-read
       (ptr-offset
         (__tl_array-data compiler-embedded-stdlib-tlci-session-image)
-        0))))
-
-(define (compiler-embedded-stdlib-tlci-session-error-shared-view) : String
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (__tl_array-data compiler-embedded-stdlib-tlci-session-error)
-        0))))
+        index))))
 
 ;; R3-P2d. The session is opened LAZILY, from inside whatever the compiler
 ;; happens to be doing when the first embedded-stdlib macro fires, and it is
@@ -148,11 +140,9 @@
 ;;   that is never released cannot reintroduce one, and it needs no
 ;;   head-tracking to keep an overflow segment reachable for a destroy that
 ;;   does not happen (H4).
-;; * The retention is two 8-word arrays, the loader's one-element liveness
-;;   cell, and at most one failure message per process. The payload bytes and
-;;   parse, which are megabytes, are the driver surface's (owned by its surface
-;;   arena) or a copy in the caller's current arena that is dropped with it, so
-;;   this does not move the macro-walk peak.
+;; * Loaded entry records, liveness cells and failure messages live here.
+;;   Executable mappings and their catalog indexes are still released at pass
+;;   close; compressed bytes are static and decoded entry bytes are transient.
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 
@@ -169,52 +159,125 @@
 ;: for the whole pass, so the message it hands back must not be.
 (define (compiler-embedded-stdlib-tlci-session-own-text [text : String]) : String
   (in-arena
-    (arena.Arena (compiler-embedded-stdlib-tlci-session-arena))
+    (unsafe
+      (arena.Arena (compiler-embedded-stdlib-tlci-session-arena)))
     (string.substring (& text) 0 (string.string-length text))))
 
-;; The image is embedded through a TLCI-only canonical-Huffman layer over the
-;; proven LZSS matches. The ordinary `.tlci` bytes are restored before the
-;; existing parser and mapper, while the source fallback retains its separate
-;; lazy per-module `include-str-lzss` payloads and decoder.
-;;
-;; One-shot expansion belongs to the caller's current arena. A hydrated
-;; surface or multi-entry compile batch can retain it in its driver-owned
-;; surface arena; that owner must unpublish the bytes before retiring.
-;; 256 MiB is far above the current image while bounding a corrupt static
-;; length before allocation.
+;; TLCH v2 frames share one authenticated index and canonical Huffman model.
+;; Surface bytes may be retained in the driver surface arena; native entries
+;; decode and map independently on demand. The bound applies to the sum of all
+;; frame outputs before allocating any of them.
 (define (compiler-embedded-stdlib-tlci-raw-limit) : i64
   268435456)
 
-;; Uncompressed image length. Zero means "no image in this build" -- the seed
-;; and test payloads are empty rather than compressed -- and every caller
-;; treats that as unavailable before touching the bytes.
+;; Surface image length. Empty seed/test payloads remain unavailable before
+;; any model or frame is read.
 (define (compiler-embedded-stdlib-tlci-length) : i64
-  (let
-    [compressed : (__tl_dyn-array u8)
-      (compiler-embedded-stdlib-tlci-compressed-shared-view)]
-    (if (= (array-length compressed) 0)
-      0
-      (match (codec.compiler-embedded-stdlib-tlci-codec-frame
-        (& compressed)
-        (compiler-embedded-stdlib-tlci-raw-limit))
-        [(Ok raw-len _ _) raw-len]
-        [(Err _)
-          (string.tl_oob_abort)
-          0]))))
+  (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
+    0
+    (tlci.tlci-read-u64
+      (& payload.embedded-stdlib-tlci-bytes)
+      (+ (frames.compiler-embedded-stdlib-tlci-frames-record 0) 24))))
+
+;; The immutable index and model outlive every surface and macro pass. Each
+;; executable mapping still belongs to one pass and is revoked on close.
+(define compiler-embedded-stdlib-tlci-table-owner : i64
+  0)
+(define compiler-embedded-stdlib-tlci-frames : (__tl_dyn-array
+    frames.CompilerEmbeddedStdlibTlciFrames)
+  (__tl_make-array frames.CompilerEmbeddedStdlibTlciFrames 1))
+(define compiler-embedded-stdlib-tlci-tables : (__tl_dyn-array
+    codec.CompilerEmbeddedStdlibTlciHuffmanTable)
+  (__tl_make-array codec.CompilerEmbeddedStdlibTlciHuffmanTable 3))
+(define compiler-embedded-stdlib-tlci-active : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-embedded-stdlib-tlci-active-count : i64
+  0)
+(define compiler-embedded-stdlib-tlci-last-image : i64
+  -1)
+
+(cfg
+  compile-profile
+  (define (compiler-embedded-stdlib-tlci-cache-bytes) : i64
+    (+
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        compiler-embedded-stdlib-tlci-table-owner)
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        compiler-embedded-stdlib-tlci-session-arena-handle))))
+
+(define (compiler-embedded-stdlib-tlci-frames-ensure!) : bool
+  (if (> compiler-embedded-stdlib-tlci-table-owner 0)
+    true
+    (if (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
+      false
+      (let
+        [catalog : frames.CompilerEmbeddedStdlibTlciFrames
+          (match (frames.compiler-embedded-stdlib-tlci-frames-parse
+            (& payload.embedded-stdlib-tlci-bytes)
+            (compiler-embedded-stdlib-tlci-raw-limit))
+            [(Ok catalog) catalog]
+            [(Err _)
+              (abort.compiler-abort
+                "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-frames-ensure!: invalid embedded TLCI index\n")
+              (frames.CompilerEmbeddedStdlibTlciFrames 0 0 0)])]
+        [owner : i64 (arena.tl_arena_make_small)]
+        (in-arena
+          (unsafe
+            (arena.Arena owner))
+          (for [index (iterator.range 0 3)]
+            (match (codec.compiler-embedded-stdlib-tlci-codec-build-table
+              (& payload.embedded-stdlib-tlci-bytes)
+              (+ 68 (cond [(= index 0) 0] [(= index 1) 257] [else 4353]))
+              (cond [(= index 0) 257] [(= index 1) 4096] [else 16]))
+              [(Ok table)
+                (set!
+                  (array-ref compiler-embedded-stdlib-tlci-tables index)
+                  table)]
+              [(Err _)
+                (abort.compiler-abort
+                  "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-frames-ensure!: invalid embedded TLCI model\n")]))
+          (set!
+            compiler-embedded-stdlib-tlci-session-state
+            (__tl_make-array i64 catalog.count))
+          (set!
+            compiler-embedded-stdlib-tlci-session-image
+            (__tl_make-array loader.TlciLoadedImage catalog.count))
+          (set!
+            compiler-embedded-stdlib-tlci-session-error
+            (__tl_make-array String catalog.count))
+          (set!
+            compiler-embedded-stdlib-tlci-active
+            (__tl_make-array i64 catalog.count)))
+        (set! (array-ref compiler-embedded-stdlib-tlci-frames 0) catalog)
+        (set! compiler-embedded-stdlib-tlci-table-owner owner)
+        true))))
+
+(define (compiler-embedded-stdlib-tlci-decode-frame [index : i64]) : (__tl_dyn-array
+    u8)
+  (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
+    (__tl_make-array u8 0)
+    (match (frames.compiler-embedded-stdlib-tlci-frames-decode
+      (& payload.embedded-stdlib-tlci-bytes)
+      (array-ref compiler-embedded-stdlib-tlci-frames 0)
+      index
+      (& compiler-embedded-stdlib-tlci-tables))
+      [(Ok bytes) bytes]
+      [(Err _)
+        (abort.compiler-abort
+          "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-decode-frame: invalid embedded TLCI frame\n")
+        (__tl_make-array u8 0)])))
 
 (define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
-  (let
-    [compressed : (__tl_dyn-array u8)
-      (compiler-embedded-stdlib-tlci-compressed-shared-view)]
-    (if (= (array-length compressed) 0)
-      (__tl_make-array u8 0)
-      (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-        (& compressed)
-        (compiler-embedded-stdlib-tlci-raw-limit))
-        [(Ok bytes) bytes]
-        [(Err _)
-          (string.tl_oob_abort)
-          (__tl_make-array u8 0)]))))
+  (if (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
+    (__tl_make-array u8 0)
+    (match (frames.compiler-embedded-stdlib-tlci-frames-expand
+      (& payload.embedded-stdlib-tlci-bytes)
+      (compiler-embedded-stdlib-tlci-raw-limit))
+      [(Ok bytes) bytes]
+      [(Err _)
+        (abort.compiler-abort
+          "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy: invalid embedded TLCI catalog\n")
+        (__tl_make-array u8 0)])))
 
 ;; Publish the owner only after its immutable bytes are complete. Nested users
 ;; borrow the enclosing owner's bytes and cannot release that owner.
@@ -230,13 +293,6 @@
     (ptr-read
       (ptr-offset (__tl_array-data compiler-embedded-stdlib-tlci-decoded) 0))))
 
-;; Retention shares only the baked-in image bytes. Each native session still
-;; parses, admits, maps, registers and releases its own executable image.
-(define (compiler-embedded-stdlib-tlci-image-bytes) : (__tl_dyn-array u8)
-  (if (= compiler-embedded-stdlib-tlci-decoded-owner 0)
-    (compiler-embedded-stdlib-tlci-copy)
-    (compiler-embedded-stdlib-tlci-decoded-shared-view)))
-
 ;; `owner` must stay alive until forget; an enclosing retained owner takes
 ;; precedence and remains responsible for its own lifetime. Nonpositive handles
 ;; retain nothing and leave the expansion in the caller's arena.
@@ -245,14 +301,15 @@
   (if (> compiler-embedded-stdlib-tlci-decoded-owner 0)
     (compiler-embedded-stdlib-tlci-decoded-shared-view)
     (if (<= owner 0)
-      (compiler-embedded-stdlib-tlci-copy)
+      (compiler-embedded-stdlib-tlci-decode-frame 0)
       (in-arena
-        (arena.Arena owner)
+        (unsafe
+          (arena.Arena owner))
         (let
-          ;; Decoder tables are transient; only its byte result belongs to
-          ;; the retained surface owner.
+          ;; Only decoded bytes belong to the retained surface owner;
+          ;; shared decode tables stay in their process arena.
           [bytes : (__tl_dyn-array u8)
-            (with-scratch (compiler-embedded-stdlib-tlci-copy))]
+            (with-scratch (compiler-embedded-stdlib-tlci-decode-frame 0))]
           (set!
             (array-ref compiler-embedded-stdlib-tlci-decoded 0)
             (owned_view.compiler-owned-shared-view bytes))
@@ -279,114 +336,140 @@
             (payload.embedded-stdlib-tlci-source-hash-shared-view)
             image.rodata)]))))
 
-(define (compiler-embedded-stdlib-tlci-host-table) : tlci.TlciHostCallbackTable
-  (compiler-comptime-host-table))
-
-(define (compiler-embedded-stdlib-tlci-session-open!) : bool
+(define (compiler-embedded-stdlib-tlci-session-open! [index : i64]) : bool
   (let
-    [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state 0)]
+    [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state index)]
     (cond
       [(= state 1) true]
       [(= state -1) false]
       [else
-        (if (= (compiler-embedded-stdlib-tlci-length) 0)
-          (begin
-            (set! (array-ref compiler-embedded-stdlib-tlci-session-state 0) -1)
-            (set!
-              (array-ref compiler-embedded-stdlib-tlci-session-error 0)
-              "embedded stdlib tlci is unavailable in the seed/test build")
-            false)
-          ;; The owner is the session's own arena, not the arena that happens
-          ;; to be current on the first embedded-stdlib macro call: this image
-          ;; is retained for the rest of the pass and dispatched from
-          ;; declarations that outlive any macro-walk generation.
-          (let
-            [bytes : (__tl_dyn-array u8)
-              (compiler-embedded-stdlib-tlci-image-bytes)]
-            [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
-            (match (loader.tlci-loader-load-from-bytes-with-host
-              (compiler-embedded-stdlib-tlci-session-arena)
-              (& bytes)
-              (& host))
-              [(Err message)
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-state 0)
-                  -1)
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-error 0)
-                  (compiler-embedded-stdlib-tlci-session-own-text message))
-                false]
-              [(Ok loaded)
-                (begin
-                  (set!
-                    (array-ref compiler-embedded-stdlib-tlci-session-image 0)
-                    loaded)
-                  (set!
-                    (array-ref compiler-embedded-stdlib-tlci-session-state 0)
-                    1)
-                  (cfg
-                    tlci-native-route-stress
-                    (set!
-                      compiler-embedded-stdlib-tlci-stress-image-generations
-                      (+
-                        compiler-embedded-stdlib-tlci-stress-image-generations
-                        1)))
-                  true)])))])))
+        (let
+          [bytes : (__tl_dyn-array u8)
+            (compiler-embedded-stdlib-tlci-decode-frame index)]
+          (match (compiler-comptime-host-load-from-bytes
+            (compiler-embedded-stdlib-tlci-session-arena)
+            (& bytes))
+            [(Err message)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-state index)
+                -1)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-error index)
+                (compiler-embedded-stdlib-tlci-session-own-text message))
+              false]
+            [(Ok loaded)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-image index)
+                loaded)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-state index)
+                1)
+              (set!
+                (array-ref
+                  compiler-embedded-stdlib-tlci-active
+                  compiler-embedded-stdlib-tlci-active-count)
+                index)
+              (+= compiler-embedded-stdlib-tlci-active-count 1)
+              (cfg
+                tlci-native-route-stress
+                (+= compiler-embedded-stdlib-tlci-stress-image-generations 1))
+              true]))])))
 
 (define (compiler-embedded-stdlib-tlci-catalog-lookup [name : String]) : CompilerEmbeddedStdlibTlciLookup
-  (if (compiler-embedded-stdlib-tlci-session-open!)
+  (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
+    (Unavailable "embedded stdlib tlci is unavailable in the seed/test build")
     (let
-      [loaded : loader.TlciLoadedImage
-        (compiler-embedded-stdlib-tlci-session-image-shared-view)]
-      (match (loader.tlci-loader-resolve-macro-entry (& loaded) (& name))
-        [(Resolved resolved) (Resolved resolved)]
-        [(Shell resolved) (Shell resolved)]
-        [(Missing) Missing]
-        [(Err message) (Unavailable message)]))
-    (Unavailable (compiler-embedded-stdlib-tlci-session-error-shared-view))))
+      [index : i64
+        (frames.compiler-embedded-stdlib-tlci-frames-find
+          (& payload.embedded-stdlib-tlci-bytes)
+          (array-ref compiler-embedded-stdlib-tlci-frames 0)
+          (& name))]
+      (cond
+        [(< index 0) Missing]
+        [(not (compiler-embedded-stdlib-tlci-session-open! index))
+          (Unavailable
+            (string.copy
+              (& (array-ref compiler-embedded-stdlib-tlci-session-error index))))]
+        [else
+          (set! compiler-embedded-stdlib-tlci-last-image index)
+          (match (loader.tlci-loader-resolve-macro-entry
+            (& (array-ref compiler-embedded-stdlib-tlci-session-image index))
+            (& name))
+            [(Resolved entry) (Resolved entry)]
+            [(Shell entry) (Shell entry)]
+            [(Missing)
+              (Unavailable "embedded stdlib tlci frame identity mismatch")]
+            [(Err message) (Unavailable message)])]))))
 
-;; Dispatch a cataloged entry on the mapped pass session. The caller owns the
-;; comptime host session (operands, fuel, cookie) around this call.
+;; A resolved handle retains the loader generation across intervening lookups.
+(define (compiler-embedded-stdlib-tlci-session-index [generation : i64]) : i64
+  (when
+    (and
+      (>= compiler-embedded-stdlib-tlci-last-image 0)
+      (=
+        (__tl-project-field
+          (array-ref
+            compiler-embedded-stdlib-tlci-session-image
+            compiler-embedded-stdlib-tlci-last-image)
+          macro-index-generation)
+        generation))
+    (return compiler-embedded-stdlib-tlci-last-image))
+  (for [active (iterator.range 0 compiler-embedded-stdlib-tlci-active-count)]
+    (let
+      [index : i64 (array-ref compiler-embedded-stdlib-tlci-active active)]
+      (when
+        (=
+          (__tl-project-field
+            (array-ref compiler-embedded-stdlib-tlci-session-image index)
+            macro-index-generation)
+          generation)
+        (set! compiler-embedded-stdlib-tlci-last-image index)
+        (return index))))
+  -1)
+
 (define (compiler-embedded-stdlib-tlci-session-dispatch
   [resolved : loader.TlciResolvedMacroEntry]
   [session-cookie : i64]) : loader.ResultTlciMacroDispatch
-  (if (= (array-ref compiler-embedded-stdlib-tlci-session-state 0) 1)
-    (let
-      [loaded : loader.TlciLoadedImage
-        (compiler-embedded-stdlib-tlci-session-image-shared-view)]
+  (let
+    [index : i64
+      (compiler-embedded-stdlib-tlci-session-index resolved.catalog-generation)]
+    (if (< index 0)
+      (Err "embedded stdlib tlci session is not loaded")
       (loader.tlci-loader-dispatch-resolved-macro
-        (& loaded)
+        (& (array-ref compiler-embedded-stdlib-tlci-session-image index))
         resolved
         session-cookie
         (& (__tl_make-array i64 0))
-        0))
-    (Err "embedded stdlib tlci session is not loaded")))
+        0))))
 
 (define (compiler-embedded-stdlib-tlci-session-mark-shell!
   [resolved : loader.TlciResolvedMacroEntry]) : loader.ResultTlciLoaderUnit
-  (if (= (array-ref compiler-embedded-stdlib-tlci-session-state 0) 1)
-    (let
-      [loaded : loader.TlciLoadedImage
-        (compiler-embedded-stdlib-tlci-session-image-shared-view)]
-      (loader.tlci-loader-mark-macro-entry-shell! (& loaded) resolved))
-    (Err "embedded stdlib tlci session is not loaded")))
+  (let
+    [index : i64
+      (compiler-embedded-stdlib-tlci-session-index resolved.catalog-generation)]
+    (if (< index 0)
+      (Err "embedded stdlib tlci session is not loaded")
+      (loader.tlci-loader-mark-macro-entry-shell!
+        (& (array-ref compiler-embedded-stdlib-tlci-session-image index))
+        resolved))))
 
 (define (compiler-embedded-stdlib-tlci-session-close!) : unit
-  (let
-    [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state 0)]
-    (set! (array-ref compiler-embedded-stdlib-tlci-session-state 0) 0)
-    (set! (array-ref compiler-embedded-stdlib-tlci-session-error 0) "")
-    (if (= state 1)
-      (begin
-        (match (loader.tlci-loader-release
-          (compiler-embedded-stdlib-tlci-session-image-shared-view))
-          [(or (Ok) (Err _)) unit])
-        (cfg
-          tlci-native-route-stress
-          (set!
-            compiler-embedded-stdlib-tlci-stress-release-generations
-            (+ compiler-embedded-stdlib-tlci-stress-release-generations 1))))
-      unit)))
+  (for [index
+    (iterator.range
+      0
+      (array-length compiler-embedded-stdlib-tlci-session-state))]
+    (when
+      (= (array-ref compiler-embedded-stdlib-tlci-session-state index) 1)
+      (match (loader.tlci-loader-release
+        (compiler-embedded-stdlib-tlci-session-image-shared-view index))
+        [(or (Ok) (Err _)) unit])
+      (cfg
+        tlci-native-route-stress
+        (+= compiler-embedded-stdlib-tlci-stress-release-generations 1)))
+    (set! (array-ref compiler-embedded-stdlib-tlci-session-state index) 0)
+    (set! (array-ref compiler-embedded-stdlib-tlci-session-error index) ""))
+  (set! compiler-embedded-stdlib-tlci-active-count 0)
+  (set! compiler-embedded-stdlib-tlci-last-image -1))
 
 ;; Map the embedded image through the production W^X loader, execute its image
 ;; registration entry, validate every registered macro record, and release the
@@ -399,14 +482,11 @@
     ;; current arena already outlives it and is the honest owner.
     (let
       [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
-      [host : tlci.TlciHostCallbackTable
-        (compiler-embedded-stdlib-tlci-host-table)]
       [loaded
         (try
-          (loader.tlci-loader-load-from-bytes-with-host
+          (compiler-comptime-host-load-from-bytes
             (arena.tl_arena_current)
-            (& bytes)
-            (& host)))]
+            (& bytes)))]
       [count : i64 loaded.macro-entry-count]
       [has-native-sentinel : bool
         (match (loader.tlci-loader-find-macro-entry
@@ -515,7 +595,7 @@
         (match value
           [(Pattern pattern)
             (ast.ast-pattern-list-push (&mut out) pattern)
-            (set! index (+ index 1))]
+            (+= index 1)]
           [_ (set! ok false)])))
     (if ok
       (begin
@@ -547,9 +627,7 @@
   (begin
     (cfg
       tlci-native-route-stress
-      (set!
-        compiler-embedded-stdlib-tlci-stress-session-generations
-        (+ compiler-embedded-stdlib-tlci-stress-session-generations 1)))
+      (+= compiler-embedded-stdlib-tlci-stress-session-generations 1))
     (set! (array-ref compiler-comptime-host-pools 0) pools)
     (set! (array-ref compiler-comptime-host-reflections 0) reflections)
     (set!
@@ -563,8 +641,8 @@
         (< index compiler-comptime-host-operand-cap))
         (set!
           (array-ref compiler-comptime-host-operands index)
-          (array-ref operands index))
-        (set! index (+ index 1))))
+          (owned_view.compiler-owned-element-view operands index))
+        (+= index 1)))
     (set! compiler-comptime-host-operand-count operand-count)
     (set! compiler-comptime-host-session-fuel fuel)
     (set!
@@ -673,12 +751,12 @@
         (* old-cap 2))]
     [bigger : (__tl_dyn-array ctfe_support.CompilerCtfeValue)
       (__tl_make-array ctfe_support.CompilerCtfeValue new-cap)]
-    [index : i64 0]
-    (while (< index compiler-comptime-host-stack-len)
+    (for [index (iterator.range 0 compiler-comptime-host-stack-len)]
       (set!
         (array-ref bigger index)
-        (array-ref compiler-comptime-host-stack index))
-      (set! index (+ index 1)))
+        (owned_view.compiler-owned-element-view
+          compiler-comptime-host-stack
+          index)))
     (set! compiler-comptime-host-stack bigger)))
 
 (define (compiler-comptime-host-push! [value : ctfe_support.CompilerCtfeValue]) : i64
@@ -690,7 +768,7 @@
   (set!
     (array-ref compiler-comptime-host-stack compiler-comptime-host-stack-len)
     value)
-  (set! compiler-comptime-host-stack-len (+ compiler-comptime-host-stack-len 1))
+  (+= compiler-comptime-host-stack-len 1)
   tlci.tlci-host-callback-status-ok)
 
 (define (compiler-comptime-host-push-expr! [node : i64]) : i64
@@ -711,9 +789,7 @@
     (compiler-comptime-host-value-node value)))
 
 (define (compiler-comptime-host-drop! [count : i64]) : unit
-  (set!
-    compiler-comptime-host-stack-len
-    (- compiler-comptime-host-stack-len count)))
+  (-= compiler-comptime-host-stack-len count))
 
 (define (compiler-comptime-host-replace!
   [count : i64]
@@ -1238,9 +1314,7 @@
     session
     (if (> compiler-comptime-host-session-fuel 0)
       (begin
-        (set!
-          compiler-comptime-host-session-fuel
-          (- compiler-comptime-host-session-fuel 1))
+        (-= compiler-comptime-host-session-fuel 1)
         tlci.tlci-host-callback-status-ok)
       tlci.tlci-host-callback-status-fuel-exhausted)))
 
@@ -2999,8 +3073,7 @@
             (let
               [patterns : ast.AstPatternList
                 (ast.ast-pattern-list-with-capacity arg-a)]
-              [index : i64 0]
-              (while (< index arg-a)
+              (for [index (iterator.range 0 arg-a)]
                 (let
                   [name : String
                     (str_cat.str-cat
@@ -3009,11 +3082,8 @@
                   (ast.ast-pattern-list-push
                     (&mut patterns)
                     (ast.ast-pat-binding-id
-                      (ctfe_support.ctfe-materialize-generated-name-id name)))
-                  (set! index (+ index 1))))
-              (set!
-                compiler-comptime-host-session-fuel
-                (- compiler-comptime-host-session-fuel arg-a))
+                      (ctfe_support.ctfe-materialize-generated-name-id name)))))
+              (-= compiler-comptime-host-session-fuel arg-a)
               (compiler-comptime-host-replace! 1 (PatternList patterns)))]
           [_ tlci.tlci-host-callback-status-bad-request])])))
 
@@ -3732,7 +3802,7 @@
         (while (and
           (< end payload-len)
           (not (= (string.string-ref payload end) '\n')))
-          (set! end (+ end 1)))
+          (+= end 1))
         (if (or
           (< flags 0)
           (> flags 1)
@@ -3757,7 +3827,7 @@
                   (= flags 1)))]
             [_ (set! valid false)]))
         (set! start (+ end 1))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (when (not (= start payload-len)) (set! valid false))
     (when
       (and valid has-ret?)
@@ -3884,7 +3954,7 @@
       valid
       (< nominal-end payload-len)
       (not (= (string.string-ref payload nominal-end) '\n')))
-      (set! nominal-end (+ nominal-end 1)))
+      (+= nominal-end 1))
     (when
       (or (= nominal-end 0) (>= nominal-end payload-len))
       (set! valid false))
@@ -3899,7 +3969,7 @@
           (while (and
             (< end payload-len)
             (not (= (string.string-ref payload end) '\n')))
-            (set! end (+ end 1)))
+            (+= end 1))
           (if (= end start)
             (set! valid false)
             (begin
@@ -3911,7 +3981,7 @@
                 (if (>= end payload-len)
                   (set! valid false)
                   (set! start (+ end 1))))))
-          (set! index (+ index 1))))
+          (+= index 1)))
       (if (not valid)
         tlci.tlci-host-callback-status-bad-request
         (compiler-comptime-host-push!
@@ -4239,7 +4309,7 @@
           (+ start index))
           [(Type _) unit]
           [_ (set! valid false)])
-        (set! index (+ index 1)))
+        (+= index 1))
       (let
         [result : i64
           (if (not valid)
@@ -4248,8 +4318,7 @@
               [pools : ast.AstNodePoolContext
                 (compiler-comptime-host-session-pools)]
               [items : ast.AstTypeList (ast.ast-type-list-with-capacity arg-a)]
-              [item-index : i64 0]
-              (while (< item-index arg-a)
+              (for [item-index (iterator.range 0 arg-a)]
                 (match (compiler-comptime-host-array-element-shared-view
                   compiler-comptime-host-stack
                   (+ start item-index))
@@ -4257,8 +4326,7 @@
                     (ast.ast-type-list-push
                       (&mut items)
                       (ast.ast-node-pool-context-type-push pools ty))]
-                  [_ unit])
-                (set! item-index (+ item-index 1)))
+                  [_ unit]))
               (set! compiler-comptime-host-stack-len start)
               (compiler-comptime-host-push! (Type (Tuple (box items))))))]
         (when
@@ -4858,7 +4926,7 @@
         [node : i64 (compiler-comptime-host-stack-node depth)]
         (when (< node 0) (set! valid? false))
         (ast.ast-expr-list-push (&mut nodes) node)
-        (set! depth (- depth 1))))
+        (-= depth 1)))
     (if valid?
       (Some nodes)
       (None))))
@@ -5329,7 +5397,6 @@
           (- header 96)
           (- header 64))]
       [value : i64 0]
-      [index : i64 0]
       (if (or
         (< count 0)
         (> count 10)
@@ -5339,7 +5406,7 @@
           (set! batch.ok false)
           0)
         (begin
-          (while (< index count)
+          (for [index (iterator.range 0 count)]
             (let
               [digit : i64
                 (-
@@ -5348,8 +5415,7 @@
                     (+ batch.pos 1 index))
                   48)]
               (when (or (< digit 0) (> digit 63)) (set! batch.ok false))
-              (set! value (+ (* value 64) digit))
-              (set! index (+ index 1))))
+              (set! value (+ (* value 64) digit))))
           (set! batch.pos (+ batch.pos 1 count))
           (if negative
             (- 0 value)
@@ -5371,7 +5437,7 @@
             (cast (string.string-ref name offset) : i64)
             (compiler-comptime-host-batch-byte batch (+ start offset))))
         (set! same false))
-      (set! offset (+ offset 1)))
+      (+= offset 1))
     same))
 
 ;: The row index of the batch name `[start, start + length)` given the
@@ -5495,13 +5561,12 @@
       (while (< capacity needed)
         (set! capacity (* capacity 2)))
       (in-arena
-        (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!))
+        (unsafe
+          (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!)))
         (let
           [next : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-          [index : i64 0]
-          (while (< index used)
-            (set! (array-ref next index) (array-ref lane index))
-            (set! index (+ index 1)))
+          (for [index (iterator.range 0 used)]
+            (set! (array-ref next index) (array-ref lane index)))
           next)))))
 
 ;; The batch word at `word` (8 bytes from `base + 8 * word`), the final partial
@@ -5527,7 +5592,7 @@
                 (unsafe
                   (ptr-read (int->ptr (+ base index) : (Ptr u8))))
                 : i64)))
-          (set! index (- index 1)))
+          (-= index 1))
         value))))
 
 (define (compiler-comptime-host-batch-cache-slot [base : i64] [len : i64]) : i64
@@ -5592,7 +5657,7 @@
                   compiler-comptime-host-batch-cache-words
                   (+ start word)))
               (set! same false))
-            (set! word (+ word 1)))
+            (+= word 1))
           (if same
             found
             -1))))))
@@ -5601,21 +5666,19 @@
 ;; so a later entry for the same key replaces the stale one again.
 (define (compiler-comptime-host-batch-cache-rehash! [capacity : i64]) : unit
   (in-arena
-    (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!))
+    (unsafe
+      (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!)))
     (set!
       compiler-comptime-host-batch-cache-slots
       (__tl_make-array i64 capacity)))
-  (let
-    [entry : i64 0]
-    (while (< entry compiler-comptime-host-batch-cache-entries)
-      (set!
-        (array-ref
-          compiler-comptime-host-batch-cache-slots
-          (compiler-comptime-host-batch-cache-key-slot
-            (array-ref compiler-comptime-host-batch-cache-bases entry)
-            (array-ref compiler-comptime-host-batch-cache-lens entry)))
-        (+ entry 1))
-      (set! entry (+ entry 1)))))
+  (for [entry (iterator.range 0 compiler-comptime-host-batch-cache-entries)]
+    (set!
+      (array-ref
+        compiler-comptime-host-batch-cache-slots
+        (compiler-comptime-host-batch-cache-key-slot
+          (array-ref compiler-comptime-host-batch-cache-bases entry)
+          (array-ref compiler-comptime-host-batch-cache-lens entry)))
+      (+ entry 1))))
 
 ;; A batch decoded without running it: the cache entry of a well-formed batch,
 ;; or, for a malformed one, where its records' lanes start (past the cache's
@@ -5652,8 +5715,8 @@
               (set! batch.ok false)
               (begin
                 (set! (array-ref resolved index) found)
-                (set! batch.pos (+ batch.pos length))
-                (set! index (+ index 1))))))))
+                (+= batch.pos length)
+                (+= index 1)))))))
     (let
       [record-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
       [record-start : i64 compiler-comptime-host-batch-cache-records-len]
@@ -5688,7 +5751,7 @@
           (if (or (< op 0) (>= op name-count))
             (set! batch.ok false)
             (begin
-              (set! batch.pos (+ batch.pos 1))
+              (+= batch.pos 1)
               (set!
                 (array-ref compiler-comptime-host-batch-cache-records lane)
                 (array-ref resolved op))))
@@ -5699,7 +5762,7 @@
               (let
                 [count : i64
                   (begin
-                    (set! batch.pos (+ batch.pos 1))
+                    (+= batch.pos 1)
                     (compiler-comptime-host-batch-int! (&mut batch)))]
                 (if (or
                   (not batch.ok)
@@ -5714,9 +5777,9 @@
                         compiler-comptime-host-batch-cache-records
                         (+ lane 1 arg))
                       (+ batch.base batch.pos))
-                    (set! batch.pos (+ batch.pos count))
+                    (+= batch.pos count)
                     (set! byte-len count)
-                    (set! arg (+ arg 1)))))
+                    (+= arg 1))))
               (let
                 [value : i64
                   (if (and
@@ -5725,7 +5788,7 @@
                       (compiler-comptime-host-batch-byte (& batch) batch.pos)
                       64))
                     (begin
-                      (set! batch.pos (+ batch.pos 1))
+                      (+= batch.pos 1)
                       0)
                     (compiler-comptime-host-batch-int! (&mut batch)))]
                 (when
@@ -5737,16 +5800,15 @@
                     compiler-comptime-host-batch-cache-records
                     (+ lane 1 arg))
                   value)
-                (set! arg (+ arg 1)))))
+                (+= arg 1))))
           (when batch.ok (set! parsed (+ record 1)))
-          (set! record (+ record 1))))
+          (+= record 1)))
       (if (not (and batch.ok (= record record-count) (= batch.pos batch.len)))
         (Prefix record-start parsed)
         (let
           [entry : i64 compiler-comptime-host-batch-cache-entries]
           [words : i64 (/ (+ len 7) 8)]
           [word-start : i64 compiler-comptime-host-batch-cache-words-len]
-          [word : i64 0]
           (set!
             compiler-comptime-host-batch-cache-words
             (compiler-comptime-host-batch-cache-grown
@@ -5754,13 +5816,12 @@
                 compiler-comptime-host-batch-cache-words)
               word-start
               (+ word-start words)))
-          (while (< word words)
+          (for [word (iterator.range 0 words)]
             (set!
               (array-ref
                 compiler-comptime-host-batch-cache-words
                 (+ word-start word))
-              (compiler-comptime-host-batch-word base len word))
-            (set! word (+ word 1)))
+              (compiler-comptime-host-batch-word base len word)))
           (set!
             compiler-comptime-host-batch-cache-bases
             (compiler-comptime-host-batch-cache-grown
@@ -5851,7 +5912,7 @@
             (array-ref compiler-comptime-host-batch-cache-records (+ lane 1))
             (array-ref compiler-comptime-host-batch-cache-records (+ lane 2))
             (array-ref compiler-comptime-host-batch-cache-records (+ lane 3)))))
-      (set! record (+ record 1)))
+      (+= record 1))
     status))
 
 (define (compiler-comptime-host-batch-cache-replay
@@ -5896,9 +5957,8 @@
       tlci.tlci-host-callback-status-bad-request
       (compiler-comptime-host-run-batch session arg-a arg-b))))
 
-;; Extract the raw code pointer from a top-level TypeLisp function value.
-;; Generated image calls provide the host context in the hidden-environment
-;; register, so no per-callback trampoline is needed.
+;; SysV's Platform and Internal contracts coincide. Its image calls provide the
+;; host context in the hidden-environment register of the closure entry.
 (define (compiler-comptime-host-function-address
   [callback : (-> i64 i64 i64 i64 i64)]) : i64
   (let
@@ -5921,6 +5981,67 @@
     (unsafe
       (ptr-read (int->ptr descriptor : (Ptr i64))))))
 
+;; Windows C callers enter explicit exports rather than an Internal closure
+;; adapter. The ordinary C-export lowering owns register forwarding and unwind
+;; metadata; these wrappers only state each callback's source signature.
+(defmacro (compiler-comptime-host-platform-entries [rows : Expr ...]) : Decls
+  (let
+    [index : i64 (expr-list-length rows)]
+    [out : ExprList (expr-list-empty)]
+    (while (> index 0)
+      (set! index (- index 1))
+      (let
+        [suffix : String (comptime.int->string index)]
+        [symbol : String
+          (comptime.string-append "__tlci_host_callback_" suffix)]
+        [entry : Expr
+          (comptime.expr-var
+            (comptime.string-append
+              "compiler-comptime-host-platform-entry-"
+              suffix))]
+        [pointer : Expr
+          (comptime.expr-var
+            (comptime.string-append
+              "compiler-comptime-host-platform-pointer-"
+              suffix))]
+        [callback : Expr (expr-list-nth rows index)]
+        (set!
+          out
+          (expr-list-cons
+            `(begin
+              (define (,entry
+                [_host : i64]
+                [session : i64]
+                [arg-a : i64]
+                [arg-b : i64]
+                [arg-c : i64])
+                (:export-symbol ,(comptime.expr-string symbol)) : i64
+                (,callback session arg-a arg-b arg-c))
+              (extern ,pointer (:symbol ,(comptime.expr-string symbol)) : u8))
+            out))))
+    `(begin
+      ,@out)))
+
+(cfg
+  windows
+  (tlci.tlci-host-callback-declarations compiler-comptime-host-platform-entries))
+
+(cfg
+  windows
+  (define (compiler-comptime-host-platform-abort-entry
+    [_host : i64]
+    [session : i64]
+    [reason : i64]
+    [message : i64]
+    [length : i64]
+    [symbol : i64])
+    (:export-symbol "__tlci_host_abort") : i64
+    (compiler-comptime-host-callback-abort session reason message length symbol)))
+
+(cfg
+  windows
+  (extern compiler-comptime-host-platform-abort-pointer (:symbol "__tlci_host_abort") : u8))
+
 ;; Registry rows append in source order; their storage index is an
 ;; implementation detail and never enters the image ABI. Spare capacity keeps
 ;; ordinary callback additions numeric-free; array bounds fail closed if this
@@ -5939,13 +6060,11 @@
 (define (compiler-comptime-host-registry-add!
   [registry : (&mut registry CompilerComptimeHostRegistryBuilder)]
   [name : String]
-  [callback : (-> i64 i64 i64 i64 i64)]) : unit
+  [address : i64]) : unit
   (let
     [index : i64 registry.len]
     (set! (array-ref registry.names index) name)
-    (set!
-      (array-ref registry.callbacks index)
-      (compiler-comptime-host-function-address callback))
+    (set! (array-ref registry.callbacks index) address)
     (set! registry.len (+ index 1))))
 
 ;; One `compiler-comptime-host-registry-add!` per host callback table row,
@@ -5973,7 +6092,19 @@
                     row
                     prefix-length
                     (- (string.string-length row) prefix-length)))
-                ,(comptime.expr-var row))
+                (cfg
+                  windows
+                  (cast
+                    (unsafe
+                      (ptr->int
+                        (ptr-addr-of
+                          ,(comptime.expr-var
+                            (comptime.string-append
+                              "compiler-comptime-host-platform-pointer-"
+                              (comptime.int->string index))))))
+                    : i64)
+                  (compiler-comptime-host-function-address
+                    ,(comptime.expr-var row))))
               adds))]
         [_
           (comptime-error
@@ -5999,8 +6130,45 @@
       0
       0
       0
-      (compiler-comptime-host-abort-function-address
-        compiler-comptime-host-callback-abort)
+      (cfg
+        windows
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-addr-of compiler-comptime-host-platform-abort-pointer)))
+          : i64)
+        (compiler-comptime-host-abort-function-address
+          compiler-comptime-host-callback-abort))
       registry.names
       registry.callbacks
       registry.len)))
+
+;; Whether this process has checked the compiled-in import registry. Every
+;; `compiler-comptime-host-table` has the same names (compile-time rows) and
+;; callbacks (this process's addresses), so the registry check -- nonempty,
+;; distinct names and nonzero callbacks -- needs to pass only once (#9449). The
+;; table itself is rebuilt for each load in the caller's arena.
+(define compiler-comptime-host-registry-checked : bool
+  false)
+
+;: `loader.tlci-loader-load-from-bytes-with-host` on a fresh compiled-in host
+;: table: the same checks, in the same order and with the same messages, except
+;: that the registry part runs on the first load only.
+(define (compiler-comptime-host-load-from-bytes
+  [owner-arena : i64]
+  [bytes : (& (__tl_dyn-array u8))]) : loader.ResultTlciLoadedImage
+  (let
+    [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
+    (if compiler-comptime-host-registry-checked
+      (loader.tlci-loader-load-from-bytes-with-checked-registry
+        owner-arena
+        bytes
+        (& host))
+      (match (tlci.tlci-validate-host-callback-table (& host))
+        [(Err message) (Err message)]
+        [(Ok)
+          (set! compiler-comptime-host-registry-checked true)
+          (loader.tlci-loader-load-from-bytes-with-checked-registry
+            owner-arena
+            bytes
+            (& host))]))))

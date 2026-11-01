@@ -16,7 +16,7 @@
       (set! value 1000)
       unit)
     (if (or false false true)
-      (set! value (+ value 6))
+      (+= value 6)
       (set! value 1000))
     (if (or
       true

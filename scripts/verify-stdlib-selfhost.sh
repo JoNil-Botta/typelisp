@@ -26,6 +26,10 @@ esac
 # scripts/verify-stdlib.sh.
 reject_diag() {
     case "$1" in
+        stdlib/tests/net_tls_transcript_construct_reject.tl|stdlib/tests/net_tls_transcript_project_reject.tl)
+            printf 'opaque type' ;;
+        stdlib/tests/net_tls_transcript_escape_reject.tl)
+            printf 'region-tagged value cannot escape with-arena' ;;
         stdlib/tests/string_raw_copy_function_value_reject.tl)
             printf 'is an unsafe callable and cannot be used as a plain function value' ;;
         stdlib/tests/string_raw_*_reject.tl|stdlib/tests/format_raw_fill_reject.tl|stdlib/tests/format_raw_copy_reject.tl|stdlib/tests/format_raw_debug_*_reject.tl)

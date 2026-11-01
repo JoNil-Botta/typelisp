@@ -687,11 +687,11 @@
     out))
 
 (test
-  dns-rfc1035-skipped-name-boundaries
+  dns-skipped-name-boundaries
   (let
-    [types : (Array i64 9) (array 2 3 4 7 8 9 12 14 15)]
+    [types : (Array i64 10) (array 2 3 4 7 8 9 12 14 15 39)]
     [i : i64 0]
-    (while (< i 9)
+    (while (< i 10)
       (let
         [rtype : i64 (array-ref types i)]
         [data : byte_buf.ByteBuf (skipped-name-data rtype)]
@@ -710,7 +710,7 @@
         (set! packet (rr packet (pointer target) 1 1 60 (a-data)))
         (match (wire.decode-response (byte_buf.as-bytes (& packet)))
           [(DnsComplete msg)
-            (test.assert-i64-eq msg.len 1 "legacy RR stays skipped")
+            (test.assert-i64-eq msg.len 1 "name-bearing RR stays skipped")
             (test.assert-i64-eq
               (array-ref msg.records 0).owner.len
               3
@@ -883,3 +883,101 @@
   (let
     [packet : byte_buf.ByteBuf (rr (message 1 0 0) (pointer 29) 1 1 0 (a-data))]
     (assert-error (byte_buf.as-bytes (& packet)) false)))
+
+(define (dname-response [compressed-cname : bool]) : byte_buf.ByteBuf
+  (let
+    [question-name : byte_buf.ByteBuf
+      (byte_buf.push
+        (text-label
+          (text-label (text-label (byte_buf.new) "www") "a")
+          "example")
+        0)]
+    [target : byte_buf.ByteBuf
+      (byte_buf.push (text-label (text-label (byte_buf.new) "b") "example") 0)]
+    [packet : byte_buf.ByteBuf (question (header 0x8180 3 0 0) question-name 1)]
+    (set! packet (rr packet (pointer 16) 39 1 300 target))
+    (test.assert-i64-eq
+      (byte_buf.len (& packet))
+      54
+      "DNAME target offset43 extent")
+    (let
+      [cname : byte_buf.ByteBuf
+        (if compressed-cname
+          (u16 (text-label (byte_buf.new) "www") 49195)
+          (byte_buf.push
+            (text-label
+              (text-label (text-label (byte_buf.new) "www") "b")
+              "example")
+            0))]
+      (set! packet (rr packet (pointer 12) 5 1 300 cname)))
+    (rr packet (pointer 66) 1 1 300 (u32 (byte_buf.new) 0xc0000202))))
+
+(test
+  dns-dname-target-and-synthesized-cname
+  (let
+    [packet : byte_buf.ByteBuf (dname-response false)]
+    (assert-complete (& packet) 2))
+  (let
+    [packet : byte_buf.ByteBuf (dname-response true)]
+    (match (wire.decode-response (byte_buf.as-bytes (& packet)))
+      [(DnsComplete msg)
+        (test.assert-i64-eq msg.len 2 "DNAME stays skipped")
+        (match (array-ref msg.records 0).data
+          [(DnsCname target)
+            (test.assert-i64-eq target.len 15 "synthesized CNAME wire length")
+            (test.assert-i64-eq
+              (cast (array-ref target.octets 5) : i64)
+              98
+              "DNAME target b.example")]
+          [_ (test.assert-true false "synthesized CNAME returned")])
+        (test.assert-i64-eq
+          (array-ref msg.records 1).owner.len
+          15
+          "address owner expands via CNAME data")]
+      [_
+        (test.assert-true false "compressed synthesized CNAME references DNAME")]))
+  ;; DNAME's target is literal, even though later names may point into it.
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr (message 0 1 0) (pointer 12) 39 1 0 (pointer 12))]
+    (assert-error (byte_buf.as-bytes (& packet)) false))
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr
+        (message 0 1 0)
+        (pointer 12)
+        39
+        1
+        0
+        (u16 (text-label (byte_buf.new) "x") 49164))]
+    (assert-error (byte_buf.as-bytes (& packet)) false))
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr (message 0 1 0) (pointer 12) 39 3 0 (pointer 12))]
+    (assert-complete (& packet) 0))
+  (let
+    [packet : byte_buf.ByteBuf
+      (rr
+        (rr (message 0 1 1) (pointer 12) 39 3 0 (skipped-name-data 39))
+        (pointer 29)
+        1
+        1
+        0
+        (a-data))]
+    (assert-error (byte_buf.as-bytes (& packet)) false)))
+
+(test
+  dns-dname-targets-charge-name-budget
+  (let
+    [count : i64 127]
+    (while (<= count 128)
+      (let
+        [packet : byte_buf.ByteBuf (message 0 count 0)]
+        [i : i64 0]
+        (while (< i count)
+          (set! packet (rr packet (pointer 12) 39 1 0 (root)))
+          (set! i (+ i 1)))
+        (if (= count 127)
+          (assert-complete (& packet) 0)
+          (assert-error (byte_buf.as-bytes (& packet)) true)))
+      (set! count (+ count 1)))))

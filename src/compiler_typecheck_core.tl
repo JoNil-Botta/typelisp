@@ -4006,6 +4006,8 @@
         [(typed.TypedOperation.If) 1]
         [(typed.TypedOperation.Match _) 1]
         [(typed.TypedOperation.Sequence) (- count 1)]
+        ;; A scoped arena's one child, its body.
+        [(typed.TypedOperation.ArenaScope _) (- count 1)]
         [_ count])]
     (while (and (>= index 0) (< index count))
       (let
@@ -9806,7 +9808,54 @@
             (tc-selected-unrepresented
               (tc-infer-selected-legacy ctx env expr syntax expected)
               after)
-            (TcSelectedResult.Ok body-ty occurrence after))])]))
+            (tc-selected-wrap-arena-scope
+              region
+              syntax
+              source
+              (TcSelectedResult.Ok body-ty occurrence after)))])]))
+
+;; A selected scoped-arena body becomes the one child of a committed
+;; ArenaScope wrapper, rollback-atomic with it. Its region only locates the
+;; innermost structural scope; it never identifies a lender.
+(define (tc-selected-wrap-arena-scope
+  [region : i64]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match result
+    [(TcSelectedResult.Ok ty (TcSelectedOccurrence.Selected body) after)
+      (tc-selected-lender-site
+        (tc-selected-publish-flow
+          (ResultTcType.Ok ty)
+          syntax
+          source
+          (typed.TypedOperation.ArenaScope region)
+          (__tl_make-array body)
+          after))]
+    [_ result]))
+
+;; Counts a published lender site on the body's store (`lender-sites`).
+(define (tc-selected-lender-site
+  [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match result
+    [(TcSelectedResult.Ok
+        ty
+        (TcSelectedOccurrence.Selected id)
+        (TcSelectedSink.Capture store lease bindings))
+      (set! store.lender-sites (+ store.lender-sites 1))
+      (TcSelectedResult.Ok
+        ty
+        (TcSelectedOccurrence.Selected id)
+        (TcSelectedSink.Capture store lease bindings))]
+    [_ result]))
 
 ;; A scratch form's body, checked under a region scoped to the form (#8776,
 ;; `tc-scratch-body-type`): its allocations cannot outlive it through a store,
@@ -9827,14 +9876,18 @@
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
     [result : (TcSelectedResult store lease intern bind)
-      (tc-infer-selected-begin
-        ctx
-        (tc-push-region env (tc-scratch-body-region body))
-        body
+      (tc-selected-wrap-arena-scope
+        (tc-scratch-body-region body)
         typed.TypedSyntax.Generated
-        expected
-        source
-        sink)]
+        (tc-global-shared-view source)
+        (tc-infer-selected-begin
+          ctx
+          (tc-push-region env (tc-scratch-body-region body))
+          body
+          typed.TypedSyntax.Generated
+          expected
+          source
+          sink))]
     (tc-type-env-scoped-runtime-restore! saved)
     result))
 
@@ -11013,15 +11066,16 @@
               [(< key 0) (tc-selected-unrepresented (ResultTcType.Ok ty) sink)]
               [(= arm 9)
                 (if (= args.len 0)
-                  (tc-selected-publish-call
-                    (ResultTcType.Ok ty)
-                    (typed.TypedCallKind.Declared key)
-                    fn-ty
-                    syntax
-                    source
-                    (tc-selected-no-occurrences)
-                    true
-                    sink)
+                  (tc-selected-lender-site
+                    (tc-selected-publish-call
+                      (ResultTcType.Ok ty)
+                      (typed.TypedCallKind.ArenaOwner key)
+                      fn-ty
+                      syntax
+                      source
+                      (tc-selected-no-occurrences)
+                      true
+                      sink))
                   (tc-selected-unrepresented (ResultTcType.Ok ty) sink))]
               [(< arg-id 0)
                 (tc-selected-unrepresented (ResultTcType.Ok ty) sink)]
@@ -49686,6 +49740,11 @@
                     (typed.TypedBinderKind.InvalidateParameter invalidates)
                     typed.TypedBinderKind.Parameter)
                   (& source))))]
+          ;; A committed lender site (`TypedStore.lender-sites`).
+          [_lender : unit
+            (when
+              (>= invalidates 0)
+              (set! store.lender-sites (+ store.lender-sites 1)))]
           (tc-type-env-scoped-carrier-bind-params-at
             ctx
             next
@@ -123395,7 +123454,9 @@
                           indirect)]
                       [(typed.TypedCallKind.Indirect callee)
                         (tc-global-effect-expr-node ctx callee indirect)]
-                      [(typed.TypedCallKind.Construct) -1])]
+                      [(typed.TypedCallKind.Construct) -1]
+                      [(typed.TypedCallKind.ArenaOwner key)
+                        (tc-global-effect-declared-node ctx key false indirect)])]
                   [(typed.TypedCallView.Err _) -1])]
               [(typed.TypedCallResult.Err _) -1])]
           (tc-selected-global-writes-add!
@@ -123826,7 +123887,78 @@
                       (set! (array-ref table.products referent-key) product))))))))
         (set! index (+ index 1))))
     (tc-selected-classify! ctx store lease (&mut table) false)
+    (when
+      (> store.lender-sites 0)
+      (tc-selected-arena-input! ctx store lease (&mut table)))
     table))
+
+;; The arena lender inputs of a body with a committed lender site (#9256
+;; G1), from each typed record's original type before its class erases it:
+;; classes, keys and variances are unchanged, and every other body skips it.
+(define (tc-selected-arena-input!
+  [ctx : TcContext]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [table : (&mut table TcSelectedTypeTable)]) : unit
+  (let
+    [count : i64 (tc-selected-type-record-count store lease)]
+    [records : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [heads : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [bivariant : (__tl_dyn-array bool)
+      (__tl_make-array bool (array-length table.variances.covariant))]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [ty : ast.AstType
+          (tc-resolve-type
+            ctx
+            (match (typed.typed-type-value-at! store lease index)
+              [(typed.TypedTypeValueResult.Ok value) value]
+              [(typed.TypedTypeValueResult.Err _) ast.AstType.Never]))]
+        [owner? : bool
+          (match (& ty)
+            [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _))
+              (tc-arena-nominal-name-id? name)]
+            [_ false])]
+        [head : i64
+          (match (& ty)
+            [(ast.AstType.Region region _)
+              (if (tc-selected-arena-region-in? ctx (& table.arena-regions) region)
+                region
+                -1)]
+            [_ -1])]
+        (set! (array-ref heads index) head)
+        (set!
+          (array-ref records index)
+          (bit-or
+            (if (tc-selected-arena-tagged?
+              ctx
+              (& table.arena-regions)
+              (tc-global-shared-view ty))
+              1
+              0)
+            (bit-or (if owner? 4 0) (if (>= head 0) 2 0)))))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index (array-length table.variances.names))
+      (let
+        [name : i64 (array-ref table.variances.names index)]
+        [at : i64 0]
+        (while (< at (array-ref table.variances.counts index))
+          (set!
+            (array-ref bivariant (+ (array-ref table.variances.starts index) at))
+            (and
+              (not (and (tc-arena-nominal-name-id? name) (= at 0)))
+              (match (tc-nominal-lifetime-variance-at ctx name at TcNameIdList.Nil)
+                [(TcVarianceBivariant) true]
+                [_ false])))
+          (set! at (+ at 1))))
+      (set! index (+ index 1)))
+    (set!
+      table.variances.lenders
+      (ownership_normalize.OwnershipNormalizeLenderInput.Gated
+        (__tl_make-array
+          (ownership_normalize.OwnershipNormalizeArena records heads bivariant))))))
 
 (defenum TcSelectedMaybeProjection
   (Some typed.TypedProjectionId)

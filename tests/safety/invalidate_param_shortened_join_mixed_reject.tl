@@ -8,7 +8,10 @@
   [c : bool]) : i64
   (let
     [k : i64 5]
-    [alias : (& k i64) (if c x (& k))]
+    [alias : (& k i64)
+      (if c
+        x
+        (& k))]
     (begin
       (arena.destroy-safe! owner)
       (deref alias))))

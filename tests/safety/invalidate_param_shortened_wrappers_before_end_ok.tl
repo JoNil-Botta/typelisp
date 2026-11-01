@@ -15,7 +15,9 @@
     (arena.destroy-safe! owner)
     v))
 
-(define (array [owner : (arena.Arena r) (:invalidate r)] [x : (Array (& r i64) 2)]) : i64
+(define (array
+  [owner : (arena.Arena r) (:invalidate r)]
+  [x : (Array (& r i64) 2)]) : i64
   (let
     [k : i64 0]
     [a : (Array (& k i64) 2) x]

@@ -7,7 +7,10 @@
   [c : bool]) : i64
   (let
     [k : i64 1]
-    [a : (& k i64) (if c x (& k))]
+    [a : (& k i64)
+      (if c
+        x
+        (& k))]
     [b : (& k i64)
       (match c
         [true x]

@@ -2,7 +2,9 @@
 ;; shortening annotation.
 (import stdlib.arena)
 
-(define (exercise [owner : (arena.Arena r) (:invalidate r)] [x : (Box (& r i64))]) : i64
+(define (exercise
+  [owner : (arena.Arena r) (:invalidate r)]
+  [x : (Box (& r i64))]) : i64
   (let
     [k : i64 0]
     [b : (Box (& k i64)) x]

@@ -49543,6 +49543,7 @@
   0)
 (define tc-invalidate-marker-id-generation : i64
   -1)
+
 ;; Whether the function declaration being checked has bound a parameter list
 ;; with an `:invalidate` effect (its own or a lambda's): until it has, no
 ;; coercion in it can drop an endable brand
@@ -53353,7 +53354,8 @@
   [joined : ResultTcType]) : ResultTcType
   (match joined
     [(ResultTcType.Ok ty)
-      (ResultTcType.Ok (tc-coercion-retain-invalidated-brands ctx env branch ty))]
+      (ResultTcType.Ok
+        (tc-coercion-retain-invalidated-brands ctx env branch ty))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-type-list-len [types : (& types ast.AstTypeList)]) : i64
@@ -53485,7 +53487,9 @@
     (let
       [tuple : ast.AstType (ast.ast-ty-tuple out)]
       (while (not (tc-name-id-list-empty? regions))
-        (set! tuple (ast.ast-ty-region (tc-name-id-list-head regions) (& tuple)))
+        (set!
+          tuple
+          (ast.ast-ty-region (tc-name-id-list-head regions) (& tuple)))
         (set! regions (tc-name-id-list-rest regions)))
       tuple)))
 
@@ -53948,7 +53952,10 @@
     (while (< index (ast.ast-lifetime-list-len (& pairs)))
       (let
         [brand : i64
-          (ast.ast-lifetime-list-get (& pairs) index (ast.ast-lifetime-fallback))]
+          (ast.ast-lifetime-list-get
+            (& pairs)
+            index
+            (ast.ast-lifetime-fallback))]
         (when
           (and
             (tc-type-stores-lifetime? ctx actual brand)
@@ -53968,7 +53975,10 @@
         found
         (=
           region
-          (ast.ast-lifetime-list-get (& pairs) index (ast.ast-lifetime-fallback))))
+          (ast.ast-lifetime-list-get
+            (& pairs)
+            index
+            (ast.ast-lifetime-fallback))))
       (+= index 2))
     found))
 

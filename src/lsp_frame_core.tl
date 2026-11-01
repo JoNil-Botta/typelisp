@@ -8281,7 +8281,8 @@
             [owner : i64 (arena.tl_arena_make)]
             [result : doc_sites.ResultDocumentationSites
               (in-arena
-                (arena.Arena owner)
+                (unsafe
+                  (arena.Arena owner))
                 (doc_sites.parse-bindings (& (__tl-box-place values-box)) owner))]
             (match result
               [(Ok sites) (Ok sites)]

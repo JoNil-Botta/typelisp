@@ -1,0 +1,7 @@
+do none
+case payload
+source tests/fixtures/backend_source_import_payload.tl
+case aliases
+source tests/fixtures/backend_source_import_aliases.tl
+case wildcard
+source tests/fixtures/backend_source_import_wildcard.tl

@@ -588,7 +588,7 @@
           (while (and check.ok (< at count))
             (set! check.error.member at)
             (let
-              [raw : (& input archive.ArchiveMember)
+              [raw : (& directory archive.ArchiveMember)
                 (& (array-ref directory.members at))]
               [member : ArMember
                 (resolve-name!

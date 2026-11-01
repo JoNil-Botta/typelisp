@@ -701,7 +701,7 @@ file fetched/typelisp.pkg
   (version "0.1.0")
   (kind bin)
   (dependencies
-    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
+    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "0123456789abcdef0123456789abcdef01234567")))))
 end-file
 file fetched/src/main.tl
 (import remote.src.lib as remote)
@@ -733,7 +733,7 @@ file escape/typelisp.pkg
   (version "0.1.0")
   (kind bin)
   (dependencies
-    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
+    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "0123456789abcdef0123456789abcdef01234567")))))
 end-file
 file escape/src/main.tl
 (import remote.src.lib as remote)
@@ -905,12 +905,12 @@ file src/main.tl
 (import math.src.lib)
 (define (main) : i64 0)
 end-file
-step selfhost-build-package-missing-alias
+step selfhost-build-package-missing-local-module
 run build --direct --manifest-path "{{dir}}/typelisp.pkg"
 exit nonzero
 stdout empty
-stderr contains compiler-load: unknown package alias 'math'
-stderr contains pkg:math/src/lib.tl
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match math[/\\]src[/\\]lib\.tl:1:1
 file typelisp.pkg
 (package
   (name "selfhost_missing_dep")

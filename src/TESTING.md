@@ -1,9 +1,156 @@
 # Selfhost compiler testing
 
+`macro_struct_pattern` checks positional, named and nested struct patterns from
+expression macros against direct-source controls at opt0/1/2 on both hosts.
+Owned and shared scrutinees retain their field binding modes, including String
+payloads. Imported macro heads keep their definition-site constructor despite a
+same-named caller struct. The safety rows reject arity, head, nested-field,
+unknown/duplicate named-field and unreachable-arm errors with diagnostics;
+the two owner controls reject same-layout structs from another module in both
+directions. Keep the target IR parity entry with the native matrix.
+
+`enum_constructor_owner_layout` and its header-less root control retain the
+declaring module's struct identity when imported and local struct names collide.
+Both hosts run opt0/1/2 for register/memory enum constructors, owned/borrowed
+matches, nested field access and struct/tuple/array/box/enum destinations.
+Aliases and full module paths must preserve the imported layout too. Keep their
+target IR parity alongside native execution.
+
+`macro_dotted_global` and its owner-module control preserve definition-site
+global field roots in quoted expression macros, checking and returning 2 at
+opt0/1/2 on both hosts. The matrix retains nested fields, caller shadowing,
+introduced locals, unquoted caller places, owner-module field assignment and
+mutable borrowing. Importer writes and mutable borrows remain rejected even
+with a same-named caller local; their safety rows retain template locations
+and macro invocation provenance. Keep target IR parity for these fixtures.
+
+The header-less `macro_dotted_root_*` entries retain the definition-site global
+when a caller local has the same name, including scalar, smaller, different and
+identical struct layouts and nested projection roots. Public check, CLI build
+and native execution must agree at opt0/1/2 on both hosts.
+The borrow entries retain the global root's type as well as its storage for
+shared/mutable field borrows, a reference-typed caller and nested projections.
+The mutable case also borrows the whole root to cover call-argument dispatch.
+Width-sensitive shared borrows retain u8 globals against wide caller fields and
+wide globals against narrow caller fields, including nested calls and tail
+results. Non-call mutable borrows retain the global type against reference and
+by-value caller parameters; writes change only the selected field. Scalar and
+bool caller locals keep nested shared borrows accepted. Each fixture retains a
+control without shadowing.
+The imported matrix also borrows an opaque global without reading it by value;
+borrow-place lookup must preserve the opaque reference boundary.
+The header-less replace fixture retains both width directions and a scalar
+caller, with controls without shadowing. Its returned old value and field-only
+update must use the same definition-site type in checking and lowering.
+
+`ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
+phi links, capacity growth, missing labels and renamed-block logical positions.
+The optimizer smoke's `dense-storage` test also checks edge captures before
+rollback, independent sibling versions, missing predecessors and unbound
+candidate variables. Keep both entry points when changing SSA storage; the
+fixed-source compiler/benchmark and CFG scaling comparisons require complete
+SSA IR (including value numbering) and raw assembly equality.
+
+`mut_borrow_field_writeback` checks immediate mutable field call arguments at
+opt0/1/2 on both hosts: one/two-word locals, nested and disjoint fields, narrow
+and SSE fields, later sibling effects and repeated calls. Writeback merges only
+the borrowed field into the current local. Shared borrows, whole-local
+writebacks, memory-backed receivers and reference receivers remain controls;
+the safety corpus retains overlapping-place borrow rejection.
+
+`nested_mut_borrow_pointer` and `nested_mut_borrow_receiver` require exit 5
+at opt0/1/2 on both hosts: nested call borrows lend original inline storage
+from memory-backed locals and mutable-reference receivers.
+`nested_mut_borrow_storage` covers deeper/nonzero-offset projections, narrow
+and floating fields, fixed/dynamic arrays, tuples, boxes, reference-valued
+fields, single index evaluation, non-call borrows, memory-class globals and
+shared reads. Keep register-local call writebacks covered by
+`mut_borrow_field_writeback` alongside them.
+
+`global_mut_borrow_field` requires exit 5 at opt0/1/2 on both hosts for a
+mutable call borrow of a two-word global's field. `global_mut_borrow_storage`
+checks one/two-word globals, disjoint and repeated writes, narrow/SSE/pointer
+fields, original-slot identity, shared reads and unit-tail borrows,
+and nested memory-class globals. Global fields lend their existing storage;
+register-local call borrows retain their separate writeback path.
+
+`compiler-lower-unit-field-reads` requires canonical unit results without
+addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
+`unit_struct_fields` exercises empty, one/two-word and memory-class structs,
+nested empty fields, checked/raw references, owned/borrowed destructuring,
+receiver effects and unit equality/inequality effects and early exits at
+opt0/1/2. Keep the separate
+unsupported tuple/array ABI checks.
+
+`backend-packed-literal-records` checks the physical byte and relocation contract
+for immutable literal pools: empty/singleton, independent and competing owners,
+suffix chains, input permutations, interior NUL, UTF-8 and larger collections.
+Every input retains exact bytes plus its terminal zero and an aligned pointer/length
+header after the input arena is destroyed. The backend smoke runs the same checks;
+mutable binary constants keep independent storage. Assembly and direct objects
+consume the same literal records. `packed_string_literals` compares complete
+native stdout for suffixes, competing owners, repeated, empty and UTF-8 literals
+at opt0/1/2 on both hosts.
+
+`stdlib/tests/process_argv.tl` covers the Windows encoder's exact Microsoft C
+argv goldens and byte limit, both native spawn modes, and all 4096 public
+arguments. Keep empty/tab/quote/trailing-backslash cases and exact framed
+child output. Windows text and direct-object startup must decode the same
+rules, preserving program-name quoting separately; update their existing
+executable-template payload and ordered-event identities together.
+
 `cse-block-tables-keep-the-first-walk-state` installs address-taken facts for
 its own blocks before the raw CSE walks. A retired preceding function's facts
 must not be read. Keep the empty-state, generation and repeated-expression
 assertions when changing this fixture's setup.
+
+`sink_addr_taken_ptr_write.tl` is #8913's reproducer and
+`sink_addr_taken_local.tl` its variants: a read of an address-taken local, or a
+copy of one, before a store through its address, a callee store or a
+loop-carried store, used in one arm, and an element address formed from the
+local on both sides of such a store, and a read through its address before a
+direct def. Both run at opt0/1/2 on both hosts. The
+`single-predecessor-successor-sink` smoke keeps the successor-sink IR half:
+such a read, a rematerialized read and a rematerialized def stay above the
+store, and a load stays above a def of an address-taken var; each has a sinking
+control. `guard-first-dominator-sinking`, `gep-split-addr-taken-capture`,
+`store-addr-sink-next-to-store` and `load-sink-to-alu-consumer` pin the same
+rule for guard sinking, gep splitting, store address sinking and load sinking,
+each against a control whose address is not taken.
+
+`borrowed-address-collector-matches-visitor` compares the standalone borrowed
+collector with the original visitor on empty sets, late-block addresses,
+duplicates, encounter order and frame bounds. Keep that differential control
+alongside the #8913/#9420 gate and stale-state mutants when changing collection.
+
+`bce_addr_taken_bound.tl` and `unroll_addr_taken_bound.tl` are #9420's bounds-
+versioning and trip-count reproducers: a `ptr-write!` raises the loop bound
+after the loop starts. `bce_addr_taken_index.tl` writes the checked index
+through its address; `bce_addr_taken_snapshot_base.tl`, its multi-block twin
+`_base_mb` and `_seed` loop on a snapshot of an address-taken local; and
+`bce_addr_taken_fusion.tl` checks one address-taken index against two slices
+with a store through its address between the checks, and
+`bce_addr_taken_tighten.tl` lowers its own loop bound through its address on
+every trip, so it must run four times (exit 4) rather than the initial eight;
+`_tighten_raise` raises the bound until the checked access aborts at index 8,
+and `_tighten_lower` lowers it to two trips (exit 4). These pin both BCE's
+bound tightening and ubound, which rewrites the same loops when tightening
+refuses them. All run at opt0/1/2 on Linux and Windows. The BCE rows must keep
+their checked bounds diagnostic, the unroll row must return 42, the tightening
+row 4, and `lftr_addr_taken_bound.tl` (a store-bearing diamond) must return 56.
+The IR tests in `tests/loop_addr_taken_value.tl` drive each transform behind
+the address-taken gate (BCE versioning and its clone-free hoist and bound
+tightening, ubound, unrolling, fill/copy-call recognition and LFTR). They
+refuse loops on a mutable bound, length, index, seed, counter, snapshot,
+length-slot pointer or pointer induction, and on a value computed from one.
+Controls must still be optimized: an unrelated store, an ordinary index or
+seed, an ordinary length slot, a load through an `addr_of` result, and a loop
+that stores through a local's address without reading the local. A function
+whose entry branch tests a tainted value (the overwritten condition itself, or
+a compare with an overwritten copy of the bound) has no loop versioned or
+recognized as a fill/copy call. A constant-trip loop on a mutable length is not
+unrolled, and a loop that only writes an address-taken local counts as touching
+it. Separate tests pin each driver's own set installation.
 
 `stdlib_math_table_payloads.tl` hashes every word of the 15 private math tables
 in little-endian order against independent SHA-256 pins at opt0/1/2. Its length
@@ -50,7 +197,8 @@ empty write set and an unavailable table. Keep the T2-2
 same-global rejection and unrelated-global forwarding controls beside them.
 
 `compiler-ast-span-forwarding` runs the compaction fixtures with source-span
-consumption enabled: empty input, bitmap and pool-segment boundaries, shared
+consumption enabled: empty input with a populated destination, small and odd
+live tails, pool-segment boundaries, unreachable source suffixes, shared
 expressions, reordered canonical/ReSpan views, destination reuse and spans read
 after source destruction. Nonconsuming cases preserve source provenance. Test
 builds poison the consumed source's shared span-base table so later reads
@@ -141,6 +289,30 @@ results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
 i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
 with smaller memory-storage layouts and zero/positive field values as controls.
 
+`return-storage-identity-moves` checks that full-width U64 self copies preserve
+the incoming hidden result address. Real overwrites, narrowing moves, undefined
+pointers, local aliases and local ranges retain their definition checks.
+`recursive_aggregate_return.tl` retains #9337's exact recursive three-word
+reproducer; its variants cover a deeper chain, a result live across a second
+call, register and memory-class results, both hidden-argument positions and
+mutual recursion. Both fixtures run natively and with `--verify-ir` at opt0/1/2
+on both hosts; the IR observability gate also verifies both target modes.
+
+`fixed_array_result_tailrec.tl` checks complete fixed-array result forwarding,
+different layouts, changed scalar arguments and independent live results at
+opt0/1/2 on both hosts. Its opt2 shape requires loops while frame-held borrows
+and post-call result reads retain recursive calls. Authored optimizer IR also
+rejects direct/derived result aliases, result escapes, partial/incompatible
+copies and additional temporary observers. Forwarding reuses result-slot
+confinement, and the ordinary frame-capture guard must still admit the loop.
+The complete private allocation run is retired before scratch-loop analysis.
+The optimizer's owner regression verifies legal array IR before and after a
+full `OptimizeRequest(A, 2)` run with empty and colliding B pools installed;
+B stays installed and unchanged. A scalar frame-refusal control preserves the
+existing inliner policy. The target-parity corpus uses the exact golden array
+witness; by-value array controls retain their legitimate ABI differences in
+the native and IR-verification matrices.
+
 `regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
 compare stack tail fallbacks with ordinary calls on both ABIs. The overflow
 boundary test checks twice each GP window and one argument beyond it; the
@@ -155,14 +327,34 @@ and aggregate-result forwarding at opt2 on both ABIs.
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
 `backend-call-convention-facts-parity` compares all convention-dependent ABI
 facts on both targets, including invalid register indices and mixed-bank stack
-boundaries. `backend-call-convention-emission-sites` turns on a `cfg test` hook
-that gives Windows `Internal` calls RSI/RDI as fifth and sixth argument
-registers, then checks where a TypeLisp call, C extern call, C function pointer
+boundaries. `backend-call-convention-caller-saved-membership` cross-checks the
+GP membership predicate against the ABI enumeration through GP, vector and mask
+register families, gaps and invalid IDs. `backend-call-convention-emission-sites` uses Windows `Internal`
+RSI/RDI fifth and sixth argument registers, then checks where a TypeLisp call, C extern call, C function pointer
 call, closure adapter forwarding to C or TypeLisp, backend runtime helper call,
 TLS-arena intrinsic and variadic call place those arguments. Run these at
 opt0/1/2; a convention-only refactor also needs exact before/after Linux and
 Windows assembly for the integration corpus and compiler, plus the bootstrap
-fixpoints.
+fixpoints. `internal_abi_six_positions.tl` runs mixed GP/FP calls, hidden result
+pointers, Slice pairs, closures and live values across Internal and C calls at
+opt0/1/2. Its C companion calls raw exports and concatenation, and on Windows
+installs RSI/RDI canaries around C-export, macro and thread entries; independent
+Internal assembly leaves force clobbers so allocator choices cannot mask a
+missing boundary save. The fixed-slot/FPO/SEH tests retain all five GP saves,
+optional RBP, XMM6–15, probes, alignment and malformed-prologue rejection.
+The Windows virtual-unwind driver enters through Platform C exports and
+crosses their RSI/RDI-saving bridges and both Internal frame forms. It still
+recovers every seeded Win64 nonvolatile GP/XMM register, RSP and RIP; the
+near/far save oracle separately covers the five Internal GP saves and RBP.
+`package-c-export-internal-body` builds a separate dependency archive at
+opt0/1/2, then calls its six-argument function through both the TypeLisp import
+and raw C export. It pins the distinct body symbol through package metadata
+and linking on both hosts.
+`runtime-atomic-export-intrinsics` retains inline sequentially consistent
+operations through the runtime's provided C exports at opt0/1/2 on both targets,
+and checks that the distinct Internal load symbols remain frameless leaves.
+The C companion also calls the raw atomic load/CAS leaves through the Windows
+RSI/RDI canary interposers.
 
 `tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
 with colliding numeric names while a decoy interner remains installed. It keeps
@@ -184,7 +376,13 @@ growth for register and memory-class elements, nested struct/tuple projections,
 one-time index selection and mutable slices at opt0/1/2 on both hosts. Its
 safety rows keep final bounds checks after the value's effects and reject
 immutable receivers; intermediate projection traps remain independently pinned
-by `set_intermediate_bounds_before_value_trap.tl`.
+by `set_intermediate_bounds_before_value_trap.tl`. The fixed-array and slice
+`set_*_field_value_before_bounds_trap.tl` rows hold every array kind to the
+same final check, and `compiler-lower-projected-store-checks` keeps a dynamic
+element's field store at one check. `inline_array_field_store_growth.tl` covers
+stores through an inline array field of a dynamic-array element after growth
+(#9057), and `set_inline_array_bounds_before_value_trap.tl` the element check
+that indexing its inline array needs before the value.
 
 The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
 pricing identical before and after backend frame-pointer omission enables an
@@ -193,6 +391,14 @@ observability gate compares cold and repeated batch assembly for
 `pure_call_join_live.tl`, including an empty predecessor, at opt0/1/2 for both
 target ABIs. An invalid middle entry must retain its source diagnostic and
 stop before later output is emitted.
+
+`checked-price-memo-key-and-lifetime` covers full equality after a structural
+bucket collision, offset/type-context separation, deep snapshots after input
+arena destruction, caller reset and stage release. The companion
+`checked-price-memo-postconditions-and-full-fallback` checks the scalar state
+left by a cache hit and unchanged full pricing when the metadata table fills.
+The memo retains prices only within one caller and its rescan generations;
+the existing callee memo keeps its independent input-retirement coverage.
 
 `arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
 aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
@@ -221,6 +427,21 @@ emission on both SIMD widths and target ABIs. Its remapped homes extend beyond
 the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
+
+`backend-empty-private-body-keeps-entry-stores-inside-frame` covers private
+AVX2 parameter homes with and without debug info on both ABIs, plus distinct
+instruction locations after coloring. `empty-private-params-debug-run` runs
+the empty-body regression at opt1/2 alongside the non-debug controls.
+
+`backend-debug-simd-caller-provenance` checks ordinary callers on both SIMD
+widths and ABIs, with interleaved function locations, duplicate value keys and
+bounds locations. The `debug-caller-*` cases in `tests/spmd/simd.cases` execute
+the caller-home matrix witnesses at opt1/2 with their correct result or shift
+trap, alongside scalar debug controls. The wide uniform-stack fixture retains
+its existing AVX-512 private-argument diagnostic.
+`backend-layout-keeps-debug-ends-after-cold-blocks` checks CFI, backtrace and
+CodeView endings through cold-arm layout. `shuffle-lane1-debug-backtrace`
+requires the trapped caller's `main` frame at opt1/2 on both SIMD widths.
 
 `indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
 returns early, for language closures and C code pointers. Counts require one
@@ -254,14 +475,45 @@ phi interaction; its independent opt2 load-forwarding defect remains #8514.
 reference or slice. It covers explicit and implicit field borrows, array and
 tuple elements, local aliases, call-returned references, shadowed parameters,
 heap aggregate copies and indirect calls at opt0/1/2 on both hosts. Its
-assembly cases retain ordinary calls for unproven storage and tail jumps for
-reference parameters, reborrows, caller-owned projections and heap storage.
+assembly cases retain ordinary calls for unproven storage and for a borrowed
+scalar local, whose copy is a frame slot (#9297), and tail jumps for reference
+parameters, reborrows, caller-owned projections, heap storage and borrows of
+dynamic-array and String locals, which lend their heap handles.
 Parameter-derived slice rests keep tail jumps through nested patterns and a
 300,000-element walk. Sibling local-array views and rebound rests retain calls,
 checking that external-storage facts neither leak between arms nor survive a
 reassignment.
 The safety corpus rejects rebinding a reference parameter to a shorter local
 borrow before forwarding it.
+
+`with_arena_scalar_borrow.tl` is #9297's program: a reference to a scalar
+local borrowed inside `with-arena` outlives the form, and the next allocation
+reuses the rewound arena. `borrow_local_frame_storage.tl` extends it to
+integer, float, bool, char and narrow locals, whole register-resident structs
+and their fields, parameters, a match payload bound through a shared
+reference, nested regions, a returned reference, a holder struct, borrow sites
+in loops and `in-arena` followed by `arena.destroy-safe!`. Each case refills
+the released arena before it reads, and `profile.alloc-total` must not move
+around borrows of locals. Both run at opt0/1/2 on both hosts, and the
+`borrow-local-no-alloc` assembly case forbids `tl_alloc` in the borrowing
+function on both targets.
+
+A lambda's by-value capture is storage of each call, so its frame-slot copy
+is only sound because the ownership graph retires the capture at every return.
+The `capture_borrow_*_reject` safety rows return or store a borrow of a
+capture (scalar, register-resident field, a `String` snapshotted into a
+`with-arena` region, under `with-arena`, `in-arena` with
+`arena.destroy-safe!`, auto-borrowed into a lifetime-carrying call, nested
+lambdas, a captured lambda parameter); main accepted each, and each must
+report the capture's E0205. Two controls keep the inferred-result and
+lambda-parameter diagnostics. `capture_borrow_storage.tl` runs the accepted
+side at opt0/1/2 on both hosts: captured references returned or reborrowed,
+non-escaping borrows (lent, annotated with the capture's lifetime, in a loop),
+shadowing, nested lambdas and field borrows. The `lambda_identical_capture`,
+`lambda_identical_capture_ref` and `lambda_identical_capture_nested` rows keep
+identical capturing bodies linkable at opt0/1/2 on both hosts, alongside the
+`lambda_identical_noncapturing` control. The merge self-test excludes either
+twin's stored or global code address and still counts the direct-call merge.
 
 `tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
 in one frame, including register-resident enum spills. Their tail jumps and
@@ -275,7 +527,7 @@ suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the
 bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47).
 
 `compiler-driver-retained-image-owner` in `compiler_driver_smoke_tests.tl`
-checks embedded-image retention, nonpositive and nested owners, forgetting a
+checks embedded-surface retention, nonpositive and nested owners, forgetting a
 borrowed owner, and reuse after the previous owner is destroyed. Run it at
 opt0, opt1 and opt2. The native-route stress and stdlib identity differential
 gates retain their complete native/source batches, mapping lifecycles,
@@ -295,6 +547,15 @@ and compare selected payload bits. Shape rows retain ordered packed GT/GE
 on both target ABIs; backend IR-text cases cover register and spill operands
 and unchanged AVX-512 signed/unsigned integer predicates.
 
+`backend-spmd-entry-preserves-every-unread-input` checks every incoming operand
+against earlier writes to its physical XMM/YMM/ZMM aliases on SysV and Win64.
+Mixed f32/f64 uniforms have register and frame homes alongside integer,
+varying and bool inputs; the AVX-512 mask swap retains its parallel schedule.
+Keep the stack-float entry-copy regressions beside it. The required SPMD
+`private-helper-entry-uniform-float-run` case runs the out-of-line reproducer
+in scalar/AVX2/AVX-512 at opt0/1/2, including a partial gang and every lane's
+result. Missing execution routes remain unverified.
+
 `spmd_uniform_index_write.tl` preserves unmasked uniform receiver/index/value
 writes across empty and tail domains in scalar, AVX2 and AVX-512 modes. The
 paired safety cases reject a uniform destination when the value is varying,
@@ -313,8 +574,22 @@ the paired private-store rejects show that values read back from that storage
 stay varying.
 
 The aggregate-global backend escape fixture rejects the safe-reference shape
-with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
-The indirect-call shape remains independently covered.
+with E0222 and checks its raw-pointer counterpart against the inline-home
+assertions (SPEC 4.x: an initialized aggregate global is one storage home whose
+assignment keeps that home). The indirect-call shape remains independently
+covered.
+
+`package-embedded-math-initializers` and `package-source-prefix-macro` check
+source global macro initializers before dependency imports at opt0/1/2 on both
+hosts, with cold/cached dependencies and explicit disk-root comparisons.
+`package-source-prefix-return-type` rejects an invalid entry-owned function
+before the import on all three routes. Existing package native/surface gates
+retain their exact trusted-prefix, native/source parity and rollback assertions.
+`package-dependency-tlci-frontend-surfaces` also builds a consumer whose
+expanding stdlib import and entry global precede its dependency imports: both
+walks must still reuse a nonempty prefix, typechecking stopping at the cut's
+module marker before the macro walk's prefix ends, with forced-source assembly
+parity.
 
 `package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
 runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
@@ -341,20 +616,22 @@ opt0/1/2 on both hosts. The `gep-split-mutable-global-capture` optimizer test
 covers implicit `Global` and `RuntimeGlobal` reads in both GEP operands across
 stores and calls, with stable literal, address and SSA splitting controls.
 
-`global_aggregate_storage_lifetime.tl` checks shallow global container storage
-after scratch and explicit arena destruction, nested scopes, repeated writes,
-large arrays, MoveOnly Box payloads, and local/global receivers retained across
-conditional, transitive and recursive whole-global replacement.
-It also checks that the allocator restores the caller's arena and remains
-visible to allocation profiling. `global_aggregate_storage_threads.tl` races
-first use from two workers writing distinct globals and reads the results only
-after join. `global_aggregate_storage_boundary.tl` fills the private static page
-exactly and retains an old receiver across the first growth. All three fixtures
-run at opt0/1/2 on both hosts. The existing
-`scratch_body_global_store_reject.tl` keeps source allocation escape illegal.
-The arena-debug gate repeats all three fixtures with debug, profile, and backtrace
-instrumentation together, using a test-enabled emitter and checking that each
-runtime feature is present. The shared-object backend test pins both TLS
+`global_aggregate_storage_lifetime.tl` checks that an inline aggregate global
+keeps its static home (SPEC 5.10) after scratch and explicit arena destruction,
+nested scopes, repeated writes, large arrays, MoveOnly Box payloads, and
+local/global receivers captured across conditional, transitive and recursive
+whole-global replacement: a store into a captured element of the global lands
+in its home. It also checks that the caller's arena is restored and that these
+stores allocate nothing. `global_aggregate_storage_threads.tl` races first use
+from two workers writing distinct globals and reads the results only after
+join. `global_aggregate_storage_boundary.tl` repeats 258 replacements in
+temporary arenas while an element place into the home is captured, and checks
+that every store lands and none allocates. All three fixtures run at opt0/1/2
+on both hosts. The existing `scratch_body_global_store_reject.tl` keeps source
+allocation escape illegal. The arena-debug gate repeats all three fixtures with
+debug, profile, and backtrace instrumentation together, using a test-enabled
+emitter, checking that each runtime feature is present and that no store
+reaches the private global allocator. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
 The parser origin-column tests exercise all thirteen kinds, compact-span
@@ -378,16 +655,22 @@ tests require every published loader code to remain documented.
 for an unknown package alias on both targets. `loader-unpublished-identity-code`
 keeps E0306 out of the public registry and explanations; explicit API identity
 constraints remain tested as E0303 resolution errors.
+The package/plain parity cases exercise sibling, nested, separate-parent and
+self-repeated module bodies through check/build on both targets, plus missing
+local modules with and without dependencies. Distinct bodies and inactive cfg declarations
+remain accepted; explicit unknown `pkg:` include aliases remain E0303.
 
 ## Packed field receivers
 
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word
 and two-word sibling writes, mutable-reference calls and whole-referent writes,
 conditional and equal-content rebinding, nested stores, loops, shadowing,
-zero-sized fields, and tuple/memory-class controls. A scalar transition oracle
-checks both packed widths across 99 input/action combinations. The lowerer test
-pins the pure packed path, guarded frame homes, and absence of runtime heap
-allocation. The paired safety fixtures retain rejection of live borrowed roots
+zero-sized fields, and tuple/memory-class controls. A rebind in the value
+copies into the receiver's home, so the store lands in the variable (SPEC 5.10).
+A scalar transition oracle checks both packed widths across 99 input/action
+combinations. The lowerer test pins the absence of runtime guards and heap
+allocation. `set_place_eval_order.tl` covers the same rule for element, element
+field and tuple-element field places. The paired safety fixtures retain rejection of live borrowed roots
 and immutable field access.
 The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
 fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
@@ -455,6 +738,42 @@ shared reference: directly, in a tuple, array, struct field or Box payload, as
 a Copy field, through two copies of one shared reference, and with a shared
 reference between two mutable ones. Each must report the `&mut` borrow
 diagnostic (E0207), not an incidental move error.
+
+`replace!` takes the place's own old value (#8889): the move-test tables check
+box contents reached through `&mut` (directly, through a field, nested) as
+returned owned values, the referent of a computed reference held in a
+temporary, and the writability of every reference on the place's path, which
+rejects a `&mut` reached through `&` with E0207 "mutable borrow through a
+shared reference" for each container shape and for `set!` (main's
+`replace_place_through_*` rows, the `replace_through_shared_*` and
+`set_*through_shared_mut_reject` safety rows). The `replace_place_paths`
+native matrix runs the accepted shapes at opt0/1/2.
+
+A view's writability follows the references it was read through: the
+`view_mut_*_ok` safety rows pin main's exit values for writes, `replace!`, a
+mutable loan and a view of a view through `&mut`, the `view_*_reject` rows keep
+the owner and other views unusable while a mutable view is written and every
+write through a `&` path rejected, and the `view_mut_write` native matrix runs
+each write form, a copied view and a loop at opt0/1/2. The move-test table
+`compiler-typecheck-view-writability-ok?` checks both sides. A binding of a
+match on a view keeps the view's writability: the `view_match_binder_*_ok`
+rows pin main's exit values for a field store, box contents, `replace!`, a
+mutable loan, a match on a view binder and a loop; the `view_match_binder_*`
+rejects keep the owner, another view of the path and a second match's binding
+unusable while a binding is written, and reject every write through a `&`
+path; the `view_match_binder_write` native matrix runs each form, an
+or-pattern, two payloads and a binding of a binding at opt0/1/2, and
+`compiler-typecheck-view-match-binder-ok?` checks both sides.
+
+A `(&mut program T)` is Rust's `&'static mut`: `program_mut_holder_uses_ok`
+(main's typecheck-smoke holder among them) reads, writes, passes, stores,
+moves and matches holders of one; the `program_mut_*_reject` rows reject a
+`&mut` reborrowed into a `program` region and used again (main accepts the
+aliasing), a reborrow through a holder returned as `program`, a store through
+a payload bound through `&`, and a borrow of a local passed for a `program`
+parameter (`program_param_*`; `program_param_shadow_ok` keeps a parameter named
+`program` an ordinary borrow); `compiler-typecheck-program-mut-holder-ok?`
+checks both sides.
 
 ## Linux thread storage
 
@@ -674,6 +993,21 @@ operands alone use constructed IR because their text spelling is not lossless;
 the instructions and expected replacements use parsed IR text. Keep these
 checks with the existing literal-length and native equality coverage.
 
+The `copy-call-byte-copy` test also verifies copy/fill exit-value suffixes:
+the counter step must follow the memory operation, and only copies and the
+loop comparison may follow that step. Its authored IR shares `i + 1` directly
+between addresses and the step, retains later address/arithmetic/load uses,
+and keeps a valid post-store step with a copied exit value as a positive.
+`tests/integration/copy_call_shifted_step.tl` checks shifted byte and word
+copies at zero, one, four and nine trips at opt0/1/2, including unchanged
+sentinels and the returned counter. Spare initialized storage keeps the
+historical wrong-offset copy in bounds, making a value mismatch the witness.
+The same self-test verifies actual positive-bound entry facts for copy and
+fill loops: selected signed comparisons, a true conjunction and a forwarding
+preheader admit the helper; fabricated guard names, bypass paths, wrong edges,
+unsigned or mismatched counter types and proof-budget exhaustion retain the
+original loop. Each authored input is verified before transformation.
+
 ## Move joins and diverging arms
 
 The `fixed-array-reference-value-and-place-access` virtual-source matrix rejects
@@ -690,7 +1024,9 @@ distinguish reading a place from transferring its element. The public
 `fixed-array-reference-*` cases pin E0208 and source locations through check and
 compile for both targets at every optimization level. `array_reference_reads.tl`
 runs the corresponding positive paths, Slice borrows, clones and replacement,
-and owned moves in the native matrix. The `array_shared_element_move_reject` and
+and owned moves in the native matrix; `tuple_reference_reads.tl` runs Copy
+reads, views, clones and replacement through `&` and `&mut` tuple receivers.
+The `array_shared_element_move_reject` and
 `slice_shared_element_move_reject` safety rows return a borrowed element under
 the reference's own lifetime.
 
@@ -798,6 +1134,25 @@ Run the companion at opt0/1/2 with a freshly built compiler and both stdlib/src
 roots. `compiler-lower-native-lane-table` checks all nine lowerer modes against
 the previous numeric width table, including non-numeric rejection. The existing
 SPMD differential and shape gates retain end-to-end lowering coverage.
+
+## Stack traffic evidence
+
+`compiler_stack_traffic_tests.tl` checks the #9242 typed boundary for #7236:
+all closed owner/bank/access/region kinds, unique emitted-operation keys,
+source identities across inlining, ordinary traps without fabricated sites,
+region-parent consistency, logical homes, malformed graph
+indices/reverse edges, nested regions, disconnected and acyclic control flow,
+self loops and an independent transitive-closure oracle over all 64 three-node
+graphs without self edges. The oracle separately checks ordered same-home
+write/read paths with no intervening header visit, both static event orders
+and `ReadWrite` events. Keep mutually exclusive arms, different homes,
+setup/exit-only traffic and read-before-write negatives; same-block access
+ordering, child-control paths, inner-cycle revisits and entry reachability
+remain explicit fixtures. SCC access counts are not ordered witnesses. Keep
+the v1 JSON golden, escaping and exact/spare IR capacity checks. The native
+smoke runs the same checks at opt0/1/2 on both hosts.
+The producer/report integration remains #7236; these fixtures do not certify
+actual backend ownership or publish a warning.
 
 ## SPMD decision provenance
 
@@ -980,6 +1335,13 @@ Allocations in segments added after the capture can then become unreachable;
 the fact that a global, map, or cache binding still contains their addresses
 does not keep those raw segments alive.
 
+`cfg-label-index-survives-source-pool-reset-and-reuse` in
+`compiler_optimize_tests.tl` retains a live index across partial/full source
+interner resets, reused source slots and a second index build. IR labels have
+their own spelling lifetime; the index's arrays must remain in a live caller
+arena. The test restores the ambient interner before releasing its isolated
+state. Run it at opt0/1/2.
+
 The intern persistent arena is not a substitute. A floor reset through
 `intern-compat-state-persistent-arena-reset-to-floor!` rewinds allocations
 above its mark, and a full reset replaces or destroys the arena. State that
@@ -1020,6 +1382,25 @@ retirement while continuing to reject ordinary reset/destroy of protected roots.
 contains the optional debug templates) and checks all fifteen native fixture
 operations on each CI host, including grown-owner retirement and invalid handles.
 
+`compiler_ast_types_smoke.tl` checks retained type-pool stamps against
+independent contexts, append growth, global installs, truncation, shallow views,
+old-cursor ID reuse, types-only copying and storage retirement. Removing the
+revision change, shared append high-water check or actual cell-identity check
+must make its dedicated stamp witness fail. A copied type prefix has a new
+authority, even when its numeric type IDs are unchanged.
+
+Explicit compiler invariant failures use the dependency-free `compiler_abort`
+leaf with a static message identifying the table and caller. Do not call the
+site-free `tl_oob_abort` from non-test compiler code. `check-tl-lint.sh` checks
+the source token stream and exercises a split-call rejection probe while
+allowing comments, strings and extern declarations. The native manifest runs
+`compiler_abort_sites.tl` at opt0/1/2 on both hosts: intern IDs, structural
+sessions, SSA rename checkpoints and token access each have an exact stderr
+oracle and managed exit 134, with a successful table-use control. The same
+fixture exercises type-pool revision exhaustion and append after retirement.
+These explicit failure paths call the out-of-line runtime diagnostic; message
+formatting and allocation must not be introduced on successful table reads.
+
 For a regression test of retained mid-walk state, exercise the invalidating
 sequence rather than only testing insertion and lookup in one context:
 
@@ -1040,6 +1421,281 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 [#5510](https://github.com/JoNil-Botta/typelisp/issues/5510).
 
 ## Coverage layers
+
+### Ownership core and independent model
+
+`compiler_typed_occurrence_tests.tl` tests the bounded selected-occurrence
+store through `src/tests/compiler_typed_occurrence_smoke.tl`. Build the driver
+with `--stdlib-root src --stdlib-root stdlib`; success exits 42. It covers
+contextual occurrences sharing an AST ID, generated literal payloads, ordered
+callee/argument children, nested rollback and slot reuse, query isolation,
+resolver and interner identities, revoked leases, cumulative work, terminal
+resource/serial exhaustion, and charged array growth with retained handles.
+Mutation cases also reject negative/overflowed child spans and malformed logical
+table extents before indexing storage.
+Typed-place controls additionally cover nested dynamic-index child order,
+formation versus value categories, exact acquisition identity/type, mismatched
+projection containers, foreign owners, restored-slot reuse, nested rollback,
+growth with retained place handles, Query refusal and forged cyclic paths or
+scalar categories. These authored place facts are not source projection or
+ownership-admission coverage.
+Projection source handles are validated too; forging their serial is rejected
+before a source payload is exposed.
+This exercises producer plumbing, not ownership admission. The native manifest requires this
+smoke on both hosts at opt0/1/2; the compiler manifest includes the module and
+its tests.
+
+The source fixture `ownership_certified_scalar_control.tl` covers captured
+operand values, signed comparison, loop-local initialization, continue/break,
+short-circuit effects, early return and unsigned ABI arguments through the
+ownership graph and the ordinary lowerer (exit 42 on both hosts at opt0/1/2).
+
+`compiler_ownership_normalize_tests.tl` exercises the primitive selected-node
+normalizer through `src/tests/compiler_ownership_normalize_smoke.tl` (exit 42).
+The native manifest requires both hosts and opt0/1/2. Tests cover distinct
+canonical scalar types, owned provenance after lease retirement, ordered
+temporaries, short-circuit initialization and shadow identities, normal and
+return edges, binder read/write type agreement, unique local declaration
+initializers, duplicate executable edges, malformed child spans, stale owners,
+resource limits and unsupported dead forms. They use selected-occurrence
+fixtures; broader source producer coverage and lowering admission remain
+separate obligations.
+Isolated production mutations removing the repeated-occurrence guard or
+forcing an `and` RHS to execute are rejected by the focused expectations with
+normal exit 1; compilation failures or crashes are not mutation witnesses.
+
+The `selected-inference-transactions` inline test in
+`tests/compiler_typecheck_core_tests.tl`, also called by the typechecker smoke,
+exercises the real selected inference entry: distinct contextual types for one
+AST ID, generated values, chosen child order, failed and unrepresented parents,
+query isolation, terminal resource failure, and a decoy installed interner
+rejected before a bogus expression ID is read. Grown compatibility and mirrored
+pool cells verify that Query bounds follow the canonical reader without
+mutating the saved cursor, reject wrong source owners/generations, and cannot
+relax Capture's exact leased bounds. The API self-test and
+`tests/integration/selected_inference_dotted.tl` preserve the original ID route
+for hygienic dotted reads/assignments and generated lambda bodies. The latter
+runs on both hosts at opt0/1/2. These tests do not claim full source normalization
+or successful ownership certification.
+
+The same producer smoke exercises the live-lease normalizer hook: primitive
+success, structural result-type mismatch, source-located uninitialized read,
+hard resource failure and explicit Unsupported migration. Canonical return
+compatibility runs before this hook; the existing exact return-mismatch API
+test preserves that diagnostic. Legacy source admission still runs, and the
+checked primitive body is not yet retained into lowering.
+
+The lexical producer controls pin the actual plain/unsafe lookup winner,
+shadowing, persistent fallback, distinct carrier epochs and reused slot
+generations. Parameter associations are created by the canonical bind loop;
+the selected Read names that parameter's typed binder. A foreign carrier with
+the same ordinal/generation, an old winner after restore, a reused unmapped
+slot and a wrong body owner are refused. Epoch/generation exhaustion is sticky
+and fails before source access; MAX-1/MAX controls also catch exhaustion caused
+by post-inference scope restoration. `begin` tests ordered children with a
+shared AST ID but different contextual types and preserve checking of a tail
+after an early return. `let` controls retain ordered initialization, contextual
+types from shared syntax, nested shadowing, repeated reuse of a restored slot,
+exact selected initializer origins, and successful owned-IR normalization.
+Unsupported parents and canonical initializer errors discard their retained
+children and restore scope; the inline test counts one inference per
+initializer. Assignment controls retain the pre-RHS winner across RHS-local
+shadowing, infer that RHS once, and refuse to invent a binder for persistent
+targets. Return controls distinguish the canonical contextual type from
+intrinsic `Never` through selected let/begin/if, retain explicit return operands,
+normalize the resulting control flow, and preserve missing-function/type-error
+diagnostics. Divergent binary operands and initializers stay explicitly
+unrepresented and roll back their retained children.
+
+Primitive producer controls also cover contextual/plain unary operand types,
+overflow and invalid-operator rollback, and noncontextual conditionals with
+distinct occurrences for shared branch syntax. Plain binary comparisons retain
+ordered operands and their canonical types. Literal-left integer/float narrowing
+and float fallback retain exactly the selected children, binders and source
+origins. Initializer counters pin one inference for a chosen probe and two for
+the canonical fallback/retry. Rejected fallback rolls everything back without
+refunding work or serials; resource exhaustion cannot become legacy success.
+
+Tuple projection producer controls bind a nested tuple parameter through the
+canonical parameter loop and inspect its exact selected place path. Copying a
+scalar sibling of a Box and moving the Box each retain only formation and
+acquisition occurrences, with no read of the whole tuple. Query type/error
+parity, out-of-range rollback and a successful projection under an abandoned
+parent are checked. Aggregate/place normalization remains explicitly Unsupported;
+these controls do not certify aggregate ownership.
+The public tuple fixture also reads the Copy sibling after moving its nested Box;
+the safety fixture pins a repeated Box move to the second move's exact location.
+
+Array producer controls cover nested fixed and dynamic arrays, distinct selected
+index children for reused syntax, exact index and per-projection origins, fresh
+index-local binder generations and one canonical inference per index. An invalid
+receiver still checks its index before receiver classification, matching the
+canonical diagnostic order. Invalid indices and unsupported annotation/borrowed
+receivers restore selected places and child/binder counts. These source facts
+remain outside the current scalar normalization and lowering certificate.
+
+`tests/integration/macro_try_operand.tl` covers recursive macro expansion under
+`try`, including a macro-generated try, hygienic caller locals, single operand
+evaluation and early error propagation. The native manifest requires both hosts
+and opt0/1/2. This fixes expansion before typechecking and does not claim a
+selected ownership producer for try itself.
+
+The `tc-dotted-identity-boundary` test also runs through the typechecker smoke.
+It pins competing use-site and definition-site import aliases, valid variant
+lookup, exact unbound diagnostics, and rejection of local/composite identities,
+unpublished interner slots, malformed global payloads, foreign owners and stale
+generations before raw dotted-name metadata is read.
+
+`compiler_ownership_core_tests.tl` tests the standalone typed ownership graph
+through `compiler_ownership_core_smoke.tl`, registered in the native manifest
+for both hosts at opt0/1/2. Cases cover nested partial moves, exact
+reinitialization, disjoint fields, distinct shadow bindings, joins, repeated
+loop iterations, break/return/abort edges, retained exit uses and Copy versus
+MoveOnly transfers. Malformed owners, generations, revisions, types and place
+forests fail structurally; unclassified operations fail even in dead blocks.
+The tests distinguish semantic rejection from resource exhaustion and check
+deterministic dumps, identity widths and source-provenance framing.
+
+`compiler_ownership_loan_tests.tl` adds shared/exclusive capabilities, nested
+reborrows, disjoint access, last-use expiry, explicit ending, diamond and loop
+liveness, and malformed loan identities. Its registered native smoke runs at
+opt0/1/2 on both hosts. These authored graph tests distinguish initialized-place
+failures from loan conflicts and require bounded resource failures to remain
+failures. Additional controls cover direct and sibling conflicts, three-deep
+grant chains, Copy/Move and Copy-consuming operations, terminator reads and
+EndLoan demand across a backedge. Direct liveness observations require a
+parent to remain live before its definition when an existing child is live;
+overall rejection alone could hide this behind a zero-iteration path. Dead
+shared writes and exclusive children of shared parents fail structurally.
+An isolated mutation restoring unconditional definition kill builds and makes
+the direct liveness expectation fail with normal exit 1.
+Resource cases reach the loan solver itself: a fixture requires exactly 48
+reserved cells (40 fails), eight points exceed a seven-point limit, and a
+50-loan/300-place/1,000-instruction graph completes under default limits.
+Observation controls pin owned row dimensions and the state before/after
+Borrow, and require the first semantic error to remain sticky when diagnostic
+inspection continues. A fixture accepted with 38 ordinary state cells needs
+60 cells for inspection, including a per-point failure-kind row; 59 returns
+Resource with incomplete observations. Earlier and later loan errors both
+remain visible in the per-point row even when the first diagnostic is retained.
+
+`compiler_ownership_cleanup_tests.tl` runs through the cleanup smoke at opt0/1/2
+on both hosts. Authored cases pin exact retained dependencies across transfer,
+loan conflicts after transfer, rejection of simultaneous root aliases and
+successful reuse after Leave, missing owned-root declarations, and ordered
+initialization/scope diagnostics with all per-point failure bits retained.
+Metadata controls reject ordinary containers of owned fields and incomplete
+cleanup plans, while admitting ordinary Copy fields and context-only Copy
+cleanup hooks. A body whose structural validation fits 64 cells must still fail
+its larger cleanup expansion with Resource; default limits admit its valid
+control. Dump checks require type ownership, exact contracts, parent identities
+and retained operands in version 3. Registration describes required coverage,
+not proof that every host run has completed.
+
+`compiler_ownership_normalize_tests.tl` includes structured scalar While,
+Break and Continue cases through the registered normalizer smoke. Each selected
+condition/body occurs once and must become a CFG cycle. Tests pin nearest-loop
+targets, nested target restoration, repeated Copy declarations, outer Assign,
+zero-iteration and first-entry initialization, and malformed/dead control forms.
+Isolated mutations of the repeat edge and lexical target restoration must build
+and fail their exact witnesses normally; compiler rejection or a crash does not
+count. The selected-inference producer smoke additionally runs twelve source
+loop cases against the shared Query/Capture checker: nested controls, repeated
+syntax with distinct binders, single initializer inference, scope restoration,
+unsupported/error rollback, and exact condition-before-body failure ordering.
+Invalid conditions prevent a later invalid initializer from being checked.
+These controls do not claim complete source normalization or lowering admission.
+
+`tools/ownership-model/README.md` documents the independent concrete model,
+finite bounds and separate production comparison adapter. Run
+`TYPELISP_BIN=<compiler> scripts/verify-ownership-model.sh` for the bounded
+native opt0/1/2 campaign and retained resource/identity reports. These tests do
+not exercise a production AST normalizer: the core is not yet the authoritative
+source ownership checker. Native fixture construction itself exercises
+aggregate value copies and borrowed enum descriptor payloads; a compiler bug
+there must fail the campaign rather than count as an ownership rejection.
+
+### Safety rejection oracle
+
+`scripts/verify-safety-corpus.sh` requires a normal checker exit of 1 and a
+structured, source-located diagnostic for every `check-fail` row. The expected
+substring must occur in diagnostic text or metadata, not a location path or
+an echoed source line;
+its primary location must belong to the expected source. The fourth manifest
+field can name another source for imported-body errors, or pin
+`source:line:column` for an intended operation. `-` selects the fixture source.
+Pin exact operations when adding safety regressions; a located error somewhere
+else in a large fixture is weaker evidence.
+
+A matching diagnostic followed by a crash, timeout or killed process fails the
+gate. `rejections.tsv` beside the retained output records exit status and the
+classification: accepted-invalid, rejected-invalid, wrong-diagnostic,
+malformed-output, compiler-crash, or infrastructure-resource-failure. A kill
+status alone cannot distinguish OOM from an external kill, so both remain
+resource failures. Empty, duplicate and incompletely executed manifests fail.
+
+The gate always runs planted outcome and diagnostic mutations, including a
+child that emits the expected diagnostic and then aborts. Run
+`scripts/verify-safety-corpus.sh --self-test` for those fast oracle tests without
+building a compiler. These tests validate the harness; they do not establish
+coverage of compiler ownership obligations.
+
+`aggregate_local_value_snapshot.tl` exercises local binding and assignment
+copies from nested projections and value-producing wrappers. It also preserves
+Box identity during a move, distinguishing a shallow storage transfer from a
+deep clone. `borrowed_pattern_descriptor.tl` distinguishes borrowed dynamic-array
+descriptor handles from their enum, tuple and fixed-array storage slots, with
+String, Box and inline-array controls for each pattern form. These are shared
+patterns; mutable borrowed patterns are outside the supported syntax.
+`aggregate_parameter_storage.tl` checks private by-value struct and enum
+storage through direct, indirect, tail-position and captured-closure calls.
+It checks caller values after callee mutation, a mutable-reference control,
+and Box identity through moved aggregate parameters and returns.
+`tail_call_aggregate_storage.tl` keeps caller-owned aggregate and projected
+reference storage alive across tail-position calls, with a scalar forwarding
+control. These native-manifest rows run at opt0/1/2 on Linux and Windows;
+agreeing optimization levels must still produce the independently specified
+exit 42. Backend module tests also author raw tail-call IR directly, testing
+named, extern C and indirect closure fallback on both target ABIs. Identity
+forwarding tests retain the spill-free scalar case and reject modified,
+unknown or narrow operands and repeated snapshot destinations.
+
+`pointer_eval_order.tl` fixes expected values for pointer offset, pointer writes,
+atomic/volatile stores, fetch-add and CAS when later operands rebind an earlier
+operand's source. `array_set_eval_order.tl` covers fixed/dynamic arrays, borrowed
+Slices, direct and materialized aggregate RHS values, and zero-size elements.
+`aggregate_assignment_storage.tl` keeps local storage identity when the RHS
+reassigns a selected field's receiver and snapshots the final aggregate
+constructor operand before destination writes; packed locals, tuples, enums,
+global storage and shallow Box transfers provide controls. `array_store_place.tl` grows the
+captured dynamic descriptor during the RHS, including through nested inline
+projections, and distinguishes descriptor rebinding from descriptor mutation.
+Wrapper controls merge mixed fixed/dynamic places and unequal dynamic root
+layouts, preserve a copied Let local's private home, and check exact condition,
+selected-arm, index and RHS effect order. The Return arm must retain its exit.
+`array_store_scope.tl` adds scalar, nominal and borrowed match receivers,
+resource cleanup before index/RHS evaluation, arena scopes, fresh literal/call
+receivers, clone-out scopes and returned mutable-reference controls.
+The lower module's store-place test pins the initial and commit-time dynamic
+bounds checks, with a single-check fixed-array control.
+The two `array_set_*bounds_order.tl` rows require a bounds abort with empty stdout
+before the RHS prints its marker. The native manifest pins all three
+optimization levels. Array receiver reassignment during a read is not evidence
+of by-value array copying: that operation's place semantics must be resolved
+separately.
+
+`compiler_ir_types_smoke.tl` tests the shared tail-transfer frame-exposure guard
+against linked, dense and mixed blocks, both storage producers, spare slots and
+malformed logical lengths. The optimizer's `tailrec` test authors frame-derived
+arguments through alias/Gep/cast instructions directly, so a lowerer refusing
+the source form cannot hide an unsafe optimizer rewrite; the scalar control
+still converts to a loop.
+
+Raw buffer boundary tests for #7945 are described in
+[`../docs/ownership-ir.md`](../docs/ownership-ir.md#raw-buffer-boundary-seed-7945).
+Invalid-pointer fixtures are check-only. Native forged-length witnesses use the
+guarded wrappers and require the exact deterministic abort, with separate valid
+full/empty and cleanup-count controls.
 
 `regalloc-assignment-table-empty` checks empty and sparse assignment tables,
 every occupied position through the last slot, ignored out-of-range inserts,
@@ -1177,7 +1833,7 @@ The package follows the standard layout: `typelisp build` resolves the default
 - modules only a tool imports (`compiler_embedded_stdlib_tlci_encoder.tl`,
   `doc_site_doc_bridge.tl`);
 - groundwork that an open issue chain builds on and that, until then, only its
-  own tests reach: the incremental identity/trace/graph/planner modules (#7025), the SFrame v3 codec,
+  own tests reach: the stack-traffic fact boundary (#7236), the incremental identity/trace/graph/planner modules (#7025), the SFrame v3 codec,
   the COFF import-member writer, the x64 executable template selection
   modules, the git client cores and `lint_fix_plan_core.tl`.
 
@@ -1524,11 +2180,12 @@ budget gate.
 Use [`../scripts/analyze-stage0-size.sh`](../scripts/analyze-stage0-size.sh)
 for linked stage0 binary size comparisons. It reports total file bytes, section
 raw sizes from `llvm-readobj`, `readelf`, or `objdump`, plus bounded static,
-compressed-token, and expanded exact-source embedded stdlib payload bytes:
+compressed-token, and expanded compiler-owned payload bytes. LZSS totals cover
+both the embedded stdlib and the executable-template catalog; TLCH/TLCI totals
+are reported separately and depend on the host and generated image inputs:
 
 ```sh
 scripts/fetch-stage0.sh
-scripts/analyze-stage0-size.sh target/stage0/typelisp
 scripts/build-stage0.sh target/stage0/typelisp target/stage0-branch/typelisp
 scripts/analyze-stage0-size.sh target/stage0-branch/typelisp
 ```
@@ -1536,7 +2193,11 @@ scripts/analyze-stage0-size.sh target/stage0-branch/typelisp
 On Windows, run the shell commands from Git Bash after fetching the Windows
 seed (`target/stage0/typelisp.exe`) and use a `.exe` output path. The stage0
 publication smoke also prints this report when a section reader is available,
-but it remains a measurement report rather than a size budget gate.
+and required PR CI runs it beside the size ratchet on both hosts. It remains
+a measurement report rather than a size budget gate. The declaration inventory
+must match the binary: analyze a downloaded seed from the source checkout that
+built it, or rebuild first as above. A seed with a different declaration set
+fails with an explicit expected/found count diagnostic against current sources.
 
 ### Instruction counts and LSP latency
 
@@ -1741,6 +2402,15 @@ for downstream binary and static-library package builds. The stage0 workflow
 keeps using the direct `compile src/main.tl` path plus native linking so a seed
 compiler can build its successor without depending on its own `build` command.
 
+Compiler builds record the commit in a fixed static byte array for `--version`
+and use the Git tree object name for `--producer-identity` and exact TLCI/surface
+admission. The `compiler-commit-stamp-field` CLI case exercises the production
+module at opt0/1/2: two stamps with one tree, assembly equality outside the
+named field, CRLF trimming, malformed stamps and unstamped source tools.
+The reference workflow's PR dry run additionally requires full identical-tree
+compiler/image byte equality and exact self-compile Ir via
+`scripts/verify-self-compile-stamp-invariance.sh`.
+
 `scripts/ci-verify.sh` is the complete local verification gate. With
 `TYPELISP_BIN` unset it fetches `stage0-latest` as the seed, which performs the
 single compiler build of the flow: the stage1->stage2->stage3 bootstrap
@@ -1819,7 +2489,7 @@ duplicate routes, stale identities, and unequal payload artifacts before the
 expensive bootstrap begins. Checked-in sources are never edited by this gate.
 
 The `verify-embedded-stdlib-tlci.sh` gate separately checks ordinary-image and
-envelope byte determinism and exact envelope expansion, proves that a
+envelope byte determinism and exact ordinary-image reconstruction, proves that a
 source-only mutation changes the image, ratchets source-lowered native-entry
 coverage, and stress-tests the mapped host callback/session bridge on both
 hosts. Unsupported transformer shapes remain explicit registration shells and
@@ -1828,6 +2498,15 @@ identity/arity/variadic/result-kind census from the parsed producer inputs and
 compares it with `tools/embedded-stdlib-tlci/identity-fixtures.tsv`; additions,
 removals, duplicates, or declaration-shape changes therefore require an
 explicit fixture review.
+
+The TLCH v2 index tests reject every proper truncation, overflowing bounds,
+wrong hashes, duplicate or unsorted identities, overlapping bodies and nonzero
+padding. The stage0 scanner independently checks that indexed layout and
+accounts for the complete shared model, index and bitstreams. The embedded
+verifier dispatches a cached entry after loading another frame, checks
+terminal-shell state, then releases/remaps and rejects the stale generation.
+The ordinary LZSS formats, exact payload parity, compression bound and complete
+macro census remain unchanged.
 
 `verify-stdlib-tlci-identity-differential.sh`, invoked by the required
 compile-profile gate, compiles the fixture manifest's witnesses through the
@@ -1853,6 +2532,9 @@ mapped catalog entry. Small required probes retain `__tl-box-place`, `and`,
 compile-profile detail rows per batch entry and requires exact
 identity/arity/call counts; built-in controls prove missing, duplicate,
 wrong-arity, and wrong-count rows fail closed.
+Before running, it requires the repository tree, compiler producer identity and
+embedded image producer identity to match exactly; commit provenance remains
+available separately through `--version`.
 `target/tlci-native-route-stress/<host>/evidence.tsv` records native and source
 compile time, assembly comparison and diagnostic-control time, generated-source
 and native/source assembly bytes, and native/source main-backend time for all
@@ -1876,15 +2558,20 @@ scripts/check-tlci-native-route-size.sh \
   target/tlci-native-route-stress/<host>/evidence.tsv
 ```
 
-The required `stage0-size-ratchet` gate holds #6260's published-stage0 target.
+The required `stage0-size-ratchet` gate enforces the 15,000,000-byte hard limit
+for published stage0 on both hosts (Refs #9440). Smaller remains a goal and size
+improvements are welcome, but they must not block correctness, compilation
+speed, generated-code quality or CI-speed work.
 It measures the converged bootstrap compiler, which comes from the same compile
 and native-link route as the published stage0 (a stripped copy on Linux, the
 linked executable on Windows), against the host's ceiling in
 `scripts/stage0-size-policy.tsv`. That file is an append-only ledger per host:
 the last row is the ceiling, an ordinary `ceiling` row may only lower it, only
 a `raise` row naming its authorizing change may raise it, and no ceiling may
-sit below the 10,000,000-byte target. When a change shrinks the binary well
-under its ceiling the checker prints the lower value to append. Reproduce with:
+sit below its recorded target. Historical rows retain their targets; each
+host's last row must use the current 15,000,000-byte target. When a change
+shrinks the binary well under its ceiling the checker prints the lower value
+to append. Reproduce with:
 
 ```sh
 scripts/check-stage0-size.sh target/bootstrap-fixpoint/stage3 linux
@@ -2185,9 +2872,121 @@ publishes.
 
 ### CI expectations
 
+To select the required local minimum and inspect the advisory superset, use
+the reviewed path map in
+[`ci-affected-paths.tsv`](../scripts/ci-affected-paths.tsv):
+
+```sh
+scripts/ci-affected.sh --base origin/main
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
+scripts/ci-affected.sh --self-test
+```
+
+The default `required` tier prints the deterministic local minimum, one ID per
+line in canonical order with producer dependencies from `ci-verify.sh`. Owners
+run that minimum (the second command) plus focused regressions for their change,
+recording applicable input-scoped reuse or host-qualified evidence. Backend and
+target-bearing sources require target parity; stdlib, safety inputs and pins
+require the safety corpus. Shared bootstrap, formatting, lint and shared-view
+checks and the cheap documented-source doctest guard are always included.
+Stdlib source edits also require documentation, rendered-site links and anchors, and
+module/fixture guards.
+Direct native, codegen and documentation inputs add
+their owning gates through the reviewed map.
+
+Required fixture owners follow declared primary inputs: native-manifest source
+entries and suite members, case-file source declarations and explicit repository
+fixture commands, plus safety and compile-manifest source entries. Imported or
+staged compiler/stdlib dependency closures stay in the advisory source classes.
+Generic compiler comparisons and produced-CLI build workloads are advisory;
+an exact primary fixture contract adds its comparison gate to the minimum.
+Broad inline discovery is advisory; named inline fixture contracts remain
+required. Diagnostic anchor references into imported or staged dependencies
+also remain advisory, rather than becoming new primary source declarations.
+When changing gate commands or primary inventories, update the reviewed path
+map and run `--self-test`. Its ownership audit follows invoked owning scripts
+and whole-directory content guards, uses the canonical case translator
+in list mode, expands manifest primaries, and checks Windows checkout bytes.
+Hosted Linux CI runs this audit unconditionally on every PR as part of
+`stage2-public-tool-surface`, before its compiler-dependent checks.
+
+New constructed primary-input lists in owning scripts must use the checked
+fixture inventory interface in `scripts/lib-fixture-inventory.sh`. Store each
+list as an existing-format `*.fixtures.cases` file with `do none`, unique
+`case LABEL` entries and literal repository-relative `source tests/...tl`
+paths. `fixture_inventory_load tests/...fixtures.cases OUTPUT` validates the
+whole inventory through `verify-codegen-cases.sh --list-fixtures` before the
+caller reads its label/tab/source rows; check its status. Consume the source
+column directly, preserving the harness's target, optimization and assertion
+matrix. If a runtime primary can differ from that column, call
+`fixture_inventory_require OUTPUT SOURCE` and check success before use.
+The IR, arena, compile-profile and backend-import loops use this interface.
+The unconditional audit discovers their literal inventory names through the
+existing owning-script traversal and reads the same checked metadata without
+running harnesses or compiling fixtures. Missing, empty, malformed and
+unsupported inventories fail; there is no independent witness list.
+Other constructed paths retain conservative directory-probe ownership or an
+explicit reviewed exemption. This boundary guards honest edits; code review
+enforces the convention. General discovery from arbitrary shell is not
+required, and the hosted full gate table remains the merge authority.
+
+`--tier advisory` prints a broader conservative superset for reviewing other
+affected checks. It includes the required tier, but it is not a requirement to
+run that entire superset locally. `--run` executes whichever tier is selected,
+one gate at a time through the canonical runner. Ordinary compiler PRs do not
+require the full local table. Full hosted coverage still applies. Unknown,
+workflow and executable-harness changes fail safe to the full table in both
+tiers. In every selector mode, these compiler worker
+counts default to `1`; any other explicit value, including empty, fails:
+
+- `TYPELISP_INLINE_TEST_WORKERS`
+- `TYPELISP_BUILD_INVARIANCE_WORKERS`
+- `TYPELISP_INTEGRATION_WORKERS`
+- `TYPELISP_COMPILE_MANIFEST_WORKERS`
+
+Use the ordinary memory-bounded invocation around the `--run` command on a
+shared development host. A partial local preflight still requires full hosted
+CI on the delivered head.
+
+Selection compares the merge base of the named ref and HEAD with the working
+tree, including committed, staged, unstaged, deleted, both sides of renamed,
+and nonignored untracked paths. All matching map rows contribute. Unmapped or
+unusually quoted Git paths select the full host table. An advisory-only match
+also selects full coverage in both tiers until its required trigger is reviewed.
+Invalid refs, invalid
+maps and unreadable path inventories fail before any gate runs. The shared
+source hygiene gates are always selected, even for an empty diff.
+
+The advisory compiler, stdlib and corpus groups select consumers recorded in
+[`ci-affected-inputs.tsv`](../scripts/ci-affected-inputs.tsv): all produced-compiler
+gates and their bootstrap dependencies, plus direct source/corpus guards.
+Compiler/backend target references therefore include target parity, and stdlib
+changes include the safety corpus. Independent memory-helper, benchmark-harness
+and publication fixtures are excluded from these source recommendations.
+Prose selects documentation consumers plus the shared hygiene floor. Executable
+harnesses, workflow paths, selector fixtures and unknown paths select the full
+table. A new or missing gate classification also makes input groups select the
+full table until their consumers have been reviewed. Review input roles when
+changing gate contracts. `--host linux|windows`
+can inspect either host plan; execution requires the native host.
+
+`--paths FILE` replays a newline-delimited repository-relative path inventory
+in either tier without executing gates. The self-test uses the required tier
+for the original changed paths at the
+failed heads of PRs #9310, #9326 and #9327, with run/base/head provenance in
+`tests/fixtures/ci-affected/history.tsv`; it also checks isolated triggers,
+fallback, dependency closure, Git discovery and the single-worker boundary.
+The fixtures work offline in shallow checkouts; when their Git objects are
+available the test also verifies them against the recorded historical diffs.
+
 Pull requests get Linux and Windows coverage from `scripts/ci-verify.sh`
 (wired in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each
-host bootstraps the full `src/main.tl` CLI as described under
+host's gates run in two CI lanes that `scripts/ci-lanes.tsv` assigns; each lane
+runs `ci-verify.sh --gates` with its gates and their needs, and the host's
+required check passes only when every gate passed in its owning lane
+(`scripts/README.md`, CI lanes). Each lane bootstraps the full `src/main.tl`
+CLI as described under
 [Stage0 and the bootstrap](#stage0-and-the-bootstrap); all downstream gates
 receive the converged compiler, and the previous bootstrap generation is
 retained for the cross-mode differential. The separate TLCI mutation bootstrap
@@ -2217,6 +3016,10 @@ text. Local runs remain uninstrumented unless the same environment variable is
 set. A successful flow ends with exactly one
 `CI verification / all / complete-verification` row measured from timing
 initialization through the last required gate; duplicate writes fail closed.
+A `--gates` subset instead ends with a `partial-verification` row. In CI, each
+host's aggregator merges its lanes' rows into `ci-timing-<host>`: each gate's
+rows from its owning lane, and one complete-verification row that is the
+slowest lane's partial-verification time.
 The artifacts are evidence for performance work; no wall-clock budget or trend
 check reads them in CI.
 
@@ -2254,19 +3057,39 @@ this backend before running the gates. Reports and command logs are retained in
 `target/build-invariance/backend-memory/` and uploaded by Linux CI; large
 assembly/executable outputs remain local.
 
-The four selfhost compiles run alone within the gate, before its pool starts;
-under `ci-verify.sh --jobs` other gates may run beside them, so their timing
-rows are evidence, not budgets. Every other chunk of both producers and the
-backend-tests build are jobs of one worker pool
-(`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 reproduces the serial
-order). Each pooled job runs through `scripts/run-memory-bounded.sh` with swap
-disabled and a 600 s timeout: 8192 MiB for the backend-tests build and both
-producers' complete codegen smoke, and 4096 MiB for every other chunk, about
-1.5 times the largest measured chunk peak (2.7 GiB). A job starts only while
-the caps of all running jobs fit 12288 MiB, so no two 8 GiB jobs overlap and
-the bound holds for every worker count; a job whose cap does not fit waits
-while later jobs that fit run. Chunk metrics and the chunk log lines carry each
-pooled chunk's peak.
+Every chunk of both producers, including the four selfhost compiles, and
+backend-tests are jobs of the existing bounded worker pool
+(`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 executes one job at a
+time). Large compiler smoke inputs stay isolated from other unique inputs;
+consecutive logical cases naming the same actual input at the same requested
+optimization share one fresh compile through the ordinary alias plan. All
+logical cases still count toward the 64-case ceiling, produce their named
+assembly, and receive their own byte comparison. Integration case names retain
+their manifest spelling; the build-invariance corpus requests opt2 for them,
+while its two selfhost rows request opt1 and opt2.
+
+Each job runs through `scripts/run-memory-bounded.sh` with swap disabled:
+8192 MiB for the backend-tests build, both producers' complete
+codegen smoke and all four selfhost compiles, and 4096 MiB for every other
+chunk. Selfhost compiles have a 1200 s timeout; every other job retains its
+600 s timeout. Before joining the pool, selfhost compiles had no per-job
+timeout and were bounded only by the workflow deadline. A job starts only
+while the caps of all running jobs fit 12288 MiB,
+so no two 8 GiB jobs overlap; a job whose cap does not fit waits while later
+jobs that fit run. The existing outer CI scheduler still owns the complete
+verification graph. Chunk metrics and the chunk log lines carry every chunk's
+peak. Locally, use one worker for the shared 8 GiB test allowance. Hosted CI
+runs build-invariance with three workers in its isolated lane (`linux-1`,
+`scripts/README.md` CI lanes), where no other gate runs beside the pool; the
+per-chunk caps and the 12288 MiB pool budget are the same.
+
+Linux CI retains the authoritative corpus, both producers' complete case,
+entry and alias plans, queue records, chunk metrics and `provenance.txt` in
+the `backend-memory-<lane>-r<run>-a<attempt>` artifact of the lane that runs
+build-invariance (`linux-1`). The provenance records source
+and compiler identities and the common target, cfgs, backend and ordered roots,
+so a coverage audit can interpret every requested optimization and comparison
+from the same records the local gate executes.
 
 The gate compares a chunk as soon as both producers have emitted it. It passes
 only with exactly one successful result per queued job: a failed, missing or
@@ -2298,23 +3121,17 @@ exit-status, lock-content, conflict-diagnostic or stage-cleanup assertions.
 Premature exit and timeout print the captured child logs; a staging-directory
 observation error fails immediately with those same diagnostics.
 
-For a selfhost compiler change, a typical local check (after
-`scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
+For a compiler change, start with the required minimum and inspect the
+advisory superset when planning additional focused checks:
 
 ```sh
-$tl fmt --check src/<changed>.tl
-TYPELISP_BIN=$tl ./scripts/verify-selfhost-compile-manifest.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-format.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-lint.sh
-TYPELISP_BIN=$tl ./scripts/verify-public-tools.sh
-TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
-TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
-TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
-TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
-scripts/ci-verify.sh
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
 ```
 
-Run the tests that match the layer you touched; `scripts/ci-verify.sh --gates
+Run the focused regressions that match the layer you touched; full hosted
+CI supplies the complete gate table, without duplicating it as a mandatory
+local suite for ordinary compiler changes. `scripts/ci-verify.sh --gates
 <id>` reruns one gate with the gates it needs. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a
 Linux environment.
@@ -2458,3 +3275,52 @@ keeps assembly/CLI execution plus an explicit object-eligibility exclusion;
 it must not execute an unadmitted raw image with #8317's placeholder runtime
 symbols. The shared native-link helper links serialized objects with the same
 entry, libraries and flags as its assembly path.
+
+The `legacy_box_get_*_reject` safety fixtures pin the E0207 receiver span for
+quote-only `box-get` and `__tl-box-place` borrows through references, including
+shared scalar, Store, mutable and nested-Box reference-match receivers. The
+public-check matrix checks the diagnostic and `deref` hint at opt0/1/2 for both
+targets. `legacy_box_get_public_deref.tl` and
+`legacy_box_get_owned_template.tl` print `via-ref=[hello]` at all three levels
+on both hosts; `legacy_box_get_owned_places.tl` retains Box fields reached
+through references, nested owned Boxes and public shared/mutable projections.
+
+The compile-profile lifetime ledger attributes immutable TLCI decode tables and
+session bookkeeping to `embedded-tlci-cache` with process lifetime. Each job
+snapshots that owner separately at load and macro boundaries. Planted controls
+remove cache or other-owner attribution, exceed a boundary snapshot, or alter
+reconciliation; every control must fail the same strict ledger checker. Exact
+reconciliation and the 95% named-owner coverage threshold remain unchanged.
+
+
+## Large constant pointer displacements
+
+`tests/integration/gep_large_displacement.tl` covers byte offsets at both
+signed-32 boundaries and just outside them, scaled word offsets, and i64
+minimum/maximum offsets. Exported load/store/address functions retain the
+selection shapes; the executable biases raw input pointers so each tested
+access lands on its small live allocation. An exported adjacent-load pair
+checks that its second offset cannot bypass displacement admission. The
+native integration corpus runs all optimization levels on both hosts, and
+the target-parity corpus compares IR at opt0/1/2 for Linux and Windows. Wide
+constants must use register materialization, while representable constants
+may use the x86 signed-32-bit displacement field.
+
+`src/tests/value_addr_taken.tl` covers #9420 sections 2-6 with direct pass
+fixtures: div/rem branch facts, wide global multiply copies, pure-call copy
+roots, gep offset preheaders and plans, and induction support. Keep ordinary
+controls, tainted snapshots, unrelated storage, tainted outside branches and
+fresh per-entry installation. The corresponding `divrem_addr_taken`,
+`mul_shift_addr_taken`, `pure_call_addr_taken`, `gep_offset_addr_taken` and
+`induction_addr_taken` native rows run at opt0/1/2 on Linux and Windows.
+
+The #9420 value tests also keep clean rewrites in mixed functions, and separately
+pin scalar operand/result gates, stale divisor and multiplier facts, original and
+resolved pure-call arguments, seeded arguments/results, cache result admission,
+and direct writes to address-taken storage as availability barriers. Private
+fact/rewrite tests install their own closure; do not rely on another test's set.
+
+The outside-loop Gep fixture keeps the loop region clean while its pointer store
+changes an address-taken base read by an exit Gep. Candidate base validation must
+refuse that hoist. Clean and unrelated-storage controls still split, and removing
+only the base-taint check must fail the mutable-base assertion.

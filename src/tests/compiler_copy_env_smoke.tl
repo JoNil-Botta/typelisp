@@ -1,5 +1,6 @@
 ;; The optimizer's dense copy environment retains immutable snapshots until
 ;; an explicit truncate declares every longer snapshot of that lineage dead.
+(import stdlib.iterator)
 (import compiler_optimize as opt)
 (import compiler_owned_view as owned_view)
 (import stdlib.test)
@@ -29,11 +30,9 @@
 
 (define (copy-test-digits [s : (& s opt.OptCopyEnv)]) : i64
   (let
-    [index : i64 0]
     [out : i64 0]
-    (while (< index s.len)
-      (set! out (+ (* out 10) (copy-test-at s index)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 s.len)]
+      (set! out (+ (* out 10) (copy-test-at s index))))
     out))
 
 (define (copy-test-lookup [s : (& s opt.OptCopyEnv)] [key : i64]) : i64
@@ -134,17 +133,13 @@
   copy-stack-growth-and-negative-global-keys
   (let
     [env (opt.opt-copy-env-empty)]
-    [index : i64 0]
-    (while (< index 17)
-      (set! env (copy-test-push env index))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index 17)
+    (for [index (iterator.range 0 17)]
+      (set! env (copy-test-push env index)))
+    (for [index (iterator.range 0 17)]
       (test.assert-i64-eq
         (copy-test-at (& env) index)
         index
-        "growth keeps every entry")
-      (set! index (+ index 1)))
+        "growth keeps every entry"))
     (set! env (opt.opt-copy-env-push env (opt.OptCopyEntry.Copy -1 (I64 42))))
     (set! env (opt.opt-copy-env-push env (opt.OptCopyEntry.Copy -65 (I64 99))))
     (set! env (opt.opt-copy-invalidate-var env -1))
@@ -176,14 +171,12 @@
   copy-stack-wide-entries-survive-growth-and-forks
   (let
     [s (opt.opt-copy-env-empty)]
-    [index : i64 0]
-    (while (< index 9)
+    (for [index (iterator.range 0 9)]
       (set!
         s
         (opt.opt-copy-env-push
           s
-          (opt.OptCopyEntry.PackWord index (+ index 1) (String "arena"))))
-      (set! index (+ index 1)))
+          (opt.OptCopyEntry.PackWord index (+ index 1) (String "arena")))))
     (let
       [fork
         (opt.opt-copy-env-push

@@ -12,11 +12,12 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
-`string_utf8_api.tl` runs the shared scalar decoder through both the native
+`string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second
 byte in each constrained range, every truncation/continuation position, scalar
 boundaries, original-input error offsets, first-error ordering, NUL, borrowed
-substrings, static/copied/arena input, and retained results.
+substrings, static/copied/arena input, and retained results. Encoding checks
+scalar boundaries, rejected non-scalars and independent byte construction.
 
 The package-lock inline transaction test exercises `io.OpenWriteCreateNew`,
 file flushing, atomic sibling replacement, advisory coordination locks,
@@ -267,6 +268,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   deterministic setup, vfork, child wiring, exec-status channel, stdin, wait,
   capture, signal, and close failures; each failure is followed by a successful
   command plus exact descriptor and child-reaping checks.
+- `process_argv.tl` pins Microsoft C quoting goldens, encoded-size boundaries,
+  and rejection before spawn. A native child checks consecutive empty values,
+  whitespace, quotes, backslash runs and non-ASCII bytes through captured and
+  inherited execution, plus the full 4096-argument public count boundary.
+  Captured argv is also compared as exact length-framed output.
 - `thread_api.tl` keeps the standalone native thread runtime coverage: two
   native worker threads, semaphore signaling, join return values, and the
   checked `String`/array/box join wrappers. A zero-count semaphore also holds a
@@ -313,6 +319,9 @@ Inline stdlib coverage:
   deterministic finite f64/f32 number conversion, serializer helpers, and
   end-to-end parse/stringify behavior for invalid input, escapes, nesting,
   arrays, objects, duplicate-key lookup, and number forms.
+  `tests/integration/json_unicode_escapes.tl` adds every BMP scalar, UTF-16 pair
+  boundaries, every high/low code unit, exact invalid-surrogate byte locations,
+  and stringify/parse round trips at opt0/1/2 with source and embedded stdlib.
 - `env_api.tl` owns standalone tests for missing, empty, and present environment
   variables; process-local set/replace/empty/unset round trips and invalid-name
   rejection; host-separator PATH splitting/joining; vector-backed PATH
@@ -529,3 +538,18 @@ Inline stdlib coverage:
 - `msvc_api.tl` owns standalone tests for pure MSVC discovery helpers with
   fake temp-directory toolset and SDK trees, including newest-usable candidate
   selection through the vector-backed scanners.
+
+### Bounded raw DEFLATE
+
+`deflate_api.tl` supplies both named compiler tests and a native driver. Its
+small RFC-derived corpus covers every input split with output chunks 1–8,
+zero-capacity calls, exact member consumption, terminal repetition and equal
+work across chunking. Other cases cover all length/distance codes and field
+boundaries, legal degenerate trees, oversubscribed/incomplete literal and
+distance trees, a missing end-of-block code, malformed/truncated streams, the
+maximum stored block and distance, overlapping/cross-block history, each
+resource limit, empty-block chains, corrupted public state, allocation-free
+stepping, and cancellation/chunk lifetimes across arenas. Fixture provenance
+is in [`tests/fixtures/deflate/README.md`](../../tests/fixtures/deflate/README.md).
+The integration manifest runs this driver and the embedded-module example at
+opt0/1/2 on Linux and Windows.

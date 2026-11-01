@@ -342,9 +342,10 @@ append_measurement() {
 }
 
 cd "$ROOT"
-SOURCE_IDENTITY=$(git rev-parse --verify HEAD 2>/dev/null || true)
+SOURCE_COMMIT=$(git rev-parse --verify HEAD 2>/dev/null || true)
+SOURCE_IDENTITY=$(git rev-parse --verify 'HEAD^{tree}' 2>/dev/null || true)
 COMPILER_IDENTITY=$(producer_identity "$COMPILER")
-for _identity in "$SOURCE_IDENTITY" "$COMPILER_IDENTITY"; do
+for _identity in "$SOURCE_COMMIT" "$SOURCE_IDENTITY" "$COMPILER_IDENTITY"; do
     printf '%s\n' "$_identity" | grep -Eq '^[0-9a-f]{40}$' ||
         fail "malformed source/compiler identity: $_identity"
 done
@@ -352,10 +353,12 @@ done
     fail "compiler identity $COMPILER_IDENTITY does not match source $SOURCE_IDENTITY"
 
 mkdir -p "$ROOT/target/build-stage0"
-printf '%s' "$SOURCE_IDENTITY" > "$ROOT/target/build-stage0/git-hash.txt"
+printf '%s' "$SOURCE_COMMIT" > "$ROOT/target/build-stage0/git-hash.txt"
+printf '%s' "$SOURCE_IDENTITY" > "$ROOT/target/build-stage0/tree-hash.txt"
 
 metadata_add "$METADATA" host "$NL_HOST_OS"
 metadata_add "$METADATA" source_identity "$SOURCE_IDENTITY"
+metadata_add "$METADATA" source_commit "$SOURCE_COMMIT"
 metadata_add "$METADATA" producer_identity "$COMPILER_IDENTITY"
 metadata_add "$METADATA" producer_path "$COMPILER"
 metadata_add "$METADATA" producer_bytes "$(file_bytes "$COMPILER")"

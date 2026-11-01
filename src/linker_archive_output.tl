@@ -1,5 +1,6 @@
 ;; Canonical container bytes and bounded structural dumps. Dialect writers
 ;; supply raw names, metadata and physical order; no index/name synthesis.
+(import stdlib.iterator)
 (import linker_archive_core as archive)
 (import stdlib.byte_buf as buf)
 (import stdlib.string)
@@ -28,7 +29,7 @@
       [digits : i64 1]
       (while (>= remaining rule.radix)
         (set! remaining (/ remaining rule.radix))
-        (set! digits (+ digits 1)))
+        (+= digits 1))
       (and (<= value rule.maximum) (<= digits width)))))
 
 ;; The preflight proves value/radix/width validity before this writer runs.
@@ -41,25 +42,23 @@
     [digits : (Array u8 12) (init : (Array u8 12))]
     [count : i64 0]
     [remaining : i64 value]
-    [index : i64 0]
     (when
       (>= remaining 0)
       (set! (array-ref digits count) (cast (+ 48 (% remaining radix)) : u8))
-      (set! count (+ count 1))
+      (+= count 1)
       (set! remaining (/ remaining radix))
       (while (> remaining 0)
         (set! (array-ref digits count) (cast (+ 48 (% remaining radix)) : u8))
-        (set! count (+ count 1))
+        (+= count 1)
         (set! remaining (/ remaining radix))))
-    (while (< index width)
+    (for [index (iterator.range 0 width)]
       (set!
         output
         (buf.push
           output
           (if (< index count)
             (array-ref digits (- (- count index) 1))
-            (cast 32 : u8))))
-      (set! index (+ index 1)))
+            (cast 32 : u8)))))
     output))
 
 (define (encode
@@ -72,7 +71,6 @@
     [patterns : i64 (array-length profile.special-names)]
     [work : i64 limits.max-work]
     [total : i64 8]
-    [index : i64 0]
     [specials : i64 0]
     (unless
       (archive.valid-limits? (& limits))
@@ -86,11 +84,10 @@
       [(ProfileFailed kind offset)
         (return (OutputFailed (archive.ArchiveError kind identity -1 offset)))])
     ;; Validate the entire plan and reserve all output work before allocating.
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [member : (& m ArchiveEncodeMember) (& (array-ref members index))]
         [size : i64 (string.string-length (& member.payload))]
-        [field : i64 0]
         [pad : i64 (% size 2)]
         (when
           (>= index limits.max-members)
@@ -112,7 +109,7 @@
           (archive.valid-name? (& member.raw-name) profile.ascii-names)
           (return
             (OutputFailed (archive.ArchiveError (BadName) identity index total))))
-        (while (< field 5)
+        (for [field (iterator.range 0 5)]
           (unless
             (number-fits?
               (if (= field 4)
@@ -126,8 +123,7 @@
                   (InvalidEncoder)
                   identity
                   index
-                  (+ total (array-ref archive.field-starts field))))))
-          (set! field (+ field 1)))
+                  (+ total (array-ref archive.field-starts field)))))))
         (when
           (archive.special-name-at? (& member.raw-name) 0 profile)
           (when
@@ -135,7 +131,7 @@
             (return
               (OutputFailed
                 (archive.ArchiveError (SpecialLimit) identity index total))))
-          (set! specials (+ specials 1)))
+          (+= specials 1))
         ;; Subtraction checks make each subsequent addition representable.
         (when
           (or
@@ -150,8 +146,7 @@
           (return
             (OutputFailed
               (archive.ArchiveError (InputLimit) identity index total))))
-        (set! total (+ total pad))
-        (set! index (+ index 1))))
+        (+= total pad)))
     ;; Zero-initialization, writes and the final String copy are all bounded.
     (when
       (> total (/ work 3))
@@ -159,18 +154,16 @@
         (OutputFailed (archive.ArchiveError (WorkLimit) identity -1 total))))
     (let
       [output : buf.ByteBuf (buf.with-capacity total)]
-      [member-index : i64 0]
       (set! output (buf.append-bytes output (buf.str-as-bytes "!<arch>\n")))
-      (while (< member-index count)
+      (for [member-index (iterator.range 0 count)]
         (let
           [member : (& m ArchiveEncodeMember)
             (& (array-ref members member-index))]
           [size : i64 (string.string-length (& member.payload))]
-          [field : i64 0]
           (set!
             output
             (buf.append-bytes output (buf.str-as-bytes (& member.raw-name))))
-          (while (< field 5)
+          (for [field (iterator.range 0 5)]
             (let
               [rule : (& p archive.ArchiveNumberRule)
                 (& (array-ref profile.numbers field))]
@@ -182,16 +175,14 @@
                     size
                     (array-ref member.metadata field))
                   rule.radix
-                  (array-ref archive.field-widths field)))
-              (set! field (+ field 1))))
+                  (array-ref archive.field-widths field)))))
           (set! output (buf.append-bytes output (buf.str-as-bytes "`\n")))
           (set!
             output
             (buf.append-bytes output (buf.str-as-bytes (& member.payload))))
           (when
             (!= (% size 2) 0)
-            (set! output (buf.push output (cast 10 : u8))))
-          (set! member-index (+ member-index 1))))
+            (set! output (buf.push output (cast 10 : u8))))))
       (Output (buf.to-string output)))))
 
 (define (append-hex [output : buf.ByteBuf] [value : u64] [digits : i64]) : buf.ByteBuf
@@ -210,7 +201,7 @@
                 (+ digit 48)
                 (+ digit 87))
               : u8)))
-        (set! index (- index 1))))
+        (-= index 1)))
     output))
 
 ;; Fixed-width hex is locale independent and makes the allocation bound exact.
@@ -236,14 +227,13 @@
     (let
       [total : i64 (+ 42 (* count 103))]
       [output : buf.ByteBuf (buf.with-capacity total)]
-      [index : i64 0]
-      (set! session.work-left (- session.work-left (* total 3)))
+      (-= session.work-left (* total 3))
       (set! output (buf.append-bytes output (buf.str-as-bytes "archive ")))
       (set! output (append-hex output identity.input 16))
       (set! output (buf.push output (cast 58 : u8)))
       (set! output (append-hex output identity.content 16))
       (set! output (buf.push output (cast 10 : u8)))
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (let
           [member : (& d archive.ArchiveMember)
             (& (array-ref directory.members index))]
@@ -253,22 +243,18 @@
               member.id.header-offset
               member.payload-offset
               member.payload-size)]
-          [field : i64 0]
-          [byte : i64 0]
-          (while (< field 4)
+          (for [field (iterator.range 0 4)]
             (set!
               output
               (append-hex output (cast (array-ref values field) : u64) 16))
-            (set! output (buf.push output (cast 32 : u8)))
-            (set! field (+ field 1)))
-          (while (< byte 16)
+            (set! output (buf.push output (cast 32 : u8))))
+          (for [byte (iterator.range 0 16)]
             (set!
               output
               (append-hex
                 output
                 (cast (array-ref member.raw-name byte) : u64)
-                2))
-            (set! byte (+ byte 1)))
+                2)))
           (set! output (buf.push output (cast 32 : u8)))
           (set!
             output
@@ -279,6 +265,5 @@
                   83
                   79)
                 : u8)))
-          (set! output (buf.push output (cast 10 : u8)))
-          (set! index (+ index 1))))
+          (set! output (buf.push output (cast 10 : u8)))))
       (Output (buf.to-string output)))))

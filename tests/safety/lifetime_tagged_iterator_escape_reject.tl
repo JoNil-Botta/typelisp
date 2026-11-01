@@ -5,7 +5,7 @@
   (len i64)
   (index i64))
 
-(define (main [items : (__tl_dyn-array i64)]) : (Iter items)
+(define (main [items : (& items (__tl_dyn-array i64))]) : (Iter items)
   (let
     [local : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (Iter (& local) 1 0)))

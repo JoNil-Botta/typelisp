@@ -2,14 +2,27 @@
 ;: Generate an equality module for concrete scalar and aggregate type `T`.
 (import stdlib.comptime)
 
-;; Read a place without transferring ownership. Generated equality is an
-;; observer, and its staged recursive projections revisit aggregate operands.
-;: Return a representation-level shared view of an equality operand place.
-(defmacro (eq-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
+;; Generated equality reads its operands through shared borrows, as Rust's
+;; derived `PartialEq` does: nothing is copied out or moved, so a compared
+;; value keeps its owner and its cleanup. An operand is a place of the
+;; compared type, a shared reference to one, or the value a match through a
+;; reference binds for a Copy payload.
+;: Return a shared reference to an equality operand.
+(defmacro (eq-ref [operand : comptime.Expr]) : comptime.Expr
+  (match (type-kind (comptime.expr-type operand))
+    ["ref" operand]
+    ["mut-ref" `(& (deref ,operand))]
+    [_ `(& ,operand)]))
 
-;: Emit short-circuiting equality for all fields of a struct.
+;: Return the value an equality operand of a Copy scalar type holds.
+(defmacro (eq-value [operand : comptime.Expr]) : comptime.Expr
+  (match (type-kind (comptime.expr-type operand))
+    ["ref" `(deref ,operand)]
+    ["mut-ref" `(deref ,operand)]
+    [_ operand]))
+
+;: Emit short-circuiting equality for all fields of a struct; LEFT and RIGHT
+;: are shared references to the compared structs.
 (defmacro (struct-eq-fields
   [T : type]
   [index-expr : comptime.Expr]
@@ -35,20 +48,15 @@
               (comptime.string-append
                 "eq: unsupported type "
                 (type-key field-type)))
-            `(let
-              [__eq_left_field (stdlib.eq.eq-shared-view ,left-field)]
-              [__eq_right_field (stdlib.eq.eq-shared-view ,right-field)]
-              (if (stdlib.eq.inline-eq
-                ,field-type
-                __eq_left_field
-                __eq_right_field)
-                (stdlib.eq.struct-eq-fields ,T ,next-index ,left ,right)
-                false)))))]
+            `(if (stdlib.eq.inline-eq ,field-type ,left-field ,right-field)
+              (stdlib.eq.struct-eq-fields ,T ,next-index ,left ,right)
+              false))))]
     [_
       (comptime.comptime-error
         "eq: struct field index must be an integer literal")]))
 
-;: Emit short-circuiting equality for all tuple elements.
+;: Emit short-circuiting equality for all tuple elements; LEFT and RIGHT are
+;: shared references to the compared tuples.
 (defmacro (tuple-eq-elements
   [T : type]
   [index-expr : comptime.Expr]
@@ -61,63 +69,66 @@
         (let
           [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
           [element-type : comptime.Expr (tuple-element-type T index)]
-          [left-item : comptime.Expr (comptime.expr-tuple-ref left index)]
-          [right-item : comptime.Expr (comptime.expr-tuple-ref right index)]
-          `(let
-            [__eq_left_item (stdlib.eq.eq-shared-view ,left-item)]
-            [__eq_right_item (stdlib.eq.eq-shared-view ,right-item)]
-            (if (stdlib.eq.inline-eq
-              ,element-type
-              __eq_left_item
-              __eq_right_item)
-              (stdlib.eq.tuple-eq-elements ,T ,next-index ,left ,right)
-              false))))]
+          [left-item : comptime.Expr
+            (comptime.expr-tuple-ref `(deref ,left) index)]
+          [right-item : comptime.Expr
+            (comptime.expr-tuple-ref `(deref ,right) index)]
+          `(if (stdlib.eq.inline-eq ,element-type ,left-item ,right-item)
+            (stdlib.eq.tuple-eq-elements ,T ,next-index ,left ,right)
+            false)))]
     [_
       (comptime.comptime-error
         "eq: tuple element index must be an integer literal")]))
 
-;: Emit equality for a nested fixed array while evaluating each operand once.
+;: Emit equality for a nested fixed array; each operand is borrowed once.
 (defmacro (inline-fixed-array-eq
   [element-type : type]
   [length-expr : comptime.Expr]
   [left : comptime.Expr]
   [right : comptime.Expr]) : comptime.Expr
   `(let
-    [__eq_left ,left]
-    [__eq_right ,right]
+    [__eq_left (stdlib.eq.eq-ref ,left)]
+    [__eq_right (stdlib.eq.eq-ref ,right)]
     [__eq_i : i64 0]
     [__eq_same : bool true]
     (while (and (< __eq_i ,length-expr) __eq_same)
-      (let
-        [__eq_left_item
-          (stdlib.eq.eq-shared-view (__tl_array-ref __eq_left __eq_i))]
-        [__eq_right_item
-          (stdlib.eq.eq-shared-view (__tl_array-ref __eq_right __eq_i))]
-        (if (stdlib.eq.inline-eq ,element-type __eq_left_item __eq_right_item)
-          unit
-          (set! __eq_same false))
-        (set! __eq_i (+ __eq_i 1))))
+      (if (stdlib.eq.inline-eq
+        ,element-type
+        (__tl_array-ref (deref __eq_left) __eq_i)
+        (__tl_array-ref (deref __eq_right) __eq_i))
+        unit
+        (set! __eq_same false))
+      (set! __eq_i (+ __eq_i 1)))
     __eq_same))
 
-;: Emit finite structural equality for a nested value expression.
+;: Emit finite structural equality for two operands of type `T`.
 (defmacro (inline-eq [T : type] [left : comptime.Expr] [right : comptime.Expr]) : comptime.Expr
   (match (type-kind T)
-    ["string" `(__tl_string_eq ,left ,right)]
+    ["string"
+      `(__tl_string_eq (stdlib.eq.eq-ref ,left) (stdlib.eq.eq-ref ,right))]
     ["unit" `true]
-    ["bool" `(= ,left ,right)]
-    ["char" `(= ,left ,right)]
-    ["i64" `(= ,left ,right)]
-    ["i32" `(= ,left ,right)]
-    ["i16" `(= ,left ,right)]
-    ["i8" `(= ,left ,right)]
-    ["u64" `(= ,left ,right)]
-    ["u32" `(= ,left ,right)]
-    ["u16" `(= ,left ,right)]
-    ["u8" `(= ,left ,right)]
-    ["f64" `(= ,left ,right)]
-    ["f32" `(= ,left ,right)]
-    ["struct" `(stdlib.eq.struct-eq-fields ,T 0 ,left ,right)]
-    ["tuple" `(stdlib.eq.tuple-eq-elements ,T 0 ,left ,right)]
+    ["bool" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["char" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["i64" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["i32" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["i16" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["i8" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["u64" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["u32" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["u16" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["u8" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["f64" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["f32" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
+    ["struct"
+      `(let
+        [__eq_left (stdlib.eq.eq-ref ,left)]
+        [__eq_right (stdlib.eq.eq-ref ,right)]
+        (stdlib.eq.struct-eq-fields ,T 0 __eq_left __eq_right))]
+    ["tuple"
+      `(let
+        [__eq_left (stdlib.eq.eq-ref ,left)]
+        [__eq_right (stdlib.eq.eq-ref ,right)]
+        (stdlib.eq.tuple-eq-elements ,T 0 __eq_left __eq_right))]
     ["array"
       (if (array-dynamic? T)
         (comptime.comptime-error
@@ -130,7 +141,11 @@
             ,length-expr
             ,left
             ,right)))]
-    ["enum" `(stdlib.eq.enum-eq-dispatch ,T ,left ,right 0)]
+    ["enum"
+      `(let
+        [__eq_left (stdlib.eq.eq-ref ,left)]
+        [__eq_right (stdlib.eq.eq-ref ,right)]
+        (stdlib.eq.enum-eq-dispatch ,T __eq_left __eq_right 0))]
     [_
       (comptime.comptime-error
         (comptime.string-append "eq: unsupported type " (type-key T)))]))
@@ -169,18 +184,9 @@
                     (comptime.int->string payload-index)))]
               [payload-type : comptime.Expr
                 (enum-variant-payload-type T variant-index payload-index)]
-              `(let
-                [__eq_left_payload (stdlib.eq.eq-shared-view ,left-value)]
-                [__eq_right_payload (stdlib.eq.eq-shared-view ,right-value)]
-                (if (stdlib.eq.inline-eq
-                  ,payload-type
-                  __eq_left_payload
-                  __eq_right_payload)
-                  (stdlib.eq.enum-eq-payloads
-                    ,T
-                    ,variant-index-expr
-                    ,next-index)
-                  false))))]
+              `(if (stdlib.eq.inline-eq ,payload-type ,left-value ,right-value)
+                (stdlib.eq.enum-eq-payloads ,T ,variant-index-expr ,next-index)
+                false)))]
         [_
           (comptime.comptime-error
             "eq: enum payload index must be an integer literal")])]
@@ -188,7 +194,8 @@
       (comptime.comptime-error
         "eq: enum variant index must be an integer literal")]))
 
-;: Emit a staged nested match that compares enum tags and payloads.
+;: Emit a staged nested match through LEFT and RIGHT, shared references to the
+;: compared enums, that compares their tags and payloads.
 (defmacro (enum-eq-dispatch
   [T : type]
   [left : comptime.Expr]
@@ -225,7 +232,7 @@
             `(stdlib.eq.enum-eq-payloads ,T ,variant-index-expr 0)]
           [right-match : comptime.Expr
             (comptime.expr-match
-              `(stdlib.eq.eq-shared-view ,right)
+              right
               (comptime.match-arm-list-cons
                 (comptime.match-arm right-pattern payload-body)
                 (comptime.match-arm-list-cons
@@ -235,7 +242,7 @@
           [fallback : comptime.Expr
             `(stdlib.eq.enum-eq-dispatch ,T ,left ,right ,next-index)]
           (comptime.expr-match
-            `(stdlib.eq.eq-shared-view ,left)
+            left
             (comptime.match-arm-list-cons
               (comptime.match-arm left-pattern right-match)
               (comptime.match-arm-list-cons
@@ -271,47 +278,36 @@
           (module ,module-name)
           (import stdlib.eq)
           (define (eq [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.struct-eq-fields ,T 0 left right))
+            (stdlib.eq.inline-eq ,T left right))
           (define (eq? [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.struct-eq-fields ,T 0 left right)))]
+            (stdlib.eq.inline-eq ,T left right)))]
       ["tuple"
         `(begin
           (module ,module-name)
           (import stdlib.eq)
           (define (eq [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.tuple-eq-elements ,T 0 left right))
+            (stdlib.eq.inline-eq ,T left right))
           (define (eq? [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.tuple-eq-elements ,T 0 left right)))]
+            (stdlib.eq.inline-eq ,T left right)))]
       ["array"
         (if (array-dynamic? T)
           (comptime.comptime-error
             (comptime.string-append "eq: unsupported type " (type-key T)))
-          (let
-            [element-type : comptime.Expr (array-element-type T)]
-            [length-expr : comptime.Expr (comptime.expr-int (array-length T))]
-            `(begin
-              (module ,module-name)
-              (import stdlib.eq)
-              (define (eq [left : ,T] [right : ,T]) : bool
-                (stdlib.eq.inline-fixed-array-eq
-                  ,element-type
-                  ,length-expr
-                  left
-                  right))
-              (define (eq? [left : ,T] [right : ,T]) : bool
-                (stdlib.eq.inline-fixed-array-eq
-                  ,element-type
-                  ,length-expr
-                  left
-                  right)))))]
+          `(begin
+            (module ,module-name)
+            (import stdlib.eq)
+            (define (eq [left : ,T] [right : ,T]) : bool
+              (stdlib.eq.inline-eq ,T left right))
+            (define (eq? [left : ,T] [right : ,T]) : bool
+              (stdlib.eq.inline-eq ,T left right))))]
       ["enum"
         `(begin
           (module ,module-name)
           (import stdlib.eq)
           (define (eq [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.enum-eq-dispatch ,T left right 0))
+            (stdlib.eq.inline-eq ,T left right))
           (define (eq? [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.enum-eq-dispatch ,T left right 0)))]
+            (stdlib.eq.inline-eq ,T left right)))]
       ["bool"
         `(begin
           (module ,module-name)

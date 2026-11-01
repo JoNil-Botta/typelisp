@@ -8,6 +8,8 @@
 ;; integration cases. The dependency-free arena leaf provides checker-visible
 ;; allocation extents without pulling collection or formatting modules into them.
 ;;
+(import compiler_abort as abort)
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 
@@ -129,7 +131,7 @@
                 (if (=
                   (ptr-read (ptr-offset lw i))
                   (ptr-read (ptr-offset rw i)))
-                  (set! i (+ i 1))
+                  (+= i 1)
                   (set! same false)))
               (if same
                 (let
@@ -138,7 +140,7 @@
                     (if (=
                       (cast (ptr-read (ptr-offset lp j)) : i64)
                       (cast (ptr-read (ptr-offset rp j)) : i64))
-                      (set! j (+ j 1))
+                      (+= j 1)
                       (set! same false)))
                   same)
                 false))))))))
@@ -454,7 +456,8 @@
 ;; sentinels are not syntax identities; reject them at the construction edge.
 (define (intern-syntax-id-from-raw [id : i64]) : InternSyntaxId
   (if (< id 0)
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-syntax-id-from-raw: invalid syntax name ID\n")
     (InternSyntaxId (cast id : u64))))
 
 (define (intern-syntax-id-renderable [id : InternSyntaxId]) : InternId
@@ -467,7 +470,8 @@
 (define (intern-id-from-renderable [id : i64]) : InternId
   (if (intern-renderable-id? id)
     (InternId (cast id : u32))
-    (tl_oob_abort)))
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-id-from-renderable: invalid renderable name ID\n")))
 
 ;; Optional table lanes reserve zero for missing and store raw id+1. Keeping
 ;; this encoding nominally separate prevents a missing slot from reaching a
@@ -538,7 +542,7 @@
           (if (=
             (intern-private-string-ref text i)
             (intern-private-string-ref prefix i))
-            (set! i (+ i 1))
+            (+= i 1)
             (set! same false)))
         same))))
 
@@ -593,7 +597,7 @@
 (define (intern-table-id-allocate!) : i64
   (let
     [id : i64 intern-next-table-id]
-    (set! intern-next-table-id (+ intern-next-table-id 1))
+    (+= intern-next-table-id 1)
     id))
 
 (define (intern-active-table-id) : i64
@@ -602,7 +606,7 @@
 (define (intern-generation-allocate!) : i64
   (let
     [generation : i64 intern-next-generation]
-    (set! intern-next-generation (+ intern-next-generation 1))
+    (+= intern-next-generation 1)
     generation))
 
 (defstruct InternStructuralTable
@@ -703,7 +707,8 @@
   (let
     [owner : i64 intern-next-structural-owner]
     (if (>= owner (intern-structural-key-owner-stride))
-      (tl_oob_abort)
+      (abort.compiler-abort
+        "tl: compiler_intern.intern-structural-owner-allocate!: structural owner ID exhausted\n")
       unit)
     (set! intern-next-structural-owner (+ owner 1))
     owner))
@@ -727,7 +732,10 @@
     InternStructuralTable)
   (let
     [table : InternStructuralTable
-      (in-arena (arena.Arena arena-handle) (intern-structural-table-new))]
+      (in-arena
+        (unsafe
+          (arena.Arena arena-handle))
+        (intern-structural-table-new))]
     (__tl_make-array table)))
 
 (define intern-persistent-arena : i64
@@ -942,17 +950,13 @@
   0)
 
 (define (intern-structural-generation-make!) : i64
-  (set!
-    intern-structural-generations-made
-    (+ intern-structural-generations-made 1))
+  (+= intern-structural-generations-made 1)
   (tl_arena_make))
 
 (define (intern-structural-generation-destroy! [generation : i64]) : unit
   (unless
     (= generation 0)
-    (set!
-      intern-structural-generations-destroyed
-      (+ intern-structural-generations-destroyed 1))
+    (+= intern-structural-generations-destroyed 1)
     (unsafe
       (tl_arena_destroy generation))))
 
@@ -973,7 +977,8 @@
     [retired : i64 table.records-arena]
     [generation : i64 (intern-structural-generation-make!)]
     (in-arena
-      (arena.Arena generation)
+      (unsafe
+        (arena.Arena generation))
       (let
         [next-kinds : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
         [next-lefts : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
@@ -1007,16 +1012,16 @@
           (= table.owner intern-active-structural-owner)
           (set!
             intern-active-structural-kinds-address
-            (intern-i64-array-address next-kinds))
+            (intern-i64-array-address table.kinds))
           (set!
             intern-active-structural-lefts-address
-            (intern-i64-array-address next-lefts))
+            (intern-i64-array-address table.lefts))
           (set!
             intern-active-structural-middles-address
-            (intern-i64-array-address next-middles))
+            (intern-i64-array-address table.middles))
           (set!
             intern-active-structural-rights-address
-            (intern-i64-array-address next-rights)))))
+            (intern-i64-array-address table.rights)))))
     (set! table.records-arena generation)
     (intern-structural-generation-destroy! retired)))
 
@@ -1028,7 +1033,8 @@
     [retired : i64 table.map-arena]
     [generation : i64 (intern-structural-generation-make!)]
     (in-arena
-      (arena.Arena generation)
+      (unsafe
+        (arena.Arena generation))
       (let
         [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
         (set! table.map-slots next-slots)
@@ -1036,7 +1042,7 @@
           [index : i64 0]
           (while (< index table.len)
             (intern-structural-table-map-put-index! table index)
-            (set! index (+ index 1))))))
+            (+= index 1)))))
     (set! table.map-arena generation)
     (intern-structural-generation-destroy! retired)))
 
@@ -1076,7 +1082,8 @@
     [found : i64 -1]
     (if (intern-structural-kind-valid? kind)
       unit
-      (tl_oob_abort))
+      (abort.compiler-abort
+        "tl: compiler_intern.intern-structural-table-probe: invalid structural table kind\n"))
     (while searching?
       (let
         [encoded : i64 (intern-active-i64-ref slots-address slot)]
@@ -1121,7 +1128,8 @@
             (&mut (array-ref cell 0))]
           [index : i64 next-table.len]
           (if (>= index (intern-structural-key-index-mask))
-            (tl_oob_abort)
+            (abort.compiler-abort
+              "tl: compiler_intern.intern-structural-table-intern: structural table index exhausted\n")
             unit)
           (set! (array-ref next-table.kinds index) (cast kind : u8))
           (set! (array-ref next-table.lefts index) left)
@@ -1154,9 +1162,10 @@
     [steps : i64 0]
     (while (not (= (intern-active-i64-ref slots-address slot) (+ index 1)))
       (if (> steps mask)
-        (tl_oob_abort)
+        (abort.compiler-abort
+          "tl: compiler_intern.intern-structural-table-map-clear-index!: record missing from the structural map\n")
         unit)
-      (set! steps (+ steps 1))
+      (+= steps 1)
       (set! slot (bit-and (+ slot 1) mask)))
     (intern-active-i64-set! slots-address slot 0)))
 
@@ -1186,11 +1195,11 @@
       by-record?
       (while (< index (array-length table.map-slots))
         (set! (array-ref table.map-slots index) 0)
-        (set! index (+ index 1)))
+        (+= index 1))
       (set! index 0)
       (while (< index (array-length table.structural-cache-raws))
         (set! (array-ref table.structural-cache-raws index) 0)
-        (set! index (+ index 1)))
+        (+= index 1))
       (set! index 0))
     (while (< index table.len)
       (if by-record?
@@ -1221,7 +1230,7 @@
       (set!
         (array-ref table.generated-symbol-handles index)
         (intern-id-slot-empty))
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! table.owner (intern-structural-owner-allocate!))
     (set! table.len 0)
     unit))
@@ -1231,7 +1240,10 @@
   [arena-handle : i64]) : unit
   (let
     [next : InternStructuralTable
-      (in-arena (arena.Arena arena-handle) (intern-structural-table-new))]
+      (in-arena
+        (unsafe
+          (arena.Arena arena-handle))
+        (intern-structural-table-new))]
     (set! (array-ref cell 0) next)))
 
 (define (intern-structural-session-reset!
@@ -1256,6 +1268,15 @@
   (__tl_make-array InternSlotId intern-generated-map-capacity))
 (define intern-generated-map-hash-slots : (__tl_dyn-array i64)
   (__tl_make-array i64 intern-generated-map-capacity))
+
+;; Reverse membership belongs to the generated map, including through captured
+;; and installed state aliases. Source ids and opaque generated names have no
+;; bit; only insertion into the canonical map sets one.
+(define (intern-generated-canonical-word-count) : i64
+  (shr (+ (intern-capacity) 63) 6))
+
+(define intern-generated-canonical-words : (__tl_dyn-array i64)
+  (__tl_make-array i64 (intern-generated-canonical-word-count)))
 
 ;; Reset empties the two maps above in proportion to what was inserted since the
 ;; previous reset, not at full capacity (#8520). Each map's inserts log the slot
@@ -1288,18 +1309,33 @@
 ;; Every store of a nonempty id into either map is preceded by this. Like the
 ;; clear below it is a macro, so it writes through the caller's own array handle,
 ;; a state field or the installed global.
+;; Write one cell of an intern map or its dirty log. The arrays are reached
+;; through the intern state, often a shared reference: the write goes through
+;; the array's storage, bounds-checked like `array-ref`, without borrowing or
+;; assigning the state.
+(defmacro (intern-map-cell-write! [cells : Expr] [index : Expr] [value : Expr]) : unit
+  `(let
+    [cell-index : i64 ,index]
+    (unsafe
+      (when
+        (or (< cell-index 0) (>= cell-index (array-length ,cells)))
+        (abort.compiler-abort "intern map cell index out of bounds\n"))
+      (ptr-write! (ptr-offset (__tl_array-data ,cells) cell-index) ,value))))
+
 (defmacro (intern-map-dirty-note! [log : Expr] [base : Expr] [slot : Expr]) : unit
   `(let
     [dirty-base : i64 ,base]
     [dirty-count : i64 (cast (array-ref ,log dirty-base) : i64)]
     (if (< dirty-count (intern-map-dirty-limit))
       (begin
-        (set!
-          (array-ref ,log (+ dirty-base (+ dirty-count 1)))
+        (intern-map-cell-write!
+          ,log
+          (+ dirty-base (+ dirty-count 1))
           (cast ,slot : i32))
-        (set! (array-ref ,log dirty-base) (cast (+ dirty-count 1) : i32)))
-      (set!
-        (array-ref ,log dirty-base)
+        (intern-map-cell-write! ,log dirty-base (cast (+ dirty-count 1) : i32)))
+      (intern-map-cell-write!
+        ,log
+        dirty-base
         (cast (+ (intern-map-dirty-limit) 1) : i32)))))
 
 ;; Empty map `slots` and its log segment at `base`. Every nonempty slot was
@@ -1313,16 +1349,61 @@
     [dirty-index : i64 0]
     (if (> dirty-count (intern-map-dirty-limit))
       (while (< dirty-index dirty-capacity)
-        (set! (array-ref ,slots dirty-index) (intern-id-slot-empty))
+        (intern-map-cell-write! ,slots dirty-index (intern-id-slot-empty))
         (set! dirty-index (+ dirty-index 1)))
       (while (< dirty-index dirty-count)
-        (set!
-          (array-ref
-            ,slots
-            (cast (array-ref ,log (+ dirty-base (+ dirty-index 1))) : i64))
+        (intern-map-cell-write!
+          ,slots
+          (cast (array-ref ,log (+ dirty-base (+ dirty-index 1))) : i64)
           (intern-id-slot-empty))
         (set! dirty-index (+ dirty-index 1))))
-    (set! (array-ref ,log dirty-base) (cast 0 : i32))))
+    (intern-map-cell-write! ,log dirty-base (cast 0 : i32))))
+
+(defmacro (intern-generated-canonical-mark! [words : Expr] [id : Expr]) : unit
+  `(let
+    [canonical-id : i64 ,id]
+    [canonical-word : i64 (shr canonical-id 6)]
+    (intern-map-cell-write!
+      ,words
+      canonical-word
+      (bit-or
+        (array-ref ,words canonical-word)
+        (shl 1 (bit-and canonical-id 63))))))
+
+;; Clear membership before the map's identities disappear. Dirty slots, rather
+;; than copied id cursors, cover writes made through every alias of this map.
+(defmacro (intern-generated-map-dirty-clear!
+  [slots : Expr]
+  [log : Expr]
+  [words : Expr]) : unit
+  `(let
+    [canonical-base : i64 (intern-map-dirty-generated-base)]
+    [canonical-count : i64 (cast (array-ref ,log canonical-base) : i64)]
+    [canonical-index : i64 0]
+    (if (> canonical-count (intern-map-dirty-limit))
+      (while (< canonical-index (array-length ,words))
+        (intern-map-cell-write! ,words canonical-index 0)
+        (+= canonical-index 1))
+      (while (< canonical-index canonical-count)
+        (let
+          [canonical-slot : i64
+            (cast
+              (array-ref ,log (+ canonical-base (+ canonical-index 1)))
+              : i64)]
+          [canonical-stored : InternSlotId (array-ref ,slots canonical-slot)]
+          (unless
+            (intern-id-slot-empty? canonical-stored)
+            (let
+              [canonical-id : i64 (intern-id-slot-decode canonical-stored)]
+              [canonical-word : i64 (shr canonical-id 6)]
+              (intern-map-cell-write!
+                ,words
+                canonical-word
+                (bit-and
+                  (array-ref ,words canonical-word)
+                  (bit-xor -1 (shl 1 (bit-and canonical-id 63))))))))
+        (+= canonical-index 1)))
+    (intern-map-dirty-clear! ,slots ,log canonical-base)))
 
 (define intern-map-ready : bool
   false)
@@ -1355,6 +1436,7 @@
     (map-hash-slots (__tl_dyn-array i64))
     (generated-map-id-slots (__tl_dyn-array InternSlotId))
     (generated-map-hash-slots (__tl_dyn-array i64))
+    (generated-canonical-words (__tl_dyn-array i64))
     (map-dirty-log (__tl_dyn-array i32))
     (map-ready (__tl_dyn-array bool))
     (reset-generation (__tl_dyn-array i64))
@@ -1385,6 +1467,7 @@
     (map-hash-slots (__tl_dyn-array i64))
     (generated-map-id-slots (__tl_dyn-array InternSlotId))
     (generated-map-hash-slots (__tl_dyn-array i64))
+    (generated-canonical-words (__tl_dyn-array i64))
     (map-dirty-log (__tl_dyn-array i32))
     (map-ready (__tl_dyn-array bool))
     (reset-generation (__tl_dyn-array i64))
@@ -1409,6 +1492,7 @@
   [map-hash-slots : Expr]
   [generated-map-id-slots : Expr]
   [generated-map-hash-slots : Expr]
+  [generated-canonical-words : Expr]
   [map-dirty-log : Expr]
   [map-ready : Expr]
   [reset-generation : Expr]
@@ -1435,6 +1519,7 @@
       ,map-hash-slots
       ,generated-map-id-slots
       ,generated-map-hash-slots
+      ,generated-canonical-words
       ,map-dirty-log
       ,map-ready
       ,reset-generation
@@ -1461,6 +1546,7 @@
         ,map-hash-slots
         ,generated-map-id-slots
         ,generated-map-hash-slots
+        ,generated-canonical-words
         ,map-dirty-log
         ,map-ready
         ,reset-generation
@@ -1616,6 +1702,7 @@
       (__tl_make-array i64 (intern-capacity))
       (__tl_make-array InternSlotId intern-generated-map-capacity)
       (__tl_make-array i64 intern-generated-map-capacity)
+      (__tl_make-array i64 (intern-generated-canonical-word-count))
       (__tl_make-array i32 (intern-map-dirty-log-length))
       map-ready
       reset-generation
@@ -1677,6 +1764,7 @@
       (intern-global-shared-view intern-map-hash-slots)
       (intern-global-shared-view intern-generated-map-id-slots)
       (intern-global-shared-view intern-generated-map-hash-slots)
+      (intern-global-shared-view intern-generated-canonical-words)
       (intern-global-shared-view intern-map-dirty-log)
       map-ready
       reset-generation
@@ -1796,10 +1884,10 @@
     state.map-id-slots
     state.map-dirty-log
     (intern-map-dirty-source-base))
-  (intern-map-dirty-clear!
+  (intern-generated-map-dirty-clear!
     state.generated-map-id-slots
     state.map-dirty-log
-    (intern-map-dirty-generated-base)))
+    state.generated-canonical-words))
 
 (define (intern-compat-state-map-insert-existing-from!
   [state : (&mut state InternCompatState)]
@@ -1810,8 +1898,7 @@
   [capacity : i64]) : unit
   (let
     [slot : i64 cursor]
-    [probes : i64 steps]
-    (while (< probes capacity)
+    (for [probes (iterator.range steps capacity)]
       (if (intern-id-slot-empty? (array-ref state.map-id-slots slot))
         (begin
           (intern-map-dirty-note!
@@ -1821,9 +1908,7 @@
           (set! (array-ref state.map-id-slots slot) (intern-id-slot-encode id))
           (set! (array-ref state.map-hash-slots slot) hash)
           (return unit))
-        (begin
-          (set! slot (intern-bucket (+ slot 1) capacity))
-          (set! probes (+ probes 1)))))))
+        (set! slot (intern-bucket (+ slot 1) capacity))))))
 
 (define (intern-compat-state-map-insert-existing!
   [state : (&mut state InternCompatState)]
@@ -1892,7 +1977,8 @@
   [start : i64]
   [len : i64]) : String
   (in-arena
-    (arena.Arena (array-ref state.persistent-arena 0))
+    (unsafe
+      (arena.Arena (array-ref state.persistent-arena 0)))
     (intern-substring text start len)))
 
 (define (intern-compat-state-persistent-substring
@@ -1916,12 +2002,11 @@
   [id : i64]
   [name : (& name str)]) : unit
   (let
-    [i : i64 0]
     [n : i64 (intern-private-string-length name)]
     [slash : i64 -1]
     [dot : i64 -1]
     [last-dot : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (intern-private-string-ref name i)]
         (if (= c '/')
@@ -1932,23 +2017,31 @@
           (if (< dot 0)
             (set! dot i)
             unit)
-          (set! last-dot i))
-        (set! i (+ i 1))))
-    (set! (array-ref state.pool-last-slash-slots id) (cast slash : i32))
-    (set! (array-ref state.pool-first-dot-slots id) (cast dot : i32))
-    (set!
-      (array-ref state.pool-macro-prefix-class-slots id)
+          (set! last-dot i))))
+    (owned_view.compiler-owned-cell-set!
+      state.pool-last-slash-slots
+      id
+      (cast slash : i32))
+    (owned_view.compiler-owned-cell-set!
+      state.pool-first-dot-slots
+      id
+      (cast dot : i32))
+    (owned_view.compiler-owned-cell-set!
+      state.pool-macro-prefix-class-slots
+      id
       (intern-private-macro-prefix-class name))
-    (set!
-      (array-ref state.pool-leading-dot-id-slots id)
+    (owned_view.compiler-owned-cell-set!
+      state.pool-leading-dot-id-slots
+      id
       (intern-id-slot-encode
         (if (< dot 0)
           -1
           (intern-compat-state-intern-ready-ref
             state
             (intern-substring name 0 dot)))))
-    (set!
-      (array-ref state.pool-dotted-prefix-id-slots id)
+    (owned_view.compiler-owned-cell-set!
+      state.pool-dotted-prefix-id-slots
+      id
       (intern-id-slot-encode
         (if (< last-dot 0)
           -1
@@ -1957,12 +2050,17 @@
             (intern-substring name 0 last-dot)))))
     (if (< slash 0)
       (begin
-        (set! (array-ref state.pool-qualified-slots id) false)
-        (set!
-          (array-ref state.pool-module-id-slots id)
+        (owned_view.compiler-owned-cell-set!
+          state.pool-qualified-slots
+          id
+          false)
+        (owned_view.compiler-owned-cell-set!
+          state.pool-module-id-slots
+          id
           (intern-id-slot-encode -1))
-        (set!
-          (array-ref state.pool-base-id-slots id)
+        (owned_view.compiler-owned-cell-set!
+          state.pool-base-id-slots
+          id
           (intern-id-slot-encode
             (if (< dot 0)
               id
@@ -1971,15 +2069,17 @@
                 (intern-substring name (+ dot 1) (- n (+ dot 1))))))))
       (let
         [base-start : i64 (+ slash 1)]
-        (set! (array-ref state.pool-qualified-slots id) true)
-        (set!
-          (array-ref state.pool-module-id-slots id)
+        (owned_view.compiler-owned-cell-set! state.pool-qualified-slots id true)
+        (owned_view.compiler-owned-cell-set!
+          state.pool-module-id-slots
+          id
           (intern-id-slot-encode
             (intern-compat-state-intern-ready-ref
               state
               (intern-substring name 0 slash))))
-        (set!
-          (array-ref state.pool-base-id-slots id)
+        (owned_view.compiler-owned-cell-set!
+          state.pool-base-id-slots
+          id
           (intern-id-slot-encode
             (intern-compat-state-intern-ready-ref
               state
@@ -2019,16 +2119,26 @@
                     0
                     (intern-private-string-length name))]
                 (begin
-                  (set! (array-ref state.pool-slots id) persistent-name)
+                  (owned_view.compiler-owned-cell-set!
+                    state.pool-slots
+                    id
+                    (owned_view.compiler-owned-shared-view persistent-name))
                   (intern-map-dirty-note!
                     state.map-dirty-log
                     (intern-map-dirty-source-base)
                     cursor)
-                  (set!
-                    (array-ref state.map-id-slots cursor)
+                  (owned_view.compiler-owned-cell-set!
+                    state.map-id-slots
+                    cursor
                     (intern-id-slot-encode id))
-                  (set! (array-ref state.map-hash-slots cursor) hash)
-                  (set! (array-ref state.pool-count 0) (+ id 1))
+                  (owned_view.compiler-owned-cell-set!
+                    state.map-hash-slots
+                    cursor
+                    hash)
+                  (owned_view.compiler-owned-cell-set!
+                    state.pool-count
+                    0
+                    (+ id 1))
                   (cfg
                     (any compile-profile test)
                     (intern-profile-note-source-record-live!
@@ -2053,7 +2163,7 @@
                 (set! done true))
               (begin
                 (set! cursor (intern-bucket (+ cursor 1) capacity))
-                (set! steps (+ steps 1))))))))
+                (+= steps 1)))))))
     (begin
       (cfg
         (any compile-profile test)
@@ -2124,16 +2234,26 @@
                         state.profile-metrics-address
                         intern-profile-slice-miss-metric
                         1))
-                    (set! (array-ref state.pool-slots id) persistent-name)
+                    (owned_view.compiler-owned-cell-set!
+                      state.pool-slots
+                      id
+                      (owned_view.compiler-owned-shared-view persistent-name))
                     (intern-map-dirty-note!
                       state.map-dirty-log
                       (intern-map-dirty-source-base)
                       cursor)
-                    (set!
-                      (array-ref state.map-id-slots cursor)
+                    (owned_view.compiler-owned-cell-set!
+                      state.map-id-slots
+                      cursor
                       (intern-id-slot-encode id))
-                    (set! (array-ref state.map-hash-slots cursor) hash)
-                    (set! (array-ref state.pool-count 0) (+ id 1))
+                    (owned_view.compiler-owned-cell-set!
+                      state.map-hash-slots
+                      cursor
+                      hash)
+                    (owned_view.compiler-owned-cell-set!
+                      state.pool-count
+                      0
+                      (+ id 1))
                     (cfg
                       (any compile-profile test)
                       (intern-profile-note-source-record-live!
@@ -2165,7 +2285,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -2239,7 +2359,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -2383,6 +2503,7 @@
       (set! intern-map-hash-slots state.map-hash-slots)
       (set! intern-generated-map-id-slots state.generated-map-id-slots)
       (set! intern-generated-map-hash-slots state.generated-map-hash-slots)
+      (set! intern-generated-canonical-words state.generated-canonical-words)
       (set! intern-map-dirty-log state.map-dirty-log)
       (set! intern-map-ready (array-ref state.map-ready 0))
       (set! intern-reset-generation (array-ref state.reset-generation 0))
@@ -2439,7 +2560,8 @@
 
 (define (intern-persistent-arena-floor-refresh!) : unit
   (in-arena
-    (arena.Arena intern-persistent-arena)
+    (unsafe
+      (arena.Arena intern-persistent-arena))
     (set! intern-persistent-arena-floor-mark (tl_region_mark))))
 
 (define (intern-persistent-arena-floor-ensure!) : unit
@@ -2583,8 +2705,9 @@
       unit)))
 
 ;; These rows report reserved payload bytes for the nine fixed record columns
-;; and the two fixed map columns. Dynamic-array headers are owner metadata, not
-;; capacity-proportional storage, so they are deliberately excluded.
+;; and the two fixed map columns, plus the canonical map's reverse bitmap.
+;; Dynamic-array headers are owner metadata, not capacity-proportional storage,
+;; so they are deliberately excluded.
 (cfg
   (any compile-profile test)
   (define (intern-profile-record-reserved-bytes) : i64
@@ -2639,21 +2762,26 @@
     (intern-profile-set!
       metrics-address
       intern-profile-canonical-map-reserved-bytes-metric
-      (intern-profile-map-reserved-bytes intern-generated-map-capacity))))
+      (+
+        (intern-profile-map-reserved-bytes intern-generated-map-capacity)
+        (*
+          (intern-generated-canonical-word-count)
+          (comptime (size-of (type i64))))))))
 
 (cfg
   (any compile-profile test)
   (define (intern-profile-reset! [metrics-address : u64]) : unit
-    (let
-      [metric : i64 intern-profile-hash-words-metric]
-      (while (< metric intern-profile-activity-end)
-        (intern-profile-set! metrics-address metric 0)
-        (set! metric (+ metric 1)))
-      (set! metric intern-profile-source-record-live-metric)
-      (while (< metric intern-profile-storage-end)
-        (intern-profile-set! metrics-address metric 0)
-        (set! metric (+ metric 1)))
-      (intern-profile-storage-initialize! metrics-address))))
+    (for [metric
+      (iterator.range
+        intern-profile-hash-words-metric
+        intern-profile-activity-end)]
+      (intern-profile-set! metrics-address metric 0))
+    (for [metric
+      (iterator.range
+        intern-profile-source-record-live-metric
+        intern-profile-storage-end)]
+      (intern-profile-set! metrics-address metric 0))
+    (intern-profile-storage-initialize! metrics-address)))
 
 (cfg
   (any compile-profile test)
@@ -2801,7 +2929,7 @@
               (unsafe
                 (ptr-read (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
             -7046029254386353131))
-        (set! i (+ i 8)))
+        (+= i 8))
       (let
         [tail : i64 0]
         (while (< i len)
@@ -2813,7 +2941,7 @@
                 (unsafe
                   (ptr-read (ptr-offset src (+ start i))))
                 : i64)))
-          (set! i (+ i 1)))
+          (+= i 1))
         (set! h (* (bit-xor h tail) -7046029254386353131))
         (bit-xor h (cast (shr (cast h : u64) 29) : i64))))))
 
@@ -2838,7 +2966,7 @@
               (unsafe
                 (ptr-read (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
             -7046029254386353131))
-        (set! i (+ i 8)))
+        (+= i 8))
       (let
         [tail : i64 0]
         (while (< i len)
@@ -2850,7 +2978,7 @@
                 (unsafe
                   (ptr-read (ptr-offset src (+ start i))))
                 : i64)))
-          (set! i (+ i 1)))
+          (+= i 1))
         (set! h (* (bit-xor h tail) -7046029254386353131))
         (bit-xor h (cast (shr (cast h : u64) 29) : i64))))))
 
@@ -2908,11 +3036,9 @@
     [dst : (MutPtr u8)
       (unsafe
         (__tl_array-data buf))]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (unsafe
-        (ptr-write! (ptr-offset dst i) (ptr-read (ptr-offset src (+ start i)))))
-      (set! i (+ i 1)))
+        (ptr-write! (ptr-offset dst i) (ptr-read (ptr-offset src (+ start i))))))
     (unsafe
       (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))
 
@@ -2950,12 +3076,13 @@
   (if (= (tl_arena_current) arena-handle)
     text
     (in-arena
-      (arena.Arena arena-handle)
+      (unsafe
+        (arena.Arena arena-handle))
       (intern-substring text 0 (__tl_string_length text)))))
 
 (define (intern-composite-rendered-name [id : i64]) : String
   (if (or (intern-composite-pair-id? id) (intern-composite-triple-id? id))
-    (array-ref
+    (owned_view.compiler-owned-element-view
       (__tl-project-field
         (array-ref (intern-global-shared-view intern-structural-table-cell) 0)
         rendered-names)
@@ -2976,7 +3103,7 @@
               (array-ref intern-structural-table-cell 0)
               rendered-names)
             index)
-          persistent)
+          (owned_view.compiler-owned-shared-view persistent))
         persistent))))
 
 ;: Reserve a source id from the low end of the shared pool. Generated ids grow
@@ -3042,16 +3169,17 @@
           [persistent-name : String
             (intern-compat-state-persistent-copy state name)]
           (begin
-            (set! (array-ref state.pool-slots next-id) persistent-name)
-            (set! (array-ref state.pool-qualified-slots next-id) qualified)
+            ;; Classified before the name moves into its slot.
             (set!
               (array-ref state.pool-macro-prefix-class-slots next-id)
-              (intern-private-macro-prefix-class persistent-name))
+              (intern-private-macro-prefix-class (& persistent-name)))
+            (set! (array-ref state.pool-qualified-slots next-id) qualified)
             (set!
               (array-ref state.pool-last-slash-slots next-id)
               (if qualified
-                (cast (intern-private-last-slash persistent-name) : i32)
+                (cast (intern-private-last-slash (& persistent-name)) : i32)
                 (cast -1 : i32)))
+            (set! (array-ref state.pool-slots next-id) persistent-name)
             (set!
               (array-ref state.pool-first-dot-slots next-id)
               (cast -1 : i32))
@@ -3100,7 +3228,8 @@
   (let
     [capacity : i64 (array-length state.generated-map-id-slots)]
     (if (>= steps capacity)
-      (tl_oob_abort)
+      (abort.compiler-abort
+        "tl: compiler_intern.intern-compat-state-generated-canonical-name-at: generated name map exhausted\n")
       (let
         [stored-id : InternSlotId
           (array-ref state.generated-map-id-slots cursor)]
@@ -3122,6 +3251,9 @@
                 (array-ref state.generated-map-id-slots cursor)
                 (intern-id-slot-encode id))
               (set! (array-ref state.generated-map-hash-slots cursor) hash)
+              (intern-generated-canonical-mark!
+                state.generated-canonical-words
+                id)
               (cfg
                 (any compile-profile test)
                 (begin
@@ -3199,7 +3331,8 @@
   [module-id : i64]
   [base-id : i64]) : i64
   (if (or (< module-id 0) (< base-id 0))
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-compat-state-generated-canonical-qualified-name: invalid qualified name component\n")
     unit)
   (if (array-ref state.map-ready 0)
     unit
@@ -3275,9 +3408,12 @@
         cached
         (let
           [persistent : String (intern-compat-state-persistent-copy state name)]
-          (set! (array-ref state.pool-slots id) persistent)
+          (set!
+            (array-ref state.pool-slots id)
+            (owned_view.compiler-owned-shared-view persistent))
           persistent)))
-    (tl_oob_abort)))
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-compat-state-generated-symbol-materialize!: inactive generated name ID\n")))
 
 (define (intern-compat-state-generated-id-active?
   [state : (& state InternCompatState)]
@@ -3423,7 +3559,7 @@
               (array-ref state.structural-table-cell 0)
               rendered-names)
             index)
-          persistent)
+          (owned_view.compiler-owned-shared-view persistent))
         persistent))))
 
 (define (intern-generated-id-at-allocation-index [index : i64]) : i64
@@ -3431,32 +3567,27 @@
     -1
     (- (- (intern-capacity) 1) index)))
 
-(define (intern-generated-canonical-id-at? [id : i64] [index : i64]) : bool
-  (if (>= index intern-generated-map-capacity)
-    false
-    (let
-      [stored : InternSlotId (array-ref intern-generated-map-id-slots index)]
-      (if (and
-        (not (intern-id-slot-empty? stored))
-        (= (intern-id-slot-decode stored) id))
-        true
-        (intern-generated-canonical-id-at? id (+ index 1))))))
+(define (intern-generated-canonical-id-at? [id : i64]) : bool
+  (and
+    (intern-renderable-id? id)
+    (not
+      (=
+        (bit-and
+          (array-ref intern-generated-canonical-words (shr id 6))
+          (shl 1 (bit-and id 63)))
+        0))))
 
 (define (intern-generated-canonical-id? [id : i64]) : bool
-  (and
-    (intern-generated-id-active? id)
-    (intern-generated-canonical-id-at? id 0)))
+  (and (intern-generated-id-active? id) (intern-generated-canonical-id-at? id)))
 
 (define (intern-private-last-slash [name : (& name str)]) : i64
   (let
-    [i : i64 0]
     [n : i64 (intern-private-string-length name)]
     [slash : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (= (intern-private-string-ref name i) '/')
         (set! slash i)
-        unit)
-      (set! i (+ i 1)))
+        unit))
     slash))
 
 ;; Generated-symbol roles are deliberately outside the source/generated id
@@ -3541,7 +3672,8 @@
   [qualification : i64]
   [components : i64]) : i64
   (if (< (intern-generated-symbol-role-index role) 0)
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-compat-state-generated-role-key: invalid generated name role\n")
     (intern-compat-state-composite-triple-id
       state
       role
@@ -3584,7 +3716,8 @@
           (intern-compat-state-generated-role-refresh-active! state))
         (if (intern-compat-state-generated-id-active? state id)
           unit
-          (tl_oob_abort))
+          (abort.compiler-abort
+            "tl: compiler_intern.intern-compat-state-generated-role-symbol-id-from-key: inactive generated role name ID\n"))
         id)
       (let
         [_refresh-active : unit
@@ -3639,7 +3772,8 @@
   [module-id : i64]
   [base-id : i64]) : i64
   (if (or (< module-id 0) (< base-id 0))
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-compat-state-generated-role-qualified-symbol-id: invalid qualified role name component\n")
     (begin
       (if (array-ref state.map-ready 0)
         unit
@@ -3670,7 +3804,8 @@
   [id : i64]
   [name : (& str)]) : String
   (if (< (intern-generated-symbol-role-index role) 0)
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-compat-state-generated-role-symbol-materialize!: invalid generated name role\n")
     (let
       [cached : String (intern-array-shared-view state.pool-slots id)]
       [rendered : String
@@ -3715,7 +3850,8 @@
   [qualification : i64]
   [components : i64]) : i64
   (if (< (intern-generated-symbol-role-index role) 0)
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-generated-role-key: invalid generated name role\n")
     (intern-composite-triple-id role qualification components)))
 
 (define (intern-generated-role-symbol-id-from-key
@@ -3767,14 +3903,17 @@
   (if (or
     (< (intern-generated-symbol-role-index role) 0)
     (not (intern-generated-id-active? id)))
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-generated-role-symbol-materialize!: invalid role or inactive generated name ID\n")
     (let
       [cached : String (intern-array-shared-view intern-pool-slots id)]
       (if (> (intern-private-string-length cached) 0)
         cached
         (let
           [rendered : String (intern-persistent-copy name)]
-          (set! (array-ref intern-pool-slots id) rendered)
+          (set!
+            (array-ref intern-pool-slots id)
+            (owned_view.compiler-owned-shared-view rendered))
           (set!
             (array-ref intern-pool-macro-prefix-class-slots id)
             (intern-private-macro-prefix-class rendered))
@@ -3858,7 +3997,7 @@
       (if (= (intern-private-string-ref name i) '.')
         (set! dot i)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     dot))
 
 (define (intern-generated-name-store
@@ -3876,7 +4015,9 @@
     (let
       [persistent-name : String (intern-persistent-copy name)]
       [id : i64 (intern-generated-id-allocate!)]
-      (set! (array-ref intern-pool-slots id) persistent-name)
+      (set!
+        (array-ref intern-pool-slots id)
+        (owned_view.compiler-owned-shared-view persistent-name))
       (set! (array-ref intern-pool-qualified-slots id) qualified)
       (set!
         (array-ref intern-pool-macro-prefix-class-slots id)
@@ -3932,7 +4073,8 @@
       (< leading-dot-id 0)
       (< dotted-prefix-id 0)
       (< dotted-tail-id 0))
-      (tl_oob_abort)
+      (abort.compiler-abort
+        "tl: compiler_intern.intern-generated-dotted-name: invalid dotted name component\n")
       (let
         [id : i64 (intern-generated-name-store name false -1 -1)]
         (set! (array-ref intern-pool-first-dot-slots id) (cast first-dot : i32))
@@ -3951,7 +4093,6 @@
   [name : String]
   [hash : i64]
   [cursor : i64]
-  [steps : i64]
   [qualified : bool]
   [module-id : i64]
   [base-id : i64]
@@ -3959,50 +4100,53 @@
   [leading-dot-id : i64]
   [dotted-prefix-id : i64]
   [dotted-tail-id : i64]) : i64
-  (if (>= steps intern-generated-map-capacity)
-    (tl_oob_abort)
+  (for [steps (iterator.range 0 intern-generated-map-capacity)]
     (let
       [stored-id : InternSlotId
         (array-ref intern-generated-map-id-slots cursor)]
       (if (intern-id-slot-empty? stored-id)
-        (let
-          [id : i64
-            (intern-generated-name-store (& name) qualified module-id base-id)]
-          (begin
-            (when
-              dotted
+        (return
+          (let
+            [id : i64
+              (intern-generated-name-store (& name) qualified module-id base-id)]
+            (begin
+              (when
+                dotted
+                (set!
+                  (array-ref intern-pool-first-dot-slots id)
+                  (cast
+                    (intern-private-first-dot
+                      (& (array-ref intern-pool-slots id)))
+                    : i32))
+                (set!
+                  (array-ref intern-pool-leading-dot-id-slots id)
+                  (intern-id-slot-encode leading-dot-id))
+                (set!
+                  (array-ref intern-pool-dotted-prefix-id-slots id)
+                  (intern-id-slot-encode dotted-prefix-id))
+                (set!
+                  (array-ref intern-pool-base-id-slots id)
+                  (intern-id-slot-encode dotted-tail-id)))
+              (intern-map-dirty-note!
+                intern-map-dirty-log
+                (intern-map-dirty-generated-base)
+                cursor)
               (set!
-                (array-ref intern-pool-first-dot-slots id)
-                (cast
-                  (intern-private-first-dot
-                    (& (array-ref intern-pool-slots id)))
-                  : i32))
-              (set!
-                (array-ref intern-pool-leading-dot-id-slots id)
-                (intern-id-slot-encode leading-dot-id))
-              (set!
-                (array-ref intern-pool-dotted-prefix-id-slots id)
-                (intern-id-slot-encode dotted-prefix-id))
-              (set!
-                (array-ref intern-pool-base-id-slots id)
-                (intern-id-slot-encode dotted-tail-id)))
-            (intern-map-dirty-note!
-              intern-map-dirty-log
-              (intern-map-dirty-generated-base)
-              cursor)
-            (set!
-              (array-ref intern-generated-map-id-slots cursor)
-              (intern-id-slot-encode id))
-            (set! (array-ref intern-generated-map-hash-slots cursor) hash)
-            (cfg
-              (any compile-profile test)
-              (begin
-                (intern-profile-note-canonical-map-probe!
-                  intern-active-profile-metrics-address
-                  (+ steps 1))
-                (intern-profile-note-canonical-map-insert!
-                  intern-active-profile-metrics-address)))
-            id))
+                (array-ref intern-generated-map-id-slots cursor)
+                (intern-id-slot-encode id))
+              (set! (array-ref intern-generated-map-hash-slots cursor) hash)
+              (intern-generated-canonical-mark!
+                intern-generated-canonical-words
+                id)
+              (cfg
+                (any compile-profile test)
+                (begin
+                  (intern-profile-note-canonical-map-probe!
+                    intern-active-profile-metrics-address
+                    (+ steps 1))
+                  (intern-profile-note-canonical-map-insert!
+                    intern-active-profile-metrics-address)))
+              id)))
         (let
           [slot-id : i64 (intern-id-slot-decode stored-id)]
           [slot-hash : i64 (array-ref intern-generated-map-hash-slots cursor)]
@@ -4024,25 +4168,19 @@
                     (= (intern-dotted-prefix-id slot-id) dotted-prefix-id)
                     (= (intern-dotted-tail-id slot-id) dotted-tail-id))
                   (< (intern-first-dot slot-id) 0)))))
-            (begin
-              (cfg
-                (any compile-profile test)
-                (intern-profile-note-canonical-map-probe!
-                  intern-active-profile-metrics-address
-                  (+ steps 1)))
-              slot-id)
-            (intern-generated-canonical-name-at
-              name
-              hash
-              (intern-bucket (+ cursor 1) intern-generated-map-capacity)
-              (+ steps 1)
-              qualified
-              module-id
-              base-id
-              dotted
-              leading-dot-id
-              dotted-prefix-id
-              dotted-tail-id)))))))
+            (return
+              (begin
+                (cfg
+                  (any compile-profile test)
+                  (intern-profile-note-canonical-map-probe!
+                    intern-active-profile-metrics-address
+                    (+ steps 1)))
+                slot-id))
+            (set!
+              cursor
+              (intern-bucket (+ cursor 1) intern-generated-map-capacity)))))))
+  (abort.compiler-abort
+    "tl: compiler_intern.intern-generated-canonical-name-at: generated name map exhausted\n"))
 
 ;; Canonical generated symbols deduplicate independently from source symbols.
 ;; Equal display text does not collapse hygiene with a source binding.
@@ -4056,7 +4194,6 @@
       name
       hash
       (intern-bucket hash intern-generated-map-capacity)
-      0
       false
       -1
       -1
@@ -4142,7 +4279,8 @@
   [module-id : i64]
   [base-id : i64]) : i64
   (if (or (< module-id 0) (< base-id 0))
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-generated-canonical-qualified-name: invalid qualified name component\n")
     unit)
   (if intern-map-ready
     unit
@@ -4158,7 +4296,6 @@
       name
       hash
       (intern-bucket hash intern-generated-map-capacity)
-      0
       true
       module-id
       base-id
@@ -4177,7 +4314,8 @@
     (< leading-dot-id 0)
     (< dotted-prefix-id 0)
     (< dotted-tail-id 0))
-    (tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern.intern-generated-canonical-dotted-name: invalid dotted name component\n")
     unit)
   (if intern-map-ready
     unit
@@ -4188,7 +4326,6 @@
       name
       hash
       (intern-bucket hash intern-generated-map-capacity)
-      0
       false
       -1
       -1
@@ -4275,18 +4412,17 @@
             (ptr-read (ptr-offset text-ptr (+ start i)))))
           unit
           (set! ok false))
-        (set! i (+ i 1)))
+        (+= i 1))
       ok)
     false))
 
 (define (intern-record-qualified-metadata [id : i64] [name : (& name str)]) : unit
   (let
-    [i : i64 0]
     [n : i64 (__tl_string_length name)]
     [slash : i64 -1]
     [dot : i64 -1]
     [last-dot : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (__tl_string_ref name i)]
         (if (= c '/')
@@ -4297,8 +4433,7 @@
           (if (< dot 0)
             (set! dot i)
             unit)
-          (set! last-dot i))
-        (set! i (+ i 1))))
+          (set! last-dot i))))
     (set! (array-ref intern-pool-last-slash-slots id) (cast slash : i32))
     (set! (array-ref intern-pool-first-dot-slots id) (cast dot : i32))
     (set!
@@ -4345,10 +4480,10 @@
     intern-map-id-slots
     intern-map-dirty-log
     (intern-map-dirty-source-base))
-  (intern-map-dirty-clear!
+  (intern-generated-map-dirty-clear!
     intern-generated-map-id-slots
     intern-map-dirty-log
-    (intern-map-dirty-generated-base)))
+    intern-generated-canonical-words))
 
 (define (intern-reset-name-cache!) : unit
   (set! intern-name-cache-ready false))
@@ -4365,8 +4500,7 @@
   [capacity : i64]) : unit
   (let
     [slot : i64 cursor]
-    [probes : i64 steps]
-    (while (< probes capacity)
+    (for [probes (iterator.range steps capacity)]
       (if (intern-id-slot-empty? (array-ref intern-map-id-slots slot))
         (begin
           (intern-map-dirty-note!
@@ -4376,9 +4510,7 @@
           (set! (array-ref intern-map-id-slots slot) (intern-id-slot-encode id))
           (set! (array-ref intern-map-hash-slots slot) hash)
           (return unit))
-        (begin
-          (set! slot (intern-bucket (+ slot 1) capacity))
-          (set! probes (+ probes 1)))))))
+        (set! slot (intern-bucket (+ slot 1) capacity))))))
 
 (define (intern-map-insert-existing! [id : i64]) : unit
   (let
@@ -4464,7 +4596,9 @@
             (let
               [persistent-name : String (intern-persistent-copy (& name))]
               [id : i64 (intern-source-id-allocate!)]
-              (set! (array-ref intern-pool-slots id) persistent-name)
+              (set!
+                (array-ref intern-pool-slots id)
+                (owned_view.compiler-owned-shared-view persistent-name))
               (intern-record-qualified-metadata id persistent-name)
               (intern-map-insert-existing-from id hash cursor 0 capacity)
               (intern-name-cache-record id)
@@ -4484,7 +4618,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -4527,7 +4661,9 @@
                     intern-active-profile-metrics-address
                     intern-profile-slice-miss-metric
                     1))
-                (set! (array-ref intern-pool-slots id) name)
+                (set!
+                  (array-ref intern-pool-slots id)
+                  (owned_view.compiler-owned-shared-view name))
                 (intern-record-qualified-metadata id name)
                 (intern-map-insert-existing-from id hash cursor 0 capacity)
                 (set! out id)
@@ -4553,7 +4689,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -4642,7 +4778,7 @@
                     (return (InternLookupFound slot-id)))
                   (begin
                     (set! cursor (bit-and (+ cursor 1) mask))
-                    (set! steps (+ steps 1))))))))
+                    (+= steps 1)))))))
         (begin
           (cfg
             (any compile-profile test)
@@ -4696,7 +4832,8 @@
 
 (define (intern-source-name-session-handle [session : InternSourceNameSession]) : InternSourceNameSessionHandle
   (in-arena
-    (arena.Arena intern-persistent-arena)
+    (unsafe
+      (arena.Arena intern-persistent-arena))
     (let
       [cell : (__tl_dyn-array InternSourceNameSession)
         (__tl_make-array InternSourceNameSession 1)]
@@ -4745,7 +4882,7 @@
               (cast handle.address : u64)
               : (Ptr InternSourceNameSession)))
           pool-slots))]
-    (array-ref pool-slots id)))
+    (owned_view.compiler-owned-element-view pool-slots id)))
 
 (define (intern-source-name-session-handle-capacity
   [handle : InternSourceNameSessionHandle]) : i64
@@ -4894,8 +5031,7 @@
       [capacity : i64 (array-length ids)]
       [hash : i64 (intern-hash name)]
       [cursor : i64 (intern-bucket hash capacity)]
-      [steps : i64 0]
-      (while (< steps capacity)
+      (for [steps (iterator.range 0 capacity)]
         (let
           [stored : InternSlotId (array-ref ids cursor)]
           (if (intern-id-slot-empty? stored)
@@ -4908,9 +5044,7 @@
                 (if (< slot-id session.source-count)
                   (return (InternLookupFound slot-id))
                   (return (InternLookupMissing)))
-                (begin
-                  (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                (set! cursor (intern-bucket (+ cursor 1) capacity)))))))
       (InternLookupMissing))
     (InternLookupMissing)))
 
@@ -4946,18 +5080,21 @@
         id))))
 
 ;: Recover the original String for an interned id.
+;; An id outside the pool (a structural or hygienic key rendered through the
+;; wrong API, or a corrupt value) is a compiler bug; it aborts with a message
+;; instead of reading past the slot array.
 (define (intern-str [id : i64]) : String
-  (cfg
-    compile-profile
-    (if (or (< id 0) (>= id (intern-capacity)))
-      "<invalid-intern-id>"
-      (begin
+  (if (or (< id 0) (>= id (intern-capacity)))
+    (intern-runtime-abort-string
+      "tl: intern-str: id outside the intern pool (render structural keys through their session)\n")
+    (begin
+      (cfg
+        compile-profile
         (intern-profile-add!
           intern-active-profile-metrics-address
           intern-profile-render-metric
-          1)
-        (intern-pool-string-shared-view id)))
-    (intern-pool-string-shared-view id)))
+          1))
+      (intern-pool-string-shared-view id))))
 
 ;; Typed render boundary. Callers with a structural key or a missing i64 cannot
 ;; call this API without an explicit, checked domain conversion.

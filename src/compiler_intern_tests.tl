@@ -1,6 +1,7 @@
 ;; compiler_intern_tests.tl - White-box tests for the interner: syntax ids,
 ;; id-space capacity, generated names, slices, persistent arenas, resets,
 ;; source-name sessions and qualified metadata.
+(import stdlib.iterator)
 (import compiler_intern as ci)
 (import compiler_str_cat as str_cat)
 (import stdlib.string)
@@ -329,10 +330,8 @@
   (let
     [source-length : i64 (+ chunk-size max-iterations)]
     [buf : (__tl_dyn-array u8) (__tl_make-array u8 source-length)]
-    [i : i64 0]
-    (while (< i source-length)
-      (set! (array-ref buf i) (cast (bit-and i 255) : u8))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 source-length)]
+      (set! (array-ref buf i) (cast (bit-and i 255) : u8)))
     (unsafe
       (string-from-bytes
         (ptr-cast (__tl_array-data buf) : (Ptr u8))
@@ -351,9 +350,8 @@
   [base : i64]
   [count : i64]) : i64
   (let
-    [index : i64 0]
     [first : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [raw : i64
           (ci.intern-structural-table-intern
@@ -362,8 +360,7 @@
             (+ base index)
             0
             (+ (* base 2) index))]
-        (when (= index 0) (set! first raw))
-        (set! index (+ index 1))))
+        (when (= index 0) (set! first raw))))
     first))
 
 ;; A reset clears the map and cache slots of the records the structural table
@@ -377,37 +374,29 @@
     [table : ci.InternStructuralTable
       (ci.intern-array-shared-view ci.intern-structural-table-cell 0)]
     [clear? : bool (= table.len 0)]
-    [index : i64 0]
-    (while (< index (array-length table.map-slots))
+    (for [index (iterator.range 0 (array-length table.map-slots))]
       (if (= (array-ref table.map-slots index) 0)
         unit
-        (set! clear? false))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index (array-length table.structural-cache-raws))
+        (set! clear? false)))
+    (for [index (iterator.range 0 (array-length table.structural-cache-raws))]
       (if (= (array-ref table.structural-cache-raws index) 0)
         unit
-        (set! clear? false))
-      (set! index (+ index 1)))
+        (set! clear? false)))
     clear?))
 
 ;; Pairs and triples through the composite paths, which write the cache.
 (define (intern-structural-reset-fill! [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
+  (for [index (iterator.range 0 count)]
+    (ci.intern-composite-pair-id (+ 1000000 index) (+ 2000000 index))
+    unit
+    (if (= (% index 3) 0)
       (begin
-        (ci.intern-composite-pair-id (+ 1000000 index) (+ 2000000 index))
+        (ci.intern-composite-triple-id
+          (+ 3000000 index)
+          index
+          (+ 4000000 index))
         unit)
-      (if (= (% index 3) 0)
-        (begin
-          (ci.intern-composite-triple-id
-            (+ 3000000 index)
-            index
-            (+ 4000000 index))
-          unit)
-        unit)
-      (set! index (+ index 1)))))
+      unit)))
 
 (define (intern-structural-table-by-record-reset?) : bool
   (let
@@ -647,7 +636,7 @@
             (=
               (ci.intern-compat-state-persistent-arena-current-head state)
               initial-head)))
-        (set! iterations (+ iterations 1))))
+        (+= iterations 1)))
     (let
       [grown-arena : i64 (ci.intern-compat-state-persistent-arena state)]
       [grown-head : i64
@@ -671,7 +660,6 @@
           (&mut state)
           structural-id
           "state/pre-growth+state/post-growth")]
-      [structural-grow-index : i64 0]
       [equal-branch-head : i64 -1]
       [equal-copy : String
         (begin
@@ -693,16 +681,14 @@
       [ok : bool true]
       ;; Force both retained structural arrays and the open-addressing map
       ;; through their checker-visible target-arena growth extents.
-      (while (< structural-grow-index 600)
-        (begin
-          (ci.intern-structural-table-intern
-            (&mut state.structural-table-cell)
-            (ci.intern-structural-kind-pair)
-            (+ 1000000 structural-grow-index)
-            0
-            (+ 2000000 structural-grow-index))
-          unit)
-        (set! structural-grow-index (+ structural-grow-index 1)))
+      (for [structural-grow-index (iterator.range 0 600)]
+        (ci.intern-structural-table-intern
+          (&mut state.structural-table-cell)
+          (ci.intern-structural-kind-pair)
+          (+ 1000000 structural-grow-index)
+          0
+          (+ 2000000 structural-grow-index))
+        unit)
       (set!
         ok
         (and
@@ -797,15 +783,13 @@
   (let
     [capacity : i64 (array-length state.map-id-slots)]
     [model : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-    [id : i64 0]
-    (while (< id mark)
+    (for [id (iterator.range 0 mark)]
       (let
         [name : String (ci.intern-array-shared-view state.pool-slots id)]
         [slot : i64 (ci.intern-bucket (ci.intern-hash (& name)) capacity)]
         (while (not (= (array-ref model slot) 0))
           (set! slot (ci.intern-bucket (+ slot 1) capacity)))
-        (set! (array-ref model slot) (+ id 1))
-        (set! id (+ id 1))))
+        (set! (array-ref model slot) (+ id 1))))
     model))
 
 (define (intern-maps-match-rebuild?
@@ -814,23 +798,24 @@
   (let
     [model : (__tl_dyn-array i64) (intern-map-rebuilt-model state mark)]
     [ok : bool true]
-    [index : i64 0]
-    (while (< index (array-length state.map-id-slots))
+    (for [index (iterator.range 0 (array-length state.map-id-slots))]
       (unless
         (=
           (ci.intern-slot-id-value (array-ref state.map-id-slots index))
           (array-ref model index))
-        (set! ok false))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index (array-length state.generated-map-id-slots))
+        (set! ok false)))
+    (for [index (iterator.range 0 (array-length state.generated-map-id-slots))]
       (unless
         (=
           (ci.intern-slot-id-value
             (array-ref state.generated-map-id-slots index))
           0)
-        (set! ok false))
-      (set! index (+ index 1)))
+        (set! ok false)))
+    (for [index
+      (iterator.range 0 (array-length state.generated-canonical-words))]
+      (unless
+        (= (array-ref state.generated-canonical-words index) 0)
+        (set! ok false)))
     ok))
 
 ;; Every seventh spelling is module-qualified and every fifth dotted, so
@@ -851,41 +836,33 @@
   [prefix : (& prefix str)]
   [count : i64]
   [generated : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
+  (for [index (iterator.range 0 count)]
+    (ci.intern-compat-state-intern
+      state
+      (& (intern-maps-fill-name prefix index)))
+    unit
+    (when
+      (< index generated)
       (begin
-        (ci.intern-compat-state-intern
+        (ci.intern-compat-state-generated-canonical-name
           state
-          (& (intern-maps-fill-name prefix index)))
-        unit)
-      (when
-        (< index generated)
-        (begin
-          (ci.intern-compat-state-generated-canonical-name
-            state
-            (str_cat.str-cat "gen-" (intern-maps-fill-name prefix index)))
-          unit))
-      (set! index (+ index 1)))))
+          (str_cat.str-cat "gen-" (intern-maps-fill-name prefix index)))
+        unit))))
 
 ;; The same through the installed globals.
 (define (intern-maps-fill-installed!
   [prefix : (& prefix str)]
   [count : i64]
   [generated : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
+  (for [index (iterator.range 0 count)]
+    (ci.intern (intern-maps-fill-name prefix index))
+    unit
+    (when
+      (< index generated)
       (begin
-        (ci.intern (intern-maps-fill-name prefix index))
-        unit)
-      (when
-        (< index generated)
-        (begin
-          (ci.intern-generated-canonical-name
-            (str_cat.str-cat "gen-" (intern-maps-fill-name prefix index)))
-          unit))
-      (set! index (+ index 1)))))
+        (ci.intern-generated-canonical-name
+          (str_cat.str-cat "gen-" (intern-maps-fill-name prefix index)))
+        unit))))
 
 (define (intern-map-dirty-reset-tests-ok?) : bool
   (let
@@ -946,6 +923,73 @@
       advanced?
       stale-ok?
       global-ok?)))
+
+(define (intern-generated-canonical-membership-tests-ok?) : bool
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [canonical-id : i64
+      (ci.intern-compat-state-generated-canonical-name
+        (&mut state-a)
+        "canonical-membership")]
+    [opaque-id : i64
+      (ci.intern-compat-state-generated-name (&mut state-b) "opaque-membership")]
+    [ok : bool (= canonical-id opaque-id)]
+    ;; Equal raw ids in different maps must not share canonical membership.
+    (ci.intern-compat-state-install! state-b)
+    (when (ci.intern-generated-canonical-id? opaque-id) (set! ok false))
+    (ci.intern-compat-state-install! state-a)
+    (unless (ci.intern-generated-canonical-id? canonical-id) (set! ok false))
+    (when
+      (or
+        (ci.intern-generated-canonical-id? (ci.intern "ordinary-source"))
+        (ci.intern-generated-canonical-id-at? -1)
+        (ci.intern-generated-canonical-id-at? (ci.intern-capacity))
+        (ci.intern-generated-canonical-id-at? 9223372036854775807))
+      (set! ok false))
+    ;; Descending ids exercise bit 63 and both sides of two word boundaries.
+    (for [index (iterator.range 0 130)]
+      (let
+        [name : String
+          (str_cat.str-cat "membership-" (string.int->string index))]
+        [canonical? : bool (= (% index 3) 0)]
+        [id : i64
+          (if canonical?
+            (ci.intern-generated-canonical-name name)
+            (ci.intern-generated-name (& name)))]
+        (unless
+          (= (ci.intern-generated-canonical-id? id) canonical?)
+          (set! ok false))))
+    (let
+      [captured : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [late-id : i64 (ci.intern-generated-canonical-name "after-capture")]
+      ;; The captured cursor predates late-id, but its shared map log includes
+      ;; that insert. Reset through the alias must clear every membership bit.
+      (ci.intern-compat-state-reset-to! (&mut captured) 0)
+      (when (ci.intern-generated-canonical-id? late-id) (set! ok false))
+      (for [offset (iterator.range 0 132)]
+        (when
+          (ci.intern-generated-canonical-id-at?
+            (- (- (ci.intern-capacity) 1) offset))
+          (set! ok false)))
+      (ci.intern-compat-state-install! captured)
+      (let
+        [reused-opaque : i64 (ci.intern-generated-name "reused-opaque")]
+        [reused-canonical : i64
+          (ci.intern-generated-canonical-name "reused-canonical")]
+        (unless
+          (and
+            (= reused-opaque canonical-id)
+            (not (ci.intern-generated-canonical-id? reused-opaque))
+            (ci.intern-generated-canonical-id? reused-canonical))
+          (set! ok false))
+        (ci.intern-reset!)
+        (when
+          (ci.intern-generated-canonical-id-at? reused-canonical)
+          (set! ok false))))
+    (ci.intern-compat-state-install! installed)
+    ok))
 
 (define (intern-persistent-floor-reset-tests-ok?) : bool
   (ci.intern-reset!)
@@ -1303,16 +1347,13 @@
           (&mut state-a)
           (ci.intern-generated-symbol-role-global-initializer)
           1512)]
-      [index : i64 0]
       (unless (not (= growth-first hash-collision)) (set! ok false))
-      (while (< index 300)
-        (begin
-          (ci.intern-compat-state-generated-role-symbol-id
-            (&mut state-a)
-            (ci.intern-generated-symbol-role-global-initializer)
-            (+ 2000 index))
-          unit)
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 300)]
+        (ci.intern-compat-state-generated-role-symbol-id
+          (&mut state-a)
+          (ci.intern-generated-symbol-role-global-initializer)
+          (+ 2000 index))
+        unit)
       (unless
         (=
           growth-first
@@ -1458,6 +1499,7 @@
         (= (ci.intern-first-dot dotted) 5)
         (intern-slice-tests-ok?)
         (intern-generated-name-tests-ok?)
+        (intern-generated-canonical-membership-tests-ok?)
         (intern-persistent-arena-tests-ok?)
         (intern-compat-state-persistent-arena-growth-tests-ok?)
         (intern-structural-generation-tests-ok?)

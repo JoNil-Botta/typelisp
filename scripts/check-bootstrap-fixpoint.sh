@@ -32,6 +32,10 @@ cd "$ROOT"
 # assemble_and_link.
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
+# Windows stage links write a COFF TimeDateStamp of 0 instead of the link time,
+# so independent CI lanes build byte-identical compilers (#7767 slice 2). Not
+# exported: only this script's own links change; #9470 covers the others.
+TYPELISP_WINDOWS_LINK_TIMESTAMP=0
 . "$ROOT/scripts/lib-bootstrap-fixpoint-control.sh"
 . "$ROOT/scripts/lib-build-provenance.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
@@ -198,13 +202,16 @@ fi
 BOOTSTRAP_EMBEDDED_WORKDIR="$BOOTSTRAP_SOURCE_ROOT/target/embedded-stdlib-tlci"
 BOOTSTRAP_EMBEDDED_IMAGE="$BOOTSTRAP_EMBEDDED_WORKDIR/stdlib.tlci"
 
-# Every converged compiler and the frontend surfaces it produces must name the
-# exact checked-in compiler revision. Keep this input beside the selected src/
+# Every converged compiler records its commit separately from the exact source
+# tree used for frontend/image admission. Keep these beside the selected src/
 # tree because compiler_build_identity includes it through src/../target.
 BUILD_IDENTITY=$(build_provenance_hash "$0")
+BUILD_PRODUCER_IDENTITY=$(build_provenance_hash "$0" 'HEAD^{tree}')
 mkdir -p "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0"
 printf '%s' "$BUILD_IDENTITY" \
     > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/git-hash.txt"
+printf '%s' "$BUILD_PRODUCER_IDENTITY" \
+    > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/tree-hash.txt"
 
 STAGE1_ASM="$WORKDIR/stage1.s"
 STAGE1_OBJ="$WORKDIR/stage1.$OBJ_EXT"
@@ -244,9 +251,22 @@ run_bootstrap_compile() {
     shift
     if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ]; then
         run_with_heartbeat \
-            "$_btc_label" env -C "$BOOTSTRAP_SOURCE_ROOT" "$@"
+            "$_btc_label" env -C "$BOOTSTRAP_SOURCE_ROOT" "$@" || return $?
     else
-        run_with_heartbeat "$_btc_label" "$@"
+        run_with_heartbeat "$_btc_label" "$@" || return $?
+    fi
+    if [ -n "${TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR:-}" ]; then
+        [ "$BOOTSTRAP_TLCI_MUTATION" -eq 0 ] || return 1
+        case "$_btc_label" in
+            'stage0 -> stage1.s') _btc_stage=stage1 ;;
+            'stage1 -> stage2.s') _btc_stage=stage2 ;;
+            'stage2 -> stage3.s') _btc_stage=stage3 ;;
+            'stage3 -> stage4.s') _btc_stage=stage4 ;;
+            *) return 1 ;;
+        esac
+        ci_timing_run "$_btc_stage" artifact-record \
+            "$ROOT/scripts/ci-compiler-artifact.sh" record "$ROOT" \
+            "$TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR" "$HOST_OS" "$_btc_stage" "$@"
     fi
 }
 
@@ -258,15 +278,15 @@ bootstrap_tlci_mutation_snapshot() {
     _btms_compiler=$2
     _btms_identity=$("$_btms_compiler" --producer-identity | tr -d '\r\n')
     bootstrap_tlci_require_identity \
-        "$_btms_identity" "$BUILD_IDENTITY" "$_btms_label producer"
+        "$_btms_identity" "$BUILD_PRODUCER_IDENTITY" "$_btms_label producer"
     _btms_inspect="$WORKDIR/tlci-mutation-$_btms_label.inspect"
     "$_btms_compiler" inspect "$BOOTSTRAP_EMBEDDED_IMAGE" > "$_btms_inspect"
     assert_contains \
         "$_btms_inspect" \
-        "surface-trust-producer-identity: $BUILD_IDENTITY"
+        "surface-trust-producer-identity: $BUILD_PRODUCER_IDENTITY"
     assert_contains \
         "$_btms_inspect" \
-        "producer-compiler-identity: $BUILD_IDENTITY"
+        "producer-compiler-identity: $BUILD_PRODUCER_IDENTITY"
     if ! grep -aFq "$BOOTSTRAP_MUTATION_SENTINEL" \
         "$BOOTSTRAP_EMBEDDED_IMAGE"; then
         echo "bootstrap tlci image does not contain the changed transformer body" >&2
@@ -493,7 +513,7 @@ check_stage2_embedded_stdlib() {
         "$STAGE2_BIN" inspect embedded:stdlib.tlci
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
-        "embedded-loader-macro-count: 165"
+        "embedded-loader-macro-count: 166"
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
         "package-name: stdlib"

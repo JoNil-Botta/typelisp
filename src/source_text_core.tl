@@ -13,6 +13,7 @@
 ;; belong in stdlib.string, but a new stdlib.string function is emitted into
 ;; every program that keeps the whole module, which changes generated code;
 ;; they live here until a codegen-changing change moves them.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -24,7 +25,7 @@
   (let
     [j : i64 i]
     (while (and (< j n) (source-text-space? (string.string-ref text j)))
-      (set! j (+ j 1)))
+      (+= j 1))
     j))
 
 ;; Offset just past the `\n` that ends the line containing `i`, or `n`.
@@ -32,7 +33,7 @@
   (let
     [j : i64 i]
     (while (and (< j n) (not (= (string.string-ref text j) '\n')))
-      (set! j (+ j 1)))
+      (+= j 1))
     (if (< j n)
       (+ j 1)
       j)))
@@ -48,11 +49,11 @@
       (let
         [c : char (string.string-ref text j)]
         (cond
-          [(= c '\\') (set! j (+ j 2))]
+          [(= c '\\') (+= j 2)]
           [(= c '"')
             (set! done true)
-            (set! j (+ j 1))]
-          [else (set! j (+ j 1))])))
+            (+= j 1)]
+          [else (+= j 1)])))
     j))
 
 (define (source-text-char-escape? [c : char]) : bool
@@ -108,11 +109,11 @@
     [line : i64 0]
     [col : i64 0]
     (while (and (< i n) (< line line0))
-      (when (= (string.string-ref text i) '\n') (set! line (+ line 1)))
-      (set! i (+ i 1)))
+      (when (= (string.string-ref text i) '\n') (+= line 1))
+      (+= i 1))
     (while (and (< i n) (< col col0) (not (= (string.string-ref text i) '\n')))
-      (set! i (+ i 1))
-      (set! col (+ col 1)))
+      (+= i 1)
+      (+= col 1))
     i))
 
 ;; 1-based line and column of byte offset `off` (clamped to the text), the
@@ -133,12 +134,10 @@
     (while (and (< i n) (< i off))
       (if (= (string.string-ref text i) '\n')
         (begin
-          (set! line (+ line 1))
+          (+= line 1)
           (set! col 1))
-        (set!
-          col
-          (+ col (source-text-column-units (string.string-ref text i) utf16))))
-      (set! i (+ i 1)))
+        (+= col (source-text-column-units (string.string-ref text i) utf16)))
+      (+= i 1))
     (SourceTextLineCol line col)))
 
 ;; Line-start table of one text: `starts[k]` is the byte offset of 1-based line
@@ -147,23 +146,17 @@
 (define (source-text-line-starts [text : (& text str)]) : (__tl_dyn-array i64)
   (let
     [n : i64 (string.string-length text)]
-    [index : i64 0]
     [line-count : i64 1]
-    (while (< index n)
-      (when
-        (= (string.string-ref text index) '\n')
-        (set! line-count (+ line-count 1)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 n)]
+      (when (= (string.string-ref text index) '\n') (+= line-count 1)))
     (let
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 line-count)]
       [line-index : i64 1]
-      (set! index 0)
-      (while (< index n)
+      (for [index (iterator.range 0 n)]
         (when
           (= (string.string-ref text index) '\n')
           (set! (array-ref starts line-index) (+ index 1))
-          (set! line-index (+ line-index 1)))
-        (set! index (+ index 1)))
+          (+= line-index 1)))
       starts)))
 
 ;; Byte offset where 1-based `line` starts, or -1 when the text has no such line.
@@ -210,7 +203,7 @@
       (< i n)
       (not (= (string.string-ref text i) '\n'))
       (not (= (string.string-ref text i) '\r')))
-      (set! i (+ i 1)))
+      (+= i 1))
     i))
 
 ;; Start of the line after the one `line-end` ended at `end`, consuming one

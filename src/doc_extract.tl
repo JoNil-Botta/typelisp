@@ -11,6 +11,7 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -172,7 +173,7 @@
     (while keep
       (if (< i end)
         (if (doc-inline-space? (string.string-ref src i))
-          (set! i (+ i 1))
+          (+= i 1)
           (set! keep false))
         (set! keep false)))
     i))
@@ -194,7 +195,7 @@
     [body-start : i64 (+ line-start prefix-len)]
     (if (< body-start line-end)
       (if (= (string.string-ref src body-start) ' ')
-        (set! body-start (+ body-start 1))
+        (+= body-start 1)
         (set! body-start body-start))
       (set! body-start body-start))
     (string.substring src body-start (- line-end body-start))))
@@ -221,14 +222,14 @@
           (cond
             [escaped
               (set! escaped false)
-              (set! i (+ i 1))]
+              (+= i 1)]
             [(= c '\\')
               (set! escaped true)
-              (set! i (+ i 1))]
+              (+= i 1)]
             [(= c '"')
-              (set! i (+ i 1))
+              (+= i 1)
               (set! keep false)]
-            [else (set! i (+ i 1))]))
+            [else (+= i 1)]))
         (set! keep false)))
     i))
 
@@ -250,15 +251,15 @@
             [(= c '\'')
               (set! i (source_text.source-text-skip-char-literal src i n))]
             [(or (= c '(') (= c '['))
-              (set! depth (+ depth 1))
-              (set! i (+ i 1))]
+              (+= depth 1)
+              (+= i 1)]
             [(or (= c ')') (= c ']'))
-              (set! depth (- depth 1))
-              (set! i (+ i 1))
+              (-= depth 1)
+              (+= i 1)
               (if (<= depth 0)
                 (set! keep false)
                 (set! keep keep))]
-            [else (set! i (+ i 1))]))
+            [else (+= i 1)]))
         (set! keep false)))
     i))
 
@@ -314,7 +315,7 @@
         (let
           [c : char (string.string-ref src i)]
           (cond
-            [(or (doc-inline-space? c) (doc-newline? c)) (set! i (+ i 1))]
+            [(or (doc-inline-space? c) (doc-newline? c)) (+= i 1)]
             [(= c ';')
               (set!
                 i
@@ -330,7 +331,7 @@
     (while keep
       (if (< i n)
         (if (doc-decl-symbol-char? (string.string-ref src i))
-          (set! i (+ i 1))
+          (+= i 1)
           (set! keep false))
         (set! keep false)))
     i))
@@ -443,13 +444,11 @@
 
 (define (doc-source-line-at [src : (& src str)] [offset : i64]) : i64
   (let
-    [i : i64 0]
     [line : i64 1]
-    (while (< i offset)
+    (for [i (iterator.range 0 offset)]
       (if (= (string.string-ref src i) '\n')
-        (set! line (+ line 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= line 1)
+        unit))
     line))
 
 ;; Only immediate fields/variants of a type are members. Consuming each whole

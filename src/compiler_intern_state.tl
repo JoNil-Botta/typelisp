@@ -3,6 +3,8 @@
 ;; The authoritative table layout and lookup implementation live in
 ;; compiler_intern. This adapter gives worker code a nominal structural view of
 ;; an explicitly owned source-name session.
+(import compiler_abort as abort)
+(import stdlib.iterator)
 (import compiler_intern as ci)
 (import compiler_owned_view as owned_view)
 
@@ -256,7 +258,8 @@
   [middle-id : i64]
   [right-id : i64]) : InternStructuralKey
   (if (or (<= handle.address 0) (not (ci.intern-structural-kind-valid? kind)))
-    (ci.tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-key: invalid structural session handle or kind\n")
     (let
       [session-ptr : (Ptr ci.InternSourceNameSession)
         (unsafe
@@ -300,7 +303,8 @@
         (not (= current-table-id table-id))
         (not (= current-reset-generation reset-generation))
         (not (= table-owner structural-owner)))
-        (ci.tl_oob_abort)
+        (abort.compiler-abort
+          "tl: compiler_intern_state.intern-structural-session-key: stale structural session table or generation\n")
         (let
           [raw : i64
             (ci.intern-structural-table-intern
@@ -322,7 +326,8 @@
   [left-id : i64]
   [right-id : i64]) : InternStructuralKey
   (if (<= handle.address 0)
-    (ci.tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-composite-pair-key: invalid structural session handle\n")
     (let
       [session-ptr : (Ptr ci.InternSourceNameSession)
         (unsafe
@@ -347,7 +352,8 @@
   [middle-id : i64]
   [right-id : i64]) : InternStructuralKey
   (if (<= handle.address 0)
-    (ci.tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-composite-triple-key: invalid structural session handle\n")
     (let
       [session-ptr : (Ptr ci.InternSourceNameSession)
         (unsafe
@@ -568,7 +574,7 @@
             (ptr-offset
               (ptr-cast (__tl_array-data rendered-names) : (MutPtr String))
               index)
-            persistent))
+            (owned_view.compiler-owned-shared-view persistent)))
         persistent))))
 
 ;; Classification-only paths should not materialize all four record lanes.
@@ -652,13 +658,11 @@
         (owned_view.compiler-owned-array-element-shared-view
           session.structural-table-cell
           0)]
-      [index : i64 0]
       [count : i64 0]
-      (while (< index table.len)
+      (for [index (iterator.range 0 table.len)]
         (if (= (cast (array-ref table.kinds index) : i64) kind)
-          (set! count (+ count 1))
-          unit)
-        (set! index (+ index 1)))
+          (+= count 1)
+          unit))
       count)))
 
 (define (intern-structural-session-source-name-component-valid?
@@ -679,7 +683,8 @@
     (intern-structural-session-source-name-component-valid?
       handle
       source-name-id))
-    (ci.tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-template-source-identity: invalid template source name component\n")
     (InternTemplateSourceIdentity
       (intern-structural-key-raw
         (intern-structural-session-key
@@ -744,7 +749,8 @@
       (intern-structural-session-source-name-component-valid?
         handle
         source-name-id)))
-    (ci.tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-fresh-local-identity: invalid fresh local identity component\n")
     (InternFreshLocalIdentity
       (intern-structural-key-raw
         (intern-structural-session-key
@@ -925,7 +931,8 @@
       macro-definition)
       [(No) true]
       [(Some _) false]))
-    (ci.tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-macro-local-identity: invalid macro local identity component\n")
     (InternMacroLocalIdentity
       (intern-structural-key-raw
         (intern-structural-session-key
@@ -987,7 +994,8 @@
   [role : i64]
   [component : i64]) : InternLowerPrivateIdentity
   (if (< component 0)
-    (ci.tl_oob_abort)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-lower-private-component-identity: invalid lower private identity component\n")
     (intern-structural-session-lower-private-identity-for-components
       handle
       role

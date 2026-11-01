@@ -82,8 +82,8 @@ clang --target=x86_64-pc-windows-msvc -c "$WORK/fixture.s" -o "$WORK/fixture.obj
 clang --target=x86_64-pc-windows-msvc -c "$WORK/driver.s" -o "$WORK/driver.obj"
 unwind_rows "$WORK/fixture.obj" > "$WORK/fixture.rows"
 
-framed=$(function_rows "$WORK/fixture.rows" _tl_win64_seh_unwind_seh_victim_framed)
-fpo=$(function_rows "$WORK/fixture.rows" _tl_win64_seh_unwind_seh_victim_fpo)
+framed=$(function_rows "$WORK/fixture.rows" 'tl_seh_victim_framed$typelisp')
+fpo=$(function_rows "$WORK/fixture.rows" 'tl_seh_victim_fpo$typelisp')
 printf 'seh-victim-framed:\n%s\nseh-victim-fpo:\n%s\n' "$framed" "$fpo"
 [ "$(count_rows "$framed" '^FrameRegister: -$')" -eq 1 ] \
     && [ "$(count_rows "$framed" 'SET_FPREG')" -eq 0 ] \
@@ -96,6 +96,23 @@ printf 'seh-victim-framed:\n%s\nseh-victim-fpo:\n%s\n' "$framed" "$fpo"
     && [ "$(count_rows "$fpo" 'SAVE_NONVOL')" -eq 0 ] \
     && [ "$(count_rows "$fpo" 'SET_FPREG')" -eq 0 ] \
     || fail "seh-victim-fpo is not a push prologue"
+
+# Small Platform leaf entries share the driver's RSI/RDI preservation frame.
+bridge=$(function_rows "$WORK/fixture.rows" '__tl$c_entry')
+[ "$(count_rows "$bridge" 'ALLOC_SMALL size=40$')" -eq 1 ] \
+    && [ "$(count_rows "$bridge" 'PUSH_NONVOL reg=RSI$')" -eq 1 ] \
+    && [ "$(count_rows "$bridge" 'PUSH_NONVOL reg=RDI$')" -eq 1 ] \
+    || fail "shared Platform frame does not describe RSI/RDI saves"
+for entry in tl_seh_victim_framed tl_seh_victim_fpo; do
+    awk -v entry="$entry" '
+        $0 == entry ":" {
+            found = 1
+            if (getline <= 0 || $0 != "    leaq " entry "$typelisp(%rip), %r11") exit 1
+            if (getline <= 0 || $0 != "    jmp __tl$c_entry") exit 1
+        }
+        END { if (!found) exit 1 }
+    ' "$WORK/fixture.s" || fail "$entry is not a stack-neutral leaf into the shared Platform frame"
+done
 
 lld-link -NOLOGO \
     "$(cygpath -aw "$WORK/fixture.obj")" \

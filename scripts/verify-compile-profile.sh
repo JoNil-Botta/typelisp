@@ -19,6 +19,9 @@ gate_require_compiler
 WORKDIR="$ROOT/target/compile-profile-verify/$NL_HOST_OS"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+. "$ROOT/scripts/lib-fixture-inventory.sh"
+fixture_inventory_load tests/fixtures/profile-import-order.fixtures.cases "$WORKDIR/import-order.tsv"
+TAB=$(printf '\t')
 
 PROFILE_ASM="$WORKDIR/typelisp-profile.s"
 PROFILE_OBJ="$WORKDIR/typelisp-profile.$NL_OBJ_EXT"
@@ -319,13 +322,10 @@ assert_intern_storage_schema_in() {
 # schema row, a fixed owner order at each boundary, and exact reconciliation of
 # exclusive owners plus the explicit remainder. Input bytes are payload detail
 # inside frontend-read-parse, so they never participate in the exclusive sum.
-assert_lifetime_ledger_in() {
-    _lll_file=$1
-    _lll_stdout=$2
-    _lll_stderr=$3
-    if ! awk -F'|' '
+lifetime_ledger_valid() {
+    awk -F'|' '
         BEGIN {
-            expected_text = "load.complete|total|boundary-total load.complete|input-bytes|payload-detail load.complete|frontend-read-parse|transfer load.complete|token-storage|scan-scratch load.complete|reader-origin-storage|transfer load.complete|parsed-source-base|transfer load.complete|parsed-expr-pool|transfer load.complete|parsed-type-pool|transfer load.complete|loader-session-surface|session load.complete|intern-storage|session load.complete|remainder|unattributed load.handoff|total|boundary-total load.handoff|input-bytes|payload-detail load.handoff|frontend-read-parse|transfer load.handoff|token-storage|scan-scratch load.handoff|reader-origin-storage|transfer load.handoff|parsed-source-base|transfer load.handoff|parsed-expr-pool|transfer load.handoff|parsed-type-pool|transfer load.handoff|loader-session-surface|session load.handoff|intern-storage|session load.handoff|remainder|unattributed macro.pre-detach|total|boundary-total macro.pre-detach|macro-enclosing|session macro.pre-detach|macro-job-registry-cache|session macro.pre-detach|intern-storage|session macro.pre-detach|scoped-env-index|cache macro.pre-detach|output-pool-base|lower-handoff macro.pre-detach|output-expr-pool|lower-handoff macro.pre-detach|output-type-pool|lower-handoff macro.pre-detach|live-symbols-registry|macro-live macro.pre-detach|retired-symbols-registry|retired macro.pre-detach|expansion-pool|scratch macro.pre-detach|active-generation-pools|scratch macro.pre-detach|retired-generation-pools|retired macro.pre-detach|remainder|unattributed macro.lower-handoff|total|boundary-total macro.lower-handoff|macro-enclosing|session macro.lower-handoff|macro-job-registry-cache|session macro.lower-handoff|intern-storage|session macro.lower-handoff|scoped-env-index|cache macro.lower-handoff|output-pool-base|lower-handoff macro.lower-handoff|output-expr-pool|lower-handoff macro.lower-handoff|output-type-pool|lower-handoff macro.lower-handoff|live-symbols-registry|macro-live macro.lower-handoff|retired-symbols-registry|retired macro.lower-handoff|expansion-pool|scratch macro.lower-handoff|active-generation-pools|scratch macro.lower-handoff|retired-generation-pools|retired macro.lower-handoff|remainder|unattributed"
+            expected_text = "load.complete|total|boundary-total load.complete|input-bytes|payload-detail load.complete|frontend-read-parse|transfer load.complete|token-storage|scan-scratch load.complete|reader-origin-storage|transfer load.complete|parsed-source-base|transfer load.complete|parsed-expr-pool|transfer load.complete|parsed-type-pool|transfer load.complete|loader-session-surface|session load.complete|intern-storage|session load.complete|embedded-tlci-cache|process load.complete|remainder|unattributed load.handoff|total|boundary-total load.handoff|input-bytes|payload-detail load.handoff|frontend-read-parse|transfer load.handoff|token-storage|scan-scratch load.handoff|reader-origin-storage|transfer load.handoff|parsed-source-base|transfer load.handoff|parsed-expr-pool|transfer load.handoff|parsed-type-pool|transfer load.handoff|loader-session-surface|session load.handoff|intern-storage|session load.handoff|embedded-tlci-cache|process load.handoff|remainder|unattributed macro.pre-detach|total|boundary-total macro.pre-detach|macro-enclosing|session macro.pre-detach|macro-job-registry-cache|session macro.pre-detach|intern-storage|session macro.pre-detach|scoped-env-index|cache macro.pre-detach|output-pool-base|lower-handoff macro.pre-detach|output-expr-pool|lower-handoff macro.pre-detach|output-type-pool|lower-handoff macro.pre-detach|live-symbols-registry|macro-live macro.pre-detach|retired-symbols-registry|retired macro.pre-detach|expansion-pool|scratch macro.pre-detach|active-generation-pools|scratch macro.pre-detach|retired-generation-pools|retired macro.pre-detach|embedded-tlci-cache|process macro.pre-detach|remainder|unattributed macro.lower-handoff|total|boundary-total macro.lower-handoff|macro-enclosing|session macro.lower-handoff|macro-job-registry-cache|session macro.lower-handoff|intern-storage|session macro.lower-handoff|scoped-env-index|cache macro.lower-handoff|output-pool-base|lower-handoff macro.lower-handoff|output-expr-pool|lower-handoff macro.lower-handoff|output-type-pool|lower-handoff macro.lower-handoff|live-symbols-registry|macro-live macro.lower-handoff|retired-symbols-registry|retired macro.lower-handoff|expansion-pool|scratch macro.lower-handoff|active-generation-pools|scratch macro.lower-handoff|retired-generation-pools|retired macro.lower-handoff|embedded-tlci-cache|process macro.lower-handoff|remainder|unattributed"
             expected_count = split(expected_text, expected, " ")
         }
         $1 == "compile-profile-lifetime" && $2 == "boundary" {
@@ -338,6 +338,9 @@ assert_lifetime_ledger_in() {
             key = $2 "|" $3 "|" $4
             if (row > expected_count || key != expected[row] || NF != 7) bad = 1
             if ($5 !~ /^[0-9]+$/ || $6 !~ /^-?[0-9]+$/ || $7 !~ /^[0-9]+$/) bad = 1
+            # Exclusive owner growth cannot be negative or exceed the live
+            # boundary snapshot; signed syntax remains accepted for diagnostics.
+            if ($6 < 0) bad = 1
             boundary = $2
             if (!(boundary in cumulative)) {
                 cumulative[boundary] = $5
@@ -366,10 +369,43 @@ assert_lifetime_ledger_in() {
             if (value["macro.pre-detach|retired-symbols-registry"] != 0) exit 1
             if (value["macro.lower-handoff|live-symbols-registry"] != 0 || value["macro.lower-handoff|retired-symbols-registry"] != 0 || value["macro.lower-handoff|expansion-pool"] != 0 || value["macro.lower-handoff|active-generation-pools"] != 0 || value["macro.lower-handoff|retired-generation-pools"] != 0) exit 1
         }
-    ' "$_lll_file"; then
-        show_failure_logs "$_lll_stdout" "$_lll_stderr"
+    ' "$1"
+}
+
+assert_lifetime_ledger_in() {
+    if ! lifetime_ledger_valid "$1"; then
+        show_failure_logs "$2" "$3"
         fail "compile lifetime ledger schema/order/accounting mismatch"
     fi
+}
+
+# Corrupt the real passing ledger, preserving its schema and exact sum when
+# testing coverage. The same checker must reject unowned cache/other bytes,
+# duplicate attribution beyond the boundary snapshot, and reconciliation drift.
+assert_lifetime_ledger_controls() {
+    _llc_input=$1
+    for _llc_control in cache-unattributed other-unattributed cache-over-snapshot other-over-snapshot cache-negative-snapshot reconciliation; do
+        _llc_output="$WORKDIR/lifetime-ledger-$_llc_control.control"
+        awk -F'|' -v OFS='|' -v control="$_llc_control" '
+            $1 == "compile-profile-lifetime" && $2 == "macro.pre-detach" {
+                if ($3 == "total") total = $6 + 0
+                owner = control ~ /^cache-/ ? "embedded-tlci-cache" : "macro-job-registry-cache"
+                if ($3 == owner && control ~ /unattributed$/) { moved = $6; $6 = 0 }
+                if ($3 == owner && control ~ /over-snapshot$/) { moved = total + 1; $6 += moved }
+                if ($3 == owner && control ~ /negative-snapshot$/) { moved = $6 + 1; $6 = -1 }
+                if ($3 == "remainder") {
+                    if (control ~ /unattributed$/) $6 += moved
+                    if (control ~ /over-snapshot$/) $6 -= moved
+                    if (control ~ /negative-snapshot$/) $6 += moved
+                    if (control == "reconciliation") $6++
+                }
+            }
+            { print }
+        ' "$_llc_input" > "$_llc_output"
+        if lifetime_ledger_valid "$_llc_output"; then
+            fail "compile lifetime ledger accepted planted $_llc_control control"
+        fi
+    done
 }
 
 # Every intermediate segmented-program flatten must name one of the two
@@ -599,7 +635,11 @@ if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
     fail "compiler reported malformed producer identity: $PRODUCER_IDENTITY"
 fi
 mkdir -p target/build-stage0
-printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
+COMPILER_COMMIT=$("$COMPILER" --version | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+printf '%s\n' "$COMPILER_COMMIT" | grep -Eq '^[0-9a-f]{40}$' ||
+    fail "compiler reported malformed commit: $COMPILER_COMMIT"
+printf '%s' "$COMPILER_COMMIT" > target/build-stage0/git-hash.txt
+printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/tree-hash.txt
 
 echo "[compile-profile] compile profile-enabled CLI"
 run_logged "$BUILD_STDOUT" "$BUILD_STDERR" "profile-enabled CLI compile failed" \
@@ -732,7 +772,7 @@ MISMATCH_PRODUCER_IDENTITY=0000000000000000000000000000000000000000
 if [ "$MISMATCH_PRODUCER_IDENTITY" = "$PRODUCER_IDENTITY" ]; then
     MISMATCH_PRODUCER_IDENTITY=1111111111111111111111111111111111111111
 fi
-surface_fallback producer-mismatch target/build-stage0/git-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
+surface_fallback producer-mismatch target/build-stage0/tree-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
 
 echo "[compile-profile] compile compact-summary CLI"
 run_logged "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR" "compact-summary CLI compile failed" \
@@ -829,6 +869,7 @@ assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
+assert_lifetime_ledger_controls "$DETACH_CHANGED_STDERR"
 
 # Each pool context allocates two cells in the long-lived load+macro arena, so
 # the macro walk may build only a bounded number per fired declaration.
@@ -1818,15 +1859,15 @@ ROWS
 # another import loading the shared dependency first (json-first is the
 # failure ordering).
 echo "[compile-profile] verify lazy macro definition import order"
-for import_order in repro format_first; do
+while IFS=$TAB read -r import_order primary; do
     route_run "import-order-$import_order" "$STDLIB_TLCI_DIR" compile \
-        "$ROOT/tests/integration/macro_import_order_$import_order.tl"
+        "$ROOT/$primary"
     [ "$route_status" -eq 0 ] || {
         show_failure_logs "$STDLIB_TLCI_DIR/import-order-$import_order.stdout" \
             "$STDLIB_TLCI_DIR/import-order-$import_order.stderr"
         fail "lazy macro definition import-order fixture $import_order failed"
     }
-done
+done < "$WORKDIR/import-order.tsv"
 if ! cmp -s "$STDLIB_TLCI_DIR/import-order-repro.s" "$STDLIB_TLCI_DIR/import-order-format_first.s"; then
     diff -u "$STDLIB_TLCI_DIR/import-order-format_first.s" "$STDLIB_TLCI_DIR/import-order-repro.s" >&2 || true
     fail "import order changed lazy macro definition-context assembly"
@@ -1841,7 +1882,7 @@ route_rows wildcard embedded <<'ROWS'
 c typecheck.macro.stdlib_tlci_native_dispatches >= 1
 c typecheck.macro.stdlib_tlci_native_module_results >= 1
 has stdlib.hash/hash arity=1
-has stdlib.hash/inline-hash arity=2
+has stdlib.hash/inline-hash arity=3
 has stdlib.eq/inline-eq arity=3
 ROWS
 route_rows wildcard interpreted <<'ROWS'

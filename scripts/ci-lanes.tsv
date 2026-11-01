@@ -1,0 +1,137 @@
+# CI lanes: the one assignment of every scripts/ci-gates.tsv gate to the CI
+# job that proves it on each host (#7767 slice 2, council decision D-C42).
+# scripts/ci-lane.sh reads this file; .github/workflows/ci.yml lists only the
+# lane names. Each lane job runs scripts/ci-verify.sh --gates with the gates it
+# owns (with their needs closure and its own bootstrap) and seals a receipt in
+# its compiler stage envelope. The per-host aggregator jobs, which keep the
+# required-check names, pass only when every lane succeeded and the receipts
+# prove each host gate passed in its owning lane.
+# id: every gate of scripts/ci-gates.tsv, exactly once.
+# linux, windows: - when the gate does not run on that host, otherwise
+# OWNER[+LANE...]. OWNER is the lane whose job proves the gate; each further
+# LANE also runs it only because gates it owns need it, and every such
+# duplicate must be declared here. A lane is HOST-N, at most two per host,
+# and its job is named "CI lane HOST-N". An unassigned, doubly assigned,
+# unknown or undeclared gate fails every lane and aggregator.
+# Lane linux-1 isolates build-invariance with its opt2-CLI consumer, so CI
+# runs it with three pool workers; the Windows lanes come from the D-C42
+# scheduler replay (scripts/README.md, CI lanes).
+id	linux	windows
+x64-executable-template-registry-coverage	linux-2	windows-2
+cross-mode-differential-oracle-self-tests	linux-2	windows-2
+linux-resident-memory-limit-helper-self-tests	linux-2	-
+windows-job-object-memory-limit-helper-self-tests	-	windows-2
+embedded-stdlib-tlci-resource-verifier-self-tests	linux-2	windows-2
+build-invariance-batch-reuse-self-tests	linux-2	-
+selfhost-linked-size-attribution-parser-self-tests	linux-2	windows-2
+cli-help-surface	linux-2	windows-2
+compiler-state-schema-boundary	linux-2	windows-2
+tlci-native-route-size-ratchet-self-tests	linux-2	windows-2
+zero-cons-structural-classifier-self-tests	linux-2	windows-2
+zero-cons-fixture-and-embedded-source-invariant	linux-2	windows-1
+shared-view-count-ratchet	linux-2	windows-2
+spmd-mode-instruction-count-harness-self-tests	linux-2	windows-2
+c-measured-region-instruction-harness-self-tests	linux-2	windows-2
+instruction-count-comparison-self-tests	linux-2	windows-2
+self-compile-gate-self-tests	linux-2	windows-1
+compiler-scaling-comparison-self-tests	linux-2	windows-2
+cli-tools-benchmark-repetition-self-test	linux-2	windows-2
+stage0-release-publication-verifier-self-tests	linux-2	windows-1
+stage0-latest-staged-publication-self-tests	linux-2	windows-2
+bootstrap-adaptive-control-flow	linux-2	windows-2
+bootstrap-fixpoint	linux-2+linux-1	windows-1+windows-2
+stage0-size-ratchet	linux-2	windows-2
+stage2-opt1-opt2-build-invariance	linux-1	-
+embedded-stdlib-tlci-image	linux-2	windows-1
+stage2-opt2-built-cli-compile-cross-fixpoint-regression	linux-1	windows-2
+stage2-compile-profile-verifier	linux-2	windows-1
+stage2-cli-build-run-and-chooser-smoke	linux-2	windows-2
+embedded-stdlib-tlci-bounded-resource-report	linux-2	windows-2
+stage2-native-integration-corpus	linux-2	windows-1
+linux-self-compile-measurement	linux-2	-
+linux-instruction-count-baseline	linux-2	-
+tlci-mutation-bootstrap-fixpoint	linux-2	windows-2
+stage2-inline-typelisp-tests	linux-2	windows-2
+stage2-selfhost-compile-manifest	linux-2	windows-2
+stage2-core-ir-dependency-boundary	linux-2	windows-2
+embedded-stdlib-build-payload	linux-2	windows-2
+stage2-deterministic-assembly	linux-2	windows-2
+typelisp-format-compiler-selection-control	linux-2	windows-1
+typelisp-source-formatting	linux-2	windows-1
+large-crlf-formatter-diff	linux-2	windows-2
+typelisp-source-lint	linux-2	windows-1
+no-libc-dependency-guard	linux-2	windows-2
+stage2-public-tool-surface	linux-2	windows-1
+stage2-app-workflow-corpus	linux-2	windows-1
+ir-observability-golden	linux-2	windows-2
+compiler-arena-debug-native-matrix	linux-2	windows-2
+stage2-arena-sanitizer-selfhost	linux-2	-
+tlci-format-corpus	linux-2	windows-1
+stage2-spmd-runtime-dispatch	linux-2	windows-1
+stage2-spmd-package-calls	linux-2	windows-1
+ispc-perfbench-loads-corpus-contract	linux-2	windows-2
+ispc-perfbench-stores-corpus-contract	linux-2	windows-2
+ispc-perfbench-gathers-corpus-contract	linux-2	windows-2
+ispc-mandelbrot-corpus-contract	linux-2	windows-2
+ispc-point-transform-corpus-contract	linux-2	windows-2
+stage2-repository-doctests	linux-2	windows-2
+stage2-prelude-macro-mutation-guard	linux-2	windows-2
+tlci-native-route-sustained-stress	linux-2	windows-1
+package-metadata-only-tlci-dependency-catalogs	linux-2	windows-1
+package-native-tlci-dependency-macros	linux-2	windows-1
+package-dependency-tlci-frontend-surfaces	linux-2	windows-1
+stage2-compile-startup-profile-verifier	linux-2	windows-2
+stage2-allocation-profile-verifier	linux-2	windows-2
+stage2-math-exp-codegen-verifier	linux-2	windows-2
+stage2-math-log-codegen-verifier	linux-2	windows-2
+stage2-math-pow-codegen-verifier	linux-2	windows-2
+stage2-math-trig-codegen-verifier	linux-2	windows-2
+stage2-codegen-target-parity	linux-2	windows-2
+stage2-backend-target-assembly-parity	linux-2	windows-2
+stage2-windows-coff-batch-plan	linux-2	windows-1
+stage2-pic-relocation-verifier	linux-2	windows-1
+stage2-linux-shared-object-code-model	linux-2	-
+stage2-coff-relocation-overflow-verifier	linux-2	windows-1
+stage2-safety-corpus	linux-2	windows-1
+stage2-ownership-model	linux-2	windows-1
+integration-manifest-validator-self-tests	linux-2	windows-1
+windows-coff-plan-validator-self-tests	linux-2	windows-1
+docs-site-search-manifest-validator-self-tests	linux-2	windows-1
+integration-batch-observability	linux-2	windows-1
+integration-windows-path-normalization	linux-2	windows-1
+integration-compile-failure-diagnostics	linux-2	windows-2
+integration-signal-notice-capture	linux-2	-
+windows-integration-linker-queue-self-test	-	windows-1
+stage2-must-use-metadata-and-abi-codegen	linux-2	windows-2
+stage2-regalloc-backend-asm-shape-gates	linux-2	-
+stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux-2	-
+stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux-2	-
+stage2-sha-512-wipe-asm-shape-gate	linux-2	-
+stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	linux-2	-
+stage2-by-value-aggregate-abi-shape-gate	linux-2	-
+stage2-examples	linux-2	windows-2
+benchmark-wall-clock-harness-self-tests	linux-2	windows-2
+stage2-benchmark-comparison-correctness	linux-2	windows-1
+stage2-optimization-corpus-correctness	linux-2	windows-2
+stage2-optimization-corpus-opt2-runtime-correctness	linux-2	windows-2
+stage2-idna-unicode12-data	linux-2	windows-1
+stage2-stdlib-modules-and-fixtures	linux-2	windows-2
+stage2-stdlib-selfhost-verifier	linux-2	windows-1
+stage2-spmd-simd-comparison	linux-2	windows-1
+stage2-cross-mode-semantic-abi-differential	linux-2	windows-1
+stage2-spmd-lane-identity	linux-2	windows-1
+stage2-spmd-broadcast	linux-2	windows-1
+stage2-sde-fallback	linux-2	windows-1
+stage2-docs-pages-build-path	linux-2	windows-1
+stage2-cli-host-action-smoke	linux-2	-
+stage2-stdlib-documentation	linux-2	-
+linux-heavy-instruction-count-baseline	linux-2	-
+linux-compiler-scaling-budgets	linux-2	-
+stage2-native-link-generated-programs	linux-2	-
+stage2-rooted-linux-filesystem-boundary	linux-2	-
+stage2-linux-process-failure-boundary	linux-2	-
+windows-native-link-build-run	-	windows-1
+win64-seh-unwind-verifier	-	windows-1
+stage2-elf-object-reader-oracle	linux-2	-
+stage2-elf-dso-reader-oracle	linux-2	-
+stage2-backend-source-import-context	linux-2	windows-1

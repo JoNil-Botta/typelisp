@@ -2,7 +2,7 @@
 (import stdlib.vector)
 (import (vector.vector i64) as vec)
 
-(define (bad [outer : vec.Vec]) : (vec.Iter outer)
+(define (bad [outer : (& outer vec.Vec)]) : (vec.Iter outer)
   (let
     [inner : vec.Vec (vec.new)]
     (vec.iterator (& inner))))

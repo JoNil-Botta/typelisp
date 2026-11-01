@@ -72,6 +72,10 @@ inspect_valid valid-platform-linux-metadata
 inspect_valid valid-platform-windows-metadata
 inspect_valid valid-platform-linux-code
 inspect_valid valid-platform-windows-code
+inspect_valid valid-abi3-linux-metadata
+inspect_valid valid-abi3-windows-metadata
+inspect_valid valid-abi3-linux-code
+inspect_valid valid-abi3-windows-code
 
 for name in \
     malformed-bad-magic \
@@ -141,6 +145,28 @@ compare_file "$CORPUS/valid-platform-windows-code.tlci" \
 compare_file "$CORPUS/malformed-platform-unknown.tlci" \
     "$EMITTED_PLATFORM_UNKNOWN" "unknown platform emitter bytes"
 
+# Callback ABI 3 changes Windows executable calls, while the v2 witnesses above
+# remain byte-for-byte inspection fixtures. Pin both current platform pairs.
+if ! "$COMPILER" run tests/tlci/platform_corpus_emit.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$WORKDIR/valid-abi3-linux-metadata.tlci" \
+    "$WORKDIR/valid-abi3-windows-metadata.tlci" \
+    "$WORKDIR/valid-abi3-linux-code.tlci" \
+    "$WORKDIR/valid-abi3-windows-code.tlci" \
+    "$WORKDIR/abi3-platform-unknown.tlci" --current-abi \
+    >"$WORKDIR/abi3-emitter.stdout" 2>"$WORKDIR/abi3-emitter.stderr"; then
+    sed 's/^/  /' "$WORKDIR/abi3-emitter.stderr" >&2 || true
+    fail "current callback ABI emitter witness failed"
+fi
+[ ! -s "$WORKDIR/abi3-emitter.stdout" ] || fail "current ABI emitter wrote stdout"
+[ ! -s "$WORKDIR/abi3-emitter.stderr" ] || fail "current ABI emitter wrote stderr"
+for name in valid-abi3-linux-metadata valid-abi3-windows-metadata \
+    valid-abi3-linux-code valid-abi3-windows-code; do
+    compare_file "$CORPUS/$name.tlci" "$WORKDIR/$name.tlci" "$name emitter bytes"
+done
+compare_file "$CORPUS/malformed-platform-unknown.tlci" \
+    "$WORKDIR/abi3-platform-unknown.tlci" "immutable unknown-platform witness"
+
 assert_platform_only_delta() {
     linux_image=$1
     windows_image=$2
@@ -158,5 +184,13 @@ assert_platform_only_delta \
     "$CORPUS/valid-platform-linux-code.tlci" \
     "$CORPUS/valid-platform-windows-code.tlci" \
     "code platform pair"
+assert_platform_only_delta \
+    "$CORPUS/valid-abi3-linux-metadata.tlci" \
+    "$CORPUS/valid-abi3-windows-metadata.tlci" \
+    "callback ABI 3 metadata platform pair"
+assert_platform_only_delta \
+    "$CORPUS/valid-abi3-linux-code.tlci" \
+    "$CORPUS/valid-abi3-windows-code.tlci" \
+    "callback ABI 3 code platform pair"
 
-echo "TLCI format corpus passed (7 valid, 9 malformed)."
+echo "TLCI format corpus passed (11 valid, 9 malformed)."

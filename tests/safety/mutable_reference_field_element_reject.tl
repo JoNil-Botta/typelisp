@@ -11,4 +11,4 @@
     (let
       [whole-left : (&mut bags (__tl_dyn-array i64)) (&mut bags.left)]
       [first-item : (&mut bags i64) (&mut (array-ref bags.left 0))]
-      unit)))
+      (__tl_array-push! whole-left 1))))

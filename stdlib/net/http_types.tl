@@ -415,7 +415,10 @@
       [normalized : byte_buf.ByteBuf
         (byte_buf.with-capacity (byte_buf.bytes-length name))]
       (while (< index old-len)
-        (set! (array-ref slots index) (array-ref set.slots index))
+        ;; The old set is consumed: each name moves into the new storage.
+        (set!
+          (array-ref slots index)
+          (replace! (array-ref set.slots index) (byte_buf.new)))
         (set! index (+ index 1)))
       (set! index 0)
       (while (< index (byte_buf.bytes-length name))

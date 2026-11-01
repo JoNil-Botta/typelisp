@@ -22,18 +22,30 @@
   (Ok CompilerSurfaceHydration)
   (Err String))
 
+;; Every lookup below takes the aux directory its caller checked once with
+;; `tlci.tlci-aux-checked-directory` for the same rodata (#9449).
 (define (compiler-surface-identity-bytes
-  [rodata : (& rodata (__tl_dyn-array u8))]) : tlci.ResultTlciAuxLookup
-  (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-package-identity))
+  [rodata : (& rodata (__tl_dyn-array u8))]
+  [checked : (& checked tlci.TlciAuxCheckedDirectory)]) : tlci.ResultTlciAuxLookup
+  (tlci.tlci-aux-checked-find
+    rodata
+    checked
+    tlci.tlci-aux-kind-package-identity))
 
-(define (compiler-surface-ast-bytes [rodata : (& rodata (__tl_dyn-array u8))]) : tlci.ResultTlciAuxLookup
-  (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-ast))
+(define (compiler-surface-ast-bytes
+  [rodata : (& rodata (__tl_dyn-array u8))]
+  [checked : (& checked tlci.TlciAuxCheckedDirectory)]) : tlci.ResultTlciAuxLookup
+  (tlci.tlci-aux-checked-find rodata checked tlci.tlci-aux-kind-frontend-ast))
 
-(define (compiler-surface-fact-bytes [rodata : (& (__tl_dyn-array u8))]) : tlci.ResultTlciAuxLookup
-  (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-facts))
+(define (compiler-surface-fact-bytes
+  [rodata : (& rodata (__tl_dyn-array u8))]
+  [checked : (& checked tlci.TlciAuxCheckedDirectory)]) : tlci.ResultTlciAuxLookup
+  (tlci.tlci-aux-checked-find rodata checked tlci.tlci-aux-kind-frontend-facts))
 
-(define (compiler-surface-key [rodata : (& (__tl_dyn-array u8))]) : ResultCompilerSurfaceKey
-  (match (compiler-surface-identity-bytes rodata)
+(define (compiler-surface-key
+  [rodata : (& (__tl_dyn-array u8))]
+  [checked : (& tlci.TlciAuxCheckedDirectory)]) : ResultCompilerSurfaceKey
+  (match (compiler-surface-identity-bytes rodata checked)
     [(Missing) Missing]
     [(Err message) (Err message)]
     [(Ok schema bytes)
@@ -70,23 +82,24 @@
 
 (define (compiler-surface-hydrate
   [rodata : (& (__tl_dyn-array u8))]
+  [checked : (& tlci.TlciAuxCheckedDirectory)]
   [expected-key : (& surface_identity.SurfaceIdentityKey)]
   [structural-session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
-  (match (compiler-surface-identity-bytes rodata)
+  (match (compiler-surface-identity-bytes rodata checked)
     [(Missing) Missing]
     [(Err message) (Err message)]
     [(Ok identity-schema identity-bytes)
       (if (not
         (= identity-schema surface_identity.surface-identity-schema-version))
         (Err "compiler surface: unsupported identity schema")
-        (match (compiler-surface-ast-bytes rodata)
+        (match (compiler-surface-ast-bytes rodata checked)
           [(Missing) Missing]
           [(Err message) (Err message)]
           [(Ok ast-schema ast-bytes)
             (if (not (= ast-schema surface_ast.surface-ast-schema-version))
               (Err "compiler surface: unsupported AST schema")
-              (match (compiler-surface-fact-bytes rodata)
+              (match (compiler-surface-fact-bytes rodata checked)
                 [(Missing) Missing]
                 [(Err message) (Err message)]
                 [(Ok fact-schema fact-bytes)

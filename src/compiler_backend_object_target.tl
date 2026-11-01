@@ -223,17 +223,21 @@
     (x64_catalog.compiler-x64-template-assert-structured! macro-template target))
   (let
     [with-image-entry : CompilerBackendObjectTargetParts
-      (compiler-backend-object-add-text-bytes
-        (compiler-backend-object-add-text
-          parts
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
-        entry-bytes)]
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-bytes
+          (compiler-backend-object-add-text
+            parts
+            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+          entry-bytes)
+        (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry$end"))]
     (if macro-entry
-      (compiler-backend-object-add-text-bytes
-        (compiler-backend-object-add-text
-          with-image-entry
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
-        macro-entry-bytes)
+      (compiler-backend-object-add-text
+        (compiler-backend-object-add-text-bytes
+          (compiler-backend-object-add-text
+            with-image-entry
+            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
+          macro-entry-bytes)
+        (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry$end"))
       with-image-entry)))
 
 (define (compiler-backend-object-base-sections

@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import linker_version_map as map)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.io)
@@ -26,11 +27,9 @@
       [(Ok nodes)
         (let
           [out : String ""]
-          [i : i64 0]
-          (while (< i nodes.len)
+          (for [i (iterator.range 0 nodes.len)]
             (let
               [node : (& nodes map.VersionNode) (& (array-ref nodes.slots i))]
-              [j : i64 0]
               (set!
                 out
                 (cat.str-cat
@@ -39,7 +38,7 @@
                   ":"
                   (string.int->string node.parent)
                   "["))
-              (while (< j node.symbols.len)
+              (for [j (iterator.range 0 node.symbols.len)]
                 (let
                   [symbol : (& nodes map.VersionSymbol)
                     (& (array-ref node.symbols.slots j))]
@@ -51,8 +50,7 @@
                         "+"
                         "-")
                       (string.copy symbol.name)
-                      ";")))
-                (set! j (+ j 1)))
+                      ";"))))
               (set!
                 out
                 (cat.str-cat
@@ -60,8 +58,7 @@
                   (if node.local-all
                     "-*;"
                     "")
-                  "]")))
-            (set! i (+ i 1)))
+                  "]"))))
           out)])))
 
 (define (contains? [text : (& t str)] [needle : (& n str)]) : bool
@@ -76,7 +73,7 @@
         (string.eq
           (string.substring text at (string.string-length needle))
           needle))
-      (set! at (+ at 1)))
+      (+= at 1))
     found))
 
 (define (reject
@@ -178,13 +175,10 @@
     (set!
       (array-ref cases 15)
       (RejectedMap "V{global:x();};" "construct '('" 1 11))
-    (let
-      [i : i64 0]
-      (while (< i (array-length cases))
-        (let
-          [case : (& cases RejectedMap) (& (array-ref cases i))]
-          (reject case.source case.detail case.line case.column (& limits)))
-        (set! i (+ i 1))))))
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [case : (& cases RejectedMap) (& (array-ref cases i))]
+        (reject case.source case.detail case.line case.column (& limits))))))
 
 (test
   version-map-bounds-and-scanner

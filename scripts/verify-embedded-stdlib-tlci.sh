@@ -139,6 +139,22 @@ MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
 MANIFEST=target/embedded-stdlib-tlci/modules.txt
 mkdir -p "$WORKDIR"
 
+# Compile outside the short execution deadline so slow compiler hosts retain
+# the same diagnostic-walk bound. The old computed-splice walk never returns.
+DIAGNOSTIC_DRIVER=$WORKDIR/native-diagnostics
+[ "$HOST_TARGET" != windows ] || DIAGNOSTIC_DRIVER=$DIAGNOSTIC_DRIVER.exe
+"$COMPILER" build tools/embedded-stdlib-tlci/native_diagnostics.tl \
+    --stdlib-root stdlib --stdlib-root src -o "$DIAGNOSTIC_DRIVER"
+diagnostic_status=0
+env -u BASH_ENV scripts/run-memory-bounded.sh \
+    --limit-mib 1024 --timeout-seconds 10 \
+    --report "$WORKDIR/native-diagnostics.report" -- \
+    env -u BASH_ENV "$DIAGNOSTIC_DRIVER" || diagnostic_status=$?
+if [ "$diagnostic_status" -ne 42 ]; then
+    echo "native producer diagnostic regression exited $diagnostic_status, expected 42" >&2
+    exit 1
+fi
+
 if [ "$HOST_TARGET" = windows ]; then
     OTHER_HOST_TARGET=linux
 else
@@ -262,9 +278,6 @@ SURFACE=target/embedded-stdlib-tlci/prelude-surface-$HOST_TARGET.rodata
     "$MANIFEST" stdlib "$FULL_BLOCKER_IMAGE" "$HOST_TARGET" \
     "$PRODUCER_IDENTITY" "$SURFACE" --full-blockers \
     > "$FULL_BLOCKER_STDOUT" 2> "$FULL_BLOCKER_STDERR"
-"$COMPILER" run tools/embedded-stdlib-tlci/encode-envelope.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
-    "$FULL_BLOCKER_IMAGE" "$FULL_BLOCKER_IMAGE.tlch"
 
 if ! cmp -s "$IMAGE_A" "$FULL_BLOCKER_IMAGE"; then
     echo "full-blocker diagnostics changed the embedded stdlib tlci image" >&2
@@ -288,9 +301,6 @@ fi
     "$MANIFEST" stdlib "$IDENTITY_IMAGE" "$HOST_TARGET" \
     "$PRODUCER_IDENTITY" "$SURFACE" --identity-manifest \
     > "$IDENTITY_STDOUT" 2> "$IDENTITY_ACTUAL"
-"$COMPILER" run tools/embedded-stdlib-tlci/encode-envelope.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
-    "$IDENTITY_IMAGE" "$IDENTITY_IMAGE.tlch"
 if ! cmp -s "$IMAGE_A" "$IDENTITY_IMAGE"; then
     echo "identity-manifest diagnostics changed the embedded stdlib tlci image" >&2
     exit 1

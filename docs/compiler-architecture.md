@@ -15,13 +15,17 @@ Lowering produces typed three-address IR, optimization transforms that IR,
 and the backend emits native code for the selected target. CLI, package,
 batch and LSP services orchestrate these stages.
 
-Multi-entry compile batches may retain immutable embedded-image bytes in the
-driver's surface arena under the [batch lifetime contract](compiler-invariants.md#architecture).
-Per-entry source admission and native mappings remain independent.
+The embedded TLCI catalog decodes only the prelude surface or requested
+native macro images, sharing one immutable Huffman model. Multi-entry batches
+retain the surface in the driver arena under the
+[batch lifetime contract](compiler-invariants.md#architecture). Source admission,
+per-pass native mappings and generation-checked handles remain independent.
 
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
+File and package loads share module-identity validation and typed loader
+diagnostics under the [loader contract](compiler-invariants.md#cli).
 Standalone backend target source helpers use the same executable prelude loader and
 retain declaration paths with their logical module column. Their borrowed
 `CompilerLowerRequest` carries roots, cfg names, session and executable policy; the
@@ -30,6 +34,12 @@ defines reset and nested-job ownership.
 Declaration-macro splice deduplication also includes the owning module;
 its scope and regression witnesses are recorded in the
 [detailed macro invariants](compiler-invariants.md#architecture).
+
+Dependency prefix reuse authenticates each semantic declaration by its admitted
+fragment or embedded stdlib source. The reused prefix ends before the first
+entry-owned body or source expression still requiring macro expansion; that
+declaration and everything after it take the ordinary walks. See the
+[prefix admission invariant](compiler-invariants.md#architecture).
 
 Generated macro commits refresh selected aliases through the existing
 module/import event index and symbol map before the next expansion context is
@@ -48,7 +58,11 @@ the singleton `Begin` rule alongside the `While` body-list contract.
 | Documentation identities and LSP targets | [shared encoder](../src/doc_render.tl), [owned semantic adapter](../src/compiler_semantic_documentation.tl), [exact site bindings](../src/lsp_documentation_sites.tl) | Keep source/member/generated identities identical across HTML/search and LSP; match exact source/compiler facts and preserve the [independent site owner](compiler-invariants.md). |
 | Tail-call argument storage | [lowering](../src/compiler_lower.tl) | Inspect effective arguments against formal types and prove storage survives frame release; preserve the [lowering invariants](compiler-invariants.md). |
 | Shared IR and operands | [IR model](../src/compiler_ir_types.tl) | Extend `compiler-ir-instr-visit-uses`, `compiler-ir-instr-map` and related operand helpers instead of copying full-variant walkers. |
+| SSA rename state | [optimizer](../src/compiler_optimize.tl) | Index block/phi lookup, restore per-variable definitions along the dominator path, and capture only requested predecessor-edge values under the [SSA contract](compiler-invariants.md#ssa-renaming). |
+| Post-regalloc stack facts | [typed boundary](../src/compiler_stack_traffic.tl), [existing CFG](../src/compiler_liveness.tl) | #7236 supplies ownership and source regions; #7294 consumes ordered same-home write/read witnesses before the next header visit. SCC access counts are a separate inventory. Keep classification separate from warning policy under the [SPMD contract](compiler-invariants.md). |
 | Target predicates | [target cfg builder](../src/compiler_target_cfg_core.tl) | Use the shared target presets and [target dispatch guard](../scripts/check-codegen-target-dispatch.sh). |
+| Immutable literal storage | [backend literal records](../src/compiler_backend.tl) | Assembly and direct objects consume the same owned payload/label/header plan; preserve the [emission lifetime contract](compiler-invariants.md#architecture). |
+| Calling conventions and C entries | [ABI facts](../src/compiler_abi.tl), [backend](../src/compiler_backend.tl) | Preserve the distinction between Internal bodies and Platform entries; both output routes share the lowered-signature forwarding plan and the [ABI invariants](compiler-invariants.md#architecture). |
 | ELF relocatable input syntax | [ELF reader](../src/linker_elf_object_reader.tl) | Preserve the input/content owner, physical IDs and borrowed spans under the [input contract](compiler-invariants.md#elf-relocatable-object-input); #7101 owns admission and linking policy. |
 | ELF shared-object metadata | [DSO reader](../src/linker_elf_dso_reader.tl) | Translate dynamic addresses through unique file-backed load extents, preserve input ownership and version identities under the [DSO contract](compiler-invariants.md#elf-shared-object-metadata); #8293/#7101 own provider selection and resolution. |
 | AMD64 short import syntax | [COFF import reader](../src/linker_coff_import_reader.tl) | Preserve physical archive member IDs, original spellings and literal IAT symbols under the [import contract](compiler-invariants.md#coff-short-import-input); #7102 owns selection and #7175 owns PE import layout. |
@@ -70,6 +84,11 @@ adapters do not make an ambient owner safe for a value from another job.
 Borrow-conflict read forms retain unchanged source IDs and build changed
 payloads in that same owner, under the linked expression/fact contract.
 
+Final macro detachment may retire source provenance before copying: it clears
+source span slots for forwarding IDs, while the shared AST traversal rebuilds
+destination provenance from wrapper rows. Other compactions preserve their
+source; see the [AST ownership invariants](compiler-invariants.md#architecture).
+
 Lifetime diagnostics and IR rendering share the validated syntax-name boundary
 with explicit macro-spelling policy; see the [rendering invariants](compiler-invariants.md#architecture).
 
@@ -85,6 +104,9 @@ contracts, canonical APIs and regression witnesses. The
 covers handwritten runtime/startup/direct-object code; shared machine-program
 work belongs to [#7055](https://github.com/JoNil-Botta/typelisp/issues/7055) and
 [#7056](https://github.com/JoNil-Botta/typelisp/issues/7056).
+The Windows startup and process boundary retain the shared
+[argument transport contract](compiler-invariants.md#windows-argument-transport)
+across text and direct-object emission.
 
 The target boundary guard from
 [#5347](https://github.com/JoNil-Botta/typelisp/issues/5347) is implemented.

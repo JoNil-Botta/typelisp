@@ -1,4 +1,5 @@
 ;; Closed parser for reviewed x86-64 template control/frame events.
+(import stdlib.iterator)
 (import stdlib.string)
 
 (defenum CompilerX64TemplateEventKind
@@ -34,13 +35,11 @@
 (define (compiler-x64-template-event-count-transcript [text : (& text str)]) : i64
   (let
     [n : i64 (string.string-length text)]
-    [at : i64 0]
     [count : i64 0]
-    (while (< at n)
+    (for [at (iterator.range 0 n)]
       (when
         (or (= at 0) (= (string.string-ref text (- at 1)) '\n'))
-        (set! count (+ count 1)))
-      (set! at (+ at 1)))
+        (+= count 1)))
     count))
 
 (define (compiler-x64-template-events [transcript : (& transcript str)]) : CompilerX64TemplateEventSeq
@@ -87,10 +86,10 @@
           (if (= row index)
             (set! done true)
             (begin
-              (set! row (+ row 1))
+              (+= row 1)
               (set! start (+ at 1))
-              (set! at (+ at 1))))
-          (set! at (+ at 1))))
+              (+= at 1)))
+          (+= at 1)))
       (let
         [end : i64
           (if done

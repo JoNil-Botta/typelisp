@@ -1,5 +1,6 @@
 ;; compiler_backend_runtime_linux.tl - Linux backend runtime leaf emitter.
 (import compiler_backend_runtime_common as runtime_common)
+(import compiler_backend_runtime_sanitize as sanitize)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
 (import stdlib.str_cat_runtime as str_cat)
@@ -72,12 +73,17 @@ tl_backtrace_stack_high:
 
 (define (compiler-backend-runtime-data
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
-  (runtime_common.compiler-backend-runtime-common-data
-    features
-    (compiler-backend-runtime-arena-data
-      (runtime_common.compiler-backend-runtime-arena-debug-text?
-        features.arena-debug)
-      features.backtrace)))
+  (let
+    [data : String
+      (runtime_common.compiler-backend-runtime-common-data
+        features
+        (compiler-backend-runtime-arena-data
+          (runtime_common.compiler-backend-runtime-arena-debug-text?
+            features.arena-debug)
+          features.backtrace))]
+    (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
+      (sanitize.runtime-sanitize-data data)
+      data)))
 
 (define (compiler-backend-runtime-linux-alloc-functions-base
   [profile : bool]
@@ -1433,14 +1439,19 @@ tl_backtrace_stack_set:
         (compiler-backend-runtime-backtrace-functions))
       (compiler-backend-runtime-linux-render
         true
-        (x64_catalog.compiler-x64-template-select-four
-          (LinuxRuntimeArena)
-          (LinuxRuntimeArenaDebug)
-          (LinuxRuntimeArenaProfile)
-          (LinuxRuntimeArenaProfileDebug)
-          profile
-          arena-debug)
-        (compiler-backend-runtime-linux-arena-functions profile debug-text))
+        (x64_catalog.compiler-x64-template-with-sanitizer
+          (x64_catalog.compiler-x64-template-select-four
+            (LinuxRuntimeArena)
+            (LinuxRuntimeArenaDebug)
+            (LinuxRuntimeArenaProfile)
+            (LinuxRuntimeArenaProfileDebug)
+            profile
+            arena-debug)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
+          (sanitize.runtime-sanitize-linux-arena
+            (compiler-backend-runtime-linux-arena-functions profile debug-text))
+          (compiler-backend-runtime-linux-arena-functions profile debug-text)))
       (compiler-backend-runtime-linux-render
         profile
         (CommonProfile)
@@ -1481,14 +1492,19 @@ tl_backtrace_stack_set:
         (compiler-backend-runtime-region-mark-functions))
       (compiler-backend-runtime-linux-render
         features.region-reset
-        (x64_catalog.compiler-x64-template-select-four
-          (LinuxRuntimeRegionReset)
-          (LinuxRuntimeRegionResetDebug)
-          (LinuxRuntimeRegionResetProfile)
-          (LinuxRuntimeRegionResetProfileDebug)
-          profile
-          arena-debug)
-        (compiler-backend-runtime-region-reset-functions profile debug-text)))))
+        (x64_catalog.compiler-x64-template-with-sanitizer
+          (x64_catalog.compiler-x64-template-select-four
+            (LinuxRuntimeRegionReset)
+            (LinuxRuntimeRegionResetDebug)
+            (LinuxRuntimeRegionResetProfile)
+            (LinuxRuntimeRegionResetProfileDebug)
+            profile
+            arena-debug)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
+          (sanitize.runtime-sanitize-linux-reset
+            (compiler-backend-runtime-region-reset-functions profile debug-text))
+          (compiler-backend-runtime-region-reset-functions profile debug-text))))))
 
 (define (compiler-backend-runtime-externs
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String

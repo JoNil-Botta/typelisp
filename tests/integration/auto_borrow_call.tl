@@ -31,7 +31,7 @@
 (define (call-pair-f [f : (-> (& p Pair) i64)] [p : Pair]) : i64
   (f p))
 
-(define (box-pair [p : Pair]) : (RefBox p)
+(define (box-pair [p : (& p Pair)]) : (RefBox p)
   (RefBox p))
 
 (define (box-sum [box : (RefBox owner)]) : i64

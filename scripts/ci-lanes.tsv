@@ -108,6 +108,7 @@ stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux-2	-
 stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux-2	-
 stage2-sha-512-wipe-asm-shape-gate	linux-2	-
 stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	linux-2	-
+stage2-crypto-aes-fixed-work-asm-shape-gate	linux-2	-
 stage2-by-value-aggregate-abi-shape-gate	linux-2	-
 stage2-examples	linux-2	windows-2
 benchmark-wall-clock-harness-self-tests	linux-2	windows-2

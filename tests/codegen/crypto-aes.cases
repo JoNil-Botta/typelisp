@@ -1,0 +1,82 @@
+# AES-specific required both-target opt1/opt2 shape boundary. Public vector,
+# lifecycle and source-work checks live in stdlib/tests/crypto_aes_*_inline.tl.
+#
+# Pin every emitted AES helper AND retain explicit production roots alongside
+# ordinary-entry consuming constructors and typed repeated-use callers. The complete normalized instruction/label bodies of
+# ALL AES functions and these production roots are pinned, not only unused
+# helpers. Every changed branch, address, call or wipe fails closed and requires
+# renewed assembly review; see tests/fixtures/crypto-aes/shape-review.md.
+
+file aes_audit.tl
+(import stdlib.crypto_aes_core as aes)
+(import stdlib.crypto_secret as secret)
+
+;: Actual typed production call, including any inlined preflight/cipher/wipes.
+(define (production-128 [schedule : (& schedule aes.Aes128Schedule)] [source : (& source secret.SecretFixed)] [destination : (&mut destination secret.SecretFixed)]) (:export-symbol "aes_audit_production_128") : aes.AesStatus
+  (aes.encrypt-128! schedule source destination))
+
+;: Independent AES-256 root, sharing the same arithmetic implementation.
+(define (production-256 [schedule : (& schedule aes.Aes256Schedule)] [source : (& source secret.SecretFixed)] [destination : (&mut destination secret.SecretFixed)]) (:export-symbol "aes_audit_production_256") : aes.AesStatus
+  (aes.encrypt-256! schedule source destination))
+
+;: Real key constructors and repeated borrowed block operations, both variants.
+(define (main) : i64
+  (let [source : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
+       [destination : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
+       [ok : bool true]
+    (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
+      [(Aes128Ok schedule)
+        (let [index : i64 0]
+          (while (< index 2)
+            (match (production-128 (& schedule) (& source) (&mut destination))
+              [(AesOk) unit] [_ (set! ok false)])
+            (set! index (+ index 1))))
+        (aes.close-128 schedule)]
+      [_ (set! ok false)])
+    (match (aes.new-256 (secret.fixed-zero (secret.Secret32)))
+      [(Aes256Ok schedule)
+        (let [index : i64 0]
+          (while (< index 2)
+            (match (production-256 (& schedule) (& source) (&mut destination))
+              [(AesOk) unit] [_ (set! ok false)])
+            (set! index (+ index 1))))
+        (aes.close-256 schedule)]
+      [_ (set! ok false)])
+    (secret.close-fixed source)
+    (secret.close-fixed destination)
+    (if ok 42 1)))
+end-file
+
+case aes-production-shape
+source {{work}}/aes_audit.tl
+args --stdlib-root {{root}}/stdlib
+target linux-x86_64 windows-x86_64
+opt 1 2
+assemble
+repeatable
+if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime
+  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call)
+  not-match \(%rip\)|\(,%
+else
+  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_gf_mul
+  contains $27
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call)
+end-if
+in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_gf_mul
+not-match ^[[:space:]]+(cmpb|testb|set[a-z]+|cmov[a-z]+)
+not-match \(%rip\)|\(,%
+in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang
+match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang$
+exec scripts/check-crypto-aes-shape.sh "{{dir}}/out.s" "{{dir}}/audit" "{{root}}/tests/fixtures/crypto-aes/shape-{{target}}-opt{{opt}}.sha256"
+
+case aes-no-escape-surface
+do none
+target -
+opt -
+in file stdlib/crypto_aes_core.tl
+narrow tl-code
+not-match \(extern|\(import stdlib\.(ffi|runtime)
+not-match ^\(define \((to-string|debug|show|format|clone|hash|serialize|to-bytes|as-bytes|to-hex|schedule-byte|schedule-word)
+not-match ^\(defdispatch
+not-match (S[Bb][Oo][Xx].*[Tt]able|[Tt]-[Tt]able)

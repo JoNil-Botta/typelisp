@@ -1017,6 +1017,16 @@ index. The `macro-segmented-program-events` test and the generated-declaration
 typecheck cases cover the event index and the re-resolution boundary; the
 `expansions` compiler-scaling row measures expansions within one module.
 
+The segmented module-alias index can survive a committed fresh, undotted
+function-only splice replacing an unaliased `Decls` placeholder in a non-root
+module. Its macro-state owner, source-name identity, segmented view and splice
+generation, resolution generation and lazy-stub count must agree. Retention
+advances the count and splice stamp without changing completeness or event
+order. Negative and lazy-derived answers therefore describe the same relation.
+Root shadows, other declaration forms and incompatible views rebuild; other
+import-derived caches still invalidate independently. Selected-item replay
+remains independent of module-alias indexing.
+
 A cached segmented module view may continue across a splice containing only
 fresh, undotted function declarations in that non-root module. The first carry
 clones the old local overlay into the persistent store owner over the new top

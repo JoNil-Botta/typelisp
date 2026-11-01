@@ -9518,20 +9518,34 @@
     [count : i64 (array-length pairs)]
     [segmented : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
+    [retained? : bool (tc_core.macro-alias-cache-segmented-current? state 0)]
     [ok : bool true]
-    (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
+    (unless
+      retained?
+      (tc_core.tc-macro-import-index-control-set! macro-state 3 0))
     (tc_core.macro-alias-cache-ensure! macro-state)
-    ;; Selected-item replay must not publish an unbuilt module-alias cache.
-    (tc_core.macro-alias-cache-build-segmented! state true)
-    (set! ok (= (tc_core.tc-macro-import-index-control macro-state 4) 0))
-    (tc_core.macro-alias-cache-build-segmented! state false)
+    ;; Selected-item replay neither publishes an unbuilt alias index nor
+    ;; changes a retained table's completeness and view metadata.
+    (let
+      [built : i64 (tc_core.tc-macro-import-index-control macro-state 4)]
+      [complete : i64 (tc_core.tc-macro-import-index-control macro-state 6)]
+      (tc_core.macro-alias-cache-build-segmented! state true)
+      (set!
+        ok
+        (and
+          (= (tc_core.tc-macro-import-index-control macro-state 4) built)
+          (= (tc_core.tc-macro-import-index-control macro-state 6) complete))))
+    (unless retained? (tc_core.macro-alias-cache-build-segmented! state false))
     (while (< index count)
       (set!
         (array-ref segmented index)
-        (tc_core.macro-alias-cache-get
+        (match (tc_core.macro-import-alias-target-cached-id
           macro-state
+          (tc_core.tc-global-shared-view flat-decls)
           (array-ref pairs index)
-          (array-ref pairs (+ index 1))))
+          (array-ref pairs (+ index 1)))
+          [(Some target) target]
+          [(No) -1]))
       (+= index 2))
     (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
     (tc_core.macro-alias-cache-ensure! macro-state)
@@ -9540,13 +9554,20 @@
     (while (< index count)
       (if (=
         (array-ref segmented index)
-        (tc_core.macro-alias-cache-get
+        (match (tc_core.macro-import-alias-target-cached-id
           macro-state
+          (tc_core.tc-global-shared-view flat-decls)
           (array-ref pairs index)
-          (array-ref pairs (+ index 1))))
+          (array-ref pairs (+ index 1)))
+          [(Some target) target]
+          [(No) -1]))
         unit
         (set! ok false))
       (+= index 2))
+    ;; Leave the oracle's caller in its original segmented mode.
+    (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
+    (tc_core.macro-alias-cache-ensure! macro-state)
+    (tc_core.macro-alias-cache-build-segmented! state false)
     ok))
 
 ;; Moves `count` rows from the cursor into the emitted prefix, as the walk does.
@@ -9716,6 +9737,96 @@
     (if (macro-segmented-events-smoke?)
       unit
       (io.panic "typecheck: segmented macro program event index smoke failed"))))
+
+(test
+  macro-segmented-alias-index-retains-function-splice
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
+    [module-id : i64 (ci.intern "alias-retain")]
+    [decls : ast.AstDeclList
+      (tc-module-carry-test-decls
+        pools
+        "(module alias-retain)\n(import dep as d)\n(generate)")]
+    [paths : ast.AstDeclPathList
+      (tc_core.macro-paths-for-decls state (& decls) "alias-retain")]
+    [program : ast.AstProgram (ast.ast-program (clone decls))]
+    [symbols : csym.CompilerSymbols
+      (match (tc_core.macro-live-symbols-build-or-reuse!
+        state
+        (& program)
+        (& paths))
+        [(Ok value) value]
+        [_ (io.panic "alias retention symbols failed")])]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        program
+        symbols
+        (tc_core.macro-live-registries-shared-view state)
+        "alias-retain"
+        module-id
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [delta : ast.AstDeclList
+      (tc-module-carry-test-decls pools "(define (fresh) : i64 42)")]
+    [delta-paths : ast.AstDeclPathList
+      (tc_core.macro-paths-for-decls state (& delta) "alias-retain")]
+    [base : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+    [missing : i64 (ci.intern "alias-retain-missing")]
+    (tc_core.macro-expand-scratch-begin! state)
+    (tc_core.macro-segmented-program-begin!
+      job
+      (ast.ast-decl-list-new)
+      (ast.ast-decl-path-list-new)
+      decls
+      paths)
+    (macro-segmented-events-emit! job 2)
+    (tc_core.macro-import-alias-target-cached-id-in-context
+      ctx
+      (ast.ast-decl-list-new)
+      module-id
+      missing)
+    (test.assert-true
+      (= (tc_core.macro-alias-cache-get state module-id missing) -1)
+      "negative answer warmed")
+    (let
+      [inert? : bool
+        (tc_core.macro-alias-cache-splice-inert? ctx (& delta) module-id)]
+      (tc_core.macro-segmented-program-splice-current!
+        job
+        (clone delta)
+        (clone delta-paths))
+      (test.assert-true
+        (tc_core.macro-live-symbols-insert-decls! state (clone delta) module-id)
+        "fresh symbols committed")
+      (test.assert-true
+        (tc_core.macro-live-registries-append-decls!
+          state
+          (clone delta)
+          (clone delta-paths)
+          module-id)
+        "fresh registries committed")
+      (match (tc_core.macro-expand-rebuild-context-for-splice
+        ctx
+        (clone delta)
+        delta-paths
+        "alias-retain"
+        module-id
+        (Extend base delta)
+        inert?)
+        [(Ok _ _)
+          (test.assert-true
+            (and
+              (= (tc_core.tc-macro-import-index-control state 3) 1)
+              (= (tc_core.tc-macro-import-index-control state 5) 1)
+              (= (tc_core.macro-alias-cache-get state module-id missing) -1))
+            "function splice retains the built alias index and negative answer")]
+        [_ (io.panic "alias retention rebuild failed")]))
+    (tc_core.macro-segmented-program-end! job)
+    (tc_core.macro-live-symbols-clear! state)
+    (tc_core.macro-expand-scratch-release! state)))
 
 (define (macro-segmented-program-job-reset-smoke?) : bool
   (let

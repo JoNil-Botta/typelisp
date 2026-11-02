@@ -1,6 +1,7 @@
 # Reviewed input classes for every canonical gate. A missing/new gate makes group selection fall back to the full table.
 # compiler/stdlib/corpus include all produced-compiler consumers, plus direct source/corpus readers below.
 id	classes	reason
+stage2-inline-aggregate-scaling	compiler,stdlib,corpus	Bounds depth-40 binary inline aggregate check and opt0/1/2 compile on the produced compiler.
 x64-executable-template-registry-coverage	compiler,corpus	Reads compiler source structure directly; retain for source and corpus recommendations.
 cross-mode-differential-oracle-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
 linux-resident-memory-limit-helper-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

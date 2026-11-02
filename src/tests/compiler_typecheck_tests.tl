@@ -2527,6 +2527,12 @@
       "A"
       "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
     (compiler-typecheck-inline-layout-error-ok?
+      "(defstruct Leaf (n i64))
+(defstruct A (left Leaf) (right Leaf) (tail B))
+(defstruct B (shared Leaf) (back A))"
+      "A"
+      "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+    (compiler-typecheck-inline-layout-error-ok?
       "(defstruct BadFixed
   (items (Array BadFixed 2)))"
       "BadFixed"
@@ -4149,6 +4155,15 @@
     (= (compiler-typecheck-move-kind-memo ctx "Cycle") 2)
     (tc_core.tc-type-move-only? ctx (Struct (ci.intern "NestedPoison")))
     (= (compiler-typecheck-move-kind-memo ctx "TextPacket") 0)
+    (tc_core.tc-type-copyable? ctx (Struct (ci.intern "CopyDag")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "SharedCycle")))
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.ast-ty-struct-args
+        (ci.intern "MixedArgs")
+        (ast.ast-lifetime-cons
+          cbi.compiler-builtin-id-fix-n
+          (& (ast.ast-lifetime-list-new)))))
     (compiler-typecheck-move-kind-copyable-group-ok? ctx)
     (compiler-typecheck-move-kind-move-only-group-ok? ctx)
     (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))
@@ -4175,6 +4190,11 @@
 (defstruct TextPacket (text String))
 (defenum PoisonChoice (None) (Text TextPacket))
 (defstruct NestedPoison (choice PoisonChoice))
+(defstruct CopyDag (left Scalar) (right Scalar))
+(defstruct SharedCycle (left CopyDag) (right CopyDag) (back SharedCycle))
+(defstruct MixedArgs (:lifetimes a)
+  (good (RefBox a))
+  (bad (RefBox a a)))
 (defenum RefOption (:lifetimes a) (None) (SomeRef (& a i64)))
 (defenum MoveOnlyEnum (Text String))")
     [(Ok program)

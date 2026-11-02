@@ -17,6 +17,15 @@
 ;# `unsafe` pointer accessors, which check liveness, generation, offset and
 ;# count before returning.
 ;#
+;# `fixed-copy-range!` and `bytes-copy-range!` copy checked public ranges into
+;# a variable owner without a readable view. Same-storage copies are rejected
+;# intentionally, including zero-count and disjoint ranges. A successful copy
+;# publishes exactly max(previous length, destination offset + count).
+;# `transfer-fixed` is an unsafe consuming macro for crypto implementations:
+;# it transfers one exact fixed allocation into pointer-backed nominal state,
+;# rotates its generation to invalidate old handles, and never copies secret
+;# bytes. Nominal cleanup poisons outer state before cleaning its inner owner.
+;#
 ;# These guarantees are a source and code-shape regression boundary, not a
 ;# side-channel review or certified erasure: copies in registers, caches, core
 ;# dumps or swapped-out pages are out of scope.
@@ -53,7 +62,8 @@
   (SecretClosed)
   (SecretBadLength i64)
   (SecretLengthMismatch i64 i64)
-  (SecretRange i64 i64 i64))
+  (SecretRange i64 i64 i64)
+  (SecretAlias))
 
 ;: The exact fixed sizes protocol consumers use.
 (defenum SecretSize
@@ -90,6 +100,37 @@
 (defstruct SecretBytes
   (:cleanup close-bytes)
   (handle SecretHandle (:cleanup storage-close)))
+
+;: Crypto-internal nominal state. Its separate allocation cannot be populated
+;: from safe code, even where opaque representation authority is unavailable.
+(defstruct SecretNominalStorage
+  (:opaque)
+  (state u64)
+  (generation i64)
+  (inner SecretHandle))
+
+;: Checked identity of one nominal allocation, not its secret storage.
+(defstruct SecretNominalHandle
+  (storage (MutPtr SecretNominalStorage))
+  (generation i64))
+
+;: A move-only nominal secret. Only an unsafe transfer can create live state;
+;: consumer modules retain this inside their own protocol-specific owner.
+(defstruct SecretNominal
+  (:cleanup close-nominal)
+  (handle SecretNominalHandle (:cleanup nominal-handle-close)))
+
+;: Transfer the caller's cleanup obligation into the consuming operation.
+(defstruct SecretTransferInput
+  (:cleanup close-transfer-input)
+  (value SecretFixed (:owned)))
+
+;: Transfer consumes its input on success and failure.
+(defenum SecretNominalResult
+  (:cleanup close-nominal-result)
+  (:must-use)
+  (SecretNominalOk SecretNominal (:owned))
+  (SecretNominalErr SecretError))
 
 ;: A new fixed owner, or a public construction failure.
 (defenum SecretFixedResult
@@ -651,3 +692,265 @@
           (unsafe
             (storage-set-length! owner.handle.storage length))
           (SecretOk))])))
+
+;: Copy a validated public count. Neither addresses nor control depend on a
+;: secret byte. The caller has rejected every alias before entering this loop.
+(unsafe
+  (define (copy-secret-range!
+    [source : (Ptr u8)]
+    [destination : (MutPtr u8)]
+    [count : i64]) : unit
+    (let
+      [index : i64 0]
+      (while (< index count)
+        (unsafe
+          (ptr-write!
+            (ptr-offset destination index)
+            (ptr-read (ptr-offset source index))))
+        (set! index (+ index 1))))))
+
+;: Preflight both complete ranges before reading or changing secret bytes.
+;: expected=0 admits a variable source; otherwise its fixed length is exact.
+(unsafe
+  (define (storage-copy-range!
+    [source : (& source SecretHandle)]
+    [expected : i64]
+    [source-offset : i64]
+    [destination : (& destination SecretHandle)]
+    [destination-offset : i64]
+    [count : i64]) : SecretStatus
+    (cond
+      [(not
+          (and
+            (unsafe
+              (storage-live? source.storage source.generation))
+            (unsafe
+              (storage-live? destination.storage destination.generation))))
+        (SecretErr (SecretClosed))]
+      [else
+        (let
+          [source-length : i64
+            (unsafe
+              (live-length source.storage source.generation))]
+          [destination-length : i64
+            (unsafe
+              (live-length destination.storage destination.generation))]
+          [capacity : i64
+            (unsafe
+              (live-capacity destination.storage destination.generation))]
+          (cond
+            [(and (> expected 0) (not (= source-length expected)))
+              (SecretErr (SecretLengthMismatch expected source-length))]
+            [(and
+                (> expected 0)
+                (not
+                  (=
+                    (unsafe
+                      (live-capacity source.storage source.generation))
+                    expected)))
+              (SecretErr
+                (SecretLengthMismatch
+                  expected
+                  (unsafe
+                    (live-capacity source.storage source.generation))))]
+            [(or
+                (< source-offset 0)
+                (< count 0)
+                (> source-offset source-length)
+                (> count (- source-length source-offset)))
+              (SecretErr (SecretRange source-offset count source-length))]
+            [(or
+                (< destination-offset 0)
+                (> destination-offset capacity)
+                (> count (- capacity destination-offset)))
+              (SecretErr (SecretRange destination-offset count capacity))]
+            [else
+              (let
+                [source-data : (Ptr u8)
+                  (unsafe
+                    (ptr-cast
+                      (ptr-offset (storage-data source.storage) source-offset)
+                      : (Ptr u8)))]
+                [destination-data : (MutPtr u8)
+                  (unsafe
+                    (ptr-offset
+                      (storage-data destination.storage)
+                      destination-offset))]
+                [source-address : u64
+                  (unsafe
+                    (ptr->int source-data))]
+                [destination-address : u64
+                  (unsafe
+                    (ptr->int destination-data))]
+                [overlap : bool
+                  (if (<= source-address destination-address)
+                    (<
+                      (- destination-address source-address)
+                      (cast count : u64))
+                    (<
+                      (- source-address destination-address)
+                      (cast count : u64)))]
+                (if (or (= source.storage destination.storage) overlap)
+                  (SecretErr (SecretAlias))
+                  (let
+                    [end : i64 (+ destination-offset count)]
+                    (unsafe
+                      (copy-secret-range! source-data destination-data count))
+                    (when
+                      (> end destination-length)
+                      (unsafe
+                        (storage-set-length! destination.storage end)))
+                    (SecretOk))))]))])))
+
+;: Copy from an exact fixed source into a variable owner. Offsets and count
+;: are public. Failure preserves all destination bytes and its length.
+(define (fixed-copy-range!
+  [source : (& source SecretFixed)]
+  [size : SecretSize]
+  [source-offset : i64]
+  [destination : (&mut destination SecretBytes)]
+  [destination-offset : i64]
+  [count : i64]) : SecretStatus
+  (unsafe
+    (storage-copy-range!
+      (& source.handle)
+      (size-bytes size)
+      source-offset
+      (& destination.handle)
+      destination-offset
+      count)))
+
+;: Copy an initialized variable-secret range without producing a byte view.
+;: Same-storage copies are intentionally rejected even for count=0 or disjoint
+;: ranges; exact and partial address overlap are also rejected before mutation.
+;: Success publishes max(previous-length, destination-offset + count).
+(define (bytes-copy-range!
+  [source : (& source SecretBytes)]
+  [source-offset : i64]
+  [destination : (&mut destination SecretBytes)]
+  [destination-offset : i64]
+  [count : i64]) : SecretStatus
+  (unsafe
+    (storage-copy-range!
+      (& source.handle)
+      0
+      source-offset
+      (& destination.handle)
+      destination-offset
+      count)))
+
+;: Live outer identity, checked without reading the secret allocation.
+(unsafe
+  (define (nominal-live? [handle : (& handle SecretNominalHandle)]) : bool
+    (and
+      (not (ptr-null? handle.storage))
+      (unsafe
+        (= (deref handle.storage).state (state-live)))
+      (unsafe
+        (= (deref handle.storage).generation handle.generation)))))
+
+;: Poison the outer allocation before invoking the inner owner's cleanup.
+;: A repeated, closed or stale outer handle cannot invoke that cleanup again.
+(define (nominal-handle-close [handle : SecretNominalHandle]) : unit
+  (when
+    (unsafe
+      (nominal-live? (& handle)))
+    (let
+      [inner : SecretHandle
+        (unsafe
+          (deref handle.storage).inner)]
+      [words : (MutPtr u64)
+        (unsafe
+          (ptr-cast handle.storage : (MutPtr u64)))]
+      (unsafe
+        (volatile-store! words (state-poisoned)))
+      (close-fixed (SecretFixed inner))
+      (unsafe
+        (volatile-store! words (state-closed))))))
+
+;: Move one exact live fixed owner into nominal state without copying bytes.
+;: This is an unsafe immediate-call boundary: only the consuming crypto
+;: implementation may assert that an arbitrary fixed value has its nominal
+;: protocol meaning. All pre-transfer handles become stale. Failure consumes
+;: and cleans the input, allocating no outer state.
+(unsafe
+  (define (transfer-fixed-input
+    [input : SecretTransferInput]
+    [size : SecretSize]) : SecretNominalResult
+    (let
+      [owner : SecretFixed input.value]
+      [handle : SecretHandle owner.handle]
+      [expected : i64 (size-bytes size)]
+      [actual : i64 (fixed-length (& owner))]
+      (cond
+        [(not
+          (unsafe
+            (storage-live? handle.storage handle.generation)))
+          (close-fixed owner)
+          (SecretNominalErr (SecretClosed))]
+        [(not (= actual expected))
+          (close-fixed owner)
+          (SecretNominalErr (SecretLengthMismatch expected actual))]
+        [(not
+            (=
+              (unsafe
+                (live-capacity handle.storage handle.generation))
+              expected))
+          (let
+            [capacity : i64
+              (unsafe
+                (live-capacity handle.storage handle.generation))]
+            (close-fixed owner)
+            (SecretNominalErr (SecretLengthMismatch expected capacity)))]
+        [else
+          (let
+            [generation : i64 (next-generation)]
+            [header : SecretStorage
+              (unsafe
+                (storage-header handle.storage))]
+            [storage : (MutPtr SecretNominalStorage)
+              (unsafe
+                (ptr-cast
+                  (secret-runtime-alloc
+                    (comptime (size-of (type SecretNominalStorage))))
+                  : (MutPtr SecretNominalStorage)))]
+            (unsafe
+              (ptr-write!
+                handle.storage
+                (SecretStorage
+                  header.state
+                  (cast generation : u64)
+                  header.length
+                  header.capacity)))
+            (unsafe
+              (ptr-write!
+                storage
+                (SecretNominalStorage
+                  (state-live)
+                  generation
+                  (SecretHandle handle.storage generation))))
+            (close-fixed owner)
+            (SecretNominalOk
+              (SecretNominal (SecretNominalHandle storage generation))))]))))
+
+;: Consume a fixed owner into the unsafe immediate-call transfer operation.
+;: The expansion deliberately retains the caller's unsafe-context requirement.
+(defmacro (transfer-fixed [owner : Expr] [size : Expr]) : SecretNominalResult
+  `(transfer-fixed-input (SecretTransferInput ,owner) ,size))
+
+;: Direct checked access for a crypto implementation borrowing nominal state.
+;: No safe view or first-class raw-pointer callable is produced.
+(unsafe
+  (define (nominal-read-pointer
+    [owner : (& owner SecretNominal)]
+    [offset : i64]
+    [count : i64]) : SecretReadResult
+    (if (unsafe
+      (nominal-live? (& owner.handle)))
+      (let
+        [inner : SecretHandle
+          (unsafe
+            (deref owner.handle.storage).inner)]
+        (unsafe
+          (read-pointer inner.storage inner.generation offset count)))
+      (SecretReadErr (SecretClosed)))))

@@ -409,12 +409,22 @@ mutable_view_match_value_form_write_ok|run-exit|tests/safety/mutable_view_match_
 # signature lifetime; they now borrow caller storage, and the old program is
 # this row.
 storage_dead_by_value_param_loop_store_reject|check-fail|tests/safety/storage_dead_by_value_param_loop_store_reject.tl|-|`items` does not live long enough
-# Arena regions are typing's: the graph erases them, so typing's store and
-# assignment checks decide a borrow of arena data that outlives its arena,
-# including one whose region is spelled like an outer lifetime.
-region_arena_store_param_array_reject|check-fail|tests/safety/region_arena_store_param_array_reject.tl|-|cannot store reference into longer-lived array
-region_arena_shadow_store_mut_param_reject|check-fail|tests/safety/region_arena_shadow_store_mut_param_reject.tl|-|cannot store reference into longer-lived struct field
+# Arena regions are typing's: the graph erases them, so typing decides a
+# borrow of arena data that outlives its arena. One spelled like a caller
+# lifetime is a fresh region and reports the arena's escape (#9593); a nested
+# arena spelled like the outer one falls to the assignment check.
+region_arena_store_param_array_reject|check-fail|tests/safety/region_arena_store_param_array_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_shadow_store_mut_param_reject|check-fail|tests/safety/region_arena_shadow_store_mut_param_reject.tl|-|region-tagged value cannot escape with-arena 'a'
 region_arena_shadow_assign_reject|check-fail|tests/safety/region_arena_shadow_assign_reject.tl|-|cannot store reference into longer-lived binding
+# A with-arena region is a fresh binder (#9593): spelled like a caller
+# lifetime it still names the arena, so arena data cannot reach caller storage,
+# while caller data and annotations spelled like the arena keep their meaning.
+# An arena whose name does not collide keeps its own region and diagnostic.
+region_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_caller_lifetime_alias_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_alias_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_caller_lifetime_store_ok|check-ok|tests/safety/region_arena_caller_lifetime_store_ok.tl|-|-
+region_arena_caller_lifetime_shadow_ok|run-exit|tests/safety/region_arena_caller_lifetime_shadow_ok.tl|42|-
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is

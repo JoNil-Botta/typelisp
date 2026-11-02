@@ -1111,11 +1111,13 @@ borrows, as rustc's borrow checker does, whatever the names.
   case it rejects the graph rejects too, so none is deleted. The store and
   assignment checks ("cannot store reference into longer-lived ...") also
   decide arena regions, which the graph erases: removing them accepts
-  `region_arena_store_param_array_reject`,
-  `region_arena_shadow_store_mut_param_reject` and
-  `region_arena_shadow_assign_reject` (each a dangling reference into a reset
-  arena), and they reject a same-spelled store into a local that is never
-  read afterwards, which the graph would accept as Rust does
+  `region_arena_shadow_assign_reject` (a dangling reference into a reset
+  arena). An arena spelled like a caller lifetime is a fresh region (#9593),
+  so `region_arena_store_param_array_reject` and
+  `region_arena_shadow_store_mut_param_reject` are reported as that arena's
+  escape before the store checks run. The store checks also reject a
+  same-spelled store into a local that is never read afterwards, which the
+  graph would accept as Rust does
   (`storage_dead_inner_scope_unused_reject`). Without the `let`-result and
   binding visibility checks ("reference value would escape lexical scope")
   main's rows fall to typing's return-type comparison (E0210), for example

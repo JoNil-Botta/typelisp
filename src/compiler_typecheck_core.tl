@@ -9761,6 +9761,8 @@
     intern
     bind)
   (let
+    [fresh : i64 (tc-with-region-binder ctx env region (& body))]
+    [_recorded : unit (tc-with-region-record! ctx region fresh (& syntax))]
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
     [result : (TcSelectedResult store lease intern bind)
@@ -9768,7 +9770,7 @@
         ctx
         env
         expr
-        region
+        fresh
         (& body)
         syntax
         expected
@@ -9804,7 +9806,14 @@
         (tc-global-shared-view source)
         noted)
         [(TcSelectedResult.Err message after)
-          (TcSelectedResult.Err message after)]
+          (if (tc-with-region-fresh-id? region)
+            ;; Legacy typing reports a fresh region's escape before a
+            ;; mismatch against the lifetime it shadows.
+            (match (tc-infer-selected-legacy ctx env expr syntax expected)
+              [(ResultTcType.Err shadow-message)
+                (TcSelectedResult.Err shadow-message after)]
+              [(ResultTcType.Ok _) (TcSelectedResult.Err message after)])
+            (TcSelectedResult.Err message after))]
         [(TcSelectedResult.Ok body-ty occurrence after)
           (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
             (tc-selected-unrepresented
@@ -9815,6 +9824,27 @@
               syntax
               source
               (TcSelectedResult.Ok body-ty occurrence after)))])]))
+
+;; The form records its fresh region (#9593, tc-with-region-binder) so later
+;; passes, lowering among them, read the region the body was renamed to.
+(define (tc-with-region-record!
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [syntax : (& syntax typed.TypedSyntax)]) : unit
+  (match syntax
+    [(typed.TypedSyntax.Source id)
+      (match (tc-context-expr-get ctx id)
+        [(ast.AstExpr.WithRegion name body)
+          (when
+            (and (= name region) (not (= fresh region)))
+            (tc-dotted-macro-journal-record!
+              (tc-context-macro-state ctx)
+              id
+              (tc-context-expr-get ctx id))
+            (ast.ast-node-set! id (ast.AstExpr.WithRegion fresh body)))]
+        [_ unit])]
+    [(typed.TypedSyntax.Generated) unit]))
 
 ;; A selected scoped-arena body becomes the one child of a committed
 ;; ArenaScope wrapper, rollback-atomic with it. Its region only locates the
@@ -33049,6 +33079,9 @@
   [actual : ast.AstType]
   [expected : ast.AstType]
   [message : String]) : String
+  (match (tc-type-shadowing-region (clone actual) (clone expected))
+    [(Some region) (return (tc-region-escape-error region))]
+    [(No) unit])
   (let
     [context-kind : bool
       (cdiag.compiler-diagnostic-typecheck-tagged? (& message))]
@@ -33062,6 +33095,34 @@
     (if context-kind
       text
       (tc-kind-message (TypeMismatch) text))))
+
+;; A fresh with-arena region (#9593) in `actual` that `expected` names by the
+;; lifetime it shadows. Both would render alike, so the mismatch is the
+;; region's escape.
+(define (tc-type-shadowing-region
+  [actual : ast.AstType]
+  [expected : ast.AstType]) : TcMaybeNameId
+  (let
+    [cursor : TcNameIdList (tc-type-collect-regions (clone actual))]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [region : i64 (tc-name-id-list-head cursor)]
+        (when
+          (tc-with-region-fresh-id? region)
+          (let
+            [source : i64
+              (ci.intern-active-syntax-source-name-id-or region false -1)]
+            (when
+              (and
+                (>= source 0)
+                (tc-type-eq
+                  (clone expected)
+                  (tc-lifetime-subst-type
+                    (TcLifetimeSubst.One region source)
+                    (clone actual))))
+              (return (Some region)))))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    (No)))
 
 (define (tc-default-env) : TcTypeEnv
   (tc-bind-id (tc-default-env-base) (tc-default-boundary-id) (Unit)))
@@ -47741,6 +47802,14 @@
         (tc-global-shared-view actual)
         (tc-global-shared-view expected)
         message)]
+    ;; A fresh with-arena region's escape (tc-type-shadowing-region) needs no
+    ;; coercion detail: the lifetimes it would name render alike.
+    [_escape : unit
+      (when
+        (tc-message-text-prefix?
+          (& base)
+          "typecheck: region-tagged value cannot escape with-arena '")
+        (return (string.copy (& base))))]
     [detail : String (tc-type-coercion-failure-detail ctx env expected actual)]
     [text : String
       (str_cat.str-cat
@@ -84764,6 +84833,174 @@
   [ty : ast.AstType]) : String
   (tc-clone-out-unsupported-message ctx "with-scratch" ty))
 
+;; A `with-arena` region is a fresh binder (#9593). When its name already names
+;; a visible lifetime, such as a caller lifetime or an owner, the region gets a
+;; fresh identity that renders as the same name and the body's annotations are
+;; renamed to it in place. A place typed with the outer lifetime then cannot
+;; hold a reference into the arena. The identity is keyed by the body's first
+;; expression, so every pass over the form agrees on it.
+(define (tc-with-region-binder
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [region : i64]
+  [body : (& body ast.AstExprList)]) : i64
+  (let
+    [source-name : i64
+      (if (ci.intern-renderable-id? region)
+        region
+        (ci.intern-active-syntax-source-name-id-or region true -1))]
+    (if (and
+      (> body.len 0)
+      (>= source-name 0)
+      (tc-lifetime-visible-id? env region)
+      ;; Legacy typing re-enters a form inside its own scope; the form's own
+      ;; region marker is not a lifetime it shadows.
+      (match (tc-active-region env)
+        [(Some active) (not (= active region))]
+        [(No) true]))
+      (let
+        [fresh : i64
+          (cis.intern-fresh-local-identity-raw
+            (cis.intern-structural-session-fresh-local-identity
+              (tc-type-env-structural-session env)
+              (+ (tc-with-region-ordinal-base) (array-ref body.slots 0))
+              source-name))]
+        ;; Rewritten nodes must live as long as the AST pool they replace.
+        (in-arena
+          (unsafe
+            (arena.Arena (ast.ast-node-pool-owner-arena-handle)))
+          (for [index (iterator.range 0 body.len)]
+            (tc-with-region-rename-expr!
+              ctx
+              region
+              fresh
+              (array-ref body.slots index))))
+        fresh)
+      region)))
+
+;; Fresh with-arena regions take fresh-local ordinals above every other
+;; family's (lowering numbers its inline temporaries from zero), so a region
+;; `tc-with-region-binder` made fresh is recognized by its identity alone.
+(define (tc-with-region-ordinal-base) : i64
+  1099511627776)
+
+(define (tc-with-region-fresh-id? [region : i64]) : bool
+  (and
+    (>= region (ci.intern-structural-key-base))
+    (=
+      (ci.intern-active-structural-record-kind-or region -1)
+      (ci.intern-structural-kind-fresh-local))
+    (>=
+      (ci.intern-composite-left-id-unchecked region)
+      (tc-with-region-ordinal-base))))
+
+(defmacro (tc-with-region-keep
+  [_ctx : comptime.Expr]
+  [_region : comptime.Expr]
+  [_fresh : comptime.Expr]
+  [value : comptime.Expr]) : comptime.Expr
+  value)
+
+(define (tc-with-region-rename-type
+  [_ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [ty : ast.AstType]) : ast.AstType
+  (tc-lifetime-subst-type (TcLifetimeSubst.One region fresh) ty))
+
+(define (tc-with-region-rename-type-id
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [ty-id : i64]) : i64
+  (tc-context-type-push
+    ctx
+    (tc-with-region-rename-type ctx region fresh (ast.ty-node-get ty-id))))
+
+(define (tc-with-region-rename-patterns
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [items : (Box ast.AstPatternList)]) : (Box ast.AstPatternList)
+  (let
+    [list : ast.AstPatternList (clone (deref items))]
+    [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity list.len)]
+    (for [index (iterator.range 0 list.len)]
+      (ast.ast-pattern-list-push
+        (&mut out)
+        (tc-with-region-rename-pattern
+          ctx
+          region
+          fresh
+          (ast.ast-pattern-list-get (& list) index (ast.ast-pattern-fallback)))))
+    (box out)))
+
+(define (tc-with-region-rename-pattern
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [pattern : ast.AstPattern]) : ast.AstPattern
+  (match pattern
+    [(Var name (Some ty))
+      (Var name (Some (tc-with-region-rename-type ctx region fresh ty)))]
+    [(Tuple items)
+      (Tuple (tc-with-region-rename-patterns ctx region fresh items))]
+    [(Variant name items)
+      (Variant name (tc-with-region-rename-patterns ctx region fresh items))]
+    [(Array items)
+      (Array (tc-with-region-rename-patterns ctx region fresh items))]
+    [(Slice items rest)
+      (Slice (tc-with-region-rename-patterns ctx region fresh items) rest)]
+    [(Or items) (Or (tc-with-region-rename-patterns ctx region fresh items))]
+    [(Fields items)
+      (Fields (tc-with-region-rename-patterns ctx region fresh items))]
+    [(Field name items)
+      (Field name (tc-with-region-rename-patterns ctx region fresh items))]
+    [_ pattern]))
+
+;; Renames `region` to `fresh` in the annotations under `id`. A nested arena
+;; of the same name binds its own region, and quoted code is data.
+(define (tc-with-region-rename-expr!
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [id : i64]) : i64
+  (let
+    [expr : ast.AstExpr (tc-context-expr-get ctx id)]
+    (match expr
+      [(WithRegion name _) (when (= name region) (return id))]
+      [(or (Quote _) (Quasiquote _)) (return id)]
+      [_ unit])
+    (tc-dotted-macro-journal-record!
+      (tc-context-macro-state ctx)
+      id
+      (tc-context-expr-get ctx id))
+    (let
+      [renamed : ast.AstExpr
+        (ast.ast-expr-map-children
+          expr
+          tc-with-region-rename-expr!
+          tc-with-region-rename-type-id
+          tc-with-region-rename-type
+          tc-with-region-rename-pattern
+          tc-with-region-keep
+          tc-with-region-keep
+          ctx
+          region
+          fresh)]
+      (ast.ast-node-set!
+        id
+        (match renamed
+          [(Borrow mutable lifetime place)
+            (Borrow
+              mutable
+              (if (= lifetime region)
+                fresh
+                lifetime)
+              place)]
+          [_ renamed]))
+      id)))
+
 (define (tc-with-region-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -85010,11 +85247,50 @@
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
+    [region : i64 (tc-with-region-binder ctx env region (& body))]
+    (if (tc-with-region-fresh-id? region)
+      (tc-with-region-shadowing-expr ctx env region body expected)
+      (tc-with-region-expr-in-scope ctx env region body expected))))
+
+(define (tc-with-region-expr-in-scope
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [region : i64]
+  [body : ast.AstExprList]
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (let
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
     [result : ResultTcType (tc-with-region-expr ctx env region body expected)]
     (tc-type-env-scoped-runtime-restore! saved)
     result))
+
+;; A fresh region renders like the lifetime it shadows. When the body's own
+;; type keeps the region, its escape is reported before a mismatch against an
+;; expected type that names the shadowed lifetime.
+(define (tc-with-region-shadowing-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [region : i64]
+  [body : ast.AstExprList]
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (match (tc-with-region-expr-in-scope
+    ctx
+    env
+    region
+    (clone body)
+    (clone expected))
+    [(Err message)
+      (match expected
+        [(Some _)
+          (match (tc-with-region-expr-in-scope ctx env region body No)
+            [(Err escape)
+              (if (string.eq escape (tc-region-escape-error region))
+                (Err escape)
+                (Err message))]
+            [(Ok _) (Err message)])]
+        [(No) (Err message)])]
+    [(Ok ty) (Ok ty)]))
 
 (define (tc-in-arena-expr-scoped
   [ctx : TcContext]

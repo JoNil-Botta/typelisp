@@ -9293,7 +9293,6 @@
       (let
         [transfers : NormalizeTransfers
           (normalize-transfer-index (& state.body) (& state.instruction-counts))]
-        [preds : NormalizePredecessors (normalize-block-predecessors (& state))]
         (while (< place places)
           (when
             (and
@@ -9307,7 +9306,6 @@
                 state
                 place
                 (& transfers)
-                (& preds)
                 (& def-place)
                 (& def-block)
                 (& def-index)
@@ -9379,7 +9377,6 @@
   [state : (&mut state NormalizeState)]
   [place : i64]
   [transfers : (& transfers NormalizeTransfers)]
-  [preds : (& preds NormalizePredecessors)]
   [def-place : (& def-place (__tl_dyn-array i64))]
   [def-block : (& def-block (__tl_dyn-array i64))]
   [def-index : (& def-index (__tl_dyn-array i64))]
@@ -9398,9 +9395,7 @@
     (let
       [count : i64 (array-length defs)]
       [entry : (__tl_dyn-array bool) (__tl_make-array bool (* blocks count))]
-      [exit : (__tl_dyn-array bool) (__tl_make-array bool (* blocks count))]
       [last : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
-      [changed : bool true]
       [block : i64 0]
       (try (normalize-charge! state 0 (* 2 blocks count) 0))
       ;; The last definition in each block (gen), or -1.
@@ -9411,40 +9406,14 @@
       (while (< at count)
         (set! (array-ref last (array-ref def-block (array-ref defs at))) at)
         (set! at (+ at 1)))
-      (while changed
-        (set! changed false)
-        (set! block 0)
-        (while (< block blocks)
-          (let
-            [p : i64 (array-ref preds.start block)]
-            (try (normalize-charge! state 0 count 0))
-            (while (< p (array-ref preds.start (+ block 1)))
-              (let
-                [pred : i64 (array-ref preds.list p)]
-                [d : i64 0]
-                (while (< d count)
-                  (when
-                    (and
-                      (array-ref exit (+ (* pred count) d))
-                      (not (array-ref entry (+ (* block count) d))))
-                    (set! (array-ref entry (+ (* block count) d)) true)
-                    (set! changed true))
-                  (set! d (+ d 1))))
-              (set! p (+ p 1)))
-            (let
-              [d : i64 0]
-              (while (< d count)
-                (let
-                  [out : bool
-                    (if (>= (array-ref last block) 0)
-                      (= d (array-ref last block))
-                      (array-ref entry (+ (* block count) d)))]
-                  (when
-                    (and out (not (array-ref exit (+ (* block count) d))))
-                    (set! (array-ref exit (+ (* block count) d)) true)
-                    (set! changed true)))
-                (set! d (+ d 1)))))
-          (set! block (+ block 1))))
+      (try
+        (normalize-reaching-entries!
+          (& state.body)
+          (& last)
+          count
+          (&mut entry)
+          (&mut state.work)
+          state.limits.work))
       ;; Reads: a copy or move out of the place.
       (let
         [edge : i64 0]
@@ -9533,6 +9502,60 @@
                   (set! r (+ r 1))))))
           (set! use (+ use 1))))
       (NormalizeUnit.Ok unit))))
+
+;; A block's last definition generates its own exit even when disconnected
+;; from the body entry. Propagate that definition until a block kills it,
+;; recording the killed definition at that block's entry too. Each entry bit
+;; is also a visited bit: a (block, definition) pair is queued at most once.
+;; Thus reverse block order and cycles need no repeated whole-CFG scans.
+(define (normalize-reaching-entries!
+  [body : (& body own.OwnershipBody)]
+  [last : (& last (__tl_dyn-array i64))]
+  [count : i64]
+  [entry : (&mut entry (__tl_dyn-array bool))]
+  [work : (&mut work i64)]
+  [limit : i64]) : NormalizeUnit
+  (let
+    [blocks : i64 (array-length body.blocks)]
+    [pending : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+    [generator : i64 0]
+    (while (< generator blocks)
+      (let
+        [definition : i64 (array-ref last generator)]
+        (when
+          (>= definition 0)
+          (let
+            [size : i64 1]
+            (set! (array-ref pending 0) generator)
+            (while (> size 0)
+              (when
+                (>= (deref work) limit)
+                (return (NormalizeUnit.Err OwnershipNormalizeFailure.Resource)))
+              (set! (deref work) (+ (deref work) 1))
+              (set! size (- size 1))
+              (let
+                [block : i64 (array-ref pending size)]
+                [edge : i64 0]
+                (while (< edge 2)
+                  (let
+                    [next : i64
+                      (own.ownership-successor
+                        (& (array-ref body.blocks block).terminator)
+                        edge)]
+                    (when
+                      (and (>= next 0) (< next blocks))
+                      (let
+                        [cell : i64 (+ (* next count) definition)]
+                        (unless
+                          (array-ref entry cell)
+                          (set! (array-ref entry cell) true)
+                          (when
+                            (< (array-ref last next) 0)
+                            (set! (array-ref pending size) next)
+                            (set! size (+ size 1))))))
+                    (set! edge (+ edge 1)))))))))
+      (set! generator (+ generator 1)))
+    (NormalizeUnit.Ok unit)))
 
 ;; The definitions (indices into `defs`) reaching position `index` of `block`:
 ;; the last one before it in the block, else those reaching the block entry.

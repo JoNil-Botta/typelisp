@@ -57891,7 +57891,8 @@
 
 ;; A mutable borrow of a by-value (register-resident) place is a temporary
 ;; written back after the call (SPEC borrow expressions): binding or storing it
-;; is rejected, so the call's result may not carry the borrow's lifetime.
+;; is rejected, so neither the call's result nor another mutable-reference
+;; parameter may carry the borrow's lifetime.
 (define (tc-check-by-value-borrow-escape
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -57911,21 +57912,32 @@
           (ast.ty-node-get
             (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))
           [(ast.AstType.MutRef lifetime _)
-            (when
-              (and
-                (tc-name-id-list-contains ret-lifetimes lifetime)
-                (tc-by-value-mut-borrow-arg?
-                  ctx
-                  env
-                  (tc-global-shared-view arg)))
-              (return
-                (ResultTcUnit.Err
-                  (tc-locate-error-at-expr
-                    (tc-context-expr-bases ctx)
-                    arg
-                    (tc-kind-message
-                      (cdiag.CompilerTypecheckKind.BorrowViolation)
-                      "typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime")))))]
+            (let
+              [in-result : bool
+                (tc-name-id-list-contains ret-lifetimes lifetime)]
+              (when
+                (and
+                  (or
+                    in-result
+                    (tc-call-mutable-formal-mentions-lifetime?
+                      ctx
+                      params
+                      index
+                      lifetime))
+                  (tc-by-value-mut-borrow-arg?
+                    ctx
+                    env
+                    (tc-global-shared-view arg)))
+                (return
+                  (ResultTcUnit.Err
+                    (tc-locate-error-at-expr
+                      (tc-context-expr-bases ctx)
+                      arg
+                      (tc-kind-message
+                        (cdiag.CompilerTypecheckKind.BorrowViolation)
+                        (if in-result
+                          "typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime"
+                          "typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime")))))))]
           [_ unit])
         (set! index (+ index 1))))
     ResultTcUnit.Ok))

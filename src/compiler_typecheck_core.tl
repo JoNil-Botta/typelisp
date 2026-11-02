@@ -48081,6 +48081,84 @@
     [(or (Ptr _) (MutPtr _)) true]
     [_ false]))
 
+;; Semantic keys use the session's exact structural interner, independently of
+;; the optional AST type-pool index. Records are shared once per nominal,
+;; arguments and context; completion membership compares only integer keys.
+(define (tc-nominal-completion-key-at
+  [ctx : TcContext]
+  [kind : i64]
+  [name : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [arguments : i64 -1]
+    (for [index (iterator.range 0 (ast.ast-lifetime-list-len lifetimes))]
+      (set!
+        arguments
+        (cis.intern-structural-key-raw
+          (cis.intern-structural-session-composite-pair-key
+            session
+            arguments
+            (ast.ast-lifetime-list-get
+              lifetimes
+              index
+              (ast.ast-lifetime-fallback))))))
+    (cis.intern-structural-key-raw
+      (cis.intern-structural-session-composite-triple-key
+        session
+        (cis.intern-structural-key-raw
+          (cis.intern-structural-session-composite-triple-key
+            session
+            kind
+            name
+            arguments))
+        ctx.module-id
+        ctx.type-module-id))))
+
+;; The singleton's negative value is the remaining unshared visit budget.
+;; After exactly64 nominal visits it becomes the ordinary completion set.
+;; This counter belongs to one walk and never allocates or resets for a child.
+(define (tc-nominal-completion-ready!
+  [completed : (&mut completed TcNameIdList)]) : bool
+  (match (clone (deref completed))
+    [(One remaining)
+      (if (< remaining 0)
+        (begin
+          (set!
+            (deref completed)
+            (if (= remaining -1)
+              Nil
+              (One (+ remaining 1))))
+          false)
+        true)]
+    [_ true]))
+
+(define (tc-nominal-completion-key
+  [ctx : TcContext]
+  [ty : (& ty ast.AstType)]
+  [completed : (&mut completed TcNameIdList)]) : i64
+  (if (tc-nominal-completion-ready! completed)
+    (match ty
+      [(Enum name)
+        (tc-nominal-completion-key-at
+          ctx
+          0
+          name
+          (& (ast.ast-lifetime-list-new)))]
+      [(Struct name)
+        (tc-nominal-completion-key-at
+          ctx
+          1
+          name
+          (& (ast.ast-lifetime-list-new)))]
+      [(EnumArgs name lifetimes)
+        (tc-nominal-completion-key-at ctx 2 name (& (deref lifetimes)))]
+      [(StructArgs name lifetimes)
+        (tc-nominal-completion-key-at ctx 3 name (& (deref lifetimes)))]
+      [_ -1])
+    -1))
+
 (define (tc-type-move-kind-copyable-type-list-at
   [ctx : TcContext]
   [types : (& types ast.AstTypeList)]
@@ -48285,7 +48363,10 @@
         ;; classifier remains total and conservative instead of recursing
         ;; forever.
         (MoveOnly)]
-      [(tc-name-id-list-contains (clone (deref completed)) type-id) (Copyable)]
+      [(and
+          (>= type-id 0)
+          (tc-name-id-list-contains (clone (deref completed)) type-id))
+        (Copyable)]
       [else
         (let
           [result : TcMoveKind
@@ -48297,14 +48378,13 @@
               stack
               completed)]
           ;; Only a completed Copyable answer is independent of the path.
-          ;; A conservative cycle cutoff must never enter this memo. Type
-          ;; IDs include the resolved nominal and all lifetime arguments;
-          ;; the memo belongs to one invocation and its context/pool.
+          ;; A conservative cycle cutoff must never enter this memo.
+          ;; The key is canonical even when the AST pool appends fresh IDs.
           (when
-            (tc-move-kind-copyable? result)
+            (and (>= type-id 0) (tc-move-kind-copyable? result))
             (set!
               (deref completed)
-              (tc-name-id-list-add (clone (deref completed)) type-id)))
+              (tc-name-id-list-cons (clone (deref completed)) type-id)))
           result)])))
 
 (define (tc-type-move-kind-nominal-fields
@@ -48396,7 +48476,7 @@
           name
           (& (ast.ast-lifetime-list-new))
           stack
-          (tc-context-type-push ctx resolved)
+          (tc-nominal-completion-key ctx (& resolved) completed)
           completed)]
       [(EnumArgs name lifetimes)
         (tc-type-move-kind-nominal-with-stack
@@ -48404,7 +48484,7 @@
           name
           (& (ast.ast-lifetime-list-box-shared-view lifetimes))
           stack
-          (tc-context-type-push ctx resolved)
+          (tc-nominal-completion-key ctx (& resolved) completed)
           completed)]
       [(StructArgs name lifetimes)
         (let
@@ -48419,7 +48499,7 @@
               name
               args
               stack
-              (tc-context-type-push ctx resolved)
+              (tc-nominal-completion-key ctx (& resolved) completed)
               completed)))]
       ;; Unresolved names and invalid type variables must never accidentally
       ;; become Copyable.
@@ -48429,7 +48509,7 @@
 
 (define (tc-type-move-kind [ctx : TcContext] [ty : ast.AstType]) : TcMoveKind
   (let
-    [completed : TcNameIdList Nil]
+    [completed : TcNameIdList (One -64)]
     (tc-type-move-kind-with-stack ctx ty Nil (&mut completed))))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
@@ -74084,34 +74164,40 @@
         ctx))
     ctx))
 
+;; Count the root visit once; its first64-visit prefix has no semantic key.
 (define (tc-inline-aggregate-nominal-finite-ok
   [ctx : TcContext]
   [name : String]
   [name-id : i64]
   [stack : TcStringList]) : ResultTcUnit
   (let
-    [completed : TcNameIdList Nil]
+    [completed : TcNameIdList (One -64)]
+    [_ : bool (tc-nominal-completion-ready! (&mut completed))]
     (tc-inline-aggregate-nominal-finite-ok-with-memo
       ctx
       name
       name-id
       stack
-      (&mut completed))))
+      (&mut completed)
+      -1)))
 
-;; The declaration surface and resolution context are fixed for this walk.
-;; Lifetime arguments cannot change inline edges. Publish only completed Ok
-;; nodes, after checking the active path, so cycles retain their exact path.
+;; Publish only completed Ok nodes after checking the active path. The shared
+;; semantic key retains applied arguments and module context, including the
+;; pre-existing missing-handle enum fallback that switches the owner module.
 (define (tc-inline-aggregate-nominal-finite-ok-with-memo
   [ctx : TcContext]
   [name : String]
   [name-id : i64]
   [stack : TcStringList]
-  [completed : (&mut completed TcNameIdList)]) : ResultTcUnit
+  [completed : (&mut completed TcNameIdList)]
+  [type-id : i64]) : ResultTcUnit
   (if (tc-string-list-contains
     (tc-global-shared-view stack)
     (tc-global-shared-view name))
     (Err (tc-inline-aggregate-cycle-message name stack))
-    (if (tc-name-id-list-contains (clone (deref completed)) name-id)
+    (if (and
+      (>= type-id 0)
+      (tc-name-id-list-contains (clone (deref completed)) type-id))
       Ok
       (let
         [_
@@ -74122,9 +74208,11 @@
               name-id
               stack
               completed))]
-        (set!
-          (deref completed)
-          (tc-name-id-list-add (clone (deref completed)) name-id))
+        (when
+          (>= type-id 0)
+          (set!
+            (deref completed)
+            (tc-name-id-list-cons (clone (deref completed)) type-id)))
         Ok))))
 
 (define (tc-inline-aggregate-nominal-finite-ok-uncached
@@ -74186,27 +74274,35 @@
   [ty : ast.AstType]
   [stack : TcStringList]
   [completed : (&mut completed TcNameIdList)]) : ResultTcUnit
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(Tuple elems)
-      (tc-inline-aggregate-type-list-finite-ok
-        ctx
-        (ast.ast-type-list-box-shared-view elems)
-        stack
-        completed)]
-    [(Array elem _)
-      (tc-inline-aggregate-type-finite-ok
-        ctx
-        (tc-context-type-get ctx elem)
-        stack
-        completed)]
-    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _))
-      (tc-inline-aggregate-nominal-finite-ok-with-memo
-        ctx
-        (tc-nominal-name-id-display name)
-        name
-        stack
-        completed)]
-    [_ Ok]))
+  (let
+    [resolved : ast.AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    [type-id : i64
+      (match (& resolved)
+        [(or (Enum _) (EnumArgs _ _) (Struct _) (StructArgs _ _))
+          (tc-nominal-completion-key ctx (& resolved) completed)]
+        [_ -1])]
+    (match resolved
+      [(Tuple elems)
+        (tc-inline-aggregate-type-list-finite-ok
+          ctx
+          (ast.ast-type-list-box-shared-view elems)
+          stack
+          completed)]
+      [(Array elem _)
+        (tc-inline-aggregate-type-finite-ok
+          ctx
+          (tc-context-type-get ctx elem)
+          stack
+          completed)]
+      [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _))
+        (tc-inline-aggregate-nominal-finite-ok-with-memo
+          ctx
+          (tc-nominal-name-id-display name)
+          name
+          stack
+          completed
+          type-id)]
+      [_ Ok])))
 
 ;; Test fixtures select a parsed declaration by expected spelling. This is a
 ;; lookup-only adapter; production compiler paths carry the declaration id.

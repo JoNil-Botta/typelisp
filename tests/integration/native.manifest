@@ -1249,3 +1249,10 @@ mul_shift_addr_taken|all|0,1,2|tests/integration/mul_shift_addr_taken.tl|3|-|-|s
 pure_call_addr_taken|all|0,1,2|tests/integration/pure_call_addr_taken.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
 gep_offset_addr_taken|all|0,1,2|tests/integration/gep_offset_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 induction_addr_taken|all|0,1,2|tests/integration/induction_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+
+# Safety positive controls retain native writeback and bounds at every level.
+composite_arg_loan_replace_old_value_ok|all|0,1,2|tests/safety/composite_arg_loan_replace_old_value_ok.tl|42|-|-|stdlib/byte_buf.tl stdlib/byte_buf_core.tl stdlib/format_writer_core.tl stdlib/string.tl|-
+mir_by_value_immediate_writeback_ok|all|0,1,2|tests/safety/mir_by_value_immediate_writeback_ok.tl|42|-|-|-|-
+mir_by_value_read_only_result_ok|all|0,1,2|tests/safety/mir_by_value_read_only_result_ok.tl|42|-|-|-|-
+mir_storage_backed_borrow_result_ok|all|0,1,2|tests/safety/mir_storage_backed_borrow_result_ok.tl|42|-|-|-|-
+string_raw_integer_writers_ok|all|0,1,2|tests/safety/string_raw_integer_writers_ok.tl|42|-|-|stdlib/string.tl|-

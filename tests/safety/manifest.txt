@@ -1368,6 +1368,14 @@ function_lifetime_elision_zero_input_return_reject|check-fail|tests/safety/funct
 # The reserved `program` lifetime may be returned without a tied input, but no
 # shorter borrow can stand in for it (#8630).
 program_lifetime_return_ok|run-exit|tests/safety/program_lifetime_return_ok.tl|42|-
+program_lifetime_visible_direct_ok|check-ok|tests/safety/program_lifetime_visible_direct_ok.tl|-|-
+program_lifetime_visible_scope_ok|check-ok|tests/safety/program_lifetime_visible_scope_ok.tl|-|-
+program_local_shadow_return_reject|check-fail|tests/safety/program_local_shadow_return_reject.tl|tests/safety/program_local_shadow_return_reject.tl:3:3|reference value would escape lexical scope
+program_local_other_return_reject|check-fail|tests/safety/program_local_other_return_reject.tl|tests/safety/program_local_other_return_reject.tl:9:11|does not outlive required lifetime `program`
+program_local_escape_store_reject|check-fail|tests/safety/program_local_escape_store_reject.tl|tests/safety/program_local_escape_store_reject.tl:3:3|source lifetime `program` does not outlive required lifetime `outer`
+program_local_field_store_reject|check-fail|tests/safety/program_local_field_store_reject.tl|tests/safety/program_local_field_store_reject.tl:6:3|cannot store reference into longer-lived struct field
+program_local_reserved_binding_store_reject|check-fail|tests/safety/program_local_reserved_binding_store_reject.tl|tests/safety/program_local_reserved_binding_store_reject.tl:7:7|cannot store reference into longer-lived binding
+program_local_reserved_binding_store_return_reject|check-fail|tests/safety/program_local_reserved_binding_store_return_reject.tl|tests/safety/program_local_reserved_binding_store_return_reject.tl:7:7|cannot store reference into longer-lived binding
 program_lifetime_return_param_borrow_reject|check-fail|tests/safety/program_lifetime_return_param_borrow_reject.tl|-|source lifetime `n` does not outlive required lifetime `program`
 program_lifetime_return_local_reject|check-fail|tests/safety/program_lifetime_return_local_reject.tl|-|reference value would escape lexical scope
 program_lifetime_field_param_borrow_reject|check-fail|tests/safety/program_lifetime_field_param_borrow_reject.tl|-|source lifetime `n` does not outlive required lifetime `program`

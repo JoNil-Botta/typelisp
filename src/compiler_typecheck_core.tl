@@ -36998,7 +36998,9 @@
           signature-marker-id)))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
-  (if (tc-generated-arena-brand-id? lifetime-id)
+  (if (or
+    (tc-generated-arena-brand-id? lifetime-id)
+    (tc-program-lifetime-id? lifetime-id))
     true
     (if (tc-type-env-scoped-runtime-active? env)
       (tc-type-env-scoped-carrier-lifetime-visible-id?

@@ -1120,7 +1120,172 @@
           (set! source (+ source 1)))
         true))))
 
+;; Independent predecessor-union fixpoint, including disconnected generators.
+;; Compare every entry bit and bound the production traversal's actual work.
+(define (normalize-test-reaching-case?
+  [blocks : (__tl_dyn-array own.OwnershipBlock)]
+  [last : (__tl_dyn-array i64)]
+  [large? : bool]) : bool
+  (let
+    [body : own.OwnershipBody (core_fixture.ownership-test-body blocks)]
+    [size : i64 (array-length body.blocks)]
+    [count : i64 4]
+    [expected : (__tl_dyn-array bool) (__tl_make-array bool (* size count))]
+    [exit : (__tl_dyn-array bool) (__tl_make-array bool (* size count))]
+    [actual : (__tl_dyn-array bool) (__tl_make-array bool (* size count))]
+    [work : i64 0]
+    [old-work : i64 0]
+    [changed : bool true]
+    (while changed
+      (set! changed false)
+      (let
+        [block : i64 0]
+        (while (< block size)
+          (set! old-work (+ old-work count))
+          (let
+            [pred : i64 0]
+            (while (< pred size)
+              (let
+                [term : (& body own.OwnershipTerminator)
+                  (& (array-ref body.blocks pred).terminator)]
+                (when
+                  (or
+                    (= (own.ownership-successor term 0) block)
+                    (= (own.ownership-successor term 1) block))
+                  (let
+                    [d : i64 0]
+                    (while (< d count)
+                      (when
+                        (and
+                          (array-ref exit (+ (* pred count) d))
+                          (not (array-ref expected (+ (* block count) d))))
+                        (set! (array-ref expected (+ (* block count) d)) true)
+                        (set! changed true))
+                      (set! d (+ d 1))))))
+              (set! pred (+ pred 1))))
+          (let
+            [d : i64 0]
+            (while (< d count)
+              (let
+                [out : bool
+                  (if (>= (array-ref last block) 0)
+                    (= d (array-ref last block))
+                    (array-ref expected (+ (* block count) d)))]
+                (when
+                  (and out (not (array-ref exit (+ (* block count) d))))
+                  (set! (array-ref exit (+ (* block count) d)) true)
+                  (set! changed true)))
+              (set! d (+ d 1))))
+          (set! block (+ block 1)))))
+    (match (norm.normalize-reaching-entries!
+      (& body)
+      (& last)
+      count
+      (&mut actual)
+      (&mut work)
+      (* size count))
+      [(norm.NormalizeUnit.Err _) (return false)]
+      [_ unit])
+    (let
+      [cell : i64 0]
+      (while (< cell (* size count))
+        (unless
+          (= (array-ref actual cell) (array-ref expected cell))
+          (return false))
+        (set! cell (+ cell 1))))
+    (when
+      large?
+      (let
+        [limited : (__tl_dyn-array bool) (__tl_make-array bool (* size count))]
+        [charged : i64 0]
+        (match (norm.normalize-reaching-entries!
+          (& body)
+          (& last)
+          count
+          (&mut limited)
+          (&mut charged)
+          1)
+          [(norm.NormalizeUnit.Err norm.OwnershipNormalizeFailure.Resource)
+            (unless (= charged 1) (return false))]
+          [_ (return false)])))
+    (and (<= work (* size count)) (or (not large?) (>= old-work (* size size))))))
+
+(define (normalize-test-reaching?) : bool
+  (let
+    [graph : i64 0]
+    ;; All three-node single-successor graphs, including absent and self
+    ;; edges; then all six-edge graphs without self edges, with branches.
+    (while (< graph 128)
+      (let
+        [generators : i64 0]
+        (while (< generators 8)
+          (let
+            [blocks : (__tl_dyn-array own.OwnershipBlock)
+              (__tl_make-array own.OwnershipBlock 3)]
+            [last : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+            [bits : i64 (% graph 64)]
+            [mask : i64 generators]
+            [block : i64 0]
+            (while (< block 3)
+              (set!
+                (array-ref last block)
+                (if (= (% mask 2) 0)
+                  -1
+                  block))
+              (set! mask (/ mask 2))
+              (let
+                [yes : i64
+                  (if (< graph 64)
+                    (- (% bits 4) 1)
+                    (if (= (% bits 2) 0)
+                      -1
+                      (% (+ block 1) 3)))]
+                [no : i64
+                  (if (< graph 64)
+                    yes
+                    (if (= (% (/ bits 2) 2) 0)
+                      -1
+                      (% (+ block 2) 3)))]
+                (set!
+                  (array-ref blocks block)
+                  (core_fixture.ownership-test-block
+                    (__tl_make-array own.OwnershipInstruction 0)
+                    (own.OwnershipTerminator.Branch
+                      (core_fixture.ownership-test-place-id 0)
+                      (core_fixture.ownership-test-block-id yes)
+                      (core_fixture.ownership-test-block-id no)))))
+              (set! bits (/ bits 4))
+              (set! block (+ block 1)))
+            (unless
+              (normalize-test-reaching-case? blocks last false)
+              (return false)))
+          (set! generators (+ generators 1))))
+      (set! graph (+ graph 1)))
+    (let
+      [size : i64 256]
+      [blocks : (__tl_dyn-array own.OwnershipBlock)
+        (__tl_make-array own.OwnershipBlock size)]
+      [last : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+      [block : i64 0]
+      (while (< block size)
+        (set! (array-ref last block) -1)
+        (set!
+          (array-ref blocks block)
+          (core_fixture.ownership-test-block
+            (__tl_make-array own.OwnershipInstruction 0)
+            (own.OwnershipTerminator.Goto
+              (core_fixture.ownership-test-block-id
+                (% (+ block (- size 1)) size)))))
+        (set! block (+ block 1)))
+      ;; Definition 0 is overwritten in its block; 3 has no generator.
+      (set! (array-ref last (- size 1)) 1)
+      (set! (array-ref last (/ size 2)) 2)
+      (normalize-test-reaching-case? blocks last true))))
+
 (define (compiler-ownership-normalize-self-test) : i64
+  (test.assert-true
+    (normalize-test-reaching?)
+    "normalizer sparse reaching definitions match the fixpoint with linear visits")
   (test.assert-true
     (normalize-test-transfer-index?)
     "normalizer transfer index preserves every ordered scan match")

@@ -1515,6 +1515,12 @@ The transfer-index fixture compares every ordered match with a full instruction
 scan, including duplicate pairs, projected roots, empty blocks and spare
 instruction capacity. A 4,096-place/1,024-source fan-in fixture also compares
 the mixed-key index with a fresh scan, including missing sources.
+The reaching-definition fixture compares every entry bit with an independent
+predecessor-union fixpoint on 1,024 small CFG/generator combinations, including
+disconnected generators, cycles, duplicate edges and kills. Its 256-block
+reverse-order cycle requires quadratic fixpoint work while the production
+traversal visits each live block/definition pair once; it also checks bounded
+resource failure and definitions overwritten before a block's exit.
 `ownership_split_many.tl` exercises 256 split bindings
 and chained redirects at opt0/1/2; the adjacent safety rejection keeps the
 redirected borrow live after its source binding is reassigned.

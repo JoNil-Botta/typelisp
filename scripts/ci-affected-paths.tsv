@@ -693,7 +693,11 @@ tests/safety/mir_by_value_borrow_retained_elided_reject.tl	stage2-safety-corpus	
 tests/safety/mir_by_value_borrow_retained_forwarded_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_lambda_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_macro_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_retained_phantom_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_scalar_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_retained_signature_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_retained_tuple_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_distinct_lifetime_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_unretained_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_storage_backed_borrow_retained_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_byte_alias_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.

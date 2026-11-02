@@ -57913,10 +57913,13 @@
             (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))
           [(ast.AstType.MutRef lifetime _)
             (let
+              [place-id : i64
+                (tc-mut-borrow-arg-place-id ctx (tc-global-shared-view arg))]
               [in-result : bool
                 (tc-name-id-list-contains ret-lifetimes lifetime)]
               (when
                 (and
+                  (>= place-id 0)
                   (or
                     in-result
                     (tc-call-mutable-formal-mentions-lifetime?
@@ -57924,10 +57927,7 @@
                       params
                       index
                       lifetime))
-                  (tc-by-value-mut-borrow-arg?
-                    ctx
-                    env
-                    (tc-global-shared-view arg)))
+                  (tc-by-value-mut-borrow-place? ctx env place-id))
                 (return
                   (ResultTcUnit.Err
                     (tc-locate-error-at-expr
@@ -57942,24 +57942,28 @@
         (set! index (+ index 1))))
     ResultTcUnit.Ok))
 
-;; `(&mut place)` of a place that is not storage-backed (a register-resident
+;; The place of a `(&mut place)` argument, also through a macro expansion, or
+;; -1.
+(define (tc-mut-borrow-arg-place-id [ctx : TcContext] [expr : ast.AstExpr]) : i64
+  (match (ast.ast-expr-unspan expr)
+    [(ast.AstExpr.Borrow true _ place-id) place-id]
+    [(ast.AstExpr.MacroExpansion expanded _ _)
+      (tc-mut-borrow-arg-place-id ctx (tc-context-expr-get ctx expanded))]
+    [_ -1]))
+
+;; Whether a mutably borrowed place is not storage-backed (a register-resident
 ;; by-value local or a part of one).
-(define (tc-by-value-mut-borrow-arg?
+(define (tc-by-value-mut-borrow-place?
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Borrow true _ place-id)
-      (match (tc-mut-borrow-non-call-place-ok
-        ctx
-        env
-        (& (tc-context-expr-get ctx place-id))
-        TcBorrowSource.No)
-        [(ResultTcUnit.Ok) false]
-        [(ResultTcUnit.Err _) true])]
-    [(ast.AstExpr.MacroExpansion expanded _ _)
-      (tc-by-value-mut-borrow-arg? ctx env (tc-context-expr-get ctx expanded))]
-    [_ false]))
+  [place-id : i64]) : bool
+  (match (tc-mut-borrow-non-call-place-ok
+    ctx
+    env
+    (& (tc-context-expr-get ctx place-id))
+    TcBorrowSource.No)
+    [(ResultTcUnit.Ok) false]
+    [(ResultTcUnit.Err _) true]))
 
 ;; A call through `:invalidate` parameters (#6670). After lifetime
 ;; substitution each invalidated brand must be one the caller may end (a local

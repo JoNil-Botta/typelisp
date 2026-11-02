@@ -209,6 +209,7 @@ compress/zlib.tl
 concurrency_registry.tl
 core_macros.tl
 crypto_aes_core.tl
+crypto_hkdf_sha256.tl
 crypto_hmac_sha256.tl
 crypto_p256.tl
 crypto_rsa_core.tl
@@ -322,6 +323,8 @@ stdlib/tests/deflate_api.tl|42|-|-|-
 stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_aes_api.tl|42|-|-|-
+stdlib/tests/crypto_hkdf_sha256_api.tl|42|-|-|-
+stdlib/tests/crypto_hkdf_sha256_parity.tl|42|-|-|-
 stdlib/tests/crypto_hmac_sha256_api.tl|42|-|-|-
 stdlib/tests/crypto_hmac_sha256_parity.tl|42|-|-|-
 stdlib/tests/crypto_secret_range_transfer.tl|42|-|-|-
@@ -410,6 +413,14 @@ stdlib/tests/crypto_sha1_git_inline.tl|pass|-
 stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha256_inline.tl|pass|-
 stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
+stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|fail|opaque type
+stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl|fail|opaque type
+stdlib/tests/crypto_hkdf_sha256_view_reject.tl|fail|opaque type
+stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|fail|opaque type
+stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl|fail|opaque type
+stdlib/tests/crypto_hkdf_sha256_okm_unsafe_reject.tl|fail|requires unsafe context
+stdlib/tests/crypto_hkdf_sha256_clone_reject.tl|fail|clone unsupported type
+stdlib/tests/crypto_hkdf_sha256_unsafe_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_hmac_sha256_storage_reject.tl|fail|opaque type
 stdlib/tests/crypto_hmac_sha256_unsafe_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_hmac_sha256_clone_reject.tl|fail|clone unsupported type

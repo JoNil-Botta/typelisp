@@ -80,6 +80,12 @@ reject_diag() {
             printf 'ptr-read requires unsafe context' ;;
         stdlib/tests/crypto_aes_rounds_reject.tl)
             printf 'encrypt-checked! requires unsafe context' ;;
+        stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl|stdlib/tests/crypto_hkdf_sha256_view_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl)
+            printf 'opaque type' ;;
+        stdlib/tests/crypto_hkdf_sha256_clone_reject.tl)
+            printf 'clone unsupported type' ;;
+        stdlib/tests/crypto_hkdf_sha256_unsafe_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_unsafe_reject.tl)
+            printf 'requires unsafe context' ;;
         stdlib/tests/crypto_hmac_sha256_storage_reject.tl)
             printf 'opaque type' ;;
         stdlib/tests/crypto_hmac_sha256_unsafe_reject.tl)

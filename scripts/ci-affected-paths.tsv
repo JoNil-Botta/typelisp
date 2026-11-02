@@ -713,3 +713,6 @@ tests/safety/string_raw_substring_alias_reject.tl	stage2-safety-corpus	@corpus	P
 tests/safety/string_raw_substring_direct_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_substring_unsafe_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_substring_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/inline-aggregate-scaling.fixtures.cases	stage2-inline-aggregate-scaling	@compiler	Primary inventory for the depth-40 aggregate resource regression.
+tests/fixtures/inline_aggregate_binary_40_clear.tl	stage2-inline-aggregate-scaling,stage2-codegen-target-parity	@compiler	Depth-40 binary aggregate resource-bound primary.
+tests/fixtures/inline_aggregate_binary_40_gated.tl	stage2-inline-aggregate-scaling,stage2-codegen-target-parity	@compiler	Depth-40 binary aggregate resource-bound primary.

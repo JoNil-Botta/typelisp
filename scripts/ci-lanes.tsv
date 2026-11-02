@@ -61,6 +61,7 @@ typelisp-source-formatting	linux-2	windows-1
 large-crlf-formatter-diff	linux-2	windows-2
 typelisp-source-lint	linux-2	windows-1
 no-libc-dependency-guard	linux-2	windows-2
+stage2-inline-aggregate-scaling	linux-2	windows-1
 stage2-public-tool-surface	linux-2	windows-1
 stage2-app-workflow-corpus	linux-2	windows-1
 ir-observability-golden	linux-2	windows-2

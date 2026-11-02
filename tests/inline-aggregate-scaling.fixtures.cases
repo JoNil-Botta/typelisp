@@ -1,0 +1,7 @@
+case binary-40-clear
+source tests/fixtures/inline_aggregate_binary_40_clear.tl
+do none
+
+case binary-40-gated
+source tests/fixtures/inline_aggregate_binary_40_gated.tl
+do none

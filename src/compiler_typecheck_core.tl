@@ -48081,10 +48081,89 @@
     [(or (Ptr _) (MutPtr _)) true]
     [_ false]))
 
+;; Semantic keys use the session's exact structural interner, independently of
+;; the optional AST type-pool index. Records are shared once per nominal,
+;; arguments and context; completion membership compares only integer keys.
+(define (tc-nominal-completion-key-at
+  [ctx : TcContext]
+  [kind : i64]
+  [name : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [arguments : i64 -1]
+    (for [index (iterator.range 0 (ast.ast-lifetime-list-len lifetimes))]
+      (set!
+        arguments
+        (cis.intern-structural-key-raw
+          (cis.intern-structural-session-composite-pair-key
+            session
+            arguments
+            (ast.ast-lifetime-list-get
+              lifetimes
+              index
+              (ast.ast-lifetime-fallback))))))
+    (cis.intern-structural-key-raw
+      (cis.intern-structural-session-composite-triple-key
+        session
+        (cis.intern-structural-key-raw
+          (cis.intern-structural-session-composite-triple-key
+            session
+            kind
+            name
+            arguments))
+        ctx.module-id
+        ctx.type-module-id))))
+
+;; The singleton's negative value is the remaining unshared visit budget.
+;; After exactly64 nominal visits it becomes the ordinary completion set.
+;; This counter belongs to one walk and never allocates or resets for a child.
+(define (tc-nominal-completion-ready!
+  [completed : (&mut completed TcNameIdList)]) : bool
+  (match (clone (deref completed))
+    [(One remaining)
+      (if (< remaining 0)
+        (begin
+          (set!
+            (deref completed)
+            (if (= remaining -1)
+              Nil
+              (One (+ remaining 1))))
+          false)
+        true)]
+    [_ true]))
+
+(define (tc-nominal-completion-key
+  [ctx : TcContext]
+  [ty : (& ty ast.AstType)]
+  [completed : (&mut completed TcNameIdList)]) : i64
+  (if (tc-nominal-completion-ready! completed)
+    (match ty
+      [(Enum name)
+        (tc-nominal-completion-key-at
+          ctx
+          0
+          name
+          (& (ast.ast-lifetime-list-new)))]
+      [(Struct name)
+        (tc-nominal-completion-key-at
+          ctx
+          1
+          name
+          (& (ast.ast-lifetime-list-new)))]
+      [(EnumArgs name lifetimes)
+        (tc-nominal-completion-key-at ctx 2 name (& (deref lifetimes)))]
+      [(StructArgs name lifetimes)
+        (tc-nominal-completion-key-at ctx 3 name (& (deref lifetimes)))]
+      [_ -1])
+    -1))
+
 (define (tc-type-move-kind-copyable-type-list-at
   [ctx : TcContext]
   [types : (& types ast.AstTypeList)]
   [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]
   [index : i64]) : bool
   (if (>= index (ast.ast-type-list-len types))
     true
@@ -48095,21 +48174,29 @@
           (tc-context-type-get
             ctx
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-          stack))
-      (tc-type-move-kind-copyable-type-list-at ctx types stack (+ index 1)))))
+          stack
+          completed))
+      (tc-type-move-kind-copyable-type-list-at
+        ctx
+        types
+        stack
+        completed
+        (+ index 1)))))
 
 (define (tc-type-move-kind-copyable-type-list?
   [ctx : TcContext]
   [types : ast.AstTypeList]
-  [stack : TcNameIdList]) : bool
-  (tc-type-move-kind-copyable-type-list-at ctx (& types) stack 0))
+  [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]) : bool
+  (tc-type-move-kind-copyable-type-list-at ctx (& types) stack completed 0))
 
 (define (tc-type-move-kind-copyable-nominal-types?
   [ctx : TcContext]
   [nominal-id : i64]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [types : ast.AstTypeList]
-  [stack : TcNameIdList]) : bool
+  [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]) : bool
   ;; Resolve declaration fields/payloads in the declaration owner's module,
   ;; then apply the use-site lifetime arguments positionally. A failed
   ;; substitution is an invalid type and therefore conservatively MoveOnly.
@@ -48118,28 +48205,32 @@
       (tc-type-move-kind-copyable-type-list?
         ctx
         (tc-lifetime-subst-type-list subst types)
-        stack)]
+        stack
+        completed)]
     [(Err _) false]))
 
 (define (tc-type-move-kind-copyable-struct-fields?
   [ctx : TcContext]
   [nominal-id : i64]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [fields : ast.AstFieldDefList]
-  [stack : TcNameIdList]) : bool
+  [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]) : bool
   (tc-type-move-kind-copyable-nominal-types?
     ctx
     nominal-id
     lifetimes
     (tc-field-type-list ctx fields)
-    stack))
+    stack
+    completed))
 
 (define (tc-type-move-kind-copyable-enum-variants-at
   [ctx : TcContext]
   [nominal-id : i64]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [variants : (& variants ast.AstVariantDefList)]
   [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]
   [index : i64]) : bool
   (if (>= index variants.len)
     true
@@ -48152,29 +48243,33 @@
           (tc-type-move-kind-copyable-nominal-types?
             ctx
             nominal-id
-            (tc-global-shared-view lifetimes)
+            lifetimes
             (tc-resolve-type-list ctx payloads)
-            stack)
+            stack
+            completed)
           (tc-type-move-kind-copyable-enum-variants-at
             ctx
             nominal-id
             lifetimes
             variants
             stack
+            completed
             (+ index 1)))])))
 
 (define (tc-type-move-kind-copyable-enum-variants?
   [ctx : TcContext]
   [nominal-id : i64]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [variants : ast.AstVariantDefList]
-  [stack : TcNameIdList]) : bool
+  [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]) : bool
   (tc-type-move-kind-copyable-enum-variants-at
     ctx
     nominal-id
     lifetimes
     (& variants)
     stack
+    completed
     0))
 
 (define (tc-move-kind-code [kind : TcMoveKind]) : i64
@@ -48189,8 +48284,10 @@
 (define (tc-type-move-kind-nominal-with-stack
   [ctx : TcContext]
   [name-id : i64]
-  [lifetimes : ast.AstLifetimeList]
-  [stack : TcNameIdList]) : TcMoveKind
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [stack : TcNameIdList]
+  [type-id : i64]
+  [completed : (&mut completed TcNameIdList)]) : TcMoveKind
   (let
     [nominal-state : TcNominalCacheState
       (tc-job-state-nominal-cache (tc-context-job-state ctx))]
@@ -48206,7 +48303,7 @@
         (match stack
           [(Nil) true]
           [_ false])
-        (= (tc-lifetime-list-count (& lifetimes)) 0))
+        (= (tc-lifetime-list-count lifetimes) 0))
         (let
           [cached : i64
             (tc-type-handle-cache-move-kind
@@ -48224,131 +48321,196 @@
                     name-id
                     handle
                     lifetimes
-                    stack)]
+                    stack
+                    type-id
+                    completed)]
                 (tc-type-handle-cache-move-kind-set!
                   nominal-state
                   (tc-context-symbols-ref (& ctx))
                   name-id
                   (tc-move-kind-code kind))
                 kind))))
-        (tc-type-move-kind-nominal-handle ctx name-id handle lifetimes stack)))))
+        (tc-type-move-kind-nominal-handle
+          ctx
+          name-id
+          handle
+          lifetimes
+          stack
+          type-id
+          completed)))))
 
 (define (tc-type-move-kind-nominal-handle
   [ctx : TcContext]
   [name-id : i64]
   [handle : i64]
-  [lifetimes : ast.AstLifetimeList]
-  [stack : TcNameIdList]) : TcMoveKind
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [stack : TcNameIdList]
+  [type-id : i64]
+  [completed : (&mut completed TcNameIdList)]) : TcMoveKind
   (let
     [kind : i64 (csym.compiler-symbol-handle-kind handle)]
     [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-    (if (or
-      (< nominal-id 0)
-      (not
-        (or
-          (= kind (csym.compiler-symbol-kind-defstruct))
-          (= kind (csym.compiler-symbol-kind-defenum)))))
-      (MoveOnly)
-      (if (tc-name-id-list-contains stack nominal-id)
+    (cond
+      [(or
+          (< nominal-id 0)
+          (not
+            (or
+              (= kind (csym.compiler-symbol-kind-defstruct))
+              (= kind (csym.compiler-symbol-kind-defenum)))))
+        (MoveOnly)]
+      [(tc-name-id-list-contains stack nominal-id)
         ;; Recursive by-value declarations are invalid layouts, but the
         ;; classifier remains total and conservative instead of recursing
         ;; forever.
-        (MoveOnly)
+        (MoveOnly)]
+      [(and
+          (>= type-id 0)
+          (tc-name-id-list-contains (clone (deref completed)) type-id))
+        (Copyable)]
+      [else
         (let
-          [owner-ctx : TcContext
-            (tc-context-with-nominal-owner-index-module
+          [result : TcMoveKind
+            (tc-type-move-kind-nominal-fields
               ctx
-              (csym.compiler-symbol-handle-index handle))]
-          (match (csym.compiler-symbols-decl-at-index
-            (tc-context-symbols-ref (& owner-ctx))
-            (csym.compiler-symbol-handle-index handle))
-            [(Ok decl)
-              (let
-                [next-stack : TcNameIdList
-                  (tc-name-id-list-add stack nominal-id)]
-                (match decl
-                  [(or (DefStruct _ _ _ cleanup fields)
-                       (DefStructLifetimes _ _ _ _ cleanup fields))
-                    (if (ast.ast-struct-cleanup? cleanup)
-                      (MoveOnly)
-                      (if (tc-type-move-kind-copyable-struct-fields?
-                        owner-ctx
-                        nominal-id
-                        lifetimes
-                        fields
-                        next-stack)
-                        (Copyable)
-                        (MoveOnly)))]
-                  [(or (DefEnum _ _ cleanup variants)
-                       (DefEnumLifetimes _ _ _ cleanup variants))
-                    (if (ast.ast-enum-cleanup? cleanup)
-                      (MoveOnly)
-                      (if (tc-type-move-kind-copyable-enum-variants?
-                        owner-ctx
-                        nominal-id
-                        lifetimes
-                        variants
-                        next-stack)
-                        (Copyable)
-                        (MoveOnly)))]
-                  [_ (MoveOnly)]))]
-            [(Err _) (MoveOnly)]))))))
+              nominal-id
+              handle
+              lifetimes
+              stack
+              completed)]
+          ;; Only a completed Copyable answer is independent of the path.
+          ;; A conservative cycle cutoff must never enter this memo.
+          ;; The key is canonical even when the AST pool appends fresh IDs.
+          (when
+            (and (>= type-id 0) (tc-move-kind-copyable? result))
+            (set!
+              (deref completed)
+              (tc-name-id-list-cons (clone (deref completed)) type-id)))
+          result)])))
+
+(define (tc-type-move-kind-nominal-fields
+  [ctx : TcContext]
+  [nominal-id : i64]
+  [handle : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]) : TcMoveKind
+  (let
+    [owner-ctx : TcContext
+      (tc-context-with-nominal-owner-index-module
+        ctx
+        (csym.compiler-symbol-handle-index handle))]
+    (match (csym.compiler-symbols-decl-at-index
+      (tc-context-symbols-ref (& owner-ctx))
+      (csym.compiler-symbol-handle-index handle))
+      [(Ok decl)
+        (let
+          [next-stack : TcNameIdList (tc-name-id-list-add stack nominal-id)]
+          (match decl
+            [(or (DefStruct _ _ _ cleanup fields)
+                 (DefStructLifetimes _ _ _ _ cleanup fields))
+              (if (ast.ast-struct-cleanup? cleanup)
+                (MoveOnly)
+                (if (tc-type-move-kind-copyable-struct-fields?
+                  owner-ctx
+                  nominal-id
+                  lifetimes
+                  fields
+                  next-stack
+                  completed)
+                  (Copyable)
+                  (MoveOnly)))]
+            [(or (DefEnum _ _ cleanup variants)
+                 (DefEnumLifetimes _ _ _ cleanup variants))
+              (if (ast.ast-enum-cleanup? cleanup)
+                (MoveOnly)
+                (if (tc-type-move-kind-copyable-enum-variants?
+                  owner-ctx
+                  nominal-id
+                  lifetimes
+                  variants
+                  next-stack
+                  completed)
+                  (Copyable)
+                  (MoveOnly)))]
+            [_ (MoveOnly)]))]
+      [(Err _) (MoveOnly)])))
 
 (define (tc-type-move-kind-with-stack
   [ctx : TcContext]
   [ty : ast.AstType]
-  [stack : TcNameIdList]) : TcMoveKind
-  (match (tc-resolve-type ctx ty)
-    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
-         (Unit) (Never) (Func _ _) (CFunc _ _) (Ptr _) (MutPtr _) (Ref _ _))
-      (Copyable)]
-    ;; Ordinary declarations (SPEC 3.7.1.2), move-only like the other syntax
-    ;; types: an `Expr` holds strings and boxed nodes.
-    [(or (Expr) (ExprList)) (MoveOnly)]
-    ;; Function values are represented by the function type only. Capturing
-    ;; closures carry a separate environment and remain a later issue.
-    ;; Shared references are handles and remain Copyable independent of their
-    ;; referent. Mutable references are unique and therefore MoveOnly.
-    [(or (Region _ inner) (Invalidate _ inner) (Array inner _))
-      (tc-type-move-kind-with-stack ctx (tc-context-type-get ctx inner) stack)]
-    [(Tuple elems)
-      (if (tc-type-move-kind-copyable-type-list?
-        ctx
-        (ast.ast-type-list-box-shared-view elems)
-        stack)
-        (Copyable)
-        (MoveOnly))]
-    ;; These are owning handles or unsized/compatibility views. Their element
-    ;; types do not make the value shallowly Copyable.
-    [(or (Enum name) (Struct name))
-      (tc-type-move-kind-nominal-with-stack
-        ctx
-        name
-        (ast.ast-lifetime-list-new)
-        stack)]
-    [(EnumArgs name lifetimes)
-      (tc-type-move-kind-nominal-with-stack
-        ctx
-        name
-        (ast.ast-lifetime-list-box-shared-view lifetimes)
-        stack)]
-    [(StructArgs name lifetimes)
-      (let
-        [args : ast.AstLifetimeList
-          (ast.ast-lifetime-list-box-shared-view lifetimes)]
-        (if (and
-          (tc-arena-nominal-name-id? name)
-          (> (tc-lifetime-list-count args) 0))
-          (MoveOnly)
-          (tc-type-move-kind-nominal-with-stack ctx name args stack)))]
-    ;; Unresolved names and invalid type variables must never accidentally
-    ;; become Copyable.
-    [(or (MutRef _ _) (String) (Str) (Bytes) (DynArray _) (Slice _) (Box _)
-         (Var _) (VarArgs _ _))
-      (MoveOnly)]))
+  [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]) : TcMoveKind
+  (let
+    [resolved : ast.AstType (tc-resolve-type ctx ty)]
+    (match (tc-global-shared-view resolved)
+      [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool)
+           (Char) (Unit) (Never) (Func _ _) (CFunc _ _) (Ptr _) (MutPtr _)
+           (Ref _ _))
+        (Copyable)]
+      ;; Ordinary declarations (SPEC 3.7.1.2), move-only like the other syntax
+      ;; types: an `Expr` holds strings and boxed nodes.
+      [(or (Expr) (ExprList)) (MoveOnly)]
+      ;; Function values are represented by the function type only. Capturing
+      ;; closures carry a separate environment and remain a later issue.
+      ;; Shared references are handles and remain Copyable independent of their
+      ;; referent. Mutable references are unique and therefore MoveOnly.
+      [(or (Region _ inner) (Invalidate _ inner) (Array inner _))
+        (tc-type-move-kind-with-stack
+          ctx
+          (tc-context-type-get ctx inner)
+          stack
+          completed)]
+      [(Tuple elems)
+        (if (tc-type-move-kind-copyable-type-list?
+          ctx
+          (ast.ast-type-list-box-shared-view elems)
+          stack
+          completed)
+          (Copyable)
+          (MoveOnly))]
+      ;; These are owning handles or unsized/compatibility views. Their element
+      ;; types do not make the value shallowly Copyable.
+      [(or (Enum name) (Struct name))
+        (tc-type-move-kind-nominal-with-stack
+          ctx
+          name
+          (& (ast.ast-lifetime-list-new))
+          stack
+          (tc-nominal-completion-key ctx (& resolved) completed)
+          completed)]
+      [(EnumArgs name lifetimes)
+        (tc-type-move-kind-nominal-with-stack
+          ctx
+          name
+          (& (ast.ast-lifetime-list-box-shared-view lifetimes))
+          stack
+          (tc-nominal-completion-key ctx (& resolved) completed)
+          completed)]
+      [(StructArgs name lifetimes)
+        (let
+          [args : ast.AstLifetimeList
+            (ast.ast-lifetime-list-box-shared-view lifetimes)]
+          (if (and
+            (tc-arena-nominal-name-id? name)
+            (> (tc-lifetime-list-count args) 0))
+            (MoveOnly)
+            (tc-type-move-kind-nominal-with-stack
+              ctx
+              name
+              args
+              stack
+              (tc-nominal-completion-key ctx (& resolved) completed)
+              completed)))]
+      ;; Unresolved names and invalid type variables must never accidentally
+      ;; become Copyable.
+      [(or (MutRef _ _) (String) (Str) (Bytes) (DynArray _) (Slice _) (Box _)
+           (Var _) (VarArgs _ _))
+        (MoveOnly)])))
 
 (define (tc-type-move-kind [ctx : TcContext] [ty : ast.AstType]) : TcMoveKind
-  (tc-type-move-kind-with-stack ctx ty Nil))
+  (let
+    [completed : TcNameIdList (One -64)]
+    (tc-type-move-kind-with-stack ctx ty Nil (&mut completed))))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
@@ -73903,13 +74065,15 @@
 (define (tc-inline-aggregate-type-list-finite-ok
   [ctx : TcContext]
   [types : ast.AstTypeList]
-  [stack : TcStringList]) : ResultTcUnit
-  (tc-inline-aggregate-type-list-finite-ok-at ctx (& types) stack 0))
+  [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]) : ResultTcUnit
+  (tc-inline-aggregate-type-list-finite-ok-at ctx (& types) stack completed 0))
 
 (define (tc-inline-aggregate-type-list-finite-ok-at
   [ctx : TcContext]
   [types : (& types ast.AstTypeList)]
   [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast.ast-type-list-len types))
     Ok
@@ -73921,19 +74085,27 @@
             (tc-context-type-get
               ctx
               (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-            (tc-global-shared-view stack)))]
-      (tc-inline-aggregate-type-list-finite-ok-at ctx types stack (+ index 1)))))
+            (tc-global-shared-view stack)
+            completed))]
+      (tc-inline-aggregate-type-list-finite-ok-at
+        ctx
+        types
+        stack
+        completed
+        (+ index 1)))))
 
 (define (tc-inline-aggregate-fields-finite-ok
   [ctx : TcContext]
   [fields : ast.AstFieldDefList]
-  [stack : TcStringList]) : ResultTcUnit
-  (tc-inline-aggregate-fields-finite-ok-at ctx (& fields) stack 0))
+  [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]) : ResultTcUnit
+  (tc-inline-aggregate-fields-finite-ok-at ctx (& fields) stack completed 0))
 
 (define (tc-inline-aggregate-fields-finite-ok-at
   [ctx : TcContext]
   [fields : (& fields ast.AstFieldDefList)]
   [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]
   [index : i64]) : ResultTcUnit
   (if (>= index fields.len)
     Ok
@@ -73948,19 +74120,27 @@
               (tc-inline-aggregate-type-finite-ok
                 ctx
                 ty
-                (tc-global-shared-view stack)))]
-          (tc-inline-aggregate-fields-finite-ok-at ctx fields stack (+ index 1)))])))
+                (tc-global-shared-view stack)
+                completed))]
+          (tc-inline-aggregate-fields-finite-ok-at
+            ctx
+            fields
+            stack
+            completed
+            (+ index 1)))])))
 
 (define (tc-inline-aggregate-variants-finite-ok
   [ctx : TcContext]
   [variants : ast.AstVariantDefList]
-  [stack : TcStringList]) : ResultTcUnit
-  (tc-inline-aggregate-variants-finite-ok-at ctx (& variants) stack 0))
+  [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]) : ResultTcUnit
+  (tc-inline-aggregate-variants-finite-ok-at ctx (& variants) stack completed 0))
 
 (define (tc-inline-aggregate-variants-finite-ok-at
   [ctx : TcContext]
   [variants : (& variants ast.AstVariantDefList)]
   [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]
   [index : i64]) : ResultTcUnit
   (if (>= index variants.len)
     Ok
@@ -73975,11 +74155,13 @@
               (tc-inline-aggregate-type-list-finite-ok
                 ctx
                 fields
-                (tc-global-shared-view stack)))]
+                (tc-global-shared-view stack)
+                completed))]
           (tc-inline-aggregate-variants-finite-ok-at
             ctx
             variants
             stack
+            completed
             (+ index 1)))])))
 
 (define (tc-inline-aggregate-context-for-name-id
@@ -73998,82 +74180,145 @@
         ctx))
     ctx))
 
+;; Count the root visit once; its first64-visit prefix has no semantic key.
 (define (tc-inline-aggregate-nominal-finite-ok
   [ctx : TcContext]
   [name : String]
   [name-id : i64]
   [stack : TcStringList]) : ResultTcUnit
+  (let
+    [completed : TcNameIdList (One -64)]
+    [_ : bool (tc-nominal-completion-ready! (&mut completed))]
+    (tc-inline-aggregate-nominal-finite-ok-with-memo
+      ctx
+      name
+      name-id
+      stack
+      (&mut completed)
+      -1)))
+
+;; Publish only completed Ok nodes after checking the active path. The shared
+;; semantic key retains applied arguments and module context, including the
+;; pre-existing missing-handle enum fallback that switches the owner module.
+(define (tc-inline-aggregate-nominal-finite-ok-with-memo
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]
+  [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]
+  [type-id : i64]) : ResultTcUnit
   (if (tc-string-list-contains
     (tc-global-shared-view stack)
     (tc-global-shared-view name))
     (Err (tc-inline-aggregate-cycle-message name stack))
-    (let
-      [handle : i64
-        (csym.compiler-symbols-lookup-type-id-or
-          (tc-context-symbols ctx)
-          name-id
-          (csym.compiler-symbols-missing-handle))]
-      (if (csym.compiler-symbols-handle-found? handle)
+    (if (and
+      (>= type-id 0)
+      (tc-name-id-list-contains (clone (deref completed)) type-id))
+      Ok
+      (let
+        [_
+          (try
+            (tc-inline-aggregate-nominal-finite-ok-uncached
+              ctx
+              name
+              name-id
+              stack
+              completed))]
+        (when
+          (>= type-id 0)
+          (set!
+            (deref completed)
+            (tc-name-id-list-cons (clone (deref completed)) type-id)))
+        Ok))))
+
+(define (tc-inline-aggregate-nominal-finite-ok-uncached
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]
+  [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]) : ResultTcUnit
+  (let
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (if (=
+        (csym.compiler-symbol-handle-kind handle)
+        (csym.compiler-symbol-kind-defenum))
+        (let
+          [variants
+            (try
+              (tc-context-enum-variants-at-handle
+                ctx
+                handle
+                name-id
+                (tc-global-shared-view name)))]
+          (tc-inline-aggregate-variants-finite-ok
+            ctx
+            variants
+            (tc-string-list-cons stack name)
+            completed))
         (if (=
           (csym.compiler-symbol-handle-kind handle)
-          (csym.compiler-symbol-kind-defenum))
+          (csym.compiler-symbol-kind-defstruct))
           (let
-            [variants
-              (try
-                (tc-context-enum-variants-at-handle
+            [decl (try (tc-struct-decl-at-handle ctx handle name-id name))]
+            (match decl
+              [(TcStructDecl _ _ fields)
+                (tc-inline-aggregate-fields-finite-ok
                   ctx
-                  handle
-                  name-id
-                  (tc-global-shared-view name)))]
-            (tc-inline-aggregate-variants-finite-ok
-              ctx
-              variants
-              (tc-string-list-cons stack name)))
-          (if (=
-            (csym.compiler-symbol-handle-kind handle)
-            (csym.compiler-symbol-kind-defstruct))
-            (let
-              [decl (try (tc-struct-decl-at-handle ctx handle name-id name))]
-              (match decl
-                [(TcStructDecl _ _ fields)
-                  (tc-inline-aggregate-fields-finite-ok
-                    ctx
-                    fields
-                    (tc-string-list-cons stack name))]))
-            (Err (str_cat.str-cat "typecheck: unknown aggregate " name))))
-        (match (tc-context-enum-variants-id
-          ctx
-          name-id
-          (tc-global-shared-view name))
-          [(Ok variants)
-            (tc-inline-aggregate-variants-finite-ok
-              (tc-inline-aggregate-context-for-name-id ctx name-id)
-              variants
-              (tc-string-list-cons stack name))]
-          [(Err _) (Err (str_cat.str-cat "typecheck: unknown aggregate " name))])))))
+                  fields
+                  (tc-string-list-cons stack name)
+                  completed)]))
+          (Err (str_cat.str-cat "typecheck: unknown aggregate " name))))
+      (match (tc-context-enum-variants-id
+        ctx
+        name-id
+        (tc-global-shared-view name))
+        [(Ok variants)
+          (tc-inline-aggregate-variants-finite-ok
+            (tc-inline-aggregate-context-for-name-id ctx name-id)
+            variants
+            (tc-string-list-cons stack name)
+            completed)]
+        [(Err _) (Err (str_cat.str-cat "typecheck: unknown aggregate " name))]))))
 
 (define (tc-inline-aggregate-type-finite-ok
   [ctx : TcContext]
   [ty : ast.AstType]
-  [stack : TcStringList]) : ResultTcUnit
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(Tuple elems)
-      (tc-inline-aggregate-type-list-finite-ok
-        ctx
-        (ast.ast-type-list-box-shared-view elems)
-        stack)]
-    [(Array elem _)
-      (tc-inline-aggregate-type-finite-ok
-        ctx
-        (tc-context-type-get ctx elem)
-        stack)]
-    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _))
-      (tc-inline-aggregate-nominal-finite-ok
-        ctx
-        (tc-nominal-name-id-display name)
-        name
-        stack)]
-    [_ Ok]))
+  [stack : TcStringList]
+  [completed : (&mut completed TcNameIdList)]) : ResultTcUnit
+  (let
+    [resolved : ast.AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    [type-id : i64
+      (match (& resolved)
+        [(or (Enum _) (EnumArgs _ _) (Struct _) (StructArgs _ _))
+          (tc-nominal-completion-key ctx (& resolved) completed)]
+        [_ -1])]
+    (match resolved
+      [(Tuple elems)
+        (tc-inline-aggregate-type-list-finite-ok
+          ctx
+          (ast.ast-type-list-box-shared-view elems)
+          stack
+          completed)]
+      [(Array elem _)
+        (tc-inline-aggregate-type-finite-ok
+          ctx
+          (tc-context-type-get ctx elem)
+          stack
+          completed)]
+      [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _))
+        (tc-inline-aggregate-nominal-finite-ok-with-memo
+          ctx
+          (tc-nominal-name-id-display name)
+          name
+          stack
+          completed
+          type-id)]
+      [_ Ok])))
 
 ;; Test fixtures select a parsed declaration by expected spelling. This is a
 ;; lookup-only adapter; production compiler paths carry the declaration id.

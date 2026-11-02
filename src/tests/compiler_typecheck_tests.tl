@@ -2527,6 +2527,12 @@
       "A"
       "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
     (compiler-typecheck-inline-layout-error-ok?
+      "(defstruct Leaf (n i64))
+(defstruct A (left Leaf) (right Leaf) (tail B))
+(defstruct B (shared Leaf) (back A))"
+      "A"
+      "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+    (compiler-typecheck-inline-layout-error-ok?
       "(defstruct BadFixed
   (items (Array BadFixed 2)))"
       "BadFixed"
@@ -4081,6 +4087,10 @@
     ;; Nested enum/struct poison must propagate through every aggregate layer.
     (tc_core.tc-type-move-only? ctx (Enum (ci.intern "PoisonChoice")))
     (tc_core.tc-type-move-only? ctx (Struct (ci.intern "NestedPoison")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "WidePoison60")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "WidePoison61")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "WidePoison62")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "WidePoison63")))
     ;; Missing lifetime arguments are conservative.
     (tc_core.tc-type-move-only? ctx (Struct (ci.intern "RefBox")))
     (tc_core.tc-type-move-only?
@@ -4149,6 +4159,15 @@
     (= (compiler-typecheck-move-kind-memo ctx "Cycle") 2)
     (tc_core.tc-type-move-only? ctx (Struct (ci.intern "NestedPoison")))
     (= (compiler-typecheck-move-kind-memo ctx "TextPacket") 0)
+    (tc_core.tc-type-copyable? ctx (Struct (ci.intern "CopyDag")))
+    (tc_core.tc-type-move-only? ctx (Struct (ci.intern "SharedCycle")))
+    (tc_core.tc-type-move-only?
+      ctx
+      (ast.ast-ty-struct-args
+        (ci.intern "MixedArgs")
+        (ast.ast-lifetime-cons
+          cbi.compiler-builtin-id-fix-n
+          (& (ast.ast-lifetime-list-new)))))
     (compiler-typecheck-move-kind-copyable-group-ok? ctx)
     (compiler-typecheck-move-kind-move-only-group-ok? ctx)
     (compiler-typecheck-move-kind-wrapper-group-ok? ctx)))
@@ -4175,8 +4194,17 @@
 (defstruct TextPacket (text String))
 (defenum PoisonChoice (None) (Text TextPacket))
 (defstruct NestedPoison (choice PoisonChoice))
+(defstruct CopyDag (left Scalar) (right Scalar))
+(defstruct SharedCycle (left CopyDag) (right CopyDag) (back SharedCycle))
+(defstruct MixedArgs (:lifetimes a)
+  (good (RefBox a))
+  (bad (RefBox a a)))
 (defenum RefOption (:lifetimes a) (None) (SomeRef (& a i64)))
-(defenum MoveOnlyEnum (Text String))")
+(defenum MoveOnlyEnum (Text String))
+(defstruct WidePoison60 (p0 Scalar) (p1 Scalar) (p2 Scalar) (p3 Scalar) (p4 Scalar) (p5 Scalar) (p6 Scalar) (p7 Scalar) (p8 Scalar) (p9 Scalar) (p10 Scalar) (p11 Scalar) (p12 Scalar) (p13 Scalar) (p14 Scalar) (p15 Scalar) (p16 Scalar) (p17 Scalar) (p18 Scalar) (p19 Scalar) (p20 Scalar) (p21 Scalar) (p22 Scalar) (p23 Scalar) (p24 Scalar) (p25 Scalar) (p26 Scalar) (p27 Scalar) (p28 Scalar) (p29 Scalar) (p30 Scalar) (p31 Scalar) (p32 Scalar) (p33 Scalar) (p34 Scalar) (p35 Scalar) (p36 Scalar) (p37 Scalar) (p38 Scalar) (p39 Scalar) (p40 Scalar) (p41 Scalar) (p42 Scalar) (p43 Scalar) (p44 Scalar) (p45 Scalar) (p46 Scalar) (p47 Scalar) (p48 Scalar) (p49 Scalar) (p50 Scalar) (p51 Scalar) (p52 Scalar) (p53 Scalar) (p54 Scalar) (p55 Scalar) (p56 Scalar) (p57 Scalar) (p58 Scalar) (p59 Scalar) (bad TextPacket))
+(defstruct WidePoison61 (p0 Scalar) (p1 Scalar) (p2 Scalar) (p3 Scalar) (p4 Scalar) (p5 Scalar) (p6 Scalar) (p7 Scalar) (p8 Scalar) (p9 Scalar) (p10 Scalar) (p11 Scalar) (p12 Scalar) (p13 Scalar) (p14 Scalar) (p15 Scalar) (p16 Scalar) (p17 Scalar) (p18 Scalar) (p19 Scalar) (p20 Scalar) (p21 Scalar) (p22 Scalar) (p23 Scalar) (p24 Scalar) (p25 Scalar) (p26 Scalar) (p27 Scalar) (p28 Scalar) (p29 Scalar) (p30 Scalar) (p31 Scalar) (p32 Scalar) (p33 Scalar) (p34 Scalar) (p35 Scalar) (p36 Scalar) (p37 Scalar) (p38 Scalar) (p39 Scalar) (p40 Scalar) (p41 Scalar) (p42 Scalar) (p43 Scalar) (p44 Scalar) (p45 Scalar) (p46 Scalar) (p47 Scalar) (p48 Scalar) (p49 Scalar) (p50 Scalar) (p51 Scalar) (p52 Scalar) (p53 Scalar) (p54 Scalar) (p55 Scalar) (p56 Scalar) (p57 Scalar) (p58 Scalar) (p59 Scalar) (p60 Scalar) (bad TextPacket))
+(defstruct WidePoison62 (p0 Scalar) (p1 Scalar) (p2 Scalar) (p3 Scalar) (p4 Scalar) (p5 Scalar) (p6 Scalar) (p7 Scalar) (p8 Scalar) (p9 Scalar) (p10 Scalar) (p11 Scalar) (p12 Scalar) (p13 Scalar) (p14 Scalar) (p15 Scalar) (p16 Scalar) (p17 Scalar) (p18 Scalar) (p19 Scalar) (p20 Scalar) (p21 Scalar) (p22 Scalar) (p23 Scalar) (p24 Scalar) (p25 Scalar) (p26 Scalar) (p27 Scalar) (p28 Scalar) (p29 Scalar) (p30 Scalar) (p31 Scalar) (p32 Scalar) (p33 Scalar) (p34 Scalar) (p35 Scalar) (p36 Scalar) (p37 Scalar) (p38 Scalar) (p39 Scalar) (p40 Scalar) (p41 Scalar) (p42 Scalar) (p43 Scalar) (p44 Scalar) (p45 Scalar) (p46 Scalar) (p47 Scalar) (p48 Scalar) (p49 Scalar) (p50 Scalar) (p51 Scalar) (p52 Scalar) (p53 Scalar) (p54 Scalar) (p55 Scalar) (p56 Scalar) (p57 Scalar) (p58 Scalar) (p59 Scalar) (p60 Scalar) (p61 Scalar) (bad TextPacket))
+(defstruct WidePoison63 (p0 Scalar) (p1 Scalar) (p2 Scalar) (p3 Scalar) (p4 Scalar) (p5 Scalar) (p6 Scalar) (p7 Scalar) (p8 Scalar) (p9 Scalar) (p10 Scalar) (p11 Scalar) (p12 Scalar) (p13 Scalar) (p14 Scalar) (p15 Scalar) (p16 Scalar) (p17 Scalar) (p18 Scalar) (p19 Scalar) (p20 Scalar) (p21 Scalar) (p22 Scalar) (p23 Scalar) (p24 Scalar) (p25 Scalar) (p26 Scalar) (p27 Scalar) (p28 Scalar) (p29 Scalar) (p30 Scalar) (p31 Scalar) (p32 Scalar) (p33 Scalar) (p34 Scalar) (p35 Scalar) (p36 Scalar) (p37 Scalar) (p38 Scalar) (p39 Scalar) (p40 Scalar) (p41 Scalar) (p42 Scalar) (p43 Scalar) (p44 Scalar) (p45 Scalar) (p46 Scalar) (p47 Scalar) (p48 Scalar) (p49 Scalar) (p50 Scalar) (p51 Scalar) (p52 Scalar) (p53 Scalar) (p54 Scalar) (p55 Scalar) (p56 Scalar) (p57 Scalar) (p58 Scalar) (p59 Scalar) (p60 Scalar) (p61 Scalar) (p62 Scalar) (bad TextPacket))")
     [(Ok program)
       (match (csym.build-compiler-symbols program)
         [(Ok symbols)
@@ -4319,8 +4347,205 @@
         "typecheck: return type mismatch: expected bool, found i64"
         1))))
 
+;; A small index and its existing capacity ceiling select the real append-only
+;; path without allocating millions of types. Every exit restores the bound
+;; and installed pool before an assertion can fail.
+(define (compiler-typecheck-raw-append-dag-source
+  [depth : i64]
+  [applied : bool]
+  [fanout : i64]) : String
+  (let
+    [source : String
+      (if applied
+        "(defstruct RawDag0 (:lifetimes a) (n (& a i64)))\n"
+        (if (> fanout 2)
+          "(defstruct RawDag0 (n u8))\n"
+          "(defstruct RawDag0 (n i64))\n"))]
+    (for [level (iterator.range 1 (+ depth 1))]
+      (let
+        [previous : String (string.int->string (- level 1))]
+        [child : String
+          (if applied
+            (str_cat.str-cat "(RawDag" previous " a)")
+            (str_cat.str-cat "RawDag" previous))]
+        [fields : String ""]
+        (for [field (iterator.range 0 fanout)]
+          (set!
+            fields
+            (str_cat.str-cat
+              fields
+              " (f"
+              (string.int->string field)
+              " "
+              (clone child)
+              ")")))
+        (set!
+          source
+          (str_cat.str-cat
+            source
+            "(defstruct RawDag"
+            (string.int->string level)
+            (if applied
+              " (:lifetimes a)"
+              "")
+            fields
+            ")\n"))))
+    source))
+
+(define (compiler-typecheck-raw-append-key-count) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-capture-active-handle))]
+    (+
+      (cis.intern-structural-session-kind-count
+        session
+        (ci.intern-structural-kind-pair))
+      (cis.intern-structural-session-kind-count
+        session
+        (ci.intern-structural-kind-triple)))))
+
+(define (compiler-typecheck-raw-append-dag-context-ok?
+  [program : ast.AstProgram]
+  [pools : ast.AstNodePoolContext]
+  [depth : i64]
+  [applied : bool]
+  [fanout : i64]) : bool
+  (match (csym.build-compiler-symbols program)
+    [(Ok symbols)
+      (match (csym.build-compiler-registries program)
+        [(Ok registries)
+          (let
+            [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+            [ctx : tc_core.TcContext
+              (tc_core.tc-context-new-with-source-names-and-job-state
+                program
+                symbols
+                registries
+                ""
+                cbi.compiler-builtin-id-fix-empty
+                pools
+                (ci.intern-source-name-session-capture-active-handle)
+                job)]
+            [name : String
+              (str_cat.str-cat "RawDag" (string.int->string depth))]
+            [name-id : i64 (ci.intern (clone name))]
+            [ty : ast.AstType
+              (if applied
+                (ast.ast-ty-struct-args
+                  name-id
+                  (ast.ast-lifetime-cons
+                    cbi.compiler-builtin-id-fix-n
+                    (& (ast.ast-lifetime-list-new))))
+                (Struct name-id))]
+            ;; Fill the four-entry index before testing the fallback: parsing
+            ;; plain field names may have needed only the shared I64 node.
+            [_ : i64 (ast.ast-node-pool-context-type-push pools (Var 0))]
+            [_ : i64 (ast.ast-node-pool-context-type-push pools (Var 1))]
+            [_ : i64 (ast.ast-node-pool-context-type-push pools (Var 2))]
+            [_ : i64 (ast.ast-node-pool-context-type-push pools (Var 3))]
+            [first : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+            [second : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+            [before-finite : i64 (ast.ast-node-pool-context-type-len pools)]
+            [keys-before : i64 (compiler-typecheck-raw-append-key-count)]
+            [finite : tc_core.ResultTcUnit
+              (tc_core.tc-inline-aggregate-layout-finite-ok ctx name name-id)]
+            [after-finite : i64 (ast.ast-node-pool-context-type-len pools)]
+            [keys-finite : i64 (compiler-typecheck-raw-append-key-count)]
+            [copyable : bool (tc_core.tc-type-copyable? ctx ty)]
+            [after-copy : i64 (ast.ast-node-pool-context-type-len pools)]
+            [keys-copy : i64 (compiler-typecheck-raw-append-key-count)]
+            [final : ast.AstTypeNodePoolState
+              (ast.ast-type-pool-cell-read pools.type-pool)]
+            [budget : i64
+              (*
+                64
+                (+
+                  depth
+                  1
+                  (if (= fanout 2)
+                    0
+                    fanout)))]
+            (and
+              (!= first second)
+              (= (ast.ty-node-dedup-table-capacity final.dedup-slots) 8)
+              (= final.dedup-count 4)
+              (match finite
+                [(Ok) true]
+                [(Err _) false])
+              copyable
+              (<= (- after-finite before-finite) budget)
+              (<= (- after-copy after-finite) budget)
+              (<= (- keys-finite keys-before) budget)
+              (<= (- keys-copy keys-finite) budget)))]
+        [(Err _) false])]
+    [(Err _) false]))
+
+(define (compiler-typecheck-raw-append-wide-dag-ok?
+  [depth : i64]
+  [applied : bool]
+  [fanout : i64]) : bool
+  (let
+    [source : String
+      (compiler-typecheck-raw-append-dag-source depth applied fanout)]
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [old-max : i64 ast.ty-node-dedup-max-capacity]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
+    [small : ast.AstTypeNodePoolState
+      (ast.AstTypeNodePoolState
+        state.segment-bases
+        state.count
+        state.base-arena
+        state.exhausted
+        (in-arena
+          (unsafe
+            (arena.Arena state.base-arena))
+          (ast.ty-node-dedup-slots-new 8))
+        state.dedup-count
+        state.storage-arena
+        state.segment-count
+        state.revision
+        state.revision-cell)]
+    (ast.ast-type-pool-cell-write! pools.type-pool small)
+    (ast.ast-node-pool-context-install! pools)
+    (unsafe
+      (ptr-write!
+        (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
+        8))
+    (let
+      [ok : bool
+        (match (parser.parse-ast-source source)
+          [(Ok program)
+            (compiler-typecheck-raw-append-dag-context-ok?
+              program
+              pools
+              depth
+              applied
+              fanout)]
+          [(Err _) false])]
+      (unsafe
+        (ptr-write!
+          (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
+          old-max))
+      (ast.ast-node-pool-context-install! previous)
+      ok)))
+
+(define (compiler-typecheck-raw-append-dag-ok? [depth : i64] [applied : bool]) : bool
+  (compiler-typecheck-raw-append-wide-dag-ok? depth applied 2))
+
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
-  (compiler-typecheck-move-kind-fixture-tests-ok?))
+  (and
+    (compiler-typecheck-move-kind-fixture-tests-ok?)
+    (compiler-typecheck-raw-append-dag-ok? 14 false)
+    (compiler-typecheck-raw-append-dag-ok? 18 false)
+    (compiler-typecheck-raw-append-dag-ok? 18 true)
+    (compiler-typecheck-raw-append-wide-dag-ok? 12 false 16)
+    (compiler-typecheck-raw-append-wide-dag-ok? 12 false 32)
+    (compiler-typecheck-raw-append-wide-dag-ok? 12 true 16)))
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and

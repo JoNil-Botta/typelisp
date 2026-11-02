@@ -472,6 +472,10 @@ composite_arg_loan_destructure_reject|check-fail|tests/safety/composite_arg_loan
 composite_arg_loan_nested_reject|check-fail|tests/safety/composite_arg_loan_nested_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_tuple_reject|check-fail|tests/safety/composite_arg_loan_tuple_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_array_reject|check-fail|tests/safety/composite_arg_loan_array_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+# Regression coverage for #8570.
+composite_arg_loan_replace_old_value_bytes_reject|check-fail|tests/safety/composite_arg_loan_replace_old_value_bytes_reject.tl|tests/safety/composite_arg_loan_replace_old_value_bytes_reject.tl:38:32|error[E0207]: typecheck: cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_replace_old_value_ok|run-exit|tests/safety/composite_arg_loan_replace_old_value_ok.tl|42|-
+composite_arg_loan_replace_old_value_reject|check-fail|tests/safety/composite_arg_loan_replace_old_value_reject.tl|tests/safety/composite_arg_loan_replace_old_value_reject.tl:37:13|error[E0207]: typecheck: cannot assign to borrowed place `pair.left`
 composite_arg_loan_dynamic_array_index_reject|check-fail|tests/safety/composite_arg_loan_dynamic_array_index_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_box_reject|check-fail|tests/safety/composite_arg_loan_box_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_try_reject|check-fail|tests/safety/composite_arg_loan_try_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
@@ -1807,6 +1811,20 @@ string_raw_borrowed_copy_reject|check-fail|stdlib/tests/string_raw_borrowed_copy
 string_raw_substring_reject|check-fail|stdlib/tests/string_raw_substring_reject.tl|stdlib/tests/string_raw_substring_reject.tl:5:3|typecheck: string/substring-copy-checked requires unsafe context
 string_raw_integer_byte_reject|check-fail|stdlib/tests/string_raw_integer_byte_reject.tl|stdlib/tests/string_raw_integer_byte_reject.tl:5:3|typecheck: string/int->string-write-byte! requires unsafe context
 string_raw_integer_digits_reject|check-fail|stdlib/tests/string_raw_integer_digits_reject.tl|stdlib/tests/string_raw_integer_digits_reject.tl:5:3|typecheck: string/int->string-write-negative-digits! requires unsafe context
+# Regression coverage for #8915.
+string_raw_byte_alias_reject|check-fail|tests/safety/string_raw_byte_alias_reject.tl|tests/safety/string_raw_byte_alias_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-byte! requires unsafe context
+string_raw_byte_direct_reject|check-fail|tests/safety/string_raw_byte_direct_reject.tl|tests/safety/string_raw_byte_direct_reject.tl:5:3|error[E0209]: typecheck: int->string-write-byte! requires unsafe context
+string_raw_byte_unsafe_value_reject|check-fail|tests/safety/string_raw_byte_unsafe_value_reject.tl|tests/safety/string_raw_byte_unsafe_value_reject.tl:5:3|error[E0219]: typecheck: s/int->string-write-byte! is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe
+string_raw_byte_value_reject|check-fail|tests/safety/string_raw_byte_value_reject.tl|tests/safety/string_raw_byte_value_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-byte! requires unsafe context
+string_raw_digits_alias_reject|check-fail|tests/safety/string_raw_digits_alias_reject.tl|tests/safety/string_raw_digits_alias_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-negative-digits! requires unsafe context
+string_raw_digits_direct_reject|check-fail|tests/safety/string_raw_digits_direct_reject.tl|tests/safety/string_raw_digits_direct_reject.tl:5:3|error[E0209]: typecheck: int->string-write-negative-digits! requires unsafe context
+string_raw_digits_unsafe_value_reject|check-fail|tests/safety/string_raw_digits_unsafe_value_reject.tl|tests/safety/string_raw_digits_unsafe_value_reject.tl:5:3|error[E0219]: typecheck: s/int->string-write-negative-digits! is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe
+string_raw_digits_value_reject|check-fail|tests/safety/string_raw_digits_value_reject.tl|tests/safety/string_raw_digits_value_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-negative-digits! requires unsafe context
+string_raw_integer_writers_ok|run-exit|tests/safety/string_raw_integer_writers_ok.tl|42|-
+string_raw_substring_alias_reject|check-fail|tests/safety/string_raw_substring_alias_reject.tl|tests/safety/string_raw_substring_alias_reject.tl:5:3|error[E0209]: typecheck: s/substring-copy-checked requires unsafe context
+string_raw_substring_direct_reject|check-fail|tests/safety/string_raw_substring_direct_reject.tl|tests/safety/string_raw_substring_direct_reject.tl:5:3|error[E0209]: typecheck: substring-copy-checked requires unsafe context
+string_raw_substring_unsafe_value_reject|check-fail|tests/safety/string_raw_substring_unsafe_value_reject.tl|tests/safety/string_raw_substring_unsafe_value_reject.tl:5:3|error[E0219]: typecheck: s/substring-copy-checked is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe
+string_raw_substring_value_reject|check-fail|tests/safety/string_raw_substring_value_reject.tl|tests/safety/string_raw_substring_value_reject.tl:5:3|error[E0209]: typecheck: s/substring-copy-checked requires unsafe context
 string_raw_copy_function_value_reject|check-fail|stdlib/tests/string_raw_copy_function_value_reject.tl|stdlib/tests/string_raw_copy_function_value_reject.tl:5:3|typecheck: string/str-copy-bytes-into is an unsafe callable and cannot be used as a plain function value
 format_raw_copy_reject|check-fail|stdlib/tests/format_raw_copy_reject.tl|stdlib/tests/format_raw_copy_reject.tl:5:3|typecheck: format/format-copy-rendered-range! requires unsafe context
 format_raw_fill_reject|check-fail|stdlib/tests/format_raw_fill_reject.tl|stdlib/tests/format_raw_fill_reject.tl:5:3|typecheck: format/format-write-fill! requires unsafe context
@@ -1929,6 +1947,18 @@ mir_slice_mut_view_conflict_reject|check-fail|tests/safety/mir_slice_mut_view_co
 mir_reborrow_outlives_reference_reject|check-fail|tests/safety/mir_reborrow_outlives_reference_reject.tl|tests/safety/mir_reborrow_outlives_reference_reject.tl:19:13|cannot assign to borrowed place `x.len`
 mir_reborrow_shared_outlives_reference_reject|check-fail|tests/safety/mir_reborrow_shared_outlives_reference_reject.tl|tests/safety/mir_reborrow_shared_outlives_reference_reject.tl:18:13|cannot assign to borrowed place `x.len`
 mir_by_value_borrow_escape_reject|check-fail|tests/safety/mir_by_value_borrow_escape_reject.tl|tests/safety/mir_by_value_borrow_escape_reject.tl:17:35|mutable borrow of by-value place cannot outlive the call
+# Regression coverage for #8897.
+mir_by_value_borrow_escape_elided_reject|check-fail|tests/safety/mir_by_value_borrow_escape_elided_reject.tl|tests/safety/mir_by_value_borrow_escape_elided_reject.tl:8:44|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_forwarded_reject|check-fail|tests/safety/mir_by_value_borrow_escape_forwarded_reject.tl|tests/safety/mir_by_value_borrow_escape_forwarded_reject.tl:11:42|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_function_value_reject|check-fail|tests/safety/mir_by_value_borrow_escape_function_value_reject.tl|tests/safety/mir_by_value_borrow_escape_function_value_reject.tl:9:45|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_lambda_reject|check-fail|tests/safety/mir_by_value_borrow_escape_lambda_reject.tl|tests/safety/mir_by_value_borrow_escape_lambda_reject.tl:11:9|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_macro_reject|check-fail|tests/safety/mir_by_value_borrow_escape_macro_reject.tl|tests/safety/mir_by_value_borrow_escape_macro_reject.tl:6:13|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_nominal_reject|check-fail|tests/safety/mir_by_value_borrow_escape_nominal_reject.tl|tests/safety/mir_by_value_borrow_escape_nominal_reject.tl:12:45|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_scalar_reject|check-fail|tests/safety/mir_by_value_borrow_escape_scalar_reject.tl|tests/safety/mir_by_value_borrow_escape_scalar_reject.tl:8:44|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_tuple_reject|check-fail|tests/safety/mir_by_value_borrow_escape_tuple_reject.tl|tests/safety/mir_by_value_borrow_escape_tuple_reject.tl:11:55|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_immediate_writeback_ok|run-exit|tests/safety/mir_by_value_immediate_writeback_ok.tl|42|-
+mir_by_value_read_only_result_ok|run-exit|tests/safety/mir_by_value_read_only_result_ok.tl|42|-
+mir_storage_backed_borrow_result_ok|run-exit|tests/safety/mir_storage_backed_borrow_result_ok.tl|42|-
 mir_struct_pattern_ok|run-exit|tests/safety/mir_struct_pattern_ok.tl|42|-
 mir_struct_pattern_moved_reject|check-fail|tests/safety/mir_struct_pattern_moved_reject.tl|tests/safety/mir_struct_pattern_moved_reject.tl:18:13|use of moved value `pair.name`
 mir_view_scrutinee_ok|run-exit|tests/safety/mir_view_scrutinee_ok.tl|42|-

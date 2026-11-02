@@ -673,6 +673,34 @@ stdlib/tests/crypto_secret_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-
 tests/spmd/private_uniform_call_clamp.tl	stage2-spmd-simd-comparison	@compiler	Private call clamp execution and packed codegen rows in the SPMD corpus.
 tests/spmd/private_uniform_call_float.tl	stage2-spmd-simd-comparison	@compiler	Private call float bit preservation execution and codegen rows in the SPMD corpus.
 tests/spmd/private_uniform_call_numeric.tl	stage2-spmd-simd-comparison	@compiler	Private call numeric pressure and nested call execution and codegen rows in the SPMD corpus.
+# Safety fixture owners for #8570, #8915 and #8897.
+tests/safety/composite_arg_loan_replace_old_value_bytes_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/composite_arg_loan_replace_old_value_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/composite_arg_loan_replace_old_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_elided_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_forwarded_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_function_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_lambda_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_macro_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_nominal_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_scalar_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_escape_tuple_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_immediate_writeback_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_read_only_result_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_storage_backed_borrow_result_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_byte_alias_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_byte_direct_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_byte_unsafe_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_byte_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_digits_alias_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_digits_direct_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_digits_unsafe_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_digits_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_integer_writers_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_substring_alias_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_substring_direct_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_substring_unsafe_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_substring_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/inline-aggregate-scaling.fixtures.cases	stage2-inline-aggregate-scaling	@compiler	Primary inventory for the depth-40 aggregate resource regression.
 tests/fixtures/inline_aggregate_binary_40_clear.tl	stage2-inline-aggregate-scaling,stage2-codegen-target-parity	@compiler	Depth-40 binary aggregate resource-bound primary.
 tests/fixtures/inline_aggregate_binary_40_gated.tl	stage2-inline-aggregate-scaling,stage2-codegen-target-parity	@compiler	Depth-40 binary aggregate resource-bound primary.

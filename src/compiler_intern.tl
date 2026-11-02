@@ -234,10 +234,17 @@
   (intern-runtime-abort-string
     "tl: intern pool capacity exhausted: source and generated lanes met\n"))
 
-;; The structural cache is direct-mapped: a pair's raw at its slot in the first
-;; `intern-structural-pair-cache-capacity` entries, a triple's in the rest.
-;; `intern-structural-table-reset!` clears records' slots with these same
-;; formulas.
+;; Mix before masking: the low bits of a product preserve correlations between
+;; nearby ids. Take the upper word after a golden-ratio multiplication, so
+;; carries from low component bits contribute to the selected slots. Callers
+;; mask at most 32 bits; arithmetic shift sign extension is discarded there.
+(defmacro (intern-structural-slot-mix [hash : Expr]) : i64
+  `(shr (* ,hash -7046029254386353131) 32))
+
+;; Two differently mixed direct-mapped placements share one array. A primary hit
+;; keeps the cheap low-word index. Only a miss checks the mixed secondary
+;; placement, and promotes a secondary hit back to the primary slot. Insertion
+;; writes both placements. Reset clears both slots for every live record.
 (defmacro (intern-structural-pair-cache-slot [left : Expr] [right : Expr]) : i64
   `(bit-and
     (bit-xor ,right (* ,left 6364136223846793005))
@@ -253,6 +260,33 @@
       (bit-xor
         ,right
         (bit-xor (* ,left 6364136223846793005) (* ,middle 1442695040888963407)))
+      (- (intern-structural-triple-cache-capacity) 1))))
+
+(defmacro (intern-structural-pair-cache-secondary-slot
+  [left : Expr]
+  [right : Expr]) : i64
+  `(+
+    (intern-structural-cache-way-capacity)
+    (bit-and
+      (intern-structural-slot-mix
+        (bit-xor ,right (* ,left 6364136223846793005)))
+      (- (intern-structural-pair-cache-capacity) 1))))
+
+(defmacro (intern-structural-triple-cache-secondary-slot
+  [left : Expr]
+  [middle : Expr]
+  [right : Expr]) : i64
+  `(+
+    (+
+      (intern-structural-cache-way-capacity)
+      (intern-structural-pair-cache-capacity))
+    (bit-and
+      (intern-structural-slot-mix
+        (bit-xor
+          ,right
+          (bit-xor
+            (* ,left 6364136223846793005)
+            (* ,middle 1442695040888963407))))
       (- (intern-structural-triple-cache-capacity) 1))))
 
 ;; Structural compound identities are session-owned canonical records, not
@@ -283,6 +317,41 @@
             (return cached-raw))
           unit))
       unit)
+    (intern-composite-pair-id-cache-miss left-id right-id cache-slot)))
+
+(define (intern-composite-pair-id-cache-miss
+  [left-id : i64]
+  [right-id : i64]
+  [primary-slot : i64]) : i64
+  (let
+    [cache-slot : i64
+      (intern-structural-pair-cache-secondary-slot left-id right-id)]
+    [cached-raw : i64
+      (intern-active-i64-ref
+        intern-active-structural-cache-raws-address
+        cache-slot)]
+    (when
+      (> cached-raw 0)
+      (let
+        [cached-index : i64
+          (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+        (when
+          (and
+            (=
+              (intern-active-i64-ref
+                intern-active-structural-lefts-address
+                cached-index)
+              left-id)
+            (=
+              (intern-active-i64-ref
+                intern-active-structural-rights-address
+                cached-index)
+              right-id))
+          (intern-active-i64-set!
+            intern-active-structural-cache-raws-address
+            primary-slot
+            cached-raw)
+          (return cached-raw))))
     (let
       [raw : i64
         (intern-structural-table-intern
@@ -294,6 +363,10 @@
       (intern-active-i64-set!
         intern-active-structural-cache-raws-address
         cache-slot
+        raw)
+      (intern-active-i64-set!
+        intern-active-structural-cache-raws-address
+        primary-slot
         raw)
       (set!
         intern-active-structural-len
@@ -365,6 +438,51 @@
             unit)
           unit))
       unit)
+    (intern-composite-triple-id-cache-miss
+      left-id
+      middle-id
+      right-id
+      cache-slot)))
+
+(define (intern-composite-triple-id-cache-miss
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]
+  [primary-slot : i64]) : i64
+  (let
+    [cache-slot : i64
+      (intern-structural-triple-cache-secondary-slot left-id middle-id right-id)]
+    [cached-raw : i64
+      (intern-active-i64-ref
+        intern-active-structural-cache-raws-address
+        cache-slot)]
+    (when
+      (> cached-raw 0)
+      (let
+        [cached-index : i64
+          (- (bit-and cached-raw (intern-structural-key-index-mask)) 1)]
+        (when
+          (and
+            (=
+              (intern-active-i64-ref
+                intern-active-structural-lefts-address
+                cached-index)
+              left-id)
+            (=
+              (intern-active-i64-ref
+                intern-active-structural-middles-address
+                cached-index)
+              middle-id)
+            (=
+              (intern-active-i64-ref
+                intern-active-structural-rights-address
+                cached-index)
+              right-id))
+          (intern-active-i64-set!
+            intern-active-structural-cache-raws-address
+            primary-slot
+            cached-raw)
+          (return cached-raw))))
     (let
       [raw : i64
         (intern-structural-table-intern
@@ -376,6 +494,10 @@
       (intern-active-i64-set!
         intern-active-structural-cache-raws-address
         cache-slot
+        raw)
+      (intern-active-i64-set!
+        intern-active-structural-cache-raws-address
+        primary-slot
         raw)
       (set!
         intern-active-structural-len
@@ -687,21 +809,20 @@
       (comptime (size-of (type InternSlotId))))))
 
 ;; The pair cache fronts every module-qualified symbol key
-;; (`compiler-symbol-module-key-id-by-id`), about 11M lookups in a self-compile.
-;; At 128K slots its direct-mapped conflict misses depended on where interning
-;; happened to place the ids, so unrelated source edits moved the self-compile
-;; by tens of millions of instructions. 512K slots (4 MiB) cut those misses and
-;; lower the self-compile count by about 50M.
+;; (`compiler-symbol-module-key-id-by-id`). Keep its capacity a power of two.
 (define (intern-structural-pair-cache-capacity) : i64
   524288)
 
 (define (intern-structural-triple-cache-capacity) : i64
   65536)
 
-(define (intern-structural-cache-capacity) : i64
+(define (intern-structural-cache-way-capacity) : i64
   (+
     (intern-structural-pair-cache-capacity)
     (intern-structural-triple-cache-capacity)))
+
+(define (intern-structural-cache-capacity) : i64
+  (* 2 (intern-structural-cache-way-capacity)))
 
 (define (intern-structural-owner-allocate!) : i64
   (let
@@ -898,7 +1019,8 @@
   [middle : Expr]
   [right : Expr]) : i64
   `(bit-and
-    (intern-structural-hash ,kind ,left ,middle ,right)
+    (intern-structural-slot-mix
+      (intern-structural-hash ,kind ,left ,middle ,right))
     (- (array-length (__tl-project-field-name ,table "map-slots")) 1)))
 
 (defmacro (intern-structural-table-record-matches?
@@ -1173,12 +1295,11 @@
 ;; capacity, while it holds few records for that capacity: the map keeps the
 ;; size its largest compile grew it to, and the cache never shrinks.
 ;; - Every nonzero map slot holds `index + 1` for a record `index < len`.
-;; - Every nonzero cache slot was written by `intern-composite-pair-id` or
-;;   `intern-composite-triple-id` with the raw of a pair or triple record
-;;   `< len`, at the slot that record's fields hash to. Those are the only
-;;   writers, and the cache address they write is always synchronized with the
-;;   table they intern into.
-;; Clearing each record's map and cache slot therefore leaves both arrays
+;; - Every nonzero cache slot holds the raw of a pair or triple record `< len`,
+;;   at that record's primary or secondary slot. Composite cache-miss helpers
+;;   are the only writers, and their cache address is synchronized with the
+;;   table they intern into. Promotion writes the same primary slot as insertion.
+;; Clearing each record's map and both cache slots therefore leaves both arrays
 ;; all-zero, exactly as a full clear does.
 (define (intern-structural-table-reset!
   [cell : (&mut cell (__tl_dyn-array InternStructuralTable))]) : unit
@@ -1214,12 +1335,27 @@
                   (intern-structural-pair-cache-slot
                     (array-ref table.lefts index)
                     (array-ref table.rights index)))
+                0)
+              (set!
+                (array-ref
+                  table.structural-cache-raws
+                  (intern-structural-pair-cache-secondary-slot
+                    (array-ref table.lefts index)
+                    (array-ref table.rights index)))
                 0)]
             [(= kind (intern-structural-kind-triple))
               (set!
                 (array-ref
                   table.structural-cache-raws
                   (intern-structural-triple-cache-slot
+                    (array-ref table.lefts index)
+                    (array-ref table.middles index)
+                    (array-ref table.rights index)))
+                0)
+              (set!
+                (array-ref
+                  table.structural-cache-raws
+                  (intern-structural-triple-cache-secondary-slot
                     (array-ref table.lefts index)
                     (array-ref table.middles index)
                     (array-ref table.rights index)))

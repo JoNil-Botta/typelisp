@@ -408,6 +408,142 @@
         (array-length table.map-slots)
         (array-length table.structural-cache-raws)))))
 
+;; Colliding primary slots retain their other placement. Exercise promotion,
+;; cold-table fallback, kind separation, and reset of both placements.
+(define (intern-structural-secondary-cache-tests-ok?) : bool
+  (ci.intern-reset!)
+  (let
+    [left : i64 112233]
+    [right : i64 1000]
+    [pair-other-right : i64
+      (+ right (ci.intern-structural-pair-cache-capacity))]
+    [triple-other-right : i64
+      (+ right (ci.intern-structural-triple-cache-capacity))]
+    [pair-slot : i64 (ci.intern-structural-pair-cache-slot left right)]
+    [pair-secondary : i64
+      (ci.intern-structural-pair-cache-secondary-slot left right)]
+    [triple-slot : i64 (ci.intern-structural-triple-cache-slot left 0 right)]
+    [triple-secondary : i64
+      (ci.intern-structural-triple-cache-secondary-slot left 0 right)]
+    [pair : i64 (ci.intern-composite-pair-id left right)]
+    [pair-other : i64 (ci.intern-composite-pair-id left pair-other-right)]
+    [triple : i64 (ci.intern-composite-triple-id left 0 right)]
+    [triple-other : i64
+      (ci.intern-composite-triple-id left 0 triple-other-right)]
+    [ok : bool
+      (and
+        (not (= pair pair-other))
+        (not (= triple triple-other))
+        (not (= pair triple))
+        (=
+          pair-slot
+          (ci.intern-structural-pair-cache-slot left pair-other-right))
+        (=
+          triple-slot
+          (ci.intern-structural-triple-cache-slot left 0 triple-other-right))
+        (not
+          (=
+            pair-secondary
+            (ci.intern-structural-pair-cache-secondary-slot
+              left
+              pair-other-right)))
+        (not
+          (=
+            triple-secondary
+            (ci.intern-structural-triple-cache-secondary-slot
+              left
+              0
+              triple-other-right)))
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            pair-slot)
+          pair-other)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            pair-secondary)
+          pair)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            triple-slot)
+          triple-other)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            triple-secondary)
+          triple)
+        (= ci.intern-active-structural-len 4))]
+    (set!
+      ok
+      (and
+        ok
+        (= (ci.intern-composite-pair-id left right) pair)
+        (= (ci.intern-composite-triple-id left 0 right) triple)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            pair-slot)
+          pair)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            triple-slot)
+          triple)
+        (= ci.intern-active-structural-len 4)))
+    ;; Clear both placements without removing records to require canonical
+    ;; table lookup, then require publication to both placements again.
+    (ci.intern-active-i64-set!
+      ci.intern-active-structural-cache-raws-address
+      pair-slot
+      0)
+    (ci.intern-active-i64-set!
+      ci.intern-active-structural-cache-raws-address
+      pair-secondary
+      0)
+    (ci.intern-active-i64-set!
+      ci.intern-active-structural-cache-raws-address
+      triple-slot
+      0)
+    (ci.intern-active-i64-set!
+      ci.intern-active-structural-cache-raws-address
+      triple-secondary
+      0)
+    (set!
+      ok
+      (and
+        ok
+        (= (ci.intern-composite-pair-id left right) pair)
+        (= (ci.intern-composite-triple-id left 0 right) triple)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            pair-slot)
+          pair)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            pair-secondary)
+          pair)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            triple-slot)
+          triple)
+        (=
+          (ci.intern-active-i64-ref
+            ci.intern-active-structural-cache-raws-address
+            triple-secondary)
+          triple)
+        (= ci.intern-active-structural-len 4)))
+    (ci.intern-reset!)
+    (and
+      ok
+      (intern-structural-table-cleared?)
+      (not (= (ci.intern-composite-pair-id left right) pair))
+      (not (= (ci.intern-composite-triple-id left 0 right) triple)))))
+
 (define (intern-structural-reset-tests-ok?) : bool
   (ci.intern-reset!)
   (intern-structural-reset-fill! 300)
@@ -1201,6 +1337,26 @@
         [_ (set! ok false)]))
     ok))
 
+(define (intern-role-collision-component
+  [state : (& state ci.InternCompatState)]
+  [role : i64]
+  [component : i64]) : i64
+  (let
+    [table : ci.InternStructuralTable
+      (intern-structural-generation-table state)]
+    [kind : i64 (ci.intern-structural-kind-triple)]
+    [slot : i64
+      (ci.intern-structural-table-first-slot table kind role 0 component)]
+    [candidate : i64 (+ component 1)]
+    (while (< candidate (+ component 65536))
+      (when
+        (=
+          (ci.intern-structural-table-first-slot table kind role 0 candidate)
+          slot)
+        (return candidate))
+      (+= candidate 1))
+    -1))
+
 (define (intern-generated-role-symbol-tests-ok?) : bool
   (let
     [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
@@ -1340,14 +1496,21 @@
           (&mut state-a)
           (ci.intern-generated-symbol-role-global-initializer)
           1000)]
-      ;; The initial structural map has 512 slots; components differing by
-      ;; 512 deliberately share the role triple's first bucket.
+      ;; Find a real first-bucket collision under the table's current mix;
+      ;; growth must preserve both distinct canonical role identities.
+      [collision-component : i64
+        (intern-role-collision-component
+          (& state-a)
+          (ci.intern-generated-symbol-role-global-initializer)
+          1000)]
       [hash-collision : i64
         (ci.intern-compat-state-generated-role-symbol-id
           (&mut state-a)
           (ci.intern-generated-symbol-role-global-initializer)
-          1512)]
-      (unless (not (= growth-first hash-collision)) (set! ok false))
+          collision-component)]
+      (unless
+        (and (> collision-component 1000) (not (= growth-first hash-collision)))
+        (set! ok false))
       (for [index (iterator.range 0 300)]
         (ci.intern-compat-state-generated-role-symbol-id
           (&mut state-a)
@@ -1503,6 +1666,7 @@
         (intern-persistent-arena-tests-ok?)
         (intern-compat-state-persistent-arena-growth-tests-ok?)
         (intern-structural-generation-tests-ok?)
+        (intern-structural-secondary-cache-tests-ok?)
         (intern-structural-reset-tests-ok?)
         (intern-reset-to-tests-ok?)
         (intern-map-dirty-reset-tests-ok?)

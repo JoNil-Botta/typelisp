@@ -36723,6 +36723,9 @@
 (define (tc-lifetime-subst-list
   [subst : TcLifetimeSubst]
   [items : ast.AstLifetimeList]) : ast.AstLifetimeList
+  (match subst
+    [(Nil) (return items)]
+    [_ unit])
   (tc-lifetime-subst-list-at subst (& items) 0))
 
 (define (tc-lifetime-subst-list-at
@@ -56494,6 +56497,9 @@
 (define (tc-lifetime-subst-type-list
   [subst : TcLifetimeSubst]
   [types : ast.AstTypeList]) : ast.AstTypeList
+  (match subst
+    [(Nil) (return types)]
+    [_ unit])
   (let
     [out : ast.AstTypeList
       (ast.ast-type-list-with-capacity (ast.ast-type-list-len (& types)))]
@@ -56518,6 +56524,10 @@
     (tc-lifetime-subst-type-list-into subst types out (+ index 1))))
 
 (define (tc-lifetime-subst-type [subst : TcLifetimeSubst] [ty : ast.AstType]) : ast.AstType
+  ;; An empty substitution renames nothing, so the input is already the result.
+  (match subst
+    [(Nil) (return ty)]
+    [_ unit])
   (match (tc-global-shared-view ty)
     [(Func args ret)
       (ast.ast-ty-func

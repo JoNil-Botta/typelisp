@@ -86,6 +86,38 @@
         (= (ast.ast-lifetime-list-get (& output) 1 -1) 2)
         (= (ast.ast-lifetime-list-get (& output) 2 -1) 103)))))
 
+;; An empty substitution renames nothing, so each entry point returns its input:
+;; the same lifetimes and the same child type ids, with no rebuilt nodes.
+(define (tc-lifetime-subst-nil-identity-ok?) : bool
+  (let
+    [lifetimes : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    [ref-id : i64 (ast.ty-node-push (& (ast.ast-ty-ref 7 (& (String)))))]
+    [ret-id : i64 (ast.ty-node-push (& (ast.ast-ty-mut-ref 8 (& (I64)))))]
+    [types : ast.AstTypeList (ast.ast-type-list-new)]
+    [fn-args : ast.AstTypeList (ast.ast-type-list-new)]
+    (ast.ast-lifetime-list-push (&mut lifetimes) 7)
+    (ast.ast-lifetime-list-push (&mut lifetimes) 8)
+    (ast.ast-type-list-push (&mut types) ref-id)
+    (ast.ast-type-list-push (&mut types) ret-id)
+    (ast.ast-type-list-push (&mut fn-args) ref-id)
+    (let
+      [same-lifetimes : ast.AstLifetimeList
+        (tc_core.tc-lifetime-subst-list Nil lifetimes)]
+      [same-types : ast.AstTypeList
+        (tc_core.tc-lifetime-subst-type-list Nil types)]
+      (and
+        (= (ast.ast-lifetime-list-len (& same-lifetimes)) 2)
+        (= (ast.ast-lifetime-list-get (& same-lifetimes) 0 -1) 7)
+        (= (ast.ast-lifetime-list-get (& same-lifetimes) 1 -1) 8)
+        (= (ast.ast-type-list-len (& same-types)) 2)
+        (= (ast.ast-type-list-get (& same-types) 0 -1) ref-id)
+        (= (ast.ast-type-list-get (& same-types) 1 -1) ret-id)
+        (match (tc_core.tc-lifetime-subst-type
+          Nil
+          (ast.AstType.Func (box fn-args) ret-id))
+          [(Func _ ret) (= ret ret-id)]
+          [_ false])))))
+
 (define (tc-lifetime-subst-storage-ok?) : bool
   (let
     [one : tc_core.TcLifetimeSubst (tc-lifetime-subst-must-bind Nil 10 110)]
@@ -134,6 +166,7 @@
               (LifetimeMismatch)
               "typecheck: constructor lifetime mismatch"))])
       (tc-lifetime-subst-list-ok?)
+      (tc-lifetime-subst-nil-identity-ok?)
       (tc-lifetime-subst-wide-and-order-ok?))))
 
 (test

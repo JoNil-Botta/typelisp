@@ -134,7 +134,8 @@ so this section only maps the modules by area. Import a module with
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,
   `crypto_sha1_git`,
   `crypto_sha256`, `crypto_sha512`, `crypto_rsa_core`, `crypto_rsa_verify`,
-  `crypto_p256`, `crypto_secret`, `crypto_aes_core`, `crypto_hmac_sha256`,
+  `crypto_p256`, `crypto_secret`, `crypto_aes_core`, `crypto_hkdf_sha256`,
+  `crypto_hmac_sha256`,
   `x509_time`, `x509` (owned certificate models,
   exact signed bytes and parsed extensions; no trust/signature decisions).
   See [certificate parsing](../docs/x509.md) for limits and the supported profile.
@@ -216,6 +217,26 @@ hermetic adapters/tests; `read-source-path` permits filesystem fixtures and
 reports the corresponding logical source path. A successful call returns one
 complete replacement; any error leaves the caller's existing state untouched.
 There is no watcher, resolver state swap or DNS exchange in these modules.
+
+`crypto_hkdf_sha256` implements RFC 5869 Extract/Expand over HMAC-SHA-256.
+Callers supply all six HKDF budgets and explicit HMAC key/message limits.
+`extract` uses the absent 32-zero-byte salt; `extract-public` copies an exact
+public salt into a temporary secret key; `extract-secret` borrows an exact
+live secret salt. All three borrow the whole live secret IKM, including empty
+values, and return a protected `HkdfSha256Prk`. `expand` borrows that reusable
+PRK and exact public binary info, returning an exact-length `HkdfSha256Okm` for
+0 through 8160 bytes. Both tokens point at HKDF-owned opaque cleanup storage;
+close them with `close-prk` / `close-okm` or `with`. A copied storage pointer
+identifies the same lifetime; closing either token invalidates every alias.
+No safe byte view, generic-secret PRK constructor, serialization or formatting
+is available. Crypto implementations have direct checked unsafe pointer access.
+Expand streams previous block, info and one binary counter octet without a
+concatenation, and preflights the complete external feed work before allocation.
+For N=0 this work is zero; otherwise it is N*info_length + N + 32*(N-1).
+Temporary keys, HMAC state, rolling blocks and partial output are wiped at their
+cleanup boundaries. Wiped arena allocations remain retained until arena reset.
+HKDF does not slow password guessing and supplies no TLS label/schedule policy.
+
 
 ## Backend Runtime Helper Ownership
 

@@ -668,3 +668,12 @@ Adler-32 vectors cover the empty string through an 80-byte string, each at every
   descriptor-slot reuse. `net_owner_copy_reject.tl`,
   `net_owner_forge_reject.tl` and `net_raw_helper_reject.tl` pin the static
   move-only and unsafe raw-state boundaries. These tests use no network.
+
+The HKDF-SHA-256 corpus `crypto_hkdf_sha256_api.tl` shares nine inline/native
+bodies for RFC 5869 A.1–A.3, deliberate salt routes, all output boundaries,
+checked piecewise work, individual limits, PRK reuse/liveness, 255 rolling
+blocks, retained-capacity wiping and internal failure cleanup. Compile-profile
+checks exact allocation equations for N=0,1,2,254,255 and allocation-free 8161
+rejection. The external parity fixture uses both protected owners outside the
+module family. Construction, cross-consumer substitution, projection, clone
+and unsafe-access rejection fixtures run through both stdlib verifiers.

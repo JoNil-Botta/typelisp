@@ -121,3 +121,4 @@ win64-seh-unwind-verifier	compiler,stdlib,corpus	Consumes compiler behavior or e
 stage2-elf-object-reader-oracle	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-elf-dso-reader-oracle	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-backend-source-import-context	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-linux-stack-protection	compiler,stdlib,corpus	Executes Linux guard, lifetime, probe encoding and full-size overflow witnesses.

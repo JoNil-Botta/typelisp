@@ -502,7 +502,9 @@
   (abort-cands (__tl_dyn-array i64))
   (abort-cand-len i64)
   (close-cands (__tl_dyn-array i64))
-  (close-cand-len i64))
+  (close-cand-len i64)
+  (probe-cands (__tl_dyn-array i64))
+  (probe-cand-len i64))
 
 ;; The physical chunks the streaming peephole parses in place, in emission
 ;; order, plus their combined byte count. A group chunk is one whole emitted
@@ -14469,6 +14471,35 @@
     (compiler-backend-asm-safe-symbol function)
     "_"
     (compiler_ir_types.compiler-ir-label-text label)))
+
+;; R11 may hold an indirect-call target at transient allocation sites. Save it
+;; INSIDE the new allocation, then use it as the page-loop endpoint. The save
+;; consumes eight of FRAME bytes; every following descent is at most 4096 and
+;; is touched before the next descent. Numeric local labels are assembler-local
+;; to this contiguous sequence, including when several probes share a function.
+(define (compiler-backend-emit-stack-probe [frame : i64]) : String
+  (let
+    [remaining : i64 (- frame 8)]
+    [tail : i64 (% remaining 4096)]
+    [pages : i64 (- remaining tail)]
+    (str_cat.str-cat
+      "    pushq %r11\n"
+      (if (> pages 0)
+        (str_cat.str-cat
+          "    leaq -"
+          (string.int->string pages)
+          "(%rsp), %r11\n997:\n"
+          "    subq $4096, %rsp\n    testb $0, (%rsp)\n    cmpq %r11, %rsp\n    jne 997b\n")
+        "")
+      (if (> tail 0)
+        (str_cat.str-cat
+          "    subq $"
+          (string.int->string tail)
+          ", %rsp\n    testb $0, (%rsp)\n")
+        "")
+      "    movq "
+      (string.int->string remaining)
+      "(%rsp), %r11\n")))
 
 (define (compiler-backend-emit-stack-sub
   [target-policy : CompilerBackendTargetPolicy]
@@ -77739,16 +77770,16 @@ tl_shared_object_init:
         (Ok buf))]
     [(Err message) (Err message)]))
 
-(define (compiler-backend-entry-call-main) : String
+(define (compiler-backend-entry-call-main [global-inits : String]) : String
   (x64_catalog.compiler-x64-template-render-assembly
     (if (compiler_ir_types.compiler-debug-info-enabled?)
       (LinuxStartupTailBacktrace)
       (LinuxStartupTail))
     (LinuxX64)
     (str_cat.str-cat
-      "    movq $0x40000000, %rsi
+      "    movq $0x40010000, %rsi
     xorq %rdi, %rdi
-    movq $3, %rdx
+    xorq %rdx, %rdx
     movq $0x22, %r10
     movq $-1, %r8
     xorq %r9, %r9
@@ -77756,12 +77787,20 @@ tl_shared_object_init:
     syscall
     testq %rax, %rax
     js .L_tl_main_stack_abort
+    leaq 65536(%rax), %r8
+    movq %r8, %rdi
+    movq $0x40000000, %rsi
+    movq $3, %rdx
+    movq $10, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_main_stack_protect_abort
 "
       (if (compiler_ir_types.compiler-debug-info-enabled?)
-        "    movq %rax, %fs:tl_backtrace_stack_low@tpoff
+        "    movq %r8, %fs:tl_backtrace_stack_low@tpoff
 "
         "")
-      "    addq $0x40000000, %rax
+      "    leaq 0x40000000(%r8), %rax
     andq $-16, %rax
 "
       (if (compiler_ir_types.compiler-debug-info-enabled?)
@@ -77774,6 +77813,7 @@ tl_shared_object_init:
         "    xorl %ebp, %ebp
 "
         "")
+      global-inits
       "    call main
     movq %rax, %rdi
     movq $60, %rax
@@ -77783,17 +77823,23 @@ tl_shared_object_init:
         (& compiler-backend-entry-size-directive))
       "    .section .rodata
 .L_tl_main_stack_mmap_error:
-    .ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"
+    .ascii \"typelisp runtime: main-stack reservation failed\\n\"
     .text
 .L_tl_main_stack_abort:
     movq $1, %rax
     movq $2, %rdi
     leaq .L_tl_main_stack_mmap_error(%rip), %rsi
-    movq $47, %rdx
+    movq $48, %rdx
     syscall
-    movq $60, %rax
+    movq $231, %rax
     movq $134, %rdi
     syscall
+.L_tl_main_stack_protect_abort:
+    leaq -65536(%r8), %rdi
+    movq $0x40010000, %rsi
+    movq $11, %rax
+    syscall
+    jmp .L_tl_main_stack_abort
 ")))
 
 (define (compiler-backend-entry
@@ -77846,8 +77892,7 @@ tl_shared_object_init:
 ")
               "")
             "    call tl_thread_init\n"))
-        global-inits
-        (compiler-backend-entry-call-main))
+        (compiler-backend-entry-call-main global-inits))
       (str_cat.str-cat
         (x64_catalog.compiler-x64-template-render-assembly
           (if startup-profile
@@ -77860,8 +77905,7 @@ tl_shared_object_init:
             "_tl_start:\n"
             startup-profile-asm
             "    call tl_thread_init\n"))
-        global-inits
-        (compiler-backend-entry-call-main)))))
+        (compiler-backend-entry-call-main global-inits)))))
 
 (define (compiler-backend-entry-for-target-with-crt
   [type-segment-bases : i64]
@@ -78972,9 +79016,48 @@ tl_shared_object_init:
       (compiler-backend-object-push-u8! out 0xec)
       (compiler-backend-object-push-u32! out amount))))
 
+;; The byte equivalent of emit-stack-probe, including preservation of a live
+;; transient R11 target. The backward edge has fixed displacement -16.
+(define (compiler-backend-object-stack-probe-bytes [frame : i64]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [remaining : i64 (- frame 8)]
+    [tail : i64 (% remaining 4096)]
+    [pages : i64 (- remaining tail)]
+    (byte_buf_core.byte-buf-builder-append-string
+      (&mut out)
+      (object_target.compiler-backend-object-bytes-from-hex "4153"))
+    (when
+      (> pages 0)
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (object_target.compiler-backend-object-bytes-from-hex "4c8d9c24"))
+      (compiler-backend-object-push-u32! (&mut out) (- 0 pages))
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (object_target.compiler-backend-object-bytes-from-hex
+          "4881ec00100000f60424004c39dc75f0")))
+    (when
+      (> tail 0)
+      (compiler-backend-object-push-sub-rsp! (&mut out) tail)
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (object_target.compiler-backend-object-bytes-from-hex "f6042400")))
+    (byte_buf_core.byte-buf-builder-append-string
+      (&mut out)
+      (object_target.compiler-backend-object-bytes-from-hex "4c8b9c24"))
+    (compiler-backend-object-push-u32! (&mut out) remaining)
+    (compiler-backend-object-bytes-finish (& out))))
+
 (define (compiler-backend-object-prologue-bytes
   [target : CompilerBackendTarget]
   [frame-size : i64]) : String
+  (when
+    (and (> frame-size 4096) (compiler-backend-target-policy-new target).linux)
+    (return
+      (str_cat.str-cat
+        (object_target.compiler-backend-object-bytes-from-hex "554889e5")
+        (compiler-backend-object-stack-probe-bytes frame-size))))
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [probe : bool
@@ -79028,10 +79111,16 @@ tl_shared_object_init:
         (compiler-backend-object-push-u32! (&mut out) value)))
     (compiler-backend-object-bytes-finish (& out))))
 
-(define (compiler-backend-object-sub-rsp-bytes [value : i64]) : String
+(define (compiler-backend-object-sub-rsp-bytes
+  [value : i64]
+  [backend-state : CompilerBackendState]) : String
   (if (= value 0)
     ""
-    (compiler-backend-object-rsp-imm-bytes 0xec value)))
+    (if (and
+      (> value 4096)
+      (compiler-backend-state-emission-target-policy backend-state).linux)
+      (compiler-backend-object-stack-probe-bytes value)
+      (compiler-backend-object-rsp-imm-bytes 0xec value))))
 
 (define (compiler-backend-object-unop-rax-bytes
   [op : compiler_ir_types.CompilerIrUnOp]) : String
@@ -79967,7 +80056,9 @@ tl_shared_object_init:
           (compiler-backend-object-call-arg-moves
             (compiler-backend-object-add-nonempty-bytes
               parts
-              (compiler-backend-object-sub-rsp-bytes space))
+              (compiler-backend-object-sub-rsp-bytes
+                space
+                program-index.backend-state))
             target
             convention
             (compiler-backend-global-shared-view site)
@@ -80194,7 +80285,9 @@ tl_shared_object_init:
       (compiler-backend-object-emit-phi-copies-stage
         (compiler-backend-object-add-nonempty-bytes
           parts
-          (compiler-backend-object-sub-rsp-bytes (* count 8)))
+          (compiler-backend-object-sub-rsp-bytes
+            (* count 8)
+            program-index.backend-state))
         site
         (compiler-backend-global-shared-view copies)
         0
@@ -80529,7 +80622,9 @@ tl_shared_object_init:
                 (compiler-backend-object-call-arg-moves
                   (compiler-backend-object-add-nonempty-bytes
                     parts
-                    (compiler-backend-object-sub-rsp-bytes space))
+                    (compiler-backend-object-sub-rsp-bytes
+                      space
+                      program-index.backend-state))
                   target
                   (Platform)
                   (compiler-backend-global-shared-view function)
@@ -86232,7 +86327,9 @@ tl_shared_object_init:
   ;; FLAGS-1: the tracked register the last pushed line wrote with an
   ;; arithmetic that sets ZF and SF from its result (sub/add/and/or/xor and
   ;; the one-operand inc/dec/neg), or -1 after any other line.
-  (flags-reg i64))
+  (flags-reg i64)
+  (probe-cands (__tl_dyn-array i64))
+  (probe-cand-len i64))
 
 (define (compiler-backend-peephole-records-publish!
   [walk : CompilerBackendPeepholeWalkState]) : unit
@@ -86265,7 +86362,9 @@ tl_shared_object_init:
     walk.abort-cands
     walk.abort-cand-len
     walk.close-cands
-    walk.close-cand-len))
+    walk.close-cand-len
+    walk.probe-cands
+    walk.probe-cand-len))
 
 (define (compiler-backend-peephole-records-retire!
   [stream : CompilerBackendStreamState]) : unit
@@ -86400,14 +86499,72 @@ tl_shared_object_init:
       (set! (array-ref grown k) (array-ref old k)))
     (set! walk.rmw-cands grown)))
 
-;; Record `index` as a window candidate when the line the sink is about to
-;; append is a foldable op over a tracked register. Reached only for a line the
-;; parser flagged single-dest, and the mnemonic's first byte then rejects all
-;; but add/and, sub, or, xor and neg/not before a single packed compare decides.
-;;
-;; Nothing here DECIDES a fold, and nothing here looks at the neighbours: the
-;; pass below reads the three records and re-checks every clause of the
-;; admission list, default-refuse.
+;; Reuse the ALU sink's already classified untracked destinations. Keep the
+;; original subtraction through every rsp/owner/dead-store pass; expand only
+;; the surviving records immediately before their final render.
+(define (compiler-backend-note-stack-probe!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
+  [line : (& line CompilerBackendPeepholeLine)]
+  [index : i64]) : unit
+  (let
+    [data : (Ptr u8) line.data]
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    [end : i64 (compiler-backend-peephole-desc-end line)]
+    [start : i64 (+ ms 6)]
+    [stop : i64 (- end 6)]
+    (when
+      (and
+        (> (- end ms) 12)
+        (compiler-backend-peephole-range-eq? data ms (+ ms 4) "subq")
+        (= (compiler-backend-peephole-byte-at data (+ ms 4)) 32)
+        (compiler-backend-peephole-range-eq? data (- end 6) end ", %rsp")
+        (>= (- stop start) 4)
+        (= (compiler-backend-peephole-byte-at data (- start 1)) 36)
+        (= (compiler-backend-rsp-rebase-int-start data start stop) start)
+        (> (compiler-backend-rsp-rebase-parse-int data start stop) 4096))
+      (when
+        (>= walk.probe-cand-len (array-length walk.probe-cands))
+        (let
+          [old : (__tl_dyn-array i64) walk.probe-cands]
+          [grown : (__tl_dyn-array i64)
+            (__tl_make-array i64 (+ 16 (* 2 (array-length old))))]
+          (for [i (iterator.range 0 walk.probe-cand-len)]
+            (set! (array-ref grown i) (array-ref old i)))
+          (set! walk.probe-cands grown)))
+      (set! (array-ref walk.probe-cands walk.probe-cand-len) index)
+      (+= walk.probe-cand-len 1))))
+
+(define (compiler-backend-expand-stack-probes!
+  [backend-state : CompilerBackendState]
+  [records : (&mut records CompilerBackendPeepholeLineVec)]) : unit
+  (when
+    (compiler-backend-state-emission-target-policy backend-state).linux
+    (for [i (iterator.range 0 records.probe-cand-len)]
+      (let
+        [at : i64 (array-ref records.probe-cands i)]
+        (when
+          (= (array-ref records.live at) 1)
+          (let
+            [amount : i64 (array-ref records.lines at).value]
+            [text : String (compiler-backend-emit-stack-probe amount)]
+            [span : i64
+              (shl
+                (string.string-length (& text))
+                compiler-backend-peephole-record-span-shift)]
+            ;; All semantic consumers have finished. This owned render-only
+            ;; record may contain the complete multi-line probe sequence.
+            (set!
+              (array-ref records.lines at)
+              (CompilerBackendPeepholeLineRecord
+                text
+                span
+                compiler-backend-peephole-record-owned-bit
+                compiler-backend-sweep-no-candidate
+                compiler-backend-sweep-no-candidate
+                0))))))))
+
+;; Record a foldable ALU window candidate. Neither this recognition nor stack
+;; probe recognition changes the line that the remaining analyses consume.
 (define (compiler-backend-peephole-rmw-note-alu!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : (& line CompilerBackendPeepholeLine)]
@@ -86426,6 +86583,9 @@ tl_shared_object_init:
               (shr line.regs compiler-backend-peephole-desc-reg-last-shift)
               compiler-backend-peephole-desc-reg-mask)
             1)]
+        (when
+          (and (= b0 115) (< last-reg 0))
+          (compiler-backend-note-stack-probe! walk line index))
         (when
           (and
             (>= last-reg 0)
@@ -89706,6 +89866,10 @@ tl_shared_object_init:
         (in-arena
           home-arena
           (let
+            [_probes : unit
+              (compiler-backend-expand-stack-probes!
+                backend-state
+                (&mut records))]
             [kept : String (compiler-backend-peephole-records-render records)]
             (CompilerBackendPeepholeSweepChunkState
               (text_buf.append state.out kept)
@@ -92506,7 +92670,9 @@ tl_shared_object_init:
         0
         (__tl_make-array i64 0)
         0
-        (- 0 1))]
+        (- 0 1)
+        (__tl_make-array i64 0)
+        0)]
     [_walk-open : unit
       (compiler-backend-peephole-records-publish!
         (compiler-backend-global-shared-view walk))]

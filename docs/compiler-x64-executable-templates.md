@@ -25,9 +25,9 @@ The checked inventory has these bounds:
 | Kind | Rows | Payload identity |
 | --- | ---: | --- |
 | Assembly | 69 | 65 fixed variants are size/hash pinned; 4 startup fragments are dynamically composed |
-| Opaque direct-object bytes | 24 | Every byte string is size/hash pinned |
+| Opaque direct-object bytes | 25 | Every byte string is size/hash pinned |
 | Structured direct-object contributions | 9 | Exact instruction/byte encoding is supplied by the object producer |
-| Total | 102 | Registry storage capacity is 112 rows |
+| Total | 103 | Registry storage capacity is 112 rows |
 
 Runtime selection uses a fixed capacity of 20 IDs. The full Linux and Windows
 sets select 16 and 16 rows, respectively. Profile and arena-debug combinations
@@ -36,7 +36,7 @@ different rendered variant.
 
 Each row records its producer and schema, target and ABI, feature gate,
 entry/interior/end anchors, related data, terminal behavior, and an ordered
-event transcript. The transcript contains 4,311 reviewed events in 26,053
+event transcript. The transcript contains 4,324 reviewed events in 26,346
 bytes. Its closed event codes are:
 
 | Code | Meaning |

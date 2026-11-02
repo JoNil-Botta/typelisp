@@ -3373,3 +3373,32 @@ The outside-loop Gep fixture keeps the loop region clean while its pointer store
 changes an address-taken base read by an exit Gep. Candidate base validation must
 refuse that hoist. Clean and unrelated-storage controls still split, and removing
 only the base-taint check must fail the mutable-base assertion.
+
+## Linux stack protection
+
+`scripts/verify-linux-stack-protection.sh` is the Linux guard/probe gate. It
+compares GNU-as bytes with direct encoding at the 4096-byte boundary and through
+1 GiB, then executes small and large non-tail recursion on the production 1 GiB
+stack at opt0/1/2 through text and admitted direct-object emission. Each compile
+is capped at 512 MiB/120 seconds; each overflow execution at 2048 MiB/120 seconds,
+with core dumps disabled. GDB records the guard mapping and fault address and
+re-delivers SIGSEGV; large-frame faults must occur at the prologue's probe touch.
+
+The edge verifier covers worker scratch destruction, timeout/ready/join map
+lifetime, setup syscall failures, genuinely shared canaries, actual heap
+sentinels in the faulting process, worker body effects, supplied foreign guards,
+grow-down/CRT stacks, FS preservation and CFA/return recovery between decrement
+and touch at both loop and remainder PCs. The fixture inventory is
+`tests/fixtures/linux-stack-protection.fixtures.cases`.
+
+The physical-decrement audit covers framed/FPO/CSR/shrink-wrapped entries,
+adapters, SPMD/call staging and direct-object call/phi staging. Text expansion
+occurs after rebasing, peephole and dead-store analyses. A conservative untouched
+descent bound is 8343 bytes: a 4096-byte entry decrement, one 4096-byte balanced
+instruction-local staging window, 128 red-zone bytes, 15 alignment bytes and
+8 return-address bytes. Pushes and calls touch their new bottom, staging windows
+do not nest across IR instructions, and tail transfers restore the entry stack;
+small decrements therefore cannot accumulate across calls. This is below the
+retained 65536-byte guard. Foreign code must provide compatible protection and
+allocation discipline. Source rows infeasible before compact storage, including
+near-T/F1 source execution, remain required issue-9582 composition coverage.

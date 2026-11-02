@@ -1,0 +1,13 @@
+do none
+case large
+source tests/fixtures/linux_stack_large.tl
+case lifetime
+source tests/fixtures/linux_stack_lifetime.tl
+case canary
+source tests/fixtures/linux_stack_canary.tl
+case foreign
+source tests/fixtures/linux_stack_foreign.tl
+case initializer
+source tests/fixtures/linux_stack_initializer.tl
+case setup-failure
+source tests/fixtures/linux_stack_setup_failure.tl

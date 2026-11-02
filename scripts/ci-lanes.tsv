@@ -137,3 +137,4 @@ win64-seh-unwind-verifier	-	windows-1
 stage2-elf-object-reader-oracle	linux-2	-
 stage2-elf-dso-reader-oracle	linux-2	-
 stage2-backend-source-import-context	linux-2	windows-1
+stage2-linux-stack-protection	linux-2	-

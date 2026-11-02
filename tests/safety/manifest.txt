@@ -376,6 +376,10 @@ caller_lifetime_reassigned_alias_store_same_name_reject|check-fail|tests/safety/
 caller_lifetime_tagged_store_ok|check-ok|tests/safety/caller_lifetime_tagged_store_ok.tl|-|-
 caller_lifetime_nullary_variant_ok|check-ok|tests/safety/caller_lifetime_nullary_variant_ok.tl|-|-
 caller_lifetime_constructor_fixed_lifetime_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_fixed_lifetime_same_name_reject.tl|-|`a` does not live long enough
+# A constructor lifetime formal spelled like a binding at the call site still
+# infers from the arguments (#8998).
+caller_lifetime_constructor_formal_same_name_ok|check-ok|tests/safety/caller_lifetime_constructor_formal_same_name_ok.tl|-|-
+caller_lifetime_constructor_formal_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_formal_same_name_reject.tl|-|cannot return a reference to parameter `cwd`
 caller_lifetime_array_join_loan_reject|check-fail|tests/safety/caller_lifetime_array_join_loan_reject.tl|-|cannot assign to borrowed place `y`
 # Rust parity for the storage rule. The `&mut` and the result are spelled like
 # the local where typing would otherwise reject the store by name, so the

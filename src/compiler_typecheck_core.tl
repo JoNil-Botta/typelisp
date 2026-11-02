@@ -18123,14 +18123,14 @@
                       TcLifetimeSubst.Nil]
                     [call-scoped? (tc-call-scoped-lifetime-subst (& lifetimes))]
                     [else
-                      (match (tc-infer-call-lifetime-subst
+                      (match (tc-infer-call-or-constructor-lifetime-subst
                         ctx
                         env
                         (tc-global-shared-view func)
                         (tc-global-shared-view args)
                         (tc-global-shared-view declared-params)
                         (tc-global-shared-view lifetimes)
-                        TcLifetimeSubst.Nil)
+                        (= key -1))
                         [(ResultTcLifetimeSubst.Ok found) found]
                         [(ResultTcLifetimeSubst.Err message)
                           (return (TcSelectedResult.Err message sink))])])]
@@ -56686,12 +56686,12 @@
 
 (define (tc-infer-call-lifetime-name
   [env : TcTypeEnv]
-  [params : ast.AstLifetimeList]
+  [params : (& params ast.AstLifetimeList)]
   [subst : TcLifetimeSubst]
   [formal : i64]
   [actual : i64]
   [variance : TcVariance]) : ResultTcLifetimeSubst
-  (if (tc-lifetime-list-contains params formal)
+  (if (tc-lifetime-list-contains-at? params formal 0)
     (tc-lifetime-subst-bind-for-variance env subst formal actual variance)
     (if (tc-lifetime-coercible-for-variance? env variance formal actual)
       (Ok subst)
@@ -56738,7 +56738,7 @@
         (try
           (tc-infer-call-lifetime-name
             env
-            (tc-global-shared-view params)
+            (& params)
             subst
             (ast.ast-lifetime-list-get formal index (ast.ast-lifetime-fallback))
             (ast.ast-lifetime-list-get actual index (ast.ast-lifetime-fallback))
@@ -56847,7 +56847,7 @@
                 (try
                   (tc-infer-call-lifetime-name
                     env
-                    (tc-global-shared-view params)
+                    (& params)
                     subst
                     formal-lifetime
                     actual-lifetime
@@ -56898,7 +56898,7 @@
                 (try
                   (tc-infer-call-lifetime-name
                     env
-                    (tc-global-shared-view params)
+                    (& params)
                     subst
                     formal-lifetime
                     actual-lifetime
@@ -56949,7 +56949,7 @@
                 (try
                   (tc-infer-call-lifetime-name
                     env
-                    (tc-global-shared-view params)
+                    (& params)
                     subst
                     formal-lifetime
                     actual-lifetime
@@ -56973,7 +56973,7 @@
                 (try
                   (tc-infer-call-lifetime-name
                     env
-                    (tc-global-shared-view params)
+                    (& params)
                     subst
                     formal-lifetime
                     actual-lifetime
@@ -57825,6 +57825,111 @@
                   arg
                   message))]))))))
 
+;; A constructor's lifetime formals are inference variables of its declaration,
+;; not names at the call site. A formal spelled like a binding there infers
+;; under a hidden name, so an argument checked against its field type cannot
+;; coerce to that binding's lifetime and pin the formal to it (#8998). The
+;; inferred substitution is restated over the declared formals; when the hidden
+;; inference fails, the declared one reports the failure. Any other call, and a
+;; constructor whose formals no binding spells, infers as declared.
+(define (tc-infer-call-or-constructor-lifetime-subst
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]
+  [lifetimes : ast.AstLifetimeList]
+  [constructor? : bool]) : ResultTcLifetimeSubst
+  (let
+    [hidden : TcLifetimeSubst
+      (if constructor?
+        (tc-constructor-bound-formal-subst env (& lifetimes) 0 Nil)
+        TcLifetimeSubst.Nil)]
+    (match hidden
+      [(Nil)
+        (tc-infer-call-lifetime-subst ctx env func args params lifetimes Nil)]
+      [_
+        (let
+          [hidden-params : ast.AstTypeList
+            (ast.ast-type-list-with-capacity (ast.ast-type-list-len (& params)))]
+          (tc-lifetime-subst-type-list-into
+            hidden
+            (& params)
+            (&mut hidden-params)
+            0)
+          (match (tc-infer-call-lifetime-subst
+            ctx
+            env
+            (tc-global-shared-view func)
+            (tc-global-shared-view args)
+            hidden-params
+            (tc-lifetime-subst-list-at hidden (& lifetimes) 0)
+            Nil)
+            [(Ok inferred)
+              (Ok
+                (tc-constructor-formal-subst-restore
+                  hidden
+                  (& lifetimes)
+                  0
+                  inferred))]
+            [(Err _)
+              (tc-infer-call-lifetime-subst
+                ctx
+                env
+                func
+                args
+                params
+                lifetimes
+                Nil)]))])))
+
+;; Hidden names for the formals from INDEX on that a binding in ENV spells.
+(define (tc-constructor-bound-formal-subst
+  [env : TcTypeEnv]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [index : i64]
+  [hidden : TcLifetimeSubst]) : TcLifetimeSubst
+  (if (>= index (ast.ast-lifetime-list-len lifetimes))
+    hidden
+    (let
+      [formal : i64
+        (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback))]
+      (tc-constructor-bound-formal-subst
+        env
+        lifetimes
+        (+ index 1)
+        (if (tc-name-bound-id? env formal)
+          (tc-lifetime-subst-push
+            hidden
+            formal
+            (tc-generated-name-id
+              (str_cat.str-cat
+                "\n__typelisp_constructor_lifetime_"
+                (ci.intern-str formal))))
+          hidden)))))
+
+;; INFERRED, which binds the hidden formals of HIDDEN, extended to bind each
+;; declared formal from INDEX on to its hidden formal's inferred lifetime. A
+;; hidden formal no argument constrains stays its declared formal.
+(define (tc-constructor-formal-subst-restore
+  [hidden : TcLifetimeSubst]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [index : i64]
+  [inferred : TcLifetimeSubst]) : TcLifetimeSubst
+  (if (>= index (ast.ast-lifetime-list-len lifetimes))
+    inferred
+    (let
+      [formal : i64
+        (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback))]
+      [hidden-formal : i64 (tc-lifetime-subst-apply hidden formal)]
+      [actual : i64 (tc-lifetime-subst-apply inferred hidden-formal)]
+      (tc-constructor-formal-subst-restore
+        hidden
+        lifetimes
+        (+ index 1)
+        (if (or (= hidden-formal formal) (= actual hidden-formal))
+          inferred
+          (tc-lifetime-subst-push inferred formal actual))))))
+
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -57842,14 +57947,14 @@
             [(or (StructArgs _ params-lifetimes) (EnumArgs _ params-lifetimes))
               (ast.ast-lifetime-list-box-shared-view params-lifetimes)]
             [_ (ast.ast-lifetime-list-new)])]
-        (match (tc-infer-call-lifetime-subst
+        (match (tc-infer-call-or-constructor-lifetime-subst
           ctx
           env
           (tc-global-shared-view func)
           (tc-global-shared-view args)
           (tc-global-shared-view params)
           lifetimes
-          Nil)
+          true)
           [(Ok subst)
             (let
               [target : ast.AstType

@@ -1255,4 +1255,7 @@ composite_arg_loan_replace_old_value_ok|all|0,1,2|tests/safety/composite_arg_loa
 mir_by_value_immediate_writeback_ok|all|0,1,2|tests/safety/mir_by_value_immediate_writeback_ok.tl|42|-|-|-|-
 mir_by_value_read_only_result_ok|all|0,1,2|tests/safety/mir_by_value_read_only_result_ok.tl|42|-|-|-|-
 mir_storage_backed_borrow_result_ok|all|0,1,2|tests/safety/mir_storage_backed_borrow_result_ok.tl|42|-|-|-|-
+mir_by_value_borrow_unretained_ok|all|0,1,2|tests/safety/mir_by_value_borrow_unretained_ok.tl|42|-|-|-|-
+mir_storage_backed_borrow_retained_ok|all|0,1,2|tests/safety/mir_storage_backed_borrow_retained_ok.tl|42|-|-|-|-
+mir_by_value_borrow_distinct_lifetime_ok|all|0,1,2|tests/safety/mir_by_value_borrow_distinct_lifetime_ok.tl|42|-|-|-|-
 string_raw_integer_writers_ok|all|0,1,2|tests/safety/string_raw_integer_writers_ok.tl|42|-|-|stdlib/string.tl|-

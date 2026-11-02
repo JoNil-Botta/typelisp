@@ -1969,6 +1969,13 @@ Borrow expressions:
   struct locals likewise write back after the call. Each writeback updates only
   the borrowed field, preserving disjoint sibling updates from other arguments
   and their evaluation.
+- A call is rejected with `typecheck: mutable borrow of by-value place cannot
+  outlive the call` when it passes a mutable borrow of a register-resident
+  by-value local, or of a part of one, to a `&mut` parameter whose lifetime,
+  elided or explicit, appears in the call's result type or in the referent of
+  another `&mut` parameter, as for borrowed temporaries (section 3.10): the
+  callee could then keep the borrow past the writeback. The check reads the
+  signature, not the callee's body.
 - Borrow expressions are the explicit spelling. At call sites, a parameter of
   type `(& lifetime T)` may also auto-borrow an argument place under the same
   immutable borrow rules below. There is no general implicit conversion from

@@ -34,6 +34,31 @@ for size in 0 128 4080 4096 4104 8192 8200 65536 262144 1048576 1073741808 10737
 done
 "$WORK/oracle" generate 0 "$WORK/small.tl"
 "$WORK/oracle" generate 2304 "$WORK/large-object.tl"
+awk '
+function tree(start,count,half) {
+    if (count == 1) {printf "v%d",start; return}
+    half=int(count/2)
+    printf "(bit-xor "
+    tree(start,half)
+    printf " "
+    tree(start+half,count-half)
+    printf ")"
+}
+BEGIN {
+    print "(define (dive [n : i64]) (:export-symbol \"stack_dive\") : i64"
+    print "  (let"
+    for(i=0;i<600;i++) printf "    [v%d : i64 (bit-xor n %d)]\n",i,i*2+1
+    print "    [child : i64 (dive (+ n 1))]"
+    printf "    (+ child "
+    tree(0,600)
+    print ")))"
+    print "(define (main) : i64 (+ (dive 1) 1))"
+}
+' > "$WORK/pic.tl"
+bounded pic-admission 512 "$WORK/oracle" object "$WORK/pic.tl" 0 "$WORK/pic.o"
+bounded pic-large-compile 512 "$COMPILER" compile "$WORK/pic.tl" \
+    --pic --opt-level 0 --stdlib-root stdlib --stdlib-root src -o "$WORK/pic.s"
+grep -x '997:' "$WORK/pic.s" >/dev/null || fail "PIC finalizer omitted large-frame probes"
 cat > "$WORK/overflow.gdb" <<'EOF'
 set pagination off
 set confirm off

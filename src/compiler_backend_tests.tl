@@ -10066,6 +10066,7 @@
       session.backend-state
       session.stream
       asm
+      false
       false)))
 
 (define (compiler-backend-peephole-test-session-win64!
@@ -11442,6 +11443,7 @@
                         legacy-state
                         legacy-stream
                         (text_buf.render raw)
+                        true
                         true))]
                   (match (lower.lower-compiler-source src)
                     [(Ok second-program second-spans lower-owner)
@@ -15403,6 +15405,24 @@ f:
           "    subq $4096, %rsp\n")
         "late expansion preserves a live indirect target and the small dip"))
     (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  linux-stack-probes-whole-text-finalizer
+  (let
+    [linux : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
+        (backend.CompilerBackendTarget.Linux))]
+    [windows : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
+        (backend.CompilerBackendTarget.Windows))]
+    (test.assert-true
+      (asm-has? linux "    pushq %r11\n" "    movq 8192(%rsp), %r11\n")
+      "the PIC whole-text boundary expands Linux probes")
+    (test.assert-true
+      (string.eq windows "    subq $8200, %rsp\n    movq %r11, (%rsp)\n")
+      "the whole-text boundary leaves Windows unchanged")))
 
 (define (compiler-backend-target-windows-abi-source) : String
   "(extern (ext [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64]) : i64)

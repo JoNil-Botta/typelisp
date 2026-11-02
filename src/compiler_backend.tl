@@ -93100,7 +93100,8 @@ tl_shared_object_init:
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
   [asm : String]
-  [drop-fallthrough? : bool]) : text_buf.TextBuf
+  [drop-fallthrough? : bool]
+  [probe-final? : bool]) : text_buf.TextBuf
   ;; The streaming pass runs the complete rule set while each line pair and its
   ;; owner state are hot. Re-running it would parse and copy the whole assembly
   ;; again to remove only a small fraction of what the first pass removes. Keep
@@ -93130,6 +93131,10 @@ tl_shared_object_init:
         backend-state
         stream
         (compiler-backend-global-shared-view records))]
+    [_probed : unit
+      (when
+        probe-final?
+        (compiler-backend-expand-stack-probes! backend-state (&mut records)))]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned
         (compiler-backend-peephole-records-buffer
@@ -93153,12 +93158,34 @@ tl_shared_object_init:
       backend-state
       stream
       asm
-      drop-fallthrough?)))
+      drop-fallthrough?
+      false)))
 
 ;; Production entry: same whole-text pass with the fallthrough-`jmp` deletion
 ;; folded in, matching what the streaming emission walk applies per group.
 (define (compiler-backend-peephole-asm-drop-fallthrough [asm : String]) : String
   (text_buf.render (compiler-backend-peephole-asm-buffer asm true)))
+
+;; PIC uses the whole-text finalizer rather than a streaming group flush.
+;; Its production boundary must expand probes after the same analyses.
+(define (compiler-backend-peephole-asm-drop-fallthrough-target
+  [asm : String]
+  [target : CompilerBackendTarget]) : String
+  (let
+    [state : CompilerBackendState
+      (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state state)]
+    (compiler-backend-state-set-emission-target-policy!
+      state
+      (compiler-backend-target-policy-new target))
+    (text_buf.render
+      (compiler-backend-peephole-asm-buffer-with-state
+        state
+        stream
+        asm
+        true
+        true))))
 
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
@@ -93887,8 +93914,9 @@ tl_shared_object_init:
         (Ok
           (CompilerBackendPicOutput
             (compiler-backend-pic-asm
-              (compiler-backend-peephole-asm-drop-fallthrough
-                (text_buf.render buf))
+              (compiler-backend-peephole-asm-drop-fallthrough-target
+                (text_buf.render buf)
+                target)
               (compiler-backend-global-shared-view image))
             (compiler-backend-pic-fixup-table
               (compiler-backend-global-shared-view image))))

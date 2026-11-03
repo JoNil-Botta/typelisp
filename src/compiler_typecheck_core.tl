@@ -685,7 +685,9 @@
   ;; Lazily allocated TcSelectedCertificateStoreData cell (zero when unused):
   ;; the ownership-certificate tables reused across this job's file boundaries.
   (selected-certificate-store-address i64)
-  (parser-control i64))
+  (parser-control i64)
+  ;; Lazy completed variance answers; cold state stays out of hot resolution views.
+  (variance-cache-address i64))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -964,6 +966,7 @@
           0
           (cdiag.compiler-advisory-sink-new)
           (TcSemanticObserver 0)
+          0
           0
           0))
       (TcJobState
@@ -21972,6 +21975,18 @@
         (set! (deref cache).holds-memo-address 0)
         (set! (deref cache).holds-memo-arena 0)
         (arena.tl_arena_destroy memo))))
+  (let
+    [slot : (MutPtr i64) (tc-variance-cache-slot state)]
+    [address : i64
+      (unsafe
+        (ptr-read slot))]
+    (when
+      (> address 0)
+      (let
+        [cache : TcVarianceCache (tc-state-cell-read address TcVarianceCache)]
+        (unsafe
+          (ptr-write! slot 0)
+          (arena.tl_arena_destroy cache.owner)))))
   (let
     [address : i64 (tc-job-state-selected-certificate-store-address state)]
     (when
@@ -46784,10 +46799,9 @@
   (if (>= index (ast.ast-type-list-len types))
     (TcVarianceBivariant)
     (tc-variance-merge
-      (tc-type-lifetime-variance
+      (tc-type-id-lifetime-variance
         ctx
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))
         lifetime-id
         table
         position)
@@ -46861,14 +46875,311 @@
             table
             (+ index 1)))])))
 
-;; Variance of a nominal's lifetime parameters, solved as Rust's variance
-;; inference solves it: every parameter position reachable from the one asked
-;; for starts bivariant, each is recomputed from its declaration with the
-;; current answers for the nominal positions it names, and the passes repeat
-;; until no answer changes. Answers only grow (bivariant, then co- or
-;; contravariant, then invariant), so each position changes at most three
-;; times, and a cycle that permutes the parameters (`(L b a)` inside `L`)
-;; gets the variance of the position it fills.
+;; A completed solution belongs to one exact resolution epoch. Segmented
+;; expansion has a mutable program view, so it uses only the invocation memo.
+(defstruct TcVarianceEpoch
+  (shared u64)
+  (program u64)
+  (job-epoch i64)
+  (resolution i64)
+  (intern-owner i64)
+  (intern-generation i64)
+  (source-owner i64)
+  (source-generation i64)
+  (symbol-owner u64)
+  (symbol-revision u64)
+  (field-owner u64)
+  (field-revision u64)
+  (decls i64)
+  (reader ast.AstTypePoolStamp)
+  (context ast.AstTypePoolStamp)
+  (installed-bases i64)
+  (installed-generation i64))
+
+(defenum TcMaybeVarianceEpoch
+  (Missing)
+  (Present TcVarianceEpoch))
+
+(defstruct TcVarianceCache
+  (owner i64)
+  (epoch TcVarianceEpoch)
+  (owners (__tl_dyn-array i64))
+  (indices (__tl_dyn-array i64))
+  (codes (__tl_dyn-array i64))
+  (len i64))
+
+(define (tc-variance-pool-same?
+  [a : ast.AstTypePoolStamp]
+  [b : ast.AstTypePoolStamp]) : bool
+  (and
+    (= a.cursor-cell b.cursor-cell)
+    (= a.revision b.revision)
+    (= a.segment-bases b.segment-bases)))
+
+(define (tc-variance-epoch-same? [a : TcVarianceEpoch] [b : TcVarianceEpoch]) : bool
+  (and
+    (= a.shared b.shared)
+    (= a.program b.program)
+    (= a.job-epoch b.job-epoch)
+    (= a.resolution b.resolution)
+    (= a.intern-owner b.intern-owner)
+    (= a.intern-generation b.intern-generation)
+    (= a.source-owner b.source-owner)
+    (= a.source-generation b.source-generation)
+    (= a.symbol-owner b.symbol-owner)
+    (= a.symbol-revision b.symbol-revision)
+    (= a.field-owner b.field-owner)
+    (= a.field-revision b.field-revision)
+    (= a.decls b.decls)
+    (tc-variance-pool-same? a.reader b.reader)
+    (tc-variance-pool-same? a.context b.context)
+    (= a.installed-bases b.installed-bases)
+    (= a.installed-generation b.installed-generation)))
+
+(define (tc-variance-reader-stamp) : ast.AstMaybeTypePoolStamp
+  (if ast.ast-node-pool-reader-explicit?
+    (ast.ast-node-pool-context-type-stamp
+      (& (ast.ast-node-pool-reader-context-current)))
+    (if (and
+      (> ast.ty-node-pool-revision 0)
+      (=
+        ast.ty-node-pool-revision
+        (ast.ast-type-pool-cursor-live-revision ast.ty-node-pool-revision-cell)))
+      (Some
+        (ast.AstTypePoolStamp
+          ast.ty-node-pool-revision-cell
+          ast.ty-node-pool-revision
+          ast.ty-node-pool-segment-bases
+          ast.ty-node-pool-count))
+      No)))
+
+(define (tc-variance-epoch [ctx : TcContext]) : TcMaybeVarianceEpoch
+  (cfg test (when (> tc-variance-test-mode 0) (return Missing)))
+  (when (macro-segmented-program-active? ctx.job-state) (return Missing))
+  (let
+    [lease
+      (csym.compiler-resolution-lease-capture
+        (tc-context-symbols ctx)
+        (tc-context-registries ctx))]
+    [names (tc-context-source-names ctx)]
+    [cache (tc-job-state-type-resolution-cache ctx.job-state)]
+    (unless
+      (and
+        (> lease.symbol-revision.owner (cast 0 : u64))
+        (> lease.symbol-revision.revision (cast 0 : u64))
+        (> lease.field-revision.owner (cast 0 : u64))
+        (> lease.field-revision.revision (cast 0 : u64)))
+      (return Missing))
+    (match (tc-variance-reader-stamp)
+      [(No) Missing]
+      [(Some reader)
+        (match (ast.ast-node-pool-context-type-stamp (& (tc-context-pools ctx)))
+          [(No) Missing]
+          [(Some context)
+            (Present
+              (TcVarianceEpoch
+                ctx.shared
+                ctx.program-decls
+                (unsafe
+                  (deref (tc-type-resolution-cache-state-view cache)).epoch)
+                tc-top-env-resolution-generation
+                (ci.intern-active-table-id)
+                (ci.intern-generation)
+                (ci.intern-source-name-session-handle-table-id names)
+                (ci.intern-source-name-session-handle-reset-generation names)
+                lease.symbol-revision.owner
+                lease.symbol-revision.revision
+                lease.field-revision.owner
+                lease.field-revision.revision
+                (csym.compiler-symbols-decl-count (tc-context-symbols ctx))
+                reader
+                context
+                ast.ty-node-pool-segment-bases
+                (ast.ty-node-pool-generation-value)))])])))
+
+;; Geometric backing storage is reused between walks/epochs. Superseded arrays
+;; retained by an arena sum to at most twice the largest backing allocation.
+(define (tc-variance-reserve!
+  [items : (&mut items (__tl_dyn-array i64))]
+  [used : i64]) : unit
+  (when
+    (>= used (array-length items))
+    (let
+      [capacity : i64 (+ 8 (* 2 (array-length items)))]
+      [grown : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+      (cfg test (+= tc-variance-test-allocated capacity))
+      (for [at (iterator.range 0 used)]
+        (set! (array-ref grown at) (array-ref items at)))
+      (set! (deref items) grown))))
+
+(define (tc-variance-cache-slot [state : TcJobState]) : (MutPtr i64)
+  (unsafe
+    (ptr-cast
+      (ptr-offset
+        (int->ptr state.address : (MutPtr u8))
+        (comptime (offset-of (type TcJobStateData) variance-cache-address)))
+      : (MutPtr i64))))
+
+(define (tc-variance-cache-bind! [ctx : TcContext]) : i64
+  (match (tc-variance-epoch ctx)
+    [(Missing) 0]
+    [(Present epoch)
+      (let
+        [slot : (MutPtr i64) (tc-variance-cache-slot ctx.job-state)]
+        [address : i64
+          (unsafe
+            (ptr-read slot))]
+        (when
+          (= address 0)
+          (let
+            [owner : i64 (arena.tl_arena_make_small)]
+            (cfg
+              test
+              (+=
+                tc-variance-test-allocated
+                (/ (comptime (size-of (type TcVarianceCache))) 8)))
+            (in-arena
+              (unsafe
+                (arena.Arena owner))
+              (let
+                [cell : (__tl_dyn-array TcVarianceCache)
+                  (__tl_make-array TcVarianceCache 1)]
+                (set!
+                  (array-ref cell 0)
+                  (TcVarianceCache
+                    owner
+                    epoch
+                    (__tl_make-array i64 0)
+                    (__tl_make-array i64 0)
+                    (__tl_make-array i64 0)
+                    0))
+                (set!
+                  address
+                  (cast
+                    (unsafe
+                      (ptr->int
+                        (ptr-cast
+                          (__tl_array-data cell)
+                          : (Ptr TcVarianceCache))))
+                    : i64))
+                (unsafe
+                  (ptr-write! slot address))))))
+        (let
+          [cache : TcVarianceCache (tc-state-cell-read address TcVarianceCache)]
+          (unless
+            (tc-variance-epoch-same? epoch cache.epoch)
+            (set! cache.epoch epoch)
+            (set! cache.len 0)
+            (tc-state-cell-write! address TcVarianceCache cache)))
+        address)]))
+
+(define (tc-variance-cache-current? [ctx : TcContext] [address : i64]) : bool
+  (and
+    (> address 0)
+    (match (tc-variance-epoch ctx)
+      [(Missing) false]
+      [(Present epoch)
+        (tc-variance-epoch-same?
+          epoch
+          (unsafe
+            (deref (int->ptr (cast address : u64) : (Ptr TcVarianceCache))).epoch))])))
+
+;; Declaration identities retain every bit. Parameter indices are a separate
+;; coordinate; multiplying a structural name by 4096 loses owner bits.
+(define (tc-variance-position-same?
+  [left-owner : i64]
+  [left-index : i64]
+  [right-owner : i64]
+  [right-index : i64]) : bool
+  (and (= left-owner right-owner) (= left-index right-index)))
+
+(define (tc-variance-cache-get [address : i64] [owner : i64] [index : i64]) : i64
+  (let
+    [cache : TcVarianceCache
+      (unsafe
+        (ptr-read (int->ptr (cast address : u64) : (Ptr TcVarianceCache))))]
+    (for [at (iterator.range 0 cache.len)]
+      (cfg test (+= tc-variance-test-lookups 1))
+      (when
+        (tc-variance-position-same?
+          (array-ref cache.owners at)
+          (array-ref cache.indices at)
+          owner
+          index)
+        (return (array-ref cache.codes at))))
+    -1))
+
+(define (tc-variance-cache-publish!
+  [ctx : TcContext]
+  [table : (& table TcVarianceTable)]) : unit
+  (when
+    (tc-variance-cache-current? ctx table.cache)
+    (let
+      [writer : (MutPtr TcVarianceCache)
+        (unsafe
+          (int->ptr (cast table.cache : u64) : (MutPtr TcVarianceCache)))]
+      [cache : TcVarianceCache
+        (unsafe
+          (ptr-read writer))]
+      (in-arena
+        (unsafe
+          (arena.Arena cache.owner))
+        (for [at (iterator.range 0 table.len)]
+          (tc-variance-reserve! (&mut cache.owners) cache.len)
+          (tc-variance-reserve! (&mut cache.indices) cache.len)
+          (tc-variance-reserve! (&mut cache.codes) cache.len)
+          (set! (array-ref cache.owners cache.len) (array-ref table.owners at))
+          (set!
+            (array-ref cache.indices cache.len)
+            (array-ref table.indices at))
+          (set! (array-ref cache.codes cache.len) (array-ref table.codes at))
+          (+= cache.len 1)))
+      (unsafe
+        (ptr-write! writer cache)))))
+
+(cfg
+  test
+  (define tc-variance-test-mode : i64
+    0))
+(cfg
+  test
+  (define tc-variance-test-bodies : i64
+    0))
+(cfg
+  test
+  (define tc-variance-test-walks : i64
+    0))
+(cfg
+  test
+  (define tc-variance-test-lookups : i64
+    0))
+(cfg
+  test
+  (define tc-variance-test-dependencies : i64
+    0))
+(cfg
+  test
+  (define tc-variance-test-polls : i64
+    0))
+(cfg
+  test
+  (define tc-variance-test-allocated : i64
+    0))
+
+(cfg
+  test
+  (define (tc-variance-test-reset! [mode : i64]) : unit
+    (set! tc-variance-test-mode mode)
+    (set! tc-variance-test-bodies 0)
+    (set! tc-variance-test-walks 0)
+    (set! tc-variance-test-lookups 0)
+    (set! tc-variance-test-dependencies 0)
+    (set! tc-variance-test-polls 0)
+    (set! tc-variance-test-allocated 0)))
+
+;; The equations are monotone in the four-valued lattice. Only a changed
+;; answer schedules its readers; every reached equation gets an initial walk.
+;; Inv composed with any answer, including Bivariant, remains Inv.
 (define (tc-nominal-lifetime-variance-at
   [ctx : TcContext]
   [name-id : i64]
@@ -46880,38 +47191,112 @@
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
-        (__tl_make-array i64 0))]
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        0
+        -1
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        0
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        0
+        (tc-variance-cache-bind! ctx))]
     [first : TcVariance (tc-variance-table-at! ctx (&mut table) name-id index)]
-    [changed : bool true]
     [at : i64 0]
-    (when (= (array-length table.keys) 0) (return first))
-    (while changed
-      (set! changed false)
-      (set! at 0)
-      (while (< at (array-length table.keys))
+    (when (= table.len 0) (return first))
+    (cfg
+      test
+      (when
+        (= tc-variance-test-mode 2)
         (let
-          [code : i64
-            (tc-variance-code
-              (tc-variance-table-walk!
-                ctx
-                (&mut table)
-                (array-ref table.handles at)
-                (array-ref table.indices at)))]
-          (when
-            (!= code (array-ref table.codes at))
-            (set! (array-ref table.codes at) code)
-            (set! changed true)))
-        (set! at (+ at 1))))
+          [changed : bool true]
+          (while changed
+            (set! changed false)
+            (set! at 0)
+            (while (< at table.len)
+              (set! table.memo-len 0)
+              (set! table.active at)
+              (let
+                [code : i64
+                  (tc-variance-code
+                    (tc-variance-table-walk!
+                      ctx
+                      (&mut table)
+                      (array-ref table.handles at)
+                      (array-ref table.indices at)))]
+                (when
+                  (!= code (array-ref table.codes at))
+                  (set! (array-ref table.codes at) code)
+                  (set! changed true)))
+              (+= at 1))))
+        (return (tc-variance-of-code (array-ref table.codes 0)))))
+    (while (< at table.len)
+      (cfg test (+= tc-variance-test-polls 1))
+      (if (= (array-ref table.pending at) 0)
+        (+= at 1)
+        (begin
+          (set! (array-ref table.pending at) 0)
+          (set! table.memo-len 0)
+          (set! table.active at)
+          (let
+            [code : i64
+              (tc-variance-code
+                (tc-variance-table-walk!
+                  ctx
+                  (&mut table)
+                  (array-ref table.handles at)
+                  (array-ref table.indices at)))]
+            (if (= code (array-ref table.codes at))
+              (+= at 1)
+              (begin
+                (set! (array-ref table.codes at) code)
+                (for [edge (iterator.range 0 table.edge-len)]
+                  (cfg test (+= tc-variance-test-dependencies 1))
+                  (when
+                    (= (array-ref table.dependencies edge) at)
+                    (set!
+                      (array-ref table.pending (array-ref table.readers edge))
+                      1)))
+                (set! at 0)))))))
+    (tc-variance-cache-publish! ctx (& table))
     (tc-variance-of-code (array-ref table.codes 0))))
 
-;; The parameter positions a variance solution has reached: per position, the
-;; nominal's owner id * 4096 + the parameter index, the symbol handle of its
-;; declaration, the index, and the answer so far (`tc-variance-code`).
 (defstruct TcVarianceTable
-  (keys (__tl_dyn-array i64))
+  (owners (__tl_dyn-array i64))
   (handles (__tl_dyn-array i64))
   (indices (__tl_dyn-array i64))
-  (codes (__tl_dyn-array i64)))
+  (codes (__tl_dyn-array i64))
+  (pending (__tl_dyn-array i64))
+  (len i64)
+  (active i64)
+  (dependencies (__tl_dyn-array i64))
+  (readers (__tl_dyn-array i64))
+  (edge-len i64)
+  (memo-nodes (__tl_dyn-array i64))
+  (memo-positions (__tl_dyn-array i64))
+  (memo-codes (__tl_dyn-array i64))
+  (memo-len i64)
+  (cache i64))
+
+(define (tc-variance-dependency!
+  [table : (&mut table TcVarianceTable)]
+  [dependency : i64]) : unit
+  (when
+    (>= table.active 0)
+    (for [edge (iterator.range 0 table.edge-len)]
+      (cfg test (+= tc-variance-test-dependencies 1))
+      (when
+        (and
+          (= (array-ref table.dependencies edge) dependency)
+          (= (array-ref table.readers edge) table.active))
+        (return unit)))
+    (tc-variance-reserve! (&mut table.dependencies) table.edge-len)
+    (tc-variance-reserve! (&mut table.readers) table.edge-len)
+    (set! (array-ref table.dependencies table.edge-len) dependency)
+    (set! (array-ref table.readers table.edge-len) table.active)
+    (+= table.edge-len 1)))
 
 (define (tc-variance-code [variance : TcVariance]) : i64
   (match variance
@@ -46945,20 +47330,41 @@
       (TcVarianceInvariant)
       (let
         [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-        [key : i64 (+ (* nominal-id 4096) index)]
         [at : i64 0]
         (when
           (or (< nominal-id 0) (< index 0) (>= index 4096))
           (return (TcVarianceInvariant)))
-        (while (< at (array-length table.keys))
+        (when
+          (> table.cache 0)
+          (if (tc-variance-cache-current? ctx table.cache)
+            (let
+              [completed : i64
+                (tc-variance-cache-get table.cache nominal-id index)]
+              (when (>= completed 0) (return (tc-variance-of-code completed))))
+            (set! table.cache 0)))
+        (while (< at table.len)
+          (cfg test (+= tc-variance-test-lookups 1))
           (when
-            (= (array-ref table.keys at) key)
+            (tc-variance-position-same?
+              (array-ref table.owners at)
+              (array-ref table.indices at)
+              nominal-id
+              index)
+            (tc-variance-dependency! table at)
             (return (tc-variance-of-code (array-ref table.codes at))))
           (set! at (+ at 1)))
-        (tc-selected-i64s-push! (&mut table.keys) key)
-        (tc-selected-i64s-push! (&mut table.handles) handle)
-        (tc-selected-i64s-push! (&mut table.indices) index)
-        (tc-selected-i64s-push! (&mut table.codes) 0)
+        (tc-variance-reserve! (&mut table.owners) table.len)
+        (tc-variance-reserve! (&mut table.handles) table.len)
+        (tc-variance-reserve! (&mut table.indices) table.len)
+        (tc-variance-reserve! (&mut table.codes) table.len)
+        (tc-variance-reserve! (&mut table.pending) table.len)
+        (set! (array-ref table.owners table.len) nominal-id)
+        (set! (array-ref table.handles table.len) handle)
+        (set! (array-ref table.indices table.len) index)
+        (set! (array-ref table.codes table.len) 0)
+        (set! (array-ref table.pending table.len) 1)
+        (tc-variance-dependency! table table.len)
+        (+= table.len 1)
         (TcVarianceBivariant)))))
 
 ;; Parameter `index`'s variance in the declaration of nominal `handle`, in its
@@ -46968,6 +47374,7 @@
   [table : (&mut table TcVarianceTable)]
   [handle : i64]
   [index : i64]) : TcVariance
+  (cfg test (+= tc-variance-test-walks 1))
   (let
     [owner-ctx : TcContext
       (tc-context-with-nominal-owner-index-module
@@ -47043,13 +47450,69 @@
           position
           (+ index 1))))))
 
+;; Memo hits already recorded their nominal dependencies for this equation.
+;; Clearing the logical length between equation walks freezes table answers.
+(define (tc-type-id-lifetime-variance
+  [ctx : TcContext]
+  [id : i64]
+  [lifetime-id : i64]
+  [table : (&mut table TcVarianceTable)]
+  [position : TcVariance]) : TcVariance
+  (cfg
+    test
+    (when
+      (> tc-variance-test-mode 0)
+      (return
+        (tc-type-lifetime-variance
+          ctx
+          (ast.ty-node-get id)
+          lifetime-id
+          table
+          position))))
+  (let
+    [code : i64 (tc-variance-code position)]
+    (for [at (iterator.range 0 table.memo-len)]
+      (cfg test (+= tc-variance-test-lookups 1))
+      (when
+        (tc-variance-position-same?
+          (array-ref table.memo-nodes at)
+          (array-ref table.memo-positions at)
+          id
+          code)
+        (return (tc-variance-of-code (array-ref table.memo-codes at)))))
+    (let
+      [answer : TcVariance
+        (tc-type-lifetime-variance
+          ctx
+          (ast.ty-node-get id)
+          lifetime-id
+          table
+          position)]
+      (tc-variance-reserve! (&mut table.memo-nodes) table.memo-len)
+      (tc-variance-reserve! (&mut table.memo-positions) table.memo-len)
+      (tc-variance-reserve! (&mut table.memo-codes) table.memo-len)
+      (set! (array-ref table.memo-nodes table.memo-len) id)
+      (set!
+        (array-ref table.memo-positions table.memo-len)
+        (tc-variance-code position))
+      (set!
+        (array-ref table.memo-codes table.memo-len)
+        (tc-variance-code answer))
+      (+= table.memo-len 1)
+      answer)))
+
 (define (tc-type-lifetime-variance
   [ctx : TcContext]
   [ty : ast.AstType]
   [lifetime-id : i64]
   [table : (&mut table TcVarianceTable)]
   [position : TcVariance]) : TcVariance
-  (match (tc-resolve-type ctx ty)
+  (cfg test (+= tc-variance-test-bodies 1))
+  ;; Composite constructors preserve shape under resolution. Resolve atomic
+  ;; names here; each composite child is resolved through its node-ID memo.
+  (match (match (& ty)
+    [(or (Var _) (VarArgs _ _)) (tc-resolve-type ctx ty)]
+    [_ ty])
     [(Func params ret)
       (tc-variance-merge
         (tc-type-list-lifetime-variance
@@ -47058,20 +47521,10 @@
           lifetime-id
           table
           (tc-variance-flip position))
-        (tc-type-lifetime-variance
-          ctx
-          (ast.ty-node-get ret)
-          lifetime-id
-          table
-          position))]
+        (tc-type-id-lifetime-variance ctx ret lifetime-id table position))]
     ;; A C function pointer is variant like the function type it points to.
     [(CFunc inner _)
-      (tc-type-lifetime-variance
-        ctx
-        (ast.ty-node-get inner)
-        lifetime-id
-        table
-        position)]
+      (tc-type-id-lifetime-variance ctx inner lifetime-id table position)]
     [(Tuple elems)
       (tc-type-list-lifetime-variance
         ctx
@@ -47080,20 +47533,15 @@
         table
         position)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem))
-      (tc-type-lifetime-variance
-        ctx
-        (ast.ty-node-get elem)
-        lifetime-id
-        table
-        position)]
+      (tc-type-id-lifetime-variance ctx elem lifetime-id table position)]
     ;; An owned dynamic array is a move-only handle whose elements change only
     ;; through its owning place or a `&mut` to it (invariant in its referent),
     ;; never through a shared reference. Like Box and Slice it follows its
     ;; context: shortening moves the handle and leaves no longer-typed alias.
     [(MutPtr elem)
-      (tc-type-lifetime-variance
+      (tc-type-id-lifetime-variance
         ctx
-        (ast.ty-node-get elem)
+        elem
         lifetime-id
         table
         (TcVarianceInvariant))]
@@ -47102,20 +47550,15 @@
         (if (= lifetime lifetime-id)
           position
           (TcVarianceBivariant))
-        (tc-type-lifetime-variance
-          ctx
-          (ast.ty-node-get inner)
-          lifetime-id
-          table
-          position))]
+        (tc-type-id-lifetime-variance ctx inner lifetime-id table position))]
     [(MutRef lifetime inner)
       (tc-variance-merge
         (if (= lifetime lifetime-id)
           position
           (TcVarianceBivariant))
-        (tc-type-lifetime-variance
+        (tc-type-id-lifetime-variance
           ctx
-          (ast.ty-node-get inner)
+          inner
           lifetime-id
           table
           (TcVarianceInvariant)))]
@@ -47124,12 +47567,7 @@
         (if (= lifetime lifetime-id)
           (TcVarianceInvariant)
           (TcVarianceBivariant))
-        (tc-type-lifetime-variance
-          ctx
-          (ast.ty-node-get inner)
-          lifetime-id
-          table
-          position))]
+        (tc-type-id-lifetime-variance ctx inner lifetime-id table position))]
     [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
       (tc-nominal-args-lifetime-variance-at
         ctx

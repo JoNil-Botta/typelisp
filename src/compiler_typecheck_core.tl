@@ -18133,7 +18133,8 @@
                         (tc-global-shared-view args)
                         (tc-global-shared-view declared-params)
                         (tc-global-shared-view lifetimes)
-                        (= key -1))
+                        (= key -1)
+                        (& declared-ret))
                         [(ResultTcLifetimeSubst.Ok found) found]
                         [(ResultTcLifetimeSubst.Err message)
                           (return (TcSelectedResult.Err message sink))])])]
@@ -58685,7 +58686,7 @@
 ;; under a hidden name, so an argument checked against its field type cannot
 ;; coerce to that binding's lifetime and pin the formal to it (#8998). The
 ;; inferred substitution is restated over the declared formals; when the hidden
-;; inference fails, the declared one reports the failure. Any other call, and a
+;; inference fails, the call infers as declared instead. Any other call, and a
 ;; constructor whose formals no binding spells, infers as declared.
 (define (tc-infer-call-or-constructor-lifetime-subst
   [ctx : TcContext]
@@ -58694,7 +58695,8 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [lifetimes : ast.AstLifetimeList]
-  [constructor? : bool]) : ResultTcLifetimeSubst
+  [constructor? : bool]
+  [ret : (& ast.AstType)]) : ResultTcLifetimeSubst
   (let
     [hidden : TcLifetimeSubst
       (if constructor?
@@ -58736,7 +58738,13 @@
             [(Ok inferred)
               (Ok
                 (tc-constructor-formal-subst-restore
-                  (ast.ast-expr-list-empty? (& args))
+                  ctx
+                  (match ret
+                    [(or (StructArgs name _) (EnumArgs name _))
+                      (if (ast.ast-expr-list-empty? (& args))
+                        name
+                        -1)]
+                    [_ -1])
                   hidden
                   (& lifetimes)
                   0
@@ -58814,10 +58822,13 @@
 ;; INFERRED, which binds the hidden formals of HIDDEN, extended to bind each
 ;; declared formal from INDEX on to its hidden formal's inferred lifetime. A
 ;; hidden formal no argument constrains stays its declared formal, except in a
-;; NULLARY? variant, which holds no reference: there it is the unconstrained
-;; lifetime (`tc-unconstrained-lifetime-id`).
+;; nullary variant of NULLARY (-1 for none), which holds no reference: there a
+;; covariant or bivariant formal is the unconstrained lifetime
+;; (`tc-unconstrained-lifetime-id`), which cannot meet an invariant or
+;; contravariant expectation.
 (define (tc-constructor-formal-subst-restore
-  [nullary? : bool]
+  [ctx : TcContext]
+  [nullary : i64]
   [hidden : TcLifetimeSubst]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]
@@ -58830,7 +58841,8 @@
       [hidden-formal : i64 (tc-lifetime-subst-apply hidden formal)]
       [actual : i64 (tc-lifetime-subst-apply inferred hidden-formal)]
       (tc-constructor-formal-subst-restore
-        nullary?
+        ctx
+        nullary
         hidden
         lifetimes
         (+ index 1)
@@ -58838,7 +58850,12 @@
           [(= hidden-formal formal) inferred]
           [(!= actual hidden-formal)
             (tc-lifetime-subst-push inferred formal actual)]
-          [(not nullary?) inferred]
+          [(or
+              (= nullary -1)
+              (match (tc-nominal-lifetime-variance-at ctx nullary index Nil)
+                [(or (TcVarianceContravariant) (TcVarianceInvariant)) true]
+                [_ false]))
+            inferred]
           [else
             (tc-lifetime-subst-push
               inferred
@@ -58869,7 +58886,8 @@
           (tc-global-shared-view args)
           (tc-global-shared-view params)
           lifetimes
-          true)
+          true
+          (& ret))
           [(Ok subst)
             (let
               [target : ast.AstType

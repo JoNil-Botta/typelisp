@@ -405,10 +405,12 @@ self_named_local_shadow_crosswindow_ok|check-ok|tests/safety/self_named_local_sh
 self_named_local_shadow_crosswindow_reject|check-fail|tests/safety/self_named_local_shadow_crosswindow_reject.tl|-|reference value would escape lexical scope
 caller_lifetime_unconstrained_variant_same_name_ok|check-ok|tests/safety/caller_lifetime_unconstrained_variant_same_name_ok.tl|-|-
 caller_lifetime_unconstrained_variant_program_shadow_ok|check-ok|tests/safety/caller_lifetime_unconstrained_variant_program_shadow_ok.tl|-|-
+caller_lifetime_unconstrained_variant_variance_ok|run-exit|tests/safety/caller_lifetime_unconstrained_variant_variance_ok.tl|0|-
 caller_lifetime_unconstrained_mut_program_shadow_ok|check-ok|tests/safety/caller_lifetime_unconstrained_mut_program_shadow_ok.tl|-|-
 caller_lifetime_unconstrained_mut_program_twice_reject|check-fail|tests/safety/caller_lifetime_unconstrained_mut_program_twice_reject.tl|-|cannot mutably borrow borrowed place `r`
 self_named_nominal_slot_return_reject|check-fail|tests/safety/self_named_nominal_slot_return_reject.tl|-|cannot return a reference to parameter `p`
 self_named_nominal_slot_call_return_reject|check-fail|tests/safety/self_named_nominal_slot_call_return_reject.tl|-|cannot return a reference to parameter `p`
+self_named_nominal_slot_store_reject|check-fail|tests/safety/self_named_nominal_slot_store_reject.tl|-|`s` does not live long enough
 region_read_inferred_region_ok|run-exit|tests/safety/region_read_inferred_region_ok.tl|42|-
 caller_lifetime_array_join_loan_reject|check-fail|tests/safety/caller_lifetime_array_join_loan_reject.tl|-|cannot assign to borrowed place `y`
 # Rust parity for the storage rule. The `&mut` and the result are spelled like

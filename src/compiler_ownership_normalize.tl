@@ -10174,9 +10174,9 @@
         (normalize-push-i64! (&mut out) (array-ref items index)))
       (set! index (+ index 1)))))
 
-;; The reserved `program` lifetime (`tc-program-lifetime-id?`).
-;; `program` and typechecking's unconstrained lifetime (#8998), which outlive
-;; every region.
+;; The reserved `program` lifetime (`tc-program-lifetime-id?`) and the spelling
+;; of typechecking's unconstrained lifetime (`tc-unconstrained-lifetime-name`,
+;; #8998), which outlive every region.
 (define (normalize-program-lifetime? [name : i64]) : bool
   (and
     (>= name 0)

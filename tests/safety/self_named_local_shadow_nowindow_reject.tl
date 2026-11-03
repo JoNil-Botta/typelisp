@@ -1,0 +1,12 @@
+;; #8998 cache-gap control (reject): a local `a : (& a i64)` borrowing an older
+;; local `a` is a self-named carrier; lifetime `a` is that older binding, found
+;; past the carrier, also in a local environment longer than its cache
+;; threshold (0 bindings between them, 0 after).
+(define (f [q : (& q i64)]) : (& q i64)
+  (let
+    [a : i64 1]
+    [a : (& a i64) (& a)]
+    a))
+
+(define (main) : i64
+  0)

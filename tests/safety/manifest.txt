@@ -376,6 +376,42 @@ caller_lifetime_reassigned_alias_store_same_name_reject|check-fail|tests/safety/
 caller_lifetime_tagged_store_ok|check-ok|tests/safety/caller_lifetime_tagged_store_ok.tl|-|-
 caller_lifetime_nullary_variant_ok|check-ok|tests/safety/caller_lifetime_nullary_variant_ok.tl|-|-
 caller_lifetime_constructor_fixed_lifetime_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_fixed_lifetime_same_name_reject.tl|-|`a` does not live long enough
+# A constructor lifetime formal spelled like a binding at the call site still
+# infers from the arguments (#8998).
+caller_lifetime_constructor_formal_same_name_ok|check-ok|tests/safety/caller_lifetime_constructor_formal_same_name_ok.tl|-|-
+caller_lifetime_constructor_formal_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_formal_same_name_reject.tl|-|source lifetime `cwd` does not outlive required lifetime `next-cwd`
+# A parameter whose own type carries its name is a self-named carrier: its
+# lifetime is the caller's region, outside every parameter and unrelated to the
+# other caller regions; a lifetime spelled like a by-value parameter is that
+# parameter's storage (#8998). A local carrier's lifetime is the older binding
+# of its name, also across environment cache windows.
+self_named_carrier_store_reject|check-fail|tests/safety/self_named_carrier_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& p i64)
+self_named_carrier_alias_store_reject|check-fail|tests/safety/self_named_carrier_alias_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& p i64)
+self_named_return_reject|check-fail|tests/safety/self_named_return_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+self_named_program_param_return_reject|check-fail|tests/safety/self_named_program_param_return_reject.tl|-|source lifetime `program` does not outlive required lifetime `q`
+self_named_other_param_return_reject|check-fail|tests/safety/self_named_other_param_return_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+self_named_dangling_caller_reject|check-fail|tests/safety/self_named_dangling_caller_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+self_named_nominal_return_reject|check-fail|tests/safety/self_named_nominal_return_reject.tl|-|source lifetime `s` does not outlive required lifetime `q`
+self_named_nominal_store_reject|check-fail|tests/safety/self_named_nominal_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& s i64)
+self_named_carrier_slot_return_reject|check-fail|tests/safety/self_named_carrier_slot_return_reject.tl|-|return type mismatch: expected (& p (& p i64)), found (& p i64)
+storage_spelled_return_reject|check-fail|tests/safety/storage_spelled_return_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+program_storage_spelled_return_reject|check-fail|tests/safety/program_storage_spelled_return_reject.tl|-|source lifetime `program` does not outlive required lifetime `q`
+self_named_carrier_controls_ok|check-ok|tests/safety/self_named_carrier_controls_ok.tl|-|-
+self_named_local_shadow_nowindow_ok|check-ok|tests/safety/self_named_local_shadow_nowindow_ok.tl|-|-
+self_named_local_shadow_nowindow_reject|check-fail|tests/safety/self_named_local_shadow_nowindow_reject.tl|-|reference value would escape lexical scope
+self_named_local_shadow_samewindow_ok|check-ok|tests/safety/self_named_local_shadow_samewindow_ok.tl|-|-
+self_named_local_shadow_samewindow_reject|check-fail|tests/safety/self_named_local_shadow_samewindow_reject.tl|-|reference value would escape lexical scope
+self_named_local_shadow_crosswindow_ok|check-ok|tests/safety/self_named_local_shadow_crosswindow_ok.tl|-|-
+self_named_local_shadow_crosswindow_reject|check-fail|tests/safety/self_named_local_shadow_crosswindow_reject.tl|-|reference value would escape lexical scope
+caller_lifetime_unconstrained_variant_same_name_ok|check-ok|tests/safety/caller_lifetime_unconstrained_variant_same_name_ok.tl|-|-
+caller_lifetime_unconstrained_variant_program_shadow_ok|check-ok|tests/safety/caller_lifetime_unconstrained_variant_program_shadow_ok.tl|-|-
+caller_lifetime_unconstrained_variant_variance_ok|run-exit|tests/safety/caller_lifetime_unconstrained_variant_variance_ok.tl|0|-
+caller_lifetime_unconstrained_mut_program_shadow_ok|check-ok|tests/safety/caller_lifetime_unconstrained_mut_program_shadow_ok.tl|-|-
+caller_lifetime_unconstrained_mut_program_twice_reject|check-fail|tests/safety/caller_lifetime_unconstrained_mut_program_twice_reject.tl|-|cannot mutably borrow borrowed place `r`
+self_named_nominal_slot_return_reject|check-fail|tests/safety/self_named_nominal_slot_return_reject.tl|-|cannot return a reference to parameter `p`
+self_named_nominal_slot_call_return_reject|check-fail|tests/safety/self_named_nominal_slot_call_return_reject.tl|-|cannot return a reference to parameter `p`
+self_named_nominal_slot_store_reject|check-fail|tests/safety/self_named_nominal_slot_store_reject.tl|-|`s` does not live long enough
+region_read_inferred_region_ok|run-exit|tests/safety/region_read_inferred_region_ok.tl|42|-
 caller_lifetime_array_join_loan_reject|check-fail|tests/safety/caller_lifetime_array_join_loan_reject.tl|-|cannot assign to borrowed place `y`
 # Rust parity for the storage rule. The `&mut` and the result are spelled like
 # the local where typing would otherwise reject the store by name, so the
@@ -1376,7 +1412,7 @@ program_lifetime_shorten_tuple_ok|check-ok|tests/safety/program_lifetime_shorten
 program_lifetime_shorten_reverse_reject|check-fail|tests/safety/program_lifetime_shorten_reverse_reject.tl|-|does not outlive required lifetime `program`
 program_lifetime_shorten_unrelated_reject|check-fail|tests/safety/program_lifetime_shorten_unrelated_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
 program_lifetime_named_param_caller_reject|check-fail|tests/safety/program_lifetime_named_param_caller_reject.tl|-|source lifetime `local` does not outlive required lifetime `program`
-program_lifetime_named_param_return_reject|check-fail|tests/safety/program_lifetime_named_param_return_reject.tl|-|does not outlive required lifetime `program`
+program_lifetime_named_param_return_reject|check-fail|tests/safety/program_lifetime_named_param_return_reject.tl|-|returned reference lifetime `program` is a by-value parameter's own storage
 program_lifetime_named_param_local_ok|check-ok|tests/safety/program_lifetime_named_param_local_ok.tl|-|-
 program_lifetime_reserved_param_local_reject|check-fail|tests/safety/program_lifetime_reserved_param_local_reject.tl|-|source lifetime `local` does not outlive required lifetime `program`
 program_local_shadow_return_reject|check-fail|tests/safety/program_local_shadow_return_reject.tl|tests/safety/program_local_shadow_return_reject.tl:3:3|reference value would escape lexical scope

@@ -37063,7 +37063,9 @@
           signature-marker-id)))))
 
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
-  (if (tc-generated-arena-brand-id? lifetime-id)
+  (if (or
+    (tc-generated-arena-brand-id? lifetime-id)
+    (tc-program-lifetime-id? lifetime-id))
     true
     (if (tc-type-env-scoped-runtime-active? env)
       (tc-type-env-scoped-carrier-lifetime-visible-id?
@@ -37482,6 +37484,11 @@
         ;; every other lifetime outlives it and it outlives none of them.
         [(= target-lifetime-id temporary) true]
         [(= value-lifetime-id temporary) false]
+        ;; A binding named `program` names its own lifetime instead.
+        [(and
+            (tc-program-lifetime-id? value-lifetime-id)
+            (not (tc-name-bound-id? env value-lifetime-id)))
+          true]
         [(tc-type-env-scoped-runtime-active? env)
           (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
             (tc-type-env-scoped-runtime-current env)

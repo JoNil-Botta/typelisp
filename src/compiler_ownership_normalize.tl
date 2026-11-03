@@ -9816,6 +9816,11 @@
   ;; when that is the reference the node itself lies under.
   (node-out-first NormalizeI64s)
   (node-out-count NormalizeI64s)
+  ;; Per node: a node with the same position sequence (names and
+  ;; invariance), itself unless all its positions lie in one child node:
+  ;; zips compare these, so a type wrapped in position-free layers meets
+  ;; itself without descending them.
+  (node-canon NormalizeI64s)
   ;; Per segment: its child node, or -1 for a leaf with `seg-name` and
   ;; `seg-inv`; and the reference the segment lies under
   ;; (`normalize-outer-none`, `-inherit` or `-head`).
@@ -9970,7 +9975,7 @@
         (array-length shapes.name-pool.items))]
     (normalize-shape-column! shapes len cap 1)))
 
-;; Room for one more node (its thirteen columns) and its `count` segments
+;; Room for one more node (its fourteen columns) and its `count` segments
 ;; (four columns).
 (define (normalize-shape-node-room!
   [shapes : (&mut shapes NormalizeShapes)]
@@ -10021,7 +10026,8 @@
         (normalize-pushes-cells
           nodes
           (array-length shapes.node-out-count.items)
-          1))]
+          1)
+        (normalize-pushes-cells nodes (array-length shapes.node-canon.items) 1))]
     [segs : i64 shapes.seg-child.len]
     [seg-cells : i64
       (+
@@ -10040,7 +10046,7 @@
       (normalize-shape-charge!
         shapes
         (+ node-cells seg-cells)
-        (+ 13 (* 4 count) node-cells seg-cells)))))
+        (+ 14 (* 4 count) node-cells seg-cells)))))
 
 ;; Room for one more shape record (its four columns).
 (define (normalize-shape-record-room! [shapes : (&mut shapes NormalizeShapes)]) : NormalizeUnit
@@ -10593,6 +10599,25 @@
                       [else unit]))
                   (set! at (+ at 1))))))
           (set! index (+ index 1)))
+        ;; The canonical node: the one child holding every position.
+        (let
+          [only : i64 -1]
+          [spread : bool false]
+          (set! index 0)
+          (while (< index count)
+            (let
+              [child : i64 (array-ref segs.child.items index)]
+              (cond
+                [(< child 0) (set! spread true)]
+                [(= (array-ref shapes.node-len.items child) 0) unit]
+                [(>= only 0) (set! spread true)]
+                [else (set! only child)]))
+            (set! index (+ index 1)))
+          (normalize-i64s-push!
+            (&mut shapes.node-canon)
+            (if (and (>= only 0) (not spread))
+              (array-ref shapes.node-canon.items only)
+              node)))
         (normalize-i64s-push! (&mut shapes.node-out-first) out-first)
         (normalize-i64s-push!
           (&mut shapes.node-out-count)
@@ -10878,6 +10903,7 @@
   [records : i64]
   [work : i64]) : NormalizeShapes
   (NormalizeShapes
+    (normalize-i64s)
     (normalize-i64s)
     (normalize-i64s)
     (normalize-i64s)
@@ -11503,6 +11529,18 @@
   ;; Node pairs already zipped from aligned starts.
   (pairs normalize_transfer_map.Map))
 
+;; Replace stack `stack`'s top node with its canonical node.
+(define (normalize-zip-canon!
+  [shapes : (& shapes NormalizeShapes)]
+  [stack : (&mut stack NormalizeI64s)]) : unit
+  (let
+    [top : i64 (array-ref stack.items (- stack.len 1))]
+    (when
+      (>= top 0)
+      (set!
+        (array-ref stack.items (- stack.len 1))
+        (array-ref shapes.node-canon.items top)))))
+
 (define (normalize-zip-item-len
   [shapes : (& shapes NormalizeShapes)]
   [item : i64]) : i64
@@ -11631,6 +11669,8 @@
       (when (> from-skip 0) (normalize-zip-drop! shapes edges (&mut a)))
       (when (> to-skip 0) (normalize-zip-drop! shapes edges (&mut b))))
     (while (and (> a.len 0) (> b.len 0) (normalize-edges-work! edges 1))
+      (normalize-zip-canon! shapes (&mut a))
+      (normalize-zip-canon! shapes (&mut b))
       (let
         [ta : i64 (array-ref a.items (- a.len 1))]
         [tb : i64 (array-ref b.items (- b.len 1))]

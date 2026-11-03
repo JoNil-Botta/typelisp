@@ -425,6 +425,10 @@ region_arena_caller_lifetime_alias_store_reject|check-fail|tests/safety/region_a
 region_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
 region_arena_caller_lifetime_store_ok|check-ok|tests/safety/region_arena_caller_lifetime_store_ok.tl|-|-
 region_arena_caller_lifetime_shadow_ok|run-exit|tests/safety/region_arena_caller_lifetime_shadow_ok.tl|42|-
+region_arena_in_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_in_arena_caller_lifetime_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_in_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_in_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_caller_lifetime_foreach_ok|run-exit|tests/safety/region_arena_caller_lifetime_foreach_ok.tl|42|-
+region_arena_caller_lifetime_foreach_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_foreach_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is

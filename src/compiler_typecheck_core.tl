@@ -33082,6 +33082,9 @@
   (match (tc-type-shadowing-region (clone actual) (clone expected))
     [(Some region) (return (tc-region-escape-error region))]
     [(No) unit])
+  (match (tc-type-shadowing-region (clone expected) (clone actual))
+    [(Some region) (return (tc-region-escape-error region))]
+    [(No) unit])
   (let
     [context-kind : bool
       (cdiag.compiler-diagnostic-typecheck-tagged? (& message))]
@@ -33098,7 +33101,8 @@
 
 ;; A fresh with-arena region (#9593) in `actual` that `expected` names by the
 ;; lifetime it shadows. Both would render alike, so the mismatch is the
-;; region's escape.
+;; region's escape. Callers also ask with the two sides swapped, for a callee
+;; signature instantiated at the fresh region.
 (define (tc-type-shadowing-region
   [actual : ast.AstType]
   [expected : ast.AstType]) : TcMaybeNameId
@@ -71185,7 +71189,7 @@
       (tc-spmd-begin-list
         ctx
         expr-bases
-        (tc-push-region env region)
+        (tc-push-region env (tc-with-region-binder ctx env region (& body)))
         spmd-env
         body)]
     [(WithEscape _ _)
@@ -84853,11 +84857,7 @@
       (> body.len 0)
       (>= source-name 0)
       (tc-lifetime-visible-id? env region)
-      ;; Legacy typing re-enters a form inside its own scope; the form's own
-      ;; region marker is not a lifetime it shadows.
-      (match (tc-active-region env)
-        [(Some active) (not (= active region))]
-        [(No) true]))
+      (not (tc-with-region-scope-active? env region)))
       (let
         [fresh : i64
           (cis.intern-fresh-local-identity-raw
@@ -84877,6 +84877,19 @@
               (array-ref body.slots index))))
         fresh)
       region)))
+
+;; Legacy typing re-enters a form inside its own scope, whose innermost region
+;; marker is the form's own `with-arena` scope (a `Var` marker); that is not a
+;; lifetime it shadows. An enclosing `in-arena` selection installs a `Region`
+;; marker for an existing owner, which a same-spelled form still shadows.
+(define (tc-with-region-scope-active? [env : TcTypeEnv] [region : i64]) : bool
+  (match (if (tc-type-env-scoped-runtime-active? env)
+    (tc-type-env-scoped-carrier-marker-type
+      (tc-type-env-scoped-runtime-current env)
+      (tc-region-marker-id))
+    (tc-env-marker-type env (tc-region-marker-id)))
+    [(Some (Var active)) (= active region)]
+    [_ false]))
 
 ;; Fresh with-arena regions take fresh-local ordinals above every other
 ;; family's (lowering numbers its inline temporaries from zero), so a region

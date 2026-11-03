@@ -2464,14 +2464,8 @@
         (ast.AstType.VarArgs 0 (box lifetimes)))
         [(norm.NormalizeInt.Ok id)
           (while (and ok (< pass 200))
-            (match (norm.normalize-shape-universal-room! (&mut many) id)
-              [(norm.NormalizeUnit.Ok _)
-                (let
-                  [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-                  (norm.normalize-shape-names-into! (& many) id (&mut names))
-                  (norm.normalize-append-unique!
-                    (&mut many.universal)
-                    (& names)))]
+            (match (norm.normalize-shape-universal-add! (&mut many) id)
+              [(norm.NormalizeUnit.Ok _) unit]
               [_ (set! ok false)])
             (set! pass (+ pass 1)))
           (unless
@@ -2479,6 +2473,33 @@
               (= (array-length many.universal) 64)
               (< many.records-used 500000))
             (set! ok false))]
+        [_ (set! ok false)]))
+    ;; Each membership scan is charged: a one-name shape naming the last of
+    ;; 1,000 universal names costs at least its 1,000 comparisons.
+    (let
+      [wide : norm.NormalizeShapes
+        (norm.normalize-shapes-new 0 0 false 1048576 33554432)]
+      [last : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+      [name : i64 1]
+      [before : i64 0]
+      (while (<= name 1000)
+        (norm.normalize-push-i64! (&mut wide.universal) (+ 5000 name))
+        (set! name (+ name 1)))
+      (ast.ast-lifetime-list-push (&mut last) 6000)
+      (match (norm.normalize-shape-add!
+        (&mut wide)
+        (& variances)
+        (ast.AstType.VarArgs 0 (box last)))
+        [(norm.NormalizeInt.Ok id)
+          (set! before wide.work-used)
+          (match (norm.normalize-shape-universal-add! (&mut wide) id)
+            [(norm.NormalizeUnit.Ok _)
+              (unless
+                (and
+                  (>= (- wide.work-used before) 1000)
+                  (= (array-length wide.universal) 1000))
+                (set! ok false))]
+            [_ (set! ok false)])]
         [_ (set! ok false)]))
     ok))
 

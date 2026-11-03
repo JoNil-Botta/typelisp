@@ -10240,32 +10240,26 @@
         (array-length shapes.call-shapes.items))]
     (normalize-shape-column! shapes len cap 1)))
 
-;; Room for shape `shape`'s names in a scratch array (a copy per push), and
-;; then in the universal names for those it does not hold yet: the scan
-;; that finds them is charged, and growth only for the new ones.
-(define (normalize-shape-universal-room!
+;; Add shape `shape`'s names the universal names lack, in first-occurrence
+;; order: each membership scan is charged before it runs, and each new name
+;; its copy-per-push growth before it is appended.
+(define (normalize-shape-universal-add!
   [shapes : (&mut shapes NormalizeShapes)]
   [shape : i64]) : NormalizeUnit
   (let
     [count : i64 (normalize-shape-name-count shapes shape false)]
-    [have : i64 (array-length shapes.universal)]
-    [fresh : i64 0]
     [index : i64 0]
-    (try (normalize-shape-charge! shapes 0 (+ count (* count have))))
     (while (< index count)
-      (unless
-        (normalize-i64-member?
-          (& shapes.universal)
-          (normalize-shape-name-at shapes shape false index))
-        (set! fresh (+ fresh 1)))
+      (let
+        [name : i64 (normalize-shape-name-at shapes shape false index)]
+        [have : i64 (array-length shapes.universal)]
+        (try (normalize-shape-charge! shapes 0 (+ have 1)))
+        (unless
+          (normalize-i64-member? (& shapes.universal) name)
+          (try (normalize-shape-charge! shapes (+ have 1) (+ have 1)))
+          (normalize-push-i64! (&mut shapes.universal) name)))
       (set! index (+ index 1)))
-    (let
-      [scratch : i64 (/ (* count (+ count 1)) 2)]
-      [grown : i64 (+ (* fresh have) (/ (* fresh (+ fresh 1)) 2))]
-      (normalize-shape-charge!
-        shapes
-        (+ scratch grown)
-        (+ scratch grown (* count count))))))
+    (NormalizeUnit.Ok unit)))
 
 ;; Room for one more shape record (its four columns).
 (define (normalize-shape-record-room! [shapes : (&mut shapes NormalizeShapes)]) : NormalizeUnit
@@ -11297,10 +11291,7 @@
                     lease
                     record
                     false))]
-              [names : (__tl_dyn-array i64) (normalize-no-i64s)]
-              (try (normalize-shape-universal-room! (&mut shapes) id))
-              (normalize-shape-names-into! (& shapes) id (&mut names))
-              (normalize-append-unique! (&mut shapes.universal) (& names))))))
+              (try (normalize-shape-universal-add! (&mut shapes) id))))))
       (set! index (+ index 1)))
     (when
       (>= return-type 0)
@@ -11315,11 +11306,7 @@
               return-type
               false))]
         (set! shapes.return-shape id)
-        (let
-          [names : (__tl_dyn-array i64) (normalize-no-i64s)]
-          (try (normalize-shape-universal-room! (&mut shapes) id))
-          (normalize-shape-names-into! (& shapes) id (&mut names))
-          (normalize-append-unique! (&mut shapes.universal) (& names)))))
+        (try (normalize-shape-universal-add! (&mut shapes) id))))
     (NormalizeShapesResult.Ok shapes)))
 
 ;; Region nodes: one per universal name (key -1), per name of a region root's

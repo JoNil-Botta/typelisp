@@ -9788,11 +9788,11 @@
 ;; inherited invariance) within one body's lane: a node is a run of segments,
 ;; each one position (a leaf: name, invariance, the reference it lies under)
 ;; or a whole child node. Each node keeps its position count, its first name,
-;; and its distinct names, its distinct names after the first position, and
-;; its distinct (name, invariance) rows, in first-occurrence order: every
-;; reader below relates regions by name (`normalize-node-of`), so these, a
-;; zip of two DAGs (`normalize-shape-zip!`) and a walk of the outlives pairs
-;; (`normalize-shape-outlives!`) reproduce the first occurrence of each edge a
+;; and, in first-occurrence order, its distinct names, its distinct names
+;; after the first position, its distinct (name, invariance) rows and its
+;; distinct outlives items: every reader below relates regions by name
+;; (`normalize-node-of`), so these and a zip of two DAGs
+;; (`normalize-shape-zip!`) reproduce the first occurrence of each edge a
 ;; position-by-position walk adds (#9584).
 (defstruct NormalizeShapes
   ;; Per node: its position count, the deepest type-edge descent below it,
@@ -9810,6 +9810,12 @@
   (node-tail-count NormalizeI64s)
   (node-rows-first NormalizeI64s)
   (node-rows-count NormalizeI64s)
+  ;; Per node: its distinct outlives items in first-occurrence order
+  ;; (`out-names`/`out-outers` runs): a position's name and the name of the
+  ;; reference it lies under within the node, or `normalize-out-inherited`
+  ;; when that is the reference the node itself lies under.
+  (node-out-first NormalizeI64s)
+  (node-out-count NormalizeI64s)
   ;; Per segment: its child node, or -1 for a leaf with `seg-name` and
   ;; `seg-inv`; and the reference the segment lies under
   ;; (`normalize-outer-none`, `-inherit` or `-head`).
@@ -9820,6 +9826,8 @@
   (name-pool NormalizeI64s)
   ;; A row is `(+ (* name 2) invariant)`.
   (row-pool NormalizeI64s)
+  (out-names NormalizeI64s)
+  (out-outers NormalizeI64s)
   ;; (type node id, invariance) to node plus one, valid for `generation`
   ;; (`ast.ty-node-pool-generation-value`).
   (interned normalize_transfer_map.Map)
@@ -9962,8 +9970,8 @@
         (array-length shapes.name-pool.items))]
     (normalize-shape-column! shapes len cap 1)))
 
-;; Room for one more node (its eleven columns) and its `count` segments (four
-;; columns).
+;; Room for one more node (its thirteen columns) and its `count` segments
+;; (four columns).
 (define (normalize-shape-node-room!
   [shapes : (&mut shapes NormalizeShapes)]
   [count : i64]) : NormalizeUnit
@@ -10005,6 +10013,14 @@
         (normalize-pushes-cells
           nodes
           (array-length shapes.node-rows-count.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-out-first.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-out-count.items)
           1))]
     [segs : i64 shapes.seg-child.len]
     [seg-cells : i64
@@ -10024,7 +10040,7 @@
       (normalize-shape-charge!
         shapes
         (+ node-cells seg-cells)
-        (+ 11 (* 4 count) node-cells seg-cells)))))
+        (+ 13 (* 4 count) node-cells seg-cells)))))
 
 ;; Room for one more shape record (its four columns).
 (define (normalize-shape-record-room! [shapes : (&mut shapes NormalizeShapes)]) : NormalizeUnit
@@ -10091,6 +10107,38 @@
     (if rows?
       (normalize-i64s-push! (&mut shapes.row-pool) item)
       (normalize-i64s-push! (&mut shapes.name-pool) item))
+    (NormalizeUnit.Ok unit)))
+
+;; An outlives item whose reference is the one its node lies under.
+(define normalize-out-inherited : i64
+  -9223372036854775807)
+
+;; Append outlives item (`name`, `outer`) to the run from `first` (the pools'
+;; end) unless it holds it already.
+(define (normalize-shape-out-add!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [first : i64]
+  [name : i64]
+  [outer : i64]) : NormalizeUnit
+  (let
+    [end : i64 shapes.out-names.len]
+    [index : i64 first]
+    (try (normalize-shape-charge! shapes 0 (+ (- end first) 1)))
+    (while (< index end)
+      (when
+        (and
+          (= (array-ref shapes.out-names.items index) name)
+          (= (array-ref shapes.out-outers.items index) outer))
+        (return (NormalizeUnit.Ok unit)))
+      (set! index (+ index 1)))
+    (let
+      [cells : i64
+        (+
+          (normalize-pushes-cells end (array-length shapes.out-names.items) 1)
+          (normalize-pushes-cells end (array-length shapes.out-outers.items) 1))]
+      (try (normalize-shape-charge! shapes cells (+ 2 cells))))
+    (normalize-i64s-push! (&mut shapes.out-names) name)
+    (normalize-i64s-push! (&mut shapes.out-outers) outer)
     (NormalizeUnit.Ok unit)))
 
 ;; The segments a node is being built from, before its children are done.
@@ -10490,6 +10538,65 @@
                 (array-ref shapes.node-rows-first.items child)
                 (array-ref shapes.node-rows-count.items child)))))
         (set! index (+ index 1)))
+      ;; Outlives items: a leaf lying under this node's head reference (its
+      ;; first position) resolves to that name; one lying under the
+      ;; reference this node lies under stays inherited; a function type's
+      ;; own lifetimes lie under none.
+      (let
+        [out-first : i64 shapes.out-names.len]
+        (set! index 0)
+        (while (< index count)
+          (let
+            [child : i64 (array-ref segs.child.items index)]
+            [code : i64 (array-ref segs.outer.items index)]
+            (if (< child 0)
+              (cond
+                [(= code normalize-outer-inherit)
+                  (try
+                    (normalize-shape-out-add!
+                      shapes
+                      out-first
+                      (array-ref segs.name.items index)
+                      normalize-out-inherited))]
+                [(= code normalize-outer-head)
+                  (try
+                    (normalize-shape-out-add!
+                      shapes
+                      out-first
+                      (array-ref segs.name.items index)
+                      first))]
+                [else unit])
+              (let
+                [at : i64 (array-ref shapes.node-out-first.items child)]
+                [end : i64
+                  (+
+                    (array-ref shapes.node-out-first.items child)
+                    (array-ref shapes.node-out-count.items child))]
+                (while (< at end)
+                  (let
+                    [name : i64 (array-ref shapes.out-names.items at)]
+                    [outer : i64 (array-ref shapes.out-outers.items at)]
+                    (cond
+                      [(!= outer normalize-out-inherited)
+                        (try
+                          (normalize-shape-out-add! shapes out-first name outer))]
+                      [(= code normalize-outer-inherit)
+                        (try
+                          (normalize-shape-out-add!
+                            shapes
+                            out-first
+                            name
+                            normalize-out-inherited))]
+                      [(= code normalize-outer-head)
+                        (try
+                          (normalize-shape-out-add! shapes out-first name first))]
+                      [else unit]))
+                  (set! at (+ at 1))))))
+          (set! index (+ index 1)))
+        (normalize-i64s-push! (&mut shapes.node-out-first) out-first)
+        (normalize-i64s-push!
+          (&mut shapes.node-out-count)
+          (- shapes.out-names.len out-first)))
       (normalize-i64s-push! (&mut shapes.node-len) len)
       (normalize-i64s-push! (&mut shapes.node-height) height)
       (normalize-i64s-push! (&mut shapes.node-first) first)
@@ -10784,7 +10891,11 @@
     (normalize-i64s)
     (normalize-i64s)
     (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
     (normalize-bools)
+    (normalize-i64s)
+    (normalize-i64s)
     (normalize-i64s)
     (normalize-i64s)
     (normalize-i64s)
@@ -12057,94 +12168,31 @@
   [key : i64]
   [shape : i64]) : unit
   (let
-    [seen : normalize_transfer_map.Map (normalize_transfer_map.new)]
+    [root : i64 (normalize-shape-root shapes shape)]
     (when
-      (and
-        (>= (normalize-shape-root shapes shape) 0)
-        (normalize-edges-charge! edges normalize-map-new-cells 1))
-      (normalize-outlives-walk!
-        edges
-        nodes
-        shapes
-        key
-        (normalize-shape-root shapes shape)
-        false
-        -1
-        (&mut seen)))))
-
-;; The outlives edges of node `node` lying under the reference named `outer`
-;; (when `under?`), in position order. A node met again under the same
-;; reference adds only edges it added already.
-(define (normalize-outlives-walk!
-  [edges : (&mut edges NormalizeRegionEdges)]
-  [nodes : (& nodes NormalizeNodes)]
-  [shapes : (& shapes NormalizeShapes)]
-  [key : i64]
-  [node : i64]
-  [under? : bool]
-  [outer : i64]
-  [seen : (&mut seen normalize_transfer_map.Map)]) : unit
-  (when
-    (and (>= node 0) (not edges.exhausted))
-    (let
-      [mark : i64
-        (cond
-          [(not under?) (* node 4294967296)]
-          [(and (>= outer -1) (< outer 4294967293))
-            (+ (* node 4294967296) outer 3)]
-          [else -1])]
-      [first : i64 (array-ref shapes.node-seg-first.items node)]
-      [count : i64 (array-ref shapes.node-seg-count.items node)]
-      [head : i64 (array-ref shapes.node-first.items node)]
-      [index : i64 0]
-      (when
-        (>= mark 0)
-        (unless (normalize-edges-work! edges 1) (return unit))
-        (when
-          (> (normalize_transfer_map.get-value-or (& seen) mark 0) 0)
-          (return unit))
-        (unless
-          (normalize-edges-map-insert!
-            edges
-            (normalize-map-grow-cells (& (deref seen))))
-          (return unit))
-        (normalize_transfer_map.insert-ref! seen mark 1))
-      (unless (normalize-edges-work! edges (+ count 1)) (return unit))
-      (while (and (< index count) (not edges.exhausted))
-        (let
-          [seg : i64 (+ first index)]
-          [code : i64 (array-ref shapes.seg-outer.items seg)]
-          [has? : bool
-            (or
-              (= code normalize-outer-head)
-              (and (= code normalize-outer-inherit) under?))]
-          [name : i64
-            (if (= code normalize-outer-head)
-              head
-              outer)]
-          [child : i64 (array-ref shapes.seg-child.items seg)]
-          (if (< child 0)
+      (>= root 0)
+      (let
+        [at : i64 (array-ref shapes.node-out-first.items root)]
+        [end : i64
+          (+
+            (array-ref shapes.node-out-first.items root)
+            (array-ref shapes.node-out-count.items root))]
+        ;; At the root an inherited item lies under no reference.
+        (while (and (< at end) (normalize-edges-work! edges 1))
+          (let
+            [outer : i64 (array-ref shapes.out-outers.items at)]
             (when
-              has?
+              (!= outer normalize-out-inherited)
               (normalize-region-edge-kind!
                 edges
                 (normalize-node-of
                   nodes
                   shapes
                   key
-                  (array-ref shapes.seg-name.items seg))
-                (normalize-node-of nodes shapes key name)
-                true))
-            (normalize-outlives-walk!
-              edges
-              nodes
-              shapes
-              key
-              child
-              has?
-              name
-              seen)))
-        (set! index (+ index 1))))))
+                  (array-ref shapes.out-names.items at))
+                (normalize-node-of nodes shapes key outer)
+                true)))
+          (set! at (+ at 1)))))))
 
 ;; Close node loan sets (rows of `words` 64-bit words) over the region edges,
 ;; leaving out the outlives edges unless `outlives?`: a worklist over the

@@ -1,6 +1,7 @@
-;; A local arena owner spelled like a colliding with-arena region shadows it,
-;; but a fresh borrow of arena data taken in its scope still cannot reach
-;; caller storage (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for a fresh arena borrow stored to
+;; the caller after a local arena owner.
 (import stdlib.arena)
 
 (defstruct RefBox

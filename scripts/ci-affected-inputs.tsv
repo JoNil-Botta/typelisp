@@ -15,7 +15,6 @@ tlci-native-route-size-ratchet-self-tests	-	Self-contained harness or publicatio
 zero-cons-structural-classifier-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
 zero-cons-fixture-and-embedded-source-invariant	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.
 shared-view-count-ratchet	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.
-with-region-binder-audit	compiler,corpus	Reads the AST schema, the with-arena rename source and the safety manifest directly.
 spmd-mode-instruction-count-harness-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
 c-measured-region-instruction-harness-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
 instruction-count-comparison-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

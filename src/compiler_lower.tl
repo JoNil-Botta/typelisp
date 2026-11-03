@@ -47526,9 +47526,7 @@
         [region-type-env : tc_core.TcTypeEnv
           (lower-type-env-push-region-reset
             marked-state
-            (tc_core.tc-push-region
-              type-env
-              (tc_core.tc-with-region-binder ctx type-env region (& body)))
+            (tc_core.tc-push-region type-env region)
             hidden-name-id)]
         [lowered : LowerExpr
           (try

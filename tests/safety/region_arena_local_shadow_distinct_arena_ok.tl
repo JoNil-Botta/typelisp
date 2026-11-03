@@ -1,4 +1,4 @@
-;; Control: the same local borrow under a non-colliding arena (#9593).
+;; Control: a local named `r` borrowed inside a non-colliding arena (#9593).
 (define (probe [p : (& r i64)]) : i64
   (with-arena
     q

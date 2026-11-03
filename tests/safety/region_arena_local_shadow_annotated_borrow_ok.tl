@@ -1,8 +1,10 @@
-;; An annotation spelled like a colliding with-arena region, inside a local
-;; of that name, names the local (#9593).
+;; Migrated for D-C121: its arena was spelled like the caller lifetime `r`,
+;; which is now rejected at entry, so it is renamed to `ar` together with the
+;; uses that meant it (#9593). It pins that an annotation spelled `r` inside a
+;; local named `r` names the local.
 (define (probe [p : (& r i64)]) : i64
   (with-arena
-    r
+    ar
     (let
       [r : i64 42]
       [x : (& r i64) (& r r)]

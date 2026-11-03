@@ -1,5 +1,7 @@
-;; A lambda parameter spelled like the arena shadows only the lambda body;
-;; the store before it still escapes the arena (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for an escape stored before a
+;; lambda with a parameter spelled like the arena.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

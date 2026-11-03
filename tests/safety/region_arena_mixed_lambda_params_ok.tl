@@ -1,10 +1,10 @@
-;; A lambda whose same-named parameters mix a non-carrier and a self-named
-;; carrier, in either order: the non-carrier stops the body rename, and those
-;; parameters then keep their types as written, so the signature and the body
-;; agree on the caller lifetime (#9593, Sol's final review of 3bafc3d02).
+;; Migrated for D-C121: its arena was spelled like the caller lifetime `r`,
+;; which is now rejected at entry, so it is renamed to `ar` together with the
+;; uses that meant it (#9593). It pins that a lambda with mixed same-named
+;; parameters, in either order, checks inside an arena; runs to 42.
 (define (probe [p : (& r i64)]) : i64
   (with-arena
-    r
+    ar
     (let
       [f
         (lambda ([r : i64] [r : (& r i64)]) : i64

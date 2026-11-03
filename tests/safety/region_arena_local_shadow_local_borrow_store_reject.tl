@@ -1,5 +1,7 @@
-;; A borrow of the shadowing local stored into caller storage is rejected as
-;; on main (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for a borrow of a local named like
+;; the arena stored into caller storage.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

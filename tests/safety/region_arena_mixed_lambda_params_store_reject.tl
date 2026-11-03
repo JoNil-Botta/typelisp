@@ -1,6 +1,7 @@
-;; Behind a lambda whose same-named parameters mix a non-carrier and a carrier,
-;; arena data passed through the carrier and returned still cannot reach
-;; caller storage (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for arena data returned through a
+;; lambda with mixed same-named parameters into caller storage.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

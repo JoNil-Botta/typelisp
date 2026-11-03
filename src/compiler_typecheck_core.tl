@@ -9764,8 +9764,6 @@
     intern
     bind)
   (let
-    [fresh : i64 (tc-with-region-binder ctx env region (& body))]
-    [_recorded : unit (tc-with-region-record! ctx region fresh (& syntax))]
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
     [result : (TcSelectedResult store lease intern bind)
@@ -9773,7 +9771,7 @@
         ctx
         env
         expr
-        fresh
+        region
         (& body)
         syntax
         expected
@@ -9796,27 +9794,48 @@
     lease
     intern
     bind)
+  (if (tc-with-region-collides? env region)
+    (TcSelectedResult.Err (tc-with-region-collision-error region) sink)
+    (tc-infer-selected-with-region-entered
+      ctx
+      env
+      expr
+      region
+      body
+      syntax
+      expected
+      source
+      sink)))
+
+(define (tc-infer-selected-with-region-entered
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [region : i64]
+  [body : (& body ast.AstExprList)]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
   (match (tc-selected-note-arena-region sink region)
     [(TcSelectedNoteResult.Err message next)
       (TcSelectedResult.Err message next)]
     [(TcSelectedNoteResult.Ok noted)
-      (match (tc-infer-selected-begin
+      (match (tc-infer-selected-with-region-body
         ctx
-        (tc-push-region env region)
+        env
+        region
         body
         (tc-global-shared-view syntax)
         (tc-global-shared-view expected)
         (tc-global-shared-view source)
         noted)
         [(TcSelectedResult.Err message after)
-          (if (tc-with-region-fresh-id? region)
-            ;; Legacy typing reports a fresh region's escape before a
-            ;; mismatch against the lifetime it shadows.
-            (match (tc-infer-selected-legacy ctx env expr syntax expected)
-              [(ResultTcType.Err shadow-message)
-                (TcSelectedResult.Err shadow-message after)]
-              [(ResultTcType.Ok _) (TcSelectedResult.Err message after)])
-            (TcSelectedResult.Err message after))]
+          (TcSelectedResult.Err message after)]
         [(TcSelectedResult.Ok body-ty occurrence after)
           (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
             (tc-selected-unrepresented
@@ -9828,26 +9847,37 @@
               source
               (TcSelectedResult.Ok body-ty occurrence after)))])]))
 
-;; The form records its fresh region (#9593, tc-with-region-binder) so later
-;; passes, lowering among them, read the region the body was renamed to.
-(define (tc-with-region-record!
+;; The body is checked under the form's region in a nested runtime scope, so
+;; the escape fallback below re-checks the whole form against the incoming
+;; scope, where the form's own region is not yet visible (the entry check in
+;; `tc-infer-selected-with-region-at` must not see it as a collision).
+(define (tc-infer-selected-with-region-body
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [region : i64]
-  [fresh : i64]
-  [syntax : (& syntax typed.TypedSyntax)]) : unit
-  (match syntax
-    [(typed.TypedSyntax.Source id)
-      (match (tc-context-expr-get ctx id)
-        [(ast.AstExpr.WithRegion name body)
-          (when
-            (and (= name region) (not (= fresh region)))
-            (tc-dotted-macro-journal-record!
-              (tc-context-macro-state ctx)
-              id
-              (tc-context-expr-get ctx id))
-            (ast.ast-node-set! id (ast.AstExpr.WithRegion fresh body)))]
-        [_ unit])]
-    [(typed.TypedSyntax.Generated) unit]))
+  [body : (& body ast.AstExprList)]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [saved : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter-env! env)]
+    [result : (TcSelectedResult store lease intern bind)
+      (tc-infer-selected-begin
+        ctx
+        (tc-push-region env region)
+        body
+        syntax
+        expected
+        source
+        sink)]
+    (tc-type-env-scoped-runtime-restore! saved)
+    result))
 
 ;; A selected scoped-arena body becomes the one child of a committed
 ;; ArenaScope wrapper, rollback-atomic with it. Its region only locates the
@@ -33151,12 +33181,6 @@
   [actual : ast.AstType]
   [expected : ast.AstType]
   [message : String]) : String
-  (match (tc-type-shadowing-region (clone actual) (clone expected))
-    [(Some region) (return (tc-region-escape-error region))]
-    [(No) unit])
-  (match (tc-type-shadowing-region (clone expected) (clone actual))
-    [(Some region) (return (tc-region-escape-error region))]
-    [(No) unit])
   (let
     [context-kind : bool
       (cdiag.compiler-diagnostic-typecheck-tagged? (& message))]
@@ -33170,35 +33194,6 @@
     (if context-kind
       text
       (tc-kind-message (TypeMismatch) text))))
-
-;; A fresh with-arena region (#9593) in `actual` that `expected` names by the
-;; lifetime it shadows. Both would render alike, so the mismatch is the
-;; region's escape. Callers also ask with the two sides swapped, for a callee
-;; signature instantiated at the fresh region.
-(define (tc-type-shadowing-region
-  [actual : ast.AstType]
-  [expected : ast.AstType]) : TcMaybeNameId
-  (let
-    [cursor : TcNameIdList (tc-type-collect-regions (clone actual))]
-    (while (not (tc-name-id-list-empty? cursor))
-      (let
-        [region : i64 (tc-name-id-list-head cursor)]
-        (when
-          (tc-with-region-fresh-id? region)
-          (let
-            [source : i64
-              (ci.intern-active-syntax-source-name-id-or region false -1)]
-            (when
-              (and
-                (>= source 0)
-                (tc-type-eq
-                  (clone expected)
-                  (tc-lifetime-subst-type
-                    (TcLifetimeSubst.One region source)
-                    (clone actual))))
-              (return (Some region)))))
-        (set! cursor (tc-name-id-list-rest cursor))))
-    (No)))
 
 (define (tc-default-env) : TcTypeEnv
   (tc-bind-id (tc-default-env-base) (tc-default-boundary-id) (Unit)))
@@ -48357,14 +48352,6 @@
         (tc-global-shared-view actual)
         (tc-global-shared-view expected)
         message)]
-    ;; A fresh with-arena region's escape (tc-type-shadowing-region) needs no
-    ;; coercion detail: the lifetimes it would name render alike.
-    [_escape : unit
-      (when
-        (tc-message-text-prefix?
-          (& base)
-          "typecheck: region-tagged value cannot escape with-arena '")
-        (return (string.copy (& base))))]
     [detail : String (tc-type-coercion-failure-detail ctx env expected actual)]
     [text : String
       (str_cat.str-cat
@@ -72269,12 +72256,14 @@
                       lane-ty
                       lane-env)]))])))]
     [(WithRegion region body)
-      (tc-spmd-begin-list
-        ctx
-        expr-bases
-        (tc-push-region env (tc-with-region-binder ctx env region (& body)))
-        spmd-env
-        body)]
+      (if (tc-with-region-collides? env region)
+        (Err (tc-with-region-collision-error region))
+        (tc-spmd-begin-list
+          ctx
+          expr-bases
+          (tc-push-region env region)
+          spmd-env
+          body))]
     [(WithEscape _ _)
       (Err "typecheck: with-escape inside spmd is not supported")]
     [(WithScratch _)
@@ -85920,686 +85909,38 @@
   [ty : ast.AstType]) : String
   (tc-clone-out-unsupported-message ctx "with-scratch" ty))
 
-;; A `with-arena` region is a fresh binder (#9593). When its name already names
-;; a visible lifetime, such as a caller lifetime or an owner, the region gets a
-;; fresh identity that renders as the same name and the body's annotations are
-;; renamed to it in place. A place typed with the outer lifetime then cannot
-;; hold a reference into the arena. The identity is keyed by the body's first
-;; expression, so every pass over the form agrees on it.
-(define (tc-with-region-binder
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [region : i64]
-  [body : (& body ast.AstExprList)]) : i64
-  (let
-    [source-name : i64
-      (if (ci.intern-renderable-id? region)
-        region
-        (ci.intern-active-syntax-source-name-id-or region true -1))]
-    (if (and
-      (> body.len 0)
-      (>= source-name 0)
-      (tc-lifetime-visible-id? env region)
-      (not (tc-with-region-scope-active? env region)))
-      (let
-        [fresh : i64
-          (cis.intern-fresh-local-identity-raw
-            (cis.intern-structural-session-fresh-local-identity
-              (tc-type-env-structural-session env)
-              (+ (tc-with-region-ordinal-base) (array-ref body.slots 0))
-              source-name))]
-        ;; Rewritten nodes must live as long as the AST pool they replace.
-        (in-arena
-          (unsafe
-            (arena.Arena (ast.ast-node-pool-owner-arena-handle)))
-          (for [index (iterator.range 0 body.len)]
-            (tc-with-region-rename-expr!
-              ctx
-              region
-              fresh
-              (array-ref body.slots index))))
-        fresh)
-      region)))
-
-;; Legacy typing re-enters a form inside its own scope, whose innermost region
-;; marker is the form's own `with-arena` scope (a `Var` marker); that is not a
-;; lifetime it shadows. An enclosing `in-arena` selection installs a `Region`
-;; marker for an existing owner, which a same-spelled form still shadows.
-(define (tc-with-region-scope-active? [env : TcTypeEnv] [region : i64]) : bool
-  (match (if (tc-type-env-scoped-runtime-active? env)
-    (tc-type-env-scoped-carrier-marker-type
-      (tc-type-env-scoped-runtime-current env)
-      (tc-region-marker-id))
-    (tc-env-marker-type env (tc-region-marker-id)))
-    [(Some (Var active)) (= active region)]
-    [_ false]))
-
-;; Fresh with-arena regions take fresh-local ordinals above every other
-;; family's (lowering numbers its inline temporaries from zero), so a region
-;; `tc-with-region-binder` made fresh is recognized by its identity alone.
-(define (tc-with-region-ordinal-base) : i64
-  1099511627776)
-
-(define (tc-with-region-fresh-id? [region : i64]) : bool
-  (and
-    (>= region (ci.intern-structural-key-base))
-    (=
-      (ci.intern-active-structural-record-kind-or region -1)
-      (ci.intern-structural-kind-fresh-local))
-    (>=
-      (ci.intern-composite-left-id-unchecked region)
-      (tc-with-region-ordinal-base))))
-
-(defmacro (tc-with-region-keep
-  [_ctx : comptime.Expr]
-  [_region : comptime.Expr]
-  [_fresh : comptime.Expr]
-  [value : comptime.Expr]) : comptime.Expr
-  value)
-
-(define (tc-with-region-rename-type
-  [_ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [ty : ast.AstType]) : ast.AstType
-  (tc-lifetime-subst-type (TcLifetimeSubst.One region fresh) ty))
-
-(define (tc-with-region-rename-type-id
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [ty-id : i64]) : i64
-  (tc-context-type-push
-    ctx
-    (tc-with-region-rename-type ctx region fresh (ast.ty-node-get ty-id))))
-
-(define (tc-with-region-rename-patterns
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [items : (Box ast.AstPatternList)]) : (Box ast.AstPatternList)
-  (let
-    [list : ast.AstPatternList (clone (deref items))]
-    [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity list.len)]
-    (for [index (iterator.range 0 list.len)]
-      (ast.ast-pattern-list-push
-        (&mut out)
-        (tc-with-region-rename-pattern
-          ctx
-          region
-          fresh
-          (ast.ast-pattern-list-get (& list) index (ast.ast-pattern-fallback)))))
-    (box out)))
-
-(define (tc-with-region-rename-pattern
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [pattern : ast.AstPattern]) : ast.AstPattern
-  (match pattern
-    [(Var name (Some ty))
-      (Var name (Some (tc-with-region-rename-type ctx region fresh ty)))]
-    [(Tuple items)
-      (Tuple (tc-with-region-rename-patterns ctx region fresh items))]
-    [(Variant name items)
-      (Variant name (tc-with-region-rename-patterns ctx region fresh items))]
-    [(Array items)
-      (Array (tc-with-region-rename-patterns ctx region fresh items))]
-    [(Slice items rest)
-      (Slice (tc-with-region-rename-patterns ctx region fresh items) rest)]
-    [(Or items) (Or (tc-with-region-rename-patterns ctx region fresh items))]
-    [(Fields items)
-      (Fields (tc-with-region-rename-patterns ctx region fresh items))]
-    [(Field name items)
-      (Field name (tc-with-region-rename-patterns ctx region fresh items))]
-    [_ pattern]))
-
-;; Renames `region` to `fresh` in the annotations under `id`. A nested arena
-;; of the same name binds its own region, and quoted code is data. A local
-;; binder spelled like the region shadows it for exactly its scope
-;; (`tc-with-region-rename-binders`).
-(define (tc-with-region-rename-expr!
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [id : i64]) : i64
-  (let
-    [expr : ast.AstExpr (tc-context-expr-get ctx id)]
-    (match expr
-      [(WithRegion name _) (when (= name region) (return id))]
-      [(or (Quote _) (Quasiquote _)) (return id)]
-      [_ unit])
-    (tc-dotted-macro-journal-record!
-      (tc-context-macro-state ctx)
-      id
-      (tc-context-expr-get ctx id))
-    (let
-      [renamed : ast.AstExpr
-        (match (tc-with-region-rename-binders ctx region fresh expr)
-          [(Some binder) binder]
-          [(No)
-            (ast.ast-expr-map-children
-              (tc-context-expr-get ctx id)
-              tc-with-region-rename-expr!
-              tc-with-region-rename-type-id
-              tc-with-region-rename-type
-              tc-with-region-rename-pattern
-              tc-with-region-keep
-              tc-with-region-keep
-              ctx
-              region
-              fresh)])]
-      (ast.ast-node-set!
-        id
-        (match renamed
-          [(Borrow mutable lifetime place)
-            (Borrow
-              mutable
-              (if (= lifetime region)
-                fresh
-                lifetime)
-              place)]
-          [_ renamed]))
-      id)))
-
-;; A child renamed only while `region` still names the arena there.
-(define (tc-with-region-rename-child!
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [live : bool]
-  [id : i64]) : i64
-  (if live
-    (tc-with-region-rename-expr! ctx region fresh id)
-    id))
-
-(defenum TcMaybeAstExpr
-  (No)
-  (Some ast.AstExpr))
-
-;; Every form that binds a local name, renamed with the checker's scopes: a
-;; binder spelled like the region ends the rename for what it scopes over,
-;; while its own annotation and the expressions evaluated before it (a let
-;; initializer, lambda signature, match scrutinee, SPMD bounds and inits, a
-;; resource initializer and cleanup) still name the arena. Other forms bind
-;; nothing and take the generic child mapping.
-(define (tc-with-region-rename-binders
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [expr : ast.AstExpr]) : TcMaybeAstExpr
-  (match expr
-    [(Let payload)
-      (match (__tl-box-place payload)
-        [(ast.AstLet.Let bindings body)
-          (let
-            [live : bool true]
-            [out : ast.AstLetBindingList
-              (ast.ast-let-binding-list-with-capacity bindings.len)]
-            (for [index (iterator.range 0 bindings.len)]
-              (match (ast.ast-let-binding-list-get
-                (& bindings)
-                index
-                (ast.ast-let-binding-fallback))
-                [(ast.AstLetBinding.Binding name maybe-ty init)
-                  (let
-                    [shadows : bool
-                      (and
-                        (= name region)
-                        (not
-                          (tc-with-region-maybe-carrier? ctx (& maybe-ty) name)))]
-                    (ast.ast-let-binding-list-push
-                      (&mut out)
-                      (ast.AstLetBinding.Binding
-                        name
-                        (if live
-                          (tc-with-region-rename-maybe-type
-                            ctx
-                            region
-                            fresh
-                            maybe-ty)
-                          maybe-ty)
-                        (tc-with-region-rename-child!
-                          ctx
-                          region
-                          fresh
-                          live
-                          init)))
-                    (when shadows (set! live false)))]))
-            (Some
-              (ast.AstExpr.Let
-                (box
-                  (ast.AstLet.Let
-                    out
-                    (tc-with-region-rename-child! ctx region fresh live body))))))])]
-    [(Lambda payload)
-      (match (__tl-box-place payload)
-        [(ast.AstLambda.Lambda params maybe-ret body)
-          (let
-            [live : bool
-              (not (tc-with-region-param-named? ctx (& params) region))]
-            (Some
-              (ast.AstExpr.Lambda
-                (box
-                  (ast.AstLambda.Lambda
-                    (tc-with-region-rename-params
-                      ctx
-                      region
-                      fresh
-                      (& params)
-                      live)
-                    (tc-with-region-rename-maybe-type
-                      ctx
-                      region
-                      fresh
-                      maybe-ret)
-                    (tc-with-region-rename-child! ctx region fresh live body))))))])]
-    [(Match payload)
-      (match (__tl-box-place payload)
-        [(ast.AstMatch.Match scrutinee arms)
-          (let
-            [out : ast.AstMatchArmList
-              (ast.ast-match-arm-list-with-capacity arms.len)]
-            (for [index (iterator.range 0 arms.len)]
-              (match (ast.ast-match-arm-list-get
-                (& arms)
-                index
-                (ast.ast-match-arm-fallback))
-                [(ast.AstMatchArm.Arm pattern body)
-                  (let
-                    [live : bool
-                      (not
-                        (tc-with-region-pattern-shadows? ctx (& pattern) region))]
-                    (ast.ast-match-arm-list-push
-                      (&mut out)
-                      (ast.AstMatchArm.Arm
-                        (tc-with-region-rename-pattern ctx region fresh pattern)
-                        (tc-with-region-rename-child!
-                          ctx
-                          region
-                          fresh
-                          live
-                          body))))]))
-            (Some
-              (ast.AstExpr.Match
-                (box
-                  (ast.AstMatch.Match
-                    (tc-with-region-rename-expr! ctx region fresh scrutinee)
-                    out)))))])]
-    [(Foreach payload)
-      (match (__tl-box-place payload)
-        [(ast.AstForeach.Foreach name ty start end body)
-          (Some
-            (ast.AstExpr.Foreach
-              (box
-                (ast.AstForeach.Foreach
-                  name
-                  (tc-with-region-rename-type ctx region fresh ty)
-                  (tc-with-region-rename-expr! ctx region fresh start)
-                  (tc-with-region-rename-expr! ctx region fresh end)
-                  (tc-with-region-rename-child!
-                    ctx
-                    region
-                    fresh
-                    (not (= name region))
-                    body)))))]
-        [(ast.AstForeach.Foreach2
-            outer
-            outer-ty
-            outer-start
-            outer-end
-            inner
-            inner-ty
-            inner-start
-            inner-end
-            body)
-          (Some
-            (ast.AstExpr.Foreach
-              (box
-                (ast.AstForeach.Foreach2
-                  outer
-                  (tc-with-region-rename-type ctx region fresh outer-ty)
-                  (tc-with-region-rename-expr! ctx region fresh outer-start)
-                  (tc-with-region-rename-expr! ctx region fresh outer-end)
-                  inner
-                  (tc-with-region-rename-type ctx region fresh inner-ty)
-                  (tc-with-region-rename-expr! ctx region fresh inner-start)
-                  (tc-with-region-rename-expr! ctx region fresh inner-end)
-                  (tc-with-region-rename-child!
-                    ctx
-                    region
-                    fresh
-                    (not (or (= outer region) (= inner region)))
-                    body)))))])]
-    [(SpmdReduce payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdReduce.Reduce op index ty start end init value)
-          (Some
-            (ast.AstExpr.SpmdReduce
-              (box
-                (ast.AstSpmdReduce.Reduce
-                  op
-                  index
-                  (tc-with-region-rename-type ctx region fresh ty)
-                  (tc-with-region-rename-expr! ctx region fresh start)
-                  (tc-with-region-rename-expr! ctx region fresh end)
-                  (tc-with-region-rename-expr! ctx region fresh init)
-                  (tc-with-region-rename-child!
-                    ctx
-                    region
-                    fresh
-                    (not (= index region))
-                    value)))))])]
-    [(SpmdScan payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdScan.Scan
-            op
-            index
-            ty
-            start
-            end
-            prefix
-            prefix-ty
-            init
-            value
-            body)
-          (Some
-            (ast.AstExpr.SpmdScan
-              (box
-                (ast.AstSpmdScan.Scan
-                  op
-                  index
-                  (tc-with-region-rename-type ctx region fresh ty)
-                  (tc-with-region-rename-expr! ctx region fresh start)
-                  (tc-with-region-rename-expr! ctx region fresh end)
-                  prefix
-                  (tc-with-region-rename-type ctx region fresh prefix-ty)
-                  (tc-with-region-rename-expr! ctx region fresh init)
-                  (tc-with-region-rename-child!
-                    ctx
-                    region
-                    fresh
-                    (not (= index region))
-                    value)
-                  (tc-with-region-rename-child!
-                    ctx
-                    region
-                    fresh
-                    (not (or (= index region) (= prefix region)))
-                    body)))))])]
-    [(SpmdCompact payload)
-      (match (__tl-box-place payload)
-        [(ast.AstSpmdCompact.Compact
-            index
-            ty
-            start
-            end
-            slot
-            slot-ty
-            init
-            keep
-            body)
-          (Some
-            (ast.AstExpr.SpmdCompact
-              (box
-                (ast.AstSpmdCompact.Compact
-                  index
-                  (tc-with-region-rename-type ctx region fresh ty)
-                  (tc-with-region-rename-expr! ctx region fresh start)
-                  (tc-with-region-rename-expr! ctx region fresh end)
-                  slot
-                  (tc-with-region-rename-type ctx region fresh slot-ty)
-                  (tc-with-region-rename-expr! ctx region fresh init)
-                  (tc-with-region-rename-child!
-                    ctx
-                    region
-                    fresh
-                    (not (= index region))
-                    keep)
-                  (tc-with-region-rename-child!
-                    ctx
-                    region
-                    fresh
-                    (not (or (= index region) (= slot region)))
-                    body)))))])]
-    [(WithResource payload)
-      (match (__tl-box-place payload)
-        [(ast.AstWithResource.WithResource bindings body)
-          (let
-            [live : bool true]
-            [out : ast.AstResourceBindingList
-              (ast.ast-resource-binding-list-with-capacity bindings.len)]
-            (for [index (iterator.range 0 bindings.len)]
-              (match (ast.ast-resource-binding-list-get
-                (& bindings)
-                index
-                (ast.ast-resource-binding-fallback))
-                [(ast.AstResourceBinding.Binding name init cleanup move-aware?)
-                  (ast.ast-resource-binding-list-push
-                    (&mut out)
-                    (ast.AstResourceBinding.Binding
-                      name
-                      (tc-with-region-rename-child! ctx region fresh live init)
-                      (tc-with-region-rename-child!
-                        ctx
-                        region
-                        fresh
-                        live
-                        cleanup)
-                      move-aware?))
-                  (when (= name region) (set! live false))]))
-            (Some
-              (ast.AstExpr.WithResource
-                (box
-                  (ast.AstWithResource.WithResource
-                    out
-                    (ast.ast-expr-list-map
-                      body
-                      tc-with-region-rename-child!
-                      ctx
-                      region
-                      fresh
-                      live))))))])]
-    ;; The private scalar-`for` planners bind their name operands (Var
-    ;; expressions) only for the last slot, the body; the source, index,
-    ;; item annotation and done flag are evaluated in the incoming scope.
-    ;; Absent (negative) slots stay as they are.
-    [(ForOwnedStep items)
-      (Some
-        (ast.AstExpr.ForOwnedStep
-          (tc-with-region-rename-for-owned
-            ctx
-            region
-            fresh
-            (& items)
-            (not
-              (and
-                (tc-with-region-slot-named? ctx (& items) 2 region)
-                (not (tc-with-region-slot-carrier? ctx (& items) 3 region)))))))]
-    [(ForOwnedState items)
-      (Some
-        (ast.AstExpr.ForOwnedState
-          (tc-with-region-rename-for-owned
-            ctx
-            region
-            fresh
-            (& items)
-            (not
-              (or
-                (tc-with-region-slot-named? ctx (& items) 0 region)
-                (tc-with-region-slot-named? ctx (& items) 1 region))))))]
-    [(ForeachActive lane body)
-      (Some
-        (ast.AstExpr.ForeachActive
-          lane
-          (tc-with-region-rename-child!
-            ctx
-            region
-            fresh
-            (not (= lane region))
-            body)))]
-    [_ (No)]))
-
-(define (tc-with-region-slot-named?
-  [ctx : TcContext]
-  [items : (& items ast.AstExprList)]
-  [slot : i64]
-  [region : i64]) : bool
-  (let
-    [id : i64 (ast.ast-expr-list-get items slot -1)]
-    (and
-      (>= id 0)
-      (=
-        (tc-expr-var-name-id
-          (tc-context-expr-segment-bases ctx)
-          (tc-context-expr-get ctx id))
-        region))))
-
-(define (tc-with-region-rename-for-owned
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [items : (& items ast.AstExprList)]
-  [body-live : bool]) : ast.AstExprList
-  (let
-    [out : ast.AstExprList (ast.ast-expr-list-with-capacity items.len)]
-    (for [index (iterator.range 0 items.len)]
-      (let
-        [id : i64 (ast.ast-expr-list-get items index -1)]
-        (ast.ast-expr-list-push
-          (&mut out)
-          (if (< id 0)
-            id
-            (tc-with-region-rename-child!
-              ctx
-              region
-              fresh
-              (or (< index (- items.len 1)) body-live)
-              id)))))
-    out))
-
-;; A binder spelled like the region shadows it unless it is a self-named
-;; carrier: a binding whose own type carries its name as a lifetime continues
-;; that older lifetime (#8998 L2, `tc-type-carries-own-lifetime?`), so here it
-;; continues the arena and the rename goes on past it.
-(define (tc-with-region-param-named?
-  [ctx : TcContext]
-  [params : (& params ast.AstParamList)]
-  [region : i64]) : bool
-  (let
-    [found : bool false]
-    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name ty _)
-          (when
-            (and
-              (= name region)
-              (not (tc-param-type-carries-own-lifetime? ctx (& ty) name)))
-            (set! found true))]))
-    found))
-
-;; Annotations are classified as L2 classifies the binding they declare: resolved,
-;; so an arena owner such as `(arena.Arena r)` stays its brand's root.
-(define (tc-with-region-maybe-carrier?
-  [ctx : TcContext]
-  [maybe-ty : (& ast.AstMaybeType)]
-  [name : i64]) : bool
-  (match maybe-ty
-    [(Some ty) (tc-param-type-carries-own-lifetime? ctx ty name)]
-    [(No) false]))
-
-;; The explicit item annotation in SLOT of a scalar-`for` planner (absent when
-;; negative) is a self-named carrier of NAME; an inferred item is not classified.
-(define (tc-with-region-slot-carrier?
-  [ctx : TcContext]
-  [items : (& items ast.AstExprList)]
-  [slot : i64]
-  [name : i64]) : bool
-  (let
-    [id : i64 (ast.ast-expr-list-get items slot -1)]
-    (and
-      (>= id 0)
-      (match (tc-for-owned-expected-type ctx id)
-        [(Ok ty) (tc-type-carries-own-lifetime? (& ty) name)]
-        [(Err _) false]))))
-
-;; Parameter types are evaluated in the incoming scope and renamed, except that
-;; when a same-named parameter stops the body rename, every parameter spelled
-;; like the region keeps its type as written, so the body and the signature
-;; agree on which `r` each names.
-(define (tc-with-region-rename-params
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [params : (& params ast.AstParamList)]
-  [body-live : bool]) : ast.AstParamList
-  (let
-    [count : i64 (ast.ast-param-list-len params)]
-    [out : ast.AstParamList (ast.ast-param-list-with-capacity count)]
-    (for [index (iterator.range 0 count)]
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name ty is-comptime)
-          (ast.ast-param-list-push
-            (&mut out)
-            (ast.AstParam.Param
-              name
-              (if (or body-live (not (= name region)))
-                (tc-with-region-rename-type ctx region fresh ty)
-                ty)
-              is-comptime))]))
-    out))
-
-(define (tc-with-region-pattern-shadows?
-  [ctx : TcContext]
-  [pattern : (& ast.AstPattern)]
-  [region : i64]) : bool
-  (match pattern
-    [(Var name maybe-ty)
-      (and
-        (= name region)
-        (not (tc-with-region-maybe-carrier? ctx maybe-ty name)))]
-    [(Binding name) (= name region)]
-    [(or (Tuple items) (Array items) (Slice items _) (Or items) (Fields items)
-         (Field _ items) (Variant _ items))
-      (let
-        [list : ast.AstPatternList (clone (deref items))]
-        [found : bool false]
-        (for [index (iterator.range 0 list.len)]
-          (when
-            (tc-with-region-pattern-shadows?
-              ctx
-              (&
-                (ast.ast-pattern-list-get
-                  (& list)
-                  index
-                  (ast.ast-pattern-fallback)))
-              region)
-            (set! found true)))
-        found)]
-    [(or (Wildcard) (Literal _)) false]))
-
-(define (tc-with-region-rename-maybe-type
-  [ctx : TcContext]
-  [region : i64]
-  [fresh : i64]
-  [maybe-ty : ast.AstMaybeType]) : ast.AstMaybeType
-  (match maybe-ty
-    [(Some ty) (Some (tc-with-region-rename-type ctx region fresh ty))]
-    [(No) No]))
-
 (define (tc-with-region-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
   [region : i64]
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
-  (let
-    [region-env : TcTypeEnv (tc-push-region env region)]
-    [body-ty : ast.AstType
-      (try (tc-begin-list-maybe-expected ctx region-env body expected))]
-    (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
-      (Err (tc-region-escape-error region))
-      (Ok body-ty))))
+  (if (tc-with-region-collides? env region)
+    (Err (tc-with-region-collision-error region))
+    (let
+      [region-env : TcTypeEnv (tc-push-region env region)]
+      [body-ty : ast.AstType
+        (try (tc-begin-list-maybe-expected ctx region-env body expected))]
+      (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
+        (Err (tc-region-escape-error region))
+        (Ok body-ty)))))
+
+;; `(with-arena r ...)` binds a new region named `r`. When `r` already names a
+;; lifetime or owner visible at the form (a signature or declaration lifetime,
+;; a lexical owner, an enclosing arena or region), the arena would share its
+;; identity, and references into the arena would pass as references of the
+;; outer lifetime (#9593). Such a form is rejected at entry; the arena must be
+;; renamed. Visibility is the checker's own lifetime resolution
+;; (`tc-lifetime-visible-id?`), so every checking path decides identically.
+(define (tc-with-region-collides? [env : TcTypeEnv] [region : i64]) : bool
+  (tc-lifetime-visible-id? env region))
+
+(define (tc-with-region-collision-error [region : i64]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    "typecheck: with-arena '"
+    (tc-lifetime-name-render region)
+    "' reuses the name of a visible lifetime or owner; rename the arena"))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
 ;; lifetime binder. The scratch expression is just an arena handle, and
@@ -86833,50 +86174,11 @@
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
-    [region : i64 (tc-with-region-binder ctx env region (& body))]
-    (if (tc-with-region-fresh-id? region)
-      (tc-with-region-shadowing-expr ctx env region body expected)
-      (tc-with-region-expr-in-scope ctx env region body expected))))
-
-(define (tc-with-region-expr-in-scope
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [region : i64]
-  [body : ast.AstExprList]
-  [expected : ast.AstMaybeType]) : ResultTcType
-  (let
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
     [result : ResultTcType (tc-with-region-expr ctx env region body expected)]
     (tc-type-env-scoped-runtime-restore! saved)
     result))
-
-;; A fresh region renders like the lifetime it shadows. When the body's own
-;; type keeps the region, its escape is reported before a mismatch against an
-;; expected type that names the shadowed lifetime.
-(define (tc-with-region-shadowing-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [region : i64]
-  [body : ast.AstExprList]
-  [expected : ast.AstMaybeType]) : ResultTcType
-  (match (tc-with-region-expr-in-scope
-    ctx
-    env
-    region
-    (clone body)
-    (clone expected))
-    [(Err message)
-      (match expected
-        [(Some _)
-          (match (tc-with-region-expr-in-scope ctx env region body No)
-            [(Err escape)
-              (if (string.eq escape (tc-region-escape-error region))
-                (Err escape)
-                (Err message))]
-            [(Ok _) (Err message)])]
-        [(No) (Err message)])]
-    [(Ok ty) (Ok ty)]))
 
 (define (tc-in-arena-expr-scoped
   [ctx : TcContext]

@@ -1,5 +1,7 @@
-;; A resource spelled like a colliding with-arena region shadows the arena in
-;; the with body: an explicit borrow of the resource names it (#9593).
+;; Migrated for D-C121: its arena was spelled like the caller lifetime `r`,
+;; which is now rejected at entry, so it is renamed to `ar` together with the
+;; uses that meant it (#9593). It pins that a resource named `r` inside an arena
+;; is an ordinary binder; runs to 42.
 (defstruct Pt
   (x i64))
 
@@ -8,7 +10,7 @@
 
 (define (probe [p : (& r i64)]) : i64
   (with-arena
-    r
+    ar
     (with
       ([r (Pt 40) drop-pt])
       (let

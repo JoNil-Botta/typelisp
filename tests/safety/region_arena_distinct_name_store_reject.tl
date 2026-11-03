@@ -1,6 +1,5 @@
-;; Control for the fresh `with-arena` binder (#9593): an arena whose name does
-;; not collide with the caller lifetime keeps its own region and its ordinary
-;; field type mismatch.
+;; A non-colliding arena keeps its own region and its ordinary field type
+;; mismatch (#9593).
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

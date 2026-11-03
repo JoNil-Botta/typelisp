@@ -1,10 +1,10 @@
-;; SPMD index binders (foreach rank 1 and 2, spmd-scan, spmd-compact,
-;; spmd-reduce) spelled like a colliding with-arena region shadow the arena in
-;; their bodies. SPMD bodies reject references to and allocation of varying
-;; values, so this pins only that the shadowed bodies still check (#9593).
+;; Migrated for D-C121: its arena was spelled like the caller lifetime `r`,
+;; which is now rejected at entry, so it is renamed to `ar` together with the
+;; uses that meant it (#9593). It pins that SPMD index binders (foreach rank 1
+;; and 2, spmd-scan, spmd-compact, spmd-reduce) named `r` check inside an arena.
 (define (probe [p : (& r i64)] [out : (&mut (Slice i64))] [n : i64]) : i64
   (with-arena
-    r
+    ar
     (foreach ([r : i64 0 n]) (set! (array-ref out r) r))
     (foreach
       ([r : i64 0 1] [q : i64 0 n])

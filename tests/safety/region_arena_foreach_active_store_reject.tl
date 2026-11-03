@@ -1,5 +1,7 @@
-;; A `foreach-active` lane spelled like the arena does not let arena data
-;; reach caller storage from its body (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for arena data stored to the
+;; caller from a `foreach-active` body.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

@@ -1,5 +1,7 @@
-;; A local carrier of the colliding with-arena region named unlike it cannot
-;; carry arena data out to caller storage (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for arena data carried out to
+;; caller storage by a differently named carrier.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

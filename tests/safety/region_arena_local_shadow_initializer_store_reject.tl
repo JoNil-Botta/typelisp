@@ -1,5 +1,7 @@
-;; A shadowing local's initializer still names the arena: storing arena data
-;; there is an escape (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for arena data stored to the
+;; caller from a shadowing local's initializer.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

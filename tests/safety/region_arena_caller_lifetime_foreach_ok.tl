@@ -1,15 +1,16 @@
-;; A colliding `with-arena` inside an SPMD `foreach` is typed only by the
-;; legacy and SPMD checkers and is lowered with the same fresh region, so
-;; annotations spelled like the arena still name it there (#9593).
+;; Migrated for D-C121: its arena was spelled like the caller lifetime `r`,
+;; which is now rejected at entry, so it is renamed to `ar` together with the
+;; uses that meant it (#9593). It pins that arena annotations inside an SPMD
+;; `foreach` arena check and lower; runs to 42.
 (define (sum [p : (& r i64)]) : i64
   (foreach
     ([i : i64 0 1])
     (with-arena
-      r
+      ar
       (let
         [n : i64 30]
-        [x : (in r (Box i64)) (box n)]
-        [y : (& r i64) (& r (deref x))]
+        [x : (in ar (Box i64)) (box n)]
+        [y : (& ar i64) (& ar (deref x))]
         unit)))
   (deref p))
 

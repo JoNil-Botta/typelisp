@@ -1,5 +1,7 @@
-;; A colliding `with-arena` inside an SPMD `foreach` still names the arena:
-;; its data cannot reach the caller's struct (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r` inside an
+;; SPMD `foreach`, so the form fails with the collision diagnostic and the arena
+;; must be renamed (#9593, D-C121). It was the review witness for arena data
+;; stored into the caller's struct from SPMD code.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

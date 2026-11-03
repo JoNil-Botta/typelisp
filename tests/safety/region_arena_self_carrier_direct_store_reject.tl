@@ -1,5 +1,7 @@
-;; After a self-named carrier of a colliding with-arena region (#9593, #8998
-;; L2), a direct borrow of arena data still cannot reach caller storage.
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for a direct arena borrow stored
+;; to the caller after a self-named carrier.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

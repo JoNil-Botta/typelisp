@@ -1,15 +1,15 @@
-;; A local spelled like a colliding with-arena region whose own annotation
-;; carries that name is a self-named carrier: it continues the arena lifetime
-;; (#8998 L2), so arena data stored through it stays inside the arena and the
-;; store is accepted (#9593).
+;; Migrated for D-C121: its arena was spelled like the caller lifetime `r`,
+;; which is now rejected at entry, so it is renamed to `ar` together with the
+;; uses that meant it (#9593). It pins that arena data stored through a self-
+;; named carrier into an arena-local is accepted.
 (define (probe [p : (& r i64)]) : i64
   (with-arena
-    r
+    ar
     (let
       [x : (Box i64) (box 30)]
-      [saved : (& r i64) (& r (deref x))]
-      [r : (& r i64) (& r (deref x))]
-      [alias : (& r i64) r]
+      [saved : (& ar i64) (& ar (deref x))]
+      [r : (& ar i64) (& ar (deref x))]
+      [alias : (& ar i64) r]
       (set! saved alias)
       (+ (deref saved) (deref p)))))
 

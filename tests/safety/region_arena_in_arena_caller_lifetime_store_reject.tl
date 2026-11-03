@@ -1,6 +1,8 @@
-;; An enclosing `in-arena` that selects the caller's branded arena does not
-;; stop a same-spelled `with-arena` from shadowing the caller lifetime: the
-;; inner arena still resets before the caller reads `b.value` (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, inside an
+;; `in-arena` selecting the caller's branded arena, so the form fails with the
+;; collision diagnostic and the arena must be renamed (#9593, D-C121). It was
+;; the review witness for arena data stored to the caller under an enclosing
+;; `in-arena`.
 (import stdlib.arena)
 
 (defstruct RefBox

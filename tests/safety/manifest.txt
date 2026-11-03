@@ -445,28 +445,44 @@ mutable_view_match_value_form_write_ok|run-exit|tests/safety/mutable_view_match_
 # signature lifetime; they now borrow caller storage, and the old program is
 # this row.
 storage_dead_by_value_param_loop_store_reject|check-fail|tests/safety/storage_dead_by_value_param_loop_store_reject.tl|-|`items` does not live long enough
-# Arena regions are typing's: the graph erases them, so typing decides a
-# borrow of arena data that outlives its arena. One spelled like a caller
-# lifetime is a fresh region and reports the arena's escape (#9593); a nested
-# arena spelled like the outer one falls to the assignment check.
-region_arena_store_param_array_reject|check-fail|tests/safety/region_arena_store_param_array_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_shadow_store_mut_param_reject|check-fail|tests/safety/region_arena_shadow_store_mut_param_reject.tl|-|region-tagged value cannot escape with-arena 'a'
-region_arena_shadow_assign_reject|check-fail|tests/safety/region_arena_shadow_assign_reject.tl|-|cannot store reference into longer-lived binding
-# A with-arena region is a fresh binder (#9593): spelled like a caller
-# lifetime it still names the arena, so arena data cannot reach caller storage,
-# while caller data and annotations spelled like the arena keep their meaning.
-# An arena whose name does not collide keeps its own region and diagnostic.
-region_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_caller_lifetime_alias_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_alias_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+# Arena regions are typing's: the graph erases them, so typing's store and
+# assignment checks decide a borrow of arena data that outlives its arena.
+# A with-arena named like a lifetime or owner visible at the form (a signature
+# or declaration lifetime, a lexical owner, an enclosing arena or region) is
+# rejected at entry, and the arena must be renamed (#9593, D-C121). The
+# original #9593 escape and every colliding reject below now fail there.
+region_arena_store_param_array_reject|check-fail|tests/safety/region_arena_store_param_array_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_shadow_store_mut_param_reject|check-fail|tests/safety/region_arena_shadow_store_mut_param_reject.tl|-|with-arena 'a' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_shadow_assign_reject|check-fail|tests/safety/region_arena_shadow_assign_reject.tl|-|with-arena 'outer' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_caller_lifetime_alias_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_alias_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_in_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_in_arena_caller_lifetime_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_caller_lifetime_foreach_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_foreach_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_local_shadow_store_reject|check-fail|tests/safety/region_arena_local_shadow_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_local_shadow_initializer_store_reject|check-fail|tests/safety/region_arena_local_shadow_initializer_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_match_sibling_store_reject|check-fail|tests/safety/region_arena_match_sibling_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_lambda_shadow_store_reject|check-fail|tests/safety/region_arena_lambda_shadow_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_local_shadow_local_borrow_store_reject|check-fail|tests/safety/region_arena_local_shadow_local_borrow_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_for_owned_store_reject|check-fail|tests/safety/region_arena_for_owned_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_foreach_active_store_reject|check-fail|tests/safety/region_arena_foreach_active_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_self_carrier_direct_store_reject|check-fail|tests/safety/region_arena_self_carrier_direct_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_distinct_carrier_store_reject|check-fail|tests/safety/region_arena_distinct_carrier_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_arena_owner_local_store_reject|check-fail|tests/safety/region_arena_arena_owner_local_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_typed_for_carrier_store_reject|check-fail|tests/safety/region_arena_typed_for_carrier_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_mixed_lambda_params_store_reject|check-fail|tests/safety/region_arena_mixed_lambda_params_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_owner_reject|check-fail|tests/safety/region_arena_collision_owner_reject.tl|-|with-arena 'owner' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_nested_reject|check-fail|tests/safety/region_arena_collision_nested_reject.tl|-|with-arena 'outer' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_in_arena_owner_reject|check-fail|tests/safety/region_arena_collision_in_arena_owner_reject.tl|-|with-arena 'brand' reuses the name of a visible lifetime or owner; rename the arena
+# A non-colliding arena keeps its own region and the ordinary escape and store
+# diagnostics.
 region_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_in_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_in_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+# The positive witnesses of every review round, with the arena renamed (only
+# the arena binding and the uses that meant it): binders spelled like a caller
+# lifetime inside an arena keep their ordinary meaning, and each is accepted.
 region_arena_caller_lifetime_store_ok|check-ok|tests/safety/region_arena_caller_lifetime_store_ok.tl|-|-
 region_arena_caller_lifetime_shadow_ok|run-exit|tests/safety/region_arena_caller_lifetime_shadow_ok.tl|42|-
-region_arena_in_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_in_arena_caller_lifetime_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_in_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_in_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
 region_arena_caller_lifetime_foreach_ok|run-exit|tests/safety/region_arena_caller_lifetime_foreach_ok.tl|42|-
-region_arena_caller_lifetime_foreach_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_foreach_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-# A binder spelled like a colliding arena shadows it for exactly its scope:
-# a let after its own initializer, a lambda body, one match arm (#9593).
 region_arena_local_shadow_explicit_borrow_ok|run-exit|tests/safety/region_arena_local_shadow_explicit_borrow_ok.tl|42|-
 region_arena_local_shadow_annotated_borrow_ok|check-ok|tests/safety/region_arena_local_shadow_annotated_borrow_ok.tl|-|-
 region_arena_local_shadow_distinct_arena_ok|check-ok|tests/safety/region_arena_local_shadow_distinct_arena_ok.tl|-|-
@@ -474,36 +490,17 @@ region_arena_local_shadow_inferred_borrow_ok|check-ok|tests/safety/region_arena_
 region_arena_local_shadow_outer_initializer_ok|run-exit|tests/safety/region_arena_local_shadow_outer_initializer_ok.tl|42|-
 region_arena_lambda_param_shadow_ok|run-exit|tests/safety/region_arena_lambda_param_shadow_ok.tl|42|-
 region_arena_match_arm_shadow_ok|run-exit|tests/safety/region_arena_match_arm_shadow_ok.tl|42|-
-region_arena_local_shadow_store_reject|check-fail|tests/safety/region_arena_local_shadow_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_local_shadow_initializer_store_reject|check-fail|tests/safety/region_arena_local_shadow_initializer_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_match_sibling_store_reject|check-fail|tests/safety/region_arena_match_sibling_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_lambda_shadow_store_reject|check-fail|tests/safety/region_arena_lambda_shadow_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_local_shadow_local_borrow_store_reject|check-fail|tests/safety/region_arena_local_shadow_local_borrow_store_reject.tl|-|`r` does not live long enough
 region_arena_for_owned_shadow_ok|run-exit|tests/safety/region_arena_for_owned_shadow_ok.tl|42|-
-region_arena_for_owned_store_reject|check-fail|tests/safety/region_arena_for_owned_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 region_arena_foreach_active_shadow_ok|run-exit|tests/safety/region_arena_foreach_active_shadow_ok.tl|42|-
-region_arena_foreach_active_store_reject|check-fail|tests/safety/region_arena_foreach_active_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 region_arena_resource_shadow_ok|run-exit|tests/safety/region_arena_resource_shadow_ok.tl|42|-
 region_arena_spmd_index_shadow_ok|check-ok|tests/safety/region_arena_spmd_index_shadow_ok.tl|-|-
-# A binder whose own annotation carries its name as a lifetime is a self-named
-# carrier (#8998 L2): it continues the arena, so the rename goes past it.
-# The carrier itself stored to caller storage is the pre-existing residual
-# #9609 (binder identity, #8890 class) and has no fixture here.
 region_arena_self_carrier_store_ok|check-ok|tests/safety/region_arena_self_carrier_store_ok.tl|-|-
 region_arena_self_carrier_shadow_ok|run-exit|tests/safety/region_arena_self_carrier_shadow_ok.tl|42|-
 region_arena_self_carrier_controls_ok|check-ok|tests/safety/region_arena_self_carrier_controls_ok.tl|-|-
-region_arena_self_carrier_direct_store_reject|check-fail|tests/safety/region_arena_self_carrier_direct_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-region_arena_distinct_carrier_store_reject|check-fail|tests/safety/region_arena_distinct_carrier_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
-# Carrier classification follows L2 on every binder path (Sol, final review of
-# 3bafc3d02): a local arena owner is not a carrier, a typed `for` item is
-# classified by its annotation, and mixed same-named lambda parameters keep
-# their types as written.
 region_arena_arena_owner_local_ok|run-exit|tests/safety/region_arena_arena_owner_local_ok.tl|42|-
-region_arena_arena_owner_local_store_reject|check-fail|tests/safety/region_arena_arena_owner_local_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 region_arena_typed_for_carrier_ok|run-exit|tests/safety/region_arena_typed_for_carrier_ok.tl|42|-
-region_arena_typed_for_carrier_store_reject|check-fail|tests/safety/region_arena_typed_for_carrier_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 region_arena_mixed_lambda_params_ok|run-exit|tests/safety/region_arena_mixed_lambda_params_ok.tl|42|-
-region_arena_mixed_lambda_params_store_reject|check-fail|tests/safety/region_arena_mixed_lambda_params_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_round6_renamed_ok|run-exit|tests/safety/region_arena_round6_renamed_ok.tl|42|-
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is
@@ -808,7 +805,7 @@ arena_return_local_owner_reject|check-fail|tests/safety/arena_return_local_owner
 arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|tests/safety/arena_return_nested_tuple_reject.tl:8:15|region-tagged value cannot escape with-arena 'phase'
 arena_return_outer_reject|check-fail|tests/safety/arena_return_outer_reject.tl|tests/safety/arena_return_outer_reject.tl:8:33|region-tagged value cannot escape with-arena 'outer'
 arena_return_string_reject|check-fail|tests/safety/arena_return_string_reject.tl|tests/safety/arena_return_string_reject.tl:5:45|region-tagged value cannot escape with-arena 'phase'
-arena_return_shadowed_input_reject|check-fail|tests/safety/arena_return_shadowed_input_reject.tl|tests/safety/arena_return_shadowed_input_reject.tl:5:30|region-tagged value cannot escape with-arena 'source'
+arena_return_shadowed_input_reject|check-fail|tests/safety/arena_return_shadowed_input_reject.tl|tests/safety/arena_return_shadowed_input_reject.tl:5:3|with-arena 'source' reuses the name of a visible lifetime or owner; rename the arena
 arena_try_array_reject|check-fail|tests/safety/arena_try_array_reject.tl|tests/safety/arena_try_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
 arena_try_nested_array_reject|check-fail|tests/safety/arena_try_nested_array_reject.tl|tests/safety/arena_try_nested_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
 arena_try_outer_reject|check-fail|tests/safety/arena_try_outer_reject.tl|tests/safety/arena_try_outer_reject.tl:15:30|region-tagged value cannot escape with-arena 'outer'

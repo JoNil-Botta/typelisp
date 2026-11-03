@@ -1,6 +1,8 @@
-;; A `with-arena` region is a fresh binder: spelled like the caller lifetime
-;; of a `&mut` parameter, it still names the arena, so a borrow of arena data
-;; stored into the caller's struct outlives the arena (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r` of a
+;; `&mut` parameter, so the form fails with the collision diagnostic and the
+;; arena must be renamed (#9593, D-C121). It was the review witness for the
+;; original #9593 escape: a borrow of arena data stored into the caller's
+;; struct.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

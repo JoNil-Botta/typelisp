@@ -1,6 +1,7 @@
-;; Inside `with-arena r`, an annotation or explicit borrow lifetime spelled `r`
-;; names the arena, not the caller lifetime it shadows. Passing the borrow
-;; through a let and a lifetime-preserving call keeps the arena region (#9593).
+;; Rejected at entry: the arena is named like the caller lifetime `r`, so the
+;; form fails with the collision diagnostic and the arena must be renamed
+;; (#9593, D-C121). It was the review witness for arena data passed through a
+;; let and a lifetime-preserving call into caller storage.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

@@ -4903,7 +4903,7 @@
           (asm-has?
             asm
             "    js .L_tl_main_stack_abort\n"
-            ".ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"\n"
+            ".ascii \"typelisp runtime: main-stack reservation failed\\n\"\n"
             ".L_tl_main_stack_abort:\n    movq $1, %rax\n")
           (not
             (let
@@ -10066,6 +10066,7 @@
       session.backend-state
       session.stream
       asm
+      false
       false)))
 
 (define (compiler-backend-peephole-test-session-win64!
@@ -11442,6 +11443,7 @@
                         legacy-state
                         legacy-stream
                         (text_buf.render raw)
+                        true
                         true))]
                   (match (lower.lower-compiler-source src)
                     [(Ok second-program second-spans lower-owner)
@@ -15317,6 +15319,135 @@ f:
       (asm-lacks? win "    subq $4800, %rsp\n")
       (asm-has? linux "    subq $4800, %rsp\n")
       (asm-lacks? linux "__chkstk"))))
+
+(test
+  linux-stack-probe-final-decrements
+  (let
+    [policy
+      (backend.compiler-backend-target-policy-new
+        (backend.CompilerBackendTarget.Linux))]
+    [sizes : (Array i64 15)
+      (array
+        0
+        128
+        4080
+        4096
+        4104
+        8192
+        8200
+        32760
+        32768
+        32776
+        65536
+        262144
+        1048576
+        1073741808
+        1073741824)]
+    (for [index (iterator.range 0 15)]
+      (let
+        [size : i64 (array-ref sizes index)]
+        [text : String
+          (if (> size 32768)
+            (backend.compiler-backend-emit-stack-probe size)
+            (backend.compiler-backend-emit-stack-sub policy size))]
+        [object : String
+          (backend.compiler-backend-object-prologue-bytes
+            (backend.CompilerBackendTarget.Linux)
+            size)]
+        (if (<= size 32768)
+          (test.assert-true
+            (string.eq
+              (if (> size 4096)
+                (string.substring text 17 (- (string.string-length text) 17))
+                text)
+              (if (= size 0)
+                ""
+                (str_cat.str-cat
+                  "    subq $"
+                  (string.int->string size)
+                  ", %rsp\n")))
+            "subthreshold entry keeps its exact physical subtraction")
+          (begin
+            (test.assert-true
+              (asm-has?
+                text
+                "    pushq %r11\n"
+                "    testb $0, (%rsp)\n"
+                (str_cat.str-cat
+                  "    movq "
+                  (string.int->string (- size 8))
+                  "(%rsp), %r11\n"))
+              "large allocation probes and restores a live R11")
+            (test.assert-true
+              (<= (string.string-length (& object)) 52)
+              "object probe is constant-size through the 1 GiB boundary")))))))
+
+(test
+  linux-stack-probes-expand-after-record-passes
+  (let
+    [state
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream (backend.compiler-backend-state-stream-state state)]
+    [records
+      (backend.compiler-backend-peephole-asm-once-records
+        state
+        stream
+        "    subq $8200, %rsp\n    movq %r11, (%rsp)\n    addq $8200, %rsp\n    subq $4096, %rsp\n"
+        true)]
+    (test.assert-true
+      (= records.probe-cand-len 1)
+      "only a surviving physical decrement above 4096 is recorded")
+    (backend.compiler-backend-expand-stack-probes! state (&mut records))
+    (let
+      [text : String (backend.compiler-backend-peephole-records-render records)]
+      (test.assert-true
+        (asm-has?
+          text
+          "    pushq %r11\n"
+          "    movq 8192(%rsp), %r11\n"
+          "    movq %r11, (%rsp)\n"
+          "    subq $4096, %rsp\n")
+        "late expansion preserves a live indirect target and the small dip"))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  linux-stack-probes-whole-text-finalizer
+  (let
+    [linux : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
+        (backend.CompilerBackendTarget.Linux))]
+    [windows : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
+        (backend.CompilerBackendTarget.Windows))]
+    (test.assert-true
+      (asm-has? linux "    pushq %r11\n" "    movq 8192(%rsp), %r11\n")
+      "the PIC whole-text boundary expands Linux probes")
+    (test.assert-true
+      (string.eq windows "    subq $8200, %rsp\n    movq %r11, (%rsp)\n")
+      "the whole-text boundary leaves Windows unchanged")))
+
+(test
+  linux-stack-entry-transient-classification
+  (let
+    [text : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        "# tl-stack-entry\n    subq $32768, %rsp\n    subq $4096, %rsp\n    movq %r11, (%rsp)\n    addq $4096, %rsp\n# tl-stack-entry\n    subq $32776, %rsp\n    movq %r11, (%rsp)\n    addq $32776, %rsp\n    subq $4104, %rsp\n    movq %r11, (%rsp)\n"
+        (backend.CompilerBackendTarget.Linux))]
+    (test.assert-true
+      (asm-has? text "    subq $32768, %rsp\n    subq $4096, %rsp\n")
+      "entry 32768 plus balanced transient 4096 remains unprobed")
+    (test.assert-true
+      (asm-has?
+        text
+        "    movq 32768(%rsp), %r11\n"
+        "    movq 4096(%rsp), %r11\n")
+      "entry 32776 and unclassified/transient 4104 are probed")
+    (test.assert-true
+      (asm-lacks? text "# tl-stack-entry")
+      "producer markers are consumed before final rendering")))
 
 (define (compiler-backend-target-windows-abi-source) : String
   "(extern (ext [arg0 : i64] [arg1 : i64] [arg2 : i64] [arg3 : i64] [arg4 : i64]) : i64)

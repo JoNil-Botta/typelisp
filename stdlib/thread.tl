@@ -664,50 +664,87 @@
         unit))))
 
 ;: Linux implementation of `spawn`.
+;: The private control page survives parent arena reset. Its first words are
+;: clear-tid:i32, started:i32, result:i64, stack-base:i64, stack-length:i64.
+;: Only consuming join can release the stack and then this page.
+(unsafe
+  (define (linux-stack-unmap [base : i64] [length : i64]) : i64
+    (unsafe
+      (syscall 11 base length))))
+
+(unsafe
+  (define (linux-spawn-protected
+    [entry : (-> i64 i64)]
+    [arg : i64]
+    [control : i64]
+    [stack : i64]) : ThreadSpawnResult
+    (let
+      [length : i64 (+ default-stack-size 65536)]
+      [low : i64 (+ stack 65536)]
+      [top : i64 (+ low default-stack-size)]
+      [protected : i64
+        (unsafe
+          (syscall 10 low default-stack-size 3))]
+      (if (< protected 0)
+        (begin
+          (unsafe
+            (linux-stack-unmap stack length))
+          (unsafe
+            (linux-stack-unmap control 4096))
+          (ThreadSpawnErr "thread: stack protection failed"))
+        (begin
+          (unsafe
+            (write-i32! control (cast 1 : i32)))
+          (unsafe
+            (write-i64! (+ control 16) stack))
+          (unsafe
+            (write-i64! (+ control 24) length))
+          (let
+            [tid : i64
+              (unsafe
+                (syscall 56 (linux-clone-flags) top 0 control 0))]
+            (if (< tid 0)
+              (begin
+                (unsafe
+                  (linux-stack-unmap stack length))
+                (unsafe
+                  (linux-stack-unmap control 4096))
+                (ThreadSpawnErr "thread: spawn failed"))
+              (if (= tid 0)
+                (unsafe
+                  (linux-child-main
+                    entry
+                    arg
+                    (+ control 8)
+                    (+ control 4)
+                    low
+                    top))
+                (begin
+                  (unsafe
+                    (linux-wait-i32-change (+ control 4) (cast 0 : i32)))
+                  (ThreadSpawnOk (Thread tid control (+ control 8) "")))))))))))
+
+;: Reserve the stack and control storage independently of user arenas. Keeping
+;: the lower 64 KiB mapped PROT_NONE prevents a heap mapping filling the guard.
 (unsafe
   (define (linux-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
     (let
-      [stack : (__tl_dyn-array u8) (__tl_make-array u8 default-stack-size)]
-      [clear-cell : (__tl_dyn-array i32) (__tl_make-array i32 1)]
-      [started-cell : (__tl_dyn-array i32) (__tl_make-array i32 1)]
-      [result-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [clear-addr : i64
+      [control : i64
         (unsafe
-          (array-i32-addr clear-cell))]
-      [started-addr : i64
-        (unsafe
-          (array-i32-addr started-cell))]
-      [result-addr : i64
-        (unsafe
-          (array-i64-addr result-cell))]
-      [stack-top : i64
-        (bit-and
-          (+
+          (syscall 9 0 4096 3 0x22 -1 0))]
+      (if (< control 0)
+        (ThreadSpawnErr "thread: control reservation failed")
+        (let
+          [stack : i64
             (unsafe
-              (array-u8-addr stack))
-            default-stack-size)
-          -16)]
-      (set! (array-ref clear-cell 0) (cast 1 : i32))
-      (let
-        [tid : i64
-          (unsafe
-            (syscall 56 (linux-clone-flags) stack-top 0 clear-addr 0))]
-        (if (< tid 0)
-          (ThreadSpawnErr "thread: spawn failed")
-          (if (= tid 0)
-            (unsafe
-              (linux-child-main
-                entry
-                arg
-                result-addr
-                started-addr
-                (unsafe
-                  (array-u8-addr stack))
-                stack-top))
+              (syscall 9 0 (+ default-stack-size 65536) 0 0x22 -1 0))]
+          (if (< stack 0)
             (begin
               (unsafe
-                (linux-wait-i32-change started-addr (cast 0 : i32)))
-              (ThreadSpawnOk (Thread tid clear-addr result-addr "")))))))))
+                (linux-stack-unmap control 4096))
+              (ThreadSpawnErr "thread: stack reservation failed"))
+            (unsafe
+              (linux-spawn-protected entry arg control stack))))))))
 
 ;: Windows spin-wait until the backend trampoline copies its start context.
 (cfg
@@ -1027,9 +1064,27 @@
           (unsafe
             (linux-futex-wait clear-addr (cast 1 : i64)))
           unit))
-      (ThreadJoinOk
-        (unsafe
-          (read-i64 thread.result-addr))))))
+      (let
+        [result : i64
+          (unsafe
+            (read-i64 thread.result-addr))]
+        [stack : i64
+          (unsafe
+            (read-i64 (+ clear-addr 16)))]
+        [length : i64
+          (unsafe
+            (read-i64 (+ clear-addr 24)))]
+        [released : i64
+          (unsafe
+            (linux-stack-unmap stack length))]
+        (if (< released 0)
+          (ThreadJoinErr "thread: stack release failed")
+          (if (<
+            (unsafe
+              (linux-stack-unmap clear-addr 4096))
+            0)
+            (ThreadJoinErr "thread: control release failed")
+            (ThreadJoinOk result)))))))
 
 ;: Windows implementation of `join`.
 (cfg

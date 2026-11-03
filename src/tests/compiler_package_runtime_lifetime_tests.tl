@@ -9,6 +9,7 @@
 (import compiler_load as load)
 (import compiler_load_tests as load_tests)
 (import stdlib.string)
+(import stdlib.str_cat)
 (import compiler_driver_core as driver)
 (import compiler_ast_types as ast)
 (import compiler_parse_core as parser)
@@ -296,27 +297,39 @@
         (= table (ci.intern-active-table-id)))
       (io.panic "failed package import did not restore live loader ownership"))))
 
+(define (runtime-owner-disposable-direct-object-smoke) : unit
+  (with-scratch
+    (let
+      [asm : String
+        (runtime-owner-smoke-for-route "(define (main) : i64 42)" Linux 0 true)]
+      (unless
+        (string.contains asm "main:")
+        (io.panic "direct object side assembly must survive runtime cleanup")))))
+
 (test
   package-runtime-direct-object-releases-side-backend
+  ;; Dispose caller-owned images/assembly only after checking side assembly
+  ;; survives package cleanup. Linux main/PR: intact25216 B, mutation211072 B,
+  ;; leak signal L=185856 B. Bound131072 gives19.24% intact versus161.04%
+  ;; mutated (ratio8.37), separating legitimate output from private-arena leaks.
+  ;; Windows margin and mutation sensitivity unverified.
+  ;; Follow-up: https://github.com/JoNil-Botta/typelisp/issues/9606.
+  (runtime-owner-disposable-direct-object-smoke)
   (let
-    [source : String "(define (main) : i64 42)"]
-    [warm : String
-      (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)]
     [before : i64 (profile.alloc-live)]
-    (unless
-      (string.contains warm "main:")
-      (io.panic "direct object side assembly must survive runtime cleanup"))
     (for [index (iterator.range 0 8)]
+      (runtime-owner-disposable-direct-object-smoke))
+    (let
+      [delta : i64 (- (profile.alloc-live) before)]
+      [bound : i64 131072]
       (unless
-        (string.contains
-          (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)
-          "main:")
-        (io.panic "repeated direct object emission lost side assembly")))
-    ;; Includes retained object images, assembly and restored parent state.
-    ;; Unretired side-backend arenas push this fixture above the bound.
-    (unless
-      (< (- (profile.alloc-live) before) 1048576)
-      (io.panic "direct object jobs retained private side-backend arenas"))))
+        (< delta bound)
+        (io.panic
+          (str_cat.str-cat
+            "direct object jobs retained private side-backend arenas: delta="
+            (string.int->string delta)
+            " bound="
+            (string.int->string bound)))))))
 
 (test
   package-runtime-windows-retains-layout-only-groups

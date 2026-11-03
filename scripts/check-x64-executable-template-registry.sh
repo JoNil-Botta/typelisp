@@ -54,9 +54,9 @@ count_matches 2 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_run
 
 # All target-owned executable byte helpers carry closed IDs.  Windows has two
 # additional bytes-from-hex sites: the data-only UNWIND_INFO and resource tree.
-count_matches 3 'CompilerX64ExecutableTemplateId\.LinuxObject.*Bytes' src/compiler_backend_object_target_linux.tl
+count_matches 4 'CompilerX64ExecutableTemplateId\.LinuxObject.*Bytes' src/compiler_backend_object_target_linux.tl
 count_matches 21 'CompilerX64ExecutableTemplateId\.WindowsObject.*Bytes' src/compiler_backend_object_target_windows.tl
-count_matches 3 'compiler-backend-object-bytes-from-hex' src/compiler_backend_object_target_linux.tl
+count_matches 4 'compiler-backend-object-bytes-from-hex' src/compiler_backend_object_target_linux.tl
 count_matches 3 'compiler-backend-object-bytes-from-hex' src/compiler_backend_object_target_windows.tl
 
 # Opaque executable instructions enter target leaves through one registration
@@ -117,9 +117,9 @@ if ! awk -F '\t' '
     $14 !~ /^[0-9]+$/ || $15 !~ /^-?[0-9]+$/ || $16 !~ /^-?[0-9]+$/ { exit 1 }
     seen_variant[$1]++ { exit 1 }
     seen_name[$2]++ { exit 1 }
-    END { if (NR != 103) exit 1 }
+    END { if (NR != 104) exit 1 }
 ' "$CATALOG_DATA"; then
-    fail "catalog data must contain 102 unique, typed 16-field rows"
+    fail "catalog data must contain 103 unique, typed 16-field rows"
 fi
 
 # Nullary enum tags are 0-based in declaration order (SPEC 3.5.1). Keep the
@@ -137,4 +137,4 @@ count_matches 3 '\.pdata:.*->\.L_tl_start_xdata' \
 count_matches 2 '\.pdata:tl_tlci_call_.*->tl_tlci_call_.*\$unwind' \
     src/compiler_x64_executable_template_evidence.tl
 
-echo "check-x64-executable-template-registry: 102 rows, 69 assembly variants, 24 opaque byte helpers, and 9 structured contributions covered"
+echo "check-x64-executable-template-registry: 103 rows, 69 assembly variants, 25 opaque byte helpers, and 9 structured contributions covered"

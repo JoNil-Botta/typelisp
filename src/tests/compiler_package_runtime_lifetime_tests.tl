@@ -9,6 +9,7 @@
 (import compiler_load as load)
 (import compiler_load_tests as load_tests)
 (import stdlib.string)
+(import stdlib.str_cat)
 (import compiler_driver_core as driver)
 (import compiler_ast_types as ast)
 (import compiler_parse_core as parser)
@@ -324,7 +325,7 @@
       (unless
         (< delta bound)
         (io.panic
-          (string.concat4
+          (str_cat.str-cat
             "direct object jobs retained private side-backend arenas: delta="
             (string.int->string delta)
             " bound="

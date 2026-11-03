@@ -26,7 +26,7 @@
     (ptr-read (ptr-offset (__tl_array-data ids.slots) index))))
 
 (define (compiler-x64-template-id-from-index [index : i64]) : x64.CompilerX64ExecutableTemplateId
-  (if (or (< index 0) (>= index 102))
+  (if (or (< index 0) (>= index 103))
     (io.panic "x64 executable template: id index is out of range")
     (unsafe
       (ptr-read
@@ -40,7 +40,7 @@
       (CompilerX64ExecutableTemplateIdList
         (__tl_make-array x64.CompilerX64ExecutableTemplateId 112)
         0)]
-    (for [index (iterator.range 0 102)]
+    (for [index (iterator.range 0 103)]
       (compiler-x64-template-id-list-push!
         (&mut ids)
         (compiler-x64-template-id-from-index index)))

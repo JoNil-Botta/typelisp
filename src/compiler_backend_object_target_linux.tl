@@ -25,6 +25,15 @@
     (object_target.compiler-backend-object-bytes-from-hex
       "4889c748c7c03c0000000f05")))
 
+;; One relocation-free startup fragment: reserve the complete guarded range,
+;; protect only usable bytes, switch, or report and exit_group(134).
+(define (compiler-backend-object-stack-bytes) : String
+  (x64_catalog.compiler-x64-template-render-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectStackBytes)
+    (LinuxX64)
+    (object_target.compiler-backend-object-bytes-from-hex
+      "48c7c6000001404831ff4831d249c7c22200000049c7c0ffffffff4d31c948c7c0090000000f054885c078464c8d80000001004c89c748c7c60000004048c7c20300000048c7c00a0000000f054885c07809498da000000040eb77498db80000ffff48c7c60000014048c7c00b0000000f0548c7c00100000048c7c702000000488d351b00000048c7c2300000000f0548c7c0e700000048c7c7860000000f050f0b747970656c6973702072756e74696d653a206d61696e2d737461636b207265736572766174696f6e206661696c65640a")))
+
 (define (compiler-backend-object-add-entry
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
   (x64_catalog.compiler-x64-template-assert-structured!
@@ -43,7 +52,9 @@
         (cobj.CompilerObjectX64Instr.Label "_tl_start"))]
     [with-main-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
-        with-label
+        (object_target.compiler-backend-object-add-text-bytes
+          with-label
+          (compiler-backend-object-stack-bytes))
         "_tl_start"
         "main")]
     (object_target.compiler-backend-object-add-text-bytes

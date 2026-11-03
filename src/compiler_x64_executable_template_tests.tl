@@ -208,22 +208,22 @@
               [(Err _) (set! events-valid false)])
             (+= event-at 1))
           (+= at 1)))
-      (test.assert-i64-eq ids.len 102 "closed executable-template row count")
+      (test.assert-i64-eq ids.len 103 "closed executable-template row count")
       (test.assert-i64-eq
         (array-length ids.slots)
         112
         "bounded all-row construction capacity")
       (test.assert-i64-eq
         event-count
-        4311
+        4324
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        26053
+        26346
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads
-        89
+        90
         "fixed assembly and opaque payloads are pinned")
       (test.assert-i64-eq
         unpinned-assembly

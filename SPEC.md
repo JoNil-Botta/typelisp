@@ -9028,14 +9028,19 @@ low-level exception and carry no safety guarantees.
   slots.
 - Stack grows downward. Frame size is computed at compile time.
 - Stack is aligned to 16 bytes at every call site (System V ABI requirement).
-- Freestanding Linux and Windows entries run `main` on a 1 GiB private stack.
-  Linux maps the region directly. Windows keeps the PE stack for bounded entry
-  bootstrap work and uses `CreateFiberEx` with a 64 KiB initial commit so the
-  operating system owns guard-page growth for the reserved 1 GiB fiber stack.
-  Windows conversion/reservation failure writes a fixed diagnostic to stderr
-  and exits 134 before any user initializer or `main` code runs. The main fiber
-  reserves an exception-stack guarantee; an entry-installed top-level filter
-  reports `STATUS_STACK_OVERFLOW` to stderr and exits 134.
+- Freestanding Linux entries, including direct-object executable entries, run user initialization and `main` on a private stack with 1 GiB (1,073,741,824 bytes) of usable capacity and an additional inaccessible 64 KiB (65,536-byte) lower guard. The guard remains reserved for the lifetime of the stack. Only bounded bootstrap work runs on the original process stack before the switch. Failure to reserve or protect the private stack writes a fixed allocation-free diagnostic and terminates the process with status 134 before user initialization.
+- Runtime-created Linux task threads have 1 MiB (1,048,576 bytes) of usable stack capacity and an additional inaccessible 64 KiB lower guard. Stack protection is established before the worker runs user code. The stack reservation is independent of user heap arenas and remains live until the worker has terminated and its consuming join releases it.
+- Freestanding Windows entries run `main` on a 1 GiB private stack. Windows keeps the PE stack for bounded entry bootstrap work and uses `CreateFiberEx` with a 64 KiB initial commit so the operating system owns guard-page growth for the reserved 1 GiB fiber stack. Windows conversion/reservation failure writes a fixed diagnostic to stderr and exits 134 before any user initializer or `main` code runs. The main fiber reserves an exception-stack guarantee; an entry-installed top-level filter reports `STATUS_STACK_OVERFLOW` to stderr and exits 134.
+
+Linux native code probes a function-entry downward stack allocation larger than 32,768 bytes, and every other downward stack allocation larger than 4,096 bytes, at intervals no greater than 4,096 bytes, including the final partial interval, before accesses using that allocation. Thresholds apply to final physical stack decrements after layout, alignment and save planning. This covers executable and library functions, all saving entries and transient stack allocations. Every possible cumulative untouched descent, including entry allocation, staging, saved registers, alignment, return pushes and red-zone accesses, must remain strictly smaller than the protecting inaccessible lower boundary; separate subthreshold decrements may not accumulate without that bound.
+
+The implementation's cumulative untouched descent is at most 40,960 bytes; its audited bound is 37,015 bytes (32,768 entry allocation + 4,096 transient staging + 128 red zone + 15 alignment + 8 return push). Runtime-owned Linux stacks retain their 65,536-byte lower guards.
+
+Exhaustion that accesses a Linux stack guard is a fatal memory fault. With the default signal disposition it terminates the process through SIGSEGV, including when the fault originates in a worker. No TypeLisp stack-overflow diagnostic or exit status 134 is promised for this case. Process status helpers represent termination by signal as 128 plus its signal number; for SIGSEGV on Linux x86-64 this is 139, rather than a normal exit with status 139.
+
+CRT entry, native library exports and code entered by another native host retain the caller's stack and signal policy. For the same safety guarantee the host must supply an inaccessible lower boundary of at least 40,960 bytes; probing does not create a guard for an unguarded host stack. Native code called through FFI must obey compatible stack-allocation discipline. Host or unsafe changes to protection or signal handling are responsible for preserving fatal handling of stack exhaustion.
+
+The implementation limit for an emitted native function's final checked frame requirement is 1 GiB (1,073,741,824 bytes), including alignment, saved registers, emergency/SIMD storage, outgoing arguments and target-required shadow space. A larger requirement reports stack overflow on function entry and terminates the process with status 134 before body effects or reserving that frame. If inlining produces an oversized containing frame, failure occurs on the containing function's entry before its body effects. This implementation limit also applies to native library exports and does not assert that a foreign host stack is at most 1 GiB.
 
 ### 7.2 Heap
 

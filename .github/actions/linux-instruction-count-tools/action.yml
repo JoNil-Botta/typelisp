@@ -33,6 +33,14 @@ runs:
       # On noble libc6-dbg is a hard dependency. No Recommends excludes gdb,
       # while preserving libc6-dbg and valgrind and the complete gate matrix.
       run: bash scripts/ci-linux-tools.sh install
+    - name: Install Linux guard-fault debugger
+      shell: bash
+      run: |
+        sudo apt-get -o APT::Get::AllowUnauthenticated=false \
+          -o Acquire::AllowInsecureRepositories=false \
+          -o Acquire::AllowDowngradeToInsecureRepositories=false \
+          -y --no-install-recommends install gdb
+        gdb --version
     - name: Start package-cache save timer
       shell: bash
       run: echo "LINUX_TOOLS_SAVE_START=$(date +%s%3N)" >> "$GITHUB_ENV"

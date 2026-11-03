@@ -85339,6 +85339,16 @@
               (or
                 (tc-with-region-slot-named? ctx (& items) 0 region)
                 (tc-with-region-slot-named? ctx (& items) 1 region))))))]
+    [(ForeachActive lane body)
+      (Some
+        (ast.AstExpr.ForeachActive
+          lane
+          (tc-with-region-rename-child!
+            ctx
+            region
+            fresh
+            (not (= lane region))
+            body)))]
     [_ (No)]))
 
 (define (tc-with-region-slot-named?

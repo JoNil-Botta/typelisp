@@ -57,7 +57,7 @@ tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus
 tests/integration/lambda_capture_atomic_arena_*.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Captured atomic Arena roots retain allocation and destruction behavior plus both-target capture shapes.
 tests/integration/lambda_capture_lifetime_enum*.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Lifetime enum capture keeps packed one/two-word and nested values while retaining memory snapshots.
 benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.
-tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
+tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,with-region-binder-audit	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
 tests/safety/legacy_box_get_*_reject.tl	stage2-public-tool-surface	-	The public-check matrix directly consumes the legacy BoxGet receiver diagnostic fixtures.
 tests/safety/set_inline_array_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array value/bounds ordering also runs in the native opt0/1/2 matrix.
 tests/safety/set_inline_array_field_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array field value/bounds ordering also runs in the native opt0/1/2 matrix.
@@ -235,7 +235,7 @@ tests/spmd/runtime_dispatch_select.tl	stage2-spmd-runtime-dispatch	@corpus	Direc
 tests/tlci/package_dependency_transition.tl	package-native-tlci-dependency-macros,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct fixture input in verify-package-native-tlci.sh.
 docs/compiler-x64-executable-templates.md	docs-site-search-manifest-validator-self-tests	@docs	Direct tracked input named by its owning verifier or compile manifest.
 src/build_run_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_ast_types.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_ast_types.tl	stage2-selfhost-compile-manifest,with-region-binder-audit	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_backend.tl	stage2-selfhost-compile-manifest,stage2-cli-build-run-and-chooser-smoke	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_check_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ctfe.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -274,7 +274,7 @@ src/compiler_spmd_logical_gang.tl	stage2-selfhost-compile-manifest	@compiler	Dir
 src/compiler_stack_traffic.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_state_schema.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_symbols.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_typecheck_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_typecheck_core.tl	stage2-selfhost-compile-manifest,with-region-binder-audit	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/doc_expand.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -669,6 +669,8 @@ tests/safety/shared_mut_borrow_replace_call_location_reject.tl	stage2-public-too
 tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace index-call diagnostic contracts.
 tests/cli/public-git.cases	stage2-public-tool-surface	@corpus	Canonical Git revision admission and staged checkout/lock/offline cache transcript.
 scripts/shared-view-baseline.tsv	shared-view-count-ratchet	@compiler	Direct limit input read by the shared-view count gate; this change lowers the limit.
+scripts/check-with-region-binder-audit.sh	with-region-binder-audit	-	The binder-audit gate script itself.
+scripts/with-region-binder-audit.tsv	with-region-binder-audit	-	The checked-in binder audit table read by the gate.
 stdlib/tests/crypto_secret_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier,stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@stdlib	Shared inline/native generation cleanup and full-capacity wipe controls.
 tests/spmd/private_uniform_call_clamp.tl	stage2-spmd-simd-comparison	@compiler	Private call clamp execution and packed codegen rows in the SPMD corpus.
 tests/spmd/private_uniform_call_float.tl	stage2-spmd-simd-comparison	@compiler	Private call float bit preservation execution and codegen rows in the SPMD corpus.

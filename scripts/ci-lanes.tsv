@@ -30,6 +30,7 @@ tlci-native-route-size-ratchet-self-tests	linux-2	windows-2
 zero-cons-structural-classifier-self-tests	linux-2	windows-2
 zero-cons-fixture-and-embedded-source-invariant	linux-2	windows-1
 shared-view-count-ratchet	linux-2	windows-2
+with-region-binder-audit	linux-2	windows-2
 spmd-mode-instruction-count-harness-self-tests	linux-2	windows-2
 c-measured-region-instruction-harness-self-tests	linux-2	windows-2
 instruction-count-comparison-self-tests	linux-2	windows-2

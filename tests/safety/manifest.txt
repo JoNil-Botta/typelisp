@@ -445,6 +445,10 @@ region_arena_lambda_shadow_store_reject|check-fail|tests/safety/region_arena_lam
 region_arena_local_shadow_local_borrow_store_reject|check-fail|tests/safety/region_arena_local_shadow_local_borrow_store_reject.tl|-|`r` does not live long enough
 region_arena_for_owned_shadow_ok|run-exit|tests/safety/region_arena_for_owned_shadow_ok.tl|42|-
 region_arena_for_owned_store_reject|check-fail|tests/safety/region_arena_for_owned_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_foreach_active_shadow_ok|run-exit|tests/safety/region_arena_foreach_active_shadow_ok.tl|42|-
+region_arena_foreach_active_store_reject|check-fail|tests/safety/region_arena_foreach_active_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_resource_shadow_ok|run-exit|tests/safety/region_arena_resource_shadow_ok.tl|42|-
+region_arena_spmd_index_shadow_ok|check-ok|tests/safety/region_arena_spmd_index_shadow_ok.tl|-|-
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is

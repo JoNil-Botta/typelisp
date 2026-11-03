@@ -296,27 +296,29 @@
         (= table (ci.intern-active-table-id)))
       (io.panic "failed package import did not restore live loader ownership"))))
 
+(define (runtime-owner-disposable-direct-object-smoke) : unit
+  (with-scratch
+    (let
+      [asm : String
+        (runtime-owner-smoke-for-route "(define (main) : i64 42)" Linux 0 true)]
+      (unless
+        (string.contains asm "main:")
+        (io.panic "direct object side assembly must survive runtime cleanup")))))
+
 (test
   package-runtime-direct-object-releases-side-backend
+  (runtime-owner-disposable-direct-object-smoke)
   (let
-    [source : String "(define (main) : i64 42)"]
-    [warm : String
-      (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)]
     [before : i64 (profile.alloc-live)]
-    (unless
-      (string.contains warm "main:")
-      (io.panic "direct object side assembly must survive runtime cleanup"))
     (for [index (iterator.range 0 8)]
+      (runtime-owner-disposable-direct-object-smoke))
+    (let
+      [delta : i64 (- (profile.alloc-live) before)]
+      [bound : i64 131072]
+      (io.eprintln "C105_DISPOSABLE_DELTA={} BOUND={}" delta bound)
       (unless
-        (string.contains
-          (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)
-          "main:")
-        (io.panic "repeated direct object emission lost side assembly")))
-    ;; Includes retained object images, assembly and restored parent state.
-    ;; Unretired side-backend arenas push this fixture above the bound.
-    (unless
-      (< (- (profile.alloc-live) before) 1048576)
-      (io.panic "direct object jobs retained private side-backend arenas"))))
+        (< delta bound)
+        (io.panic "direct object jobs retained private side-backend arenas")))))
 
 (test
   package-runtime-windows-retains-layout-only-groups

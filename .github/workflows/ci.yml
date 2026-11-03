@@ -197,6 +197,44 @@ jobs:
             target/ci-compiler-artifact-fixtures.json
           if-no-files-found: warn
 
+      # D-C105 permits this one diagnostic cycle; removed on the final head.
+      - name: Observe issue 9588 Windows allocation accounting
+        if: matrix.lane == 'windows-2'
+        shell: bash
+        env:
+          TYPELISP_INLINE_TEST_WORKERS: '1'
+          TYPELISP_BUILD_INVARIANCE_WORKERS: '1'
+        run: |
+          observation_root="$PWD/target/exp/issue-9588-c105"
+          mkdir -p "$observation_root"
+          export TMPDIR="$HOME/.cache/typelisp-agent-tmp/issue-9588/c105/$GITHUB_RUN_ID"
+          mkdir -p "$TMPDIR"
+          base_compiler=$(sh scripts/fetch-stage0.sh stage0-20261103-003706-r41551084443 "$observation_root/base-compiler")
+          export TYPELISP_BOOTSTRAP_WORKDIR=target/exp/issue-9588-c105/bootstrap
+          export TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE="$observation_root/converged.path"
+          scripts/run-memory-bounded.sh --limit-mib 8192 --timeout-seconds 1500 \
+            --report "$observation_root/bootstrap.memory" -- \
+            "$(command -v bash)" scripts/check-bootstrap-fixpoint.sh "$base_compiler"
+          compiler=$(cat "$observation_root/converged.path")
+          bash scripts/observe-issue-9588-c105.sh --compiler "$compiler" \
+            --base-compiler "$base_compiler" --output "$observation_root/results"
+
+      - name: Upload issue 9588 Windows allocation observations
+        if: always() && matrix.lane == 'windows-2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-9588-c105-windows-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            target/exp/issue-9588-c105/*.memory
+            target/exp/issue-9588-c105/results/*.json
+            target/exp/issue-9588-c105/results/*.sha256
+            target/exp/issue-9588-c105/results/*.memory
+            target/exp/issue-9588-c105/results/*.stdout
+            target/exp/issue-9588-c105/results/*.stderr
+            target/exp/issue-9588-c105/results/*.tl
+            target/exp/issue-9588-c105/results/PASS
+          if-no-files-found: error
+
       - name: CI verification
         id: verification
         shell: bash

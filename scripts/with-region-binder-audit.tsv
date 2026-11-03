@@ -9,8 +9,8 @@ ctor	Binary	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-
 ctor	Unary	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	Call	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	If	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
-ctor	Let	binder	binding names, sequential: annotation+init incoming; later bindings and body shadowed	region_arena_local_shadow_explicit_borrow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
-ctor	Lambda	binder	params: types and return incoming; body shadowed	region_arena_lambda_param_shadow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
+ctor	Let	binder	binding names, sequential: annotation+init incoming; later bindings and body shadowed unless the annotation carries the name (self-named carrier, #8998 L2)	region_arena_local_shadow_explicit_borrow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
+ctor	Lambda	binder	params: types and return incoming; body shadowed unless every same-named param type carries its name (self-named carrier)	region_arena_lambda_param_shadow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	Tuple	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	TupleRef	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	Array	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
@@ -30,7 +30,7 @@ ctor	Replace	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc
 ctor	Ann	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	Cast	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	Borrow	nonbinder	generic child mapping	-	src/compiler_typecheck_core.tl#tc-expr-inner
-ctor	Match	binder	arm pattern binders: scrutinee and patterns incoming; that arm body shadowed	region_arena_match_arm_shadow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
+ctor	Match	binder	arm pattern binders: scrutinee and patterns incoming; that arm body shadowed unless a typed binder carries its name	region_arena_match_arm_shadow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	Foreach	binder	index names (Foreach, nested Foreach2 outer/inner): types and bounds incoming; body shadowed	region_arena_spmd_index_shadow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	SpmdReduce	binder	index: type, bounds, init incoming; value shadowed	region_arena_spmd_index_shadow_ok	src/compiler_typecheck_core.tl#tc-expr-inner
 ctor	SpmdScan	binder	index, prefix: types, bounds, init incoming; value (index), body (index or prefix) shadowed	region_arena_spmd_index_shadow_ok	src/compiler_typecheck_core.tl#tc-expr-inner

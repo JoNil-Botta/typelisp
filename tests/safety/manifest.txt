@@ -485,6 +485,15 @@ region_arena_foreach_active_shadow_ok|run-exit|tests/safety/region_arena_foreach
 region_arena_foreach_active_store_reject|check-fail|tests/safety/region_arena_foreach_active_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 region_arena_resource_shadow_ok|run-exit|tests/safety/region_arena_resource_shadow_ok.tl|42|-
 region_arena_spmd_index_shadow_ok|check-ok|tests/safety/region_arena_spmd_index_shadow_ok.tl|-|-
+# A binder whose own annotation carries its name as a lifetime is a self-named
+# carrier (#8998 L2): it continues the arena, so the rename goes past it.
+# The carrier itself stored to caller storage is the pre-existing residual
+# #9609 (binder identity, #8890 class) and has no fixture here.
+region_arena_self_carrier_store_ok|check-ok|tests/safety/region_arena_self_carrier_store_ok.tl|-|-
+region_arena_self_carrier_shadow_ok|run-exit|tests/safety/region_arena_self_carrier_shadow_ok.tl|42|-
+region_arena_self_carrier_controls_ok|check-ok|tests/safety/region_arena_self_carrier_controls_ok.tl|-|-
+region_arena_self_carrier_direct_store_reject|check-fail|tests/safety/region_arena_self_carrier_direct_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_distinct_carrier_store_reject|check-fail|tests/safety/region_arena_distinct_carrier_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is

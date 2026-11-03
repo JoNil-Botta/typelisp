@@ -86142,19 +86142,29 @@
                 index
                 (ast.ast-let-binding-fallback))
                 [(ast.AstLetBinding.Binding name maybe-ty init)
-                  (ast.ast-let-binding-list-push
-                    (&mut out)
-                    (ast.AstLetBinding.Binding
-                      name
-                      (if live
-                        (tc-with-region-rename-maybe-type
+                  (let
+                    [shadows : bool
+                      (and
+                        (= name region)
+                        (not (tc-with-region-maybe-carrier? (& maybe-ty) name)))]
+                    (ast.ast-let-binding-list-push
+                      (&mut out)
+                      (ast.AstLetBinding.Binding
+                        name
+                        (if live
+                          (tc-with-region-rename-maybe-type
+                            ctx
+                            region
+                            fresh
+                            maybe-ty)
+                          maybe-ty)
+                        (tc-with-region-rename-child!
                           ctx
                           region
                           fresh
-                          maybe-ty)
-                        maybe-ty)
-                      (tc-with-region-rename-child! ctx region fresh live init)))
-                  (when (= name region) (set! live false))]))
+                          live
+                          init)))
+                    (when shadows (set! live false)))]))
             (Some
               (ast.AstExpr.Let
                 (box
@@ -86165,7 +86175,8 @@
       (match (__tl-box-place payload)
         [(ast.AstLambda.Lambda params maybe-ret body)
           (let
-            [live : bool (not (tc-with-region-param-named? (& params) region))]
+            [live : bool
+              (not (tc-with-region-param-named? ctx (& params) region))]
             (Some
               (ast.AstExpr.Lambda
                 (box
@@ -86196,10 +86207,7 @@
                 [(ast.AstMatchArm.Arm pattern body)
                   (let
                     [live : bool
-                      (not
-                        (tc-name-id-list-contains
-                          (tc-pattern-add-bound-name-ids (clone pattern) Nil)
-                          region))]
+                      (not (tc-with-region-pattern-shadows? (& pattern) region))]
                     (ast.ast-match-arm-list-push
                       (&mut out)
                       (ast.AstMatchArm.Arm
@@ -86465,15 +86473,57 @@
               id)))))
     out))
 
+;; A binder spelled like the region shadows it unless it is a self-named
+;; carrier: a binding whose own type carries its name as a lifetime continues
+;; that older lifetime (#8998 L2, `tc-type-carries-own-lifetime?`), so here it
+;; continues the arena and the rename goes on past it.
 (define (tc-with-region-param-named?
+  [ctx : TcContext]
   [params : (& params ast.AstParamList)]
   [region : i64]) : bool
   (let
     [found : bool false]
     (for [index (iterator.range 0 (ast.ast-param-list-len params))]
       (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name _ _) (when (= name region) (set! found true))]))
+        [(Param name ty _)
+          (when
+            (and
+              (= name region)
+              (not (tc-param-type-carries-own-lifetime? ctx (& ty) name)))
+            (set! found true))]))
     found))
+
+(define (tc-with-region-maybe-carrier?
+  [maybe-ty : (& ast.AstMaybeType)]
+  [name : i64]) : bool
+  (match maybe-ty
+    [(Some ty) (tc-type-carries-own-lifetime? ty name)]
+    [(No) false]))
+
+(define (tc-with-region-pattern-shadows?
+  [pattern : (& ast.AstPattern)]
+  [region : i64]) : bool
+  (match pattern
+    [(Var name maybe-ty)
+      (and (= name region) (not (tc-with-region-maybe-carrier? maybe-ty name)))]
+    [(Binding name) (= name region)]
+    [(or (Tuple items) (Array items) (Slice items _) (Or items) (Fields items)
+         (Field _ items) (Variant _ items))
+      (let
+        [list : ast.AstPatternList (clone (deref items))]
+        [found : bool false]
+        (for [index (iterator.range 0 list.len)]
+          (when
+            (tc-with-region-pattern-shadows?
+              (&
+                (ast.ast-pattern-list-get
+                  (& list)
+                  index
+                  (ast.ast-pattern-fallback)))
+              region)
+            (set! found true)))
+        found)]
+    [(or (Wildcard) (Literal _)) false]))
 
 (define (tc-with-region-rename-maybe-type
   [ctx : TcContext]

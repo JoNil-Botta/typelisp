@@ -1282,7 +1282,1031 @@
       (set! (array-ref last (/ size 2)) 2)
       (normalize-test-reaching-case? blocks last true))))
 
+;; Compact lifetime occurrence shapes (#9584). The oracle is the walk the
+;; shapes replaced: every position laid out with its name, invariance and the
+;; position of the reference it lies under. Region edges built from it,
+;; position by position, are compared with the edges built from the DAG.
+(defstruct NormalizeTestFlat
+  (names (__tl_dyn-array i64))
+  (vars (__tl_dyn-array bool))
+  (outers (__tl_dyn-array i64)))
+
+(define (normalize-test-flat-new) : NormalizeTestFlat
+  (NormalizeTestFlat
+    (__tl_make-array i64 0)
+    (__tl_make-array bool 0)
+    (__tl_make-array i64 0)))
+
+(define (normalize-test-flat-push!
+  [out : (&mut out NormalizeTestFlat)]
+  [name : i64]
+  [inv? : bool]
+  [outer : i64]) : unit
+  (norm.normalize-push-i64! (&mut out.names) name)
+  (norm.normalize-push-bool! (&mut out.vars) inv?)
+  (norm.normalize-push-i64! (&mut out.outers) outer))
+
+(define (normalize-test-flat-lifetimes
+  [variances : (& variances norm.OwnershipNormalizeVariances)]
+  [lender? : bool]
+  [name : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [inv? : bool]
+  [out : (&mut out NormalizeTestFlat)]
+  [outer : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast.ast-lifetime-list-len lifetimes))
+      (if lender?
+        (let
+          [variance : i64 (norm.normalize-lender-variance variances name index)]
+          (when
+            (< variance 2)
+            (normalize-test-flat-push!
+              out
+              (ast.ast-lifetime-list-get lifetimes index -1)
+              (or inv? (= variance 0))
+              outer)))
+        (normalize-test-flat-push!
+          out
+          (ast.ast-lifetime-list-get lifetimes index -1)
+          (or
+            inv?
+            (not (norm.normalize-nominal-covariant? variances name index)))
+          outer))
+      (set! index (+ index 1)))))
+
+(define (normalize-test-flat-walk
+  [variances : (& variances norm.OwnershipNormalizeVariances)]
+  [lender? : bool]
+  [ty : ast.AstType]
+  [inv? : bool]
+  [out : (&mut out NormalizeTestFlat)]
+  [outer : i64]) : unit
+  (let
+    [here : i64 (array-length out.names)]
+    (match ty
+      [(ast.AstType.Ref lifetime inner)
+        (normalize-test-flat-push! out lifetime inv? outer)
+        (normalize-test-flat-walk
+          variances
+          lender?
+          (ast.ty-node-get inner)
+          inv?
+          out
+          here)]
+      [(ast.AstType.MutRef lifetime inner)
+        (normalize-test-flat-push! out lifetime inv? outer)
+        (normalize-test-flat-walk
+          variances
+          lender?
+          (ast.ty-node-get inner)
+          true
+          out
+          here)]
+      [(ast.AstType.Region lifetime inner)
+        (normalize-test-flat-push! out lifetime inv? outer)
+        (normalize-test-flat-walk
+          variances
+          lender?
+          (ast.ty-node-get inner)
+          inv?
+          out
+          here)]
+      [(ast.AstType.Invalidate lifetime inner)
+        (normalize-test-flat-push! out lifetime true outer)
+        (normalize-test-flat-walk
+          variances
+          lender?
+          (ast.ty-node-get inner)
+          true
+          out
+          here)]
+      [(or (ast.AstType.EnumArgs name lifetimes)
+           (ast.AstType.StructArgs name lifetimes))
+        (normalize-test-flat-lifetimes
+          variances
+          lender?
+          name
+          (& (deref lifetimes))
+          inv?
+          out
+          outer)]
+      [(ast.AstType.VarArgs _ lifetimes)
+        (normalize-test-flat-lifetimes
+          variances
+          lender?
+          -1
+          (& (deref lifetimes))
+          true
+          out
+          outer)]
+      [(ast.AstType.Tuple elems)
+        (normalize-test-flat-list
+          variances
+          lender?
+          (& (deref elems))
+          inv?
+          out
+          outer)]
+      [(ast.AstType.Func args ret)
+        (normalize-test-flat-list
+          variances
+          lender?
+          (& (deref args))
+          true
+          out
+          -1)
+        (normalize-test-flat-walk
+          variances
+          lender?
+          (ast.ty-node-get ret)
+          true
+          out
+          -1)]
+      [(or (ast.AstType.Array elem _) (ast.AstType.DynArray elem)
+           (ast.AstType.Box elem) (ast.AstType.Slice elem))
+        (normalize-test-flat-walk
+          variances
+          lender?
+          (ast.ty-node-get elem)
+          inv?
+          out
+          outer)]
+      [_ unit])))
+
+(define (normalize-test-flat-list
+  [variances : (& variances norm.OwnershipNormalizeVariances)]
+  [lender? : bool]
+  [types : (& types ast.AstTypeList)]
+  [inv? : bool]
+  [out : (&mut out NormalizeTestFlat)]
+  [outer : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (ast.ast-type-list-len types))
+      (normalize-test-flat-walk
+        variances
+        lender?
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        inv?
+        out
+        outer)
+      (set! index (+ index 1)))))
+
+(define (normalize-test-flat
+  [variances : (& variances norm.OwnershipNormalizeVariances)]
+  [lender? : bool]
+  [id : i64]) : NormalizeTestFlat
+  (let
+    [out : NormalizeTestFlat (normalize-test-flat-new)]
+    (normalize-test-flat-walk
+      variances
+      lender?
+      (ast.ty-node-get id)
+      false
+      (&mut out)
+      -1)
+    out))
+
+;; The old position-by-position relation (`normalize-relate!` before #9584).
+(define (normalize-test-flat-relate!
+  [edges : (&mut edges norm.NormalizeRegionEdges)]
+  [nodes : (& nodes norm.NormalizeNodes)]
+  [shapes : (& shapes norm.NormalizeShapes)]
+  [from-key : i64]
+  [from : (& from NormalizeTestFlat)]
+  [from-shape : i64]
+  [from-skip : i64]
+  [to-key : i64]
+  [to : (& to NormalizeTestFlat)]
+  [to-shape : i64]
+  [to-skip : i64]
+  [both? : bool]) : unit
+  (if (!=
+    (- (array-length from.names) from-skip)
+    (- (array-length to.names) to-skip))
+    (norm.normalize-relate-all!
+      edges
+      nodes
+      shapes
+      from-key
+      from-shape
+      to-key
+      to-shape)
+    (let
+      [count : i64 (- (array-length from.names) from-skip)]
+      [index : i64 0]
+      [mismatch : bool false]
+      (while (and (not both?) (< index count))
+        (when
+          (!=
+            (array-ref from.vars (+ from-skip index))
+            (array-ref to.vars (+ to-skip index)))
+          (set! mismatch true))
+        (set! index (+ index 1)))
+      (if mismatch
+        (norm.normalize-relate-all!
+          edges
+          nodes
+          shapes
+          from-key
+          from-shape
+          to-key
+          to-shape)
+        (begin
+          (set! index 0)
+          (while (< index count)
+            (let
+              [a : i64
+                (norm.normalize-node-of
+                  nodes
+                  shapes
+                  from-key
+                  (array-ref from.names (+ from-skip index)))]
+              [b : i64
+                (norm.normalize-node-of
+                  nodes
+                  shapes
+                  to-key
+                  (array-ref to.names (+ to-skip index)))]
+              (if (or (< a 0) (< b 0))
+                (norm.normalize-relate-all!
+                  edges
+                  nodes
+                  shapes
+                  from-key
+                  from-shape
+                  to-key
+                  to-shape)
+                (begin
+                  (norm.normalize-region-edge! edges a b)
+                  (when
+                    (or both? (array-ref from.vars (+ from-skip index)))
+                    (norm.normalize-region-edge! edges b a)))))
+            (set! index (+ index 1))))))))
+
+;; The old reborrow relation (`normalize-relate-reborrow!` before #9584).
+(define (normalize-test-flat-reborrow!
+  [edges : (&mut edges norm.NormalizeRegionEdges)]
+  [nodes : (& nodes norm.NormalizeNodes)]
+  [shapes : (& shapes norm.NormalizeShapes)]
+  [from-key : i64]
+  [from-shape : i64]
+  [to-key : i64]
+  [to : (& to NormalizeTestFlat)]
+  [to-shape : i64]) : unit
+  (let
+    [index : i64 0]
+    [others : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (norm.normalize-key-nodes-into!
+      nodes
+      shapes
+      from-key
+      from-shape
+      (&mut others))
+    (while (< index (array-length to.names))
+      (let
+        [name : i64 (array-ref to.names index)]
+        [b : i64 (norm.normalize-node-of nodes shapes to-key name)]
+        [a : i64 (norm.normalize-node-of nodes shapes from-key name)]
+        (cond
+          [(< b 0)
+            (norm.normalize-relate-all!
+              edges
+              nodes
+              shapes
+              from-key
+              from-shape
+              to-key
+              to-shape)]
+          [(and (>= a 0) (= index 0))
+            (norm.normalize-region-edge-kind! edges a b true)]
+          [(>= a 0)
+            (norm.normalize-region-edge! edges a b)
+            (norm.normalize-region-edge! edges b a)]
+          [else
+            (let
+              [at : i64 0]
+              (while (< at (array-length others))
+                (norm.normalize-region-edge-kind!
+                  edges
+                  (array-ref others at)
+                  b
+                  (= index 0))
+                (unless
+                  (= index 0)
+                  (norm.normalize-region-edge! edges b (array-ref others at)))
+                (set! at (+ at 1))))]))
+      (set! index (+ index 1)))))
+
+;; The old well-formedness edges (`normalize-shape-outlives!` before #9584).
+(define (normalize-test-flat-outlives!
+  [edges : (&mut edges norm.NormalizeRegionEdges)]
+  [nodes : (& nodes norm.NormalizeNodes)]
+  [shapes : (& shapes norm.NormalizeShapes)]
+  [key : i64]
+  [flat : (& flat NormalizeTestFlat)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (array-length flat.names))
+      (let
+        [outer : i64 (array-ref flat.outers index)]
+        (when
+          (>= outer 0)
+          (norm.normalize-region-edge-kind!
+            edges
+            (norm.normalize-node-of
+              nodes
+              shapes
+              key
+              (array-ref flat.names index))
+            (norm.normalize-node-of
+              nodes
+              shapes
+              key
+              (array-ref flat.names outer))
+            true)))
+      (set! index (+ index 1)))))
+
+;; Two edge lists are the same edges in the same order.
+(define (normalize-test-edges-same?
+  [a : (& a norm.NormalizeRegionEdges)]
+  [b : (& b norm.NormalizeRegionEdges)]) : bool
+  (let
+    [index : i64 0]
+    (unless
+      (and (= a.from.len b.from.len) (= a.exhausted b.exhausted))
+      (return false))
+    (while (< index a.from.len)
+      (unless
+        (and
+          (= (array-ref a.from.items index) (array-ref b.from.items index))
+          (= (array-ref a.to.items index) (array-ref b.to.items index))
+          (=
+            (array-ref a.outlives.items index)
+            (array-ref b.outlives.items index)))
+        (return false))
+      (set! index (+ index 1)))
+    true))
+
+;; The first-occurrence distinct items of `items` from `from`.
+(define (normalize-test-distinct
+  [items : (& items (__tl_dyn-array i64))]
+  [from : i64]) : (__tl_dyn-array i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [index : i64 from]
+    (while (< index (array-length items))
+      (unless
+        (norm.normalize-i64-member? (& out) (array-ref items index))
+        (norm.normalize-push-i64! (&mut out) (array-ref items index)))
+      (set! index (+ index 1)))
+    out))
+
+;; Shape `shape`'s summaries agree with its laid-out positions `flat`.
+(define (normalize-test-summaries-agree?
+  [shapes : (& shapes norm.NormalizeShapes)]
+  [shape : i64]
+  [flat : (& flat NormalizeTestFlat)]) : bool
+  (let
+    [len : i64 (array-length flat.names)]
+    [names : (__tl_dyn-array i64) (normalize-test-distinct (& flat.names) 0)]
+    [tail : (__tl_dyn-array i64) (normalize-test-distinct (& flat.names) 1)]
+    [rows : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [index : i64 0]
+    (while (< index len)
+      (norm.normalize-push-i64!
+        (&mut rows)
+        (+
+          (* (array-ref flat.names index) 2)
+          (if (array-ref flat.vars index)
+            1
+            0)))
+      (set! index (+ index 1)))
+    (set! rows (normalize-test-distinct (& rows) 0))
+    (unless
+      (and
+        (= (array-ref shapes.lens.items shape) len)
+        (or
+          (= len 0)
+          (= (norm.normalize-shape-first shapes shape) (array-ref flat.names 0)))
+        (=
+          (norm.normalize-shape-name-count shapes shape false)
+          (array-length names))
+        (=
+          (norm.normalize-shape-name-count shapes shape true)
+          (array-length tail)))
+      (return false))
+    (set! index 0)
+    (while (< index (array-length names))
+      (unless
+        (=
+          (norm.normalize-shape-name-at shapes shape false index)
+          (array-ref names index))
+        (return false))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index (array-length tail))
+      (unless
+        (=
+          (norm.normalize-shape-name-at shapes shape true index)
+          (array-ref tail index))
+        (return false))
+      (set! index (+ index 1)))
+    (let
+      [root : i64 (norm.normalize-shape-root shapes shape)]
+      (if (< root 0)
+        (= (array-length rows) 0)
+        (and
+          (= (array-ref shapes.node-rows-count.items root) (array-length rows))
+          (let
+            [first : i64 (array-ref shapes.node-rows-first.items root)]
+            [at : i64 0]
+            [same : bool true]
+            (while (< at (array-length rows))
+              (unless
+                (=
+                  (array-ref shapes.row-pool.items (+ first at))
+                  (array-ref rows at))
+                (set! same false))
+              (set! at (+ at 1)))
+            same))))))
+
+;; Region nodes for the comparisons: keys 0 and 1 are places, key 0 with one
+;; node per name 1..5, key 1 without name 5 (an unknown node).
+(define (normalize-test-shape-nodes) : norm.NormalizeNodes
+  (let
+    [nodes : norm.NormalizeNodes
+      (norm.NormalizeNodes
+        (norm.normalize-i64s)
+        (norm.normalize-i64s)
+        (__tl_make-array i64 2)
+        (__tl_make-array i64 2)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        0
+        0
+        -1
+        (__tl_make-array bool 2))]
+    [name : i64 1]
+    (while (<= name 5)
+      (norm.normalize-node-add! (&mut nodes) 0 name)
+      (set! name (+ name 1)))
+    (set! (array-ref nodes.place-first 0) 0)
+    (set! (array-ref nodes.place-count 0) 5)
+    (set! (array-ref nodes.place-first 1) nodes.keys.len)
+    (set! name 4)
+    (while (>= name 1)
+      (norm.normalize-node-add! (&mut nodes) 1 name)
+      (set! name (- name 1)))
+    (set! (array-ref nodes.place-count 1) 4)
+    nodes))
+
+;; Nominals for the generated types: 501 has a covariant and an invariant
+;; lifetime, 502 one bivariant (in the lender lane) covariant one.
+(define (normalize-test-shape-variances [lender? : bool]) : norm.OwnershipNormalizeVariances
+  (let
+    [variances : norm.OwnershipNormalizeVariances
+      (norm.ownership-normalize-variances-empty)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [covariant : (__tl_dyn-array bool) (__tl_make-array bool 3)]
+    [bivariant : (__tl_dyn-array bool) (__tl_make-array bool 3)]
+    (set! (array-ref names 0) 501)
+    (set! (array-ref names 1) 502)
+    (set! (array-ref starts 0) 0)
+    (set! (array-ref starts 1) 2)
+    (set! (array-ref counts 0) 2)
+    (set! (array-ref counts 1) 1)
+    (set! (array-ref covariant 0) true)
+    (set! (array-ref covariant 2) true)
+    (set! (array-ref bivariant 2) true)
+    (set! variances.names names)
+    (set! variances.starts starts)
+    (set! variances.counts counts)
+    (set! variances.covariant covariant)
+    (when
+      lender?
+      (let
+        [arenas : (__tl_dyn-array norm.OwnershipNormalizeArena)
+          (__tl_make-array norm.OwnershipNormalizeArena 1)]
+        (set!
+          (array-ref arenas 0)
+          (norm.OwnershipNormalizeArena
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0)
+            bivariant))
+        (set!
+          variances.lenders
+          (norm.OwnershipNormalizeLenderInput.Gated arenas))))
+    variances))
+
+(define normalize-test-shape-seed : i64
+  12345)
+
+(define (normalize-test-shape-rand [bound : i64]) : i64
+  (set!
+    normalize-test-shape-seed
+    (% (+ (* normalize-test-shape-seed 1103515245) 12345) 2147483648))
+  (% (shr normalize-test-shape-seed 8) bound))
+
+(define (normalize-test-shape-type [ty : ast.AstType]) : i64
+  (ast.ty-node-push (& ty)))
+
+(define (normalize-test-shape-pair [a : i64] [b : i64]) : i64
+  (let
+    [list : ast.AstTypeList (ast.ast-type-list-new)]
+    (ast.ast-type-list-push (&mut list) a)
+    (ast.ast-type-list-push (&mut list) b)
+    (normalize-test-shape-type (ast.AstType.Tuple (box list)))))
+
+(define (normalize-test-shape-lifetimes [count : i64]) : (Box
+    ast.AstLifetimeList)
+  (let
+    [list : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    [index : i64 0]
+    (while (< index count)
+      (ast.ast-lifetime-list-push
+        (&mut list)
+        (+ 1 (normalize-test-shape-rand 5)))
+      (set! index (+ index 1)))
+    (box list)))
+
+;; A random type of at most `depth` type edges over lifetimes 1..5; `flip?`
+;; swaps `&` and `&mut` (the same shape with other variances). `pool` holds
+;; earlier types, reused to make shared DAGs.
+(define (normalize-test-shape-random
+  [depth : i64]
+  [flip? : bool]
+  [pool : (&mut pool (__tl_dyn-array i64))]) : i64
+  (let
+    [pick : i64 (normalize-test-shape-rand 12)]
+    [name : i64 (+ 1 (normalize-test-shape-rand 5))]
+    [id : i64
+      (cond
+        [(and (> (array-length pool) 0) (= pick 0))
+          (array-ref pool (normalize-test-shape-rand (array-length pool)))]
+        [(or (<= depth 0) (= pick 1))
+          (if (= (normalize-test-shape-rand 2) 0)
+            (normalize-test-shape-type ast.AstType.I64)
+            (normalize-test-shape-type
+              (ast.AstType.StructArgs
+                (+ 501 (normalize-test-shape-rand 2))
+                (normalize-test-shape-lifetimes
+                  (+ 1 (normalize-test-shape-rand 2))))))]
+        [(= pick 2)
+          (let
+            [inner : i64 (normalize-test-shape-random (- depth 1) flip? pool)]
+            (normalize-test-shape-type
+              (if flip?
+                (ast.AstType.MutRef name inner)
+                (ast.AstType.Ref name inner))))]
+        [(= pick 3)
+          (let
+            [inner : i64 (normalize-test-shape-random (- depth 1) flip? pool)]
+            (normalize-test-shape-type
+              (if flip?
+                (ast.AstType.Ref name inner)
+                (ast.AstType.MutRef name inner))))]
+        [(= pick 4)
+          (normalize-test-shape-type
+            (ast.AstType.Region
+              name
+              (normalize-test-shape-random (- depth 1) flip? pool)))]
+        [(= pick 5)
+          (normalize-test-shape-type
+            (ast.AstType.Invalidate
+              name
+              (normalize-test-shape-random (- depth 1) flip? pool)))]
+        [(= pick 6)
+          (normalize-test-shape-type
+            (ast.AstType.VarArgs 0 (normalize-test-shape-lifetimes 2)))]
+        [(= pick 7)
+          (let
+            [args : ast.AstTypeList (ast.ast-type-list-new)]
+            (ast.ast-type-list-push
+              (&mut args)
+              (normalize-test-shape-random (- depth 1) flip? pool))
+            (normalize-test-shape-type
+              (ast.AstType.Func
+                (box args)
+                (normalize-test-shape-random (- depth 1) flip? pool))))]
+        [(= pick 8)
+          (normalize-test-shape-type
+            (ast.AstType.DynArray
+              (normalize-test-shape-random (- depth 1) flip? pool)))]
+        [else
+          (let
+            [a : i64 (normalize-test-shape-random (- depth 1) flip? pool)]
+            (normalize-test-shape-pair a a))])]
+    (norm.normalize-push-i64! pool id)
+    id))
+
+;; One comparison of the DAG relations of `from` and `to` (shapes `fs`, `ts`)
+;; with the old position-by-position ones.
+(define (normalize-test-shape-relations-agree?
+  [shapes : (& shapes norm.NormalizeShapes)]
+  [nodes : (& nodes norm.NormalizeNodes)]
+  [fs : i64]
+  [from : (& from NormalizeTestFlat)]
+  [ts : i64]
+  [to : (& to NormalizeTestFlat)]) : bool
+  (let
+    [ok : bool true]
+    [mode : i64 0]
+    (while (< mode 4)
+      (let
+        [both? : bool (>= mode 2)]
+        [to-skip : i64 (% mode 2)]
+        [old : norm.NormalizeRegionEdges
+          (norm.normalize-region-edges-empty 1000000)]
+        [new : norm.NormalizeRegionEdges
+          (norm.normalize-region-edges-empty 1000000)]
+        (when
+          (or (= to-skip 0) (> (array-length to.names) 0))
+          (normalize-test-flat-relate!
+            (&mut old)
+            nodes
+            shapes
+            0
+            from
+            fs
+            0
+            1
+            to
+            ts
+            to-skip
+            both?)
+          (norm.normalize-relate!
+            (&mut new)
+            nodes
+            shapes
+            0
+            fs
+            0
+            1
+            ts
+            to-skip
+            both?)
+          (unless (normalize-test-edges-same? (& old) (& new)) (set! ok false))))
+      (set! mode (+ mode 1)))
+    (let
+      [old : norm.NormalizeRegionEdges
+        (norm.normalize-region-edges-empty 1000000)]
+      [new : norm.NormalizeRegionEdges
+        (norm.normalize-region-edges-empty 1000000)]
+      (normalize-test-flat-reborrow! (&mut old) nodes shapes 0 fs 1 to ts)
+      (norm.normalize-relate-reborrow! (&mut new) nodes shapes 0 fs 1 ts)
+      (unless (normalize-test-edges-same? (& old) (& new)) (set! ok false)))
+    (let
+      [old : norm.NormalizeRegionEdges
+        (norm.normalize-region-edges-empty 1000000)]
+      [new : norm.NormalizeRegionEdges
+        (norm.normalize-region-edges-empty 1000000)]
+      (normalize-test-flat-outlives! (&mut old) nodes shapes 0 from)
+      (norm.normalize-shape-outlives! (&mut new) nodes shapes 0 fs)
+      (unless (normalize-test-edges-same? (& old) (& new)) (set! ok false)))
+    ok))
+
+;; Random types in both lanes: summaries, zips (aligned, renamed, regrouped,
+;; variance-flipped and unaligned), reborrows and outlives edges all match
+;; the laid-out walk.
+(define (normalize-test-shape-differential?) : bool
+  (let
+    [ok : bool true]
+    [trial : i64 0]
+    (set! normalize-test-shape-seed 12345)
+    (while (and ok (< trial 600))
+      (let
+        [lender? : bool (= (% trial 2) 1)]
+        [variances : norm.OwnershipNormalizeVariances
+          (normalize-test-shape-variances lender?)]
+        [shapes : norm.NormalizeShapes
+          (norm.normalize-shapes-new 2 0 lender? 1000000 33554432)]
+        [nodes : norm.NormalizeNodes (normalize-test-shape-nodes)]
+        [pool : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [seed : i64 normalize-test-shape-seed]
+        [a : i64 (normalize-test-shape-random 5 false (&mut pool))]
+        [after : i64 normalize-test-shape-seed]
+        ;; The same draws flipped: equal length, other variances.
+        [_flip : unit (set! normalize-test-shape-seed seed)]
+        [scratch : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [flipped : i64 (normalize-test-shape-random 5 true (&mut scratch))]
+        [_resume : unit (set! normalize-test-shape-seed after)]
+        [b : i64 (normalize-test-shape-random 5 false (&mut pool))]
+        [c : i64 (normalize-test-shape-random 3 false (&mut pool))]
+        ;; Regrouped: ((a b) c) against (a (b c)).
+        [left : i64
+          (normalize-test-shape-pair (normalize-test-shape-pair a b) c)]
+        [right : i64
+          (normalize-test-shape-pair a (normalize-test-shape-pair b c))]
+        [ids : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+        [shape-ids : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+        [flats : (__tl_dyn-array NormalizeTestFlat)
+          (__tl_make-array NormalizeTestFlat 6)]
+        [index : i64 0]
+        (set! (array-ref ids 0) a)
+        (set! (array-ref ids 1) flipped)
+        (set! (array-ref ids 2) b)
+        (set! (array-ref ids 3) left)
+        (set! (array-ref ids 4) right)
+        (set! (array-ref ids 5) c)
+        (while (< index 6)
+          (match (norm.normalize-shape-add!
+            (&mut shapes)
+            (& variances)
+            (ast.ty-node-get (array-ref ids index)))
+            [(norm.NormalizeInt.Ok id) (set! (array-ref shape-ids index) id)]
+            [(norm.NormalizeInt.Err _) (set! ok false)])
+          (set!
+            (array-ref flats index)
+            (normalize-test-flat (& variances) lender? (array-ref ids index)))
+          (when
+            ok
+            (unless
+              (normalize-test-summaries-agree?
+                (& shapes)
+                (array-ref shape-ids index)
+                (& (array-ref flats index)))
+              (set! ok false)))
+          (set! index (+ index 1)))
+        (set! index 0)
+        (while (and ok (< index 36))
+          (let
+            [i : i64 (/ index 6)]
+            [j : i64 (% index 6)]
+            (unless
+              (normalize-test-shape-relations-agree?
+                (& shapes)
+                (& nodes)
+                (array-ref shape-ids i)
+                (& (array-ref flats i))
+                (array-ref shape-ids j)
+                (& (array-ref flats j)))
+              (set! ok false)))
+          (set! index (+ index 1))))
+      (set! trial (+ trial 1)))
+    ok))
+
+;; A balanced tuple tree of 2^`depth` copies of `leaf`.
+(define (normalize-test-shape-balanced [leaf : i64] [depth : i64]) : i64
+  (if (= depth 0)
+    leaf
+    (let
+      [half : i64 (normalize-test-shape-balanced leaf (- depth 1))]
+      (normalize-test-shape-pair half half))))
+
+;; `count` copies of `leaf` as balanced blocks, largest first (or last).
+(define (normalize-test-shape-blocks
+  [leaf : i64]
+  [count : i64]
+  [largest-first? : bool]) : i64
+  (let
+    [result : i64 -1]
+    [bit : i64 0]
+    (while (< bit 20)
+      (let
+        [at : i64
+          (if largest-first?
+            bit
+            (- 19 bit))]
+        (when
+          (> (bit-and count (shl 1 at)) 0)
+          (let
+            [block : i64 (normalize-test-shape-balanced leaf at)]
+            (set!
+              result
+              (cond
+                [(< result 0) block]
+                [largest-first? (normalize-test-shape-pair block result)]
+                [else (normalize-test-shape-pair result block)])))))
+      (set! bit (+ bit 1)))
+    result))
+
+;; Unaligned equal-length DAGs of 4095, 4096 and 4097 positions relate as the
+;; laid-out walk does, within budget (the zip is charged, not cut off).
+(define (normalize-test-shape-unaligned?) : bool
+  (let
+    [ok : bool true]
+    [variances : norm.OwnershipNormalizeVariances
+      (normalize-test-shape-variances false)]
+    [nodes : norm.NormalizeNodes (normalize-test-shape-nodes)]
+    [leaf-a : i64
+      (normalize-test-shape-type
+        (ast.AstType.Ref 1 (normalize-test-shape-type ast.AstType.I64)))]
+    [leaf-b : i64
+      (normalize-test-shape-type
+        (ast.AstType.MutRef 2 (normalize-test-shape-type ast.AstType.I64)))]
+    [count : i64 4095]
+    (while (<= count 4097)
+      (let
+        [shapes : norm.NormalizeShapes
+          (norm.normalize-shapes-new 2 0 false 1048576 33554432)]
+        [mixed : i64 (normalize-test-shape-pair leaf-a leaf-b)]
+        [from : i64 (normalize-test-shape-blocks mixed count true)]
+        [to : i64 (normalize-test-shape-blocks mixed count false)]
+        [fs : i64
+          (match (norm.normalize-shape-add!
+            (&mut shapes)
+            (& variances)
+            (ast.ty-node-get from))
+            [(norm.NormalizeInt.Ok id) id]
+            [(norm.NormalizeInt.Err _) -1])]
+        [ts : i64
+          (match (norm.normalize-shape-add!
+            (&mut shapes)
+            (& variances)
+            (ast.ty-node-get to))
+            [(norm.NormalizeInt.Ok id) id]
+            [(norm.NormalizeInt.Err _) -1])]
+        (if (or (< fs 0) (< ts 0))
+          (set! ok false)
+          (let
+            [from-flat : NormalizeTestFlat
+              (normalize-test-flat (& variances) false from)]
+            [to-flat : NormalizeTestFlat
+              (normalize-test-flat (& variances) false to)]
+            (unless
+              (and
+                (= (array-ref shapes.lens.items fs) (* 2 count))
+                (normalize-test-shape-relations-agree?
+                  (& shapes)
+                  (& nodes)
+                  fs
+                  (& from-flat)
+                  ts
+                  (& to-flat)))
+              (set! ok false)))))
+      (set! count (+ count 1)))
+    ok))
+
+;; Records and work used adding `id` to fresh shapes with ample budget.
+(define (normalize-test-shape-cost [lender? : bool] [id : i64]) : (Tuple
+    i64
+    i64)
+  (let
+    [variances : norm.OwnershipNormalizeVariances
+      (normalize-test-shape-variances lender?)]
+    [shapes : norm.NormalizeShapes
+      (norm.normalize-shapes-new 0 0 lender? 1048576 33554432)]
+    (norm.normalize-shape-add! (&mut shapes) (& variances) (ast.ty-node-get id))
+    (tuple shapes.records-used shapes.work-used)))
+
+;; Whether adding `id` with exactly `records` and `work` succeeds (1); a
+;; failure must be a Resource that records no shape and spends no more than
+;; the budget (0), anything else is -1.
+(define (normalize-test-shape-fits?
+  [lender? : bool]
+  [id : i64]
+  [records : i64]
+  [work : i64]) : i64
+  (let
+    [variances : norm.OwnershipNormalizeVariances
+      (normalize-test-shape-variances lender?)]
+    [shapes : norm.NormalizeShapes
+      (norm.normalize-shapes-new 0 0 lender? records work)]
+    (match (norm.normalize-shape-add!
+      (&mut shapes)
+      (& variances)
+      (ast.ty-node-get id))
+      [(norm.NormalizeInt.Ok _) 1]
+      [(norm.NormalizeInt.Err (norm.OwnershipNormalizeFailure.Resource))
+        (if (and
+          (= shapes.roots.len 0)
+          (<= shapes.records-used records)
+          (<= shapes.work-used work))
+          0
+          -1)]
+      [(norm.NormalizeInt.Err _) -1])))
+
+;; The budget: the exact records and work a shape needs succeed and one less
+;; of either fails closed, in both lanes; sharing is charged once; positions
+;; past 2^63 overflow closed; the depth bound counts reused nodes as a fresh
+;; walk would.
+(define (normalize-test-shape-budget-code) : i64
+  (let
+    [code : i64 0]
+    [leaf : i64
+      (normalize-test-shape-type
+        (ast.AstType.StructArgs 501 (normalize-test-shape-lifetimes 2)))]
+    [deep : i64 (normalize-test-shape-balanced leaf 40)]
+    [lane : i64 0]
+    (while (< lane 2)
+      (let
+        [lender? : bool (= lane 1)]
+        [cost : (Tuple i64 i64) (normalize-test-shape-cost lender? deep)]
+        [records : i64 (tuple-ref cost 0)]
+        [work : i64 (tuple-ref cost 1)]
+        (unless
+          (and
+            (> records 0)
+            (< records 5000)
+            (< work 5000)
+            (= (normalize-test-shape-fits? lender? deep records work) 1)
+            (= (normalize-test-shape-fits? lender? deep (- records 1) work) 0)
+            (= (normalize-test-shape-fits? lender? deep records (- work 1)) 0))
+          (when (= code 0) (set! code 1))))
+      (set! lane (+ lane 1)))
+    ;; 2^62 positions fit; 2^63 overflow.
+    (let
+      [variances : norm.OwnershipNormalizeVariances
+        (normalize-test-shape-variances false)]
+      [shapes : norm.NormalizeShapes
+        (norm.normalize-shapes-new 0 0 false 1048576 33554432)]
+      [one : i64
+        (normalize-test-shape-type
+          (ast.AstType.Ref 1 (normalize-test-shape-type ast.AstType.I64)))]
+      ;; A reference has 1 position: 2^62 references, then 2^63.
+      (match (norm.normalize-shape-add!
+        (&mut shapes)
+        (& variances)
+        (ast.ty-node-get (normalize-test-shape-balanced one 62)))
+        [(norm.NormalizeInt.Ok id)
+          (unless
+            (= (array-ref shapes.lens.items id) 4611686018427387904)
+            (when (= code 0) (set! code 2)))]
+        [_ (when (= code 0) (set! code 3))])
+      (match (norm.normalize-shape-add!
+        (&mut shapes)
+        (& variances)
+        (ast.ty-node-get (normalize-test-shape-balanced one 63)))
+        [(norm.NormalizeInt.Err (norm.OwnershipNormalizeFailure.Resource)) unit]
+        [_ (when (= code 0) (set! code 4))]))
+    ;; A chain of 200 type edges, reused 56 and 57 edges deeper: the walk
+    ;; would reach 256 and 257.
+    (let
+      [variances : norm.OwnershipNormalizeVariances
+        (normalize-test-shape-variances false)]
+      [shapes : norm.NormalizeShapes
+        (norm.normalize-shapes-new 0 0 false 1048576 33554432)]
+      [unit-type : i64 (normalize-test-shape-type ast.AstType.I64)]
+      [chain : i64 leaf]
+      [index : i64 0]
+      (while (< index 200)
+        (set! chain (normalize-test-shape-pair chain unit-type))
+        (set! index (+ index 1)))
+      (match (norm.normalize-shape-add!
+        (&mut shapes)
+        (& variances)
+        (ast.ty-node-get chain))
+        [(norm.NormalizeInt.Ok _) unit]
+        [_ (when (= code 0) (set! code 5))])
+      (let
+        [outer : i64 chain]
+        [depth : i64 0]
+        (while (< depth 57)
+          (set! outer (normalize-test-shape-pair outer unit-type))
+          (set! depth (+ depth 1))
+          (let
+            [added : norm.NormalizeInt
+              (norm.normalize-shape-add!
+                (&mut shapes)
+                (& variances)
+                (ast.ty-node-get outer))]
+            (match added
+              [(norm.NormalizeInt.Ok _)
+                (when (= depth 57) (when (= code 0) (set! code 6)))]
+              [(norm.NormalizeInt.Err (norm.OwnershipNormalizeFailure.Resource))
+                (when (< depth 57) (when (= code 0) (set! code 7)))]
+              [_ (when (= code 0) (set! code 8))])))))
+    code))
+
+;; Duplicate region edges are kept once, by (from, to, outlives?): the same
+;; pair as an outlives edge is a different edge; past the limit the graph is
+;; exhausted.
+(define (normalize-test-shape-edge-dedup?) : bool
+  (let
+    [edges : norm.NormalizeRegionEdges (norm.normalize-region-edges-empty 6)]
+    (norm.normalize-region-edge! (&mut edges) 1 2)
+    (norm.normalize-region-edge! (&mut edges) 1 2)
+    (norm.normalize-region-edge-kind! (&mut edges) 1 2 true)
+    (norm.normalize-region-edge! (&mut edges) 2 1)
+    (and
+      (= edges.from.len 3)
+      (= edges.work 1)
+      (not edges.exhausted)
+      (begin
+        (norm.normalize-region-edge! (&mut edges) 3 4)
+        (norm.normalize-region-edge! (&mut edges) 3 5)
+        (norm.normalize-region-edge! (&mut edges) 3 6)
+        edges.exhausted))))
+
 (define (compiler-ownership-normalize-self-test) : i64
+  (test.assert-true
+    (normalize-test-shape-differential?)
+    "compact shapes: summaries, zips, reborrows and outlives edges match the laid-out walk in both lanes")
+  (test.assert-true
+    (normalize-test-shape-unaligned?)
+    "compact shapes: unaligned equal-length DAGs of 4095/4096/4097 relate as the laid-out walk within budget")
+  (test.assert-true
+    (= (normalize-test-shape-budget-code) 0)
+    "compact shapes: exact budget fits, one less fails closed, overflow and the reused-node depth bound fail closed")
+  (test.assert-true
+    (normalize-test-shape-edge-dedup?)
+    "region edges are distinct by (from, to, outlives?) and exhaust at the limit")
   (test.assert-true
     (normalize-test-reaching?)
     "normalizer sparse reaching definitions match the fixpoint with linear visits")

@@ -10571,6 +10571,52 @@
   [shapes : (& shapes NormalizeShapes)]) : NormalizeUnit
   (normalize-charge! state shapes.records-used shapes.work-used 0))
 
+;; Empty shapes for `place-count` places and `cache-size` typed records, with
+;; `records` and `work` of budget.
+(define (normalize-shapes-new
+  [place-count : i64]
+  [cache-size : i64]
+  [lender? : bool]
+  [records : i64]
+  [work : i64]) : NormalizeShapes
+  (NormalizeShapes
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-bools)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize_transfer_map.new)
+    (ast.ty-node-pool-generation-value)
+    (normalize-i64s)
+    (normalize-i64s)
+    (normalize-bools)
+    (normalize-bools)
+    (__tl_make-array i64 place-count)
+    (normalize-i64s)
+    (normalize-i64s)
+    -1
+    (normalize-no-i64s)
+    (__tl_make-array i64 cache-size)
+    (__tl_make-array i64 cache-size)
+    -1
+    lender?
+    records
+    work
+    0
+    0))
+
 ;; Shapes for every place, call and the return type, and the universal names
 ;; (every lifetime a parameter's or the return type names).
 (define (normalize-compute-shapes!
@@ -10581,43 +10627,12 @@
   [lender? : bool]) : NormalizeShapesResult
   (let
     [shapes : NormalizeShapes
-      (NormalizeShapes
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-bools)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize_transfer_map.new)
-        (ast.ty-node-pool-generation-value)
-        (normalize-i64s)
-        (normalize-i64s)
-        (normalize-bools)
-        (normalize-bools)
-        (__tl_make-array i64 state.place-count)
-        (normalize-i64s)
-        (normalize-i64s)
-        -1
-        (normalize-no-i64s)
-        (__tl_make-array i64 (normalize-shape-cache-size state))
-        (__tl_make-array i64 (normalize-shape-cache-size state))
-        -1
+      (normalize-shapes-new
+        state.place-count
+        (normalize-shape-cache-size state)
         lender?
         (- state.limits.records state.records)
-        (- state.limits.work state.work)
-        0
-        0)]
+        (- state.limits.work state.work))]
     [place : i64 0]
     [index : i64 0]
     (when
@@ -10935,6 +10950,17 @@
   ;; edges took, which counts against `limit` with the edges (#9584).
   (seen normalize_transfer_map.Map)
   (work i64))
+
+;; No edges yet, with `limit` work left.
+(define (normalize-region-edges-empty [limit : i64]) : NormalizeRegionEdges
+  (NormalizeRegionEdges
+    (normalize-i64s)
+    (normalize-i64s)
+    limit
+    false
+    (normalize-bools)
+    (normalize_transfer_map.new)
+    0))
 
 (define (normalize-region-edge!
   [edges : (&mut edges NormalizeRegionEdges)]
@@ -11540,14 +11566,7 @@
   [nodes : (& nodes NormalizeNodes)]) : NormalizeRegionEdges
   (let
     [edges : NormalizeRegionEdges
-      (NormalizeRegionEdges
-        (normalize-i64s)
-        (normalize-i64s)
-        (- state.limits.work state.work)
-        false
-        (normalize-bools)
-        (normalize_transfer_map.new)
-        0)]
+      (normalize-region-edges-empty (- state.limits.work state.work))]
     [index : i64 0]
     (while (< index state.flow-count)
       (when

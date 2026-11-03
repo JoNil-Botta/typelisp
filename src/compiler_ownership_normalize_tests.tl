@@ -1922,9 +1922,9 @@
         [both? : bool (>= mode 2)]
         [to-skip : i64 (% mode 2)]
         [old : norm.NormalizeRegionEdges
-          (norm.normalize-region-edges-empty 1000000)]
+          (norm.normalize-region-edges-empty 1000000 1000000)]
         [new : norm.NormalizeRegionEdges
-          (norm.normalize-region-edges-empty 1000000)]
+          (norm.normalize-region-edges-empty 1000000 1000000)]
         (when
           (or (= to-skip 0) (> (array-length to.names) 0))
           (normalize-test-flat-relate!
@@ -1955,17 +1955,17 @@
       (set! mode (+ mode 1)))
     (let
       [old : norm.NormalizeRegionEdges
-        (norm.normalize-region-edges-empty 1000000)]
+        (norm.normalize-region-edges-empty 1000000 1000000)]
       [new : norm.NormalizeRegionEdges
-        (norm.normalize-region-edges-empty 1000000)]
+        (norm.normalize-region-edges-empty 1000000 1000000)]
       (normalize-test-flat-reborrow! (&mut old) nodes shapes 0 fs 1 to ts)
       (norm.normalize-relate-reborrow! (&mut new) nodes shapes 0 fs 1 ts)
       (unless (normalize-test-edges-same? (& old) (& new)) (set! ok false)))
     (let
       [old : norm.NormalizeRegionEdges
-        (norm.normalize-region-edges-empty 1000000)]
+        (norm.normalize-region-edges-empty 1000000 1000000)]
       [new : norm.NormalizeRegionEdges
-        (norm.normalize-region-edges-empty 1000000)]
+        (norm.normalize-region-edges-empty 1000000 1000000)]
       (normalize-test-flat-outlives! (&mut old) nodes shapes 0 from)
       (norm.normalize-shape-outlives! (&mut new) nodes shapes 0 fs)
       (unless (normalize-test-edges-same? (& old) (& new)) (set! ok false)))
@@ -2087,7 +2087,10 @@
     result))
 
 ;; Unaligned equal-length DAGs of 4095, 4096 and 4097 positions relate as the
-;; laid-out walk does, within budget (the zip is charged, not cut off).
+;; laid-out walk does, within budget: balanced blocks against the same count
+;; behind one leading leaf, so no aligned node pair meets until the leaves,
+;; and the zip descends (charged, not cut off) rather than taking the
+;; same-node shortcut.
 (define (normalize-test-shape-unaligned?) : bool
   (let
     [ok : bool true]
@@ -2105,9 +2108,11 @@
       (let
         [shapes : norm.NormalizeShapes
           (norm.normalize-shapes-new 2 0 false 1048576 33554432)]
-        [mixed : i64 (normalize-test-shape-pair leaf-a leaf-b)]
-        [from : i64 (normalize-test-shape-blocks mixed count true)]
-        [to : i64 (normalize-test-shape-blocks mixed count false)]
+        [from : i64 (normalize-test-shape-blocks leaf-a count true)]
+        [to : i64
+          (normalize-test-shape-pair
+            leaf-b
+            (normalize-test-shape-blocks leaf-a (- count 1) true))]
         [fs : i64
           (match (norm.normalize-shape-add!
             (&mut shapes)
@@ -2129,9 +2134,29 @@
               (normalize-test-flat (& variances) false from)]
             [to-flat : NormalizeTestFlat
               (normalize-test-flat (& variances) false to)]
+            [probe : norm.NormalizeRegionEdges
+              (norm.normalize-region-edges-empty 33554432 1048576)]
+            (norm.normalize-relate!
+              (&mut probe)
+              (& nodes)
+              (& shapes)
+              0
+              fs
+              0
+              1
+              ts
+              0
+              true)
             (unless
               (and
-                (= (array-ref shapes.lens.items fs) (* 2 count))
+                (= (array-ref shapes.lens.items fs) count)
+                (= (array-ref shapes.lens.items ts) count)
+                (!=
+                  (norm.normalize-shape-root (& shapes) fs)
+                  (norm.normalize-shape-root (& shapes) ts))
+                (not probe.exhausted)
+                ;; The descent visited the positions, not one shortcut.
+                (> probe.work count)
                 (normalize-test-shape-relations-agree?
                   (& shapes)
                   (& nodes)
@@ -2203,8 +2228,8 @@
         (unless
           (and
             (> records 0)
-            (< records 5000)
-            (< work 5000)
+            (< records 50000)
+            (< work 50000)
             (= (normalize-test-shape-fits? lender? deep records work) 1)
             (= (normalize-test-shape-fits? lender? deep (- records 1) work) 0)
             (= (normalize-test-shape-fits? lender? deep records (- work 1)) 0))
@@ -2279,20 +2304,22 @@
 ;; exhausted.
 (define (normalize-test-shape-edge-dedup?) : bool
   (let
-    [edges : norm.NormalizeRegionEdges (norm.normalize-region-edges-empty 6)]
+    [edges : norm.NormalizeRegionEdges
+      (norm.normalize-region-edges-empty 1000 1000)]
+    [tight : norm.NormalizeRegionEdges
+      (norm.normalize-region-edges-empty 3 1000)]
     (norm.normalize-region-edge! (&mut edges) 1 2)
     (norm.normalize-region-edge! (&mut edges) 1 2)
     (norm.normalize-region-edge-kind! (&mut edges) 1 2 true)
     (norm.normalize-region-edge! (&mut edges) 2 1)
+    ;; A first edge's backing (three columns of 8 cells) exceeds 3 work.
+    (norm.normalize-region-edge! (&mut tight) 1 2)
     (and
       (= edges.from.len 3)
-      (= edges.work 1)
       (not edges.exhausted)
-      (begin
-        (norm.normalize-region-edge! (&mut edges) 3 4)
-        (norm.normalize-region-edge! (&mut edges) 3 5)
-        (norm.normalize-region-edge! (&mut edges) 3 6)
-        edges.exhausted))))
+      (> edges.records 24)
+      (= tight.from.len 0)
+      tight.exhausted)))
 
 (define (compiler-ownership-normalize-self-test) : i64
   (test.assert-true

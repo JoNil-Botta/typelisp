@@ -9880,9 +9880,10 @@
 (define normalize-outer-head : i64
   2)
 
-;; Charge `records` retained cells and `work` steps to the shapes' budget.
-;; Each cell a column gains is charged 3 records: geometric growth keeps at
-;; most as many spare and superseded cells (in the bump arena) as live ones.
+;; Charge `records` retained cells and `work` steps to the shapes' budget,
+;; before the allocation or traversal they pay for. Records count every
+;; backing cell allocated, including a column's spare cells and the buffers
+;; it outgrew (the bump arena keeps them).
 (define (normalize-shape-charge!
   [shapes : (&mut shapes NormalizeShapes)]
   [records : i64]
@@ -9898,12 +9899,144 @@
       (NormalizeUnit.Ok unit))
     (normalize-unit-resource)))
 
-(define (normalize-shape-cells!
+;; The backing cells `count` pushes allocate on a column of `len` cells and
+;; capacity `cap` (`normalize-reserve-i64!`: a full column grows to twice its
+;; length plus 8), or -1 past any budget.
+(define (normalize-pushes-cells [len : i64] [cap : i64] [count : i64]) : i64
+  (let
+    [cells : i64 0]
+    [at : i64 len]
+    [room : i64 cap]
+    [left : i64 count]
+    (while (> left 0)
+      (when
+        (>= at room)
+        (set! room (+ 8 (* 2 at)))
+        (set! cells (+ cells room))
+        (when (> cells 4611686018427387904) (return -1)))
+      (let
+        [step : i64
+          (if (< left (- room at))
+            left
+            (- room at))]
+        (set! at (+ at step))
+        (set! left (- left step))))
+    cells))
+
+;; Charge `count` pushes on a column of `len` cells and capacity `cap`: the
+;; cells it allocates, and the steps that fill and copy them.
+(define (normalize-shape-column!
   [shapes : (&mut shapes NormalizeShapes)]
-  [cells : i64]) : NormalizeUnit
-  (if (> cells 3074457345618258602)
-    (normalize-unit-resource)
-    (normalize-shape-charge! shapes (* 3 cells) cells)))
+  [len : i64]
+  [cap : i64]
+  [count : i64]) : NormalizeUnit
+  (let
+    [cells : i64 (normalize-pushes-cells len cap count)]
+    (if (< cells 0)
+      (normalize-unit-resource)
+      (normalize-shape-charge! shapes cells (+ count cells)))))
+
+;; The cells a hashmap insert allocates when it grows (three per slot, at
+;; twice the capacity) and the rehash steps; 0 when it has room.
+(define (normalize-map-grow-cells [map : (& map normalize_transfer_map.Map)]) : i64
+  (if (>= (normalize_transfer_map.len map) map.growth-limit)
+    (* 6 (normalize_transfer_map.capacity map))
+    0))
+
+;; A new hashmap's backing: four slots.
+(define normalize-map-new-cells : i64
+  12)
+
+;; Room in the name or row pool for one more item.
+(define (normalize-shape-pool-room!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [rows? : bool]) : NormalizeUnit
+  (let
+    [len : i64
+      (if rows?
+        shapes.row-pool.len
+        shapes.name-pool.len)]
+    [cap : i64
+      (if rows?
+        (array-length shapes.row-pool.items)
+        (array-length shapes.name-pool.items))]
+    (normalize-shape-column! shapes len cap 1)))
+
+;; Room for one more node (its eleven columns) and its `count` segments (four
+;; columns).
+(define (normalize-shape-node-room!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [count : i64]) : NormalizeUnit
+  (let
+    [nodes : i64 shapes.node-len.len]
+    [node-cells : i64
+      (+
+        (normalize-pushes-cells nodes (array-length shapes.node-len.items) 1)
+        (normalize-pushes-cells nodes (array-length shapes.node-height.items) 1)
+        (normalize-pushes-cells nodes (array-length shapes.node-first.items) 1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-seg-first.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-seg-count.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-names-first.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-names-count.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-tail-first.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-tail-count.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-rows-first.items)
+          1)
+        (normalize-pushes-cells
+          nodes
+          (array-length shapes.node-rows-count.items)
+          1))]
+    [segs : i64 shapes.seg-child.len]
+    [seg-cells : i64
+      (+
+        (normalize-pushes-cells
+          segs
+          (array-length shapes.seg-child.items)
+          count)
+        (normalize-pushes-cells segs (array-length shapes.seg-name.items) count)
+        (normalize-pushes-cells segs (array-length shapes.seg-inv.items) count)
+        (normalize-pushes-cells
+          segs
+          (array-length shapes.seg-outer.items)
+          count))]
+    (if (or (< node-cells 0) (< seg-cells 0))
+      (normalize-unit-resource)
+      (normalize-shape-charge!
+        shapes
+        (+ node-cells seg-cells)
+        (+ 11 (* 4 count) node-cells seg-cells)))))
+
+;; Room for one more shape record (its four columns).
+(define (normalize-shape-record-room! [shapes : (&mut shapes NormalizeShapes)]) : NormalizeUnit
+  (let
+    [count : i64 shapes.roots.len]
+    [cells : i64
+      (+
+        (normalize-pushes-cells count (array-length shapes.roots.items) 1)
+        (normalize-pushes-cells count (array-length shapes.lens.items) 1)
+        (normalize-pushes-cells count (array-length shapes.views.items) 1)
+        (normalize-pushes-cells count (array-length shapes.references.items) 1))]
+    (normalize-shape-charge! shapes cells (+ 4 cells))))
 
 ;; `a + b` for counts, or -1 when it overflows.
 (define (normalize-count-add [a : i64] [b : i64]) : i64
@@ -9954,7 +10087,7 @@
           item)
         (return (NormalizeUnit.Ok unit)))
       (set! index (+ index 1)))
-    (try (normalize-shape-cells! shapes 1))
+    (try (normalize-shape-pool-room! shapes rows?))
     (if rows?
       (normalize-i64s-push! (&mut shapes.row-pool) item)
       (normalize-i64s-push! (&mut shapes.name-pool) item))
@@ -9968,15 +10101,26 @@
   (outer NormalizeI64s))
 
 (define (normalize-shape-seg!
+  [shapes : (&mut shapes NormalizeShapes)]
   [segs : (&mut segs NormalizeShapeSegs)]
   [child : i64]
   [name : i64]
   [inv? : bool]
-  [outer : i64]) : unit
-  (normalize-i64s-push! (&mut segs.child) child)
-  (normalize-i64s-push! (&mut segs.name) name)
-  (normalize-bools-push! (&mut segs.inv) inv?)
-  (normalize-i64s-push! (&mut segs.outer) outer))
+  [outer : i64]) : NormalizeUnit
+  (let
+    [count : i64 segs.child.len]
+    [cells : i64
+      (+
+        (normalize-pushes-cells count (array-length segs.child.items) 1)
+        (normalize-pushes-cells count (array-length segs.name.items) 1)
+        (normalize-pushes-cells count (array-length segs.inv.items) 1)
+        (normalize-pushes-cells count (array-length segs.outer.items) 1))]
+    (try (normalize-shape-charge! shapes cells (+ 4 cells)))
+    (normalize-i64s-push! (&mut segs.child) child)
+    (normalize-i64s-push! (&mut segs.name) name)
+    (normalize-bools-push! (&mut segs.inv) inv?)
+    (normalize-i64s-push! (&mut segs.outer) outer)
+    (NormalizeUnit.Ok unit)))
 
 ;; The node of type node `id` under inherited invariance `inv?`, at type-edge
 ;; depth `depth`: interned, so a type spelled again is one node. A reused
@@ -9996,6 +10140,7 @@
   (try (normalize-shape-charge! shapes 0 1))
   (when
     (!= shapes.generation (ast.ty-node-pool-generation-value))
+    (try (normalize-shape-charge! shapes normalize-map-new-cells 1))
     (set! shapes.interned (normalize_transfer_map.new))
     (set! shapes.generation (ast.ty-node-pool-generation-value)))
   (let
@@ -10021,7 +10166,9 @@
               (ast.ty-node-get id)
               inv?
               depth))]
-        (try (normalize-shape-cells! shapes 2))
+        (let
+          [grow : i64 (normalize-map-grow-cells (& shapes.interned))]
+          (try (normalize-shape-charge! shapes grow (+ 1 (/ grow 3)))))
         (normalize_transfer_map.insert-ref!
           (&mut shapes.interned)
           key
@@ -10032,13 +10179,14 @@
 ;; covariant (`name` -1 declares none) and in a covariant context. The lender
 ;; lane gives a bivariant one no position.
 (define (normalize-shape-lifetimes
+  [shapes : (&mut shapes NormalizeShapes)]
   [variances : (& variances OwnershipNormalizeVariances)]
-  [lender? : bool]
   [name : i64]
   [lifetimes : ast.AstLifetimeList]
   [inv? : bool]
-  [segs : (&mut segs NormalizeShapeSegs)]) : unit
+  [segs : (&mut segs NormalizeShapeSegs)]) : NormalizeUnit
   (let
+    [lender? : bool shapes.lender?]
     [index : i64 0]
     (while (< index (ast.ast-lifetime-list-len (& lifetimes)))
       (if lender?
@@ -10046,19 +10194,24 @@
           [variance : i64 (normalize-lender-variance variances name index)]
           (when
             (< variance 2)
-            (normalize-shape-seg!
-              segs
-              -1
-              (ast.ast-lifetime-list-get (& lifetimes) index -1)
-              (or inv? (= variance 0))
-              normalize-outer-inherit)))
-        (normalize-shape-seg!
-          segs
-          -1
-          (ast.ast-lifetime-list-get (& lifetimes) index -1)
-          (or inv? (not (normalize-nominal-covariant? variances name index)))
-          normalize-outer-inherit))
-      (set! index (+ index 1)))))
+            (try
+              (normalize-shape-seg!
+                shapes
+                segs
+                -1
+                (ast.ast-lifetime-list-get (& lifetimes) index -1)
+                (or inv? (= variance 0))
+                normalize-outer-inherit))))
+        (try
+          (normalize-shape-seg!
+            shapes
+            segs
+            -1
+            (ast.ast-lifetime-list-get (& lifetimes) index -1)
+            (or inv? (not (normalize-nominal-covariant? variances name index)))
+            normalize-outer-inherit)))
+      (set! index (+ index 1)))
+    (NormalizeUnit.Ok unit)))
 
 ;; One child segment per element of `types`.
 (define (normalize-shape-children!
@@ -10072,18 +10225,16 @@
   (let
     [index : i64 0]
     (while (< index (ast.ast-type-list-len (& types)))
-      (normalize-shape-seg!
-        segs
-        (try
-          (normalize-shape-node!
-            shapes
-            variances
-            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))
-            inv?
-            depth))
-        -1
-        false
-        outer)
+      (let
+        [child : i64
+          (try
+            (normalize-shape-node!
+              shapes
+              variances
+              (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))
+              inv?
+              depth))]
+        (try (normalize-shape-seg! shapes segs child -1 false outer)))
       (set! index (+ index 1)))
     (NormalizeUnit.Ok unit)))
 
@@ -10105,74 +10256,104 @@
     [below : i64 (+ depth 1)]
     (match ty
       [(ast.AstType.Ref lifetime inner)
-        (normalize-shape-seg!
-          (&mut segs)
-          -1
-          lifetime
-          inv?
-          normalize-outer-inherit)
-        (normalize-shape-seg!
-          (&mut segs)
-          (try (normalize-shape-node! shapes variances inner inv? below))
-          -1
-          false
-          normalize-outer-head)]
+        (try
+          (normalize-shape-seg!
+            shapes
+            (&mut segs)
+            -1
+            lifetime
+            inv?
+            normalize-outer-inherit))
+        (let
+          [child : i64
+            (try (normalize-shape-node! shapes variances inner inv? below))]
+          (try
+            (normalize-shape-seg!
+              shapes
+              (&mut segs)
+              child
+              -1
+              false
+              normalize-outer-head)))]
       [(ast.AstType.MutRef lifetime inner)
-        (normalize-shape-seg!
-          (&mut segs)
-          -1
-          lifetime
-          inv?
-          normalize-outer-inherit)
-        (normalize-shape-seg!
-          (&mut segs)
-          (try (normalize-shape-node! shapes variances inner true below))
-          -1
-          false
-          normalize-outer-head)]
+        (try
+          (normalize-shape-seg!
+            shapes
+            (&mut segs)
+            -1
+            lifetime
+            inv?
+            normalize-outer-inherit))
+        (let
+          [child : i64
+            (try (normalize-shape-node! shapes variances inner true below))]
+          (try
+            (normalize-shape-seg!
+              shapes
+              (&mut segs)
+              child
+              -1
+              false
+              normalize-outer-head)))]
       [(ast.AstType.Region lifetime inner)
-        (normalize-shape-seg!
-          (&mut segs)
-          -1
-          lifetime
-          inv?
-          normalize-outer-inherit)
-        (normalize-shape-seg!
-          (&mut segs)
-          (try (normalize-shape-node! shapes variances inner inv? below))
-          -1
-          false
-          normalize-outer-head)]
+        (try
+          (normalize-shape-seg!
+            shapes
+            (&mut segs)
+            -1
+            lifetime
+            inv?
+            normalize-outer-inherit))
+        (let
+          [child : i64
+            (try (normalize-shape-node! shapes variances inner inv? below))]
+          (try
+            (normalize-shape-seg!
+              shapes
+              (&mut segs)
+              child
+              -1
+              false
+              normalize-outer-head)))]
       [(ast.AstType.Invalidate lifetime inner)
-        (normalize-shape-seg!
-          (&mut segs)
-          -1
-          lifetime
-          true
-          normalize-outer-inherit)
-        (normalize-shape-seg!
-          (&mut segs)
-          (try (normalize-shape-node! shapes variances inner true below))
-          -1
-          false
-          normalize-outer-head)]
+        (try
+          (normalize-shape-seg!
+            shapes
+            (&mut segs)
+            -1
+            lifetime
+            true
+            normalize-outer-inherit))
+        (let
+          [child : i64
+            (try (normalize-shape-node! shapes variances inner true below))]
+          (try
+            (normalize-shape-seg!
+              shapes
+              (&mut segs)
+              child
+              -1
+              false
+              normalize-outer-head)))]
       [(or (ast.AstType.EnumArgs name lifetimes)
            (ast.AstType.StructArgs name lifetimes))
-        (normalize-shape-lifetimes
-          variances
-          shapes.lender?
-          name
-          (ast.ast-lifetime-list-box-shared-view lifetimes)
-          inv?
-          (&mut segs))]
+        (try
+          (normalize-shape-lifetimes
+            shapes
+            variances
+            name
+            (ast.ast-lifetime-list-box-shared-view lifetimes)
+            inv?
+            (&mut segs)))]
       [(ast.AstType.VarArgs _ lifetimes)
-        (normalize-shape-lifetimes
-          variances
-          shapes.lender?
-          -1
-          (ast.ast-lifetime-list-box-shared-view lifetimes)
-          true
-          (&mut segs))]
+        (try
+          (normalize-shape-lifetimes
+            shapes
+            variances
+            -1
+            (ast.ast-lifetime-list-box-shared-view lifetimes)
+            true
+            (&mut segs)))]
       [(ast.AstType.Tuple elems)
         (try
           (normalize-shape-children!
@@ -10194,20 +10375,30 @@
             normalize-outer-none
             below
             (&mut segs)))
-        (normalize-shape-seg!
-          (&mut segs)
-          (try (normalize-shape-node! shapes variances ret true below))
-          -1
-          false
-          normalize-outer-none)]
+        (let
+          [child : i64
+            (try (normalize-shape-node! shapes variances ret true below))]
+          (try
+            (normalize-shape-seg!
+              shapes
+              (&mut segs)
+              child
+              -1
+              false
+              normalize-outer-none)))]
       [(or (ast.AstType.Array elem _) (ast.AstType.DynArray elem)
            (ast.AstType.Box elem) (ast.AstType.Slice elem))
-        (normalize-shape-seg!
-          (&mut segs)
-          (try (normalize-shape-node! shapes variances elem inv? below))
-          -1
-          false
-          normalize-outer-inherit)]
+        (let
+          [child : i64
+            (try (normalize-shape-node! shapes variances elem inv? below))]
+          (try
+            (normalize-shape-seg!
+              shapes
+              (&mut segs)
+              child
+              -1
+              false
+              normalize-outer-inherit)))]
       [_ unit])
     (normalize-shape-finish! shapes (& segs))))
 
@@ -10226,7 +10417,7 @@
     [names-first : i64 shapes.name-pool.len]
     [tail-first : i64 0]
     [rows-first : i64 shapes.row-pool.len]
-    (try (normalize-shape-cells! shapes (+ 11 (* 4 count))))
+    (try (normalize-shape-node-room! shapes count))
     (while (< index count)
       (let
         [child : i64 (array-ref segs.child.items index)]
@@ -10380,7 +10571,7 @@
   [len : i64]
   [view? : bool]
   [reference? : bool]) : NormalizeInt
-  (try (normalize-shape-cells! shapes 4))
+  (try (normalize-shape-record-room! shapes))
   (let
     [id : i64 shapes.roots.len]
     (normalize-i64s-push! (&mut shapes.roots) root)
@@ -10614,7 +10805,7 @@
     lender?
     records
     work
-    0
+    normalize-map-new-cells
     0))
 
 ;; Shapes for every place, call and the return type, and the universal names
@@ -10945,22 +11136,64 @@
   ;; well-formedness one): it keeps those loans live, but they are not where
   ;; the target points.
   (outlives NormalizeBools)
-  ;; Edges are distinct: (from, to, outlives?) of each edge plus one, and the
-  ;; work comparing shapes (`normalize-shape-zip!`) and skipping repeated
-  ;; edges took, which counts against `limit` with the edges (#9584).
+  ;; Edges are distinct: (from, to, outlives?) of each edge plus one. `work`
+  ;; is the other work the graph took (comparing shapes, probing, copying
+  ;; and rehashing), counted against `limit` with the edges; `records` is the
+  ;; backing cells it allocated, at most `records-limit` (#9584).
   (seen normalize_transfer_map.Map)
-  (work i64))
+  (work i64)
+  (records i64)
+  (records-limit i64))
 
-;; No edges yet, with `limit` work left.
-(define (normalize-region-edges-empty [limit : i64]) : NormalizeRegionEdges
+;; No edges yet, with `limit` work and `records-limit` cells left.
+(define (normalize-region-edges-empty [limit : i64] [records-limit : i64]) : NormalizeRegionEdges
   (NormalizeRegionEdges
     (normalize-i64s)
     (normalize-i64s)
     limit
-    false
+    (< records-limit normalize-map-new-cells)
     (normalize-bools)
     (normalize_transfer_map.new)
-    0))
+    0
+    normalize-map-new-cells
+    records-limit))
+
+;; Spend `records` cells and `work` steps of the graph's budget, before the
+;; allocation or traversal they pay for; false (and the graph exhausted) when
+;; they do not fit or it is exhausted already.
+(define (normalize-edges-charge!
+  [edges : (&mut edges NormalizeRegionEdges)]
+  [records : i64]
+  [work : i64]) : bool
+  (if (and
+    (>= records 0)
+    (>= work 0)
+    (not edges.exhausted)
+    (<= work (- edges.limit (+ edges.from.len edges.work)))
+    (<= records (- edges.records-limit edges.records)))
+    (begin
+      (set! edges.work (+ edges.work work))
+      (set! edges.records (+ edges.records records))
+      true)
+    (begin
+      (set! edges.exhausted true)
+      false)))
+
+;; Charge `count` pushes on a column of `len` cells and capacity `cap`.
+(define (normalize-edges-column!
+  [edges : (&mut edges NormalizeRegionEdges)]
+  [len : i64]
+  [cap : i64]
+  [count : i64]) : bool
+  (let
+    [cells : i64 (normalize-pushes-cells len cap count)]
+    (and (>= cells 0) (normalize-edges-charge! edges cells cells))))
+
+;; Charge an insert into `map` (its probe, and its growth when full).
+(define (normalize-edges-map-insert!
+  [edges : (&mut edges NormalizeRegionEdges)]
+  [grow : i64]) : bool
+  (normalize-edges-charge! edges grow (+ 1 (/ grow 3))))
 
 (define (normalize-region-edge!
   [edges : (&mut edges NormalizeRegionEdges)]
@@ -10986,31 +11219,51 @@
               1
               0))
           -1)]
-      ;; A repeated edge costs the step a pushed one would.
-      (if (and
-        (>= key 0)
-        (> (normalize_transfer_map.get-value-or (& edges.seen) key 0) 0))
-        (normalize-edges-work! edges 1)
-        (if (>= (+ edges.from.len edges.work) edges.limit)
-          (set! edges.exhausted true)
-          (begin
-            (when
-              (>= key 0)
-              (normalize_transfer_map.insert-ref! (&mut edges.seen) key 1))
-            (normalize-i64s-push! (&mut edges.from) from)
-            (normalize-i64s-push! (&mut edges.to) to)
-            (normalize-bools-push! (&mut edges.outlives) outlives?)))))))
+      [count : i64 edges.from.len]
+      ;; The probe, then for a new edge its three columns' growth, the seen
+      ;; map's growth, and the edge itself (counted by `from.len`).
+      (when
+        (normalize-edges-charge! edges 0 1)
+        (unless
+          (and
+            (>= key 0)
+            (> (normalize_transfer_map.get-value-or (& edges.seen) key 0) 0))
+          (let
+            [cells : i64
+              (+
+                (normalize-pushes-cells count (array-length edges.from.items) 1)
+                (normalize-pushes-cells count (array-length edges.to.items) 1)
+                (normalize-pushes-cells
+                  count
+                  (array-length edges.outlives.items)
+                  1))]
+            [grow : i64
+              (if (>= key 0)
+                (normalize-map-grow-cells (& edges.seen))
+                0)]
+            (cond
+              [(< cells 0) (set! edges.exhausted true)]
+              [(not
+                  (normalize-edges-charge!
+                    edges
+                    (+ cells grow)
+                    (+ cells (/ grow 3))))
+                unit]
+              [(>= (+ edges.from.len edges.work) edges.limit)
+                (set! edges.exhausted true)]
+              [else
+                (when
+                  (>= key 0)
+                  (normalize_transfer_map.insert-ref! (&mut edges.seen) key 1))
+                (normalize-i64s-push! (&mut edges.from) from)
+                (normalize-i64s-push! (&mut edges.to) to)
+                (normalize-bools-push! (&mut edges.outlives) outlives?)])))))))
 
 ;; Spend `work` steps of the edge budget; past it the graph is exhausted.
 (define (normalize-edges-work!
   [edges : (&mut edges NormalizeRegionEdges)]
-  [work : i64]) : unit
-  (if (and
-    (>= work 0)
-    (not edges.exhausted)
-    (<= work (- edges.limit (+ edges.from.len edges.work))))
-    (set! edges.work (+ edges.work work))
-    (set! edges.exhausted true)))
+  [work : i64]) : bool
+  (normalize-edges-charge! edges 0 work))
 
 ;; Every node of key `key` (a root's own, a call's, or for -1 the universal
 ;; nodes), into `out`.
@@ -11146,7 +11399,7 @@
     1
     (array-ref shapes.node-len.items item)))
 
-;; Replace the top node of `stack` with its segments.
+;; Replace the top node of `stack` with its segments, once their charge fits.
 (define (normalize-zip-expand!
   [shapes : (& shapes NormalizeShapes)]
   [edges : (&mut edges NormalizeRegionEdges)]
@@ -11155,24 +11408,31 @@
     [node : i64 (array-ref stack.items (- stack.len 1))]
     [first : i64 (array-ref shapes.node-seg-first.items node)]
     [index : i64 (array-ref shapes.node-seg-count.items node)]
-    (normalize-edges-work! edges index)
-    (set! stack.len (- stack.len 1))
-    (while (> index 0)
-      (set! index (- index 1))
-      (let
-        [child : i64 (array-ref shapes.seg-child.items (+ first index))]
-        (normalize-i64s-push!
-          stack
-          (if (< child 0)
-            (- -2 (+ first index))
-            child))))))
+    (when
+      (and
+        (normalize-edges-work! edges index)
+        (normalize-edges-column!
+          edges
+          (- stack.len 1)
+          (array-length stack.items)
+          index))
+      (set! stack.len (- stack.len 1))
+      (while (> index 0)
+        (set! index (- index 1))
+        (let
+          [child : i64 (array-ref shapes.seg-child.items (+ first index))]
+          (normalize-i64s-push!
+            stack
+            (if (< child 0)
+              (- -2 (+ first index))
+              child)))))))
 
 ;; Drop the first position of the run `stack` holds.
 (define (normalize-zip-drop!
   [shapes : (& shapes NormalizeShapes)]
   [edges : (&mut edges NormalizeRegionEdges)]
   [stack : (&mut stack NormalizeI64s)]) : unit
-  (while (and (> stack.len 0) (not edges.exhausted))
+  (while (and (> stack.len 0) (normalize-edges-work! edges 1))
     (let
       [top : i64 (array-ref stack.items (- stack.len 1))]
       (cond
@@ -11183,7 +11443,9 @@
           (set! stack.len (- stack.len 1))]
         [else (normalize-zip-expand! shapes edges stack)]))))
 
+;; Record triple (from, to, inv?) unless seen, once its charge fits.
 (define (normalize-zip-add!
+  [edges : (&mut edges NormalizeRegionEdges)]
   [zip : (&mut zip NormalizeZip)]
   [from : i64]
   [to : i64]
@@ -11201,8 +11463,19 @@
       (if (< key 0)
         0
         (normalize_transfer_map.get-value-or (& zip.seen) key 0))]
+    [count : i64 zip.from.len]
     (when
-      (or (< key 0) (= (bit-and seen bit) 0))
+      (and
+        (normalize-edges-work! edges 1)
+        (or (< key 0) (= (bit-and seen bit) 0))
+        (normalize-edges-column! edges count (array-length zip.from.items) 1)
+        (normalize-edges-column! edges count (array-length zip.to.items) 1)
+        (normalize-edges-column! edges count (array-length zip.inv.items) 1)
+        (or
+          (< key 0)
+          (normalize-edges-map-insert!
+            edges
+            (normalize-map-grow-cells (& zip.seen)))))
       (when
         (>= key 0)
         (normalize_transfer_map.insert-ref!
@@ -11216,7 +11489,9 @@
 ;; Zip shapes rooted at `from-root` and `to-root` (-1: none), past their first
 ;; `from-skip` and `to-skip` positions; their remaining lengths are equal. Two
 ;; aligned starts of one node give its rows; two aligned nodes of equal length
-;; are zipped once. Each step is charged to the edge budget.
+;; are zipped once. Every step, probe and allocation is charged to the edge
+;; budget first; once it is exhausted the zip stops (and the body fails
+;; closed).
 (define (normalize-shape-zip!
   [edges : (&mut edges NormalizeRegionEdges)]
   [shapes : (& shapes NormalizeShapes)]
@@ -11235,12 +11510,16 @@
         (normalize_transfer_map.new))]
     [a : NormalizeI64s (normalize-i64s)]
     [b : NormalizeI64s (normalize-i64s)]
-    (when (>= from-root 0) (normalize-i64s-push! (&mut a) from-root))
-    (when (>= to-root 0) (normalize-i64s-push! (&mut b) to-root))
-    (when (> from-skip 0) (normalize-zip-drop! shapes edges (&mut a)))
-    (when (> to-skip 0) (normalize-zip-drop! shapes edges (&mut b)))
-    (while (and (> a.len 0) (> b.len 0) (not edges.exhausted))
-      (normalize-edges-work! edges 1)
+    (when
+      (and
+        (normalize-edges-charge! edges (* 2 normalize-map-new-cells) 2)
+        (normalize-edges-column! edges 0 0 1)
+        (normalize-edges-column! edges 0 0 1))
+      (when (>= from-root 0) (normalize-i64s-push! (&mut a) from-root))
+      (when (>= to-root 0) (normalize-i64s-push! (&mut b) to-root))
+      (when (> from-skip 0) (normalize-zip-drop! shapes edges (&mut a)))
+      (when (> to-skip 0) (normalize-zip-drop! shapes edges (&mut b))))
+    (while (and (> a.len 0) (> b.len 0) (normalize-edges-work! edges 1))
       (let
         [ta : i64 (array-ref a.items (- a.len 1))]
         [tb : i64 (array-ref b.items (- b.len 1))]
@@ -11261,6 +11540,7 @@
                   (array-ref shapes.seg-inv.items ts))
                 (set! zip.mismatch true))
               (normalize-zip-add!
+                edges
                 (&mut zip)
                 (array-ref shapes.seg-name.items fs)
                 (array-ref shapes.seg-name.items ts)
@@ -11272,15 +11552,19 @@
               [first : i64 (array-ref shapes.node-rows-first.items ta)]
               [count : i64 (array-ref shapes.node-rows-count.items ta)]
               [index : i64 0]
-              (normalize-edges-work! edges count)
-              (while (< index count)
+              (while (and (< index count) (not edges.exhausted))
                 (let
                   [row : i64 (array-ref shapes.row-pool.items (+ first index))]
                   [name : i64
                     (if (< row 0)
                       (- (/ (+ row 1) 2) 1)
                       (/ row 2))]
-                  (normalize-zip-add! (&mut zip) name name (!= row (* name 2))))
+                  (normalize-zip-add!
+                    edges
+                    (&mut zip)
+                    name
+                    name
+                    (!= row (* name 2))))
                 (set! index (+ index 1))))]
           [(and (>= ta 0) (>= tb 0) (= la lb))
             (let
@@ -11291,7 +11575,10 @@
                 (begin
                   (set! a.len (- a.len 1))
                   (set! b.len (- b.len 1)))
-                (begin
+                (when
+                  (normalize-edges-map-insert!
+                    edges
+                    (normalize-map-grow-cells (& zip.pairs)))
                   (normalize_transfer_map.insert-ref! (&mut zip.pairs) key 1)
                   (normalize-zip-expand! shapes edges (&mut a))
                   (normalize-zip-expand! shapes edges (&mut b)))))]
@@ -11563,10 +11850,12 @@
 (define (normalize-region-edges
   [state : (& state NormalizeState)]
   [shapes : (& shapes NormalizeShapes)]
-  [nodes : (& nodes NormalizeNodes)]) : NormalizeRegionEdges
+  [nodes : (& nodes NormalizeNodes)]
+  [limit : i64]
+  [records-limit : i64]) : NormalizeRegionEdges
   (let
     [edges : NormalizeRegionEdges
-      (normalize-region-edges-empty (- state.limits.work state.work))]
+      (normalize-region-edges-empty limit records-limit)]
     [index : i64 0]
     (while (< index state.flow-count)
       (when
@@ -11769,15 +12058,19 @@
   [shape : i64]) : unit
   (let
     [seen : normalize_transfer_map.Map (normalize_transfer_map.new)]
-    (normalize-outlives-walk!
-      edges
-      nodes
-      shapes
-      key
-      (normalize-shape-root shapes shape)
-      false
-      -1
-      (&mut seen))))
+    (when
+      (and
+        (>= (normalize-shape-root shapes shape) 0)
+        (normalize-edges-charge! edges normalize-map-new-cells 1))
+      (normalize-outlives-walk!
+        edges
+        nodes
+        shapes
+        key
+        (normalize-shape-root shapes shape)
+        false
+        -1
+        (&mut seen)))))
 
 ;; The outlives edges of node `node` lying under the reference named `outer`
 ;; (when `under?`), in position order. A node met again under the same
@@ -11806,12 +12099,18 @@
       [index : i64 0]
       (when
         (>= mark 0)
+        (unless (normalize-edges-work! edges 1) (return unit))
         (when
           (> (normalize_transfer_map.get-value-or (& seen) mark 0) 0)
           (return unit))
+        (unless
+          (normalize-edges-map-insert!
+            edges
+            (normalize-map-grow-cells (& (deref seen))))
+          (return unit))
         (normalize_transfer_map.insert-ref! seen mark 1))
-      (normalize-edges-work! edges (+ count 1))
-      (while (< index count)
+      (unless (normalize-edges-work! edges (+ count 1)) (return unit))
+      (while (and (< index count) (not edges.exhausted))
         (let
           [seg : i64 (+ first index)]
           [code : i64 (array-ref shapes.seg-outer.items seg)]
@@ -11987,11 +12286,22 @@
         ;; it, and reborrows add no loans (`NormalizeRegionEdges`).
         [nodes : NormalizeNodes (normalize-build-nodes (& state) shapes true)]
         [edges : NormalizeRegionEdges
-          (normalize-region-edges (& state) shapes (& nodes))]
+          (normalize-region-edges
+            (& state)
+            shapes
+            (& nodes)
+            (- state.limits.work state.work)
+            (- state.limits.records state.records))]
         [aim-nodes : NormalizeNodes
           (normalize-build-nodes (& state) shapes false)]
+        ;; One allowance: the second graph gets what the first left.
         [aim-edges : NormalizeRegionEdges
-          (normalize-region-edges (& state) shapes (& aim-nodes))]
+          (normalize-region-edges
+            (& state)
+            shapes
+            (& aim-nodes)
+            (- state.limits.work (+ state.work edges.from.len edges.work))
+            (- state.limits.records (+ state.records edges.records)))]
         [count : i64 (+ nodes.keys.len aim-nodes.keys.len)]
         [words : i64 (/ (+ width 63) 64)]
         (unless
@@ -12003,7 +12313,7 @@
         (try
           (normalize-charge!
             state
-            0
+            (+ edges.records aim-edges.records)
             (+
               (* (+ count 2) words)
               (* 2 places width)
@@ -14574,12 +14884,16 @@
 ;; ordinary notes and work budget whatever happens: no ordinary note,
 ;; solution, verdict or diagnostic depends on it, and running out of its
 ;; budget leaves its lenders unknown, never a failure.
+;; With `shared?` the lane spends the body's one record and work budget, and
+;; running out of it fails the body closed; otherwise (the test-build gate
+;; check) its spending is undone and a failure leaves its lenders unknown.
 (define (normalize-lenders!
   [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [inputs : (__tl_dyn-array OwnershipNormalizeArena)]
-  [return-type : i64]) : OwnershipNormalizedLenders
+  [return-type : i64]
+  [shared? : bool]) : NormalizeLenderLane
   (let
     [records : i64 state.records]
     [work : i64 state.work]
@@ -14621,13 +14935,22 @@
     (set! state.type-references saved.kinds)
     (set! state.flow-count flows)
     (set! state.use-count uses)
-    (set! state.records records)
-    (set! state.work work)
+    (unless shared? (set! state.records records) (set! state.work work))
     (set! state.bytes bytes)
     (match solved
       [(NormalizeLendersResult.Ok arena)
-        (OwnershipNormalizedLenders.Gated (__tl_make-array arena))]
-      [(NormalizeLendersResult.Err _) OwnershipNormalizedLenders.Exhausted])))
+        (NormalizeLenderLane.Ok
+          (OwnershipNormalizedLenders.Gated (__tl_make-array arena)))]
+      [(NormalizeLendersResult.Err (OwnershipNormalizeFailure.Resource))
+        (if shared?
+          (NormalizeLenderLane.Err OwnershipNormalizeFailure.Resource)
+          (NormalizeLenderLane.Ok OwnershipNormalizedLenders.Exhausted))]
+      [(NormalizeLendersResult.Err _)
+        (NormalizeLenderLane.Ok OwnershipNormalizedLenders.Exhausted)])))
+
+(defenum NormalizeLenderLane
+  (Ok OwnershipNormalizedLenders)
+  (Err OwnershipNormalizeFailure))
 
 (defenum NormalizeLendersResult
   (Ok OwnershipNormalizedArena)
@@ -14901,7 +15224,12 @@
             (normalize-node-add! (&mut nodes) index -1)))
         (set! index (+ index 1)))]
     [edges : NormalizeRegionEdges
-      (normalize-region-edges (& state) (& shapes) (& nodes))]
+      (normalize-region-edges
+        (& state)
+        (& shapes)
+        (& nodes)
+        (- state.limits.work state.work)
+        (- state.limits.records state.records))]
     [_extra : unit
       (normalize-lender-edges!
         (& state)
@@ -14919,7 +15247,7 @@
       (try
         (normalize-charge!
           state
-          0
+          edges.records
           (+
             edges.from.len
             edges.work
@@ -15048,8 +15376,9 @@
           (normalize-no-i64s)
           (normalize-no-i64s)
           (__tl_make-array bool (array-length state.variances.covariant))))
-      return-type)
-      [(OwnershipNormalizedLenders.Gated arenas)
+      return-type
+      false)
+      [(NormalizeLenderLane.Ok (OwnershipNormalizedLenders.Gated arenas))
         (if (and
           (> (array-length (array-ref arenas 0).lenders) 0)
           (<= store.lender-sites 0))
@@ -15536,12 +15865,16 @@
                     return-type.handle.index)))
               OwnershipNormalizedLenders.Clear]
             [(OwnershipNormalizeLenderInput.Gated inputs)
-              (normalize-lenders!
+              (match (normalize-lenders!
                 (&mut state)
                 store
                 lease
                 inputs
-                return-type.handle.index)])]
+                return-type.handle.index
+                true)
+                [(NormalizeLenderLane.Ok lenders) lenders]
+                [(NormalizeLenderLane.Err failure)
+                  (return (OwnershipNormalizeResult.Err failure))])])]
         (cfg
           arena-lender-dump
           (match (& lenders)

@@ -57097,7 +57097,9 @@
                     handle))]
               (if (ast.ast-type-list-empty? (& fields))
                 (Ok
-                  (tc-tag-active-region env (tc-nullary-variant-type env ret)))
+                  (tc-tag-active-region
+                    env
+                    (tc-nullary-variant-type ctx env ret)))
                 (Err
                   (tc-call-arity-count-message
                     (tc-context-expr-segment-bases ctx)
@@ -57108,7 +57110,8 @@
           (if (tc-name-qualified-id?
             (tc-context-structural-session ctx)
             enum-name-id)
-            (Ok (tc-tag-active-region env (tc-nullary-variant-type env ret)))
+            (Ok
+              (tc-tag-active-region env (tc-nullary-variant-type ctx env ret)))
             (Err "typecheck: call target is not a function"))))
       (Err "typecheck: call target is not a function"))))
 
@@ -57117,18 +57120,29 @@
 ;; unconstrained lifetime rather than that binding's (#8998), as an
 ;; unconstrained formal of a constructor call is
 ;; (`tc-constructor-formal-subst-restore`).
-(define (tc-nullary-variant-type [env : TcTypeEnv] [ret : ast.AstType]) : ast.AstType
+(define (tc-nullary-variant-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ret : ast.AstType]) : ast.AstType
   (match (& ret)
     [(EnumArgs _ lifetimes)
       (tc-lifetime-subst-type
-        (tc-constructor-unconstrained-formal-subst env (deref lifetimes) 0 Nil)
+        (tc-constructor-unconstrained-formal-subst
+          ctx
+          env
+          (& ret)
+          (deref lifetimes)
+          0
+          Nil)
         ret)]
     [_ ret]))
 
-;; SUBST binding each formal from INDEX on that names a binding in ENV to the
-;; unconstrained lifetime.
+;; SUBST binding each formal of RET from INDEX on that names a binding in ENV
+;; to the unconstrained lifetime, where RET's variance allows it.
 (define (tc-constructor-unconstrained-formal-subst
+  [ctx : TcContext]
   [env : TcTypeEnv]
+  [ret : (& ast.AstType)]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]
   [subst : TcLifetimeSubst]) : TcLifetimeSubst
@@ -57138,10 +57152,14 @@
       [formal : i64
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback))]
       (tc-constructor-unconstrained-formal-subst
+        ctx
         env
+        ret
         lifetimes
         (+ index 1)
-        (if (tc-constructor-formal-names-binding? env formal)
+        (if (and
+          (tc-constructor-formal-names-binding? env formal)
+          (tc-nullary-formal-unconstrained? ctx ret formal))
           (tc-lifetime-subst-push subst formal (tc-unconstrained-lifetime-id))
           subst)))))
 
@@ -58739,12 +58757,8 @@
               (Ok
                 (tc-constructor-formal-subst-restore
                   ctx
-                  (match ret
-                    [(or (StructArgs name _) (EnumArgs name _))
-                      (if (ast.ast-expr-list-empty? (& args))
-                        name
-                        -1)]
-                    [_ -1])
+                  (ast.ast-expr-list-empty? (& args))
+                  ret
                   hidden
                   (& lifetimes)
                   0
@@ -58819,16 +58833,47 @@
       [(Ok ty) (not (tc-type-carries-own-lifetime? (& ty) formal))]
       [(Err _) true])))
 
+;; Whether nominal RET is covariant or bivariant in the lifetime parameter its
+;; own lifetime list spells FORMAL (a call's collected list may be reordered).
+(define (tc-nullary-formal-unconstrained?
+  [ctx : TcContext]
+  [ret : (& ast.AstType)]
+  [formal : i64]) : bool
+  (match ret
+    [(or (StructArgs name lifetimes) (EnumArgs name lifetimes))
+      (let
+        [index : i64 (tc-lifetime-list-index-of (deref lifetimes) formal 0)]
+        (and
+          (>= index 0)
+          (match (tc-nominal-lifetime-variance-at ctx name index Nil)
+            [(or (TcVarianceCovariant) (TcVarianceBivariant)) true]
+            [_ false])))]
+    [_ false]))
+
+;; The first index from INDEX on of NAME in ITEMS, or -1.
+(define (tc-lifetime-list-index-of
+  [items : (& items ast.AstLifetimeList)]
+  [name : i64]
+  [index : i64]) : i64
+  (cond
+    [(>= index (ast.ast-lifetime-list-len items)) -1]
+    [(=
+        (ast.ast-lifetime-list-get items index (ast.ast-lifetime-fallback))
+        name)
+      index]
+    [else (tc-lifetime-list-index-of items name (+ index 1))]))
+
 ;; INFERRED, which binds the hidden formals of HIDDEN, extended to bind each
 ;; declared formal from INDEX on to its hidden formal's inferred lifetime. A
 ;; hidden formal no argument constrains stays its declared formal, except in a
-;; nullary variant of NULLARY (-1 for none), which holds no reference: there a
-;; covariant or bivariant formal is the unconstrained lifetime
+;; NULLARY? variant of RET, which holds no reference: there a formal RET is
+;; covariant or bivariant in is the unconstrained lifetime
 ;; (`tc-unconstrained-lifetime-id`), which cannot meet an invariant or
 ;; contravariant expectation.
 (define (tc-constructor-formal-subst-restore
   [ctx : TcContext]
-  [nullary : i64]
+  [nullary? : bool]
+  [ret : (& ast.AstType)]
   [hidden : TcLifetimeSubst]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]
@@ -58842,7 +58887,8 @@
       [actual : i64 (tc-lifetime-subst-apply inferred hidden-formal)]
       (tc-constructor-formal-subst-restore
         ctx
-        nullary
+        nullary?
+        ret
         hidden
         lifetimes
         (+ index 1)
@@ -58850,11 +58896,8 @@
           [(= hidden-formal formal) inferred]
           [(!= actual hidden-formal)
             (tc-lifetime-subst-push inferred formal actual)]
-          [(or
-              (= nullary -1)
-              (match (tc-nominal-lifetime-variance-at ctx nullary index Nil)
-                [(or (TcVarianceContravariant) (TcVarianceInvariant)) true]
-                [_ false]))
+          [(not
+              (and nullary? (tc-nullary-formal-unconstrained? ctx ret formal)))
             inferred]
           [else
             (tc-lifetime-subst-push

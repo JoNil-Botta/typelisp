@@ -47,8 +47,52 @@
     [v : (Contra p) (Contra.None)]
     0))
 
+;; Two lifetime parameters of different variance: each formal is gated by its
+;; own parameter's variance, whatever order the call collects them in.
+(defenum InvCov
+  (:lifetimes a b)
+  (None)
+  (Some (&mut program (& a i64)) (& b i64)))
+
+(defenum CovInv
+  (:lifetimes a b)
+  (None)
+  (Some (& a str) (&mut program (& b i64))))
+
+(defstruct HoldInvCov
+  (:lifetimes a b)
+  (t (InvCov a b)))
+
+; Must pass: invariant first, covariant second.
+(define (inv-cov [a : i64] [b : i64]) : i64
+  (let
+    [v : (InvCov a b) (InvCov.None)]
+    0))
+
+; Must pass: covariant first, invariant second.
+(define (cov-inv [a : i64] [b : i64]) : i64
+  (let
+    [v : (CovInv a b) (CovInv.None)]
+    0))
+
+; Must pass: the covariant formal still takes the unconstrained lifetime.
+(define (cov-inv-carrier [a : (& next str)] [b : i64]) : i64
+  (let
+    [t : (CovInv next b) (CovInv.None)]
+    0))
+
+; Must pass: the nullary variant nested in a constructor.
+(define (hold-inv-cov [a : i64] [b : i64]) : i64
+  (let
+    [h : (HoldInvCov a b) (HoldInvCov (InvCov.None))]
+    0))
+
 (define (main) : i64
   (+
+    (inv-cov 1 2)
+    (cov-inv 1 2)
+    (cov-inv-carrier "x" 2)
+    (hold-inv-cov 1 2)
     (param-inv 1 2)
     (param-contra 1 2)
     (param-inv-plain 1)

@@ -26,7 +26,7 @@
   ;; contract.
   (let
     [index : i64 (x64.compiler-x64-template-enum-tag id)]
-    (if (or (< index 0) (>= index 102))
+    (if (or (< index 0) (>= index 103))
       (io.panic "x64 executable template: id tag is out of range")
       index)))
 

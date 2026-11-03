@@ -719,5 +719,6 @@ tests/fixtures/inline_aggregate_binary_40_gated.tl	stage2-inline-aggregate-scali
 tests/fixtures/linux_stack_*	stage2-linux-stack-protection	@corpus	Linux stack reservation, lifetime and overflow inputs.
 tools/linux-stack-protection/*	stage2-linux-stack-protection	@compiler	Production-admitted direct-object and probe encoding oracle.
 scripts/verify-linux-stack-protection.sh	stage2-linux-stack-protection	-	Linux stack witness harness.
+scripts/verify-linux-stack-combinations.sh	stage2-linux-stack-protection	-	Entry/transient combinations on the minimum foreign guard.
 scripts/verify-linux-stack-edges.sh	stage2-linux-stack-protection	-	Linux stack failure, host and unwind witnesses.
 tests/fixtures/linux-stack-protection.fixtures.cases	stage2-linux-stack-protection,stage2-public-tool-surface	@corpus	Declared Linux stack witness primaries.

@@ -25,37 +25,20 @@ bounded() {
 }
 bounded oracle-build 6144 "$COMPILER" build tools/linux-stack-protection/main.tl \
     --stdlib-root stdlib --stdlib-root src --opt-level 1 -o "$WORK/oracle"
-for size in 0 128 4080 4096 4104 8192 8200 65536 262144 1048576 1073741808 1073741824; do
-    bounded "plan-$size" 512 "$WORK/oracle" plan "$size" "$WORK/plan-$size.s" "$WORK/plan-$size.bytes"
-    as "$WORK/plan-$size.s" -o "$WORK/plan-$size.o"
-    objcopy -O binary --only-section=.text "$WORK/plan-$size.o" "$WORK/plan-$size.assembled"
-    cmp "$WORK/plan-$size.bytes" "$WORK/plan-$size.assembled"
-    objdump -dr "$WORK/plan-$size.o" > "$WORK/plan-$size.dump"
+for size in 0 128 4080 4096 4104 8192 8200 32760 32768 32776 65536 262144 1048576 1073741808 1073741824; do
+    for kind in plan transient; do
+        bounded "$kind-$size" 512 "$WORK/oracle" "$kind" "$size" "$WORK/$kind-$size.s" "$WORK/$kind-$size.bytes"
+        as "$WORK/$kind-$size.s" -o "$WORK/$kind-$size.o"
+        objcopy -O binary --only-section=.text "$WORK/$kind-$size.o" "$WORK/$kind-$size.assembled"
+        cmp "$WORK/$kind-$size.bytes" "$WORK/$kind-$size.assembled"
+        objdump -dr "$WORK/$kind-$size.o" > "$WORK/$kind-$size.dump"
+    done
 done
+. "$ROOT/scripts/verify-linux-stack-combinations.sh"
 "$WORK/oracle" generate 0 "$WORK/small.tl"
 "$WORK/oracle" generate 2304 "$WORK/large-object.tl"
-awk '
-function tree(start,count,half) {
-    if (count == 1) {printf "v%d",start; return}
-    half=int(count/2)
-    printf "(bit-xor "
-    tree(start,half)
-    printf " "
-    tree(start+half,count-half)
-    printf ")"
-}
-BEGIN {
-    print "(define (dive [n : i64]) (:export-symbol \"stack_dive\") : i64"
-    print "  (let"
-    for(i=0;i<600;i++) printf "    [v%d : i64 (bit-xor n %d)]\n",i,i*2+1
-    print "    [child : i64 (dive (+ n 1))]"
-    printf "    (+ child "
-    tree(0,600)
-    print ")))"
-    print "(define (main) : i64 (+ (dive 1) 1))"
-}
-' > "$WORK/pic.tl"
-bounded pic-admission 512 "$WORK/oracle" object "$WORK/pic.tl" 0 "$WORK/pic.o"
+fixture_inventory_require "$WORK/fixtures.tsv" tests/fixtures/linux_stack_large.tl
+cp tests/fixtures/linux_stack_large.tl "$WORK/pic.tl"
 bounded pic-large-compile 512 "$COMPILER" compile "$WORK/pic.tl" \
     --pic --opt-level 0 --stdlib-root stdlib --stdlib-root src -o "$WORK/pic.s"
 grep -x '997:' "$WORK/pic.s" >/dev/null || fail "PIC finalizer omitted large-frame probes"
@@ -127,7 +110,7 @@ for opt in 0 1 2; do
         observe_overflow "$cell"
     done
 done
-for fixture in lifetime canary; do
+for fixture in lifetime canary observations; do
     cell="worker-$fixture"
     fixture_inventory_require "$WORK/fixtures.tsv" "tests/fixtures/linux_stack_$fixture.tl"
     bounded "$cell-compile" 512 "$COMPILER" compile "tests/fixtures/linux_stack_$fixture.tl" \

@@ -11,3 +11,5 @@ case initializer
 source tests/fixtures/linux_stack_initializer.tl
 case setup-failure
 source tests/fixtures/linux_stack_setup_failure.tl
+case observations
+source tests/fixtures/linux_stack_observations.tl

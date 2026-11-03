@@ -14501,6 +14501,9 @@
       (string.int->string remaining)
       "(%rsp), %r11\n")))
 
+;; Known entry producers mark large subtractions without another allocation.
+;; The late record sink consumes the fact after ordinary subtraction analyses.
+;; Unmarked/unknown decrements retain the conservative 4096-byte threshold.
 (define (compiler-backend-emit-stack-sub
   [target-policy : CompilerBackendTargetPolicy]
   [frame : i64]) : String
@@ -14515,7 +14518,12 @@
           ""
           "")
         (str_cat.str-cat "    subq $" (string.int->string frame) ", %rsp\n" ""))
-      (str_cat.str-cat "    subq $" (string.int->string frame) ", %rsp\n" ""))))
+      (str_cat.str-cat
+        (if (> frame 4096)
+          "# tl-stack-entry\n    subq $"
+          "    subq $")
+        (string.int->string frame)
+        ", %rsp\n"))))
 
 (define (compiler-backend-emit-windows-seh-proc
   [target : CompilerBackendTarget]
@@ -15368,7 +15376,9 @@
       (str_cat.str-cat symbol ":\n" "")
       (str_cat.str-cat
         symbol
-        ":\n    subq $"
+        (if (> sub 4096)
+          ":\n# tl-stack-entry\n    subq $"
+          ":\n    subq $")
         (string.int->string sub)
         ", %rsp\n"))))
 
@@ -15405,7 +15415,9 @@
       acc
       (str_cat.str-cat
         acc
-        "    subq $"
+        (if (> sub-s 4096)
+          "# tl-stack-entry\n    subq $"
+          "    subq $")
         (string.int->string sub-s)
         ", %rsp\n"
         ""))))
@@ -79053,7 +79065,7 @@ tl_shared_object_init:
   [target : CompilerBackendTarget]
   [frame-size : i64]) : String
   (when
-    (and (> frame-size 4096) (compiler-backend-target-policy-new target).linux)
+    (and (> frame-size 32768) (compiler-backend-target-policy-new target).linux)
     (return
       (str_cat.str-cat
         (object_target.compiler-backend-object-bytes-from-hex "554889e5")
@@ -86514,11 +86526,15 @@ tl_shared_object_init:
     [stop : i64 (- end 6)]
     (when
       (and
+        ;; Reject the common small immediates before inspecting their text.
+        (>= (- stop start) 4)
+        (or
+          (> (- stop start) 4)
+          (>= (compiler-backend-peephole-byte-at data start) 52))
         (> (- end ms) 12)
         (compiler-backend-peephole-range-eq? data ms (+ ms 4) "subq")
         (= (compiler-backend-peephole-byte-at data (+ ms 4)) 32)
         (compiler-backend-peephole-range-eq? data (- end 6) end ", %rsp")
-        (>= (- stop start) 4)
         (= (compiler-backend-peephole-byte-at data (- start 1)) 36)
         (= (compiler-backend-rsp-rebase-int-start data start stop) start)
         (> (compiler-backend-rsp-rebase-parse-int data start stop) 4096))
@@ -86531,8 +86547,33 @@ tl_shared_object_init:
           (for [i (iterator.range 0 walk.probe-cand-len)]
             (set! (array-ref grown i) (array-ref old i)))
           (set! walk.probe-cands grown)))
-      (set! (array-ref walk.probe-cands walk.probe-cand-len) index)
-      (+= walk.probe-cand-len 1))))
+      (let
+        [entry? : bool
+          (and
+            (> index 0)
+            (let
+              [previous : (& walk CompilerBackendPeepholeLineRecord)
+                (& (array-ref walk.lines (- index 1)))]
+              [first : i64 (compiler-backend-peephole-record-start previous)]
+              [last : i64 (compiler-backend-peephole-record-end previous)]
+              (and
+                (= (- last first) 16)
+                (compiler-backend-peephole-range-eq?
+                  (compiler-backend-peephole-record-data previous)
+                  first
+                  last
+                  "# tl-stack-entry"))))]
+        (when entry? (set! (array-ref walk.live (- index 1)) 0))
+        ;; Low bit is producer classification; the remaining bits are the
+        ;; record index. No extra per-line/per-function state or scan is needed.
+        (set!
+          (array-ref walk.probe-cands walk.probe-cand-len)
+          (+
+            (* index 2)
+            (if entry?
+              1
+              0)))
+        (+= walk.probe-cand-len 1)))))
 
 (define (compiler-backend-expand-stack-probes!
   [backend-state : CompilerBackendState]
@@ -86541,9 +86582,14 @@ tl_shared_object_init:
     (compiler-backend-state-emission-target-policy backend-state).linux
     (for [i (iterator.range 0 records.probe-cand-len)]
       (let
-        [at : i64 (array-ref records.probe-cands i)]
+        [candidate : i64 (array-ref records.probe-cands i)]
+        [at : i64 (shr candidate 1)]
         (when
-          (= (array-ref records.live at) 1)
+          (and
+            (= (array-ref records.live at) 1)
+            (or
+              (= (bit-and candidate 1) 0)
+              (> (array-ref records.lines at).value 32768)))
           (let
             [amount : i64 (array-ref records.lines at).value]
             [text : String (compiler-backend-emit-stack-probe amount)]

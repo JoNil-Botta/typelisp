@@ -2427,3 +2427,10 @@ crypto_secret_nominal_forge_reject|check-fail|tests/safety/crypto_secret_nominal
 crypto_secret_nominal_unsafe_read_reject|check-fail|tests/safety/crypto_secret_nominal_unsafe_read_reject.tl|tests/safety/crypto_secret_nominal_unsafe_read_reject.tl:1:1|cannot read through a pointer to the opaque type stdlib.crypto_secret/SecretNominalStorage
 crypto_secret_nominal_accessor_reject|check-fail|tests/safety/crypto_secret_nominal_accessor_reject.tl|tests/safety/crypto_secret_nominal_accessor_reject.tl:4:3|secret/nominal-read-pointer requires unsafe context
 crypto_secret_nominal_clone_reject|check-fail|tests/safety/crypto_secret_nominal_clone_reject.tl|tests/safety/crypto_secret_nominal_clone_reject.tl:4:3|clone unsupported type
+
+# Lifetime variance over shared type DAGs (Refs #9589).
+variance_layers_d32_ok|check-ok|tests/safety/variance_layers_d32_ok.tl|-|-
+variance_layers_d40_ok|check-ok|tests/safety/variance_layers_d40_ok.tl|-|-
+variance_dag_call_d12_ok|check-ok|tests/safety/variance_dag_call_d12_ok.tl|-|-
+variance_dag_nested_d12_ok|check-ok|tests/safety/variance_dag_nested_d12_ok.tl|-|-
+variance_dag_shorten_d8_ok|check-ok|tests/safety/variance_dag_shorten_d8_ok.tl|-|-

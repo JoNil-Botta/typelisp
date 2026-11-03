@@ -84972,7 +84972,9 @@
     [_ pattern]))
 
 ;; Renames `region` to `fresh` in the annotations under `id`. A nested arena
-;; of the same name binds its own region, and quoted code is data.
+;; of the same name binds its own region, and quoted code is data. A local
+;; binder spelled like the region shadows it for exactly its scope
+;; (`tc-with-region-rename-binders`).
 (define (tc-with-region-rename-expr!
   [ctx : TcContext]
   [region : i64]
@@ -84990,17 +84992,20 @@
       (tc-context-expr-get ctx id))
     (let
       [renamed : ast.AstExpr
-        (ast.ast-expr-map-children
-          expr
-          tc-with-region-rename-expr!
-          tc-with-region-rename-type-id
-          tc-with-region-rename-type
-          tc-with-region-rename-pattern
-          tc-with-region-keep
-          tc-with-region-keep
-          ctx
-          region
-          fresh)]
+        (match (tc-with-region-rename-binders ctx region fresh expr)
+          [(Some binder) binder]
+          [(No)
+            (ast.ast-expr-map-children
+              (tc-context-expr-get ctx id)
+              tc-with-region-rename-expr!
+              tc-with-region-rename-type-id
+              tc-with-region-rename-type
+              tc-with-region-rename-pattern
+              tc-with-region-keep
+              tc-with-region-keep
+              ctx
+              region
+              fresh)])]
       (ast.ast-node-set!
         id
         (match renamed
@@ -85013,6 +85018,315 @@
               place)]
           [_ renamed]))
       id)))
+
+;; A child renamed only while `region` still names the arena there.
+(define (tc-with-region-rename-child!
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [live : bool]
+  [id : i64]) : i64
+  (if live
+    (tc-with-region-rename-expr! ctx region fresh id)
+    id))
+
+(defenum TcMaybeAstExpr
+  (No)
+  (Some ast.AstExpr))
+
+;; Every form that binds a local name, renamed with the checker's scopes: a
+;; binder spelled like the region ends the rename for what it scopes over,
+;; while its own annotation and the expressions evaluated before it (a let
+;; initializer, lambda signature, match scrutinee, SPMD bounds and inits, a
+;; resource initializer and cleanup) still name the arena. Other forms bind
+;; nothing and take the generic child mapping.
+(define (tc-with-region-rename-binders
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [expr : ast.AstExpr]) : TcMaybeAstExpr
+  (match expr
+    [(Let payload)
+      (match (__tl-box-place payload)
+        [(ast.AstLet.Let bindings body)
+          (let
+            [live : bool true]
+            [out : ast.AstLetBindingList
+              (ast.ast-let-binding-list-with-capacity bindings.len)]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (ast.ast-let-binding-list-get
+                (& bindings)
+                index
+                (ast.ast-let-binding-fallback))
+                [(ast.AstLetBinding.Binding name maybe-ty init)
+                  (ast.ast-let-binding-list-push
+                    (&mut out)
+                    (ast.AstLetBinding.Binding
+                      name
+                      (if live
+                        (tc-with-region-rename-maybe-type
+                          ctx
+                          region
+                          fresh
+                          maybe-ty)
+                        maybe-ty)
+                      (tc-with-region-rename-child! ctx region fresh live init)))
+                  (when (= name region) (set! live false))]))
+            (Some
+              (ast.AstExpr.Let
+                (box
+                  (ast.AstLet.Let
+                    out
+                    (tc-with-region-rename-child! ctx region fresh live body))))))])]
+    [(Lambda payload)
+      (match (__tl-box-place payload)
+        [(ast.AstLambda.Lambda params maybe-ret body)
+          (let
+            [live : bool (not (tc-with-region-param-named? (& params) region))]
+            (Some
+              (ast.AstExpr.Lambda
+                (box
+                  (ast.AstLambda.Lambda
+                    (ast.ast-param-list-map
+                      params
+                      tc-with-region-rename-type
+                      ctx
+                      region
+                      fresh)
+                    (tc-with-region-rename-maybe-type
+                      ctx
+                      region
+                      fresh
+                      maybe-ret)
+                    (tc-with-region-rename-child! ctx region fresh live body))))))])]
+    [(Match payload)
+      (match (__tl-box-place payload)
+        [(ast.AstMatch.Match scrutinee arms)
+          (let
+            [out : ast.AstMatchArmList
+              (ast.ast-match-arm-list-with-capacity arms.len)]
+            (for [index (iterator.range 0 arms.len)]
+              (match (ast.ast-match-arm-list-get
+                (& arms)
+                index
+                (ast.ast-match-arm-fallback))
+                [(ast.AstMatchArm.Arm pattern body)
+                  (let
+                    [live : bool
+                      (not
+                        (tc-name-id-list-contains
+                          (tc-pattern-add-bound-name-ids (clone pattern) Nil)
+                          region))]
+                    (ast.ast-match-arm-list-push
+                      (&mut out)
+                      (ast.AstMatchArm.Arm
+                        (tc-with-region-rename-pattern ctx region fresh pattern)
+                        (tc-with-region-rename-child!
+                          ctx
+                          region
+                          fresh
+                          live
+                          body))))]))
+            (Some
+              (ast.AstExpr.Match
+                (box
+                  (ast.AstMatch.Match
+                    (tc-with-region-rename-expr! ctx region fresh scrutinee)
+                    out)))))])]
+    [(Foreach payload)
+      (match (__tl-box-place payload)
+        [(ast.AstForeach.Foreach name ty start end body)
+          (Some
+            (ast.AstExpr.Foreach
+              (box
+                (ast.AstForeach.Foreach
+                  name
+                  (tc-with-region-rename-type ctx region fresh ty)
+                  (tc-with-region-rename-expr! ctx region fresh start)
+                  (tc-with-region-rename-expr! ctx region fresh end)
+                  (tc-with-region-rename-child!
+                    ctx
+                    region
+                    fresh
+                    (not (= name region))
+                    body)))))]
+        [(ast.AstForeach.Foreach2
+            outer
+            outer-ty
+            outer-start
+            outer-end
+            inner
+            inner-ty
+            inner-start
+            inner-end
+            body)
+          (Some
+            (ast.AstExpr.Foreach
+              (box
+                (ast.AstForeach.Foreach2
+                  outer
+                  (tc-with-region-rename-type ctx region fresh outer-ty)
+                  (tc-with-region-rename-expr! ctx region fresh outer-start)
+                  (tc-with-region-rename-expr! ctx region fresh outer-end)
+                  inner
+                  (tc-with-region-rename-type ctx region fresh inner-ty)
+                  (tc-with-region-rename-expr! ctx region fresh inner-start)
+                  (tc-with-region-rename-expr! ctx region fresh inner-end)
+                  (tc-with-region-rename-child!
+                    ctx
+                    region
+                    fresh
+                    (not (or (= outer region) (= inner region)))
+                    body)))))])]
+    [(SpmdReduce payload)
+      (match (__tl-box-place payload)
+        [(ast.AstSpmdReduce.Reduce op index ty start end init value)
+          (Some
+            (ast.AstExpr.SpmdReduce
+              (box
+                (ast.AstSpmdReduce.Reduce
+                  op
+                  index
+                  (tc-with-region-rename-type ctx region fresh ty)
+                  (tc-with-region-rename-expr! ctx region fresh start)
+                  (tc-with-region-rename-expr! ctx region fresh end)
+                  (tc-with-region-rename-expr! ctx region fresh init)
+                  (tc-with-region-rename-child!
+                    ctx
+                    region
+                    fresh
+                    (not (= index region))
+                    value)))))])]
+    [(SpmdScan payload)
+      (match (__tl-box-place payload)
+        [(ast.AstSpmdScan.Scan
+            op
+            index
+            ty
+            start
+            end
+            prefix
+            prefix-ty
+            init
+            value
+            body)
+          (Some
+            (ast.AstExpr.SpmdScan
+              (box
+                (ast.AstSpmdScan.Scan
+                  op
+                  index
+                  (tc-with-region-rename-type ctx region fresh ty)
+                  (tc-with-region-rename-expr! ctx region fresh start)
+                  (tc-with-region-rename-expr! ctx region fresh end)
+                  prefix
+                  (tc-with-region-rename-type ctx region fresh prefix-ty)
+                  (tc-with-region-rename-expr! ctx region fresh init)
+                  (tc-with-region-rename-child!
+                    ctx
+                    region
+                    fresh
+                    (not (= index region))
+                    value)
+                  (tc-with-region-rename-child!
+                    ctx
+                    region
+                    fresh
+                    (not (or (= index region) (= prefix region)))
+                    body)))))])]
+    [(SpmdCompact payload)
+      (match (__tl-box-place payload)
+        [(ast.AstSpmdCompact.Compact
+            index
+            ty
+            start
+            end
+            slot
+            slot-ty
+            init
+            keep
+            body)
+          (Some
+            (ast.AstExpr.SpmdCompact
+              (box
+                (ast.AstSpmdCompact.Compact
+                  index
+                  (tc-with-region-rename-type ctx region fresh ty)
+                  (tc-with-region-rename-expr! ctx region fresh start)
+                  (tc-with-region-rename-expr! ctx region fresh end)
+                  slot
+                  (tc-with-region-rename-type ctx region fresh slot-ty)
+                  (tc-with-region-rename-expr! ctx region fresh init)
+                  (tc-with-region-rename-child!
+                    ctx
+                    region
+                    fresh
+                    (not (= index region))
+                    keep)
+                  (tc-with-region-rename-child!
+                    ctx
+                    region
+                    fresh
+                    (not (or (= index region) (= slot region)))
+                    body)))))])]
+    [(WithResource payload)
+      (match (__tl-box-place payload)
+        [(ast.AstWithResource.WithResource bindings body)
+          (let
+            [live : bool true]
+            [out : ast.AstResourceBindingList
+              (ast.ast-resource-binding-list-with-capacity bindings.len)]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (ast.ast-resource-binding-list-get
+                (& bindings)
+                index
+                (ast.ast-resource-binding-fallback))
+                [(ast.AstResourceBinding.Binding name init cleanup move-aware?)
+                  (ast.ast-resource-binding-list-push
+                    (&mut out)
+                    (ast.AstResourceBinding.Binding
+                      name
+                      (tc-with-region-rename-child! ctx region fresh live init)
+                      (tc-with-region-rename-child!
+                        ctx
+                        region
+                        fresh
+                        live
+                        cleanup)
+                      move-aware?))
+                  (when (= name region) (set! live false))]))
+            (Some
+              (ast.AstExpr.WithResource
+                (box
+                  (ast.AstWithResource.WithResource
+                    out
+                    (ast.ast-expr-list-map
+                      body
+                      tc-with-region-rename-child!
+                      ctx
+                      region
+                      fresh
+                      live))))))])]
+    [_ (No)]))
+
+(define (tc-with-region-param-named?
+  [params : (& params ast.AstParamList)]
+  [region : i64]) : bool
+  (let
+    [found : bool false]
+    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param name _ _) (when (= name region) (set! found true))]))
+    found))
+
+(define (tc-with-region-rename-maybe-type
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [maybe-ty : ast.AstMaybeType]) : ast.AstMaybeType
+  (match maybe-ty
+    [(Some ty) (Some (tc-with-region-rename-type ctx region fresh ty))]
+    [(No) No]))
 
 (define (tc-with-region-expr
   [ctx : TcContext]

@@ -1021,7 +1021,9 @@
   (with-arena r
     (let [s : String (string.int->string 1)]
       (set! (array-ref items 0) (& s)))))")
-      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+      ;; The arena spelled like the parameter's lifetime is a fresh region
+      ;; (#9593), so the store is that arena's escape.
+      "typecheck: region-tagged value cannot escape with-arena 'r'")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64]) : (-> unit)
   (let

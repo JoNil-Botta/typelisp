@@ -6176,6 +6176,49 @@
     unit
     (io.panic "typecheck: env walker api smoke failed")))
 
+;; #8998: a binding whose own type carries its name (`[a : (& a T)]`) is a
+;; self-named carrier, not the binding of its lifetime `a`; that lifetime is an
+;; older binding spelled `a`. A local cache window keeps only the newest binding
+;; of a name, so lookups past the carrier still reach the older one, whether the
+;; window holds both or only the carrier, as on the uncached spine.
+(define (tc-type-env-carrier-shadow-cache-smoke?) : bool
+  (let
+    [name : i64 (ci.intern "carrier-shadowed")]
+    [outer : i64 (ci.intern "carrier-outer")]
+    [base : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) outer (I64))]
+    [older : tc_core.TcTypeEnv (tc_core.tc-bind-id base name (I64))]
+    [ok : bool true]
+    (for [gap (iterator.range 0 2)]
+      (let
+        [before : tc_core.TcTypeEnv
+          (tc-type-env-bind-many
+            older
+            (if (= gap 0)
+              3
+              (+ (tc_core.tc-local-cache-threshold) 4)))]
+        [raw : tc_core.TcTypeEnv
+          (tc-type-env-bind-many
+            (tc_core.tc-bind-id before name (ast.ast-ty-ref name (& (I64))))
+            4)]
+        [cached : tc_core.TcTypeEnv (tc_core.tc-env-with-local-cache raw)]
+        (unless
+          (and
+            (tc-type-env-cache-head? cached)
+            (tc_core.tc-lifetime-visible-id? raw name)
+            (tc_core.tc-lifetime-visible-id? cached name)
+            (>= (tc_core.tc-ordinary-binding-rank-id-from raw name 0) 0)
+            (=
+              (tc_core.tc-ordinary-binding-rank-id-from raw name 0)
+              (tc_core.tc-ordinary-binding-rank-id-from cached name 0))
+            ;; The older binding is newer than `outer`, as on the raw spine.
+            (tc_core.tc-lifetime-outlives-lifetime-id? raw outer name)
+            (tc_core.tc-lifetime-outlives-lifetime-id? cached outer name)
+            (not (tc_core.tc-lifetime-outlives-lifetime-id? raw name outer))
+            (not (tc_core.tc-lifetime-outlives-lifetime-id? cached name outer)))
+          (set! ok false))))
+    ok))
+
 (define (tc-type-env-local-cache-smoke?) : bool
   (cbi.compiler-builtin-initialize-for-parse!)
   (and
@@ -6189,6 +6232,7 @@
     (tc-type-env-local-cache-c-function-smoke?)
     (tc-type-env-local-cache-lambda-capture-smoke?)
     (tc-type-env-scoped-stack-smoke?)
+    (tc-type-env-carrier-shadow-cache-smoke?)
     (tc-type-env-walker-api-smoke?)))
 
 (test

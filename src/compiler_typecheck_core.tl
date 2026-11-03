@@ -46903,7 +46903,8 @@
 (defstruct TcVarianceCache
   (owner i64)
   (epoch TcVarianceEpoch)
-  (keys (__tl_dyn-array i64))
+  (owners (__tl_dyn-array i64))
+  (indices (__tl_dyn-array i64))
   (codes (__tl_dyn-array i64))
   (len i64))
 
@@ -47050,6 +47051,7 @@
                     epoch
                     (__tl_make-array i64 0)
                     (__tl_make-array i64 0)
+                    (__tl_make-array i64 0)
                     0))
                 (set!
                   address
@@ -47082,7 +47084,16 @@
           (unsafe
             (deref (int->ptr (cast address : u64) : (Ptr TcVarianceCache))).epoch))])))
 
-(define (tc-variance-cache-get [address : i64] [key : i64]) : i64
+;; Declaration identities retain every bit. Parameter indices are a separate
+;; coordinate; multiplying a structural name by 4096 loses owner bits.
+(define (tc-variance-position-same?
+  [left-owner : i64]
+  [left-index : i64]
+  [right-owner : i64]
+  [right-index : i64]) : bool
+  (and (= left-owner right-owner) (= left-index right-index)))
+
+(define (tc-variance-cache-get [address : i64] [owner : i64] [index : i64]) : i64
   (let
     [cache : TcVarianceCache
       (unsafe
@@ -47090,7 +47101,11 @@
     (for [at (iterator.range 0 cache.len)]
       (cfg test (+= tc-variance-test-lookups 1))
       (when
-        (= (array-ref cache.keys at) key)
+        (tc-variance-position-same?
+          (array-ref cache.owners at)
+          (array-ref cache.indices at)
+          owner
+          index)
         (return (array-ref cache.codes at))))
     -1))
 
@@ -47110,9 +47125,13 @@
         (unsafe
           (arena.Arena cache.owner))
         (for [at (iterator.range 0 table.len)]
-          (tc-variance-reserve! (&mut cache.keys) cache.len)
+          (tc-variance-reserve! (&mut cache.owners) cache.len)
+          (tc-variance-reserve! (&mut cache.indices) cache.len)
           (tc-variance-reserve! (&mut cache.codes) cache.len)
-          (set! (array-ref cache.keys cache.len) (array-ref table.keys at))
+          (set! (array-ref cache.owners cache.len) (array-ref table.owners at))
+          (set!
+            (array-ref cache.indices cache.len)
+            (array-ref table.indices at))
           (set! (array-ref cache.codes cache.len) (array-ref table.codes at))
           (+= cache.len 1)))
       (unsafe
@@ -47181,6 +47200,7 @@
         0
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
         0
         (tc-variance-cache-bind! ctx))]
     [first : TcVariance (tc-variance-table-at! ctx (&mut table) name-id index)]
@@ -47244,7 +47264,7 @@
     (tc-variance-of-code (array-ref table.codes 0))))
 
 (defstruct TcVarianceTable
-  (keys (__tl_dyn-array i64))
+  (owners (__tl_dyn-array i64))
   (handles (__tl_dyn-array i64))
   (indices (__tl_dyn-array i64))
   (codes (__tl_dyn-array i64))
@@ -47254,7 +47274,8 @@
   (dependencies (__tl_dyn-array i64))
   (readers (__tl_dyn-array i64))
   (edge-len i64)
-  (memo-keys (__tl_dyn-array i64))
+  (memo-nodes (__tl_dyn-array i64))
+  (memo-positions (__tl_dyn-array i64))
   (memo-codes (__tl_dyn-array i64))
   (memo-len i64)
   (cache i64))
@@ -47309,7 +47330,6 @@
       (TcVarianceInvariant)
       (let
         [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
-        [key : i64 (+ (* nominal-id 4096) index)]
         [at : i64 0]
         (when
           (or (< nominal-id 0) (< index 0) (>= index 4096))
@@ -47318,22 +47338,27 @@
           (> table.cache 0)
           (if (tc-variance-cache-current? ctx table.cache)
             (let
-              [completed : i64 (tc-variance-cache-get table.cache key)]
+              [completed : i64
+                (tc-variance-cache-get table.cache nominal-id index)]
               (when (>= completed 0) (return (tc-variance-of-code completed))))
             (set! table.cache 0)))
         (while (< at table.len)
           (cfg test (+= tc-variance-test-lookups 1))
           (when
-            (= (array-ref table.keys at) key)
+            (tc-variance-position-same?
+              (array-ref table.owners at)
+              (array-ref table.indices at)
+              nominal-id
+              index)
             (tc-variance-dependency! table at)
             (return (tc-variance-of-code (array-ref table.codes at))))
           (set! at (+ at 1)))
-        (tc-variance-reserve! (&mut table.keys) table.len)
+        (tc-variance-reserve! (&mut table.owners) table.len)
         (tc-variance-reserve! (&mut table.handles) table.len)
         (tc-variance-reserve! (&mut table.indices) table.len)
         (tc-variance-reserve! (&mut table.codes) table.len)
         (tc-variance-reserve! (&mut table.pending) table.len)
-        (set! (array-ref table.keys table.len) key)
+        (set! (array-ref table.owners table.len) nominal-id)
         (set! (array-ref table.handles table.len) handle)
         (set! (array-ref table.indices table.len) index)
         (set! (array-ref table.codes table.len) 0)
@@ -47445,11 +47470,15 @@
           table
           position))))
   (let
-    [key : i64 (+ (* id 4) (tc-variance-code position))]
+    [code : i64 (tc-variance-code position)]
     (for [at (iterator.range 0 table.memo-len)]
       (cfg test (+= tc-variance-test-lookups 1))
       (when
-        (= (array-ref table.memo-keys at) key)
+        (tc-variance-position-same?
+          (array-ref table.memo-nodes at)
+          (array-ref table.memo-positions at)
+          id
+          code)
         (return (tc-variance-of-code (array-ref table.memo-codes at)))))
     (let
       [answer : TcVariance
@@ -47459,9 +47488,13 @@
           lifetime-id
           table
           position)]
-      (tc-variance-reserve! (&mut table.memo-keys) table.memo-len)
+      (tc-variance-reserve! (&mut table.memo-nodes) table.memo-len)
+      (tc-variance-reserve! (&mut table.memo-positions) table.memo-len)
       (tc-variance-reserve! (&mut table.memo-codes) table.memo-len)
-      (set! (array-ref table.memo-keys table.memo-len) key)
+      (set! (array-ref table.memo-nodes table.memo-len) id)
+      (set!
+        (array-ref table.memo-positions table.memo-len)
+        (tc-variance-code position))
       (set!
         (array-ref table.memo-codes table.memo-len)
         (tc-variance-code answer))

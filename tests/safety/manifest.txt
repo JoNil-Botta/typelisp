@@ -494,6 +494,16 @@ region_arena_self_carrier_shadow_ok|run-exit|tests/safety/region_arena_self_carr
 region_arena_self_carrier_controls_ok|check-ok|tests/safety/region_arena_self_carrier_controls_ok.tl|-|-
 region_arena_self_carrier_direct_store_reject|check-fail|tests/safety/region_arena_self_carrier_direct_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 region_arena_distinct_carrier_store_reject|check-fail|tests/safety/region_arena_distinct_carrier_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+# Carrier classification follows L2 on every binder path (Sol, final review of
+# 3bafc3d02): a local arena owner is not a carrier, a typed `for` item is
+# classified by its annotation, and mixed same-named lambda parameters keep
+# their types as written.
+region_arena_arena_owner_local_ok|run-exit|tests/safety/region_arena_arena_owner_local_ok.tl|42|-
+region_arena_arena_owner_local_store_reject|check-fail|tests/safety/region_arena_arena_owner_local_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_typed_for_carrier_ok|run-exit|tests/safety/region_arena_typed_for_carrier_ok.tl|42|-
+region_arena_typed_for_carrier_store_reject|check-fail|tests/safety/region_arena_typed_for_carrier_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+region_arena_mixed_lambda_params_ok|run-exit|tests/safety/region_arena_mixed_lambda_params_ok.tl|42|-
+region_arena_mixed_lambda_params_store_reject|check-fail|tests/safety/region_arena_mixed_lambda_params_store_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is

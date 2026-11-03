@@ -86146,7 +86146,8 @@
                     [shadows : bool
                       (and
                         (= name region)
-                        (not (tc-with-region-maybe-carrier? (& maybe-ty) name)))]
+                        (not
+                          (tc-with-region-maybe-carrier? ctx (& maybe-ty) name)))]
                     (ast.ast-let-binding-list-push
                       (&mut out)
                       (ast.AstLetBinding.Binding
@@ -86181,12 +86182,12 @@
               (ast.AstExpr.Lambda
                 (box
                   (ast.AstLambda.Lambda
-                    (ast.ast-param-list-map
-                      params
-                      tc-with-region-rename-type
+                    (tc-with-region-rename-params
                       ctx
                       region
-                      fresh)
+                      fresh
+                      (& params)
+                      live)
                     (tc-with-region-rename-maybe-type
                       ctx
                       region
@@ -86207,7 +86208,8 @@
                 [(ast.AstMatchArm.Arm pattern body)
                   (let
                     [live : bool
-                      (not (tc-with-region-pattern-shadows? (& pattern) region))]
+                      (not
+                        (tc-with-region-pattern-shadows? ctx (& pattern) region))]
                     (ast.ast-match-arm-list-push
                       (&mut out)
                       (ast.AstMatchArm.Arm
@@ -86410,7 +86412,10 @@
             region
             fresh
             (& items)
-            (not (tc-with-region-slot-named? ctx (& items) 2 region)))))]
+            (not
+              (and
+                (tc-with-region-slot-named? ctx (& items) 2 region)
+                (not (tc-with-region-slot-carrier? ctx (& items) 3 region)))))))]
     [(ForOwnedState items)
       (Some
         (ast.AstExpr.ForOwnedState
@@ -86493,19 +86498,66 @@
             (set! found true))]))
     found))
 
+;; Annotations are classified as L2 classifies the binding they declare: resolved,
+;; so an arena owner such as `(arena.Arena r)` stays its brand's root.
 (define (tc-with-region-maybe-carrier?
+  [ctx : TcContext]
   [maybe-ty : (& ast.AstMaybeType)]
   [name : i64]) : bool
   (match maybe-ty
-    [(Some ty) (tc-type-carries-own-lifetime? ty name)]
+    [(Some ty) (tc-param-type-carries-own-lifetime? ctx ty name)]
     [(No) false]))
 
+;; The explicit item annotation in SLOT of a scalar-`for` planner (absent when
+;; negative) is a self-named carrier of NAME; an inferred item is not classified.
+(define (tc-with-region-slot-carrier?
+  [ctx : TcContext]
+  [items : (& items ast.AstExprList)]
+  [slot : i64]
+  [name : i64]) : bool
+  (let
+    [id : i64 (ast.ast-expr-list-get items slot -1)]
+    (and
+      (>= id 0)
+      (match (tc-for-owned-expected-type ctx id)
+        [(Ok ty) (tc-type-carries-own-lifetime? (& ty) name)]
+        [(Err _) false]))))
+
+;; Parameter types are evaluated in the incoming scope and renamed, except that
+;; when a same-named parameter stops the body rename, every parameter spelled
+;; like the region keeps its type as written, so the body and the signature
+;; agree on which `r` each names.
+(define (tc-with-region-rename-params
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [params : (& params ast.AstParamList)]
+  [body-live : bool]) : ast.AstParamList
+  (let
+    [count : i64 (ast.ast-param-list-len params)]
+    [out : ast.AstParamList (ast.ast-param-list-with-capacity count)]
+    (for [index (iterator.range 0 count)]
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param name ty is-comptime)
+          (ast.ast-param-list-push
+            (&mut out)
+            (ast.AstParam.Param
+              name
+              (if (or body-live (not (= name region)))
+                (tc-with-region-rename-type ctx region fresh ty)
+                ty)
+              is-comptime))]))
+    out))
+
 (define (tc-with-region-pattern-shadows?
+  [ctx : TcContext]
   [pattern : (& ast.AstPattern)]
   [region : i64]) : bool
   (match pattern
     [(Var name maybe-ty)
-      (and (= name region) (not (tc-with-region-maybe-carrier? maybe-ty name)))]
+      (and
+        (= name region)
+        (not (tc-with-region-maybe-carrier? ctx maybe-ty name)))]
     [(Binding name) (= name region)]
     [(or (Tuple items) (Array items) (Slice items _) (Or items) (Fields items)
          (Field _ items) (Variant _ items))
@@ -86515,6 +86567,7 @@
         (for [index (iterator.range 0 list.len)]
           (when
             (tc-with-region-pattern-shadows?
+              ctx
               (&
                 (ast.ast-pattern-list-get
                   (& list)

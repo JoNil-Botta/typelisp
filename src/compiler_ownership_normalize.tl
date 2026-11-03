@@ -10175,11 +10175,17 @@
       (set! index (+ index 1)))))
 
 ;; The reserved `program` lifetime (`tc-program-lifetime-id?`).
+;; `program` and typechecking's unconstrained lifetime (#8998), which outlive
+;; every region.
 (define (normalize-program-lifetime? [name : i64]) : bool
   (and
     (>= name 0)
     (ci.intern-renderable-id? name)
-    (string.eq (ci.intern-str name) "program")))
+    (let
+      [text : String (ci.intern-str name)]
+      (or
+        (string.eq text "program")
+        (string.eq text "\n__typelisp_unconstrained_lifetime")))))
 
 (define (normalize-i64-member?
   [items : (& items (__tl_dyn-array i64))]

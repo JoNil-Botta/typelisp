@@ -26825,14 +26825,18 @@
 (defmacro (tc-lifetime-name-render [name : comptime.Expr]) : comptime.Expr
   `(let
     [lifetime-name-id : i64 ,name]
-    (if (ci.intern-renderable-id? lifetime-name-id)
-      (ci.intern-str lifetime-name-id)
-      (let
-        [source-name-id : i64
-          (ci.intern-active-syntax-source-name-id-or lifetime-name-id true -1)]
-        (if (ci.intern-renderable-id? source-name-id)
-          (ci.intern-str source-name-id)
-          (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))))
+    (cond
+      ;; No written lifetime can name the unconstrained one (#8998).
+      [(= lifetime-name-id (tc-unconstrained-lifetime-id)) "_"]
+      [(ci.intern-renderable-id? lifetime-name-id)
+        (ci.intern-str lifetime-name-id)]
+      [else
+        (let
+          [source-name-id : i64
+            (ci.intern-active-syntax-source-name-id-or lifetime-name-id true -1)]
+          (if (ci.intern-renderable-id? source-name-id)
+            (ci.intern-str source-name-id)
+            (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">")))])))
 
 (define (tc-spanned-escape-error
   [expr-bases : i64]
@@ -29038,6 +29042,10 @@
   -1)
 (define tc-call-temporary-lifetime-id-cache : i64
   -1)
+(define tc-unconstrained-lifetime-id-generation : i64
+  -1)
+(define tc-unconstrained-lifetime-id-cache : i64
+  -1)
 
 ;; Set when a call argument is typed as a borrowed temporary, so the call can
 ;; check its temporaries afterwards without classifying every argument
@@ -29507,7 +29515,37 @@
   [arena-owner : bool]
   [position : i64]) : bool
   (if (< lifetime-id 0)
-    false
+    ;; A combined signature-marker entry (`tc-signature-lifetime-marker-type`)
+    ;; keys its one slot under each of its lifetimes.
+    (match (& ty)
+      [(VarArgs _ lifetimes)
+        (if signature
+          (let
+            [added : bool false]
+            (for [index
+              (iterator.range 0 (ast.ast-lifetime-list-len (deref lifetimes)))]
+              (when
+                (tc_i64_i64_map.insert-if-absent-ref!
+                  ids
+                  (tc-env-cache-lifetime-marker-key
+                    (ast.ast-lifetime-list-get
+                      (deref lifetimes)
+                      index
+                      (ast.ast-lifetime-fallback)))
+                  next)
+                (set! added true)))
+            (when
+              added
+              (set! (array-ref values next) ty)
+              (set! (array-ref unsafe-flags next) 0)
+              (set!
+                (array-ref shadow-flags next)
+                (+
+                  tc-env-cache-flag-signature-lifetime
+                  (* position tc-env-cache-sidecar-position-scale))))
+            added)
+          false)]
+      [_ false])
     (let
       [general-added : bool
         (tc_i64_i64_map.insert-if-absent-ref!
@@ -30733,6 +30771,24 @@
         (set! tc-call-temporary-lifetime-id-cache lifetime-id)
         (set! tc-call-temporary-lifetime-id-generation generation)
         lifetime-id))))
+
+;; The lifetime of a lifetime formal no argument constrains, such as a nullary
+;; variant's (#8998). No reference has it, so it outlives every lifetime and no
+;; other lifetime outlives it; unlike `program`, no binding can shadow it, and
+;; no written lifetime can name it.
+(define (tc-unconstrained-lifetime-id) : i64
+  (let
+    [generation : i64 (ci.intern-generation)]
+    (if (= tc-unconstrained-lifetime-id-generation generation)
+      tc-unconstrained-lifetime-id-cache
+      (let
+        [lifetime-id : i64 (ci.intern (tc-unconstrained-lifetime-name))]
+        (set! tc-unconstrained-lifetime-id-cache lifetime-id)
+        (set! tc-unconstrained-lifetime-id-generation generation)
+        lifetime-id))))
+
+(define (tc-unconstrained-lifetime-name) : String
+  "\n__typelisp_unconstrained_lifetime")
 
 (define (tc-cleanup-owner-marker-id) : i64
   cbi.compiler-builtin-id-tc-cleanup-owner)
@@ -36754,6 +36810,11 @@
   (if (= key signature-marker-id)
     (match ty
       [(Var lifetime) (and (>= lifetime-id 0) (= lifetime lifetime-id))]
+      ;; A parameter list's caller regions share one entry (#8998).
+      [(VarArgs _ lifetimes)
+        (and
+          (>= lifetime-id 0)
+          (tc-lifetime-list-contains-at? (deref lifetimes) lifetime-id 0))]
       [_ false])
     false))
 
@@ -36893,8 +36954,6 @@
         (if scan-through
           (match (tc_i64_i64_map.get (& ids) name-id)
             [(LookupFound index)
-              ;; A newest carrier can shadow an older binding of the name in
-              ;; this window (`tc-env-cache-lifetime-match-status`).
               (if (tc-type-carries-own-lifetime?
                 (& (array-ref values index))
                 name-id)
@@ -37032,7 +37091,8 @@
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
   (if (or
     (tc-generated-arena-brand-id? lifetime-id)
-    (tc-program-lifetime-id? lifetime-id))
+    (tc-program-lifetime-id? lifetime-id)
+    (= lifetime-id (tc-unconstrained-lifetime-id)))
     true
     (if (tc-type-env-scoped-runtime-active? env)
       (tc-type-env-scoped-carrier-lifetime-visible-id?
@@ -37446,7 +37506,12 @@
     true
     (let
       [temporary : i64 (tc-call-temporary-lifetime-id)]
+      [unconstrained : i64 (tc-unconstrained-lifetime-id)]
       (cond
+        ;; An unconstrained lifetime outlives every other lifetime, and none
+        ;; outlives it, not even the reserved `program`.
+        [(= target-lifetime-id unconstrained) false]
+        [(= value-lifetime-id unconstrained) true]
         ;; A borrowed call-argument temporary dies when its call returns, so
         ;; every other lifetime outlives it and it outlives none of them.
         [(= target-lifetime-id temporary) true]
@@ -38488,7 +38553,7 @@
 ;; A parameter of the declared callee with symbol index `key` spelled
 ;; `program` names its own lifetime in the signature, as any parameter named
 ;; like a lifetime does, shadowing the reserved one
-;; (`tc-signature-lifetime-needs-marker?`): that name, or -1. A function
+;; (`tc-signature-lifetime-marker-type`): that name, or -1. A function
 ;; value's type names no parameters, so its `program` is the reserved one.
 (define (tc-call-program-shadow [ctx : TcContext] [key : i64] [count : i64]) : i64
   (let
@@ -47505,9 +47570,11 @@
 ;; lifetime has a synthesized name no source can spell, so it is described
 ;; instead (Rust's "anonymous lifetime").
 (define (tc-lifetime-diagnostic-name [role : String] [name : i64]) : String
-  (if (tc-elaborated-lifetime-hidden? name)
-    "the signature's elided lifetime"
-    (str_cat.str-cat role " lifetime `" (tc-lifetime-name-render name) "`")))
+  (cond
+    [(tc-elaborated-lifetime-hidden? name) "the signature's elided lifetime"]
+    [(= name (tc-unconstrained-lifetime-id)) "an unconstrained lifetime"]
+    [else
+      (str_cat.str-cat role " lifetime `" (tc-lifetime-name-render name) "`")]))
 
 (define (tc-lifetime-coercion-outlives-detail [source : i64] [required : i64]) : String
   (str_cat.str-cat
@@ -49680,56 +49747,91 @@
           (= name name-id)
           (tc-param-list-has-name-id-at? params name-id (+ index 1)))])))
 
-(define (tc-signature-lifetime-needs-marker?
+;; The one signature-marker entry type of a parameter list (#8998): its caller
+;; regions, which are incomparable to each other, or No. A lifetime spelled like
+;; a parameter is the caller's referent region when that parameter is a
+;; self-named carrier; otherwise it names the parameter's storage (#8890) or
+;; brand and is rooted at the parameter. One pass reads each parameter once.
+(define (tc-signature-lifetime-marker-type
   [ctx : TcContext]
-  [params : (& params ast.AstParamList)]
-  [lifetime-id : i64]) : bool
-  ;; A lifetime spelled like a parameter is the caller's referent region when
-  ;; that parameter is a self-named carrier (#8998); otherwise it names the
-  ;; parameter's storage (#8890) or brand and is rooted at the parameter.
-  (and
-    (>= lifetime-id 0)
-    (not (tc-elaborated-lifetime-hidden? lifetime-id))
-    (let
-      [class : i64 (tc-param-list-own-lifetime-class ctx params lifetime-id 0)]
-      (if (< class 0)
-        (not (tc-program-lifetime-id? lifetime-id))
-        (= class 1)))))
+  [params : (& params ast.AstParamList)]) : ast.AstMaybeType
+  (let
+    [lifetimes : TcNameIdList Nil]
+    [carriers : TcNameIdList Nil]
+    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param name ty _)
+          (when
+            (tc-param-type-carries-own-lifetime? ctx (& ty) name)
+            (set! carriers (tc-name-id-list-add carriers name)))
+          (set!
+            lifetimes
+            (tc-signature-lifetime-type-collect-into ty -1 lifetimes))]))
+    (tc-signature-lifetime-marker-type-for params lifetimes carriers)))
 
-;; From INDEX on: -1 when no parameter is named NAME-ID, else 1 when that
-;; parameter is a self-named carrier and 0 when it is not.
-(define (tc-param-list-own-lifetime-class
-  [ctx : TcContext]
+;; The signature-marker entry type for LIFETIMES of PARAMS, whose self-named
+;; carriers are CARRIERS (`tc-signature-lifetime-marker-type`), or No.
+(define (tc-signature-lifetime-marker-type-for
   [params : (& params ast.AstParamList)]
-  [name-id : i64]
-  [index : i64]) : i64
-  (if (>= index (ast.ast-param-list-len params))
-    -1
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(Param name ty _)
-        (if (= name name-id)
-          (if (tc-param-type-carries-own-lifetime? ctx ty name-id)
-            1
-            0)
-          (tc-param-list-own-lifetime-class ctx params name-id (+ index 1)))])))
+  [lifetimes : TcNameIdList]
+  [carriers : TcNameIdList]) : ast.AstMaybeType
+  (when (tc-name-id-list-empty? lifetimes) (return (ast.AstMaybeType.No)))
+  (let
+    [marked : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    [cursor : TcNameIdList lifetimes]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [lifetime : i64 (tc-name-id-list-head cursor)]
+        (when
+          (and
+            (>= lifetime 0)
+            (not (tc-elaborated-lifetime-hidden? lifetime))
+            (if (tc-name-id-list-contains carriers lifetime)
+              true
+              (and
+                (not (tc-program-lifetime-id? lifetime))
+                (not (tc-param-slots-have-name? params lifetime))))
+            (not (tc-lifetime-list-contains-at? (& marked) lifetime 0)))
+          (ast.ast-lifetime-list-push (&mut marked) lifetime))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    (if (ast.ast-lifetime-list-empty? (& marked))
+      (ast.AstMaybeType.No)
+      (ast.AstMaybeType.Some
+        (ast.ast-ty-var-args (tc-signature-lifetime-marker-id) marked)))))
+
+;; Whether a parameter of PARAMS is named NAME-ID, read without copying.
+(define (tc-param-slots-have-name?
+  [params : (& params ast.AstParamList)]
+  [name-id : i64]) : bool
+  (let
+    [index : i64 0]
+    (while (< index params.len)
+      (match (& (array-ref params.slots index))
+        [(Param name _ _) (when (= name name-id) (return true))])
+      (set! index (+ index 1)))
+    false))
 
 ;; `tc-type-carries-own-lifetime?` of a parameter's declared type TY as its
 ;; binder binds it: resolved, without an `:invalidate` wrapper. Only a nominal
 ;; that names the lifetime is resolved; a reference is decided as written.
 (define (tc-param-type-carries-own-lifetime?
   [ctx : TcContext]
-  [ty : ast.AstType]
+  [ty : (& ast.AstType)]
   [name-id : i64]) : bool
-  (match (& ty)
+  (match ty
     [(Invalidate _ inner)
-      (tc-param-type-carries-own-lifetime? ctx (ast.ty-node-get inner) name-id)]
+      (tc-param-type-carries-own-lifetime?
+        ctx
+        (& (ast.ty-node-get inner))
+        name-id)]
     [(or (StructArgs _ lifetimes) (EnumArgs _ lifetimes) (VarArgs _ lifetimes))
       (and
         (tc-lifetime-list-contains-at? (deref lifetimes) name-id 0)
         (tc-type-carries-own-lifetime?
-          (& (tc-type-strip-invalidate (tc-resolve-type ctx (clone ty))))
+          (&
+            (tc-type-strip-invalidate (tc-resolve-type ctx (clone (deref ty)))))
           name-id))]
-    [_ (tc-type-carries-own-lifetime? (& ty) name-id)]))
+    [_ (tc-type-carries-own-lifetime? ty name-id)]))
 
 ;; Whether a binding named NAME-ID whose (resolved) type is TY is a
 ;; self-named carrier (#8998): TY is a reference whose lifetime is NAME-ID, or
@@ -49752,52 +49854,30 @@
     [_ false]))
 
 (define (tc-bind-signature-lifetime-markers
-  [ctx : TcContext]
   [env : TcTypeEnv]
-  [params : (& params ast.AstParamList)]
-  [lifetimes : TcNameIdList]) : TcTypeEnv
-  (let
-    [cursor : TcNameIdList lifetimes]
-    [out : TcTypeEnv env]
-    (while (not (tc-name-id-list-empty? cursor))
-      (let
-        [lifetime : i64 (tc-name-id-list-head cursor)]
-        (if (tc-signature-lifetime-needs-marker? ctx params lifetime)
-          (set!
-            out
-            (tc-bind-runtime-marker-id
-              out
-              (tc-signature-lifetime-marker-id)
-              (Var lifetime)
-              Other))
-          unit)
-        (set! cursor (tc-name-id-list-rest cursor))))
-    out))
+  [marker : ast.AstMaybeType]) : TcTypeEnv
+  (match marker
+    [(ast.AstMaybeType.Some marker)
+      (tc-bind-runtime-marker-id
+        env
+        (tc-signature-lifetime-marker-id)
+        marker
+        Other)]
+    [(ast.AstMaybeType.No) env]))
 
 (define (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
-  [ctx : TcContext]
   [carrier : TcTypeEnvScopedCarrier]
-  [params : (& params ast.AstParamList)]
-  [lifetimes : TcNameIdList]) : TcTypeEnvScopedCarrier
-  (let
-    [cursor : TcNameIdList lifetimes]
-    [out : TcTypeEnvScopedCarrier carrier]
-    (while (not (tc-name-id-list-empty? cursor))
-      (let
-        [lifetime : i64 (tc-name-id-list-head cursor)]
-        (if (tc-signature-lifetime-needs-marker? ctx params lifetime)
-          (set!
-            out
-            (tc-type-env-scoped-carrier-with-sidecar
-              (tc-global-shared-view out)
-              (tc-type-env-scoped-sidecar-bind-marker-id
-                out.sidecar
-                (tc-signature-lifetime-marker-id)
-                (Var lifetime)
-                Other)))
-          unit)
-        (set! cursor (tc-name-id-list-rest cursor))))
-    out))
+  [marker : ast.AstMaybeType]) : TcTypeEnvScopedCarrier
+  (match marker
+    [(ast.AstMaybeType.Some marker)
+      (tc-type-env-scoped-carrier-with-sidecar
+        (tc-global-shared-view carrier)
+        (tc-type-env-scoped-sidecar-bind-marker-id
+          carrier.sidecar
+          (tc-signature-lifetime-marker-id)
+          marker
+          Other))]
+    [(ast.AstMaybeType.No) carrier]))
 
 (define (tc-bind-params
   [ctx : TcContext]
@@ -49808,23 +49888,11 @@
   (tc-bind-params-at
     ctx
     (tc-bind-signature-lifetime-markers
-      ctx
       env
-      (& params)
-      (tc-param-list-signature-lifetimes (& params)))
+      (tc-signature-lifetime-marker-type ctx (& params)))
     (& params)
     0
     Nil))
-
-(define (tc-param-list-signature-lifetimes
-  [params : (& params ast.AstParamList)]) : TcNameIdList
-  (let
-    [out : TcNameIdList Nil]
-    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param _ ty _)
-          (set! out (tc-signature-lifetime-type-collect-into ty -1 out))]))
-    out))
 
 (define (tc-bind-params-at
   [ctx : TcContext]
@@ -49836,7 +49904,9 @@
     ;; An arena brand keeps its marker inside the parameters, where the
     ;; arena checks order it (#8998): this newer marker shadows the outer one.
     (tc-bind-invalidate-marker
-      (tc-bind-signature-lifetime-markers ctx env params lifetimes)
+      (tc-bind-signature-lifetime-markers
+        env
+        (tc-signature-lifetime-marker-type-for params lifetimes Nil))
       params)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
@@ -49975,10 +50045,8 @@
   (tc-type-env-scoped-carrier-bind-params-at
     ctx
     (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
-      ctx
       carrier
-      (& params)
-      (tc-param-list-signature-lifetimes (& params)))
+      (tc-signature-lifetime-marker-type ctx (& params)))
     (& params)
     0
     TcNameIdList.Nil
@@ -50008,10 +50076,8 @@
           ;; As `tc-bind-params-at`: arena brands' markers inside.
           [out : TcTypeEnvScopedCarrier
             (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
-              ctx
               carrier
-              params
-              lifetimes)]
+              (tc-signature-lifetime-marker-type-for params lifetimes Nil))]
           (match (tc-invalidate-marker-type params)
             [(Some marker)
               (tc-type-env-scoped-carrier-with-sidecar
@@ -56608,22 +56674,21 @@
       (Err "typecheck: call target is not a function"))))
 
 ;; A nullary variant holds no reference, so no lifetime of its enum is
-;; constrained: a formal spelled like a binding at the call site is the reserved
-;; `program` lifetime rather than that binding's (#8998), as an unconstrained
-;; formal of a constructor call is (`tc-constructor-formal-subst-restore`).
+;; constrained: a formal spelled like a binding at the call site is the
+;; unconstrained lifetime rather than that binding's (#8998), as an
+;; unconstrained formal of a constructor call is
+;; (`tc-constructor-formal-subst-restore`).
 (define (tc-nullary-variant-type [env : TcTypeEnv] [ret : ast.AstType]) : ast.AstType
   (match (& ret)
     [(EnumArgs _ lifetimes)
-      (if (tc-name-bound-id? env (tc-program-lifetime-name-id))
-        ret
-        (tc-lifetime-subst-type
-          (tc-constructor-program-formal-subst env (deref lifetimes) 0 Nil)
-          ret))]
+      (tc-lifetime-subst-type
+        (tc-constructor-unconstrained-formal-subst env (deref lifetimes) 0 Nil)
+        ret)]
     [_ ret]))
 
 ;; SUBST binding each formal from INDEX on that names a binding in ENV to the
-;; reserved `program` lifetime.
-(define (tc-constructor-program-formal-subst
+;; unconstrained lifetime.
+(define (tc-constructor-unconstrained-formal-subst
   [env : TcTypeEnv]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]
@@ -56633,12 +56698,12 @@
     (let
       [formal : i64
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback))]
-      (tc-constructor-program-formal-subst
+      (tc-constructor-unconstrained-formal-subst
         env
         lifetimes
         (+ index 1)
         (if (tc-constructor-formal-names-binding? env formal)
-          (tc-lifetime-subst-push subst formal (tc-program-lifetime-name-id))
+          (tc-lifetime-subst-push subst formal (tc-unconstrained-lifetime-id))
           subst)))))
 
 (define (tc-call-region-args-allowed-for-func
@@ -56785,6 +56850,132 @@
           (ast.ast-lifetime-list-box-shared-view lifetimes)))]
     [_ ty]))
 
+;; Expansions and new nodes of `tc-lifetime-subst-type-id-shared` (bound tests).
+(define tc-lifetime-subst-shared-expansions : i64
+  0)
+(define tc-lifetime-subst-shared-new-nodes : i64
+  0)
+
+;; The id of the type node ID with SUBST applied (#8998). MEMO maps each
+;; expanded node to its result and is shared across one operation's roots, so
+;; each distinct node is expanded once and a shared input child stays a shared
+;; output child; an unchanged node is its own result. Expansions and new nodes
+;; are therefore each at most the number of distinct reachable nodes.
+(define (tc-lifetime-subst-type-id-shared
+  [subst : TcLifetimeSubst]
+  [memo : (&mut memo tc_i64_i64_map.Map)]
+  [id : i64]) : i64
+  (match (tc_i64_i64_map.get memo id)
+    [(LookupFound done) done]
+    [(LookupMissing)
+      (+= tc-lifetime-subst-shared-expansions 1)
+      (let
+        [ty : ast.AstType (ast.ty-node-get id)]
+        [changed : ast.AstMaybeType
+          (match (& ty)
+            [(or (Ref lifetime inner) (MutRef lifetime inner)
+                 (Region lifetime inner) (Invalidate lifetime inner))
+              (let
+                [next : i64 (tc-lifetime-subst-type-id-shared subst memo inner)]
+                [renamed : i64 (tc-lifetime-subst-apply subst lifetime)]
+                (if (and (= next inner) (= renamed lifetime))
+                  (ast.AstMaybeType.No)
+                  (ast.AstMaybeType.Some
+                    (match (& ty)
+                      [(Ref _ _) (Ref renamed next)]
+                      [(MutRef _ _) (MutRef renamed next)]
+                      [(Region _ _) (Region renamed next)]
+                      [_ (Invalidate renamed next)]))))]
+            [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem)
+                 (Ptr elem) (MutPtr elem))
+              (let
+                [next : i64 (tc-lifetime-subst-type-id-shared subst memo elem)]
+                (if (= next elem)
+                  (ast.AstMaybeType.No)
+                  (ast.AstMaybeType.Some
+                    (match (& ty)
+                      [(Array _ len) (Array next len)]
+                      [(DynArray _) (DynArray next)]
+                      [(Slice _) (Slice next)]
+                      [(Box _) (Box next)]
+                      [(Ptr _) (Ptr next)]
+                      [_ (MutPtr next)]))))]
+            [(Tuple elems)
+              (let
+                [changed : bool false]
+                [next : ast.AstTypeList
+                  (tc-lifetime-subst-type-list-shared
+                    subst
+                    memo
+                    (deref elems)
+                    (&mut changed))]
+                (if changed
+                  (ast.AstMaybeType.Some (ast.ast-ty-tuple next))
+                  (ast.AstMaybeType.No)))]
+            [(Func args ret)
+              (let
+                [changed : bool false]
+                [next : ast.AstTypeList
+                  (tc-lifetime-subst-type-list-shared
+                    subst
+                    memo
+                    (deref args)
+                    (&mut changed))]
+                [next-ret : i64
+                  (tc-lifetime-subst-type-id-shared subst memo ret)]
+                (if (or changed (!= next-ret ret))
+                  (ast.AstMaybeType.Some (Func (box next) next-ret))
+                  (ast.AstMaybeType.No)))]
+            [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes)
+                 (VarArgs _ lifetimes))
+              (if (tc-lifetime-subst-list-changes? subst (deref lifetimes) 0)
+                (ast.AstMaybeType.Some
+                  (tc-lifetime-subst-type subst (clone ty)))
+                (ast.AstMaybeType.No))]
+            [_ (ast.AstMaybeType.No)])]
+        [out : i64
+          (match changed
+            [(Some next)
+              (+= tc-lifetime-subst-shared-new-nodes 1)
+              (ast.ast-node-pool-reader-type-push (& next))]
+            [(No) id])]
+        (tc_i64_i64_map.insert-ref! memo id out)
+        out)]))
+
+;; The ids of TYPES with SUBST applied through MEMO
+;; (`tc-lifetime-subst-type-id-shared`); CHANGED is set when one differs.
+(define (tc-lifetime-subst-type-list-shared
+  [subst : TcLifetimeSubst]
+  [memo : (&mut memo tc_i64_i64_map.Map)]
+  [types : (& types ast.AstTypeList)]
+  [changed : (&mut changed bool)]) : ast.AstTypeList
+  (let
+    [out : ast.AstTypeList
+      (ast.ast-type-list-with-capacity (ast.ast-type-list-len types))]
+    (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+      (let
+        [item : i64
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))]
+        [next : i64 (tc-lifetime-subst-type-id-shared subst memo item)]
+        (when (!= next item) (set! (deref changed) true))
+        (ast.ast-type-list-push (&mut out) next)))
+    out))
+
+;; Whether SUBST renames a lifetime of ITEMS from INDEX on.
+(define (tc-lifetime-subst-list-changes?
+  [subst : TcLifetimeSubst]
+  [items : (& items ast.AstLifetimeList)]
+  [index : i64]) : bool
+  (cond
+    [(>= index (ast.ast-lifetime-list-len items)) false]
+    [(match (tc-lifetime-subst-lookup
+        subst
+        (ast.ast-lifetime-list-get items index (ast.ast-lifetime-fallback)))
+        [(Some _) true]
+        [(No) false])
+      true]
+    [else (tc-lifetime-subst-list-changes? subst items (+ index 1))]))
+
 (define (tc-call-lifetime-subst-mismatch-message) : String
   "typecheck: internal call lifetime substitution mismatch")
 
@@ -56883,17 +57074,23 @@
   [variance : TcVariance]) : ResultTcLifetimeSubst
   (if (tc-lifetime-list-contains-at? params formal 0)
     ;; An argument typed as its field's hidden formal echoes the expected
-    ;; type (`tc-infer-call-or-constructor-lifetime-subst`): only a `program`
-    ;; lifetime coerces to that unbound name, so it binds that.
+    ;; type (`tc-infer-call-or-constructor-lifetime-subst`): only an unshadowed
+    ;; `program` or an unconstrained lifetime coerces to that unbound name, so
+    ;; it binds `program` where `program` is unshadowed, else the unconstrained
+    ;; lifetime.
     (tc-lifetime-subst-bind-for-variance
       env
       subst
       formal
-      (if (and
-        (= formal actual)
-        (tc-name-id-list-contains tc-constructor-hidden-formals formal))
-        (tc-program-lifetime-name-id)
-        actual)
+      (cond
+        [(not
+            (and
+              (= formal actual)
+              (tc-name-id-list-contains tc-constructor-hidden-formals formal)))
+          actual]
+        [(tc-name-bound-id? env (tc-program-lifetime-name-id))
+          (tc-unconstrained-lifetime-id)]
+        [else (tc-program-lifetime-name-id)])
       variance)
     (if (tc-lifetime-coercible-for-variance? env variance formal actual)
       (Ok subst)
@@ -58070,13 +58267,15 @@
         (tc-infer-call-lifetime-subst ctx env func args params lifetimes Nil)]
       [_
         (let
+          ;; One memo for every field of this operation (#8998).
+          [memo : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 16)]
+          [changed : bool false]
           [hidden-params : ast.AstTypeList
-            (ast.ast-type-list-with-capacity (ast.ast-type-list-len (& params)))]
-          (tc-lifetime-subst-type-list-into
-            hidden
-            (& params)
-            (&mut hidden-params)
-            0)
+            (tc-lifetime-subst-type-list-shared
+              hidden
+              (&mut memo)
+              (& params)
+              (&mut changed))]
           (match (let
             [outer : TcNameIdList tc-constructor-hidden-formals]
             [hidden-lifetimes : ast.AstLifetimeList
@@ -58099,7 +58298,6 @@
             [(Ok inferred)
               (Ok
                 (tc-constructor-formal-subst-restore
-                  env
                   (ast.ast-expr-list-empty? (& args))
                   hidden
                   (& lifetimes)
@@ -58178,11 +58376,9 @@
 ;; INFERRED, which binds the hidden formals of HIDDEN, extended to bind each
 ;; declared formal from INDEX on to its hidden formal's inferred lifetime. A
 ;; hidden formal no argument constrains stays its declared formal, except in a
-;; NULLARY? variant, which holds no reference: there it is the reserved
-;; `program` lifetime, which outlives every other, unless a binding spelled
-;; `program` shadows it.
+;; NULLARY? variant, which holds no reference: there it is the unconstrained
+;; lifetime (`tc-unconstrained-lifetime-id`).
 (define (tc-constructor-formal-subst-restore
-  [env : TcTypeEnv]
   [nullary? : bool]
   [hidden : TcLifetimeSubst]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
@@ -58196,7 +58392,6 @@
       [hidden-formal : i64 (tc-lifetime-subst-apply hidden formal)]
       [actual : i64 (tc-lifetime-subst-apply inferred hidden-formal)]
       (tc-constructor-formal-subst-restore
-        env
         nullary?
         hidden
         lifetimes
@@ -58205,15 +58400,12 @@
           [(= hidden-formal formal) inferred]
           [(!= actual hidden-formal)
             (tc-lifetime-subst-push inferred formal actual)]
-          [(or
-              (not nullary?)
-              (tc-name-bound-id? env (tc-program-lifetime-name-id)))
-            inferred]
+          [(not nullary?) inferred]
           [else
             (tc-lifetime-subst-push
               inferred
               formal
-              (tc-program-lifetime-name-id))])))))
+              (tc-unconstrained-lifetime-id))])))))
 
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]

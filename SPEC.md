@@ -2564,13 +2564,14 @@ lifetime type arguments in parameter positions. A return type may mention a
 lifetime only when that lifetime is tied to at least one input parameter or is
 the reserved `program` lifetime. Returning a named aggregate containing
 references is valid only when every stored reference lifetime in the returned
-type is tied to such an input lifetime or to `program`. A parameter whose own
-type carries its name, as in `[xs : (& xs T)]` or `[s : (RefBox s)]`, names
-the caller's region it refers into, not its own storage: that region outlives
-every parameter and is unrelated to the signature's other lifetimes. A lifetime
-spelled like a parameter whose type does not carry it, as `a` in
-`[a : i64] [r : (& a i64)]`, names that parameter's storage, which ends when
-the call returns.
+type is tied to such an input lifetime or to `program`. A parameter whose type
+is itself a reference with its name as the lifetime, as in `[xs : (& xs T)]`,
+or a nominal type other than an arena with its name among the lifetime
+arguments, as in `[s : (RefBox s)]`, names the caller's region it refers into,
+not its own storage: that region outlives every parameter and is unrelated to
+the signature's other lifetimes. Any other lifetime spelled like a parameter,
+as `a` in `[a : i64] [r : (& a i64)]`, names that parameter's storage, which
+ends when the call returns.
 
 ```lisp test=ignore name=lifetime-parameterized-return-ok reason="illustrative return example; not a standalone program"
 (define (keep-ref [value : (& a i64)]) : (RefBox a)

@@ -6219,6 +6219,239 @@
           (set! ok false))))
     ok))
 
+;; #8998: the unconstrained lifetime outlives every lifetime and none outlives
+;; it, not even an unshadowed `program`; it is visible everywhere and is never
+;; rendered by its internal spelling.
+(define (tc-unconstrained-lifetime-order-smoke?) : bool
+  (let
+    [free : i64 (tc_core.tc-unconstrained-lifetime-id)]
+    [ordinary : i64 (ci.intern "unconstrained-order-ordinary")]
+    [program : i64 (ci.intern "program")]
+    [temporary : i64 (tc_core.tc-call-temporary-lifetime-id)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) ordinary (I64))]
+    [shadowed : tc_core.TcTypeEnv (tc_core.tc-bind-id env program (I64))]
+    (and
+      (tc_core.tc-lifetime-outlives-lifetime-id? env free free)
+      (tc_core.tc-lifetime-outlives-lifetime-id? env free ordinary)
+      (not (tc_core.tc-lifetime-outlives-lifetime-id? env ordinary free))
+      (not (tc_core.tc-lifetime-outlives-lifetime-id? env program free))
+      (not (tc_core.tc-lifetime-outlives-lifetime-id? shadowed program free))
+      (tc_core.tc-lifetime-outlives-lifetime-id? env free temporary)
+      (not (tc_core.tc-lifetime-outlives-lifetime-id? env temporary free))
+      (tc_core.tc-lifetime-visible-id? env free)
+      (string.eq
+        (tc_core.tc-lifetime-diagnostic-name "source" free)
+        "an unconstrained lifetime"))))
+
+;; #8998: the hidden-collision substitution expands each distinct node of a
+;; shared type graph once and keeps shared children shared: over
+;; `T0 = (& r i64)`, `Td = (Tuple T(d-1) T(d-1))` (d + 2 distinct nodes) it
+;; expands and creates at most d + 2 nodes, and an identity renames nothing.
+(define (tc-lifetime-subst-shared-dag-smoke?) : bool
+  (let
+    [from : i64 (ci.intern "shared-dag-from")]
+    [to : i64 (ci.intern "shared-dag-to")]
+    [rename : tc_core.TcLifetimeSubst
+      (tc_core.tc-lifetime-subst-push tc_core.TcLifetimeSubst.Nil from to)]
+    [same : tc_core.TcLifetimeSubst
+      (tc_core.tc-lifetime-subst-push tc_core.TcLifetimeSubst.Nil to to)]
+    [ok : bool true]
+    (for [step (iterator.range 0 3)]
+      (let
+        [depth : i64
+          (if (= step 0)
+            8
+            (if (= step 1)
+              16
+              32))]
+        [leaf : i64 (ast.ty-node-push-raw (& (I64)))]
+        [node : i64 (ast.ty-node-push-raw (& (ast.AstType.Ref from leaf)))]
+        (for [_level (iterator.range 0 depth)]
+          (let
+            [elems : ast.AstTypeList (ast.ast-type-list-with-capacity 2)]
+            (ast.ast-type-list-push (&mut elems) node)
+            (ast.ast-type-list-push (&mut elems) node)
+            (set! node (ast.ty-node-push-raw (& (ast.ast-ty-tuple elems))))))
+        (let
+          [expansions : i64 tc_core.tc-lifetime-subst-shared-expansions]
+          [created : i64 tc_core.tc-lifetime-subst-shared-new-nodes]
+          [memo : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 16)]
+          [out : i64
+            (tc_core.tc-lifetime-subst-type-id-shared rename (&mut memo) node)]
+          [expanded : i64
+            (- tc_core.tc-lifetime-subst-shared-expansions expansions)]
+          [new-nodes : i64
+            (- tc_core.tc-lifetime-subst-shared-new-nodes created)]
+          [identity-memo : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 16)]
+          [before-identity : i64 tc_core.tc-lifetime-subst-shared-new-nodes]
+          [identity : i64
+            (tc_core.tc-lifetime-subst-type-id-shared
+              same
+              (&mut identity-memo)
+              node)]
+          (unless
+            (and
+              (<= expanded (+ depth 2))
+              (<= new-nodes (+ depth 2))
+              (!= out node)
+              (= identity node)
+              (= tc_core.tc-lifetime-subst-shared-new-nodes before-identity)
+              (match (ast.ty-node-get out)
+                [(Tuple elems)
+                  (=
+                    (ast.ast-type-list-get (& (deref elems)) 0 -1)
+                    (ast.ast-type-list-get (& (deref elems)) 1 -2))]
+                [_ false]))
+            (set! ok false)))))
+    ok))
+
+;; #8998: the ENV that `tc-lifetime-lookup-paths-agree-smoke?` builds over BASE:
+;; an ordinary `outer`, one combined signature marker for `m1` and `m2`, an
+;; ordinary `shadowed`, FILL bindings, then a self-named carrier also spelled
+;; `shadowed`, a `local` and FILL more.
+(define (tc-lifetime-agree-env [base : tc_core.TcTypeEnv] [fill : i64]) : tc_core.TcTypeEnv
+  (let
+    [markers : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    (ast.ast-lifetime-list-push (&mut markers) (ci.intern "agree-m1"))
+    (ast.ast-lifetime-list-push (&mut markers) (ci.intern "agree-m2"))
+    (let
+      [outer : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id base (ci.intern "agree-outer") (I64))]
+      [signed : tc_core.TcTypeEnv
+        (tc_core.tc-bind-signature-lifetime-markers
+          outer
+          (ast.AstMaybeType.Some
+            (ast.ast-ty-var-args
+              (tc_core.tc-signature-lifetime-marker-id)
+              markers)))]
+      [older : tc_core.TcTypeEnv
+        (tc-type-env-bind-many
+          (tc_core.tc-bind-id signed (ci.intern "agree-shadowed") (I64))
+          fill)]
+      [carrier : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id
+          older
+          (ci.intern "agree-shadowed")
+          (ast.ast-ty-ref (ci.intern "agree-shadowed") (& (I64))))]
+      (tc-type-env-bind-many
+        (tc_core.tc-bind-id carrier (ci.intern "agree-local") (I64))
+        fill))))
+
+;; Whether every outlives and visibility answer over the agreement names is the
+;; same in ENV and REFERENCE.
+(define (tc-lifetime-answers-agree?
+  [env : tc_core.TcTypeEnv]
+  [reference : tc_core.TcTypeEnv]) : bool
+  (let
+    [names : (Array i64 9)
+      (array
+        (ci.intern "agree-outer")
+        (ci.intern "agree-m1")
+        (ci.intern "agree-m2")
+        (ci.intern "agree-shadowed")
+        (ci.intern "agree-local")
+        (ci.intern "agree-missing")
+        (ci.intern "program")
+        (tc_core.tc-unconstrained-lifetime-id)
+        (tc_core.tc-call-temporary-lifetime-id))]
+    [ok : bool true]
+    (for [value (iterator.range 0 (array-length names))]
+      (unless
+        (=
+          (tc_core.tc-lifetime-visible-id? env (array-ref names value))
+          (tc_core.tc-lifetime-visible-id? reference (array-ref names value)))
+        (set! ok false))
+      (for [target (iterator.range 0 (array-length names))]
+        (unless
+          (=
+            (tc_core.tc-lifetime-outlives-lifetime-id?
+              env
+              (array-ref names value)
+              (array-ref names target))
+            (tc_core.tc-lifetime-outlives-lifetime-id?
+              reference
+              (array-ref names value)
+              (array-ref names target)))
+          (set! ok false))))
+    ok))
+
+;; #8998: lifetime lookups agree between the uncached spine, local cache
+;; windows (one holding both `shadowed` bindings, and one holding only the
+;; carrier) and the scoped runtime, before and after a scope is popped; the
+;; markers are incomparable, a missing name is invisible, and the carrier's
+;; lifetime is the older `shadowed`.
+(define (tc-lifetime-lookup-paths-agree-smoke?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [ok : bool true]
+    (for [step (iterator.range 0 2)]
+      (let
+        [fill : i64
+          (if (= step 0)
+            2
+            40)]
+        [raw : tc_core.TcTypeEnv
+          (tc-lifetime-agree-env (tc_core.tc-default-env) fill)]
+        [cached : tc_core.TcTypeEnv (tc_core.tc-env-with-local-cache raw)]
+        [carrier : tc_core.TcTypeEnvScopedCarrier
+          (tc_core.tc-type-env-scoped-carrier-from-env (tc_core.tc-default-env))]
+        [outer-save : tc_core.TcTypeEnvScopedRuntimeSave
+          (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+        [scope-save : tc_core.TcTypeEnvScopedRuntimeSave
+          (tc_core.tc-type-env-scoped-runtime-save (tc_core.tc-default-env))]
+        [scoped : tc_core.TcTypeEnv
+          (tc-lifetime-agree-env (tc_core.tc-default-env) fill)]
+        [scoped-ok : bool
+          (and
+            (tc_core.tc-type-env-scoped-runtime-active? scoped)
+            (tc-lifetime-answers-agree? scoped raw))]
+        (tc_core.tc-type-env-scoped-runtime-restore! scope-save)
+        (let
+          [popped-ok : bool
+            (and
+              (not
+                (tc_core.tc-lifetime-visible-id?
+                  (tc_core.tc-default-env)
+                  (ci.intern "agree-m1")))
+              (not
+                (tc_core.tc-lifetime-visible-id?
+                  (tc_core.tc-default-env)
+                  (ci.intern "agree-shadowed")))
+              (not
+                (tc_core.tc-lifetime-visible-id?
+                  (tc_core.tc-default-env)
+                  (ci.intern "agree-local")))
+              (tc_core.tc-lifetime-visible-id?
+                (tc_core.tc-default-env)
+                (ci.intern "program")))]
+          (tc_core.tc-type-env-scoped-runtime-restore! outer-save)
+          (unless
+            (and
+              scoped-ok
+              popped-ok
+              (tc-lifetime-answers-agree? cached raw)
+              (not
+                (tc_core.tc-lifetime-outlives-lifetime-id?
+                  raw
+                  (ci.intern "agree-m1")
+                  (ci.intern "agree-m2")))
+              (not
+                (tc_core.tc-lifetime-visible-id?
+                  raw
+                  (ci.intern "agree-missing")))
+              (tc_core.tc-lifetime-outlives-lifetime-id?
+                raw
+                (ci.intern "agree-shadowed")
+                (ci.intern "agree-local"))
+              (not
+                (tc_core.tc-lifetime-outlives-lifetime-id?
+                  raw
+                  (ci.intern "agree-shadowed")
+                  (ci.intern "agree-outer"))))
+            (set! ok false)))))
+    ok))
+
 (define (tc-type-env-local-cache-smoke?) : bool
   (cbi.compiler-builtin-initialize-for-parse!)
   (and
@@ -6233,6 +6466,9 @@
     (tc-type-env-local-cache-lambda-capture-smoke?)
     (tc-type-env-scoped-stack-smoke?)
     (tc-type-env-carrier-shadow-cache-smoke?)
+    (tc-unconstrained-lifetime-order-smoke?)
+    (tc-lifetime-subst-shared-dag-smoke?)
+    (tc-lifetime-lookup-paths-agree-smoke?)
     (tc-type-env-walker-api-smoke?)))
 
 (test

@@ -1,12 +1,12 @@
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
-(import compiler_ast_types as ast)
+(cfg test (import compiler_ast_types as ast))
 (import compiler_typecheck_core as tc)
 (import compiler_typecheck_variance_dag as fixture)
-(import stdlib.io)
+(cfg test (import stdlib.io))
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.iterator)
+(cfg test (import stdlib.iterator))
 
 (defstruct VarianceIdentityFixture
   (context tc.TcContext)

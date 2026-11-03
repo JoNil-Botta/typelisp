@@ -307,6 +307,12 @@
 
 (test
   package-runtime-direct-object-releases-side-backend
+  ;; Dispose caller-owned images/assembly only after checking side assembly
+  ;; survives package cleanup. Linux main/PR: intact25216 B, mutation211072 B,
+  ;; leak signal L=185856 B. Bound131072 gives19.24% intact versus161.04%
+  ;; mutated (ratio8.37), separating legitimate output from private-arena leaks.
+  ;; Windows margin and mutation sensitivity unverified.
+  ;; Follow-up: https://github.com/JoNil-Botta/typelisp/issues/9606.
   (runtime-owner-disposable-direct-object-smoke)
   (let
     [before : i64 (profile.alloc-live)]
@@ -315,10 +321,14 @@
     (let
       [delta : i64 (- (profile.alloc-live) before)]
       [bound : i64 131072]
-      (io.eprintln "C105_DISPOSABLE_DELTA={} BOUND={}" delta bound)
       (unless
         (< delta bound)
-        (io.panic "direct object jobs retained private side-backend arenas")))))
+        (io.panic
+          (string.concat4
+            "direct object jobs retained private side-backend arenas: delta="
+            (string.int->string delta)
+            " bound="
+            (string.int->string bound)))))))
 
 (test
   package-runtime-windows-retains-layout-only-groups

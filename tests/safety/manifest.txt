@@ -2526,6 +2526,7 @@ variance_layers_d40_ok|check-ok|tests/safety/variance_layers_d40_ok.tl|-|-
 variance_dag_call_d12_ok|check-ok|tests/safety/variance_dag_call_d12_ok.tl|-|-
 variance_dag_nested_d12_ok|check-ok|tests/safety/variance_dag_nested_d12_ok.tl|-|-
 variance_dag_shorten_d8_ok|check-ok|tests/safety/variance_dag_shorten_d8_ok.tl|-|-
+
 # Lifetime occurrence shapes are compact (#9584): a nested type is walked to 256
 # type-edge descents and a deeper one fails closed with the resource reason; a
 # function type's lifetimes reset the enclosing reference. A linear chain past

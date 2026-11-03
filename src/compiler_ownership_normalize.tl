@@ -9790,9 +9790,10 @@
   (len i64)
   ;; Capacity is 2^bits (0 cells while bits is 0).
   (bits i64)
-  ;; The probes the last operation took, or -1 when it stopped at its
-  ;; allowance.
-  (probes i64))
+  ;; The probes the last operation took, and whether it stopped at its
+  ;; allowance (its user charges them either way, then fails closed).
+  (probes i64)
+  (stopped bool))
 
 (define (normalize-probe-table-new) : NormalizeProbeTable
   (NormalizeProbeTable
@@ -9801,14 +9802,15 @@
     (normalize-no-bools)
     0
     0
-    0))
+    0
+    false))
 
 (define (normalize-probe-table-start [key : i64] [bits : i64]) : i64
   (bit-and (shr (* key -7046029254386353131) (- 64 bits)) (- (shl 1 bits) 1)))
 
 ;; The slot holding `key`, or the empty slot where it would go; -1 for an
 ;; empty table, -2 when more than `allowance` probes would be needed (then
-;; `probes` is -1).
+;; `stopped`, with the probes it took).
 (define (normalize-probe-table-locate!
   [table : (&mut table NormalizeProbeTable)]
   [key : i64]
@@ -9818,11 +9820,16 @@
     [at : i64 0]
     [probes : i64 1]
     (set! table.probes 0)
+    (set! table.stopped false)
     (when (= cap 0) (return -1))
-    (when (< allowance 1) (set! table.probes -1) (return -2))
+    (when (< allowance 1) (set! table.stopped true) (return -2))
     (set! at (normalize-probe-table-start key table.bits))
     (while (and (array-ref table.used at) (!= (array-ref table.keys at) key))
-      (when (>= probes allowance) (set! table.probes -1) (return -2))
+      (when
+        (>= probes allowance)
+        (set! table.probes probes)
+        (set! table.stopped true)
+        (return -2))
       (set! at (bit-and (+ at 1) (- cap 1)))
       (set! probes (+ probes 1)))
     (set! table.probes probes)
@@ -9856,8 +9863,8 @@
   (* 3 cap))
 
 ;; Grow to capacity `cap` (from `normalize-table-growth`), reinserting every
-;; entry; `probes` is the reinsertion probes, or -1 when they would pass
-;; `allowance` (the table is then unusable and its user fails closed).
+;; entry; `probes` is the reinsertion probes, and `stopped` when they would
+;; pass `allowance` (the table is then unusable and its user fails closed).
 (define (normalize-probe-table-grow!
   [table : (&mut table NormalizeProbeTable)]
   [cap : i64]
@@ -9883,7 +9890,11 @@
               table
               (array-ref old-keys index)
               (- allowance total))]
-          (when (< at 0) (set! table.probes -1) (return unit))
+          (when
+            (< at 0)
+            (set! table.probes (+ total table.probes))
+            (set! table.stopped true)
+            (return unit))
           (set! total (+ total table.probes))
           (set! (array-ref table.keys at) (array-ref old-keys index))
           (set! (array-ref table.vals at) (array-ref old-vals index))
@@ -10053,11 +10064,10 @@
     [allowance : i64 (normalize-shape-work-left shapes)]
     [hit : i64
       (normalize-probe-table-get! (&mut shapes.interned) key 0 allowance)]
-    (if (< shapes.interned.probes 0)
+    (try (normalize-shape-charge! shapes 0 shapes.interned.probes))
+    (if shapes.interned.stopped
       (normalize-int-resource)
-      (begin
-        (try (normalize-shape-charge! shapes 0 shapes.interned.probes))
-        (NormalizeInt.Ok hit)))))
+      (NormalizeInt.Ok hit))))
 
 ;; Intern `key` as `value`: its growth (cells before allocating, then the
 ;; reinsertion probes) and its probes are charged.
@@ -10078,16 +10088,17 @@
         (&mut shapes.interned)
         growth
         (normalize-shape-work-left shapes))
-      (when (< shapes.interned.probes 0) (return (normalize-unit-resource)))
-      (try (normalize-shape-charge! shapes 0 shapes.interned.probes)))
+      (try (normalize-shape-charge! shapes 0 shapes.interned.probes))
+      (when shapes.interned.stopped (return (normalize-unit-resource))))
     (normalize-probe-table-put!
       (&mut shapes.interned)
       key
       value
       (normalize-shape-work-left shapes))
-    (if (< shapes.interned.probes 0)
+    (try (normalize-shape-charge! shapes 0 shapes.interned.probes))
+    (if shapes.interned.stopped
       (normalize-unit-resource)
-      (normalize-shape-charge! shapes 0 shapes.interned.probes))))
+      (NormalizeUnit.Ok unit))))
 
 ;; The backing cells `count` pushes allocate on a column of `len` cells and
 ;; capacity `cap` (`normalize-reserve-i64!`: a full column grows to twice its
@@ -10229,17 +10240,32 @@
         (array-length shapes.call-shapes.items))]
     (normalize-shape-column! shapes len cap 1)))
 
-;; Room for shape `shape`'s names in a scratch array and then in the
-;; universal names, both grown a copy per push.
+;; Room for shape `shape`'s names in a scratch array (a copy per push), and
+;; then in the universal names for those it does not hold yet: the scan
+;; that finds them is charged, and growth only for the new ones.
 (define (normalize-shape-universal-room!
   [shapes : (&mut shapes NormalizeShapes)]
   [shape : i64]) : NormalizeUnit
   (let
     [count : i64 (normalize-shape-name-count shapes shape false)]
     [have : i64 (array-length shapes.universal)]
-    [cells : i64
-      (+ (/ (* count (+ count 1)) 2) (* count have) (/ (* count (+ count 1)) 2))]
-    (normalize-shape-charge! shapes cells (+ cells (* count (+ count have))))))
+    [fresh : i64 0]
+    [index : i64 0]
+    (try (normalize-shape-charge! shapes 0 (+ count (* count have))))
+    (while (< index count)
+      (unless
+        (normalize-i64-member?
+          (& shapes.universal)
+          (normalize-shape-name-at shapes shape false index))
+        (set! fresh (+ fresh 1)))
+      (set! index (+ index 1)))
+    (let
+      [scratch : i64 (/ (* count (+ count 1)) 2)]
+      [grown : i64 (+ (* fresh have) (/ (* fresh (+ fresh 1)) 2))]
+      (normalize-shape-charge!
+        shapes
+        (+ scratch grown)
+        (+ scratch grown (* count count))))))
 
 ;; Room for one more shape record (its four columns).
 (define (normalize-shape-record-room! [shapes : (&mut shapes NormalizeShapes)]) : NormalizeUnit
@@ -11550,13 +11576,14 @@
           key
           fallback
           (normalize-edges-work-left edges))]
-      (if (< table.probes 0)
+      ;; The probes taken are spent even when the lookup stopped short.
+      (if (and
+        (normalize-edges-charge! edges 0 table.probes)
+        (not table.stopped))
+        value
         (begin
           (set! edges.exhausted true)
-          fallback)
-        (begin
-          (normalize-edges-charge! edges 0 table.probes)
-          value)))))
+          fallback)))))
 
 ;; Set `key` to `value` in `table`: its growth (cells before allocating, then
 ;; the reinsertion probes) and its probes are charged; false (and the graph
@@ -11580,18 +11607,20 @@
         table
         growth
         (normalize-edges-work-left edges))
-      (when (< table.probes 0) (set! edges.exhausted true) (return false))
-      (unless (normalize-edges-charge! edges 0 table.probes) (return false)))
+      (unless
+        (and (normalize-edges-charge! edges 0 table.probes) (not table.stopped))
+        (set! edges.exhausted true)
+        (return false)))
     (normalize-probe-table-put!
       table
       key
       value
       (normalize-edges-work-left edges))
-    (if (< table.probes 0)
+    (if (and (normalize-edges-charge! edges 0 table.probes) (not table.stopped))
+      true
       (begin
         (set! edges.exhausted true)
-        false)
-      (normalize-edges-charge! edges 0 table.probes))))
+        false))))
 
 (define (normalize-region-edge!
   [edges : (&mut edges NormalizeRegionEdges)]
@@ -11621,7 +11650,10 @@
       ;; The probes of the distinct-edge set, then for a new edge its three
       ;; columns' growth, the set's growth and insertion, and the edge itself
       ;; (counted by `from.len`).
-      [_fresh : unit (set! edges.seen.probes 0)]
+      [_fresh : unit
+        (begin
+          (set! edges.seen.probes 0)
+          (set! edges.seen.stopped false))]
       [seen : i64
         (if (>= key 0)
           (normalize-probe-table-get!
@@ -11631,8 +11663,9 @@
             (normalize-edges-work-left edges))
           0)]
       (cond
-        [(< edges.seen.probes 0) (set! edges.exhausted true)]
+        ;; The probes taken are spent even when the lookup stopped short.
         [(not (normalize-edges-charge! edges 0 (+ 1 edges.seen.probes))) unit]
+        [edges.seen.stopped (set! edges.exhausted true)]
         [(> seen 0) unit]
         [else
           (let
@@ -11677,23 +11710,24 @@
           (&mut edges.seen)
           growth
           (normalize-edges-work-left edges))
-        (when
-          (< edges.seen.probes 0)
-          (set! edges.exhausted true)
-          (return false))
         (unless
-          (normalize-edges-charge! edges 0 edges.seen.probes)
+          (and
+            (normalize-edges-charge! edges 0 edges.seen.probes)
+            (not edges.seen.stopped))
+          (set! edges.exhausted true)
           (return false)))
       (normalize-probe-table-put!
         (&mut edges.seen)
         key
         1
         (normalize-edges-work-left edges))
-      (if (< edges.seen.probes 0)
+      (if (and
+        (normalize-edges-charge! edges 0 edges.seen.probes)
+        (not edges.seen.stopped))
+        true
         (begin
           (set! edges.exhausted true)
-          false)
-        (normalize-edges-charge! edges 0 edges.seen.probes)))))
+          false)))))
 
 ;; Spend `work` steps of the edge budget; past it the graph is exhausted.
 (define (normalize-edges-work!
@@ -12678,6 +12712,9 @@
             (& nodes)
             (- state.limits.work state.work)
             (- state.limits.records state.records))]
+        ;; An exhausted first graph fails the body before the second is built.
+        [_first : unit
+          (when edges.exhausted (return (normalize-unit-resource)))]
         [aim-nodes : NormalizeNodes
           (normalize-build-nodes (& state) shapes false)]
         ;; One allowance: the second graph gets what the first left.

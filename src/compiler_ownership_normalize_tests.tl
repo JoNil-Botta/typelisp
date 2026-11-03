@@ -2429,7 +2429,57 @@
     (unless (and (> probes 0) (< probes 8192)) (set! ok false))
     ;; A lookup with no allowance left stops before probing.
     (norm.normalize-probe-table-get! (&mut table) 7 0 0)
-    (unless (< table.probes 0) (set! ok false))
+    (unless (and table.stopped (= table.probes 0)) (set! ok false))
+    ;; A lookup that runs past its allowance through a crowded run stops with
+    ;; the probes it took (charged by its user), not a sentinel.
+    (let
+      [crowded : norm.NormalizeProbeTable (norm.normalize-probe-table-new)]
+      [found : i64 0]
+      [key : i64 1]
+      (norm.normalize-probe-table-grow! (&mut crowded) 8 100)
+      (while (< found 3)
+        (when
+          (= (norm.normalize-probe-table-start key 3) 0)
+          (norm.normalize-probe-table-put! (&mut crowded) key key 100)
+          (set! found (+ found 1)))
+        (set! key (+ key 1)))
+      (while (!= (norm.normalize-probe-table-start key 3) 0)
+        (set! key (+ key 1)))
+      (norm.normalize-probe-table-get! (&mut crowded) key 0 2)
+      (unless (and crowded.stopped (= crowded.probes 2)) (set! ok false)))
+    ;; Universal names grow only for names they lack: one shape of 64 names
+    ;; added 200 times costs its scratch copies, not 200 universal copies.
+    (let
+      [many : norm.NormalizeShapes
+        (norm.normalize-shapes-new 0 0 false 1048576 33554432)]
+      [lifetimes : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+      [name : i64 1]
+      [pass : i64 0]
+      (while (<= name 64)
+        (ast.ast-lifetime-list-push (&mut lifetimes) (+ 1000 name))
+        (set! name (+ name 1)))
+      (match (norm.normalize-shape-add!
+        (&mut many)
+        (& variances)
+        (ast.AstType.VarArgs 0 (box lifetimes)))
+        [(norm.NormalizeInt.Ok id)
+          (while (and ok (< pass 200))
+            (match (norm.normalize-shape-universal-room! (&mut many) id)
+              [(norm.NormalizeUnit.Ok _)
+                (let
+                  [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+                  (norm.normalize-shape-names-into! (& many) id (&mut names))
+                  (norm.normalize-append-unique!
+                    (&mut many.universal)
+                    (& names)))]
+              [_ (set! ok false)])
+            (set! pass (+ pass 1)))
+          (unless
+            (and
+              (= (array-length many.universal) 64)
+              (< many.records-used 500000))
+            (set! ok false))]
+        [_ (set! ok false)]))
     ok))
 
 (define (compiler-ownership-normalize-self-test) : i64

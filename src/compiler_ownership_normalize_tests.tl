@@ -2321,6 +2321,117 @@
       (= tight.from.len 0)
       tight.exhausted)))
 
+;; Charging reproducers: empty shapes for 1,000 places and 1,000 cached types
+;; hold 3,000 cells, so a 44-record budget fails closed before recording a
+;; shape; relating under no work allowance allocates and charges nothing; the
+;; probe table spreads the packed edge keys (k -> 0) of 512 edges, counts
+;; every probe, and stops at its allowance.
+(define (normalize-test-shape-charging?) : bool
+  (let
+    [variances : norm.OwnershipNormalizeVariances
+      (normalize-test-shape-variances false)]
+    [small : norm.NormalizeShapes
+      (norm.normalize-shapes-new 1000 1000 false 44 33554432)]
+    [nodes : norm.NormalizeNodes (normalize-test-shape-nodes)]
+    [shapes : norm.NormalizeShapes
+      (norm.normalize-shapes-new 2 0 false 1048576 33554432)]
+    [leaf : i64
+      (normalize-test-shape-type
+        (ast.AstType.Ref 1 (normalize-test-shape-type ast.AstType.I64)))]
+    [left : i64
+      (normalize-test-shape-pair leaf (normalize-test-shape-pair leaf leaf))]
+    [right : i64
+      (normalize-test-shape-pair (normalize-test-shape-pair leaf leaf) leaf)]
+    [fs : i64
+      (match (norm.normalize-shape-add!
+        (&mut shapes)
+        (& variances)
+        (ast.ty-node-get left))
+        [(norm.NormalizeInt.Ok id) id]
+        [(norm.NormalizeInt.Err _) -1])]
+    [ts : i64
+      (match (norm.normalize-shape-add!
+        (&mut shapes)
+        (& variances)
+        (ast.ty-node-get right))
+        [(norm.NormalizeInt.Ok id) id]
+        [(norm.NormalizeInt.Err _) -1])]
+    [none : norm.NormalizeRegionEdges
+      (norm.normalize-region-edges-empty 0 1048576)]
+    [table : norm.NormalizeProbeTable (norm.normalize-probe-table-new)]
+    [ok : bool true]
+    [probes : i64 0]
+    [k : i64 1]
+    (match (norm.normalize-shape-add!
+      (&mut small)
+      (& variances)
+      ast.AstType.I64)
+      [(norm.NormalizeInt.Err (norm.OwnershipNormalizeFailure.Resource))
+        (unless (= small.roots.len 0) (set! ok false))]
+      [_ (set! ok false)])
+    (norm.normalize-relate!
+      (&mut none)
+      (& nodes)
+      (& shapes)
+      0
+      fs
+      0
+      1
+      ts
+      0
+      false)
+    (norm.normalize-relate!
+      (&mut none)
+      (& nodes)
+      (& shapes)
+      0
+      fs
+      0
+      1
+      ts
+      0
+      false)
+    (unless
+      (and
+        (>= fs 0)
+        (>= ts 0)
+        none.exhausted
+        (= none.records 0)
+        (= none.from.len 0))
+      (set! ok false))
+    (while (<= k 512)
+      (let
+        [key : i64 (* (* k 1073741824) 2)]
+        (when
+          (> (norm.normalize-probe-table-growth (& table)) 0)
+          (norm.normalize-probe-table-grow!
+            (&mut table)
+            (norm.normalize-probe-table-growth (& table))
+            1000000)
+          (set! probes (+ probes table.probes)))
+        (norm.normalize-probe-table-put! (&mut table) key k 1000000)
+        (set! probes (+ probes table.probes)))
+      (set! k (+ k 1)))
+    (set! k 1)
+    (while (<= k 512)
+      (unless
+        (=
+          (norm.normalize-probe-table-get!
+            (&mut table)
+            (* (* k 1073741824) 2)
+            0
+            1000000)
+          k)
+        (set! ok false))
+      (set! probes (+ probes table.probes))
+      (set! k (+ k 1)))
+    ;; Spread: far below the 131,328 probes of one shared bucket.
+    (unless (and (> probes 0) (< probes 8192)) (set! ok false))
+    ;; A lookup with no allowance left stops before probing.
+    (norm.normalize-probe-table-get! (&mut table) 7 0 0)
+    (unless (< table.probes 0) (set! ok false))
+    ok))
+
 (define (compiler-ownership-normalize-self-test) : i64
   (test.assert-true
     (normalize-test-shape-differential?)
@@ -2331,6 +2442,9 @@
   (test.assert-true
     (= (normalize-test-shape-budget-code) 0)
     "compact shapes: exact budget fits, one less fails closed, overflow and the reused-node depth bound fail closed")
+  (test.assert-true
+    (normalize-test-shape-charging?)
+    "compact shapes: constructor cells, unpaid zips and hash probes are charged before they happen")
   (test.assert-true
     (normalize-test-shape-edge-dedup?)
     "region edges are distinct by (from, to, outlives?) and exhaust at the limit")

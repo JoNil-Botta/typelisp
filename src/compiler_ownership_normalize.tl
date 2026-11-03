@@ -9779,6 +9779,135 @@
 ;; all its nodes; every return demands the universal nodes'. Where a
 ;; reference points (a reborrow's parent, a dereference check) is read off a
 ;; second graph without shared universal nodes or outlives edges.
+;; A set or map of i64 keys whose every probe is counted, so its users charge
+;; exactly the work they do (#9584): open addressing with linear probing at
+;; most half full, the start slot from the top bits of the key times the
+;; 64-bit golden ratio. An empty table holds no cells.
+(defstruct NormalizeProbeTable
+  (keys (__tl_dyn-array i64))
+  (vals (__tl_dyn-array i64))
+  (used (__tl_dyn-array bool))
+  (len i64)
+  ;; Capacity is 2^bits (0 cells while bits is 0).
+  (bits i64)
+  ;; The probes the last operation took, or -1 when it stopped at its
+  ;; allowance.
+  (probes i64))
+
+(define (normalize-probe-table-new) : NormalizeProbeTable
+  (NormalizeProbeTable
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-bools)
+    0
+    0
+    0))
+
+(define (normalize-probe-table-start [key : i64] [bits : i64]) : i64
+  (bit-and (shr (* key -7046029254386353131) (- 64 bits)) (- (shl 1 bits) 1)))
+
+;; The slot holding `key`, or the empty slot where it would go; -1 for an
+;; empty table, -2 when more than `allowance` probes would be needed (then
+;; `probes` is -1).
+(define (normalize-probe-table-locate!
+  [table : (&mut table NormalizeProbeTable)]
+  [key : i64]
+  [allowance : i64]) : i64
+  (let
+    [cap : i64 (array-length table.keys)]
+    [at : i64 0]
+    [probes : i64 1]
+    (set! table.probes 0)
+    (when (= cap 0) (return -1))
+    (when (< allowance 1) (set! table.probes -1) (return -2))
+    (set! at (normalize-probe-table-start key table.bits))
+    (while (and (array-ref table.used at) (!= (array-ref table.keys at) key))
+      (when (>= probes allowance) (set! table.probes -1) (return -2))
+      (set! at (bit-and (+ at 1) (- cap 1)))
+      (set! probes (+ probes 1)))
+    (set! table.probes probes)
+    at))
+
+;; The value of `key`, or `fallback`.
+(define (normalize-probe-table-get!
+  [table : (&mut table NormalizeProbeTable)]
+  [key : i64]
+  [fallback : i64]
+  [allowance : i64]) : i64
+  (let
+    [at : i64 (normalize-probe-table-locate! table key allowance)]
+    (if (and (>= at 0) (array-ref table.used at))
+      (array-ref table.vals at)
+      fallback)))
+
+;; The capacity the table needs before one more insert, or 0 when it has
+;; room (it stays at most half full).
+(define (normalize-probe-table-growth [table : (& table NormalizeProbeTable)]) : i64
+  (let
+    [cap : i64 (array-length table.keys)]
+    (if (> (* (+ table.len 1) 2) cap)
+      (if (< cap 8)
+        8
+        (* cap 2))
+      0)))
+
+;; The backing cells a grow to `cap` allocates (keys, values, flags).
+(define (normalize-probe-table-cells [cap : i64]) : i64
+  (* 3 cap))
+
+;; Grow to capacity `cap` (from `normalize-table-growth`), reinserting every
+;; entry; `probes` is the reinsertion probes, or -1 when they would pass
+;; `allowance` (the table is then unusable and its user fails closed).
+(define (normalize-probe-table-grow!
+  [table : (&mut table NormalizeProbeTable)]
+  [cap : i64]
+  [allowance : i64]) : unit
+  (let
+    [old-keys : (__tl_dyn-array i64)
+      (replace! table.keys (__tl_make-array i64 cap))]
+    [old-vals : (__tl_dyn-array i64)
+      (replace! table.vals (__tl_make-array i64 cap))]
+    [old-used : (__tl_dyn-array bool)
+      (replace! table.used (__tl_make-array bool cap))]
+    [index : i64 0]
+    [total : i64 0]
+    (set! table.bits 0)
+    (while (< (shl 1 table.bits) cap)
+      (set! table.bits (+ table.bits 1)))
+    (while (< index (array-length old-keys))
+      (when
+        (array-ref old-used index)
+        (let
+          [at : i64
+            (normalize-probe-table-locate!
+              table
+              (array-ref old-keys index)
+              (- allowance total))]
+          (when (< at 0) (set! table.probes -1) (return unit))
+          (set! total (+ total table.probes))
+          (set! (array-ref table.keys at) (array-ref old-keys index))
+          (set! (array-ref table.vals at) (array-ref old-vals index))
+          (set! (array-ref table.used at) true)))
+      (set! index (+ index 1)))
+    (set! table.probes total)))
+
+;; Set `key` to `value`; the table has room (`normalize-table-growth` is 0).
+(define (normalize-probe-table-put!
+  [table : (&mut table NormalizeProbeTable)]
+  [key : i64]
+  [value : i64]
+  [allowance : i64]) : unit
+  (let
+    [at : i64 (normalize-probe-table-locate! table key allowance)]
+    (when
+      (>= at 0)
+      (unless
+        (array-ref table.used at)
+        (set! (array-ref table.used at) true)
+        (set! (array-ref table.keys at) key)
+        (set! table.len (+ table.len 1)))
+      (set! (array-ref table.vals at) value))))
+
 ;; A type's lifetime positions in pre-order, each with whether the position is
 ;; invariant and the reference it lies under. Two types of the same shape
 ;; (equal up to names) line up index by index.
@@ -9835,7 +9964,7 @@
   (out-outers NormalizeI64s)
   ;; (type node id, invariance) to node plus one, valid for `generation`
   ;; (`ast.ty-node-pool-generation-value`).
-  (interned normalize_transfer_map.Map)
+  (interned NormalizeProbeTable)
   (generation i64)
   ;; Per shape: its root node (-1 for the shared empty shape) and position
   ;; count.
@@ -9912,6 +10041,54 @@
       (NormalizeUnit.Ok unit))
     (normalize-unit-resource)))
 
+;; The work the shapes' budget has left.
+(define (normalize-shape-work-left [shapes : (& shapes NormalizeShapes)]) : i64
+  (- shapes.work-left shapes.work-used))
+
+;; `key`'s interned node plus one, or 0; its probes are charged.
+(define (normalize-shape-intern-get!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [key : i64]) : NormalizeInt
+  (let
+    [allowance : i64 (normalize-shape-work-left shapes)]
+    [hit : i64
+      (normalize-probe-table-get! (&mut shapes.interned) key 0 allowance)]
+    (if (< shapes.interned.probes 0)
+      (normalize-int-resource)
+      (begin
+        (try (normalize-shape-charge! shapes 0 shapes.interned.probes))
+        (NormalizeInt.Ok hit)))))
+
+;; Intern `key` as `value`: its growth (cells before allocating, then the
+;; reinsertion probes) and its probes are charged.
+(define (normalize-shape-intern-put!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [key : i64]
+  [value : i64]) : NormalizeUnit
+  (let
+    [growth : i64 (normalize-probe-table-growth (& shapes.interned))]
+    (when
+      (> growth 0)
+      (try
+        (normalize-shape-charge!
+          shapes
+          (normalize-probe-table-cells growth)
+          growth))
+      (normalize-probe-table-grow!
+        (&mut shapes.interned)
+        growth
+        (normalize-shape-work-left shapes))
+      (when (< shapes.interned.probes 0) (return (normalize-unit-resource)))
+      (try (normalize-shape-charge! shapes 0 shapes.interned.probes)))
+    (normalize-probe-table-put!
+      (&mut shapes.interned)
+      key
+      value
+      (normalize-shape-work-left shapes))
+    (if (< shapes.interned.probes 0)
+      (normalize-unit-resource)
+      (normalize-shape-charge! shapes 0 shapes.interned.probes))))
+
 ;; The backing cells `count` pushes allocate on a column of `len` cells and
 ;; capacity `cap` (`normalize-reserve-i64!`: a full column grows to twice its
 ;; length plus 8), or -1 past any budget.
@@ -9948,17 +10125,6 @@
     (if (< cells 0)
       (normalize-unit-resource)
       (normalize-shape-charge! shapes cells (+ count cells)))))
-
-;; The cells a hashmap insert allocates when it grows (three per slot, at
-;; twice the capacity) and the rehash steps; 0 when it has room.
-(define (normalize-map-grow-cells [map : (& map normalize_transfer_map.Map)]) : i64
-  (if (>= (normalize_transfer_map.len map) map.growth-limit)
-    (* 6 (normalize_transfer_map.capacity map))
-    0))
-
-;; A new hashmap's backing: four slots.
-(define normalize-map-new-cells : i64
-  12)
 
 ;; Room in the name or row pool for one more item.
 (define (normalize-shape-pool-room!
@@ -10047,6 +10213,33 @@
         shapes
         (+ node-cells seg-cells)
         (+ 14 (* 4 count) node-cells seg-cells)))))
+
+;; Room for one more call operand (`ret?`: call result) shape.
+(define (normalize-shape-call-room!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [ret? : bool]) : NormalizeUnit
+  (let
+    [len : i64
+      (if ret?
+        shapes.call-ret-shapes.len
+        shapes.call-shapes.len)]
+    [cap : i64
+      (if ret?
+        (array-length shapes.call-ret-shapes.items)
+        (array-length shapes.call-shapes.items))]
+    (normalize-shape-column! shapes len cap 1)))
+
+;; Room for shape `shape`'s names in a scratch array and then in the
+;; universal names, both grown a copy per push.
+(define (normalize-shape-universal-room!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [shape : i64]) : NormalizeUnit
+  (let
+    [count : i64 (normalize-shape-name-count shapes shape false)]
+    [have : i64 (array-length shapes.universal)]
+    [cells : i64
+      (+ (/ (* count (+ count 1)) 2) (* count have) (/ (* count (+ count 1)) 2))]
+    (normalize-shape-charge! shapes cells (+ cells (* count (+ count have))))))
 
 ;; Room for one more shape record (its four columns).
 (define (normalize-shape-record-room! [shapes : (&mut shapes NormalizeShapes)]) : NormalizeUnit
@@ -10194,8 +10387,7 @@
   (try (normalize-shape-charge! shapes 0 1))
   (when
     (!= shapes.generation (ast.ty-node-pool-generation-value))
-    (try (normalize-shape-charge! shapes normalize-map-new-cells 1))
-    (set! shapes.interned (normalize_transfer_map.new))
+    (set! shapes.interned (normalize-probe-table-new))
     (set! shapes.generation (ast.ty-node-pool-generation-value)))
   (let
     [key : i64
@@ -10204,7 +10396,7 @@
         (if inv?
           1
           0))]
-    [hit : i64 (normalize_transfer_map.get-value-or (& shapes.interned) key 0)]
+    [hit : i64 (try (normalize-shape-intern-get! shapes key))]
     (if (> hit 0)
       (if (>
         (+ depth (array-ref shapes.node-height.items (- hit 1)))
@@ -10220,13 +10412,7 @@
               (ast.ty-node-get id)
               inv?
               depth))]
-        (let
-          [grow : i64 (normalize-map-grow-cells (& shapes.interned))]
-          (try (normalize-shape-charge! shapes grow (+ 1 (/ grow 3)))))
-        (normalize_transfer_map.insert-ref!
-          (&mut shapes.interned)
-          key
-          (+ node 1))
+        (try (normalize-shape-intern-put! shapes key (+ node 1)))
         (NormalizeInt.Ok node)))))
 
 ;; A nominal type's lifetime arguments: each is invariant unless declared
@@ -10895,7 +11081,8 @@
   (normalize-charge! state shapes.records-used shapes.work-used 0))
 
 ;; Empty shapes for `place-count` places and `cache-size` typed records, with
-;; `records` and `work` of budget.
+;; `records` and `work` of budget, of which their own cells are used (the
+;; caller checks they fit before allocating them).
 (define (normalize-shapes-new
   [place-count : i64]
   [cache-size : i64]
@@ -10925,7 +11112,7 @@
     (normalize-i64s)
     (normalize-i64s)
     (normalize-i64s)
-    (normalize_transfer_map.new)
+    (normalize-probe-table-new)
     (ast.ty-node-pool-generation-value)
     (normalize-i64s)
     (normalize-i64s)
@@ -10942,8 +11129,13 @@
     lender?
     records
     work
-    normalize-map-new-cells
+    (normalize-shapes-base-cells place-count cache-size)
     0))
+
+;; The cells empty shapes hold: a shape per place and two cache cells per
+;; typed record. They count against the budget before anything else.
+(define (normalize-shapes-base-cells [place-count : i64] [cache-size : i64]) : i64
+  (+ place-count (* 2 cache-size)))
 
 ;; Shapes for every place, call and the return type, and the universal names
 ;; (every lifetime a parameter's or the return type names).
@@ -10953,6 +11145,13 @@
   [lease : (& lease (typed.TypedBodyLease intern))]
   [return-type : i64]
   [lender? : bool]) : NormalizeShapesResult
+  (when
+    (>
+      (normalize-shapes-base-cells
+        state.place-count
+        (normalize-shape-cache-size state))
+      (- state.limits.records state.records))
+    (return (NormalizeShapesResult.Err OwnershipNormalizeFailure.Resource)))
   (let
     [shapes : NormalizeShapes
       (normalize-shapes-new
@@ -11027,6 +11226,7 @@
                                 (- operand first)
                                 (ast.ast-type-id-fallback)))))
                         -1)]
+                    (try (normalize-shape-call-room! (&mut shapes) false))
                     (normalize-i64s-push! (&mut shapes.call-shapes) shape))
                   (set! operand (+ operand 1)))
                 (let
@@ -11036,13 +11236,16 @@
                         (&mut shapes)
                         (& state.variances)
                         (ast.ty-node-get ret)))]
+                  (try (normalize-shape-call-room! (&mut shapes) true))
                   (normalize-i64s-push! (&mut shapes.call-ret-shapes) shape)))]
             [_
               (let
                 [operand : i64 0]
                 (while (< operand (array-ref state.call-counts.items index))
+                  (try (normalize-shape-call-room! (&mut shapes) false))
                   (normalize-i64s-push! (&mut shapes.call-shapes) -1)
                   (set! operand (+ operand 1)))
+                (try (normalize-shape-call-room! (&mut shapes) true))
                 (normalize-i64s-push! (&mut shapes.call-ret-shapes) -1))])]
         [(typed.TypedTypeValueResult.Err error)
           (return (normalize-shapes-typed error))])
@@ -11069,6 +11272,7 @@
                     record
                     false))]
               [names : (__tl_dyn-array i64) (normalize-no-i64s)]
+              (try (normalize-shape-universal-room! (&mut shapes) id))
               (normalize-shape-names-into! (& shapes) id (&mut names))
               (normalize-append-unique! (&mut shapes.universal) (& names))))))
       (set! index (+ index 1)))
@@ -11087,6 +11291,7 @@
         (set! shapes.return-shape id)
         (let
           [names : (__tl_dyn-array i64) (normalize-no-i64s)]
+          (try (normalize-shape-universal-room! (&mut shapes) id))
           (normalize-shape-names-into! (& shapes) id (&mut names))
           (normalize-append-unique! (&mut shapes.universal) (& names)))))
     (NormalizeShapesResult.Ok shapes)))
@@ -11277,7 +11482,7 @@
   ;; is the other work the graph took (comparing shapes, probing, copying
   ;; and rehashing), counted against `limit` with the edges; `records` is the
   ;; backing cells it allocated, at most `records-limit` (#9584).
-  (seen normalize_transfer_map.Map)
+  (seen NormalizeProbeTable)
   (work i64)
   (records i64)
   (records-limit i64))
@@ -11288,11 +11493,11 @@
     (normalize-i64s)
     (normalize-i64s)
     limit
-    (< records-limit normalize-map-new-cells)
+    (< records-limit 0)
     (normalize-bools)
-    (normalize_transfer_map.new)
+    (normalize-probe-table-new)
     0
-    normalize-map-new-cells
+    0
     records-limit))
 
 ;; Spend `records` cells and `work` steps of the graph's budget, before the
@@ -11326,11 +11531,67 @@
     [cells : i64 (normalize-pushes-cells len cap count)]
     (and (>= cells 0) (normalize-edges-charge! edges cells cells))))
 
-;; Charge an insert into `map` (its probe, and its growth when full).
-(define (normalize-edges-map-insert!
+;; The work the graph has left.
+(define (normalize-edges-work-left [edges : (& edges NormalizeRegionEdges)]) : i64
+  (- edges.limit (+ edges.from.len edges.work)))
+
+;; `key`'s value in `table` (or `fallback`), its probes charged to the graph.
+(define (normalize-edges-table-get!
   [edges : (&mut edges NormalizeRegionEdges)]
-  [grow : i64]) : bool
-  (normalize-edges-charge! edges grow (+ 1 (/ grow 3))))
+  [table : (&mut table NormalizeProbeTable)]
+  [key : i64]
+  [fallback : i64]) : i64
+  (if edges.exhausted
+    fallback
+    (let
+      [value : i64
+        (normalize-probe-table-get!
+          table
+          key
+          fallback
+          (normalize-edges-work-left edges))]
+      (if (< table.probes 0)
+        (begin
+          (set! edges.exhausted true)
+          fallback)
+        (begin
+          (normalize-edges-charge! edges 0 table.probes)
+          value)))))
+
+;; Set `key` to `value` in `table`: its growth (cells before allocating, then
+;; the reinsertion probes) and its probes are charged; false (and the graph
+;; exhausted) when they do not fit.
+(define (normalize-edges-table-put!
+  [edges : (&mut edges NormalizeRegionEdges)]
+  [table : (&mut table NormalizeProbeTable)]
+  [key : i64]
+  [value : i64]) : bool
+  (let
+    [growth : i64 (normalize-probe-table-growth table)]
+    (when
+      (> growth 0)
+      (unless
+        (normalize-edges-charge!
+          edges
+          (normalize-probe-table-cells growth)
+          growth)
+        (return false))
+      (normalize-probe-table-grow!
+        table
+        growth
+        (normalize-edges-work-left edges))
+      (when (< table.probes 0) (set! edges.exhausted true) (return false))
+      (unless (normalize-edges-charge! edges 0 table.probes) (return false)))
+    (normalize-probe-table-put!
+      table
+      key
+      value
+      (normalize-edges-work-left edges))
+    (if (< table.probes 0)
+      (begin
+        (set! edges.exhausted true)
+        false)
+      (normalize-edges-charge! edges 0 table.probes))))
 
 (define (normalize-region-edge!
   [edges : (&mut edges NormalizeRegionEdges)]
@@ -11357,14 +11618,23 @@
               0))
           -1)]
       [count : i64 edges.from.len]
-      ;; The probe, then for a new edge its three columns' growth, the seen
-      ;; map's growth, and the edge itself (counted by `from.len`).
-      (when
-        (normalize-edges-charge! edges 0 1)
-        (unless
-          (and
-            (>= key 0)
-            (> (normalize_transfer_map.get-value-or (& edges.seen) key 0) 0))
+      ;; The probes of the distinct-edge set, then for a new edge its three
+      ;; columns' growth, the set's growth and insertion, and the edge itself
+      ;; (counted by `from.len`).
+      [_fresh : unit (set! edges.seen.probes 0)]
+      [seen : i64
+        (if (>= key 0)
+          (normalize-probe-table-get!
+            (&mut edges.seen)
+            key
+            0
+            (normalize-edges-work-left edges))
+          0)]
+      (cond
+        [(< edges.seen.probes 0) (set! edges.exhausted true)]
+        [(not (normalize-edges-charge! edges 0 (+ 1 edges.seen.probes))) unit]
+        [(> seen 0) unit]
+        [else
           (let
             [cells : i64
               (+
@@ -11374,27 +11644,56 @@
                   count
                   (array-length edges.outlives.items)
                   1))]
-            [grow : i64
-              (if (>= key 0)
-                (normalize-map-grow-cells (& edges.seen))
-                0)]
-            (cond
-              [(< cells 0) (set! edges.exhausted true)]
-              [(not
-                  (normalize-edges-charge!
-                    edges
-                    (+ cells grow)
-                    (+ cells (/ grow 3))))
-                unit]
-              [(>= (+ edges.from.len edges.work) edges.limit)
-                (set! edges.exhausted true)]
-              [else
-                (when
-                  (>= key 0)
-                  (normalize_transfer_map.insert-ref! (&mut edges.seen) key 1))
-                (normalize-i64s-push! (&mut edges.from) from)
-                (normalize-i64s-push! (&mut edges.to) to)
-                (normalize-bools-push! (&mut edges.outlives) outlives?)])))))))
+            (when
+              (and
+                (>= cells 0)
+                (normalize-edges-charge! edges cells cells)
+                (normalize-edges-seen-put! edges key))
+              (if (>= (+ edges.from.len edges.work) edges.limit)
+                (set! edges.exhausted true)
+                (begin
+                  (normalize-i64s-push! (&mut edges.from) from)
+                  (normalize-i64s-push! (&mut edges.to) to)
+                  (normalize-bools-push! (&mut edges.outlives) outlives?))))
+            (when (< cells 0) (set! edges.exhausted true)))]))))
+
+;; Record new edge key `key` (-1: not recorded) in the distinct-edge set.
+(define (normalize-edges-seen-put!
+  [edges : (&mut edges NormalizeRegionEdges)]
+  [key : i64]) : bool
+  (if (< key 0)
+    true
+    (let
+      [growth : i64 (normalize-probe-table-growth (& edges.seen))]
+      (when
+        (> growth 0)
+        (unless
+          (normalize-edges-charge!
+            edges
+            (normalize-probe-table-cells growth)
+            growth)
+          (return false))
+        (normalize-probe-table-grow!
+          (&mut edges.seen)
+          growth
+          (normalize-edges-work-left edges))
+        (when
+          (< edges.seen.probes 0)
+          (set! edges.exhausted true)
+          (return false))
+        (unless
+          (normalize-edges-charge! edges 0 edges.seen.probes)
+          (return false)))
+      (normalize-probe-table-put!
+        (&mut edges.seen)
+        key
+        1
+        (normalize-edges-work-left edges))
+      (if (< edges.seen.probes 0)
+        (begin
+          (set! edges.exhausted true)
+          false)
+        (normalize-edges-charge! edges 0 edges.seen.probes)))))
 
 ;; Spend `work` steps of the edge budget; past it the graph is exhausted.
 (define (normalize-edges-work!
@@ -11525,9 +11824,9 @@
   (inv NormalizeBools)
   (mismatch bool)
   ;; (from name, to name) to a bit per invariance seen.
-  (seen normalize_transfer_map.Map)
+  (seen NormalizeProbeTable)
   ;; Node pairs already zipped from aligned starts.
-  (pairs normalize_transfer_map.Map))
+  (pairs NormalizeProbeTable))
 
 ;; Replace stack `stack`'s top node with its canonical node.
 (define (normalize-zip-canon!
@@ -11611,7 +11910,7 @@
     [seen : i64
       (if (< key 0)
         0
-        (normalize_transfer_map.get-value-or (& zip.seen) key 0))]
+        (normalize-edges-table-get! edges (&mut zip.seen) key 0))]
     [count : i64 zip.from.len]
     (when
       (and
@@ -11622,15 +11921,11 @@
         (normalize-edges-column! edges count (array-length zip.inv.items) 1)
         (or
           (< key 0)
-          (normalize-edges-map-insert!
+          (normalize-edges-table-put!
             edges
-            (normalize-map-grow-cells (& zip.seen)))))
-      (when
-        (>= key 0)
-        (normalize_transfer_map.insert-ref!
-          (&mut zip.seen)
-          key
-          (bit-or seen bit)))
+            (&mut zip.seen)
+            key
+            (bit-or seen bit))))
       (normalize-i64s-push! (&mut zip.from) from)
       (normalize-i64s-push! (&mut zip.to) to)
       (normalize-bools-push! (&mut zip.inv) inv?))))
@@ -11655,13 +11950,13 @@
         (normalize-i64s)
         (normalize-bools)
         false
-        (normalize_transfer_map.new)
-        (normalize_transfer_map.new))]
+        (normalize-probe-table-new)
+        (normalize-probe-table-new))]
     [a : NormalizeI64s (normalize-i64s)]
     [b : NormalizeI64s (normalize-i64s)]
     (when
       (and
-        (normalize-edges-charge! edges (* 2 normalize-map-new-cells) 2)
+        (normalize-edges-charge! edges 0 2)
         (normalize-edges-column! edges 0 0 1)
         (normalize-edges-column! edges 0 0 1))
       (when (>= from-root 0) (normalize-i64s-push! (&mut a) from-root))
@@ -11721,16 +12016,15 @@
             (let
               [key : i64 (+ (* ta 2147483648) tb)]
               (if (>
-                (normalize_transfer_map.get-value-or (& zip.pairs) key 0)
+                (normalize-edges-table-get! edges (&mut zip.pairs) key 0)
                 0)
                 (begin
                   (set! a.len (- a.len 1))
                   (set! b.len (- b.len 1)))
                 (when
-                  (normalize-edges-map-insert!
-                    edges
-                    (normalize-map-grow-cells (& zip.pairs)))
-                  (normalize_transfer_map.insert-ref! (&mut zip.pairs) key 1)
+                  (and
+                    (not edges.exhausted)
+                    (normalize-edges-table-put! edges (&mut zip.pairs) key 1))
                   (normalize-zip-expand! shapes edges (&mut a))
                   (normalize-zip-expand! shapes edges (&mut b)))))]
           [(or (< ta 0) (and (>= tb 0) (> lb la)))
@@ -12008,7 +12302,7 @@
     [edges : NormalizeRegionEdges
       (normalize-region-edges-empty limit records-limit)]
     [index : i64 0]
-    (while (< index state.flow-count)
+    (while (and (< index state.flow-count) (not edges.exhausted))
       (when
         (>= (array-ref state.flow-from index) 0)
         (let
@@ -12071,11 +12365,13 @@
     ;; result place. An indirect callee's own regions also reach the formals
     ;; they name (a closure's captures).
     (set! index 0)
-    (while (< index state.call-sigs.len)
+    (while (and (< index state.call-sigs.len) (not edges.exhausted))
       (let
         [operand : i64 0]
         [key : i64 (- -2 index)]
-        (while (< operand (array-ref state.call-counts.items index))
+        (while (and
+          (< operand (array-ref state.call-counts.items index))
+          (not edges.exhausted))
           (let
             [slot : i64 (+ (array-ref state.call-starts.items index) operand)]
             [place : i64 (array-ref state.call-operands.items slot)]
@@ -12122,7 +12418,7 @@
       (set! index (+ index 1)))
     ;; Returned values into the declared return type's universal regions.
     (set! index 0)
-    (while (< index state.return-places.len)
+    (while (and (< index state.return-places.len) (not edges.exhausted))
       (let
         [place : i64 (array-ref state.return-places.items index)]
         (when
@@ -12141,7 +12437,7 @@
       (set! index (+ index 1)))
     ;; Well-formedness of every root's, formal's and the return's type.
     (set! index 0)
-    (while (< index state.place-count)
+    (while (and (< index state.place-count) (not edges.exhausted))
       (when
         (and
           (< (own.ownership-parent (& (array-ref state.body.places index))) 0)
@@ -12158,11 +12454,13 @@
           (array-ref shapes.place-shapes index)))
       (set! index (+ index 1)))
     (set! index 0)
-    (while (< index state.call-sigs.len)
+    (while (and (< index state.call-sigs.len) (not edges.exhausted))
       (let
         [operand : i64 0]
         [key : i64 (- -2 index)]
-        (while (< operand (array-ref state.call-counts.items index))
+        (while (and
+          (< operand (array-ref state.call-counts.items index))
+          (not edges.exhausted))
           (normalize-shape-outlives!
             (&mut edges)
             nodes
@@ -12187,7 +12485,7 @@
     (when
       (>= nodes.program 0)
       (set! index 0)
-      (while (< index nodes.keys.len)
+      (while (and (< index nodes.keys.len) (not edges.exhausted))
         (when
           (and
             (<= (array-ref nodes.keys.items index) -2)
@@ -15385,7 +15683,7 @@
   [edges : (&mut edges NormalizeRegionEdges)]) : unit
   (let
     [index : i64 0]
-    (while (< index state.flow-count)
+    (while (and (< index state.flow-count) (not edges.exhausted))
       (let
         [from : i64 (array-ref state.flow-from index)]
         [to : i64

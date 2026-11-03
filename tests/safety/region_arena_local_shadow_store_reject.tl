@@ -1,5 +1,8 @@
-;; A later local spelled like the arena does not let earlier arena data reach
-;; caller storage (#9593).
+;; A later local spelled like the arena does not let a fresh borrow of arena
+;; data, taken inside that local's scope, reach caller storage (#9593). This
+;; rejects only because the stored value is the fresh `(& (deref x))`: arena
+;; data bound before the shadowing local and stored after it is still accepted,
+;; a pre-existing binder-identity hole tracked by #9609.
 (defstruct RefBox
   (:lifetimes a)
   (value (& a i64)))

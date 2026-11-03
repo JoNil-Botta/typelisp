@@ -13,10 +13,14 @@
 #   - every binder has a named arm in tc-with-region-rename-binders and a
 #     shadow fixture listed in tests/safety/manifest.txt;
 #   - every barrier has its arm in tc-with-region-rename-expr!;
-#   - every nonbinder cites a checker source line naming the constructor;
-#   - every derived passthrough field is listed, with its kind.
-# --self-test checks that an omitted constructor, an omitted binder arm and an
-# unlisted passthrough field each fail the audit. --markdown prints the table.
+#   - every constructor cites FILE#FUNCTION, a checker function whose patterns
+#     name it, so line drift elsewhere does not break the citation;
+#   - every derived passthrough field, including those of the list map macros
+#     an arm calls (as macro:field), is listed with its kind.
+# --self-test checks that an omitted constructor, an omitted binder arm, an
+# unlisted passthrough field, a list map macro gaining or dropping a name and a
+# wrong citation each fail the audit, and that line drift does not.
+# --markdown prints the table.
 # usage: scripts/check-with-region-binder-audit.sh [--self-test|--markdown]
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -32,51 +36,86 @@ derive_constructors() {
          f && /^  \([A-Z]/ { sub(/^  \(/, ""); split($0, a, /[ )]/); print a[1] }' "$1"
 }
 
-# Prints "Constructor<TAB>field" for every pattern variable that an arm of the
-# map macros copies into its result without a hook.
+# Prints "Constructor<TAB>field" for every pattern variable that an arm of
+# ast-expr-map-children copies into its result without a hook, and, for every
+# list map macro an arm calls (transitively), "Constructor<TAB>macro:field" for
+# each pattern variable that macro copies through unchanged.
 derive_passthrough() {
     awk '
-    function flush(   n, i, toks, v, out, rest, cnt) {
-        if (ctor == "") return
+    function passthrough(text, emit,   n, i, toks, v, out, rest, cnt, pats, s, m, seen, re) {
         gsub(/[ \t]+/, " ", text)
-        add_patterns(text)
-        out = text
-        # Hooked children and box reads are not passthrough.
-        gsub(/\(,[a-z-]+ ,@x [a-z0-9?-]+\)/, " HOOK ", out)
-        gsub(/\(__tl-box-place [a-z-]+\)/, " BOX ", out)
-        gsub(/\(ast-[a-z-]+-map [a-z-]+[^)]*\)/, " MAP ", out)
-        gsub(/\[\([A-Za-z0-9.]+( [a-z0-9?-]+)*\)/, " PAT ", out)
-        n = split(pats, toks, " ")
-        for (i = 1; i <= n; i++) {
-            v = toks[i]
-            if (v == "" || v ~ /^[A-Z]/ || seen[ctor SUBSEP v]++) continue
-            rest = out
-            cnt = gsub("[ (]" v "[ )]", "", rest)
-            if (cnt > 0) print ctor "\t" v
-        }
-        ctor = ""; text = ""; pats = ""
-    }
-    function add_patterns(line,   m, s) {
-        s = line
+        pats = ""; s = text
         while (match(s, /\[\([A-Za-z0-9.]+( [a-z0-9?-]+)*\)/)) {
             m = substr(s, RSTART + 2, RLENGTH - 3)
             sub(/^[A-Za-z0-9.]+/, "", m)
             pats = pats " " m
             s = substr(s, RSTART + RLENGTH)
         }
+        out = text
+        # Hooked children, box reads and nested list maps are not passthrough.
+        gsub(/\(,[a-z-]+ ,@[a-z]+ [a-z0-9?-]+\)/, " HOOK ", out)
+        gsub(/\(__tl-box-place [a-z-]+\)/, " BOX ", out)
+        gsub(/\(ast-[a-z-]+-map [a-z-]+[^)]*\)/, " MAP ", out)
+        gsub(/\[\([A-Za-z0-9.]+( [a-z0-9?-]+)*\)/, " PAT ", out)
+        n = split(pats, toks, " ")
+        for (i = 1; i <= n; i++) {
+            v = toks[i]
+            if (v == "" || v ~ /^[A-Z]/ || (v in seen)) continue
+            seen[v] = 1
+            rest = out; re = v
+            gsub(/[?]/, "[?]", re)
+            cnt = gsub("[ (]" re "[ )]", "", rest)
+            if (cnt > 0) emit[++emit[0]] = v
+        }
     }
-    /^\(defmacro \(ast-expr-map-children$/ { inmap = 1; next }
-    inmap && /^\(/ { flush(); inmap = 0 }
-    !inmap { next }
-    /^      \[\(AstExpr\.[A-Za-z]+/ {
-        flush()
-        ctor = $0; sub(/^      \[\(AstExpr\./, "", ctor); sub(/[ )].*/, "", ctor)
+    function helpers_of(text, key,   s) {
+        s = text
+        while (match(s, /\(ast-[a-z-]+-map /)) {
+            uses[key] = uses[key] " " substr(s, RSTART + 1, RLENGTH - 2)
+            s = substr(s, RSTART + RLENGTH)
+        }
     }
+    function flush(   e, i) {
+        if (unit == "") return
+        e[0] = 0
+        passthrough(text, e)
+        if (mode == "map") {
+            for (i = 1; i <= e[0]; i++) print unit "\t" e[i]
+            ctors[unit] = 1
+        } else {
+            for (i = 1; i <= e[0]; i++) hp[unit] = hp[unit] " " e[i]
+        }
+        helpers_of(text, unit)
+        unit = ""; text = ""
+    }
+    function short(h) { sub(/^ast-/, "", h); sub(/(-list)?-map$/, "", h); return h }
+    function expand(c, h, depth,   n, i, hs, k, vs) {
+        if (depth > 8 || ((c SUBSEP h) in done)) return
+        done[c SUBSEP h] = 1
+        n = split(hp[h], vs, " ")
+        for (k = 1; k <= n; k++) if (vs[k] != "") print c "\t" short(h) ":" vs[k]
+        n = split(uses[h], hs, " ")
+        for (i = 1; i <= n; i++) if (hs[i] != "") expand(c, hs[i], depth + 1)
+    }
+    /^\(/ { flush(); mode = "" }
+    /^\(defmacro \(ast-expr-map-children$/ { mode = "map"; next }
+    /^\(defmacro \(ast-[a-z-]+-map$/ {
+        mode = "helper"; unit = $0; sub(/^\(defmacro \(/, "", unit); next
+    }
+    mode == "" { next }
     /^[ \t]*;/ { next }
-    ctor != "" { text = text " " $0 }
-    END { flush() }' "$1"
-    # Name fields inside the list payloads the macro maps.
-    printf 'Let\tbinding-name\nLambda\tparam-name\nWithResource\tresource-name\n'
+    mode == "map" && /^      \[\(AstExpr\.[A-Za-z]+/ {
+        flush(); mode = "map"
+        unit = $0; sub(/^      \[\(AstExpr\./, "", unit); sub(/[ )].*/, "", unit)
+    }
+    unit != "" { text = text " " $0 }
+    END {
+        flush()
+        for (c in ctors) {
+            n = split(uses[c], hs, " ")
+            for (i = 1; i <= n; i++) if (hs[i] != "") expand(c, hs[i], 0)
+        }
+    }' "$1"
 }
 
 function_arms() {
@@ -127,9 +166,16 @@ audit() {
             nonbinder) : ;;
             *) echo "binder-audit: $ctor has unknown class '$class'" >&2; status=1 ;;
         esac
-        file=${cite%%:*}; line=${cite##*:}
-        if [ ! -f "$file" ] || ! sed -n "${line}p" "$file" | grep -q "$ctor"; then
-            echo "binder-audit: $ctor citation $cite does not name the constructor" >&2; status=1
+        # A citation is FILE#FUNCTION: the checker function must name the
+        # constructor in a pattern, so line drift elsewhere cannot break it.
+        file=${cite%%#*}; fn=${cite##*#}
+        [ "$file" = src/compiler_typecheck_core.tl ] && file=$CORE
+        if [ ! -f "$file" ] || ! awk -v fn="$fn" -v c="$ctor" '
+                $0 == "(define (" fn || index($0, "(define (" fn " ") == 1 { f = 1; next }
+                f && /^\(/ { f = 0 }
+                f && $0 ~ ("\\((ast\\.AstExpr\\.)?" c "[ )]") { found = 1 }
+                END { exit found ? 0 : 1 }' "$file"; then
+            echo "binder-audit: $ctor citation $cite: the function does not name the constructor" >&2; status=1
         fi
     done < "$work/table"
     while IFS="$(printf '\t')" read -r kind ctor field fkind note; do
@@ -185,6 +231,30 @@ case "${1:-}" in
         grep -v "$(printf '^field\tForeachActive\tlane\t')" "$TABLE" > "$work/omit-field.tsv"
         if AUDIT_TABLE="$work/omit-field.tsv" "$0" > "$work/omit-field.out" 2>&1; then
             echo "binder-audit self-test: an unlisted passthrough field passed" >&2; exit 1
+        fi
+        # A list map macro that gains an unlisted name, or stops passing one
+        # through, must fail: helper fields are derived, not asserted.
+        sed 's/(AstParam\.Param name ty is-comptime)/(AstParam.Param name ty is-comptime audit-extra)/;
+             s/(AstParam\.Param name (,on-type ,@contexts ty) is-comptime)/(AstParam.Param name (,on-type ,@contexts ty) is-comptime audit-extra)/' \
+            "$AST" > "$work/helper-extra.tl"
+        if cmp -s "$AST" "$work/helper-extra.tl" || AUDIT_AST="$work/helper-extra.tl" "$0" > "$work/helper-extra.out" 2>&1; then
+            echo "binder-audit self-test: an unlisted list-macro name passed" >&2; exit 1
+        fi
+        sed 's/(AstParam\.Param name (,on-type ,@contexts ty) is-comptime)/(AstParam.Param 0 (,on-type ,@contexts ty) is-comptime)/' \
+            "$AST" > "$work/helper-drop.tl"
+        if cmp -s "$AST" "$work/helper-drop.tl" || AUDIT_AST="$work/helper-drop.tl" "$0" > "$work/helper-drop.out" 2>&1; then
+            echo "binder-audit self-test: a list-macro name no longer passed through still passed" >&2; exit 1
+        fi
+        # A citation must name the constructor in the cited function.
+        awk -F '\t' 'BEGIN { OFS = FS } $1 == "ctor" && $2 == "Var" { $6 = "src/compiler_typecheck_core.tl#tc-with-region-binder" } { print }' \
+            "$TABLE" > "$work/bad-cite.tsv"
+        if AUDIT_TABLE="$work/bad-cite.tsv" "$0" > "$work/bad-cite.out" 2>&1; then
+            echo "binder-audit self-test: a citation of a function not naming the constructor passed" >&2; exit 1
+        fi
+        # Line drift elsewhere in the checker must not break the audit.
+        { awk 'BEGIN { for (i = 0; i < 500; i++) print ";; drift" }'; cat "$CORE"; } > "$work/drift.tl"
+        if ! AUDIT_CORE="$work/drift.tl" "$0" > "$work/drift.out" 2>&1; then
+            echo "binder-audit self-test: 500 lines of drift broke the audit" >&2; exit 1
         fi
         echo "binder-audit self-test: passed"
         ;;

@@ -87,8 +87,46 @@
     [h : (HoldInvCov a b) (HoldInvCov (InvCov.None))]
     0))
 
+;; `a` is bivariant here: nothing in a payload spells it.
+(defenum BiInv
+  (:lifetimes a b)
+  (None)
+  (Some (&mut program (& b i64))))
+
+; Must pass: the covariant `b` takes the unconstrained lifetime and so
+; shortens to the caller region `a` beside the invariant one.
+(define (inv-cov-shortening [r : (& a i64)] [b : i64] [program : i64]) : i64
+  (let
+    [v : (InvCov a a) (InvCov.None)]
+    0))
+
+; Must pass: a bivariant formal beside an invariant one.
+(define (bi-inv [a : i64] [b : i64] [program : i64]) : i64
+  (let
+    [v : (BiInv a b) (BiInv.None)]
+    0))
+
+; Must pass: two local collisions.
+(define (inv-cov-locals [program : i64]) : i64
+  (let
+    [a : i64 0]
+    [b : i64 0]
+    [v : (InvCov a b) (InvCov.None)]
+    0))
+
+; Must pass: the reserved `program` in the covariant position, which the
+; colliding `a` reaches as the unconstrained lifetime.
+(define (cov-inv-program [a : i64] [b : i64]) : i64
+  (let
+    [v : (CovInv program b) (CovInv.None)]
+    0))
+
 (define (main) : i64
   (+
+    (inv-cov-shortening (& 1) 2 3)
+    (bi-inv 1 2 3)
+    (inv-cov-locals 3)
+    (cov-inv-program 1 2)
     (inv-cov 1 2)
     (cov-inv 1 2)
     (cov-inv-carrier "x" 2)

@@ -16,6 +16,7 @@ p = argparse.ArgumentParser()
 p.add_argument('--compiler', required=True)
 p.add_argument('--base-compiler', required=True)
 p.add_argument('--output', required=True)
+p.add_argument('--preflight-only', action='store_true')
 a = p.parse_args()
 root = Path.cwd()
 out = Path(a.output).resolve()
@@ -36,6 +37,16 @@ def sha(path):
 def git(*args):
     return subprocess.check_output(['git', *args], cwd=root)
 
+def lf_bytes(text):
+    assert '\r' not in text, 'unexpected CR in intended TypeLisp source'
+    return text.encode('utf-8')
+
+def write_lf(path, text):
+    path.write_bytes(lf_bytes(text))
+
+def blob_hash(data):
+    return hashlib.sha1(b'blob ' + str(len(data)).encode('ascii') + b'\0' + data).hexdigest()
+
 identity = {'host': host, 'checkout': git('rev-parse', 'HEAD').decode().strip(),
             'refs': refs, 'bound': bound, 'linux_intact': 25216,
             'environment': {k: os.environ.get(k) for k in
@@ -51,7 +62,9 @@ for name, compiler in compilers.items():
         'version': subprocess.check_output([str(compiler), '--version'], text=True).strip()}
 assert refs['base'] in identity['compilers']['base']['version']
 (out / 'identity.json').write_text(json.dumps(identity, indent=2) + '\n')
-candidate = (root / test_path).read_text()
+candidate_blob = git('show', 'HEAD:' + test_path)
+assert (root / test_path).read_bytes() == candidate_blob
+candidate = candidate_blob.decode('utf-8')
 assert '[bound : i64 131072]' in candidate
 assert 'C105_DISPOSABLE_DELTA=' in candidate
 original_assertion = '''    (unless
@@ -74,6 +87,8 @@ mutation = '''                  (let
                       (io.panic "C105 mutation did not allocate a private arena"))
                     unit)'''
 trees = {}
+source_bytes = {}
+blob_ids = {}
 for name, ref in refs.items():
     exists = subprocess.run(['git', 'cat-file', '-e', ref + '^{commit}'],
                             cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -91,6 +106,16 @@ for name, ref in refs.items():
                     '--prefix=' + tree.as_posix() + '/'], cwd=root,
                    env=index_env, input=paths, check=True)
     trees[name] = tree
+    entries = git('ls-tree', '-rz', ref, '--', 'src', 'stdlib').split(b'\0')
+    blob_ids[name] = {entry.split(b'\t', 1)[1].decode('utf-8'):
+                     entry.split(b'\t', 1)[0].split()[2].decode('ascii')
+                     for entry in entries if entry}
+    source_bytes[name] = {f.relative_to(tree).as_posix(): f.read_bytes()
+                          for f in tree.rglob('*') if f.is_file()}
+    for path, data in source_bytes[name].items():
+        if path.endswith('.tl'):
+            assert b'\r' not in data
+            assert blob_hash(data) == blob_ids[name][path], path + ': checkout differs from Git blob'
     (out / (name + '-source.sha256')).write_text(''.join(
         sha(f) + '  ' + f.relative_to(tree).as_posix() + '\n'
         for f in sorted(tree.rglob('*')) if f.is_file()))
@@ -103,7 +128,9 @@ try:
             tree = out / label
             shutil.copytree(trees[name], tree)
             path = tree / test_path
-            text = path.read_text()
+            original = source_bytes[name][test_path]
+            assert path.read_bytes() == original
+            text = original.decode('utf-8')
             assert text.count(original_assertion) == 1
             if variant in ('original', 'entry-disabled'):
                 text = text.replace(original_assertion, observed_assertion)
@@ -113,14 +140,39 @@ try:
                     text = text.replace(old, 'runtime-owner-smoke-for-route-and-entry (string.copy source) Linux 0 true false')
             else:
                 text = candidate
-            path.write_text(text)
+            write_lf(path, text)
+            expected = dict(source_bytes[name])
+            expected[test_path] = lf_bytes(text)
             if variant == 'mutation':
                 driver = tree / 'src/compiler_driver_core.tl'
-                old = driver.read_text()
+                old = source_bytes[name]['src/compiler_driver_core.tl'].decode('utf-8')
                 assert old.count(release) == 1
-                driver.write_text(old.replace(release, mutation))
-                (out / (name + '-mutant-driver.tl')).write_text(driver.read_text())
-            (out / (label + '.tl')).write_text(text)
+                expected['src/compiler_driver_core.tl'] = lf_bytes(old.replace(release, mutation))
+                driver.write_bytes(expected['src/compiler_driver_core.tl'])
+                assert driver.read_bytes().replace(lf_bytes(mutation), lf_bytes(release), 1) == lf_bytes(old)
+                (out / (name + '-mutant-driver.tl')).write_bytes(driver.read_bytes())
+            if variant in ('candidate', 'mutation'):
+                assert path.read_bytes() == candidate_blob
+            else:
+                restored = text
+                if variant == 'entry-disabled':
+                    restored = restored.replace('runtime-owner-smoke-for-route-and-entry (string.copy source) Linux 0 true false', old)
+                restored = restored.replace(observed_assertion, original_assertion)
+                assert lf_bytes(restored) == original
+            prepared = {f.relative_to(tree).as_posix(): f.read_bytes()
+                        for f in tree.rglob('*') if f.is_file()}
+            assert prepared == expected, label + ': unintended source change'
+            proof = {'case': label, 'checked_files': len(prepared),
+                     'test_origin_blob': blob_ids[name][test_path],
+                     'prepared_test_blob': blob_hash(path.read_bytes()),
+                     'candidate_blob': blob_hash(candidate_blob),
+                     'changed_paths': [p for p in expected if expected[p] != source_bytes[name][p]],
+                     'exact_expected_bytes': True, 'driver_release_only': variant == 'mutation'}
+            (out / (label + '-proof.json')).write_text(json.dumps(proof, indent=2) + '\n')
+            (out / (label + '.tl')).write_bytes(path.read_bytes())
+            if a.preflight_only:
+                print(json.dumps(proof), flush=True)
+                continue
             report = out / (label + '.memory')
             command = [str(compilers[name]), 'test', str(path), '--exact', test_name,
                        '--target', target, '--stdlib-root', str(tree / 'stdlib'),
@@ -166,7 +218,10 @@ try:
                 if variant == 'candidate':
                     assert delta * 5 <= bound * 4
                     assert delta * 4 <= 25216 * 5, label + ': exceeds Linux by more than25%'
-    (out / 'PASS').write_text('All8 identity/case cells meet D-C105.\n')
+    if a.preflight_only:
+        (out / 'PREFLIGHT_PASS').write_text('All8 prepared source sets have exact intended bytes.\n')
+    else:
+        (out / 'PASS').write_text('All8 identity/case cells meet D-C105.\n')
 finally:
     (out / 'results.json').write_text(json.dumps(rows, indent=2) + '\n')
 PY

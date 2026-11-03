@@ -209,7 +209,13 @@ jobs:
           mkdir -p "$observation_root"
           export TMPDIR="$HOME/.cache/typelisp-agent-tmp/issue-9588/c105/$GITHUB_RUN_ID"
           mkdir -p "$TMPDIR"
-          base_compiler=$(sh scripts/fetch-stage0.sh stage0-20261103-003706-r41551084443 "$observation_root/base-compiler")
+          sh scripts/fetch-stage0.sh stage0-20261103-003706-r41551084443 "$observation_root/base-compiler" \
+            2>&1 | tee "$observation_root/fetch-stage0.log"
+          base_compiler="$observation_root/base-compiler/typelisp.exe"
+          test -x "$base_compiler"
+          "$base_compiler" --version | tee "$observation_root/base-version.log"
+          grep -F d21da5c63648c891ed17126dd7d9224d2703565b "$observation_root/base-version.log"
+          sha256sum "$base_compiler" | tee "$observation_root/base-compiler.sha256"
           export TYPELISP_BOOTSTRAP_WORKDIR=target/exp/issue-9588-c105/bootstrap
           export TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE="$observation_root/converged.path"
           scripts/run-memory-bounded.sh --limit-mib 8192 --timeout-seconds 1500 \
@@ -226,6 +232,8 @@ jobs:
           name: issue-9588-c105-windows-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: |
             target/exp/issue-9588-c105/*.memory
+            target/exp/issue-9588-c105/*.log
+            target/exp/issue-9588-c105/*.sha256
             target/exp/issue-9588-c105/results/*.json
             target/exp/issue-9588-c105/results/*.sha256
             target/exp/issue-9588-c105/results/*.memory

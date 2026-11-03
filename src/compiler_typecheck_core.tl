@@ -85307,7 +85307,70 @@
                       region
                       fresh
                       live))))))])]
+    ;; The private scalar-`for` planners bind their name operands (Var
+    ;; expressions) only for the last slot, the body; the source, index,
+    ;; item annotation and done flag are evaluated in the incoming scope.
+    ;; Absent (negative) slots stay as they are.
+    [(ForOwnedStep items)
+      (Some
+        (ast.AstExpr.ForOwnedStep
+          (tc-with-region-rename-for-owned
+            ctx
+            region
+            fresh
+            (& items)
+            (not (tc-with-region-slot-named? ctx (& items) 2 region)))))]
+    [(ForOwnedState items)
+      (Some
+        (ast.AstExpr.ForOwnedState
+          (tc-with-region-rename-for-owned
+            ctx
+            region
+            fresh
+            (& items)
+            (not
+              (or
+                (tc-with-region-slot-named? ctx (& items) 0 region)
+                (tc-with-region-slot-named? ctx (& items) 1 region))))))]
     [_ (No)]))
+
+(define (tc-with-region-slot-named?
+  [ctx : TcContext]
+  [items : (& items ast.AstExprList)]
+  [slot : i64]
+  [region : i64]) : bool
+  (let
+    [id : i64 (ast.ast-expr-list-get items slot -1)]
+    (and
+      (>= id 0)
+      (=
+        (tc-expr-var-name-id
+          (tc-context-expr-segment-bases ctx)
+          (tc-context-expr-get ctx id))
+        region))))
+
+(define (tc-with-region-rename-for-owned
+  [ctx : TcContext]
+  [region : i64]
+  [fresh : i64]
+  [items : (& items ast.AstExprList)]
+  [body-live : bool]) : ast.AstExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity items.len)]
+    (for [index (iterator.range 0 items.len)]
+      (let
+        [id : i64 (ast.ast-expr-list-get items index -1)]
+        (ast.ast-expr-list-push
+          (&mut out)
+          (if (< id 0)
+            id
+            (tc-with-region-rename-child!
+              ctx
+              region
+              fresh
+              (or (< index (- items.len 1)) body-live)
+              id)))))
+    out))
 
 (define (tc-with-region-param-named?
   [params : (& params ast.AstParamList)]

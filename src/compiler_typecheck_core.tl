@@ -71549,38 +71549,7 @@
             (+ index 1)))]
       [(Err message) (Err message)])))
 
-;; A `let` or `with-arena` inside SPMD code scopes what it binds: the SPMD
-;; checker threads `env` functionally, but binding also pushes onto the active
-;; scoped runtime, which later siblings would otherwise still see (so a sibling
-;; arena or let binder would look visible to the with-arena entry check). Only
-;; an `env` that is the active runtime is truncated back to its mark; an
-;; environment the runtime does not carry (an inlined private helper's) is left
-;; as it was.
 (define (tc-spmd-expr-typed
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [spmd-env : TcSpmdEnv]
-  [expr : ast.AstExpr]
-  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
-  (if (and
-    (tc-spmd-scoped-form? (& expr))
-    (tc-type-env-scoped-runtime-active? env))
-    (let
-      [saved : TcTypeEnvScopedRuntimeSave
-        (tc-type-env-scoped-runtime-enter-env! env)]
-      [result : ResultTcSpmdExprInfo
-        (tc-spmd-expr-typed-form ctx expr-bases env spmd-env expr expr-ty)]
-      (tc-type-env-scoped-runtime-restore! saved)
-      result)
-    (tc-spmd-expr-typed-form ctx expr-bases env spmd-env expr expr-ty)))
-
-(define (tc-spmd-scoped-form? [expr : (& ast.AstExpr)]) : bool
-  (match expr
-    [(or (Let _) (WithRegion _ _)) true]
-    [_ false]))
-
-(define (tc-spmd-expr-typed-form
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -85974,10 +85943,18 @@
 ;; a lexical owner, an enclosing arena or region), the arena would share its
 ;; identity, and references into the arena would pass as references of the
 ;; outer lifetime (#9593). Such a form is rejected at entry; the arena must be
-;; renamed. Visibility is the checker's own lifetime resolution
-;; (`tc-lifetime-visible-id?`), so every checking path decides identically.
+;; renamed. Visibility is the checker's own lifetime resolution over the
+;; lexical environment (`tc-lifetime-visible-persistent-id?`, the walk
+;; `tc-lifetime-visible-id?` uses without a scoped runtime). The scoped runtime
+;; is a cache that SPMD checking does not unwind between siblings, so reading
+;; it could see an ended binding; the lexical environment is exact on every
+;; checking path.
 (define (tc-with-region-collides? [env : TcTypeEnv] [region : i64]) : bool
-  (tc-lifetime-visible-id? env region))
+  (or
+    (tc-generated-arena-brand-id? region)
+    (tc-program-lifetime-id? region)
+    (= region (tc-unconstrained-lifetime-id))
+    (tc-lifetime-visible-persistent-id? env region)))
 
 (define (tc-with-region-collision-prefix) : String
   "typecheck: with-arena '")

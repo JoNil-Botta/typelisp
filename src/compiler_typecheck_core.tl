@@ -50248,7 +50248,7 @@
 
 ;; The one signature-marker entry type of a parameter list (#8998): its caller
 ;; regions, arena brands included (#9604), which are incomparable to each
-;; other, or No. A lifetime spelled like a parameter is the caller's referent
+;; other, or No. An invalidated brand is re-bound inside the parameters. A lifetime spelled like a parameter is the caller's referent
 ;; region when that parameter is a self-named carrier; otherwise it names the
 ;; parameter's storage (#8890) and is rooted at the parameter. One pass reads
 ;; each parameter once.
@@ -50338,7 +50338,9 @@
 ;; a nominal with NAME-ID among its lifetime arguments, under any region tags.
 ;; Its lifetime NAME-ID is then the caller's referent region, not the binding's
 ;; storage. An arena handle `[owner : (arena.Arena owner)]` is one too: its
-;; brand is the caller's arena region, which outlives the handle (#9604).
+;; brand is the caller's arena region, which outlives the handle (#9604). A
+;; parameter list re-binds a brand it invalidates inside its parameters
+;; (`tc-invalidated-brand-marker-type`).
 ;; Only the outer type is inspected, so the test is linear in its region tags
 ;; and lifetime arguments.
 (define (tc-type-carries-own-lifetime? [ty : (& ast.AstType)] [name-id : i64]) : bool
@@ -50382,7 +50384,8 @@
   [params : (& params ast.AstParamList)]) : TcTypeEnv
   ;; Caller lifetimes outlive every parameter's storage: their markers are
   ;; bound outside the parameters (#8998). A by-value arena parameter's brand
-  ;; is such a caller region too: the caller's arena outlives the call (#9604).
+  ;; is such a caller region too: the caller's arena outlives the call, unless
+  ;; the call invalidates it (#9604).
   (tc-bind-params-at
     ctx
     (tc-bind-signature-lifetime-markers
@@ -50397,7 +50400,11 @@
   [params : (& params ast.AstParamList)]
   [index : i64]) : TcTypeEnv
   (if (>= index (ast.ast-param-list-len params))
-    (tc-bind-invalidate-marker env params)
+    (tc-bind-invalidate-marker
+      (tc-bind-signature-lifetime-markers
+        env
+        (tc-invalidated-brand-marker-type params))
+      params)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (let
@@ -50452,6 +50459,29 @@
     out))
 
 ;; The marker to bind for a parameter list, or No when none is needed.
+;; The signature-marker entry type of the brands PARAMS invalidate, or No.
+;; Such a brand ends inside the call, so this marker is bound after the
+;; parameters and shadows the caller-region one: every parameter's storage
+;; outlives it (#9604).
+(define (tc-invalidated-brand-marker-type
+  [params : (& params ast.AstParamList)]) : ast.AstMaybeType
+  (unless (tc-invalidate-types-present?) (return (ast.AstMaybeType.No)))
+  (let
+    [pairs : ast.AstLifetimeList (tc-param-list-invalidate-pairs params)]
+    [brands : TcNameIdList Nil]
+    [index : i64 0]
+    (while (< index (ast.ast-lifetime-list-len (& pairs)))
+      (set!
+        brands
+        (tc-name-id-list-add
+          brands
+          (ast.ast-lifetime-list-get
+            (& pairs)
+            index
+            (ast.ast-lifetime-fallback))))
+      (set! index (+ index 2)))
+    (tc-signature-lifetime-marker-type-for params brands brands)))
+
 (define (tc-invalidate-marker-type [params : (& params ast.AstParamList)]) : ast.AstMaybeType
   (unless (tc-invalidate-types-present?) (return (No)))
   (let
@@ -50543,16 +50573,22 @@
         (tc-selected-unit
           (tc-selected-bindings-pin! bindings lease (& carrier))))
       (ResultTcScopedCarrier.Ok
-        (match (tc-invalidate-marker-type params)
-          [(Some marker)
-            (tc-type-env-scoped-carrier-with-sidecar
-              (tc-global-shared-view carrier)
-              (tc-type-env-scoped-sidecar-bind-marker-id
-                carrier.sidecar
-                (tc-invalidate-marker-id)
-                marker
-                Other))]
-          [(No) carrier])))
+        (let
+          ;; As `tc-bind-params-at`: invalidated brands' markers inside.
+          [out : TcTypeEnvScopedCarrier
+            (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
+              carrier
+              (tc-invalidated-brand-marker-type params))]
+          (match (tc-invalidate-marker-type params)
+            [(Some marker)
+              (tc-type-env-scoped-carrier-with-sidecar
+                (tc-global-shared-view out)
+                (tc-type-env-scoped-sidecar-bind-marker-id
+                  out.sidecar
+                  (tc-invalidate-marker-id)
+                  marker
+                  Other))]
+            [(No) out]))))
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (let

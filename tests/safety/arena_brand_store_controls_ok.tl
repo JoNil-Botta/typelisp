@@ -34,11 +34,30 @@
   [out : (&mut r (RefBox r))]) : unit
   (set! out.value held.value))
 
+; Brand data may be stored where a parameter's storage is required: the brand
+; outlives the call.
+(define (store-into-storage-slot
+  [a : i64]
+  [ar : (arena.Arena r)]
+  [v : (& r i64)]
+  [slot : (&mut a (RefBox a))]) : unit
+  (set! slot.value v))
+
+; An invalidated brand ends inside the call, so parameter storage outlives it.
+(define (store-before-release
+  [a : i64]
+  [ra : (& a i64)]
+  [owner : (arena.Arena owner) (:invalidate owner)]
+  [out : (&mut owner (RefBox owner))]) : unit
+  (begin
+    (set! out.value ra)
+    (arena.destroy-safe! owner)))
+
 ; A branded helper may return arena-allocated data tied to its brand.
 (define (allocate-text [ar : (arena.Arena r)]) : (in r String)
   (in-arena ar (string.append "brand" "-text")))
 
-; A self-named arena owner keeps its brand rooted at the parameter.
+; A self-named arena owner's brand is a caller region too.
 (define (self-named [owner : (arena.Arena owner)] [v : (& owner i64)]) : (Pair
     owner)
   (Pair v v))

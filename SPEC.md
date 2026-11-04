@@ -2302,9 +2302,9 @@ return a reference to local `x`" (or "to parameter `x`", or "to captured
 `x`") for a returned one, as Rust's E0597 and E0515. This holds when a local or parameter is spelled
 like a caller lifetime: a borrow of a parameter `[a : i64]` stored through
 `[b : (&mut a (RefBox a))]` is rejected. The brand `r` of a by-value
-`(arena.Arena r)` parameter is a caller region too, since the caller's arena
-outlives the call: the same borrow stored through `[out : (&mut r (RefBox r))]`
-is rejected.
+`(arena.Arena r)` parameter that the call does not invalidate is a caller
+region too, since the caller's arena outlives the call: the same borrow stored
+through `[out : (&mut r (RefBox r))]` is rejected.
 
 **Immutable call-site auto-borrowing.** When a typed TypeLisp call, function
 value/lambda call, or constructor call has a formal parameter of type
@@ -2575,9 +2575,12 @@ or a nominal type with its name among the lifetime arguments, as in
 `[s : (RefBox s)]` or the arena handle `[owner : (arena.Arena owner)]`, names
 the caller's region it refers into, not its own storage: that region outlives
 every parameter and is unrelated to the signature's other lifetimes. The brand
-of any by-value `(arena.Arena r)` parameter is likewise a caller region. Any
-other lifetime spelled like a parameter, as `a` in `[a : i64] [r : (& a i64)]`,
-names that parameter's storage, which ends when the call returns.
+of a by-value `(arena.Arena r)` parameter is likewise a caller region, unless
+the signature invalidates `r` (`(:invalidate r)`, section 5.16): an
+invalidated brand may end inside the call, so every parameter's storage
+outlives it. Any other lifetime spelled like a parameter, as `a` in
+`[a : i64] [r : (& a i64)]`, names that parameter's storage, which ends when
+the call returns.
 
 ```lisp test=ignore name=lifetime-parameterized-return-ok reason="illustrative return example; not a standalone program"
 (define (keep-ref [value : (& a i64)]) : (RefBox a)

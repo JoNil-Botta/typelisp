@@ -415,13 +415,17 @@ region_read_inferred_region_ok|run-exit|tests/safety/region_read_inferred_region
 # A by-value arena parameter's brand, self-named or not, is a caller region
 # outside every parameter: parameter storage and callee-local regions cannot
 # be stored into it, distinct brands stay unrelated, and brand-tied and
-# arena-allocated data can be stored (#9604).
-arena_brand_storage_spelled_store_reject|check-fail|tests/safety/arena_brand_storage_spelled_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& a i64)
-arena_brand_tuple_self_named_store_reject|check-fail|tests/safety/arena_brand_tuple_self_named_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& n i64)
-arena_brand_dangling_caller_reject|check-fail|tests/safety/arena_brand_dangling_caller_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& a i64)
-arena_brand_with_arena_store_reject|check-fail|tests/safety/arena_brand_with_arena_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& s i64)
-arena_brand_self_named_owner_store_reject|check-fail|tests/safety/arena_brand_self_named_owner_store_reject.tl|-|struct field assignment type mismatch: expected (& owner i64), found (& a i64)
+# arena-allocated data can be stored. A brand the call invalidates ends inside
+# the call, inside every parameter (#9604).
+arena_brand_storage_spelled_store_reject|check-fail|tests/safety/arena_brand_storage_spelled_store_reject.tl|tests/safety/arena_brand_storage_spelled_store_reject.tl:16:3|struct field assignment type mismatch: expected (& r i64), found (& a i64)
+arena_brand_tuple_self_named_store_reject|check-fail|tests/safety/arena_brand_tuple_self_named_store_reject.tl|tests/safety/arena_brand_tuple_self_named_store_reject.tl:14:3|struct field assignment type mismatch: expected (& r i64), found (& n i64)
+arena_brand_dangling_caller_reject|check-fail|tests/safety/arena_brand_dangling_caller_reject.tl|tests/safety/arena_brand_dangling_caller_reject.tl:15:3|struct field assignment type mismatch: expected (& r i64), found (& a i64)
+arena_brand_self_named_owner_store_reject|check-fail|tests/safety/arena_brand_self_named_owner_store_reject.tl|tests/safety/arena_brand_self_named_owner_store_reject.tl:16:3|struct field assignment type mismatch: expected (& owner i64), found (& a i64)
+arena_brand_with_arena_store_reject|check-fail|tests/safety/arena_brand_with_arena_store_reject.tl|tests/safety/arena_brand_with_arena_store_reject.tl:10:3|struct field assignment type mismatch: expected (& r i64), found (& s i64)
 arena_brand_wrong_return_reject|check-fail|tests/safety/arena_brand_wrong_return_reject.tl|tests/safety/arena_brand_wrong_return_reject.tl:9:3|error[E0205]: typecheck: cannot store region-tagged value into return value
+arena_brand_invalidate_storage_slot_reject|check-fail|tests/safety/arena_brand_invalidate_storage_slot_reject.tl|tests/safety/arena_brand_invalidate_storage_slot_reject.tl:16:3|struct field assignment type mismatch: expected (& a i64), found (& r i64)
+arena_brand_self_named_invalidate_slot_reject|check-fail|tests/safety/arena_brand_self_named_invalidate_slot_reject.tl|tests/safety/arena_brand_self_named_invalidate_slot_reject.tl:15:3|struct field assignment type mismatch: expected (& a i64), found (& owner i64)
+arena_brand_invalidate_type_form_slot_reject|check-fail|tests/safety/arena_brand_invalidate_type_form_slot_reject.tl|tests/safety/arena_brand_invalidate_type_form_slot_reject.tl:14:3|struct field assignment type mismatch: expected (& a i64), found (& r i64)
 arena_brand_store_controls_ok|run-exit|tests/safety/arena_brand_store_controls_ok.tl|42|-
 caller_lifetime_array_join_loan_reject|check-fail|tests/safety/caller_lifetime_array_join_loan_reject.tl|-|cannot assign to borrowed place `y`
 # Rust parity for the storage rule. The `&mut` and the result are spelled like

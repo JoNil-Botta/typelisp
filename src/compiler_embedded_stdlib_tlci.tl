@@ -3636,25 +3636,6 @@
     session
     (compiler-comptime-host-ptr-binary-step! 1)))
 
-(define (compiler-comptime-host-callback-expr-comptime
-  [session : i64]
-  [_arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
-  (compiler-comptime-host-status-callback
-    session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (let
-        [inner : i64 (compiler-comptime-host-stack-node 1)]
-        (if (< inner 0)
-          tlci.tlci-host-callback-status-bad-request
-          (compiler-comptime-host-replace-expr!
-            1
-            (ast.ast-expr-comptime-with-pools
-              (compiler-comptime-host-session-pools)
-              inner)))))))
-
 ;; expr-unsafe pops an expression list and pushes the `(unsafe ...)` node
 ;; the parser produces, matching expr-begin's shape.
 (define (compiler-comptime-host-callback-expr-unsafe
@@ -5159,8 +5140,9 @@
   [operand-value : ctfe_support.CompilerCtfeValue]
   [first-terminal : i64]
   [second-terminal : i64]
-  [out-node : i64]) : i64
-  (compiler-comptime-host-drop! 2)
+  [out-node : i64]
+  [terminal-count : i64]) : i64
+  (compiler-comptime-host-drop! terminal-count)
   (if (and
     (ctfe_support.ctfe-hygiene-inert-literal-node? pools first-terminal)
     (ctfe_support.ctfe-hygiene-inert-literal-node? pools second-terminal))
@@ -5214,25 +5196,35 @@
                     operand-value
                     when-true-node
                     when-false-node
-                    out-node))]
+                    out-node
+                    2))]
               [(None) tlci.tlci-host-callback-status-bad-request])))))))
 
 (define (compiler-comptime-host-callback-expr-clause-list-fold-if
   [session : i64]
   [arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
+  [arg-b : i64]
+  [arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
     (if (or
-      (< compiler-comptime-host-stack-len 2)
+      (<
+        compiler-comptime-host-stack-len
+        (if (> arg-b 0)
+          1
+          2))
+      (< arg-b 0)
+      (< arg-c 0)
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-operand-count))
       tlci.tlci-host-callback-status-bad-request
       (let
         [else-not-final-node : i64 (compiler-comptime-host-stack-node 1)]
-        [missing-node : i64 (compiler-comptime-host-stack-node 2)]
-        (if (or (< else-not-final-node 0) (< missing-node 0))
+        [missing-input : i64
+          (if (> arg-b 0)
+            else-not-final-node
+            (compiler-comptime-host-stack-node 2))]
+        (if (or (< else-not-final-node 0) (< missing-input 0))
           tlci.tlci-host-callback-status-bad-request
           (let
             [operand-value : ctfe_support.CompilerCtfeValue
@@ -5244,6 +5236,14 @@
                 (let
                   [pools : ast.AstNodePoolContext
                     (compiler-comptime-host-value-pools operand-value)]
+                  [missing-node : i64
+                    (if (> arg-b 0)
+                      (ctfe_support.ctfe-expr-clause-list-error-terminal
+                        pools
+                        items
+                        (unsafe
+                          (string-from-bytes (int->ptr arg-b : (Ptr u8)) arg-c)))
+                      missing-input)]
                   [out-node : i64
                     (__tl-project-field
                       (ctfe_support.ctfe-expr-clause-list-fold-if-node
@@ -5258,7 +5258,10 @@
                     operand-value
                     missing-node
                     else-not-final-node
-                    out-node))]
+                    out-node
+                    (if (> arg-b 0)
+                      1
+                      2)))]
               [(None) tlci.tlci-host-callback-status-bad-request])))))))
 
 (define (compiler-comptime-host-callback-commit-result

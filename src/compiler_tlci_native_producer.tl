@@ -18,6 +18,7 @@
 (import compiler_object as cobj)
 (import compiler_backend)
 (import compiler_lower)
+(import compiler_ctfe as ctfe_support)
 (import compiler_optimize)
 (import compiler_tlci_native_image)
 (import tlci_core)
@@ -760,14 +761,27 @@
                   context
                   params
                   (compiler_ast_types.ast-expr-list-get (& fold-args) 0 0))]
+              [terminal : i64
+                (compiler_ast_types.ast-expr-list-get (& fold-args) 1 0)]
+              [message : String
+                (ctfe_support.ctfe-clause-error-template-message
+                  (& context.pools)
+                  (& context.intern-state)
+                  (&
+                    (compiler_ast_types.ast-node-pool-context-expr-get
+                      context.pools
+                      terminal)))]
+              [checked? : bool (> (string.string-length message) 0)]
               [missing-opened : i64
-                (embedded-native-computed-expr-ops
-                  context
-                  params
-                  (compiler_ast_types.ast-expr-list-get (& fold-args) 1 0)
-                  ops
-                  ops-count)]
-              [else-not-final-opened : i64
+                (if checked?
+                  0
+                  (embedded-native-computed-expr-ops
+                    context
+                    params
+                    terminal
+                    ops
+                    ops-count))]
+              [else-opened : i64
                 (embedded-native-computed-expr-ops
                   context
                   params
@@ -777,19 +791,22 @@
               (if (or
                 (< clauses-index 0)
                 (< missing-opened 0)
-                (< else-not-final-opened 0))
+                (< else-opened 0))
                 -1
                 (begin
-                  (embedded-native-ops-push!
+                  (embedded-native-template-push!
                     ops
                     ops-count
-                    (embedded-native-op-call
-                      (tlci_core.tlci-host-callback-name
-                        expr-clause-list-fold-if)
-                      (string.int->string clauses-index)
-                      "0"
+                    (tlci_core.tlci-host-callback-name expr-clause-list-fold-if)
+                    (string.int->string clauses-index)
+                    (if checked?
+                      (embedded-native-name-arg
+                        (owned_view.compiler-owned-shared-view message))
+                      "0")
+                    (if checked?
+                      (string.int->string (string.string-length message))
                       "0"))
-                  (+ missing-opened else-not-final-opened 1))))
+                  (+ missing-opened else-opened 1))))
             (if (and
               (or
                 (string.eq
@@ -1832,14 +1849,6 @@
         data-node
         length-node
         (tlci_core.tlci-host-callback-name expr-string-from-bytes)
-        ops
-        ops-count)]
-    [(Comptime inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-comptime)
         ops
         ops-count)]
     [(Unsafe body-exprs)

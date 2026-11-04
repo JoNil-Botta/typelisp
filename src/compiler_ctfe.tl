@@ -8897,6 +8897,103 @@
             expr
             "expr-clause-list-fold-if expects an ExprClauseList")))]))
 
+;; The checked fold reuses the final result on its common path. Only a
+;; missing final else needs syntax for the deferred authored error; keeping
+;; that syntax in the fold's pool also preserves captured-operand ownership.
+(define (ctfe-expr-clause-list-error-terminal
+  [pools : ast.AstNodePoolContext]
+  [items : (& items ast.AstExprClauseList)]
+  [message : String]) : i64
+  (let
+    [length : i64 (ctfe-expr-clause-list-length items)]
+    (when
+      (> length 0)
+      (let
+        [last : ast.AstExprClause
+          (ctfe-expr-clause-list-nth items (- length 1))]
+        (when
+          (ctfe-expr-else-with-pools? (& pools) (ctfe-expr-clause-first last))
+          (return (ctfe-expr-clause-second last)))))
+    (let
+      [callee : i64
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (Var (ctfe-builtin "comptime-error")))]
+      [args : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
+      (ast.ast-expr-list-push
+        (&mut args)
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (Literal (String (ctfe-materialize-generated-name-id message)))))
+      (ast.ast-expr-comptime-with-pools
+        pools
+        (ast.ast-expr-call-with-pools pools callee args)))))
+
+;; A closed error quote has no unquotes or evaluated effects. It can be
+;; omitted when a fold's final else already supplies the terminal. Other
+;; terminal expressions retain their ordinary eager evaluation.
+(define (ctfe-clause-error-template-message
+  [pools : (& pools ast.AstNodePoolContext)]
+  [intern-state : (& intern-state ci.InternCompatState)]
+  [expr : (& ast.AstExpr)]) : String
+  (match (ast.ast-expr-unspan-with-pools pools expr)
+    [(Quasiquote quoted)
+      (match (ast.ast-expr-unspan-with-pools
+        pools
+        (& (ast.ast-node-pool-context-expr-get pools quoted)))
+        [(Comptime inner)
+          (match (ast.ast-expr-unspan-with-pools
+            pools
+            (& (ast.ast-node-pool-context-expr-get pools inner)))
+            [(Call callee args)
+              (when
+                (= args.len 1)
+                (match (ast.ast-expr-unspan-with-pools
+                  pools
+                  (& (ast.ast-node-pool-context-expr-get pools callee)))
+                  [(Var name)
+                    (let
+                      [text : String
+                        (ci.intern-compat-state-str intern-state name)]
+                      (when
+                        (or
+                          (string.eq text "comptime.comptime-error")
+                          (string.eq text "comptime-error"))
+                        (match (ast.ast-expr-unspan-with-pools
+                          pools
+                          (&
+                            (ast.ast-node-pool-context-expr-get
+                              pools
+                              (ast.ast-expr-list-get (& args) 0 0))))
+                          [(Literal (String message))
+                            (return
+                              (ci.intern-compat-state-str intern-state message))]
+                          [_ unit])))]
+                  [_ unit]))]
+            [_ unit])]
+        [_ unit])]
+    [_ unit])
+  "")
+
+(define (ctfe-expr-clause-list-error-value
+  [items : (& CompilerCtfeValue)]
+  [message : String]
+  [env : CtfeEnv]) : CompilerCtfeValue
+  (match items
+    [(ExprClauseList clauses)
+      (Expr
+        (ctfe-expr-clause-list-error-terminal
+          (ctfe-env-pools env)
+          clauses
+          message)
+        (ctfe-untyped-expr-type))]
+    [(CapturedExprClauseList clauses pools)
+      (CapturedExpr
+        (ctfe-expr-clause-list-error-terminal pools clauses message)
+        (ctfe-untyped-expr-type)
+        pools)]
+    [_ (Bool false)]))
+
 (define (ctfe-eval-expr-clause-list-fold-if-call
   [args : (& ast.AstExprList)]
   [expr : (& ast.AstExpr)]
@@ -8907,9 +9004,18 @@
       [items-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [missing-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
       [else-not-final-arg : ast.AstExpr (ctfe-expr-arg args 2 env)]
+      [message : String
+        (ctfe-clause-error-template-message
+          (& (ctfe-env-pools env))
+          (& (ci.intern-compat-state-capture-active))
+          (& missing-arg))]
       (match (compiler-ctfe-eval (& items-arg) env fuel)
         [(Ok items-value items-fuel)
-          (match (compiler-ctfe-eval (& missing-arg) env items-fuel)
+          (match (if (> (string.string-length message) 0)
+            (ResultCtfe.Ok
+              (ctfe-expr-clause-list-error-value (& items-value) message env)
+              items-fuel)
+            (compiler-ctfe-eval (& missing-arg) env items-fuel))
             [(Ok missing-value missing-fuel)
               (match (compiler-ctfe-eval
                 (& else-not-final-arg)

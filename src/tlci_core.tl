@@ -965,9 +965,7 @@
   ;; non-ok status. `run-ops` itself is not a batchable op. The producer
   ;; emits it for runs of ops whose immediates are all constants, which is
   ;; what keeps template construction out of machine code. Refs #8274.
-  compiler-comptime-host-callback-run-ops
-  ;; Preserve explicit compile-time evaluation in generated expression syntax.
-  compiler-comptime-host-callback-expr-comptime)
+  compiler-comptime-host-callback-run-ops)
 
 ;; Compare the complete name against one table row without creating a view
 ;; header in the process-lifetime string-view arena.

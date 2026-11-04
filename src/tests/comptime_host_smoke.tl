@@ -1545,45 +1545,30 @@
         (host-smoke-commit?)
         (host-smoke-result-is-hygiene-free?)))))
 
-(define (host-smoke-comptime-template-ok?) : bool
+(define (host-smoke-checked-fold-terminal-ok?) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [inner : i64 (host-smoke-var pools "value")]
-    [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
-      (__tl_make-array ctfe.CompilerCtfeValue 1)]
-    [ok : bool true]
-    (for [variant (iterator.range 0 3)]
-      (set!
-        (array-ref operands 0)
-        (if (= variant 1)
-          (I64 1)
-          (host-smoke-expr inner)))
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 1 8)
-      (when (> variant 0) (set! ok (and ok (host-smoke-push? 0))))
-      (set!
-        ok
-        (and
-          ok
-          (if (= variant 2)
-            (and
-              (host-smoke-ok?
-                host.compiler-comptime-host-callback-expr-comptime
-                0
-                0)
-              (host-smoke-commit?)
-              (match (host.compiler-comptime-host-result-value)
-                [(Expr node _)
-                  (match (ast.ast-node-pool-context-expr-get (& pools) node)
-                    [(Comptime child) (= child inner)]
-                    [_ false])]
-                [_ false]))
-            (host-smoke-rejected?
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-expr-comptime
-                0
-                0)))))
-      (host.compiler-comptime-host-session-close!))
-    ok))
+    [result : i64 (host-smoke-var pools "value")]
+    [else-node : i64 (host-smoke-var pools "else")]
+    [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
+    [empty : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
+    (ast.ast-expr-clause-list-push
+      (&mut clauses)
+      (ast.ast-expr-clause else-node result))
+    (let
+      [before : i64 (ast.ast-node-pool-len)]
+      [valid : i64
+        (ctfe.ctfe-expr-clause-list-error-terminal pools (& clauses) "missing")]
+      [after-valid : i64 (ast.ast-node-pool-len)]
+      [missing : i64
+        (ctfe.ctfe-expr-clause-list-error-terminal pools (& empty) "missing")]
+      (and
+        (= valid result)
+        (= before after-valid)
+        (= (ast.ast-node-pool-len) (+ before 4))
+        (match (ast.ast-node-pool-context-expr-get (& pools) missing)
+          [(Comptime _) true]
+          [_ false])))))
 
 (define (host-smoke-call-provenance-ok?) : bool
   (let
@@ -1761,8 +1746,8 @@
       (io.panic "comptime host smoke: expression fold hygiene")]
     [(not (host-smoke-clause-list-fold-hygiene-ok?))
       (io.panic "comptime host smoke: clause fold hygiene")]
-    [(not (host-smoke-comptime-template-ok?))
-      (io.panic "comptime host smoke: comptime template")]
+    [(not (host-smoke-checked-fold-terminal-ok?))
+      (io.panic "comptime host smoke: checked fold terminal")]
     [(not (host-smoke-call-provenance-ok?))
       (io.panic "comptime host smoke: call provenance")]
     [(not (host-smoke-single-commit-ok?))

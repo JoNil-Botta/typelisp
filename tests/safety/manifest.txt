@@ -2571,10 +2571,10 @@ lifetime_shape_depth_257_reject|check-fail|tests/safety/lifetime_shape_depth_257
 lifetime_shape_func_reset_255_check|check-ok|tests/safety/lifetime_shape_func_reset_255_check.tl|-|-
 lifetime_shape_func_reset_256_reject|check-fail|tests/safety/lifetime_shape_func_reset_256_reject.tl|-|the body exceeds the ownership graph's size limits
 lifetime_shape_escape_linear_40_reject|check-fail|tests/safety/lifetime_shape_escape_linear_40_reject.tl|-|reference value would escape lexical scope
-cond_missing_else_reject|check-fail|tests/safety/cond_missing_else_reject.tl|tests/safety/cond_missing_else_reject.tl:2:4|error[E0505]: cond requires a final [else ...] arm
-cond_missing_else_nested_reject|check-fail|tests/safety/cond_missing_else_nested_reject.tl|tests/safety/cond_missing_else_nested_reject.tl:2:16|error[E0505]: cond requires a final [else ...] arm
-cond_missing_else_qualified_reject|check-fail|tests/safety/cond_missing_else_qualified_reject.tl|tests/safety/cond_missing_else_qualified_reject.tl:4:4|error[E0505]: cond requires a final [else ...] arm
-cond_missing_else_empty_reject|check-fail|tests/safety/cond_missing_else_empty_reject.tl|tests/safety/cond_missing_else_empty_reject.tl:2:4|error[E0505]: cond requires a final [else ...] arm
-cond_missing_else_test_reject|check-fail|tests/safety/cond_missing_else_test_reject.tl|tests/safety/cond_missing_else_test_reject.tl:2:4|error[E0505]: cond requires a final [else ...] arm
-cond_missing_else_generated_reject|check-fail|tests/safety/cond_missing_else_generated_reject.tl|tests/safety/cond_missing_else_generated_reject.tl:2:5|error[E0505]: cond requires a final [else ...] arm
-cond_missing_else_spliced_reject|check-fail|tests/safety/cond_missing_else_spliced_reject.tl|tests/safety/cond_missing_else_spliced_reject.tl:5:14|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_reject|check-fail|tests/safety/cond_missing_else_reject.tl|tests/safety/cond_missing_else_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_nested_reject|check-fail|tests/safety/cond_missing_else_nested_reject.tl|tests/safety/cond_missing_else_nested_reject.tl:2:15|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_qualified_reject|check-fail|tests/safety/cond_missing_else_qualified_reject.tl|tests/safety/cond_missing_else_qualified_reject.tl:4:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_empty_reject|check-fail|tests/safety/cond_missing_else_empty_reject.tl|tests/safety/cond_missing_else_empty_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_test_reject|check-fail|tests/safety/cond_missing_else_test_reject.tl|tests/safety/cond_missing_else_test_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_generated_reject|check-fail|tests/safety/cond_missing_else_generated_reject.tl|tests/safety/cond_missing_else_generated_reject.tl:2:4|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_spliced_reject|check-fail|tests/safety/cond_missing_else_spliced_reject.tl|tests/safety/cond_missing_else_spliced_reject.tl:5:13|error[E0505]: cond requires a final [else ...] arm

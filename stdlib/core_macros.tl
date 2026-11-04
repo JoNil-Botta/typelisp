@@ -167,21 +167,10 @@
 ;: results are captured as `ExprClause` operands; the expanded `if` chain
 ;: performs the ordinary post-expansion bool/result typechecking.
 (defmacro (cond [arms : ExprClause ...]) : Expr
-  (let
-    [count : i64 (comptime.expr-clause-list-length arms)]
-    [final-else? : bool
-      (if (> count 0)
-        (match (comptime.expr-clause-first
-          (comptime.expr-clause-list-nth arms (- count 1)))
-          [(comptime.Expr.Var name) (string-eq name "else")]
-          [_ false])
-        false)]
-    (if final-else?
-      (comptime.expr-clause-list-fold-if
-        arms
-        (comptime.expr-bool false)
-        (comptime.expr-var "core-cond-else-must-be-final"))
-      (comptime.comptime-error "cond requires a final [else ...] arm"))))
+  (comptime.expr-clause-list-fold-if
+    arms
+    `(comptime (comptime.comptime-error "cond requires a final [else ...] arm"))
+    (comptime.expr-var "core-cond-else-must-be-final")))
 
 ;: Add `delta` to the numeric value stored in `place`.
 ;:

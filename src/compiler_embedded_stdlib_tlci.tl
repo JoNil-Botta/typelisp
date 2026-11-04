@@ -3636,6 +3636,25 @@
     session
     (compiler-comptime-host-ptr-binary-step! 1)))
 
+(define (compiler-comptime-host-callback-expr-comptime
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (if (< compiler-comptime-host-stack-len 1)
+      tlci.tlci-host-callback-status-bad-request
+      (let
+        [inner : i64 (compiler-comptime-host-stack-node 1)]
+        (if (< inner 0)
+          tlci.tlci-host-callback-status-bad-request
+          (compiler-comptime-host-replace-expr!
+            1
+            (ast.ast-expr-comptime-with-pools
+              (compiler-comptime-host-session-pools)
+              inner)))))))
+
 ;; expr-unsafe pops an expression list and pushes the `(unsafe ...)` node
 ;; the parser produces, matching expr-begin's shape.
 (define (compiler-comptime-host-callback-expr-unsafe

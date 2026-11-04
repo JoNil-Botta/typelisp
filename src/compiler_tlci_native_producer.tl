@@ -760,40 +760,26 @@
                   context
                   params
                   (compiler_ast_types.ast-expr-list-get (& fold-args) 0 0))]
-              [missing-name : String
-                (embedded-native-expr-var-name
+              [missing-opened : i64
+                (embedded-native-computed-expr-ops
                   context
-                  (compiler_ast_types.ast-expr-list-get (& fold-args) 1 0))]
-              [else-not-final-name : String
-                (embedded-native-expr-var-name
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& fold-args) 1 0)
+                  ops
+                  ops-count)]
+              [else-not-final-opened : i64
+                (embedded-native-computed-expr-ops
                   context
-                  (compiler_ast_types.ast-expr-list-get (& fold-args) 2 0))]
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& fold-args) 2 0)
+                  ops
+                  ops-count)]
               (if (or
                 (< clauses-index 0)
-                (= (string.string-length missing-name) 0)
-                (= (string.string-length else-not-final-name) 0))
+                (< missing-opened 0)
+                (< else-not-final-opened 0))
                 -1
                 (begin
-                  (embedded-native-ops-push!
-                    ops
-                    ops-count
-                    (embedded-native-op-call
-                      (tlci_core.tlci-host-callback-name expr-var)
-                      (embedded-native-name-arg
-                        (owned_view.compiler-owned-shared-view missing-name))
-                      (string.int->string (string.string-length missing-name))
-                      "0"))
-                  (embedded-native-ops-push!
-                    ops
-                    ops-count
-                    (embedded-native-op-call
-                      (tlci_core.tlci-host-callback-name expr-var)
-                      (embedded-native-name-arg
-                        (owned_view.compiler-owned-shared-view
-                          else-not-final-name))
-                      (string.int->string
-                        (string.string-length else-not-final-name))
-                      "0"))
                   (embedded-native-ops-push!
                     ops
                     ops-count
@@ -803,7 +789,7 @@
                       (string.int->string clauses-index)
                       "0"
                       "0"))
-                  3)))
+                  (+ missing-opened else-not-final-opened 1))))
             (if (and
               (or
                 (string.eq
@@ -1846,6 +1832,14 @@
         data-node
         length-node
         (tlci_core.tlci-host-callback-name expr-string-from-bytes)
+        ops
+        ops-count)]
+    [(Comptime inner-node)
+      (embedded-native-template-unary-node-ops
+        context
+        params
+        inner-node
+        (tlci_core.tlci-host-callback-name expr-comptime)
         ops
         ops-count)]
     [(Unsafe body-exprs)

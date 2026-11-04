@@ -11,7 +11,7 @@ exit 1
 stdout empty
 stderr contains error[E0505]: cond requires a final [else ...] arm
 stderr after ^error\[E0505\]:
-next-line .*cond_missing_else_reject.tl:2:4$
+next-line .*cond_missing_else_reject.tl:2:3$
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
 
@@ -21,7 +21,7 @@ exit 1
 stdout empty
 stderr contains error[E0505]: cond requires a final [else ...] arm
 stderr after ^error\[E0505\]:
-next-line .*cond_missing_else_nested_reject.tl:2:16$
+next-line .*cond_missing_else_nested_reject.tl:2:15$
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
 
@@ -31,7 +31,7 @@ exit 1
 stdout empty
 stderr contains error[E0505]: cond requires a final [else ...] arm
 stderr after ^error\[E0505\]:
-next-line .*cond_missing_else_qualified_reject.tl:4:4$
+next-line .*cond_missing_else_qualified_reject.tl:4:3$
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
 
@@ -41,7 +41,7 @@ exit 1
 stdout empty
 stderr contains error[E0505]: cond requires a final [else ...] arm
 stderr after ^error\[E0505\]:
-next-line .*cond_missing_else_empty_reject.tl:2:4$
+next-line .*cond_missing_else_empty_reject.tl:2:3$
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
 
@@ -51,7 +51,7 @@ exit 1
 stdout empty
 stderr contains error[E0505]: cond requires a final [else ...] arm
 stderr after ^error\[E0505\]:
-next-line .*cond_missing_else_test_reject.tl:2:4$
+next-line .*cond_missing_else_test_reject.tl:2:3$
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
 
@@ -61,7 +61,7 @@ exit 1
 stdout empty
 stderr contains error[E0505]: cond requires a final [else ...] arm
 stderr after ^error\[E0505\]:
-next-line .*cond_missing_else_generated_reject.tl:2:5$
+next-line .*cond_missing_else_generated_reject.tl:2:4$
 stderr contains in expansion of macro `choose` invoked here
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
@@ -72,26 +72,10 @@ exit 1
 stdout empty
 stderr contains error[E0505]: cond requires a final [else ...] arm
 stderr after ^error\[E0505\]:
-next-line .*cond_missing_else_spliced_reject.tl:5:14$
+next-line .*cond_missing_else_spliced_reject.tl:5:13$
 stderr contains in expansion of macro `identity` invoked here
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
-
-# Keep ordinary authored errors located at the rejected invocation too.
-case authored-macro-error-location
-file main.tl
-(defmacro (reject) : Expr
-  (comptime-error "invalid macro input"))
-
-(define (main) : i64
-  (reject))
-end-file
-run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
-exit 1
-stdout empty
-stderr contains error[E0505]: invalid macro input
-stderr after ^error\[E0505\]:
-next-line .*main.tl:5:4$
 
 case cond-arm-type-error
 file main.tl
@@ -117,3 +101,20 @@ run compile "{{root}}/tests/integration/cond.tl" --target {{target}} --opt-level
 exit 0
 stdout contains Wrote
 stderr empty
+
+# A spliced user's explicit comptime error retains its own expression span.
+case spliced-comptime-error-location
+each check compile build
+file main.tl
+(defmacro (identity [value : Expr]) : Expr
+  value)
+
+(define (main) : i64
+  (identity (comptime (comptime-error "invalid user expression"))))
+end-file
+run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: invalid user expression
+stderr after ^error\[E0505\]:
+next-line .*main.tl:5:13$

@@ -1,9 +1,10 @@
 ;; Byte-order oracle for value, branching and select-on-flags comparisons.
 ;; Recursion prevents inlining the predicate dispatchers into the oracle.
-(import stdlib.test)
+(define failures : i64
+  0)
 
 (define (assert [condition : bool]) : unit
-  (test.assert-true condition "unsigned char comparison"))
+  (unless condition (set! failures (+ failures 1))))
 
 (define branch-witness : i64
   0)
@@ -317,4 +318,6 @@
           (set! j (+ j 1))))
       (set! i (+ i 1)))
     (assert (= mismatches 0))
-    42))
+    (if (= failures 0)
+      42
+      1)))

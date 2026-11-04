@@ -2582,10 +2582,11 @@ outlives it. It may also end before any local of the body, and its destroy
 reaches only values whose types carry it, so it outlives no lifetime of the
 signature or the body except the locals of the innermost enclosing lambda,
 which end before that lambda returns: its data cannot be held under another
-local's lifetime. A local or parameter of the same name shadows the brand.
-This is a temporary restriction until the ownership graph tracks arena ends
-by identity (#9256), which will accept such programs when every use comes
-before the end. Any other lifetime spelled like a parameter, as `a` in
+local's lifetime. A local of the body, or a parameter of a nested lambda, of
+the same name shadows the brand; a parameter of the invalidating signature
+does not, since the brand is bound after the parameters. This is a temporary
+restriction until the ownership graph tracks arena ends by identity (#9256),
+which will accept such programs when every use comes before the end. Any other lifetime spelled like a parameter, as `a` in
 `[a : i64] [r : (& a i64)]`, names that parameter's storage, which ends when
 the call returns.
 

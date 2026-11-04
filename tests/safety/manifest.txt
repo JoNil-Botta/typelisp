@@ -440,6 +440,9 @@ arena_brand_invalidate_lambda_value_reject|check-fail|tests/safety/arena_brand_i
 arena_brand_invalidate_lambda_store_reject|check-fail|tests/safety/arena_brand_invalidate_lambda_store_reject.tl|tests/safety/arena_brand_invalidate_lambda_store_reject.tl:15:3|struct field assignment type mismatch: expected (& y i64), found (& r i64)
 arena_brand_invalidate_local_controls_ok|run-exit|tests/safety/arena_brand_invalidate_local_controls_ok.tl|42|-
 arena_brand_invalidate_shadow_ok|run-exit|tests/safety/arena_brand_invalidate_shadow_ok.tl|42|-
+# Temporary restriction (D-C124, sound; restored by #9256 G2): a parameter of the
+# invalidating signature named like the brand does not shadow it.
+arena_brand_invalidate_signature_param_restriction_reject|check-fail|tests/safety/arena_brand_invalidate_signature_param_restriction_reject.tl|tests/safety/arena_brand_invalidate_signature_param_restriction_reject.tl:11:24|source lifetime `r` does not outlive required lifetime `k`
 caller_lifetime_array_join_loan_reject|check-fail|tests/safety/caller_lifetime_array_join_loan_reject.tl|-|cannot assign to borrowed place `y`
 # Rust parity for the storage rule. The `&mut` and the result are spelled like
 # the local where typing would otherwise reject the store by name, so the

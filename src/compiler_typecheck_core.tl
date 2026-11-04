@@ -29081,6 +29081,18 @@
               target-lifetime-id)]
           [result : bool
             (cond
+              ;; An invalidated brand is a signature lifetime: decided on a
+              ;; cache miss only (#9612).
+              [(and
+                  value-signature
+                  (not (= tc-invalidate-param-bind-count 0))
+                  (>=
+                    (tc-invalidated-brand-param carrier.env value-lifetime-id)
+                    -1))
+                (tc-invalidated-brand-outlives?
+                  carrier.env
+                  value-lifetime-id
+                  target-lifetime-id)]
               [(and value-signature target-signature) false]
               [(>= value-index 0)
                 (and (>= target-index 0) (< value-index target-index))]
@@ -37550,6 +37562,16 @@
         [target-rank : i64
           (tc-ordinary-binding-rank-id-from env target-lifetime-id 0)]
         (cond
+          ;; An invalidated brand is a signature lifetime: decided on a
+          ;; memo miss only (#9612).
+          [(and
+              value-signature
+              (not (= tc-invalidate-param-bind-count 0))
+              (>= (tc-invalidated-brand-param env value-lifetime-id) -1))
+            (tc-invalidated-brand-outlives?
+              env
+              value-lifetime-id
+              target-lifetime-id)]
           [(and value-signature target-signature) false]
           [(or value-signature target-signature)
             (tc-lifetime-outlives-lifetime-scan-id
@@ -37597,14 +37619,6 @@
             (tc-program-lifetime-id? value-lifetime-id)
             (not (tc-name-bound-id? env value-lifetime-id)))
           true]
-        ;; An invalidated brand (#9612).
-        [(and
-            (not (= tc-invalidate-param-bind-count 0))
-            (>= (tc-invalidated-brand-param env value-lifetime-id) -1))
-          (tc-invalidated-brand-outlives?
-            env
-            value-lifetime-id
-            target-lifetime-id)]
         [(tc-type-env-scoped-runtime-active? env)
           (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
             (tc-type-env-scoped-runtime-current env)
@@ -50532,6 +50546,7 @@
 (define (tc-bind-invalidate-marker
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]) : TcTypeEnv
+  (unless (tc-invalidate-types-present?) (return env))
   (match (tc-invalidate-marker-type
     params
     (if (= tc-invalidate-param-bind-count 0)
@@ -50673,22 +50688,24 @@
             (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
               carrier
               (tc-invalidated-brand-marker-type params))]
-          (match (tc-invalidate-marker-type
-            params
-            (if (= tc-invalidate-param-bind-count 0)
-              (No)
-              (tc-type-env-scoped-carrier-marker-type
-                (clone out)
-                (tc-invalidate-marker-id))))
-            [(Some marker)
-              (tc-type-env-scoped-carrier-with-sidecar
-                (tc-global-shared-view out)
-                (tc-type-env-scoped-sidecar-bind-marker-id
-                  out.sidecar
-                  (tc-invalidate-marker-id)
-                  marker
-                  Other))]
-            [(No) out]))))
+          (if (tc-invalidate-types-present?)
+            (match (tc-invalidate-marker-type
+              params
+              (if (= tc-invalidate-param-bind-count 0)
+                (No)
+                (tc-type-env-scoped-carrier-marker-type
+                  (clone out)
+                  (tc-invalidate-marker-id))))
+              [(Some marker)
+                (tc-type-env-scoped-carrier-with-sidecar
+                  (tc-global-shared-view out)
+                  (tc-type-env-scoped-sidecar-bind-marker-id
+                    out.sidecar
+                    (tc-invalidate-marker-id)
+                    marker
+                    Other))]
+              [(No) out])
+            out))))
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (let

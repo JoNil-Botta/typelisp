@@ -37597,6 +37597,13 @@
             (tc-program-lifetime-id? value-lifetime-id)
             (not (tc-name-bound-id? env value-lifetime-id)))
           true]
+        ;; A brand the enclosing body invalidates may end before any of its
+        ;; locals, and its destroy reaches only values typed with it, so it
+        ;; outlives no other lifetime (#9612).
+        [(and
+            (not (= tc-invalidate-param-bind-count 0))
+            (tc-invalidate-lifetime-declared? env value-lifetime-id))
+          false]
         [(tc-type-env-scoped-runtime-active? env)
           (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
             (tc-type-env-scoped-runtime-current env)

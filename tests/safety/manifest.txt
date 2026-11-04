@@ -427,6 +427,14 @@ arena_brand_invalidate_storage_slot_reject|check-fail|tests/safety/arena_brand_i
 arena_brand_self_named_invalidate_slot_reject|check-fail|tests/safety/arena_brand_self_named_invalidate_slot_reject.tl|tests/safety/arena_brand_self_named_invalidate_slot_reject.tl:15:3|struct field assignment type mismatch: expected (& a i64), found (& owner i64)
 arena_brand_invalidate_type_form_slot_reject|check-fail|tests/safety/arena_brand_invalidate_type_form_slot_reject.tl|tests/safety/arena_brand_invalidate_type_form_slot_reject.tl:14:3|struct field assignment type mismatch: expected (& a i64), found (& r i64)
 arena_brand_store_controls_ok|run-exit|tests/safety/arena_brand_store_controls_ok.tl|42|-
+# An invalidated brand outlives no lifetime of the body either: its data cannot
+# be held under a local's lifetime, where its destroy would not reach it (#9612).
+arena_brand_invalidate_local_launder_reject|check-fail|tests/safety/arena_brand_invalidate_local_launder_reject.tl|tests/safety/arena_brand_invalidate_local_launder_reject.tl:17:22|source lifetime `r` does not outlive required lifetime `y`
+arena_brand_invalidate_local_ref_reject|check-fail|tests/safety/arena_brand_invalidate_local_ref_reject.tl|tests/safety/arena_brand_invalidate_local_ref_reject.tl:17:20|source lifetime `r` does not outlive required lifetime `y`
+arena_brand_invalidate_call_launder_reject|check-fail|tests/safety/arena_brand_invalidate_call_launder_reject.tl|tests/safety/arena_brand_invalidate_call_launder_reject.tl:20:16|source lifetime `y` does not outlive required lifetime `r`
+arena_brand_invalidate_local_store_reject|check-fail|tests/safety/arena_brand_invalidate_local_store_reject.tl|tests/safety/arena_brand_invalidate_local_store_reject.tl:15:3|struct field assignment type mismatch: expected (& y i64), found (& r i64)
+arena_brand_invalidate_self_named_launder_reject|check-fail|tests/safety/arena_brand_invalidate_self_named_launder_reject.tl|tests/safety/arena_brand_invalidate_self_named_launder_reject.tl:19:22|source lifetime `owner` does not outlive required lifetime `y`
+arena_brand_invalidate_local_controls_ok|run-exit|tests/safety/arena_brand_invalidate_local_controls_ok.tl|42|-
 caller_lifetime_array_join_loan_reject|check-fail|tests/safety/caller_lifetime_array_join_loan_reject.tl|-|cannot assign to borrowed place `y`
 # Rust parity for the storage rule. The `&mut` and the result are spelled like
 # the local where typing would otherwise reject the store by name, so the

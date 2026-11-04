@@ -2578,9 +2578,11 @@ every parameter and is unrelated to the signature's other lifetimes. The brand
 of a by-value `(arena.Arena r)` parameter is likewise a caller region, unless
 the signature invalidates `r` (`(:invalidate r)`, section 5.16): an
 invalidated brand may end inside the call, so every parameter's storage
-outlives it. Any other lifetime spelled like a parameter, as `a` in
-`[a : i64] [r : (& a i64)]`, names that parameter's storage, which ends when
-the call returns.
+outlives it. It may also end before any local of the body, and its destroy
+reaches only values whose types carry it, so it outlives no other lifetime:
+its data cannot be held under a local's lifetime. Any other lifetime spelled
+like a parameter, as `a` in `[a : i64] [r : (& a i64)]`, names that
+parameter's storage, which ends when the call returns.
 
 ```lisp test=ignore name=lifetime-parameterized-return-ok reason="illustrative return example; not a standalone program"
 (define (keep-ref [value : (& a i64)]) : (RefBox a)

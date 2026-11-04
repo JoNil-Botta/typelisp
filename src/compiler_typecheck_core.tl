@@ -126379,17 +126379,17 @@
                 [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
                 [(TcInferredTypeMatch.Mismatch actual)
                   ;; A mismatch only in region tags is the value's region
-                  ;; escaping, named at the value (#9604).
+                  ;; escaping, named at the value (#9604). Only this error
+                  ;; path copies its operands.
                   (match (if (tc-type-eq
-                    (tc-type-without-regions (tc-global-shared-view actual))
-                    (tc-type-without-regions
-                      (tc-global-shared-view resolved-ret)))
+                    (tc-type-without-regions (clone actual))
+                    (tc-type-without-regions (clone resolved-ret)))
                     (tc-selected-return-flow-check
                       ctx
                       env
-                      (tc-global-shared-view resolved-ret)
-                      (tc-global-shared-view actual)
-                      (tc-global-shared-view body))
+                      (clone resolved-ret)
+                      (clone actual)
+                      (clone body))
                     ResultTcUnit.Ok)
                     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
                     [(ResultTcUnit.Ok)

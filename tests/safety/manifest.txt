@@ -495,6 +495,8 @@ region_arena_spmd_sibling_scope_ok|check-ok|tests/safety/region_arena_spmd_sibli
 # A non-colliding arena keeps its own region and the ordinary escape and store
 # diagnostics.
 region_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_elided_mut_store_reject|check-fail|tests/safety/region_arena_elided_mut_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_elided_mut_local_store_reject|check-fail|tests/safety/region_arena_elided_mut_local_store_reject.tl|-|struct field assignment type mismatch
 region_arena_in_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_in_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
 # The positive witnesses of every review round, with the arena renamed (only
 # the arena binding and the uses that meant it): binders spelled like a caller

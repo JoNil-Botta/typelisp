@@ -5,6 +5,8 @@
 branch and conditional-selection routes. Literal and runtime boundary cases
 cover 0, 127, 128 and 255. The native manifest runs opt0/1/2 on Linux and
 Windows; the target-parity corpus retains the same optimization matrix.
+`char_comparison_immediates.tl` retains constant operands 0/127/128/255 on
+both sides of every operator against all 256 dynamic byte values.
 
 `arena_caller_reference_store` builds the caller-reference store through an
 elided-lifetime mutable parameter inside a distinct arena. Its contexts fixture

@@ -1674,18 +1674,30 @@
     [len : i64 (array-length flat.names)]
     [names : (__tl_dyn-array i64) (normalize-test-distinct (& flat.names) 0)]
     [tail : (__tl_dyn-array i64) (normalize-test-distinct (& flat.names) 1)]
-    [rows : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    ;; Distinct (name, invariance) rows in first-occurrence order.
+    [row-names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [row-invs : (__tl_dyn-array bool) (__tl_make-array bool 0)]
     [index : i64 0]
     (while (< index len)
-      (norm.normalize-push-i64!
-        (&mut rows)
-        (+
-          (* (array-ref flat.names index) 2)
-          (if (array-ref flat.vars index)
-            1
-            0)))
+      (let
+        [at : i64 0]
+        [seen : bool false]
+        (while (< at (array-length row-names))
+          (when
+            (and
+              (= (array-ref row-names at) (array-ref flat.names index))
+              (= (array-ref row-invs at) (array-ref flat.vars index)))
+            (set! seen true))
+          (set! at (+ at 1)))
+        (unless
+          seen
+          (norm.normalize-push-i64!
+            (&mut row-names)
+            (array-ref flat.names index))
+          (norm.normalize-push-bool!
+            (&mut row-invs)
+            (array-ref flat.vars index))))
       (set! index (+ index 1)))
-    (set! rows (normalize-test-distinct (& rows) 0))
     (unless
       (and
         (= (array-ref shapes.lens.items shape) len)
@@ -1718,24 +1730,31 @@
     (let
       [root : i64 (norm.normalize-shape-root shapes shape)]
       (if (< root 0)
-        (= (array-length rows) 0)
+        (= (array-length row-names) 0)
         (and
-          (= (array-ref shapes.node-rows-count.items root) (array-length rows))
+          (=
+            (array-ref shapes.node-rows-count.items root)
+            (array-length row-names))
           (let
             [first : i64 (array-ref shapes.node-rows-first.items root)]
             [at : i64 0]
             [same : bool true]
-            (while (< at (array-length rows))
+            (while (< at (array-length row-names))
               (unless
-                (=
-                  (array-ref shapes.row-pool.items (+ first at))
-                  (array-ref rows at))
+                (and
+                  (=
+                    (array-ref shapes.row-pool.items (+ first at))
+                    (array-ref row-names at))
+                  (=
+                    (array-ref shapes.row-invs.items (+ first at))
+                    (array-ref row-invs at)))
                 (set! same false))
               (set! at (+ at 1)))
             same))))))
 
 ;; Region nodes for the comparisons: keys 0 and 1 are places, key 0 with one
-;; node per name 1..5, key 1 without name 5 (an unknown node).
+;; node per name 1..5 and per huge name 2^62 + 1..5, key 1 without name 5 and
+;; its huge twin (unknown nodes).
 (define (normalize-test-shape-nodes) : norm.NormalizeNodes
   (let
     [nodes : norm.NormalizeNodes
@@ -1753,15 +1772,17 @@
     [name : i64 1]
     (while (<= name 5)
       (norm.normalize-node-add! (&mut nodes) 0 name)
+      (norm.normalize-node-add! (&mut nodes) 0 (+ 4611686018427387904 name))
       (set! name (+ name 1)))
     (set! (array-ref nodes.place-first 0) 0)
-    (set! (array-ref nodes.place-count 0) 5)
+    (set! (array-ref nodes.place-count 0) 10)
     (set! (array-ref nodes.place-first 1) nodes.keys.len)
     (set! name 4)
     (while (>= name 1)
       (norm.normalize-node-add! (&mut nodes) 1 name)
+      (norm.normalize-node-add! (&mut nodes) 1 (+ 4611686018427387904 name))
       (set! name (- name 1)))
-    (set! (array-ref nodes.place-count 1) 4)
+    (set! (array-ref nodes.place-count 1) 8)
     nodes))
 
 ;; Nominals for the generated types: 501 has a covariant and an invariant
@@ -1816,6 +1837,15 @@
 (define (normalize-test-shape-type [ty : ast.AstType]) : i64
   (ast.ty-node-push (& ty)))
 
+;; A lifetime name: mostly 1..5, sometimes one past 2^62, as generated arena
+;; brands are (names span the whole i64 range).
+(define (normalize-test-shape-name) : i64
+  (let
+    [name : i64 (+ 1 (normalize-test-shape-rand 5))]
+    (if (= (normalize-test-shape-rand 8) 0)
+      (+ 4611686018427387904 name)
+      name)))
+
 (define (normalize-test-shape-pair [a : i64] [b : i64]) : i64
   (let
     [list : ast.AstTypeList (ast.ast-type-list-new)]
@@ -1829,9 +1859,7 @@
     [list : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
     [index : i64 0]
     (while (< index count)
-      (ast.ast-lifetime-list-push
-        (&mut list)
-        (+ 1 (normalize-test-shape-rand 5)))
+      (ast.ast-lifetime-list-push (&mut list) (normalize-test-shape-name))
       (set! index (+ index 1)))
     (box list)))
 
@@ -1844,7 +1872,7 @@
   [pool : (&mut pool (__tl_dyn-array i64))]) : i64
   (let
     [pick : i64 (normalize-test-shape-rand 12)]
-    [name : i64 (+ 1 (normalize-test-shape-rand 5))]
+    [name : i64 (normalize-test-shape-name)]
     [id : i64
       (cond
         [(and (> (array-length pool) 0) (= pick 0))

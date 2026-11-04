@@ -8237,7 +8237,7 @@
 (define (compiler-backend-avx2-unsigned-compare?
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : bool
   (match elem-ty
-    [(or (U64) (U32) (U16) (U8) (Char)) true]
+    [(or (U64) (U32) (U16) (U8)) true]
     [_ false]))
 
 (define (compiler-backend-avx2-unsigned-sign-shift
@@ -22442,7 +22442,7 @@
 (define (compiler-backend-unsigned-rel-ty?
   [ty : (& compiler_ast_types.AstType)]) : bool
   (match ty
-    [(or (U64) (U32) (U16) (U8)) true]
+    [(or (U64) (U32) (U16) (U8) (Char)) true]
     [_ false]))
 
 (define (compiler-backend-global-type-lookup

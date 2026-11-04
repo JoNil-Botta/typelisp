@@ -473,7 +473,7 @@ region_arena_mixed_lambda_params_store_reject|check-fail|tests/safety/region_are
 region_arena_collision_owner_reject|check-fail|tests/safety/region_arena_collision_owner_reject.tl|-|with-arena 'owner' reuses the name of a visible lifetime or owner; rename the arena
 region_arena_collision_nested_reject|check-fail|tests/safety/region_arena_collision_nested_reject.tl|-|with-arena 'outer' reuses the name of a visible lifetime or owner; rename the arena
 region_arena_collision_in_arena_owner_reject|check-fail|tests/safety/region_arena_collision_in_arena_owner_reject.tl|-|with-arena 'brand' reuses the name of a visible lifetime or owner; rename the arena
-region_arena_collision_spmd_index_reject|check-fail|tests/safety/region_arena_collision_spmd_index_reject.tl|-|with-arena 'i' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_spmd_index_reject|check-fail|tests/safety/region_arena_collision_spmd_index_reject.tl|tests/safety/region_arena_collision_spmd_index_reject.tl:7:5|with-arena 'i' reuses the name of a visible lifetime or owner; rename the arena
 # Inside SPMD code a let or with-arena scopes what it binds, so a later sibling
 # arena may reuse the name, as outside SPMD code.
 region_arena_spmd_sibling_scope_ok|check-ok|tests/safety/region_arena_spmd_sibling_scope_ok.tl|-|-

@@ -56862,6 +56862,19 @@
   [span : ast.AstSourceSpan]
   [message : String]) : ResultTcType
   (cond
+    ;; A with-arena collision (#9593) is located at the arena form itself.
+    [(and
+        (tc-message-text-prefix? (& message) (tc-with-region-collision-prefix))
+        (not (tc-encoded-error? message)))
+      (match (& inner)
+        [(WithRegion _ _) (Err (tc-located-error span message))]
+        [_
+          (tc-locate-spanned-error
+            (tc-context-expr-bases ctx)
+            (tc-context-structural-session ctx)
+            inner
+            span
+            message)])]
     [(and (tc-unbound-name-message? message) (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
         [(Var name-id)
@@ -85961,10 +85974,13 @@
 (define (tc-with-region-collides? [env : TcTypeEnv] [region : i64]) : bool
   (tc-lifetime-visible-id? env region))
 
+(define (tc-with-region-collision-prefix) : String
+  "typecheck: with-arena '")
+
 (define (tc-with-region-collision-error [region : i64]) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-    "typecheck: with-arena '"
+    (tc-with-region-collision-prefix)
     (tc-lifetime-name-render region)
     "' reuses the name of a visible lifetime or owner; rename the arena"))
 

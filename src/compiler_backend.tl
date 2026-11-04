@@ -22442,7 +22442,7 @@
 (define (compiler-backend-unsigned-rel-ty?
   [ty : (& compiler_ast_types.AstType)]) : bool
   (match ty
-    [(or (U64) (U32) (U16) (U8)) true]
+    [(or (U64) (U32) (U16) (U8) (Char)) true]
     [_ false]))
 
 (define (compiler-backend-global-type-lookup

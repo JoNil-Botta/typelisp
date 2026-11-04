@@ -10947,32 +10947,22 @@
 ;; completes, 0 when the shape is too long or the walk passes its visits
 ;; (the caller builds a DAG instead); a walk past the type-edge depth bound
 ;; fails closed.
-;; Cloning a type copies its one boxed list's whole backing array (its
-;; capacity, not its length) plus 4 header cells (an over-count for the
-;; lifetime lists, never an under-count).
-(define (normalize-type-list-copy-cells [list : (& list ast.AstTypeList)]) : i64
-  (+ 4 (array-length list.slots)))
-
-(define (normalize-lifetime-list-copy-cells
-  [list : (& list ast.AstLifetimeList)]) : i64
-  (+ 4 (array-length list.slots)))
-
-(define (normalize-type-copy-cells [ty : (& ty ast.AstType)]) : i64
-  (match ty
-    [(or (ast.AstType.EnumArgs _ lifetimes) (ast.AstType.StructArgs _ lifetimes)
-         (ast.AstType.VarArgs _ lifetimes))
-      (normalize-lifetime-list-copy-cells (& (deref lifetimes)))]
-    [(ast.AstType.Tuple elems)
-      (normalize-type-list-copy-cells (& (deref elems)))]
-    [(ast.AstType.Func args _)
-      (normalize-type-list-copy-cells (& (deref args)))]
-    [_ 0]))
-
 (define (normalize-flat-walk!
   [shapes : (&mut shapes NormalizeShapes)]
   [variances : (& variances OwnershipNormalizeVariances)]
   [start : i64]
   [ty : ast.AstType]
+  [inv? : bool]
+  [outer : i64]
+  [depth : i64]) : NormalizeInt
+  (normalize-flat-walk-at! shapes variances start (& ty) inv? outer depth))
+
+;; The flat walk of a borrowed type, so the root is walked without a copy.
+(define (normalize-flat-walk-at!
+  [shapes : (&mut shapes NormalizeShapes)]
+  [variances : (& variances OwnershipNormalizeVariances)]
+  [start : i64]
+  [ty : (& ty ast.AstType)]
   [inv? : bool]
   [outer : i64]
   [depth : i64]) : NormalizeInt
@@ -11390,11 +11380,8 @@
         [_ false])]
     [start : i64 shapes.flat-names.len]
     [_visits : unit (set! shapes.flat-visited 0)]
-    ;; The flat walk consumes a copy of `ty`: charge the copy before making it.
-    [copy : i64 (normalize-type-copy-cells (& ty))]
-    [_copy : unit (try (normalize-shape-charge! shapes copy copy))]
     [walked : i64
-      (try (normalize-flat-walk! shapes variances start (clone ty) false -1 0))]
+      (try (normalize-flat-walk-at! shapes variances start (& ty) false -1 0))]
     (if (= walked 1)
       (let
         [len : i64 (- shapes.flat-names.len start)]

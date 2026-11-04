@@ -97018,18 +97018,33 @@
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (match (macro-expansion-site-span ctx call-expr)
     [(Some span)
-      (cdiag.compiler-diagnostic-with-secondary-if-new
-        diag
-        (&
+      (let
+        [site : cdiag.CompilerDiagnosticSpan
           (cdiag.CompilerDiagnosticSpan
             path
             (ast.ast-source-span-start-line span)
             (ast.ast-source-span-start-col span)
             (ast.ast-source-span-end-line span)
-            (ast.ast-source-span-end-col span)))
-        (&
-          (CompilerDiagnosticSomeString
-            (tc-macro-expansion-frame-label (ci.intern macro-name)))))]
+            (ast.ast-source-span-end-col span))]
+        ;; Authored errors reject the invocation's input. CTFE body spans are
+        ;; template locations (or absent), so the invocation is primary.
+        [located : cdiag.CompilerDiagnostic
+          (if (and
+            (string.eq
+              (cdiag.compiler-diagnostic-code-or-empty (& diag))
+              "E0505")
+            (=
+              (cdiag.compiler-diagnostic-label-list-count
+                (& (cdiag.compiler-diagnostic-secondary-spans diag)))
+              0))
+            (cdiag.compiler-diagnostic-with-primary-span (& diag) (clone site))
+            diag)]
+        (cdiag.compiler-diagnostic-with-secondary-if-new
+          located
+          (& site)
+          (&
+            (CompilerDiagnosticSomeString
+              (tc-macro-expansion-frame-label (ci.intern macro-name))))))]
     [(No) diag]))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64

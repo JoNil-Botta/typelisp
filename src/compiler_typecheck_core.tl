@@ -71552,7 +71552,10 @@
 ;; A `let` or `with-arena` inside SPMD code scopes what it binds: the SPMD
 ;; checker threads `env` functionally, but binding also pushes onto the active
 ;; scoped runtime, which later siblings would otherwise still see (so a sibling
-;; arena or let binder would look visible to the with-arena entry check).
+;; arena or let binder would look visible to the with-arena entry check). Only
+;; an `env` that is the active runtime is truncated back to its mark; an
+;; environment the runtime does not carry (an inlined private helper's) is left
+;; as it was.
 (define (tc-spmd-expr-typed
   [ctx : TcContext]
   [expr-bases : i64]
@@ -71560,7 +71563,9 @@
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
-  (if (tc-spmd-scoped-form? (& expr))
+  (if (and
+    (tc-spmd-scoped-form? (& expr))
+    (tc-type-env-scoped-runtime-active? env))
     (let
       [saved : TcTypeEnvScopedRuntimeSave
         (tc-type-env-scoped-runtime-enter-env! env)]

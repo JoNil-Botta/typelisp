@@ -56862,19 +56862,14 @@
   [span : ast.AstSourceSpan]
   [message : String]) : ResultTcType
   (cond
-    ;; A with-arena collision (#9593) is located at the arena form itself.
+    ;; A with-arena collision (#9593) is located at the arena form itself. The
+    ;; form's shape is tested first: the message test copies the message text,
+    ;; and this function sees every located error.
     [(and
-        (tc-message-text-prefix? (& message) (tc-with-region-collision-prefix))
-        (not (tc-encoded-error? message)))
-      (match (& inner)
-        [(WithRegion _ _) (Err (tc-located-error span message))]
-        [_
-          (tc-locate-spanned-error
-            (tc-context-expr-bases ctx)
-            (tc-context-structural-session ctx)
-            inner
-            span
-            message)])]
+        (tc-with-region-form? (& inner))
+        (not (tc-encoded-error? message))
+        (tc-message-text-prefix? (& message) (tc-with-region-collision-prefix)))
+      (Err (tc-located-error span message))]
     [(and (tc-unbound-name-message? message) (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
         [(Var name-id)
@@ -85955,6 +85950,11 @@
     (tc-program-lifetime-id? region)
     (= region (tc-unconstrained-lifetime-id))
     (tc-lifetime-visible-persistent-id? env region)))
+
+(define (tc-with-region-form? [expr : (& ast.AstExpr)]) : bool
+  (match expr
+    [(WithRegion _ _) true]
+    [_ false]))
 
 (define (tc-with-region-collision-prefix) : String
   "typecheck: with-arena '")

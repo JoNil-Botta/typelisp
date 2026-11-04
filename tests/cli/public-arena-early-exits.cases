@@ -5,7 +5,7 @@ target linux-x86_64 windows-x86_64
 opt 0 1 2
 
 case arena-early-exit-reject
-each arena_return_string_reject arena_return_box_reject arena_return_nested_tuple_reject arena_return_outer_reject arena_return_shadowed_input_reject arena_try_string_reject arena_try_outer_reject arena_try_array_reject arena_try_nested_array_reject
+each arena_return_string_reject arena_return_box_reject arena_return_nested_tuple_reject arena_return_outer_reject arena_try_string_reject arena_try_outer_reject arena_try_array_reject arena_try_nested_array_reject
 run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stdout empty
@@ -18,6 +18,20 @@ stdout empty
 stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena
 stderr contains tests/safety/{{each}}.tl:
 stderr contains use with-escape
+
+# An arena named like the input owner's brand is rejected at with-arena entry
+# before any early exit is checked (#9593, SPEC 5.16).
+case arena-early-exit-collision-reject
+run check "{{root}}/tests/safety/arena_return_shadowed_input_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: with-arena 'source' reuses the name of a visible lifetime or owner; rename the arena
+stderr contains tests/safety/arena_return_shadowed_input_reject.tl:5:3
+run compile "{{root}}/tests/safety/arena_return_shadowed_input_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: with-arena 'source' reuses the name of a visible lifetime or owner; rename the arena
+stderr contains tests/safety/arena_return_shadowed_input_reject.tl:5:3
 
 case arena-owner-early-exit-reject
 run check "{{root}}/tests/safety/arena_return_local_owner_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"

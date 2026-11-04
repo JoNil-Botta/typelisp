@@ -1784,3 +1784,27 @@ target linux-x86_64 windows-x86_64
 opt 0
 in fn _tl_lambda_capture_lifetime_enum_variants_case_memory
 count = 1 ^[[:space:]]+call tl_substring$
+
+# The byte matrix must reach select-on-flags, as well as setcc and branches.
+case char-comparison-select-flags
+source tests/integration/char_comparisons.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_char_comparisons_select_eq
+match ^[[:space:]]+cmove[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_ne
+match ^[[:space:]]+cmovne[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_lt
+match ^[[:space:]]+cmovb[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_le
+match ^[[:space:]]+cmovbe[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_gt
+match ^[[:space:]]+cmova[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_ge
+match ^[[:space:]]+cmovae[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]

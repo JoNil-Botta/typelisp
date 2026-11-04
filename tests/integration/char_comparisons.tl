@@ -46,33 +46,111 @@
         (set! branch-witness (- branch-witness 1)))]
     [else (branch-char a b (- op 6))]))
 
-(define (select-char [a : char] [b : char] [op : i64] [yes : i64] [no : i64]) : i64
+(define (select-eq [a : char] [b : char] [count : i64]) : i64
+  (let
+    [left : i64 (cast a : i64)]
+    [right : i64 (cast b : i64)]
+    [sum : i64 0]
+    [i : i64 0]
+    (while (< i count)
+      (let
+        [selected : i64
+          (if (= a b)
+            left
+            right)]
+        (set! sum (+ sum selected))
+        (set! i (+ i 1))))
+    (+ sum 5)))
+
+(define (select-ne [a : char] [b : char] [count : i64]) : i64
+  (let
+    [left : i64 (cast a : i64)]
+    [right : i64 (cast b : i64)]
+    [sum : i64 0]
+    [i : i64 0]
+    (while (< i count)
+      (let
+        [selected : i64
+          (if (!= a b)
+            left
+            right)]
+        (set! sum (+ sum selected))
+        (set! i (+ i 1))))
+    (+ sum 5)))
+
+(define (select-lt [a : char] [b : char] [count : i64]) : i64
+  (let
+    [left : i64 (cast a : i64)]
+    [right : i64 (cast b : i64)]
+    [sum : i64 0]
+    [i : i64 0]
+    (while (< i count)
+      (let
+        [selected : i64
+          (if (< a b)
+            left
+            right)]
+        (set! sum (+ sum selected))
+        (set! i (+ i 1))))
+    (+ sum 5)))
+
+(define (select-le [a : char] [b : char] [count : i64]) : i64
+  (let
+    [left : i64 (cast a : i64)]
+    [right : i64 (cast b : i64)]
+    [sum : i64 0]
+    [i : i64 0]
+    (while (< i count)
+      (let
+        [selected : i64
+          (if (<= a b)
+            left
+            right)]
+        (set! sum (+ sum selected))
+        (set! i (+ i 1))))
+    (+ sum 5)))
+
+(define (select-gt [a : char] [b : char] [count : i64]) : i64
+  (let
+    [left : i64 (cast a : i64)]
+    [right : i64 (cast b : i64)]
+    [sum : i64 0]
+    [i : i64 0]
+    (while (< i count)
+      (let
+        [selected : i64
+          (if (> a b)
+            left
+            right)]
+        (set! sum (+ sum selected))
+        (set! i (+ i 1))))
+    (+ sum 5)))
+
+(define (select-ge [a : char] [b : char] [count : i64]) : i64
+  (let
+    [left : i64 (cast a : i64)]
+    [right : i64 (cast b : i64)]
+    [sum : i64 0]
+    [i : i64 0]
+    (while (< i count)
+      (let
+        [selected : i64
+          (if (>= a b)
+            left
+            right)]
+        (set! sum (+ sum selected))
+        (set! i (+ i 1))))
+    (+ sum 5)))
+
+(define (select-char [a : char] [b : char] [op : i64]) : i64
   (cond
-    [(= op 0)
-      (if (= a b)
-        yes
-        no)]
-    [(= op 1)
-      (if (!= a b)
-        yes
-        no)]
-    [(= op 2)
-      (if (< a b)
-        yes
-        no)]
-    [(= op 3)
-      (if (<= a b)
-        yes
-        no)]
-    [(= op 4)
-      (if (> a b)
-        yes
-        no)]
-    [(= op 5)
-      (if (>= a b)
-        yes
-        no)]
-    [else (select-char a b (- op 6) yes no)]))
+    [(= op 0) (select-eq a b 1)]
+    [(= op 1) (select-ne a b 1)]
+    [(= op 2) (select-lt a b 1)]
+    [(= op 3) (select-le a b 1)]
+    [(= op 4) (select-gt a b 1)]
+    [(= op 5) (select-ge a b 1)]
+    [else (select-char a b (- op 6))]))
 
 (define (oracle [a : i64] [b : i64] [op : i64]) : bool
   (cond
@@ -107,10 +185,12 @@
           (set! mismatches (+ mismatches 1)))
         (when
           (!=
-            (select-char a b op 17 93)
-            (if expected
-              17
-              93))
+            (select-char a b op)
+            (+
+              (if expected
+                left
+                right)
+              5))
           (set! mismatches (+ mismatches 1))))
       (set! op (+ op 1)))
     mismatches))

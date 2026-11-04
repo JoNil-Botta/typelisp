@@ -59,6 +59,8 @@ fi
 corpus() {
     cat <<'EOF'
 arithmetic tests/integration/arithmetic.tl
+arena_caller_reference_store tests/integration/arena_caller_reference_store.tl
+arena_caller_reference_store_contexts tests/integration/arena_caller_reference_store_contexts.tl
 stdlib_net_parity tests/integration/stdlib_net_parity.tl
 stdlib_net_owner_parity tests/integration/stdlib_net_owner_parity.tl
 net_tls_transcript stdlib/tests/net_tls_transcript_parity.tl

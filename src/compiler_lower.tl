@@ -30618,6 +30618,7 @@
         type-env
         (lower-context-expr-get ctx place-box))]
     [(or (Set _ _) (StructSet _ _ _) (BoxSet _ _)) (Ok (Unit))]
+    [(Return _) (Ok (Never))]
     [_ (Err "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-result-type-or-check
@@ -32773,8 +32774,11 @@
           (lower-global-shared-view expected-ty))
         expected-ty
         origin)]
-    [(or (Unary _ _) (Binary _ _ _) (Let _) (Begin _) (Unsafe _) (Array _)
-         (DynArray _) (Tuple _) (Borrow _ _ _))
+    ;; These forms were checked with this expected type. Recurse into their
+    ;; lowering instead of checking scoped stores again in a reconstructed env.
+    [(or (Unary _ _) (Binary _ _ _) (Let _) (Begin _) (Unsafe _)
+         (WithRegion _ _) (Return _) (Array _) (DynArray _) (Tuple _)
+         (Borrow _ _ _))
       (lower-expr-with-type-and-coerce
         ctx
         state

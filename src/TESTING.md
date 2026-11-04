@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`arena_caller_reference_store` builds the caller-reference store through an
+elided-lifetime mutable parameter inside a distinct arena. Its contexts fixture
+covers explicit lifetimes, explicit return, typed locals and call arguments.
+Both run at opt0/1/2 on both hosts with exit 42 and retain target IR parity.
+The safety corpus rejects arena and stack references stored through the same
+elided parameter shape. Keep check verdicts unchanged when adjusting lowering.
+
 `utf8_literals.tl` checks completed literal bytes, every malformed UTF-8
 class, escape-to-source diagnostic offsets, and strict formatter agreement.
 `compiler_load_includes.tl` retains the four include-kind matrix: runtime text

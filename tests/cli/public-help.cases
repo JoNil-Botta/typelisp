@@ -52,9 +52,13 @@ stderr contains Summary:
 
 case help-details
 run build -h
-stderr contains --opt-level <0|1|2>            Override package optimizer level (release 2, dev 0)
+stderr contains typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+stderr contains --opt-level <0|1|2>            Optimizer level (source default 1; package release 2, dev 0)
 stderr contains --locked
 stderr contains --update-lock
+run run -h
+stderr contains typelisp run <file.tl> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+stderr contains --opt-level <0|1|2>            Optimizer level (source default 1; package release 2, dev 0)
 run compile -h
 stderr contains --emit-ir                      Emit intermediate representation
 stderr contains --dump-ir [after-<pass>]       Emit textual IR, optionally after a pass

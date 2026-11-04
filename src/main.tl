@@ -121,7 +121,7 @@ Run `typelisp <command> --help` for command-specific usage.
 
 (define (cli-build-help-text) : String
   "Usage:
-    typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
+    typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp build [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
 
 Summary:
@@ -134,7 +134,7 @@ Options:
     --release                      Alias for --profile release
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
-    --opt-level <0|1|2>            Override package optimizer level (release 2, dev 0)
+    --opt-level <0|1|2>            Optimizer level (source default 1; package release 2, dev 0)
     --debug, -g                    Emit line tables and linker debug information
     --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
     --locked                       Require matching typelisp.lock; do not rewrite
@@ -162,7 +162,7 @@ Options:
 
 (define (cli-run-help-text) : String
   "Usage:
-    typelisp run <file.tl> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
+    typelisp run <file.tl> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
     typelisp run [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
 
 Summary:
@@ -176,7 +176,7 @@ Options:
     --update-lock                  Refresh remote pins and rewrite typelisp.lock
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
-    --opt-level <0|1|2>            Select optimizer level
+    --opt-level <0|1|2>            Optimizer level (source default 1; package release 2, dev 0)
     --debug, -g                    Emit line tables and linker debug information
     --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
     --stdlib-root <dir>            Search root for stdlib/... imports

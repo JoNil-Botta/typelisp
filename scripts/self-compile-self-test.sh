@@ -1346,6 +1346,17 @@ st_e2e_settle() {
         "$(awk '{ n++; s += $1 } END { print n, s }' "$ST_E2E/settle-zero-c0/sleeps")" "120 120"
     st_eq "the zero-interval timeout names the bound" "$(_ses_problem zero)" \
         "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed (last listed after 120s: status in_progress, conclusion none)"
+    # Intervals with leading zeros are read as decimal, as sleep reads them.
+    st_eq "a zero-padded interval is decimal" "$(sc_decimal 060)" 60
+    st_eq "a zero-padded interval need not be octal" "$(sc_decimal 08)" 8
+    st_eq "an all-zero interval is zero" "$(sc_decimal 000)" 0
+    st_eq "an interval of 060 keeps the bound" \
+        "$(SC_POLL_SECONDS=$(sc_decimal 060); st_e2e_settle_case pad60 in_progress: | cut -d' ' -f1-2)" "1 provenance-failure"
+    st_eq "an interval of 060 waits 60 s twice" "$(_ses_sleeps pad60)" "60 60 "
+    st_eq "an interval of 08 keeps the bound" \
+        "$(SC_POLL_SECONDS=$(sc_decimal 08); st_e2e_settle_case pad8 in_progress: | cut -d' ' -f1-2)" "1 provenance-failure"
+    st_eq "an interval of 08 waits 8 s at a time, up to the bound" \
+        "$(awk '{ n++; s += $1 } END { print n, s }' "$ST_E2E/settle-pad8-c0/sleeps")" "15 120"
     st_e2e_ledger_set settle-api - 116000050100
     ST_API=$ST_E2E/settle-api-api
     printf '<html>502</html>\n' | st_api_put "$_ses_jobs"

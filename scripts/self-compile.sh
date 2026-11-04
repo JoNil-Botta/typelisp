@@ -79,8 +79,17 @@ sc_validate_seconds() {
     esac
 }
 
+# sc_decimal DIGITS  ->  DIGITS without leading zeros. Shell arithmetic would
+# read `060` as octal (and reject `08`), but sleep reads it as decimal.
+sc_decimal() {
+    _sd=${1#"${1%%[!0]*}"}
+    printf '%s\n' "${_sd:-0}"
+}
+
 sc_validate_seconds TYPELISP_SELF_COMPILE_WAIT_SECONDS "$SC_WAIT_SECONDS"
 sc_validate_seconds TYPELISP_SELF_COMPILE_POLL_SECONDS "$SC_POLL_SECONDS"
+SC_WAIT_SECONDS=$(sc_decimal "$SC_WAIT_SECONDS")
+SC_POLL_SECONDS=$(sc_decimal "$SC_POLL_SECONDS")
 [ "$SC_WAIT_SECONDS" -le 1800 ] || sc_fail "TYPELISP_SELF_COMPILE_WAIT_SECONDS may not exceed 1800 (D-C15)"
 case "$SC_TOLERANCE_PPM" in
     "" | *[!0-9]*) sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: $SC_TOLERANCE_PPM" ;;

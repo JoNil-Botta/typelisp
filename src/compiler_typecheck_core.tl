@@ -124536,15 +124536,15 @@
           (tc-selected-no-i64s)
           (tc-selected-no-i64s))])))
 
-;; Records the nominal types `ty` names, to the normalizer's depth bound (a
-;; deeper type's shape fails closed there).
+;; Records the nominal types `ty` names, to the normalizer's depth bound: a
+;; deeper type leaves the table incomplete, and its body fails closed.
 (define (tc-selected-nominal-variances-in!
   [ctx : TcContext]
   [ty : ast.AstType]
   [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]
   [depth : i64]) : unit
-  (when
-    (< depth 32)
+  (if (> depth (ownership_normalize.ownership-normalize-depth-limit))
+    (set! out.incomplete? true)
     (match ty
       [(or (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner)
            (ast.AstType.Region _ inner) (ast.AstType.Invalidate _ inner))

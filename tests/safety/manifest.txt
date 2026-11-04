@@ -2306,7 +2306,9 @@ mir_holder_disjoint_lifetime_store_ok|run-exit|tests/safety/mir_holder_disjoint_
 mir_reborrow_returned_holder_ok|run-exit|tests/safety/mir_reborrow_returned_holder_ok.tl|42|-
 reassigned_array_call_store_reject|check-fail|tests/safety/reassigned_array_call_store_reject.tl|tests/safety/reassigned_array_call_store_reject.tl:22:11|cannot assign to borrowed place `p.z`
 reassigned_field_lifetime_order_reject|check-fail|tests/safety/reassigned_field_lifetime_order_reject.tl|tests/safety/reassigned_field_lifetime_order_reject.tl:27:13|cannot assign to borrowed place `q.r`
-region_type_depth_bound_reject|check-fail|tests/safety/region_type_depth_bound_reject.tl|tests/safety/region_type_depth_bound_reject.tl:4:3|the ownership checker does not support
+region_type_depth_bound_reject|check-fail|tests/safety/region_type_depth_bound_reject.tl|-|the ownership checker does not support
+region_type_depth_32_loan_reject|check-fail|tests/safety/region_type_depth_32_loan_reject.tl|-|cannot assign to borrowed place `x`
+region_type_depth_255_loan_reject|check-fail|tests/safety/region_type_depth_255_loan_reject.tl|-|cannot assign to borrowed place `x`
 mir_field_store_uses_holder_reject|check-fail|tests/safety/mir_field_store_uses_holder_reject.tl|tests/safety/mir_field_store_uses_holder_reject.tl:26:15|cannot mutably borrow borrowed place `rb`
 region_covariant_holder_overwrite_ok|run-exit|tests/safety/region_covariant_holder_overwrite_ok.tl|42|-
 region_borrow_after_overwrite_ok|run-exit|tests/safety/region_borrow_after_overwrite_ok.tl|42|-
@@ -2524,3 +2526,15 @@ variance_layers_d40_ok|check-ok|tests/safety/variance_layers_d40_ok.tl|-|-
 variance_dag_call_d12_ok|check-ok|tests/safety/variance_dag_call_d12_ok.tl|-|-
 variance_dag_nested_d12_ok|check-ok|tests/safety/variance_dag_nested_d12_ok.tl|-|-
 variance_dag_shorten_d8_ok|check-ok|tests/safety/variance_dag_shorten_d8_ok.tl|-|-
+
+# Lifetime occurrence shapes are compact (#9584): a nested type is walked to 256
+# type-edge descents and a deeper one fails closed with the resource reason; a
+# function type's lifetimes reset the enclosing reference. A linear chain past
+# the old depth-32 cutoff checks, and its escaping twin still rejects.
+lifetime_shape_linear_40_check|check-ok|tests/safety/lifetime_shape_linear_40_check.tl|-|-
+lifetime_shape_linear_scalar_40_check|check-ok|tests/safety/lifetime_shape_linear_scalar_40_check.tl|-|-
+lifetime_shape_depth_256_check|check-ok|tests/safety/lifetime_shape_depth_256_check.tl|-|-
+lifetime_shape_depth_257_reject|check-fail|tests/safety/lifetime_shape_depth_257_reject.tl|-|the body exceeds the ownership graph's size limits
+lifetime_shape_func_reset_255_check|check-ok|tests/safety/lifetime_shape_func_reset_255_check.tl|-|-
+lifetime_shape_func_reset_256_reject|check-fail|tests/safety/lifetime_shape_func_reset_256_reject.tl|-|the body exceeds the ownership graph's size limits
+lifetime_shape_escape_linear_40_reject|check-fail|tests/safety/lifetime_shape_escape_linear_40_reject.tl|-|reference value would escape lexical scope

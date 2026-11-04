@@ -879,8 +879,17 @@ the lifetimes the typechecker already carries in every type it publishes.
   (`(&mut r (T s))` has `s` outliving `r`), so a call result typed with `r`
   keeps the loans behind it. A transfer whose shapes do not line up relates
   everything both ways, and an operation without a signature (a primitive)
-  may put any operand's loans in its result. A type nested past the shape
-  walk's depth bound fails closed (`region_type_depth_bound_reject`).
+  may put any operand's loans in its result. A shape of at most 16 lifetime
+  positions (found within 64 visits) is kept as a flat position list; a
+  longer one is a DAG interned per type node, so a type spelled again (a
+  tuple of a tuple of ...) is one node: each consumer reads distinct names,
+  first/tail names, distinct rows, distinct outlives items or a zip of two
+  DAGs. Either way the region graph gets the same (from, to, outlives?)
+  edge set a position-by-position walk would (#9584). The shape,
+  referent and variance walks take at most 256 type-edge descents; a deeper
+  type, or a body whose shapes and edges exhaust the record/work budget, fails
+  closed (`region_type_depth_bound_reject`; within the bound,
+  `region_type_depth_255_loan_reject` finds the loan).
 - **Loans and uses.** A borrow's loan starts in its reference's outer region;
   region loan sets are closed over the edges. A use of a root demands every
   loan of every region of the root, and every return demands every universal

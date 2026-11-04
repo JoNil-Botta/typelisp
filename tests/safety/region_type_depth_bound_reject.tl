@@ -1,106 +1,265 @@
-;: A type nested past the ownership graph's depth bound cannot be given all
-;: its regions, so the body fails closed rather than lose a loan (#8449).
+;: A reference nested in 256 arrays lies past the ownership graph's depth
+;: bound of 256 type-edge descents (its referent is the 257th), so the body
+;: fails closed rather than lose a loan (#8449, #9584).
 (define (main) : i64
   (let
     [x : i64 1]
-    [deep
-      (array
-        (array
-          (array
-            (array
-              (array
-                (array
-                  (array
-                    (array
-                      (array
-                        (array
-                          (array
-                            (array
-                              (array
-                                (array
-                                  (array
-                                    (array
-                                      (array
-                                        (array
-                                          (array
-                                            (array
-                                              (array
-                                                (array
-                                                  (array
-                                                    (array
-                                                      (array
-                                                        (array
-                                                          (array
-                                                            (array
-                                                              (array
-                                                                (array
-                                                                  (array
-                                                                    (array
-                                                                      (& x)))))))))))))))))))))))))))))))))]
+    [a0 (& x)]
+    [a1 (array a0)]
+    [a2 (array a1)]
+    [a3 (array a2)]
+    [a4 (array a3)]
+    [a5 (array a4)]
+    [a6 (array a5)]
+    [a7 (array a6)]
+    [a8 (array a7)]
+    [a9 (array a8)]
+    [a10 (array a9)]
+    [a11 (array a10)]
+    [a12 (array a11)]
+    [a13 (array a12)]
+    [a14 (array a13)]
+    [a15 (array a14)]
+    [a16 (array a15)]
+    [a17 (array a16)]
+    [a18 (array a17)]
+    [a19 (array a18)]
+    [a20 (array a19)]
+    [a21 (array a20)]
+    [a22 (array a21)]
+    [a23 (array a22)]
+    [a24 (array a23)]
+    [a25 (array a24)]
+    [a26 (array a25)]
+    [a27 (array a26)]
+    [a28 (array a27)]
+    [a29 (array a28)]
+    [a30 (array a29)]
+    [a31 (array a30)]
+    [a32 (array a31)]
+    [a33 (array a32)]
+    [a34 (array a33)]
+    [a35 (array a34)]
+    [a36 (array a35)]
+    [a37 (array a36)]
+    [a38 (array a37)]
+    [a39 (array a38)]
+    [a40 (array a39)]
+    [a41 (array a40)]
+    [a42 (array a41)]
+    [a43 (array a42)]
+    [a44 (array a43)]
+    [a45 (array a44)]
+    [a46 (array a45)]
+    [a47 (array a46)]
+    [a48 (array a47)]
+    [a49 (array a48)]
+    [a50 (array a49)]
+    [a51 (array a50)]
+    [a52 (array a51)]
+    [a53 (array a52)]
+    [a54 (array a53)]
+    [a55 (array a54)]
+    [a56 (array a55)]
+    [a57 (array a56)]
+    [a58 (array a57)]
+    [a59 (array a58)]
+    [a60 (array a59)]
+    [a61 (array a60)]
+    [a62 (array a61)]
+    [a63 (array a62)]
+    [a64 (array a63)]
+    [a65 (array a64)]
+    [a66 (array a65)]
+    [a67 (array a66)]
+    [a68 (array a67)]
+    [a69 (array a68)]
+    [a70 (array a69)]
+    [a71 (array a70)]
+    [a72 (array a71)]
+    [a73 (array a72)]
+    [a74 (array a73)]
+    [a75 (array a74)]
+    [a76 (array a75)]
+    [a77 (array a76)]
+    [a78 (array a77)]
+    [a79 (array a78)]
+    [a80 (array a79)]
+    [a81 (array a80)]
+    [a82 (array a81)]
+    [a83 (array a82)]
+    [a84 (array a83)]
+    [a85 (array a84)]
+    [a86 (array a85)]
+    [a87 (array a86)]
+    [a88 (array a87)]
+    [a89 (array a88)]
+    [a90 (array a89)]
+    [a91 (array a90)]
+    [a92 (array a91)]
+    [a93 (array a92)]
+    [a94 (array a93)]
+    [a95 (array a94)]
+    [a96 (array a95)]
+    [a97 (array a96)]
+    [a98 (array a97)]
+    [a99 (array a98)]
+    [a100 (array a99)]
+    [a101 (array a100)]
+    [a102 (array a101)]
+    [a103 (array a102)]
+    [a104 (array a103)]
+    [a105 (array a104)]
+    [a106 (array a105)]
+    [a107 (array a106)]
+    [a108 (array a107)]
+    [a109 (array a108)]
+    [a110 (array a109)]
+    [a111 (array a110)]
+    [a112 (array a111)]
+    [a113 (array a112)]
+    [a114 (array a113)]
+    [a115 (array a114)]
+    [a116 (array a115)]
+    [a117 (array a116)]
+    [a118 (array a117)]
+    [a119 (array a118)]
+    [a120 (array a119)]
+    [a121 (array a120)]
+    [a122 (array a121)]
+    [a123 (array a122)]
+    [a124 (array a123)]
+    [a125 (array a124)]
+    [a126 (array a125)]
+    [a127 (array a126)]
+    [a128 (array a127)]
+    [a129 (array a128)]
+    [a130 (array a129)]
+    [a131 (array a130)]
+    [a132 (array a131)]
+    [a133 (array a132)]
+    [a134 (array a133)]
+    [a135 (array a134)]
+    [a136 (array a135)]
+    [a137 (array a136)]
+    [a138 (array a137)]
+    [a139 (array a138)]
+    [a140 (array a139)]
+    [a141 (array a140)]
+    [a142 (array a141)]
+    [a143 (array a142)]
+    [a144 (array a143)]
+    [a145 (array a144)]
+    [a146 (array a145)]
+    [a147 (array a146)]
+    [a148 (array a147)]
+    [a149 (array a148)]
+    [a150 (array a149)]
+    [a151 (array a150)]
+    [a152 (array a151)]
+    [a153 (array a152)]
+    [a154 (array a153)]
+    [a155 (array a154)]
+    [a156 (array a155)]
+    [a157 (array a156)]
+    [a158 (array a157)]
+    [a159 (array a158)]
+    [a160 (array a159)]
+    [a161 (array a160)]
+    [a162 (array a161)]
+    [a163 (array a162)]
+    [a164 (array a163)]
+    [a165 (array a164)]
+    [a166 (array a165)]
+    [a167 (array a166)]
+    [a168 (array a167)]
+    [a169 (array a168)]
+    [a170 (array a169)]
+    [a171 (array a170)]
+    [a172 (array a171)]
+    [a173 (array a172)]
+    [a174 (array a173)]
+    [a175 (array a174)]
+    [a176 (array a175)]
+    [a177 (array a176)]
+    [a178 (array a177)]
+    [a179 (array a178)]
+    [a180 (array a179)]
+    [a181 (array a180)]
+    [a182 (array a181)]
+    [a183 (array a182)]
+    [a184 (array a183)]
+    [a185 (array a184)]
+    [a186 (array a185)]
+    [a187 (array a186)]
+    [a188 (array a187)]
+    [a189 (array a188)]
+    [a190 (array a189)]
+    [a191 (array a190)]
+    [a192 (array a191)]
+    [a193 (array a192)]
+    [a194 (array a193)]
+    [a195 (array a194)]
+    [a196 (array a195)]
+    [a197 (array a196)]
+    [a198 (array a197)]
+    [a199 (array a198)]
+    [a200 (array a199)]
+    [a201 (array a200)]
+    [a202 (array a201)]
+    [a203 (array a202)]
+    [a204 (array a203)]
+    [a205 (array a204)]
+    [a206 (array a205)]
+    [a207 (array a206)]
+    [a208 (array a207)]
+    [a209 (array a208)]
+    [a210 (array a209)]
+    [a211 (array a210)]
+    [a212 (array a211)]
+    [a213 (array a212)]
+    [a214 (array a213)]
+    [a215 (array a214)]
+    [a216 (array a215)]
+    [a217 (array a216)]
+    [a218 (array a217)]
+    [a219 (array a218)]
+    [a220 (array a219)]
+    [a221 (array a220)]
+    [a222 (array a221)]
+    [a223 (array a222)]
+    [a224 (array a223)]
+    [a225 (array a224)]
+    [a226 (array a225)]
+    [a227 (array a226)]
+    [a228 (array a227)]
+    [a229 (array a228)]
+    [a230 (array a229)]
+    [a231 (array a230)]
+    [a232 (array a231)]
+    [a233 (array a232)]
+    [a234 (array a233)]
+    [a235 (array a234)]
+    [a236 (array a235)]
+    [a237 (array a236)]
+    [a238 (array a237)]
+    [a239 (array a238)]
+    [a240 (array a239)]
+    [a241 (array a240)]
+    [a242 (array a241)]
+    [a243 (array a242)]
+    [a244 (array a243)]
+    [a245 (array a244)]
+    [a246 (array a245)]
+    [a247 (array a246)]
+    [a248 (array a247)]
+    [a249 (array a248)]
+    [a250 (array a249)]
+    [a251 (array a250)]
+    [a252 (array a251)]
+    [a253 (array a252)]
+    [a254 (array a253)]
+    [a255 (array a254)]
+    [a256 (array a255)]
     (set! x 9)
-    (deref
-      (array-ref
-        (array-ref
-          (array-ref
-            (array-ref
-              (array-ref
-                (array-ref
-                  (array-ref
-                    (array-ref
-                      (array-ref
-                        (array-ref
-                          (array-ref
-                            (array-ref
-                              (array-ref
-                                (array-ref
-                                  (array-ref
-                                    (array-ref
-                                      (array-ref
-                                        (array-ref
-                                          (array-ref
-                                            (array-ref
-                                              (array-ref
-                                                (array-ref
-                                                  (array-ref
-                                                    (array-ref
-                                                      (array-ref
-                                                        (array-ref
-                                                          (array-ref
-                                                            (array-ref
-                                                              (array-ref
-                                                                (array-ref
-                                                                  (array-ref
-                                                                    (array-ref
-                                                                      deep
-                                                                      0)
-                                                                    0)
-                                                                  0)
-                                                                0)
-                                                              0)
-                                                            0)
-                                                          0)
-                                                        0)
-                                                      0)
-                                                    0)
-                                                  0)
-                                                0)
-                                              0)
-                                            0)
-                                          0)
-                                        0)
-                                      0)
-                                    0)
-                                  0)
-                                0)
-                              0)
-                            0)
-                          0)
-                        0)
-                      0)
-                    0)
-                  0)
-                0)
-              0)
-            0)
-          0)
-        0))))
+    (array-length a256)))

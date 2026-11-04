@@ -879,12 +879,13 @@ the lifetimes the typechecker already carries in every type it publishes.
   (`(&mut r (T s))` has `s` outliving `r`), so a call result typed with `r`
   keeps the loans behind it. A transfer whose shapes do not line up relates
   everything both ways, and an operation without a signature (a primitive)
-  may put any operand's loans in its result. A shape is a DAG interned per
-  type node, so a type spelled again (a tuple of a tuple of ...) is one node:
-  each consumer reads distinct names, first/tail names, distinct rows,
-  distinct outlives items or a zip of two DAGs, and region edges are distinct
-  by (from, to, outlives?), which adds exactly the edges a position-by-position
-  walk would (#9584). The shape,
+  may put any operand's loans in its result. A shape of at most 16 lifetime
+  positions (found within 64 visits) is kept as a flat position list; a
+  longer one is a DAG interned per type node, so a type spelled again (a
+  tuple of a tuple of ...) is one node: each consumer reads distinct names,
+  first/tail names, distinct rows, distinct outlives items or a zip of two
+  DAGs. Either way the region graph gets the same (from, to, outlives?)
+  edge set a position-by-position walk would (#9584). The shape,
   referent and variance walks take at most 256 type-edge descents; a deeper
   type, or a body whose shapes and edges exhaust the record/work budget, fails
   closed (`region_type_depth_bound_reject`; within the bound,

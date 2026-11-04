@@ -3,14 +3,48 @@
 This page describes TypeLisp ownership, borrowing, boxes, and arenas. The
 formal rules are in [SPEC.md](../SPEC.md).
 
-TypeLisp implements move-only aggregate semantics and lexical
+TypeLisp implements structural copy/move semantics and lexical
 immutable/mutable borrow checking with conservative non-lexical lifetime
 shortening. There are no destructors, no general `free`, and no garbage
 collector; heap allocation uses a backend-emitted bump allocator into the
-active arena. Scalars, raw pointers, and non-capturing function values are
-copyable; `String`, arrays, tuples, structs, enums, and capturing closures
-move in by-value positions. See [SPEC.md](../SPEC.md) sections 4.7.2 and 7 for
-the precise model.
+active arena.
+
+A by-value use copies a Copy value and leaves the source usable; it moves any
+other value, and later uses of the moved source are rejected. Copy is decided
+per type, recursively ([SPEC.md](../SPEC.md) section 4.7.2):
+
+- **Copy leaves:** scalars (integers, floats, `bool`, `char`, `unit`), raw
+  pointers, shared references `(& r T)` whatever `T` is, and named or
+  non-capturing function values.
+- **Copy aggregates:** a fixed array, tuple, struct or enum is Copy when every
+  element, slot, field and variant payload is Copy. A capturing closure is
+  Copy when every captured value is.
+- **Move-only:** `String`, `ByteBuf`, bare `str`/`bytes` and `Slice` values
+  (a shared reference to one is Copy), `(Box T)`, mutable references, and any
+  aggregate or closure that contains one. A cleanup-owning struct or enum
+  (declared with `(:cleanup ...)`) is always move-only, even when every part
+  is Copy. A nominal aggregate whose classification reaches itself again is
+  conservatively move-only.
+
+So a record of scalar, fixed-array and shared-reference fields is Copy, while
+one `String` field makes the whole record move:
+
+```typelisp
+(defstruct Span (start i64) (end i64)) ; every field is Copy: Span is Copy
+(defstruct Label (name String) (span Span)) ; a String field: Label moves
+
+(define (width [s : Span]) : i64
+  (- s.end s.start))
+
+(define (main) : i64
+  (let
+    [s : Span (Span 2 5)]
+    (+ (width s) (width s)))) ; s is copied each time, never moved
+```
+
+Passing a `Label` by value twice the same way is rejected, because the first
+call moves it; borrow it with `(& Label)` instead. See [SPEC.md](../SPEC.md)
+sections 4.7.2 and 7 for the precise model.
 
 `String` values are immutable at the source level; borrowing a `String`
 place produces a borrowed `(& lifetime str)` view, and typed calls

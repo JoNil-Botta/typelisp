@@ -28,6 +28,10 @@ SC_LEDGER_ARTIFACT=self-compile-ledger
 SC_DECLARATION_DIR=perf/self-compile-declarations
 SC_RESOLUTIONS_FILE=perf/self-compile-ledger-resolutions.tsv
 SC_CHECKPOINT_FILE=perf/self-compile-ledger-checkpoint.tsv
+# When GitHub lists no PR for a merge commit, the ledger scans closed PRs into
+# main, newest-updated first, at most this many pages of this size.
+SC_PR_SCAN_PAGES=10
+SC_PR_SCAN_PER_PAGE=100
 
 # The measured invocation. The output directory keeps the historical `-o`
 # argument byte-for-byte (target/instruction-count-check/measure/...), so a
@@ -534,6 +538,22 @@ sc_select_pr_run() {
                   and .repository.full_name == $repo
                   and .status == "completed" and .conclusion == "success")]
         | sort_by(.run_number, .id) | last // empty | .id | tostring' "$1" | tr -d '\r'
+}
+
+# sc_merged_prs PULLS_JSON COMMIT  ->  `number<TAB>head` of each distinct PR in
+# the listing that merged into main with COMMIT as its merge commit.
+sc_merged_prs() {
+    jq -r --arg c "$2" '
+        [.[] | select(.merge_commit_sha == $c and .merged_at != null and .base.ref == "main")]
+        | unique_by(.number) | .[] | [(.number | tostring), .head.sha] | @tsv' "$1" | tr -d '\r'
+}
+
+# sc_pr_page_ends PULLS_JSON PER_PAGE SINCE  ->  succeeds when a listing sorted
+# newest-updated first needs no further page: it ended (a short page) or has
+# reached a PR last updated before SINCE (seconds since the epoch).
+sc_pr_page_ends() {
+    jq -e --argjson n "$2" --argjson since "$3" '
+        length < $n or ([.[].updated_at | fromdateiso8601] | min) < $since' "$1" >/dev/null
 }
 
 # sc_reference_record_check REF HEAD REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE

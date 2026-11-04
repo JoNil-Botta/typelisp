@@ -217,6 +217,17 @@ Each merge is then checked as follows:
   `|step × 10⁶ − d × M(p)| > 5000 × M(p)`.
 - **Missing PR record:** fails, whatever the numbers.
 
+The merged PR is the one GitHub lists for c (`commits/c/pulls`) that merged
+into main with merge commit c. GitHub can lose that association, as it did for
+c418b1041 (#9611) during an incident. When it lists none, the ledger scans
+closed PRs into main, newest-updated first, for that merge commit. A PR is
+never last updated before it merged, so the scan stops at the first PR updated
+over a day before c's commit time, or at the end of the listing. It covers at
+most 10 pages of 100. The PR must be the only match, and its record gets the
+same binding checks (PR, head, run, attempt, repository). A scan that hits
+its page limit first is an attribution failure; a listing error is an
+infrastructure failure.
+
 The ledger's `outcome.tsv` names the result for the merge-pause rules, with
 `complete` and the account state. The outcomes are `ok`, `warning`, `pending`,
 `numerical-failure`, `comparability-failure`, `provenance-failure`,
@@ -245,6 +256,14 @@ these compact records. Every unresolved failure stays listed.
   merge whose step was never measured or whose attribution is missing.
 - A missing measurement is repaired by re-running that merge's ledger job: a
   later run replaces the entry with the repaired one and re-folds every total.
+- A missing attribution is repaired by the next ledger run. A re-run of that
+  merge's own ledger would run that merge's older scripts. For an entry whose
+  step was measured but whose PR was not found, each later ledger run looks up
+  the PR again. It then recomputes the entry from the pair records that
+  merge's ledger run uploaded, and the commit, parent and trees from git. The
+  step must come out unchanged. The rules are the same; the repair step never
+  measures, so when the PR's identity differs from the pair's the entry stays
+  unattributed.
 - If the artifact chain is lost, a reviewed
   `perf/self-compile-ledger-checkpoint.tsv` (a copy of an account) restores
   continuity.

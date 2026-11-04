@@ -10947,15 +10947,25 @@
 ;; completes, 0 when the shape is too long or the walk passes its visits
 ;; (the caller builds a DAG instead); a walk past the type-edge depth bound
 ;; fails closed.
-;; Cloning a type copies its one boxed list: its cells plus 4 header cells
-;; (an over-count for the lifetime lists, never an under-count).
+;; Cloning a type copies its one boxed list's whole backing array (its
+;; capacity, not its length) plus 4 header cells (an over-count for the
+;; lifetime lists, never an under-count).
+(define (normalize-type-list-copy-cells [list : (& list ast.AstTypeList)]) : i64
+  (+ 4 (array-length list.slots)))
+
+(define (normalize-lifetime-list-copy-cells
+  [list : (& list ast.AstLifetimeList)]) : i64
+  (+ 4 (array-length list.slots)))
+
 (define (normalize-type-copy-cells [ty : (& ty ast.AstType)]) : i64
   (match ty
     [(or (ast.AstType.EnumArgs _ lifetimes) (ast.AstType.StructArgs _ lifetimes)
          (ast.AstType.VarArgs _ lifetimes))
-      (+ 4 (ast.ast-lifetime-list-len (& (deref lifetimes))))]
-    [(ast.AstType.Tuple elems) (+ 4 (ast.ast-type-list-len (& (deref elems))))]
-    [(ast.AstType.Func args _) (+ 4 (ast.ast-type-list-len (& (deref args))))]
+      (normalize-lifetime-list-copy-cells (& (deref lifetimes)))]
+    [(ast.AstType.Tuple elems)
+      (normalize-type-list-copy-cells (& (deref elems)))]
+    [(ast.AstType.Func args _)
+      (normalize-type-list-copy-cells (& (deref args)))]
     [_ 0]))
 
 (define (normalize-flat-walk!

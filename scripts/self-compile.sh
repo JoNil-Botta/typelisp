@@ -30,6 +30,7 @@ cd "$ROOT"
 
 SC_WAIT_SECONDS=${TYPELISP_SELF_COMPILE_WAIT_SECONDS:-1800}
 SC_POLL_SECONDS=${TYPELISP_SELF_COMPILE_POLL_SECONDS:-60}
+SC_JOB_SETTLE_SECONDS=120
 SC_WALK_LIMIT=${TYPELISP_SELF_COMPILE_WALK_LIMIT:-200}
 SC_OUT=target/self-compile
 SC_GATE_RECORD=$SC_OUT/measurement/record.tsv
@@ -894,12 +895,29 @@ sc_ledger_pair_references() {
         { echo "this run has no $SC_REFERENCE_ARTIFACT artifact" > "$_slp_dest/provenance-problem"; return 2; }
     sc_download_artifact "$_slp_art" "$_slp_work/this-run" ||
         { SC_LEDGER_INFRA="downloading this run's reference failed"; return 1; }
-    sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
-        "$_slp_work/this-run-jobs.json" ||
-        { SC_LEDGER_INFRA="listing this run's jobs failed"; return 1; }
-    _slp_job=$(sc_job_latest "$_slp_work/this-run-jobs.json" "$SC_REFERENCE_JOB_NAME")
-    [ "$(printf '%s' "$_slp_job" | cut -f2-3)" = "$(printf 'completed\tsuccess')" ] ||
-        { echo "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed" > "$_slp_dest/provenance-problem"; return 2; }
+    # This job needs the measurement job, but GitHub's jobs listing can still
+    # show it unfinished for a few seconds (#9620): re-list until it reports a
+    # conclusion, for at most SC_JOB_SETTLE_SECONDS.
+    _slp_waited=0
+    while :; do
+        sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
+            "$_slp_work/this-run-jobs.json" ||
+            { SC_LEDGER_INFRA="listing this run's jobs failed"; return 1; }
+        _slp_job=$(sc_job_latest "$_slp_work/this-run-jobs.json" "$SC_REFERENCE_JOB_NAME")
+        _slp_status=$(printf '%s' "$_slp_job" | cut -f2)
+        _slp_conclusion=$(printf '%s' "$_slp_job" | cut -f3)
+        if [ "$_slp_status" = completed ] && [ -n "$_slp_conclusion" ]; then
+            break
+        fi
+        [ "$_slp_waited" -lt "$SC_JOB_SETTLE_SECONDS" ] || break
+        sleep "$SC_POLL_SECONDS"
+        _slp_waited=$((_slp_waited + SC_POLL_SECONDS))
+    done
+    [ "$_slp_status/$_slp_conclusion" = completed/success ] || {
+        echo "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed (last listed after ${_slp_waited}s: status ${_slp_status:-none}, conclusion ${_slp_conclusion:-none})" \
+            > "$_slp_dest/provenance-problem"
+        return 2
+    }
     _slp_msg=$(sc_reference_record_check "$_slp_work/this-run/record.tsv" "$_slp_work/this-run/record.tsv" \
         "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$(printf '%s' "$_slp_job" | cut -f1)" "$_slp_c" gate) ||
         { echo "$_slp_msg" > "$_slp_dest/provenance-problem"; return 2; }

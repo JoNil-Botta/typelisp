@@ -836,13 +836,21 @@ st_e2e_env() {
     export GITHUB_ACTIONS RUNNER_ENVIRONMENT GITHUB_REPOSITORY GITHUB_RUN_ATTEMPT GITHUB_STEP_SUMMARY
 }
 
-# st_e2e_mocks API ART  ->  fixture readers for the API and artifacts.
+# st_e2e_mocks API ART  ->  fixture readers for the API and artifacts. An
+# endpoint staged as FILE.1, FILE.2, ... answers successive calls in turn, the
+# last one repeating.
 st_e2e_mocks() {
     ST_API=$1
     ST_ART=$2
     mkdir -p "$ST_API" "$ST_ART"
     sc_api() {
         _f="$ST_API/$(st_api_file "$1")"
+        if [ -f "$_f.1" ]; then
+            _n=$(($(cat "$_f.calls" 2>/dev/null || echo 0) + 1))
+            echo "$_n" > "$_f.calls"
+            while [ ! -f "$_f.$_n" ]; do _n=$((_n - 1)); done
+            _f=$_f.$_n
+        fi
         [ -f "$_f" ] || return 1
         sc_json_ok "$_f" || return 1
         cp "$_f" "$2"
@@ -1106,6 +1114,10 @@ st_e2e_ledger() {
         GITHUB_OUTPUT=$_sel_dir/outputs
         export TYPELISP_SELF_COMPILE_TOOLS_READY GITHUB_OUTPUT
         : > "$_sel_dir/events"
+        # Waits are recorded, not slept.
+        sleep() {
+            echo "$1" >> "$_sel_dir/sleeps"
+        }
         # This runner's identity is the fixture identity, and the parent
         # measured here is a fixture record.
         sc_this_runner_record() {
@@ -1283,6 +1295,53 @@ st_e2e_lost_association() {
         "$(grep -c "cannot re-attribute $ST_SET_C0: its PR's measurement identity differs" "$ST_E2E/reattr-id-c1/ledger.log" | tr -d ' ')" 1
 }
 
+# GitHub's jobs listing can lag this run's just-completed measurement job
+# (#9620): the ledger re-lists it for a bounded time before judging it.
+st_e2e_settle() {
+    _ses_jobs="repos/$ST_REPO/actions/runs/900/jobs?filter=all&per_page=100"
+    # st_e2e_settle_case NAME [STATUS:CONCLUSION...]  ->  c0's ledger result
+    # when its run's listings report those states in turn.
+    st_e2e_settle_case() {
+        st_e2e_ledger_set "settle-$1" - 116000050100
+        ST_API=$ST_E2E/settle-$1-api
+        _sesc_name=$1
+        shift
+        _sesc_n=0
+        for _sesc_state in "$@"; do
+            _sesc_n=$((_sesc_n + 1))
+            printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "%s", "conclusion": %s, "started_at": "t1", "completed_at": "t2", "runner_name": "r"}]}\n' \
+                "$SC_REFERENCE_JOB_NAME" "${_sesc_state%%:*}" \
+                "$( [ -n "${_sesc_state#*:}" ] && printf '"%s"' "${_sesc_state#*:}" || printf null)" |
+                st_api_put "$_ses_jobs.$_sesc_n"
+        done
+        st_e2e_ledger c0 "$ST_SET_C0" 900 "settle-$_sesc_name"
+    }
+    _ses_problem() {
+        sc_record_get "$ST_E2E/settle-$1-c0/repo/target/self-compile/ledger/outcome.tsv" detail
+    }
+    _ses_sleeps() {
+        cat "$ST_E2E/settle-$1-c0/sleeps" 2>/dev/null | tr '\n' ' '
+    }
+    st_eq "a stale listing of this run's measurement job settles" \
+        "$(st_e2e_settle_case stale in_progress: completed: completed:success)" "0 ok yes clean 1"
+    st_eq "the stale listing was re-listed at the poll interval" "$(_ses_sleeps stale)" "60 60 "
+    st_eq "a listed failure of this run's measurement job is a provenance failure at once" \
+        "$(st_e2e_settle_case failed completed:failure | cut -d' ' -f1-2)" "1 provenance-failure"
+    st_eq "a listed failure is not re-listed" "$(_ses_sleeps failed)" ""
+    st_eq "the provenance failure names the listed state" "$(_ses_problem failed)" \
+        "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed (last listed after 0s: status completed, conclusion failure)"
+    st_eq "a listing that never completes is a provenance failure" \
+        "$(st_e2e_settle_case never in_progress: | cut -d' ' -f1-2)" "1 provenance-failure"
+    st_eq "the unsettled listing is bounded" "$(_ses_sleeps never)" "60 60 "
+    st_eq "the timeout names the last listed state" "$(_ses_problem never)" \
+        "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed (last listed after 120s: status in_progress, conclusion none)"
+    st_e2e_ledger_set settle-api - 116000050100
+    ST_API=$ST_E2E/settle-api-api
+    printf '<html>502</html>\n' | st_api_put "$_ses_jobs"
+    st_eq "an API error listing this run's jobs is an infrastructure failure" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 settle-api | cut -d' ' -f1-2)" "1 infrastructure-failure"
+}
+
 st_e2e() {
     case "$(uname -s)" in
         Linux*) ;;
@@ -1450,6 +1509,7 @@ st_e2e() {
     st_eq "e2e ledger attributes a pre-lane CI run to its Linux job" \
         "$(st_e2e_ledger c0 "$ST_SET_C0" 900 legacy-job)" "0 ok yes clean 1"
     st_e2e_lost_association
+    st_e2e_settle
     st_e2e_ledger_set e6 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 

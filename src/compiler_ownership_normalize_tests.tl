@@ -1630,25 +1630,49 @@
             true)))
       (set! index (+ index 1)))))
 
-;; Two edge lists are the same edges in the same order.
+;; Whether edge `index` of `edges` already occurs before it.
+(define (normalize-test-edge-repeat?
+  [edges : (& edges norm.NormalizeRegionEdges)]
+  [index : i64]) : bool
+  (let
+    [at : i64 0]
+    (while (< at index)
+      (when
+        (and
+          (= (array-ref edges.from.items at) (array-ref edges.from.items index))
+          (= (array-ref edges.to.items at) (array-ref edges.to.items index))
+          (=
+            (array-ref edges.outlives.items at)
+            (array-ref edges.outlives.items index)))
+        (return true))
+      (set! at (+ at 1)))
+    false))
+
+;; Two edge lists add the same distinct edges in the same first-occurrence
+;; order (the loan closure reads only the set; repeats add nothing).
 (define (normalize-test-edges-same?
   [a : (& a norm.NormalizeRegionEdges)]
   [b : (& b norm.NormalizeRegionEdges)]) : bool
   (let
-    [index : i64 0]
-    (unless
-      (and (= a.from.len b.from.len) (= a.exhausted b.exhausted))
-      (return false))
-    (while (< index a.from.len)
+    [i : i64 0]
+    [j : i64 0]
+    (unless (= a.exhausted b.exhausted) (return false))
+    (while true
+      (while (and (< i a.from.len) (normalize-test-edge-repeat? a i))
+        (set! i (+ i 1)))
+      (while (and (< j b.from.len) (normalize-test-edge-repeat? b j))
+        (set! j (+ j 1)))
+      (when
+        (or (>= i a.from.len) (>= j b.from.len))
+        (return (and (>= i a.from.len) (>= j b.from.len))))
       (unless
         (and
-          (= (array-ref a.from.items index) (array-ref b.from.items index))
-          (= (array-ref a.to.items index) (array-ref b.to.items index))
-          (=
-            (array-ref a.outlives.items index)
-            (array-ref b.outlives.items index)))
+          (= (array-ref a.from.items i) (array-ref b.from.items j))
+          (= (array-ref a.to.items i) (array-ref b.to.items j))
+          (= (array-ref a.outlives.items i) (array-ref b.outlives.items j)))
         (return false))
-      (set! index (+ index 1)))
+      (set! i (+ i 1))
+      (set! j (+ j 1)))
     true))
 
 ;; The first-occurrence distinct items of `items` from `from`.
@@ -1727,6 +1751,27 @@
           (array-ref tail index))
         (return false))
       (set! index (+ index 1)))
+    ;; A flat shape holds the laid-out positions themselves.
+    (when
+      (norm.normalize-shape-flat? shapes shape)
+      (let
+        [first : i64 (array-ref shapes.flat-first.items shape)]
+        [at : i64 0]
+        (while (< at len)
+          (unless
+            (and
+              (=
+                (array-ref shapes.flat-names.items (+ first at))
+                (array-ref flat.names at))
+              (=
+                (array-ref shapes.flat-invs.items (+ first at))
+                (array-ref flat.vars at))
+              (=
+                (array-ref shapes.flat-outers.items (+ first at))
+                (array-ref flat.outers at)))
+            (return false))
+          (set! at (+ at 1)))
+        (return (<= len norm.normalize-flat-limit))))
     (let
       [root : i64 (norm.normalize-shape-root shapes shape)]
       (if (< root 0)
@@ -2007,7 +2052,7 @@
     [ok : bool true]
     [trial : i64 0]
     (set! normalize-test-shape-seed 12345)
-    (while (and ok (< trial 600))
+    (while (and ok (< trial 800))
       (let
         [lender? : bool (= (% trial 2) 1)]
         [variances : norm.OwnershipNormalizeVariances
@@ -2017,14 +2062,19 @@
         [nodes : norm.NormalizeNodes (normalize-test-shape-nodes)]
         [pool : (__tl_dyn-array i64) (__tl_make-array i64 0)]
         [seed : i64 normalize-test-shape-seed]
-        [a : i64 (normalize-test-shape-random 5 false (&mut pool))]
+        ;; The last 200 trials draw deeper types: longer shapes, kept as DAGs.
+        [depth : i64
+          (if (< trial 600)
+            5
+            8)]
+        [a : i64 (normalize-test-shape-random depth false (&mut pool))]
         [after : i64 normalize-test-shape-seed]
         ;; The same draws flipped: equal length, other variances.
         [_flip : unit (set! normalize-test-shape-seed seed)]
         [scratch : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-        [flipped : i64 (normalize-test-shape-random 5 true (&mut scratch))]
+        [flipped : i64 (normalize-test-shape-random depth true (&mut scratch))]
         [_resume : unit (set! normalize-test-shape-seed after)]
-        [b : i64 (normalize-test-shape-random 5 false (&mut pool))]
+        [b : i64 (normalize-test-shape-random depth false (&mut pool))]
         [c : i64 (normalize-test-shape-random 3 false (&mut pool))]
         ;; Regrouped: ((a b) c) against (a (b c)).
         [left : i64
@@ -2194,6 +2244,49 @@
                   (& to-flat)))
               (set! ok false)))))
       (set! count (+ count 1)))
+    ;; A flat 16-position shape and a reference to it (17 positions, a DAG):
+    ;; the borrow relation skips the reference's own position and relates a
+    ;; flat shape with a DAG one.
+    (let
+      [shapes : norm.NormalizeShapes
+        (norm.normalize-shapes-new 2 0 false 1048576 33554432)]
+      [mixed : i64 (normalize-test-shape-pair leaf-a leaf-b)]
+      [inner : i64 (normalize-test-shape-blocks mixed 8 true)]
+      [outer : i64 (normalize-test-shape-type (ast.AstType.Ref 3 inner))]
+      [fs : i64
+        (match (norm.normalize-shape-add!
+          (&mut shapes)
+          (& variances)
+          (ast.ty-node-get inner))
+          [(norm.NormalizeInt.Ok id) id]
+          [(norm.NormalizeInt.Err _) -1])]
+      [ts : i64
+        (match (norm.normalize-shape-add!
+          (&mut shapes)
+          (& variances)
+          (ast.ty-node-get outer))
+          [(norm.NormalizeInt.Ok id) id]
+          [(norm.NormalizeInt.Err _) -1])]
+      (if (or (< fs 0) (< ts 0))
+        (set! ok false)
+        (let
+          [from-flat : NormalizeTestFlat
+            (normalize-test-flat (& variances) false inner)]
+          [to-flat : NormalizeTestFlat
+            (normalize-test-flat (& variances) false outer)]
+          (unless
+            (and
+              (norm.normalize-shape-flat? (& shapes) fs)
+              (not (norm.normalize-shape-flat? (& shapes) ts))
+              (= (array-ref shapes.lens.items ts) 17)
+              (normalize-test-shape-relations-agree?
+                (& shapes)
+                (& nodes)
+                fs
+                (& from-flat)
+                ts
+                (& to-flat)))
+            (set! ok false)))))
     ok))
 
 ;; Records and work used adding `id` to fresh shapes with ample budget.
@@ -2327,10 +2420,10 @@
               [_ (when (= code 0) (set! code 8))])))))
     code))
 
-;; Duplicate region edges are kept once, by (from, to, outlives?): the same
-;; pair as an outlives edge is a different edge; past the limit the graph is
-;; exhausted.
-(define (normalize-test-shape-edge-dedup?) : bool
+;; Region edges are pushed as the positional relation pushed them (duplicates
+;; included); their columns' growth is charged first, so a limit too small
+;; for a first edge's backing exhausts the graph.
+(define (normalize-test-shape-edges?) : bool
   (let
     [edges : norm.NormalizeRegionEdges
       (norm.normalize-region-edges-empty 1000 1000)]
@@ -2340,12 +2433,11 @@
     (norm.normalize-region-edge! (&mut edges) 1 2)
     (norm.normalize-region-edge-kind! (&mut edges) 1 2 true)
     (norm.normalize-region-edge! (&mut edges) 2 1)
-    ;; A first edge's backing (three columns of 8 cells) exceeds 3 work.
     (norm.normalize-region-edge! (&mut tight) 1 2)
     (and
-      (= edges.from.len 3)
+      (= edges.from.len 4)
       (not edges.exhausted)
-      (> edges.records 24)
+      (>= edges.records 24)
       (= tight.from.len 0)
       tight.exhausted)))
 
@@ -2545,8 +2637,8 @@
     (normalize-test-shape-charging?)
     "compact shapes: constructor cells, unpaid zips and hash probes are charged before they happen")
   (test.assert-true
-    (normalize-test-shape-edge-dedup?)
-    "region edges are distinct by (from, to, outlives?) and exhaust at the limit")
+    (normalize-test-shape-edges?)
+    "region edges keep the positional relation's pushes and exhaust at the limit")
   (test.assert-true
     (normalize-test-reaching?)
     "normalizer sparse reaching definitions match the fixpoint with linear visits")

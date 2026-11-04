@@ -11090,10 +11090,7 @@
               variances
               start
               (ast.ty-node-get
-                (ast.ast-type-list-get
-                  types
-                  index
-                  (ast.ast-type-id-fallback)))
+                (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
               inv?
               outer
               depth))

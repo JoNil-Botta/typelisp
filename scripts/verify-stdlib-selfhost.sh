@@ -47,7 +47,7 @@ reject_diag() {
         stdlib/tests/core_macros_cond_flat_reject.tl)
             printf 'typecheck: ExprClause macro operand expects bracket syntax' ;;
         stdlib/tests/core_macros_cond_missing_else.tl)
-            printf 'core-cond-missing-else' ;;
+            printf 'cond requires a final [else ...] arm' ;;
         stdlib/tests/core_macros_cond_else_not_final.tl)
             printf 'core-cond-else-must-be-final' ;;
         stdlib/tests/core_macros_cond_branch_mismatch.tl)

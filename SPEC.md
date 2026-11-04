@@ -2580,8 +2580,9 @@ the signature invalidates `r` (`(:invalidate r)`, section 5.16): an
 invalidated brand may end inside the call, so every parameter's storage
 outlives it. It may also end before any local of the body, and its destroy
 reaches only values whose types carry it, so it outlives no lifetime of the
-signature or the body except a nested lambda's own locals, which end before
-that lambda returns: its data cannot be held under another local's lifetime.
+signature or the body except the locals of the innermost enclosing lambda,
+which end before that lambda returns: its data cannot be held under another
+local's lifetime. A local or parameter of the same name shadows the brand.
 This is a temporary restriction until the ownership graph tracks arena ends
 by identity (#9256), which will accept such programs when every use comes
 before the end. Any other lifetime spelled like a parameter, as `a` in

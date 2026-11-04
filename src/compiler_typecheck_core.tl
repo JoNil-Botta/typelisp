@@ -50596,12 +50596,20 @@
 
 ;; The parameter of LIFETIME's pair in the innermost body's invalidate marker:
 ;; >= 0 when that body invalidates it, `tc-invalidate-inherited-param` when an
-;; enclosing body does, or -2 when it is no invalidated brand.
+;; enclosing body does, or -2 when it is no invalidated brand (including when
+;; a nearer local or parameter of the same name shadows it).
 (define (tc-invalidated-brand-param [env : TcTypeEnv] [lifetime : i64]) : i64
   (cfg test (when tc-invalidated-brand-test-bypass (return -2)))
   (let
     [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
-    (tc-invalidate-pairs-param (& pairs) lifetime)))
+    [param : i64 (tc-invalidate-pairs-param (& pairs) lifetime)]
+    ;; A local or parameter of the same name shadows the brand: its borrows
+    ;; name that storage, not the arena.
+    (if (and
+      (>= param -1)
+      (not (tc-lifetime-nearest-signature-id? env lifetime)))
+      -2
+      param)))
 
 ;; Whether invalidated brand LIFETIME outlives TARGET. The brand may end before
 ;; any local of the body that invalidates it, and its destroy reaches only

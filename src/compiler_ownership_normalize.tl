@@ -12076,7 +12076,8 @@
   (when
     (and (>= from 0) (>= to 0) (!= from to) (not edges.exhausted))
     ;; The edge itself counts against `limit` (`from.len`); its three
-    ;; lockstep columns' growth is charged first.
+    ;; lockstep columns' growth is charged first. An edge that is not
+    ;; pushed exhausts the graph: it is never dropped silently.
     (let
       [cells : i64
         (*
@@ -12085,16 +12086,14 @@
             edges.from.len
             (array-length edges.from.items)
             1))]
-      (when
-        (and
-          (>= cells 0)
-          (normalize-edges-charge! edges cells cells)
-          (< (+ edges.from.len edges.work) edges.limit))
-        (normalize-i64s-push! (&mut edges.from) from)
-        (normalize-i64s-push! (&mut edges.to) to)
-        (normalize-bools-push! (&mut edges.outlives) outlives?))
-      (unless
-        (and (>= cells 0) (<= (+ edges.from.len edges.work) edges.limit))
+      (if (and
+        (>= cells 0)
+        (normalize-edges-charge! edges cells cells)
+        (< (+ edges.from.len edges.work) edges.limit))
+        (begin
+          (normalize-i64s-push! (&mut edges.from) from)
+          (normalize-i64s-push! (&mut edges.to) to)
+          (normalize-bools-push! (&mut edges.outlives) outlives?))
         (set! edges.exhausted true)))))
 
 ;; Spend `work` steps of the edge budget; past it the graph is exhausted.

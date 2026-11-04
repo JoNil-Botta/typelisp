@@ -2429,6 +2429,12 @@
       (norm.normalize-region-edges-empty 1000 1000)]
     [tight : norm.NormalizeRegionEdges
       (norm.normalize-region-edges-empty 3 1000)]
+    ;; Exact limit: the first edge's 24 cells plus itself leave the limit of
+    ;; 25 reached, so the second edge exhausts instead of being dropped.
+    [exact : norm.NormalizeRegionEdges
+      (norm.normalize-region-edges-empty 25 1000)]
+    (norm.normalize-region-edge! (&mut exact) 1 2)
+    (norm.normalize-region-edge! (&mut exact) 2 1)
     (norm.normalize-region-edge! (&mut edges) 1 2)
     (norm.normalize-region-edge! (&mut edges) 1 2)
     (norm.normalize-region-edge-kind! (&mut edges) 1 2 true)
@@ -2439,7 +2445,9 @@
       (not edges.exhausted)
       (>= edges.records 24)
       (= tight.from.len 0)
-      tight.exhausted)))
+      tight.exhausted
+      (= exact.from.len 1)
+      exact.exhausted)))
 
 ;; Charging reproducers: empty shapes for 1,000 places and 1,000 cached types
 ;; hold 3,000 cells, so a 44-record budget fails closed before recording a

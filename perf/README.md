@@ -238,7 +238,8 @@ M(c) is the record of the ledger's own run's `Self-compile reference (Linux)`
 job, which must have succeeded. The ledger job runs after it, but GitHub's jobs
 listing can lag its completion for a few seconds (#9620). So while that listing
 does not yet show the job completed with a conclusion, the ledger re-lists it
-at the poll interval for up to 120 seconds. A listed non-success, or no
+at the poll interval for up to 120 seconds; each wait is at least 1 second and
+at most the time left. A listed non-success, or no
 conclusion by then, is a provenance failure that names the last listed status;
 a listing error is an infrastructure failure.
 

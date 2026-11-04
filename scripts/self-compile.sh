@@ -909,9 +909,14 @@ sc_ledger_pair_references() {
         if [ "$_slp_status" = completed ] && [ -n "$_slp_conclusion" ]; then
             break
         fi
-        [ "$_slp_waited" -lt "$SC_JOB_SETTLE_SECONDS" ] || break
-        sleep "$SC_POLL_SECONDS"
-        _slp_waited=$((_slp_waited + SC_POLL_SECONDS))
+        # Each wait is the poll interval, at least 1 s and at most the time
+        # left, so the listings end at SC_JOB_SETTLE_SECONDS for any interval.
+        _slp_step=$((SC_JOB_SETTLE_SECONDS - _slp_waited))
+        [ "$_slp_step" -gt 0 ] || break
+        [ "$SC_POLL_SECONDS" -ge "$_slp_step" ] || _slp_step=$SC_POLL_SECONDS
+        [ "$_slp_step" -gt 0 ] || _slp_step=1
+        sleep "$_slp_step"
+        _slp_waited=$((_slp_waited + _slp_step))
     done
     [ "$_slp_status/$_slp_conclusion" = completed/success ] || {
         echo "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed (last listed after ${_slp_waited}s: status ${_slp_status:-none}, conclusion ${_slp_conclusion:-none})" \

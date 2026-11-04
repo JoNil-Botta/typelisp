@@ -1335,6 +1335,17 @@ st_e2e_settle() {
     st_eq "the unsettled listing is bounded" "$(_ses_sleeps never)" "60 60 "
     st_eq "the timeout names the last listed state" "$(_ses_problem never)" \
         "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed (last listed after 120s: status in_progress, conclusion none)"
+    # Any accepted interval keeps the 120 s bound: waits are capped to the time
+    # left, and a zero interval waits one second rather than spinning.
+    st_eq "a poll interval that does not divide the bound times out" \
+        "$(SC_POLL_SECONDS=100; st_e2e_settle_case slow in_progress: | cut -d' ' -f1-2)" "1 provenance-failure"
+    st_eq "its last wait is capped to the time left" "$(_ses_sleeps slow)" "100 20 "
+    st_eq "a zero poll interval times out" \
+        "$(SC_POLL_SECONDS=0; st_e2e_settle_case zero in_progress: | cut -d' ' -f1-2)" "1 provenance-failure"
+    st_eq "a zero poll interval waits one second at a time, up to the bound" \
+        "$(awk '{ n++; s += $1 } END { print n, s }' "$ST_E2E/settle-zero-c0/sleeps")" "120 120"
+    st_eq "the zero-interval timeout names the bound" "$(_ses_problem zero)" \
+        "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed (last listed after 120s: status in_progress, conclusion none)"
     st_e2e_ledger_set settle-api - 116000050100
     ST_API=$ST_E2E/settle-api-api
     printf '<html>502</html>\n' | st_api_put "$_ses_jobs"

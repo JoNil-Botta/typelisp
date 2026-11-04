@@ -71536,7 +71536,33 @@
             (+ index 1)))]
       [(Err message) (Err message)])))
 
+;; A `let` or `with-arena` inside SPMD code scopes what it binds: the SPMD
+;; checker threads `env` functionally, but binding also pushes onto the active
+;; scoped runtime, which later siblings would otherwise still see (so a sibling
+;; arena or let binder would look visible to the with-arena entry check).
 (define (tc-spmd-expr-typed
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultTcSpmdExprInfo
+  (if (tc-spmd-scoped-form? (& expr))
+    (let
+      [saved : TcTypeEnvScopedRuntimeSave
+        (tc-type-env-scoped-runtime-enter-env! env)]
+      [result : ResultTcSpmdExprInfo
+        (tc-spmd-expr-typed-form ctx expr-bases env spmd-env expr expr-ty)]
+      (tc-type-env-scoped-runtime-restore! saved)
+      result)
+    (tc-spmd-expr-typed-form ctx expr-bases env spmd-env expr expr-ty)))
+
+(define (tc-spmd-scoped-form? [expr : (& ast.AstExpr)]) : bool
+  (match expr
+    [(or (Let _) (WithRegion _ _)) true]
+    [_ false]))
+
+(define (tc-spmd-expr-typed-form
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]

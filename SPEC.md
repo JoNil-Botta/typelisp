@@ -9212,8 +9212,9 @@ not as an independently quantified region. The owner classes are:
   arena and lexical `with-arena` binders. A scoped arena binder `phase` is
   named in `(& phase T)` reference types and in `(in phase T)` region-tagged
   handles. A `with-arena` binder always introduces a new owner name: one that
-  would reuse a visible lifetime or owner is rejected (§5.16). Untagged aggregate handles allocated outside any scoped arena are
-  owned by the default program-lifetime arena; borrow inference uses the
+  would reuse a visible lifetime or owner is rejected (§5.16). Untagged
+  aggregate handles allocated outside any scoped arena are owned by the
+  default program-lifetime arena; borrow inference uses the
   reserved lifetime name `program` for that storage, but there is no source
   binder to introduce.
 - **Ordinary first-class arena owners:** handles returned by `arena.make`

@@ -26,9 +26,17 @@
 ;; (`normalize-lender-test-record!`), or an empty log when typing failed.
 (define (lender-test-log [src : String]) : (__tl_dyn-array i64)
   (cfg test (norm.normalize-lender-test-take!))
-  (match (tc_api.typecheck-compiler-source src)
-    [(Ok _) unit]
-    [(Err _) (io.panic "arena lender test source failed to typecheck")])
+  ;; G1 types the R-predicate witnesses without the #9612 invalidated-brand
+  ;; ordering, which the public checker applies, so the lender assertions run
+  ;; on them; #9256 G2 removes this.
+  (cfg test (tc_core.tc-invalidated-brand-test-bypass-set! true))
+  (let
+    [typed : bool
+      (match (tc_api.typecheck-compiler-source src)
+        [(Ok _) true]
+        [(Err _) false])]
+    (cfg test (tc_core.tc-invalidated-brand-test-bypass-set! false))
+    (unless typed (io.panic "arena lender test source failed to typecheck")))
   (let
     [all : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     (cfg test (set! all (norm.normalize-lender-test-take!)))
@@ -305,6 +313,28 @@
           (cdiag.compiler-diagnostic-list-first (deref diag))]
         (string.eq (cdiag.compiler-diagnostic-message (& first)) want))]
     [(Ok _) false]))
+
+;; With the #9612 ordering on, as the public checker runs it: whether `src` is
+;; rejected first with E0210 at `line`:`col`.
+(define (lender-test-public-e0210-at? [src : String] [line : i64] [col : i64]) : bool
+  (match (tc_api.typecheck-compiler-source src)
+    [(Err diag)
+      (let
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first (deref diag))]
+        (and
+          (match (cdiag.compiler-diagnostic-code (& first))
+            [(cdiag.CompilerDiagnosticSomeString code) (string.eq code "E0210")]
+            [_ false])
+          (= (cdiag.compiler-diagnostic-line (& first)) line)
+          (= (cdiag.compiler-diagnostic-col (& first)) col)))]
+    [(Ok _) false]))
+
+;; Whether the public checker accepts `src`.
+(define (lender-test-public-accepts? [src : String]) : bool
+  (match (tc_api.typecheck-compiler-source src)
+    [(Ok _) true]
+    [(Err _) false]))
 
 ;; x1: a brand reference passes through a named call; its alias is read after `destroy-safe!` ends the brand.
 (define (lender-test-x1-source) : String
@@ -992,3 +1022,60 @@
         (lender-test-demand-at (& log) body 1 0)
         (lender-test-kind-mask (& log) body lender-test-scope)
         "the scope's exit use"))))
+
+;; #9612 interim (D-C124): the public checker shortens no invalidated brand to
+;; a body-local lifetime. Each unsafe R-predicate row is rejected with a
+;; located E0210. p3 and n1 are sound and are temporary restrictions that
+;; #9256 G2 restores; b2s and b2m, which name the brand only in a phantom
+;; position, stay accepted.
+(cfg
+  test
+  (test
+    arena-lender-public-interim-rule
+    (begin
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-x1-source) 8 29)
+        "x1")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-x2-source) 5 29)
+        "x2")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-x4n-source) 5 32)
+        "x4n")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-x6n-source) 5 29)
+        "x6n")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-p1-source) 5 24)
+        "p1")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-f1-source) 7 24)
+        "f1")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-f2-source) 8 24)
+        "f2")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-f4-source) 5 24)
+        "f4")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-f5-source) 8 19)
+        "f5")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-mb-source) 9 21)
+        "mb")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-ob-source) 11 26)
+        "ob")
+      ;; Temporary restrictions (sound; restored by #9256 G2).
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-p3-source) 5 24)
+        "p3 (temporary restriction)")
+      (test.assert-true
+        (lender-test-public-e0210-at? (lender-test-n1-source) 5 21)
+        "n1 (temporary restriction)")
+      (test.assert-true
+        (lender-test-public-accepts? (lender-test-b2s-source))
+        "b2s")
+      (test.assert-true
+        (lender-test-public-accepts? (lender-test-b2m-source))
+        "b2m"))))

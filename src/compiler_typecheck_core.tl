@@ -50581,10 +50581,24 @@
     [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
     (>= (tc-invalidate-pairs-param (& pairs) lifetime) 0)))
 
+;; Test builds only: the #9256 G1 lender tests type their R-predicate witnesses
+;; with this ordering off, so the graph's lender assertions still run on them.
+;; Removed with the rule by #9256 G2.
+(cfg
+  test
+  (define tc-invalidated-brand-test-bypass : bool
+    false))
+
+(cfg
+  test
+  (define (tc-invalidated-brand-test-bypass-set! [on : bool]) : unit
+    (set! tc-invalidated-brand-test-bypass on)))
+
 ;; The parameter of LIFETIME's pair in the innermost body's invalidate marker:
 ;; >= 0 when that body invalidates it, `tc-invalidate-inherited-param` when an
 ;; enclosing body does, or -2 when it is no invalidated brand.
 (define (tc-invalidated-brand-param [env : TcTypeEnv] [lifetime : i64]) : i64
+  (cfg test (when tc-invalidated-brand-test-bypass (return -2)))
   (let
     [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
     (tc-invalidate-pairs-param (& pairs) lifetime)))

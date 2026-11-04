@@ -2580,11 +2580,13 @@ the signature invalidates `r` (`(:invalidate r)`, section 5.16): an
 invalidated brand may end inside the call, so every parameter's storage
 outlives it. It may also end before any local of the body, and its destroy
 reaches only values whose types carry it, so it outlives no lifetime of the
-signature or the body: its data cannot be held under a local's lifetime, even
-from a nested lambda. A nested lambda cannot end it, so it outlives that
-lambda's own locals. Any other lifetime spelled
-like a parameter, as `a` in `[a : i64] [r : (& a i64)]`, names that
-parameter's storage, which ends when the call returns.
+signature or the body except a nested lambda's own locals, which end before
+that lambda returns: its data cannot be held under another local's lifetime.
+This is a temporary restriction until the ownership graph tracks arena ends
+by identity (#9256), which will accept such programs when every use comes
+before the end. Any other lifetime spelled like a parameter, as `a` in
+`[a : i64] [r : (& a i64)]`, names that parameter's storage, which ends when
+the call returns.
 
 ```lisp test=ignore name=lifetime-parameterized-return-ok reason="illustrative return example; not a standalone program"
 (define (keep-ref [value : (& a i64)]) : (RefBox a)

@@ -2579,8 +2579,10 @@ of a by-value `(arena.Arena r)` parameter is likewise a caller region, unless
 the signature invalidates `r` (`(:invalidate r)`, section 5.16): an
 invalidated brand may end inside the call, so every parameter's storage
 outlives it. It may also end before any local of the body, and its destroy
-reaches only values whose types carry it, so it outlives no other lifetime:
-its data cannot be held under a local's lifetime. Any other lifetime spelled
+reaches only values whose types carry it, so it outlives no lifetime of the
+signature or the body: its data cannot be held under a local's lifetime, even
+from a nested lambda. A nested lambda cannot end it, so it outlives that
+lambda's own locals. Any other lifetime spelled
 like a parameter, as `a` in `[a : i64] [r : (& a i64)]`, names that
 parameter's storage, which ends when the call returns.
 

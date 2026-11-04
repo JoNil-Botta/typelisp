@@ -37597,13 +37597,14 @@
             (tc-program-lifetime-id? value-lifetime-id)
             (not (tc-name-bound-id? env value-lifetime-id)))
           true]
-        ;; A brand the enclosing body invalidates may end before any of its
-        ;; locals, and its destroy reaches only values typed with it, so it
-        ;; outlives no other lifetime (#9612).
+        ;; An invalidated brand (#9612).
         [(and
             (not (= tc-invalidate-param-bind-count 0))
-            (tc-invalidate-lifetime-declared? env value-lifetime-id))
-          false]
+            (>= (tc-invalidated-brand-param env value-lifetime-id) -1))
+          (tc-invalidated-brand-outlives?
+            env
+            value-lifetime-id
+            target-lifetime-id)]
         [(tc-type-env-scoped-runtime-active? env)
           (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
             (tc-type-env-scoped-runtime-current env)
@@ -50489,25 +50490,76 @@
       (set! index (+ index 2)))
     (tc-signature-lifetime-marker-type-for params brands brands)))
 
-(define (tc-invalidate-marker-type [params : (& params ast.AstParamList)]) : ast.AstMaybeType
+;; A pair whose parameter is this id records a brand an enclosing body
+;; invalidates: it orders the brand (`tc-invalidated-brand-outlives?`) but
+;; grants no effect.
+(define tc-invalidate-inherited-param : i64
+  -1)
+
+;; The marker for PARAMS, whose enclosing body's marker is OUTER: the
+;; parameters' own effects, then OUTER's brands as inherited pairs.
+(define (tc-invalidate-marker-type
+  [params : (& params ast.AstParamList)]
+  [outer : ast.AstMaybeType]) : ast.AstMaybeType
   (unless (tc-invalidate-types-present?) (return (No)))
   (let
     [pairs : ast.AstLifetimeList (tc-param-list-invalidate-pairs params)]
-    (if (ast.ast-lifetime-list-empty? (& pairs))
-      (if (= tc-invalidate-param-bind-count 0)
-        (No)
-        (Some (ast.ast-ty-var-args (tc-invalidate-marker-id) pairs)))
-      (begin
-        (+= tc-invalidate-param-bind-count 1)
-        (Some (ast.ast-ty-var-args (tc-invalidate-marker-id) pairs))))))
+    (unless
+      (ast.ast-lifetime-list-empty? (& pairs))
+      (+= tc-invalidate-param-bind-count 1))
+    (when (= tc-invalidate-param-bind-count 0) (return (No)))
+    (match outer
+      [(Some (VarArgs _ outer-pairs))
+        (let
+          [index : i64 0]
+          (while (< index (ast.ast-lifetime-list-len (& (deref outer-pairs))))
+            (let
+              [lifetime : i64
+                (ast.ast-lifetime-list-get
+                  (& (deref outer-pairs))
+                  index
+                  (ast.ast-lifetime-fallback))]
+              (when
+                (< (tc-invalidate-pairs-param (& pairs) lifetime) -1)
+                (ast.ast-lifetime-list-push (&mut pairs) lifetime)
+                (ast.ast-lifetime-list-push
+                  (&mut pairs)
+                  tc-invalidate-inherited-param)))
+            (+= index 2)))]
+      [_ unit])
+    (Some (ast.ast-ty-var-args (tc-invalidate-marker-id) pairs))))
 
 (define (tc-bind-invalidate-marker
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]) : TcTypeEnv
-  (match (tc-invalidate-marker-type params)
+  (match (tc-invalidate-marker-type
+    params
+    (if (= tc-invalidate-param-bind-count 0)
+      (No)
+      (tc-env-marker-type env (tc-invalidate-marker-id))))
     [(Some marker)
       (tc-bind-runtime-marker-id env (tc-invalidate-marker-id) marker Other)]
     [(No) env]))
+
+;; The parameter of LIFETIME's pair in PAIRS, `tc-invalidate-inherited-param`
+;; for an inherited one, or -2 when PAIRS do not name it.
+(define (tc-invalidate-pairs-param
+  [pairs : (& pairs ast.AstLifetimeList)]
+  [lifetime : i64]) : i64
+  (let
+    [index : i64 0]
+    (while (< index (ast.ast-lifetime-list-len pairs))
+      (when
+        (=
+          (ast.ast-lifetime-list-get pairs index (ast.ast-lifetime-fallback))
+          lifetime)
+        (return
+          (ast.ast-lifetime-list-get
+            pairs
+            (+ index 1)
+            (ast.ast-lifetime-fallback))))
+      (+= index 2))
+    -2))
 
 ;; The (lifetime, parameter) pairs the innermost enclosing function or lambda
 ;; body declares.
@@ -50527,16 +50579,29 @@
 (define (tc-invalidate-lifetime-declared? [env : TcTypeEnv] [lifetime : i64]) : bool
   (let
     [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
-    [index : i64 0]
-    [found : bool false]
-    (while (and (not found) (< index (ast.ast-lifetime-list-len (& pairs))))
-      (if (=
-        (ast.ast-lifetime-list-get (& pairs) index (ast.ast-lifetime-fallback))
-        lifetime)
-        (set! found true)
-        unit)
-      (+= index 2))
-    found))
+    (>= (tc-invalidate-pairs-param (& pairs) lifetime) 0)))
+
+;; The parameter of LIFETIME's pair in the innermost body's invalidate marker:
+;; >= 0 when that body invalidates it, `tc-invalidate-inherited-param` when an
+;; enclosing body does, or -2 when it is no invalidated brand.
+(define (tc-invalidated-brand-param [env : TcTypeEnv] [lifetime : i64]) : i64
+  (let
+    [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
+    (tc-invalidate-pairs-param (& pairs) lifetime)))
+
+;; Whether invalidated brand LIFETIME outlives TARGET. The brand may end before
+;; any local of the body that invalidates it, and its destroy reaches only
+;; values typed with it, so it outlives none of that body's lifetimes. A
+;; nested lambda cannot end it, and a lambda holding its data ends with it,
+;; so an enclosing body's brand outlives exactly the lifetimes bound after the
+;; lambda's marker (#9612).
+(define (tc-invalidated-brand-outlives?
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [target : i64]) : bool
+  (and
+    (< (tc-invalidated-brand-param env lifetime) 0)
+    (tc-lifetime-outlives-lifetime-id? env (tc-invalidate-marker-id) target)))
 
 (defenum ResultTcScopedCarrier
   (Ok TcTypeEnvScopedCarrier)
@@ -50586,7 +50651,13 @@
             (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
               carrier
               (tc-invalidated-brand-marker-type params))]
-          (match (tc-invalidate-marker-type params)
+          (match (tc-invalidate-marker-type
+            params
+            (if (= tc-invalidate-param-bind-count 0)
+              (No)
+              (tc-type-env-scoped-carrier-marker-type
+                (clone out)
+                (tc-invalidate-marker-id))))
             [(Some marker)
               (tc-type-env-scoped-carrier-with-sidecar
                 (tc-global-shared-view out)

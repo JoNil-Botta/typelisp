@@ -1,5 +1,6 @@
-;; #9612: a brand the call invalidates outlives no lifetime of the body, but
-;; values typed with the brand itself stay usable until it ends.
+;; #9612: a brand the call invalidates outlives no lifetime of the body other
+;; than a nested lambda's own, and values typed with the brand itself stay
+;; usable until it ends.
 (import stdlib.arena)
 
 (defstruct RefBox
@@ -49,6 +50,22 @@
             [y : i64 1]
             [w : (& y i64) v]
             (deref w))))]
+    (begin
+      (release ar)
+      x)))
+
+; The same holds for the locals of a lambda nested in a lambda.
+(define (nested-lambda-local
+  [ar : (arena.Arena r) (:invalidate r)]
+  [v : (& r i64)]) : i64
+  (let
+    [x : i64
+      ((lambda () : i64
+          ((lambda () : i64
+              (let
+                [z : i64 1]
+                [w : (& z i64) v]
+                (deref w))))))]
     (begin
       (release ar)
       x)))

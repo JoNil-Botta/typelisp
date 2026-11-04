@@ -6787,7 +6787,7 @@ only: inside an admissible arena, locals, parameters, pattern binders, loop
 items and SPMD indices may use any name, including one spelled like an
 enclosing lifetime, with their ordinary meaning (§5.7, §5.15).
 
-```lisp test=ignore
+```lisp test=ignore name=with-arena-name-collision reason=illustrative
 (define (store [b : (&mut r (RefBox r))]) : unit
   (with-arena r            ; rejected: `r` is the caller's lifetime; rename it
     (set! b.value (& (deref (box 5))))))

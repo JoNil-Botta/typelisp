@@ -2,7 +2,8 @@
 
 `arena_caller_reference_store` builds the caller-reference store through an
 elided-lifetime mutable parameter inside a distinct arena. Its contexts fixture
-covers explicit lifetimes, explicit return, typed locals and call arguments.
+covers explicit lifetimes, explicit return, typed/inferred locals, call
+arguments, arithmetic/comparison operands, tuples, arrays and boxes.
 Both run at opt0/1/2 on both hosts with exit 42 and retain target IR parity.
 The safety corpus rejects arena and stack references stored through the same
 elided parameter shape. Keep check verdicts unchanged when adjusting lowering.

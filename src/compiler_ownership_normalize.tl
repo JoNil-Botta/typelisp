@@ -10947,6 +10947,17 @@
 ;; completes, 0 when the shape is too long or the walk passes its visits
 ;; (the caller builds a DAG instead); a walk past the type-edge depth bound
 ;; fails closed.
+;; Cloning a type copies its one boxed list: its cells plus 4 header cells
+;; (an over-count for the lifetime lists, never an under-count).
+(define (normalize-type-copy-cells [ty : (& ty ast.AstType)]) : i64
+  (match ty
+    [(or (ast.AstType.EnumArgs _ lifetimes) (ast.AstType.StructArgs _ lifetimes)
+         (ast.AstType.VarArgs _ lifetimes))
+      (+ 4 (ast.ast-lifetime-list-len (& (deref lifetimes))))]
+    [(ast.AstType.Tuple elems) (+ 4 (ast.ast-type-list-len (& (deref elems))))]
+    [(ast.AstType.Func args _) (+ 4 (ast.ast-type-list-len (& (deref args))))]
+    [_ 0]))
+
 (define (normalize-flat-walk!
   [shapes : (&mut shapes NormalizeShapes)]
   [variances : (& variances OwnershipNormalizeVariances)]
@@ -11194,6 +11205,14 @@
 
 ;; The positions of DAG node `root` past its first `skip` (at most a few:
 ;; a borrow relating a flat shape with a DAG one) into the graph's scratch.
+;; Copying the scratch's two backing arrays: their cells plus 4 header cells
+;; each (an over-count for the flags, never an under-count).
+(define (normalize-scratch-copy-cells [edges : (& edges NormalizeRegionEdges)]) : i64
+  (+
+    8
+    (array-length edges.scratch-names.items)
+    (array-length edges.scratch-invs.items)))
+
 (define (normalize-flat-scratch!
   [edges : (&mut edges NormalizeRegionEdges)]
   [shapes : (& shapes NormalizeShapes)]
@@ -11361,6 +11380,9 @@
         [_ false])]
     [start : i64 shapes.flat-names.len]
     [_visits : unit (set! shapes.flat-visited 0)]
+    ;; The flat walk consumes a copy of `ty`: charge the copy before making it.
+    [copy : i64 (normalize-type-copy-cells (& ty))]
+    [_copy : unit (try (normalize-shape-charge! shapes copy copy))]
     [walked : i64
       (try (normalize-flat-walk! shapes variances start (clone ty) false -1 0))]
     (if (= walked 1)
@@ -12497,6 +12519,17 @@
         ;; one position longer: lay the DAG's few positions out.
         [from-flat?
           (normalize-flat-scratch! edges shapes to-root to-skip)
+          ;; The scratch is copied out of `edges`: charge both copies
+          ;; first, and stop if laying it out or the charge exhausted.
+          (when
+            (or
+              edges.exhausted
+              (not
+                (normalize-edges-charge!
+                  edges
+                  (normalize-scratch-copy-cells edges)
+                  (normalize-scratch-copy-cells edges))))
+            (return unit))
           (let
             [names : (__tl_dyn-array i64) (clone edges.scratch-names.items)]
             [invs : (__tl_dyn-array bool) (clone edges.scratch-invs.items)]
@@ -12518,6 +12551,17 @@
               both?))]
         [to-flat?
           (normalize-flat-scratch! edges shapes from-root from-skip)
+          ;; The scratch is copied out of `edges`: charge both copies
+          ;; first, and stop if laying it out or the charge exhausted.
+          (when
+            (or
+              edges.exhausted
+              (not
+                (normalize-edges-charge!
+                  edges
+                  (normalize-scratch-copy-cells edges)
+                  (normalize-scratch-copy-cells edges))))
+            (return unit))
           (let
             [names : (__tl_dyn-array i64) (clone edges.scratch-names.items)]
             [invs : (__tl_dyn-array bool) (clone edges.scratch-invs.items)]

@@ -2301,7 +2301,10 @@ returns), is rejected (E0205): "`x` does not live long enough", or "cannot
 return a reference to local `x`" (or "to parameter `x`", or "to captured
 `x`") for a returned one, as Rust's E0597 and E0515. This holds when a local or parameter is spelled
 like a caller lifetime: a borrow of a parameter `[a : i64]` stored through
-`[b : (&mut a (RefBox a))]` is rejected.
+`[b : (&mut a (RefBox a))]` is rejected. The brand `r` of a by-value
+`(arena.Arena r)` parameter that the call does not invalidate is a caller
+region too, since the caller's arena outlives the call: the same borrow stored
+through `[out : (&mut r (RefBox r))]` is rejected.
 
 **Immutable call-site auto-borrowing.** When a typed TypeLisp call, function
 value/lambda call, or constructor call has a formal parameter of type
@@ -2568,12 +2571,16 @@ the reserved `program` lifetime. Returning a named aggregate containing
 references is valid only when every stored reference lifetime in the returned
 type is tied to such an input lifetime or to `program`. A parameter whose type
 is itself a reference with its name as the lifetime, as in `[xs : (& xs T)]`,
-or a nominal type other than an arena with its name among the lifetime
-arguments, as in `[s : (RefBox s)]`, names the caller's region it refers into,
-not its own storage: that region outlives every parameter and is unrelated to
-the signature's other lifetimes. Any other lifetime spelled like a parameter,
-as `a` in `[a : i64] [r : (& a i64)]`, names that parameter's storage, which
-ends when the call returns.
+or a nominal type with its name among the lifetime arguments, as in
+`[s : (RefBox s)]` or the arena handle `[owner : (arena.Arena owner)]`, names
+the caller's region it refers into, not its own storage: that region outlives
+every parameter and is unrelated to the signature's other lifetimes. The brand
+of a by-value `(arena.Arena r)` parameter is likewise a caller region, unless
+the signature invalidates `r` (`(:invalidate r)`, section 5.16): an
+invalidated brand may end inside the call, so every parameter's storage
+outlives it. Any other lifetime spelled like a parameter, as `a` in
+`[a : i64] [r : (& a i64)]`, names that parameter's storage, which ends when
+the call returns.
 
 ```lisp test=ignore name=lifetime-parameterized-return-ok reason="illustrative return example; not a standalone program"
 (define (keep-ref [value : (& a i64)]) : (RefBox a)

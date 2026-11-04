@@ -50247,10 +50247,11 @@
           (tc-param-list-has-name-id-at? params name-id (+ index 1)))])))
 
 ;; The one signature-marker entry type of a parameter list (#8998): its caller
-;; regions, which are incomparable to each other, or No. A lifetime spelled like
-;; a parameter is the caller's referent region when that parameter is a
-;; self-named carrier; otherwise it names the parameter's storage (#8890) or
-;; brand and is rooted at the parameter. One pass reads each parameter once.
+;; regions, arena brands included (#9604), which are incomparable to each
+;; other, or No. An invalidated brand is re-bound inside the parameters. A lifetime spelled like a parameter is the caller's referent
+;; region when that parameter is a self-named carrier; otherwise it names the
+;; parameter's storage (#8890) and is rooted at the parameter. One pass reads
+;; each parameter once.
 (define (tc-signature-lifetime-marker-type
   [ctx : TcContext]
   [params : (& params ast.AstParamList)]) : ast.AstMaybeType
@@ -50334,19 +50335,18 @@
 
 ;; Whether a binding named NAME-ID whose (resolved) type is TY is a
 ;; self-named carrier (#8998): TY is a reference whose lifetime is NAME-ID, or
-;; a non-arena nominal with NAME-ID among its lifetime arguments, under any
-;; region tags. Its lifetime NAME-ID is then the caller's referent region, not
-;; the binding's storage. An arena owner owns its brand and stays its root.
+;; a nominal with NAME-ID among its lifetime arguments, under any region tags.
+;; Its lifetime NAME-ID is then the caller's referent region, not the binding's
+;; storage. An arena handle `[owner : (arena.Arena owner)]` is one too: its
+;; brand is the caller's arena region, which outlives the handle (#9604). A
+;; parameter list re-binds a brand it invalidates inside its parameters
+;; (`tc-invalidated-brand-marker-type`).
 ;; Only the outer type is inspected, so the test is linear in its region tags
 ;; and lifetime arguments.
 (define (tc-type-carries-own-lifetime? [ty : (& ast.AstType)] [name-id : i64]) : bool
   (match ty
     [(or (Ref lifetime _) (MutRef lifetime _)) (= lifetime name-id)]
-    [(StructArgs name lifetimes)
-      (and
-        (not (tc-arena-nominal-name-id? name))
-        (tc-lifetime-list-contains-at? (deref lifetimes) name-id 0))]
-    [(or (EnumArgs _ lifetimes) (VarArgs _ lifetimes))
+    [(or (StructArgs _ lifetimes) (EnumArgs _ lifetimes) (VarArgs _ lifetimes))
       (tc-lifetime-list-contains-at? (deref lifetimes) name-id 0)]
     [(Region _ inner)
       (tc-type-carries-own-lifetime? (& (ast.ty-node-get inner)) name-id)]
@@ -50383,29 +50383,27 @@
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]) : TcTypeEnv
   ;; Caller lifetimes outlive every parameter's storage: their markers are
-  ;; bound outside the parameters (#8998).
+  ;; bound outside the parameters (#8998). A by-value arena parameter's brand
+  ;; is such a caller region too: the caller's arena outlives the call, unless
+  ;; the call invalidates it (#9604).
   (tc-bind-params-at
     ctx
     (tc-bind-signature-lifetime-markers
       env
       (tc-signature-lifetime-marker-type ctx (& params)))
     (& params)
-    0
-    Nil))
+    0))
 
 (define (tc-bind-params-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]
-  [index : i64]
-  [lifetimes : TcNameIdList]) : TcTypeEnv
+  [index : i64]) : TcTypeEnv
   (if (>= index (ast.ast-param-list-len params))
-    ;; An arena brand keeps its marker inside the parameters, where the
-    ;; arena checks order it (#8998): this newer marker shadows the outer one.
     (tc-bind-invalidate-marker
       (tc-bind-signature-lifetime-markers
         env
-        (tc-signature-lifetime-marker-type-for params lifetimes Nil))
+        (tc-invalidated-brand-marker-type params))
       params)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
@@ -50415,29 +50413,11 @@
               (tc-type-strip-invalidate
                 (tc-resolve-type ctx (tc-global-shared-view ty)))
               (tc-resolve-type ctx (tc-global-shared-view ty)))]
-          [brands : TcNameIdList (tc-arena-brand-add (& resolved) lifetimes)]
           (tc-bind-params-at
             ctx
             (tc-bind-id env name resolved)
             params
-            (+ index 1)
-            brands))])))
-
-;; BRANDS with the brand of an arena type TY, if TY is one.
-(define (tc-arena-brand-add [ty : (& ast.AstType)] [brands : TcNameIdList]) : TcNameIdList
-  (match ty
-    [(StructArgs name lifetimes)
-      (if (and
-        (tc-arena-nominal-name-id? name)
-        (= (ast.ast-lifetime-list-len (deref lifetimes)) 1))
-        (tc-name-id-list-add
-          brands
-          (ast.ast-lifetime-list-get
-            (deref lifetimes)
-            0
-            (ast.ast-lifetime-fallback)))
-        brands)]
-    [_ brands]))
+            (+ index 1)))])))
 
 ;; --- `(:invalidate r T)` parameters (#6670) --------------------------------
 ;;
@@ -50479,6 +50459,29 @@
     out))
 
 ;; The marker to bind for a parameter list, or No when none is needed.
+;; The signature-marker entry type of the brands PARAMS invalidate, or No.
+;; Such a brand ends inside the call, so this marker is bound after the
+;; parameters and shadows the caller-region one: every parameter's storage
+;; outlives it (#9604).
+(define (tc-invalidated-brand-marker-type
+  [params : (& params ast.AstParamList)]) : ast.AstMaybeType
+  (unless (tc-invalidate-types-present?) (return (ast.AstMaybeType.No)))
+  (let
+    [pairs : ast.AstLifetimeList (tc-param-list-invalidate-pairs params)]
+    [brands : TcNameIdList Nil]
+    [index : i64 0]
+    (while (< index (ast.ast-lifetime-list-len (& pairs)))
+      (set!
+        brands
+        (tc-name-id-list-add
+          brands
+          (ast.ast-lifetime-list-get
+            (& pairs)
+            index
+            (ast.ast-lifetime-fallback))))
+      (set! index (+ index 2)))
+    (tc-signature-lifetime-marker-type-for params brands brands)))
+
 (define (tc-invalidate-marker-type [params : (& params ast.AstParamList)]) : ast.AstMaybeType
   (unless (tc-invalidate-types-present?) (return (No)))
   (let
@@ -50540,7 +50543,8 @@
   [lease : (& lease (typed.TypedBodyLease intern))]
   [bindings : (&mut bindings TcSelectedBindings)]
   [source : ownership.OwnershipSource]) : ResultTcScopedCarrier
-  ;; Caller lifetimes outlive every parameter's storage (#8998).
+  ;; Caller lifetimes, arena brands included, outlive every parameter's
+  ;; storage (#8998, #9604).
   (tc-type-env-scoped-carrier-bind-params-at
     ctx
     (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
@@ -50548,7 +50552,6 @@
       (tc-signature-lifetime-marker-type ctx (& params)))
     (& params)
     0
-    TcNameIdList.Nil
     store
     lease
     bindings
@@ -50559,7 +50562,6 @@
   [carrier : TcTypeEnvScopedCarrier]
   [params : (& params ast.AstParamList)]
   [index : i64]
-  [lifetimes : TcNameIdList]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [bindings : (&mut bindings TcSelectedBindings)]
@@ -50572,11 +50574,11 @@
           (tc-selected-bindings-pin! bindings lease (& carrier))))
       (ResultTcScopedCarrier.Ok
         (let
-          ;; As `tc-bind-params-at`: arena brands' markers inside.
+          ;; As `tc-bind-params-at`: invalidated brands' markers inside.
           [out : TcTypeEnvScopedCarrier
             (tc-type-env-scoped-carrier-bind-signature-lifetime-markers
               carrier
-              (tc-signature-lifetime-marker-type-for params lifetimes Nil))]
+              (tc-invalidated-brand-marker-type params))]
           (match (tc-invalidate-marker-type params)
             [(Some marker)
               (tc-type-env-scoped-carrier-with-sidecar
@@ -50600,7 +50602,6 @@
               carrier
               name
               (tc-global-shared-view resolved))]
-          [brands : TcNameIdList (tc-arena-brand-add (& resolved) lifetimes)]
           ;; An `(:invalidate r T)` parameter owns the brand `r`.
           [invalidates : i64
             (match (tc-type-invalidate-lifetime
@@ -50645,7 +50646,6 @@
             next
             params
             (+ index 1)
-            brands
             store
             lease
             bindings
@@ -126414,13 +126414,28 @@
               (match matched-got
                 [(TcInferredTypeMatch.Compatible _) ResultTcUnit.Ok]
                 [(TcInferredTypeMatch.Mismatch actual)
-                  (ResultTcUnit.Err
-                    (tc-type-mismatch-message-in-context
+                  ;; A mismatch only in region tags is the value's region
+                  ;; escaping, named at the value (#9604). Only this error
+                  ;; path copies its operands.
+                  (match (if (tc-type-eq
+                    (tc-type-without-regions (clone actual))
+                    (tc-type-without-regions (clone resolved-ret)))
+                    (tc-selected-return-flow-check
                       ctx
-                      comparison-env
-                      actual
-                      (tc-global-shared-view resolved-ret)
-                      "typecheck: return type mismatch"))])]
+                      env
+                      (clone resolved-ret)
+                      (clone actual)
+                      (clone body))
+                    ResultTcUnit.Ok)
+                    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
+                    [(ResultTcUnit.Ok)
+                      (ResultTcUnit.Err
+                        (tc-type-mismatch-message-in-context
+                          ctx
+                          comparison-env
+                          actual
+                          (tc-global-shared-view resolved-ret)
+                          "typecheck: return type mismatch"))])])]
             (tc-body-type-facts-start-consuming! body-state)
             (match (match expect-result
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]

@@ -1,5 +1,11 @@
 # Selfhost compiler testing
 
+`char_comparisons.tl` checks all six comparison operators against zero-extended
+`i64` operands for every byte pair, with separate bool-return, side-effecting
+branch and conditional-selection routes. Literal and runtime boundary cases
+cover 0, 127, 128 and 255. The native manifest runs opt0/1/2 on Linux and
+Windows; the target-parity corpus retains the same optimization matrix.
+
 `arena_caller_reference_store` builds the caller-reference store through an
 elided-lifetime mutable parameter inside a distinct arena. Its contexts fixture
 covers explicit lifetimes, explicit return, typed/inferred locals, call

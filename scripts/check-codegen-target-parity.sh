@@ -67,6 +67,7 @@ net_tls_transcript stdlib/tests/net_tls_transcript_parity.tl
 crypto_hkdf_sha256 stdlib/tests/crypto_hkdf_sha256_parity.tl
 crypto_hmac_sha256 stdlib/tests/crypto_hmac_sha256_parity.tl
 control_flow tests/integration/control_flow.tl
+char_comparisons tests/integration/char_comparisons.tl
 enum_match tests/integration/enum_match.tl
 enum_constructor_owner_layout tests/integration/enum_constructor_owner_layout.tl
 enum_constructor_owner_root tests/integration/enum_constructor_owner_root.tl

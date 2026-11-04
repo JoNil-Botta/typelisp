@@ -5292,6 +5292,9 @@ do (§5.3). Short-circuiting forms evaluate only their selected operands:
 | `>` | integer integer → bool | Greater than |
 | `>=` | integer integer → bool | Greater than or equal |
 
+- The six comparison operators also accept two `char` operands. They compare
+  the operands' unsigned byte values, from 0 through 255. Each result is the
+  same as applying that operator to both operand values cast to `i64` (§3.8).
 - Float comparisons use the same operators; type checking disambiguates.
 - For `f32` and `f64`, a NaN in either operand makes `=`, `<`, `<=`, `>`,
   and `>=` false, and makes `!=` true. Positive and negative zero compare

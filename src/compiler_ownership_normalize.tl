@@ -10904,13 +10904,13 @@
   [variances : (& variances OwnershipNormalizeVariances)]
   [start : i64]
   [name : i64]
-  [lifetimes : ast.AstLifetimeList]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [inv? : bool]
   [outer : i64]) : NormalizeInt
   (let
     [lender? : bool shapes.lender?]
     [index : i64 0]
-    (while (< index (ast.ast-lifetime-list-len (& lifetimes)))
+    (while (< index (ast.ast-lifetime-list-len lifetimes))
       (if lender?
         (let
           [variance : i64 (normalize-lender-variance variances name index)]
@@ -10922,7 +10922,7 @@
                   (normalize-flat-push!
                     shapes
                     start
-                    (ast.ast-lifetime-list-get (& lifetimes) index -1)
+                    (ast.ast-lifetime-list-get lifetimes index -1)
                     (or inv? (= variance 0))
                     outer))
                 0))
@@ -10933,7 +10933,7 @@
               (normalize-flat-push!
                 shapes
                 start
-                (ast.ast-lifetime-list-get (& lifetimes) index -1)
+                (ast.ast-lifetime-list-get lifetimes index -1)
                 (or
                   inv?
                   (not (normalize-nominal-covariant? variances name index)))
@@ -11016,7 +11016,7 @@
           variances
           start
           name
-          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          (& (deref lifetimes))
           inv?
           outer)]
       [(ast.AstType.VarArgs _ lifetimes)
@@ -11025,7 +11025,7 @@
           variances
           start
           -1
-          (ast.ast-lifetime-list-box-shared-view lifetimes)
+          (& (deref lifetimes))
           true
           outer)]
       [(ast.AstType.Tuple elems)
@@ -11033,7 +11033,7 @@
           shapes
           variances
           start
-          (ast.ast-type-list-box-shared-view elems)
+          (& (deref elems))
           inv?
           outer
           below)]
@@ -11045,7 +11045,7 @@
               shapes
               variances
               start
-              (ast.ast-type-list-box-shared-view args)
+              (& (deref args))
               true
               -1
               below))
@@ -11075,13 +11075,13 @@
   [shapes : (&mut shapes NormalizeShapes)]
   [variances : (& variances OwnershipNormalizeVariances)]
   [start : i64]
-  [types : ast.AstTypeList]
+  [types : (& types ast.AstTypeList)]
   [inv? : bool]
   [outer : i64]
   [depth : i64]) : NormalizeInt
   (let
     [index : i64 0]
-    (while (< index (ast.ast-type-list-len (& types)))
+    (while (< index (ast.ast-type-list-len types))
       (when
         (=
           (try
@@ -11091,7 +11091,7 @@
               start
               (ast.ty-node-get
                 (ast.ast-type-list-get
-                  (& types)
+                  types
                   index
                   (ast.ast-type-id-fallback)))
               inv?

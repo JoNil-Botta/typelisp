@@ -629,17 +629,32 @@
       "(define (main [r : (& n i64)]) : (Array (& n i64) 1)
   (let [n : i64 1] (array (& n))))"
       "typecheck: reference value would escape lexical scope")
+    ;; An arena named like the caller's lifetime is rejected at entry (#9593,
+    ;; SPEC 5.16); the same arena data escaping a non-colliding arena keeps
+    ;; the escape diagnostic.
     (tc_tests.compiler-typecheck-error-ok?
       (tc_tests.compiler-typecheck-with-alloc-string-helper-source
         "(define (main [seed : (& phase str)]) : (Tuple (& phase str) i64)
   (with-arena phase
     (let [s : String (string.int->string 1)] (tuple (& phase s) 1))))")
-      "typecheck: region-tagged value cannot escape with-arena 'phase'")
+      "typecheck: with-arena 'phase' reuses the name of a visible lifetime or owner; rename the arena")
     (tc_tests.compiler-typecheck-error-ok?
       (tc_tests.compiler-typecheck-with-alloc-string-helper-source
         "(define (main [seed : (& phase str)]) : (Array (& phase str) 1)
   (with-arena phase
     (let [s : String (string.int->string 1)] (array (& phase s)))))")
+      "typecheck: with-arena 'phase' reuses the name of a visible lifetime or owner; rename the arena")
+    (tc_tests.compiler-typecheck-error-ok?
+      (tc_tests.compiler-typecheck-with-alloc-string-helper-source
+        "(define (main) : i64
+  (let [t (with-arena phase
+    (let [s : String (string.int->string 1)] (tuple (& phase s) 1)))] 0))")
+      "typecheck: region-tagged value cannot escape with-arena 'phase'")
+    (tc_tests.compiler-typecheck-error-ok?
+      (tc_tests.compiler-typecheck-with-alloc-string-helper-source
+        "(define (main) : i64
+  (let [t (with-arena phase
+    (let [s : String (string.int->string 1)] (array (& phase s))))] 0))")
       "typecheck: region-tagged value cannot escape with-arena 'phase'")))
 
 (define (compiler-typecheck-reference-dyn-array-tests-ok?) : bool
@@ -1021,7 +1036,7 @@
   (with-arena r
     (let [s : String (string.int->string 1)]
       (set! (array-ref items 0) (& s)))))")
-      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+      "typecheck: with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64]) : (-> unit)
   (let

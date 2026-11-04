@@ -9794,13 +9794,41 @@
     lease
     intern
     bind)
+  (if (tc-with-region-collides? env region)
+    (TcSelectedResult.Err (tc-with-region-collision-error region) sink)
+    (tc-infer-selected-with-region-entered
+      ctx
+      env
+      expr
+      region
+      body
+      syntax
+      expected
+      source
+      sink)))
+
+(define (tc-infer-selected-with-region-entered
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [region : i64]
+  [body : (& body ast.AstExprList)]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
   (match (tc-selected-note-arena-region sink region)
     [(TcSelectedNoteResult.Err message next)
       (TcSelectedResult.Err message next)]
     [(TcSelectedNoteResult.Ok noted)
-      (match (tc-infer-selected-begin
+      (match (tc-infer-selected-with-region-body
         ctx
-        (tc-push-region env region)
+        env
+        region
         body
         (tc-global-shared-view syntax)
         (tc-global-shared-view expected)
@@ -9818,6 +9846,38 @@
               syntax
               source
               (TcSelectedResult.Ok body-ty occurrence after)))])]))
+
+;; The body is checked under the form's region in a nested runtime scope, so
+;; the escape fallback below re-checks the whole form against the incoming
+;; scope, where the form's own region is not yet visible (the entry check in
+;; `tc-infer-selected-with-region-at` must not see it as a collision).
+(define (tc-infer-selected-with-region-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [region : i64]
+  [body : (& body ast.AstExprList)]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [saved : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter-env! env)]
+    [result : (TcSelectedResult store lease intern bind)
+      (tc-infer-selected-begin
+        ctx
+        (tc-push-region env region)
+        body
+        syntax
+        expected
+        source
+        sink)]
+    (tc-type-env-scoped-runtime-restore! saved)
+    result))
 
 ;; A selected scoped-arena body becomes the one child of a committed
 ;; ArenaScope wrapper, rollback-atomic with it. Its region only locates the
@@ -56802,6 +56862,14 @@
   [span : ast.AstSourceSpan]
   [message : String]) : ResultTcType
   (cond
+    ;; A with-arena collision (#9593) is located at the arena form itself. The
+    ;; form's shape is tested first: the message test copies the message text,
+    ;; and this function sees every located error.
+    [(and
+        (tc-with-region-form? (& inner))
+        (not (tc-encoded-error? message))
+        (tc-message-text-prefix? (& message) (tc-with-region-collision-prefix)))
+      (Err (tc-located-error span message))]
     [(and (tc-unbound-name-message? message) (not (tc-encoded-error? message)))
       (match (tc-global-shared-view inner)
         [(Var name-id)
@@ -72196,12 +72264,14 @@
                       lane-ty
                       lane-env)]))])))]
     [(WithRegion region body)
-      (tc-spmd-begin-list
-        ctx
-        expr-bases
-        (tc-push-region env region)
-        spmd-env
-        body)]
+      (if (tc-with-region-collides? env region)
+        (Err (tc-with-region-collision-error region))
+        (tc-spmd-begin-list
+          ctx
+          expr-bases
+          (tc-push-region env region)
+          spmd-env
+          body))]
     [(WithEscape _ _)
       (Err "typecheck: with-escape inside spmd is not supported")]
     [(WithScratch _)
@@ -85853,13 +85923,48 @@
   [region : i64]
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
-  (let
-    [region-env : TcTypeEnv (tc-push-region env region)]
-    [body-ty : ast.AstType
-      (try (tc-begin-list-maybe-expected ctx region-env body expected))]
-    (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
-      (Err (tc-region-escape-error region))
-      (Ok body-ty))))
+  (if (tc-with-region-collides? env region)
+    (Err (tc-with-region-collision-error region))
+    (let
+      [region-env : TcTypeEnv (tc-push-region env region)]
+      [body-ty : ast.AstType
+        (try (tc-begin-list-maybe-expected ctx region-env body expected))]
+      (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
+        (Err (tc-region-escape-error region))
+        (Ok body-ty)))))
+
+;; `(with-arena r ...)` binds a new region named `r`. When `r` already names a
+;; lifetime or owner visible at the form (a signature or declaration lifetime,
+;; a lexical owner, an enclosing arena or region), the arena would share its
+;; identity, and references into the arena would pass as references of the
+;; outer lifetime (#9593). Such a form is rejected at entry; the arena must be
+;; renamed. Visibility is the checker's own lifetime resolution over the
+;; lexical environment (`tc-lifetime-visible-persistent-id?`, the walk
+;; `tc-lifetime-visible-id?` uses without a scoped runtime). The scoped runtime
+;; is a cache that SPMD checking does not unwind between siblings, so reading
+;; it could see an ended binding; the lexical environment is exact on every
+;; checking path.
+(define (tc-with-region-collides? [env : TcTypeEnv] [region : i64]) : bool
+  (or
+    (tc-generated-arena-brand-id? region)
+    (tc-program-lifetime-id? region)
+    (= region (tc-unconstrained-lifetime-id))
+    (tc-lifetime-visible-persistent-id? env region)))
+
+(define (tc-with-region-form? [expr : (& ast.AstExpr)]) : bool
+  (match expr
+    [(WithRegion _ _) true]
+    [_ false]))
+
+(define (tc-with-region-collision-prefix) : String
+  "typecheck: with-arena '")
+
+(define (tc-with-region-collision-error [region : i64]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    (tc-with-region-collision-prefix)
+    (tc-lifetime-name-render region)
+    "' reuses the name of a visible lifetime or owner; rename the arena"))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
 ;; lifetime binder. The scratch expression is just an arena handle, and

@@ -1828,8 +1828,10 @@ layout. The tag exists solely to enable static escape checking.
 `(with-arena r ...)` creates the scoped arena, produces `(in r T)` region tags
 for allocations inside the body, shadows the calling thread's default arena, and
 lowers to `tl_region_mark` / `tl_region_reset` around the body. The region name
-cannot be `program`: that is the reserved lifetime that outlives every region
-(section 3.10).
+cannot be `program`, the reserved lifetime that outlives every region (section
+3.10). More generally, it cannot reuse any lifetime or owner name visible at the
+form: an arena named like a caller lifetime, a lexical owner or an enclosing
+region is rejected at entry and must be renamed (§5.16).
 
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:
@@ -6768,6 +6770,29 @@ region-tagged value escape its scope:
 an inner region may not escape to the outer region, and a value from an outer
 region may be used inside an inner region (it does not gain the inner tag).
 
+**The region name must be new at the form:** `ident` must not already name a
+lifetime or owner visible where the form appears. That includes:
+
+- a function signature or declaration lifetime;
+- a lexical owner (a parameter or local binding in scope);
+- an enclosing `with-arena` region, or the brand of an arena owner selected by
+  `in-arena` or held in scope;
+- the reserved `program` lifetime.
+
+Such a form is rejected at entry with a source-located diagnostic asking for the
+arena to be renamed. If the name were reused, the arena would share that
+lifetime's identity, and references into the arena would pass as references of
+the outer lifetime and could outlive the arena. This is an entry restriction
+only: inside an admissible arena, locals, parameters, pattern binders, loop
+items and SPMD indices may use any name, including one spelled like an
+enclosing lifetime, with their ordinary meaning (§5.7, §5.15).
+
+```lisp test=ignore name=with-arena-name-collision reason=illustrative
+(define (store [b : (&mut r (RefBox r))]) : unit
+  (with-arena r            ; rejected: `r` is the caller's lifetime; rename it
+    (set! b.value (& (deref (box 5))))))
+```
+
 **Lowering contract:** Each `with-arena` lowers to a `tl_region_mark` at
 entry, the body with all region-allocating operations implicitly targeting the
 active region, and a `tl_region_reset` at exit that restores the mark. Because
@@ -9186,8 +9211,10 @@ not as an independently quantified region. The owner classes are:
 - **Lexical arena/region owners:** the implicit default program-lifetime
   arena and lexical `with-arena` binders. A scoped arena binder `phase` is
   named in `(& phase T)` reference types and in `(in phase T)` region-tagged
-  handles. Untagged aggregate handles allocated outside any scoped arena are
-  owned by the default program-lifetime arena; borrow inference uses the
+  handles. A `with-arena` binder always introduces a new owner name: one that
+  would reuse a visible lifetime or owner is rejected (§5.16). Untagged
+  aggregate handles allocated outside any scoped arena are owned by the
+  default program-lifetime arena; borrow inference uses the
   reserved lifetime name `program` for that storage, but there is no source
   binder to introduce.
 - **Ordinary first-class arena owners:** handles returned by `arena.make`

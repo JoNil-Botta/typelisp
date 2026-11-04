@@ -510,12 +510,13 @@
       (if stop (return 0) (deref b)))))
 (define (main) : i64 0)")
 
-;; nested: nested scopes with the same region name mint two scope lenders.
+;; nested: nested scopes mint two scope lenders. (A nested arena may not reuse
+;; the outer one's name; SPEC 5.16.)
 (define (lender-test-nested-source) : String
   "(define (main) : i64
   (with-arena r
     (let [outer : (Box i64) (box 1)]
-      (with-arena r
+      (with-arena q
         (let [inner : (Box i64) (box 41)]
           (+ (deref inner) (deref outer)))))))")
 
@@ -692,8 +693,8 @@
         (lender-test-demands-after? (& n1) 9 lender-test-brand)
         "n1 no demand after the end"))))
 
-;; Each scoped form's body demands its scope; nested same-name scopes are two
-;; lenders, each demanded by its own allocation.
+;; Each scoped form's body demands its scope; nested scopes are two lenders,
+;; each demanded by its own allocation.
 (cfg
   test
   (test
@@ -715,7 +716,7 @@
       (test.assert-i64-eq
         (lender-test-minted (& nested) lender-test-scope)
         2
-        "nested same-name scopes")
+        "nested scopes")
       (test.assert-i64-eq
         (lender-test-mask-at (& nested) 6)
         3

@@ -733,11 +733,23 @@ sc_fetch_pr_record() {
     }
     sc_api "repos/$GITHUB_REPOSITORY/commits/$_sfpr_c/pulls" "$_sfpr_dest/api/pulls.json" ||
         { SC_LEDGER_INFRA="listing PRs of $_sfpr_c failed"; _sfpr_problem "API error listing PRs of $_sfpr_c"; return 1; }
-    _sfpr_sel=$(jq -r --arg c "$_sfpr_c" '
-        [.[] | select(.merge_commit_sha == $c and .merged_at != null and .base.ref == "main")]
-        | if length == 1 then .[0] | [(.number | tostring), .head.sha] | @tsv else empty end' \
-        "$_sfpr_dest/api/pulls.json" | tr -d '\r')
-    [ -n "$_sfpr_sel" ] || { _sfpr_problem "no single merged PR has merge commit $_sfpr_c"; return 1; }
+    _sfpr_sel=$(sc_merged_prs "$_sfpr_dest/api/pulls.json" "$_sfpr_c")
+    if [ -z "$_sfpr_sel" ]; then
+        # GitHub can lose a merge's commit-to-PR association (#7851, c418b1041):
+        # find the PR by the merge commit it records instead.
+        _sfpr_scan_rc=0
+        sc_scan_merged_prs "$_sfpr_c" "$_sfpr_dest/api" || _sfpr_scan_rc=$?
+        case "$_sfpr_scan_rc" in
+            0) _sfpr_sel=$(cat "$_sfpr_dest/api/merged-prs.tsv") ;;
+            1)
+                _sfpr_problem "no PR lists merge commit $_sfpr_c, and closed PRs did not reach its merge time within $SC_PR_SCAN_PAGES pages"
+                return 1
+                ;;
+            *) SC_LEDGER_INFRA="listing closed PRs failed"; _sfpr_problem "API error listing closed PRs"; return 1 ;;
+        esac
+    fi
+    [ -n "$_sfpr_sel" ] && [ "$(printf '%s\n' "$_sfpr_sel" | wc -l | tr -d ' ')" = 1 ] ||
+        { _sfpr_problem "no single merged PR has merge commit $_sfpr_c"; return 1; }
     _sfpr_pr=$(printf '%s' "$_sfpr_sel" | cut -f1)
     _sfpr_h=$(printf '%s' "$_sfpr_sel" | cut -f2)
     sc_api "repos/$GITHUB_REPOSITORY/actions/workflows/$(basename "$SC_CI_WORKFLOW")/runs?event=pull_request&head_sha=$_sfpr_h&per_page=50" \
@@ -776,6 +788,31 @@ sc_fetch_pr_record() {
     cp "$_sfpr_a/result.tsv" "$_sfpr_dest/pr.tsv"
     cp "$_sfpr_a/head.tsv" "$_sfpr_dest/pr-head.tsv"
     cp "$_sfpr_a/base.tsv" "$_sfpr_dest/pr-base.tsv"
+}
+
+# sc_scan_merged_prs COMMIT DEST  ->  DEST/merged-prs.tsv, the merged PRs into
+# main (`number<TAB>head`) whose recorded merge commit is COMMIT, from closed
+# PRs listed newest-updated first back to a day before COMMIT's commit time:
+# a PR is never last updated before it merged. Returns 1 when the listing does
+# not reach that time within SC_PR_SCAN_PAGES pages, 2 on an API error.
+sc_scan_merged_prs() {
+    _ssmp_t=$(git log -1 --format=%ct "$1" 2>/dev/null) && sc_is_count "$_ssmp_t" || return 1
+    _ssmp_since=$((_ssmp_t - 86400))
+    : > "$2/merged-prs.all"
+    _ssmp_page=1
+    while [ "$_ssmp_page" -le "$SC_PR_SCAN_PAGES" ]; do
+        _ssmp_json=$2/closed-prs-$_ssmp_page.json
+        sc_api "repos/$GITHUB_REPOSITORY/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=$SC_PR_SCAN_PER_PAGE&page=$_ssmp_page" \
+            "$_ssmp_json" || return 2
+        jq -e 'type == "array"' "$_ssmp_json" >/dev/null 2>&1 || return 2
+        sc_merged_prs "$_ssmp_json" "$1" >> "$2/merged-prs.all"
+        if sc_pr_page_ends "$_ssmp_json" "$SC_PR_SCAN_PER_PAGE" "$_ssmp_since"; then
+            sort -u "$2/merged-prs.all" > "$2/merged-prs.tsv"
+            return 0
+        fi
+        _ssmp_page=$((_ssmp_page + 1))
+    done
+    return 1
 }
 
 # sc_pr_record_binding DIR PR HEAD RUN ATTEMPT REPO
@@ -962,6 +999,36 @@ sc_ledger_reproduce() {
     sc_record_line reproduction "T rebuilt as $_slr_t (tree $_slr_tree)" >> "$_slr_dest/reproduction"
 }
 
+# sc_ledger_attach_pr PR_DIR IN PARENT  ->  the merged PR's records in the
+# entry inputs IN, with the merges between its tested base and PARENT.
+sc_ledger_attach_pr() {
+    cp "$1/pr.tsv" "$1/pr-head.tsv" "$1/pr-base.tsv" "$2/"
+    _slap_b=$(sc_record_get "$2/pr.tsv" base)
+    if git merge-base --is-ancestor "$_slap_b" "$3" 2>/dev/null; then
+        git log --first-parent --format=%H "$_slap_b..$3" > "$2/merges-between"
+    fi
+}
+
+# sc_ledger_binary_checks IN  ->  IN/binary-problem names every pair of held
+# records whose compiler bytes disagree; sc_same_commit_binary applies only to
+# one commit built with the same as/ld at the same workspace.
+sc_ledger_binary_checks() {
+    _slbc_records=
+    for _slbc_kind in landed-reference landed parent-reference parent pr-head pr-base rep-head rep-base; do
+        [ -f "$1/$_slbc_kind.tsv" ] && _slbc_records="$_slbc_records $_slbc_kind"
+    done
+    _slbc_rest=$_slbc_records
+    for _slbc_one in $_slbc_records; do
+        _slbc_rest=${_slbc_rest# }
+        _slbc_rest=${_slbc_rest#"$_slbc_one"}
+        for _slbc_two in $_slbc_rest; do
+            if ! _slbc_msg=$(sc_same_commit_binary "$1/$_slbc_one.tsv" "$1/$_slbc_two.tsv"); then
+                echo "$_slbc_one/$_slbc_two: $_slbc_msg" >> "$1/binary-problem"
+            fi
+        done
+    done
+}
+
 # sc_ledger_walk_line COMMIT WORK  ->  one sc_chain_plan line for an ancestor,
 # downloading its ledger artifact into WORK when there is one.
 sc_ledger_walk_line() {
@@ -1000,22 +1067,79 @@ sc_ledger_walk_line() {
 
 # sc_ledger_repair_entries ACCOUNT WORK OUT
 #   An entry without an accounted step is replaced when its commit's ledger has
-#   since been re-run and produced a complete entry.
+#   since been re-run and produced a complete entry. An entry whose step was
+#   measured but whose PR was not found is re-attributed here instead
+#   (sc_ledger_reattribute): a re-run of that commit's ledger would run that
+#   commit's own, older scripts.
 sc_ledger_repair_entries() {
     cp "$1" "$3"
     for _slre_c in $(awk -F '\t' '$1 == "entry" && ($6 == "-" || $7 == "-") { print $2 }' "$1"); do
         _slre_dir=$2/repair-$_slre_c
         sc_fetch_run_artifact ledger "$_slre_c" "$SC_LEDGER_JOB_NAME" "$SC_LEDGER_ARTIFACT" "$_slre_dir"
         [ "$SC_RUN_STATUS" = ok ] || continue
+        [ "$(sc_record_get "$_slre_dir/artifact/producer.tsv" commit 2>/dev/null || true)" = "$_slre_c" ] || continue
         [ "$(sc_record_get "$_slre_dir/artifact/producer.tsv" run.id 2>/dev/null || true)" = "$SC_RUN_ID" ] || continue
         [ "$(sc_record_get "$_slre_dir/artifact/producer.tsv" run.attempt 2>/dev/null || true)" = "$SC_RUN_ATTEMPT" ] || continue
         [ "$(sc_record_get "$_slre_dir/artifact/entry.tsv" commit 2>/dev/null || true)" = "$_slre_c" ] || continue
         sc_record_get "$_slre_dir/artifact/entry.tsv" step >/dev/null 2>&1 || continue
-        sc_record_get "$_slre_dir/artifact/entry.tsv" own >/dev/null 2>&1 || continue
-        sc_account_apply "$3" "$_slre_dir/artifact/entry.tsv" > "$3.next"
+        _slre_entry=$_slre_dir/artifact/entry.tsv
+        _slre_how="from its re-run"
+        if ! sc_record_get "$_slre_entry" own >/dev/null 2>&1; then
+            sc_ledger_reattribute "$_slre_c" "$_slre_dir" || continue
+            _slre_entry=$_slre_dir/reattributed/entry.tsv
+            _slre_how="by re-attributing its PR"
+        fi
+        sc_account_apply "$3" "$_slre_entry" > "$3.next"
         mv "$3.next" "$3"
-        sc_log "repaired the ledger entry of $_slre_c from its re-run"
+        sc_log "repaired the ledger entry of $_slre_c $_slre_how"
     done
+}
+
+# sc_ledger_reattribute COMMIT DIR  ->  DIR/reattributed/entry.tsv, COMMIT's
+# entry recomputed from the pair records its ledger run uploaded (DIR/artifact,
+# already bound to that run) and its merged PR's record fetched now. Only an
+# entry with `attribution missing` qualifies, and only when the PR's own
+# comparison is comparable with the landed pair: a reproduction would need
+# measuring, which the repair step never does.
+sc_ledger_reattribute() {
+    _slra_old=$2/artifact/entry.tsv
+    _slra_in=$2/reattributed/inputs
+    [ "$(sc_record_get "$_slra_old" attribution 2>/dev/null || true)" = missing ] || return 1
+    mkdir -p "$_slra_in"
+    for _slra_kind in landed-reference landed parent-reference parent; do
+        if [ -f "$2/artifact/entry-inputs/$_slra_kind.tsv" ]; then
+            cp "$2/artifact/entry-inputs/$_slra_kind.tsv" "$_slra_in/"
+        fi
+    done
+    # The commit, its parent and their trees come from git, not the artifact.
+    _slra_p=$(git rev-parse --verify -q "$1^1") || return 1
+    printf '%s\n' "$1" > "$_slra_in/commit"
+    printf '%s\n' "$_slra_p" > "$_slra_in/parent"
+    git rev-parse "$1^{tree}" > "$_slra_in/tree.commit" || return 1
+    git rev-parse "$_slra_p^{tree}" > "$_slra_in/tree.parent" || return 1
+    if ! sc_fetch_pr_record "$1" "$2/reattributed/pr"; then
+        sc_log "cannot re-attribute $1: $(cat "$2/reattributed/pr/attribution-problem" 2>/dev/null)"
+        return 1
+    fi
+    sc_ledger_attach_pr "$2/reattributed/pr" "$_slra_in" "$_slra_p"
+    if ! sc_records_comparable "$_slra_in/pr-head.tsv" "$_slra_in/landed.tsv" >/dev/null ||
+        ! sc_records_comparable "$_slra_in/pr-base.tsv" "$_slra_in/landed.tsv" >/dev/null; then
+        sc_log "cannot re-attribute $1: its PR's measurement identity differs from the landed pair"
+        return 1
+    fi
+    sc_ledger_binary_checks "$_slra_in"
+    {
+        sc_ledger_entry "$_slra_in"
+        sc_record_line pair_source "$(sc_record_get "$_slra_old" pair_source 2>/dev/null || true)"
+        if sc_record_get "$_slra_old" reconciliation >/dev/null 2>&1; then
+            sc_record_line reconciliation "$(sc_record_get "$_slra_old" reconciliation)"
+        fi
+        sc_record_line reattributed "ledger run ${GITHUB_RUN_ID:-} attempt ${GITHUB_RUN_ATTEMPT:-}"
+    } > "$2/reattributed/entry.tsv"
+    # The same pair records must give the same step.
+    [ "$(sc_record_get "$2/reattributed/entry.tsv" commit 2>/dev/null || true)" = "$1" ] &&
+        [ "$(sc_record_get "$2/reattributed/entry.tsv" step 2>/dev/null || true)" = "$(sc_record_get "$_slra_old" step)" ] &&
+        sc_record_get "$2/reattributed/entry.tsv" own >/dev/null 2>&1
 }
 
 sc_cmd_ledger_prepare() {
@@ -1056,11 +1180,7 @@ sc_cmd_ledger_prepare() {
     esac
     if [ -z "$_scl_outcome" ]; then
         if sc_fetch_pr_record "$_scl_c" "$_scl_work/pr"; then
-            cp "$_scl_work/pr/pr.tsv" "$_scl_work/pr/pr-head.tsv" "$_scl_work/pr/pr-base.tsv" "$_scl_in/"
-            _scl_b=$(sc_record_get "$_scl_in/pr.tsv" base)
-            if git merge-base --is-ancestor "$_scl_b" "$_scl_p" 2>/dev/null; then
-                git log --first-parent --format=%H "$_scl_b..$_scl_p" > "$_scl_in/merges-between"
-            fi
+            sc_ledger_attach_pr "$_scl_work/pr" "$_scl_in" "$_scl_p"
         elif [ -n "$SC_LEDGER_INFRA" ]; then
             _scl_outcome=infrastructure-failure
             _scl_detail=$SC_LEDGER_INFRA
@@ -1135,22 +1255,7 @@ sc_cmd_ledger() {
     if [ -z "$_scl_outcome" ]; then
         # After every re-measurement: one commit measured twice with the same
         # as/ld must have measured the same compiler bytes.
-        # Every pair of records held; sc_same_commit_binary applies only to
-        # one commit built with the same as/ld at the same workspace.
-        _scl_records=
-        for _scl_kind in landed-reference landed parent-reference parent pr-head pr-base rep-head rep-base; do
-            [ -f "$_scl_in/$_scl_kind.tsv" ] && _scl_records="$_scl_records $_scl_kind"
-        done
-        _scl_rest=$_scl_records
-        for _scl_one in $_scl_records; do
-            _scl_rest=${_scl_rest# }
-            _scl_rest=${_scl_rest#"$_scl_one"}
-            for _scl_two in $_scl_rest; do
-                if ! _scl_msg=$(sc_same_commit_binary "$_scl_in/$_scl_one.tsv" "$_scl_in/$_scl_two.tsv"); then
-                    echo "$_scl_one/$_scl_two: $_scl_msg" >> "$_scl_in/binary-problem"
-                fi
-            done
-        done
+        sc_ledger_binary_checks "$_scl_in"
         sc_ledger_entry "$_scl_in" > "$_scl_out/entry.tsv"
         sc_record_line pair_source "$SC_PAIR_SOURCE" >> "$_scl_out/entry.tsv"
         if [ -f "$_scl_in/attribution-problem" ]; then

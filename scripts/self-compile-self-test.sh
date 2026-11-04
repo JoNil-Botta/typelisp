@@ -1185,6 +1185,104 @@ st_e2e_ledger_set() {
     done
 }
 
+# st_closed_prs PAGE PER_PAGE [PR...]  ->  that page of closed PRs into main,
+# newest-updated first; each PR is `number:merge_commit:head[:merged[:base]]`
+# (merged `yes` by default, base `main`), last updated now.
+st_closed_prs() {
+    _scp_page=$1
+    _scp_per=$2
+    shift 2
+    _scp_now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    for _scp_pr in "$@"; do
+        printf '%s\n' "$_scp_pr"
+    done | jq -R -s -c --arg now "$_scp_now" '
+        split("\n") | map(select(length > 0) | split(":")
+            | {number: (.[0] | tonumber), merge_commit_sha: .[1], head: {sha: .[2]},
+               merged_at: (if (.[3] // "yes") == "yes" then "2026-10-26T00:00:00Z" else null end),
+               base: {ref: (.[4] // "main")}, updated_at: $now})' |
+        st_api_put "repos/$ST_REPO/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=$_scp_per&page=$_scp_page"
+}
+
+# GitHub lost the commit-to-PR association of a merge (#7851, c418b1041): the
+# ledger finds the PR by its recorded merge commit, and a later ledger run
+# re-attributes an entry whose PR was not found then.
+st_e2e_lost_association() {
+    # 1793664000 is 2026-11-03T00:00:00Z.
+    printf '[{"updated_at": "2026-11-04T10:00:00Z"}, {"updated_at": "2026-11-03T00:00:01Z"}]\n' > "$ST_E2E/page-recent.json"
+    printf '[{"updated_at": "2026-11-04T10:00:00Z"}, {"updated_at": "2026-11-02T23:59:59Z"}]\n' > "$ST_E2E/page-older.json"
+    st_fails "a full page of PRs updated since the bound continues" sc_pr_page_ends "$ST_E2E/page-recent.json" 2 1793664000
+    st_succeeds "a page reaching a PR updated before the bound ends" sc_pr_page_ends "$ST_E2E/page-older.json" 2 1793664000
+    st_succeeds "a short page ends" sc_pr_page_ends "$ST_E2E/page-recent.json" 3 1793664000
+
+    st_e2e_ledger_set lost - 116000050100
+    ST_API=$ST_E2E/lost-api
+    printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$ST_SET_C0/pulls"
+    st_closed_prs 1 100 "52:$ST_SET_C0:$ST_SHA_F:no" "53:$ST_SET_C0:$ST_SHA_F:yes:release" \
+        "50:$ST_SET_C0:$ST_SHA_E" "49:$ST_SHA_A:$ST_SHA_B"
+    st_eq "e2e ledger finds a PR whose association is lost by its merge commit" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lost)" "0 ok yes clean 1"
+    st_eq "the found PR is the merged one into main" \
+        "$(sc_record_get "$ST_E2E/lost-c0/repo/target/self-compile/ledger/entry.tsv" pr)" 50
+
+    st_e2e_ledger_set lost-two - 116000050100
+    ST_API=$ST_E2E/lost-two-api
+    printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$ST_SET_C0/pulls"
+    st_closed_prs 1 100 "50:$ST_SET_C0:$ST_SHA_E" "54:$ST_SET_C0:$ST_SHA_F"
+    st_eq "e2e ledger refuses two merged PRs with one merge commit" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lost-two | cut -d' ' -f1-2)" "1 attribution-failure"
+
+    st_e2e_ledger_set lost-far - 116000050100
+    ST_API=$ST_E2E/lost-far-api
+    printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$ST_SET_C0/pulls"
+    st_closed_prs 1 1 "48:$ST_SHA_A:$ST_SHA_B"
+    st_closed_prs 2 1 "47:$ST_SHA_A:$ST_SHA_B"
+    st_closed_prs 3 1 "50:$ST_SET_C0:$ST_SHA_E"
+    st_closed_prs 4 1
+    st_eq "e2e ledger bounds the closed-PR scan" \
+        "$(SC_PR_SCAN_PAGES=2; SC_PR_SCAN_PER_PAGE=1; st_e2e_ledger c0 "$ST_SET_C0" 900 lost-far | cut -d' ' -f1-2)" \
+        "1 attribution-failure"
+    st_eq "a bounded scan names its bound" \
+        "$(sc_record_get "$ST_E2E/lost-far-c0/repo/target/self-compile/ledger/entry.tsv" attribution_problem | grep -c 'within 2 pages' | tr -d ' ')" 1
+    st_eq "e2e ledger scans closed PRs page by page" \
+        "$(SC_PR_SCAN_PAGES=4; SC_PR_SCAN_PER_PAGE=1; st_e2e_ledger c0b "$ST_SET_C0" 900 lost-far)" "0 ok yes clean 1"
+
+    st_e2e_ledger_set lost-api - 116000050100
+    ST_API=$ST_E2E/lost-api-api
+    printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$ST_SET_C0/pulls"
+    st_eq "an API error in the closed-PR scan is an infrastructure failure" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lost-api | cut -d' ' -f1-2)" "1 infrastructure-failure"
+
+    # Neither listing names c0's PR when its ledger runs; by c1's ledger the
+    # closed-PR listing does, and c1's ledger repairs c0's entry.
+    st_e2e_ledger_set reattr - 116000050100
+    ST_API=$ST_E2E/reattr-api
+    printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$ST_SET_C0/pulls"
+    st_closed_prs 1 100
+    st_eq "e2e ledger without any PR for c0" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 reattr)" \
+        "1 attribution-failure no unresolved 1"
+    st_closed_prs 1 100 "50:$ST_SET_C0:$ST_SHA_E"
+    st_eq "a later ledger re-attributes the earlier entry" "$(st_e2e_ledger c1 "$ST_SET_C1" 901 reattr)" "0 ok yes clean 2"
+    _st_acc=$ST_E2E/reattr-c1/repo/target/self-compile/ledger/account.tsv
+    st_eq "the re-attributed entry carries the PR's own" \
+        "$(awk -F '\t' -v c="$ST_SET_C0" '$1 == "entry" && $2 == c { print $3, $5, $6, $7 }' "$_st_acc")" "S ok 50000 50100"
+    st_eq "the re-attribution is logged" \
+        "$(grep -c "repaired the ledger entry of $ST_SET_C0 by re-attributing its PR" "$ST_E2E/reattr-c1/ledger.log" | tr -d ' ')" 1
+
+    # A PR measured in another identity would need a reproduction: the repair
+    # step never measures, so the entry stays unattributed.
+    st_e2e_ledger_set reattr-id - 116000050100 key.kernel=6.8.0-1036-azure
+    ST_API=$ST_E2E/reattr-id-api
+    printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$ST_SET_C0/pulls"
+    st_closed_prs 1 100
+    st_eq "e2e ledger without any PR for c0 (other identity)" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 reattr-id | cut -d' ' -f1-2)" "1 attribution-failure"
+    st_closed_prs 1 100 "50:$ST_SET_C0:$ST_SHA_E"
+    st_eq "re-attribution never reproduces a PR comparison" \
+        "$(st_e2e_ledger c1 "$ST_SET_C1" 901 reattr-id)" "1 ok no unresolved 2"
+    st_eq "the refused re-attribution says why" \
+        "$(grep -c "cannot re-attribute $ST_SET_C0: its PR's measurement identity differs" "$ST_E2E/reattr-id-c1/ledger.log" | tr -d ' ')" 1
+}
+
 st_e2e() {
     case "$(uname -s)" in
         Linux*) ;;
@@ -1351,6 +1449,7 @@ st_e2e() {
         "$SC_CI_LEGACY_JOB_NAME" | st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100"
     st_eq "e2e ledger attributes a pre-lane CI run to its Linux job" \
         "$(st_e2e_ledger c0 "$ST_SET_C0" 900 legacy-job)" "0 ok yes clean 1"
+    st_e2e_lost_association
     st_e2e_ledger_set e6 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 

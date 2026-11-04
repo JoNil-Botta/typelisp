@@ -98,6 +98,7 @@ tests/fixtures/crypto-aes/shape-windows-x86_64-opt2.sha256	stage2-crypto-aes-fix
 tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.
 tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast,stage2-sde-fallback	@corpus	Exact case file named by the lane and broadcast gates.
 tests/cli/public-*.cases	stage2-public-tool-surface	@corpus	Public command transcripts discovered by the public-tool runner.
+tests/safety/cond_missing_else*_reject.tl	stage2-public-tool-surface	@corpus	Primary rejection fixtures in the public conditional diagnostic matrix.
 tests/cli/selfhost-surface.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact command-surface corpus named by the CLI smoke runner.
 tests/cli/selfhost-build-run.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact build/run corpus named by the CLI smoke runner.
 tests/cli/host-action.cases	stage2-cli-host-action-smoke	@corpus	The host-action smoke runner directly consumes this transcript.
@@ -163,7 +164,7 @@ tests/integration/compile_profile_vector_struct_full.tl	stage2-compile-profile-v
 tests/integration/compiler_arena_debug.tl	compiler-arena-debug-native-matrix	@corpus	Direct fixture input in verify-compiler-arena-debug.sh.
 tests/integration/comptime_type_expr_worklist.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/comptime_type_specialization.tl	stage2-compile-profile-verifier	@corpus	Direct fixture input in verify-compile-profile.sh.
-tests/integration/cond.tl	stage2-prelude-macro-mutation-guard	@corpus	Direct fixture input in verify-prelude-mutation.sh.
+tests/integration/cond.tl	stage2-prelude-macro-mutation-guard,stage2-public-tool-surface	@corpus	Direct fixture in the prelude mutation guard and public conditional diagnostic matrix.
 tests/integration/control_flow.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-codegen-target-parity.sh, check-deterministic-asm.sh.
 tests/integration/cross_mode_internal_color.tl	stage2-cross-mode-semantic-abi-differential,stage2-sde-fallback	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
 tests/integration/enum_match.tl	stage2-deterministic-assembly,stage2-windows-coff-batch-plan	@corpus	Direct fixture input in check-codegen-target-parity.sh, check-deterministic-asm.sh, verify-compile-batch-windows-coff.sh.

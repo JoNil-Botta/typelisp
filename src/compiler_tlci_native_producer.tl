@@ -801,7 +801,8 @@
                     (string.int->string clauses-index)
                     (if checked?
                       (embedded-native-name-arg
-                        (owned_view.compiler-owned-shared-view message))
+                        (embedded-native-escape-string
+                          (owned_view.compiler-owned-shared-view message)))
                       "0")
                     (if checked?
                       (string.int->string (string.string-length message))

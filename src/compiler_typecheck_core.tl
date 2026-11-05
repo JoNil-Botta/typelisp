@@ -113280,11 +113280,11 @@
 
 ;; Transformer CTFE has no import scope. A source `defmacro` whose body has a
 ;; `(type T)` literal naming a type through an import alias or module name
-;; carries the parser's marker; expanding it resolves the body's type literals
-;; in the macro's defining module, the way an ordinary fold resolves its
-;; literals (#8112), so `(type g.Point)` there names the declaration an
-;; annotation of `g.Point` names in that module (#9633). Other transformers
-;; read no marker until such a macro has been parsed.
+;; carries the parser's declaration marker 4; expanding it resolves every type
+;; literal of the body in the macro's defining module, the way an ordinary fold
+;; resolves its literals (#8112), so `(type g.Point)` there names the
+;; declaration an annotation of `g.Point` names in that module (#9633). Other
+;; transformers read no marker until such a macro has been parsed.
 (define (macro-transformer-type-literal-env
   [ctx : TcContext]
   [module-id : i64]
@@ -113292,47 +113292,35 @@
   [body : (& ast.AstExpr)]
   [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
   (if (and
-    parser.compiler-parse-qualified-type-literal-macro-seen
-    (macro-declaration-names-qualified-type-literal? ctx declaration-id))
-    ;; The whole body: a multi-form body is an unspanned `Begin`.
-    (macro-transformer-type-literal-env-at
-      ctx
-      module-id
-      (clone (deref body))
-      env)
+    (not (= (bit-and parser.compiler-parse-qualified-type-literal-state 2) 0))
+    (match (csym.compiler-symbols-decl-at-index
+      (tc-context-symbols ctx)
+      declaration-id)
+      [(Ok decl)
+        (not (= (bit-and (ast.ast-decl-aggregate-markers (& decl)) 4) 0))]
+      [(Err _) false]))
+    (let
+      [module-ctx : TcContext
+        (cond
+          [(= ctx.module-id module-id) ctx]
+          [(csym.compiler-symbol-root-module-id? module-id)
+            (tc-context-with-module-id ctx "" module-id)]
+          [else
+            (tc-context-with-module-id
+              ctx
+              (tc-env-key-name-text module-id)
+              module-id)])]
+      [resolutions : ctfe_support.CtfeTypeLiteralResolutions
+        (ctfe_support.ctfe-type-literal-resolutions-empty)]
+      ;; The whole body: a multi-form body is an unspanned `Begin`.
+      (tc-ctfe-type-literal-resolutions-into
+        module-ctx
+        (&mut resolutions)
+        (clone (deref body)))
+      (if (ast.ast-type-list-empty? (& resolutions.written))
+        env
+        (ctfe_support.ctfe-env-with-type-literals env resolutions)))
     env))
-
-(define (macro-declaration-names-qualified-type-literal?
-  [ctx : TcContext]
-  [declaration-id : i64]) : bool
-  (match (csym.compiler-symbols-decl-at-index
-    (tc-context-symbols ctx)
-    declaration-id)
-    [(Ok decl) (ast.ast-decl-names-qualified-type-literal? (& decl))]
-    [(Err _) false]))
-
-(define (macro-transformer-type-literal-env-at
-  [ctx : TcContext]
-  [module-id : i64]
-  [body : ast.AstExpr]
-  [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
-  (let
-    [module-ctx : TcContext
-      (cond
-        [(= ctx.module-id module-id) ctx]
-        [(csym.compiler-symbol-root-module-id? module-id)
-          (tc-context-with-module-id ctx "" module-id)]
-        [else
-          (tc-context-with-module-id
-            ctx
-            (tc-env-key-name-text module-id)
-            module-id)])]
-    [resolutions : ctfe_support.CtfeTypeLiteralResolutions
-      (ctfe_support.ctfe-type-literal-resolutions-empty)]
-    (tc-ctfe-type-literal-resolutions-into module-ctx (&mut resolutions) body)
-    (if (ast.ast-type-list-empty? (& resolutions.written))
-      env
-      (ctfe_support.ctfe-env-with-type-literals env resolutions))))
 
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]

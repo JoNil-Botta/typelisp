@@ -8161,28 +8161,15 @@
           (MalformedForm)
           "parse: comptime expects exactly one expression"))]))
 
-;; Whether a `(type T)` literal parsed inside the current `defmacro` body
-;; names a type through an import alias or module name. Transformer CTFE has no
-;; import scope, so expansion resolves such a body's literals in the defining
-;; module; the parser records the fact on the declaration (#9633).
-(define compiler-parse-qualified-type-literal-seen : bool
-  false)
-
-;; Set once any parsed `defmacro` carries that marker. Until then expansion
-;; skips the marker read entirely.
-(define compiler-parse-qualified-type-literal-macro-seen : bool
-  false)
-
-;; A written type naming a declaration through a dotted alias or module name.
-;; Composite written types count conservatively.
-(define (parse-ast-type-qualified? [ty : (& ast.AstType)]) : bool
-  (match ty
-    [(or (Var name) (VarArgs name _)) (ci.intern-dotted? name)]
-    [(or (CFunc _ _) (Func _ _) (Tuple _) (Array _ _) (DynArray _) (Slice _)
-         (Box _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Region _ _)
-         (Invalidate _ _))
-      true]
-    [_ false]))
+;; Qualified type literals in `defmacro` bodies (#9633). Bit 1: the
+;; `defmacro` body being parsed has a `(type T)` literal naming a type through
+;; a dotted alias or module name (composite written types count
+;; conservatively); the parser records it as declaration marker 4, because
+;; transformer CTFE has no import scope and expansion resolves such a body's
+;; literals in the defining module. Bit 2: some parsed `defmacro` carries that
+;; marker; until then expansion never reads it.
+(define compiler-parse-qualified-type-literal-state : i64
+  0)
 
 (define (parse-ast-type-literal
   [dispatch : sym_i64_env.SymI64Env]
@@ -8193,8 +8180,16 @@
       (let
         [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
         (when
-          (parse-ast-type-qualified? (& parsed-ty))
-          (set! compiler-parse-qualified-type-literal-seen true))
+          (match (& parsed-ty)
+            [(or (Var name) (VarArgs name _)) (ci.intern-dotted? name)]
+            [(or (CFunc _ _) (Func _ _) (Tuple _) (Array _ _) (DynArray _)
+                 (Slice _) (Box _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _)
+                 (Region _ _) (Invalidate _ _))
+              true]
+            [_ false])
+          (set!
+            compiler-parse-qualified-type-literal-state
+            (bit-or compiler-parse-qualified-type-literal-state 1)))
         (Ok
           (ast.ast-node-pool-context-expr-push
             pools
@@ -10615,30 +10610,41 @@
                 params)
               (let
                 [parsed-ret (try (parse-ast-type-spanned dispatch pools ret))]
-                [enclosing-seen : bool
-                  compiler-parse-qualified-type-literal-seen]
-                [_ (set! compiler-parse-qualified-type-literal-seen false)]
+                [enclosing : i64
+                  (bit-and compiler-parse-qualified-type-literal-state 1)]
+                [_
+                  (set!
+                    compiler-parse-qualified-type-literal-state
+                    (bit-and compiler-parse-qualified-type-literal-state 2))]
                 [body-result : ResultAstExpr
                   (parse-ast-body-tail
                     dispatch
                     pools
                     (reader.spanned-sexpr-drop rest 3)
                     "parse: malformed defmacro")]
-                [qualified : bool compiler-parse-qualified-type-literal-seen]
+                [qualified : bool
+                  (not
+                    (=
+                      (bit-and compiler-parse-qualified-type-literal-state 1)
+                      0))]
                 (set!
-                  compiler-parse-qualified-type-literal-seen
-                  (or enclosing-seen qualified))
-                (when
-                  qualified
-                  (set! compiler-parse-qualified-type-literal-macro-seen true))
+                  compiler-parse-qualified-type-literal-state
+                  (bit-or
+                    (bit-and compiler-parse-qualified-type-literal-state 2)
+                    (bit-or
+                      enclosing
+                      (if qualified
+                        2
+                        0))))
                 (Ok
-                  (ast.ast-decl-def-macro-id-with-markers
-                    (ci.intern-syntax-id-value name)
-                    parsed-params
-                    parsed-ret
-                    (try body-result)
+                  (ast.ast-decl-with-aggregate-markers
+                    (ast.ast-decl-def-macro-id
+                      (ci.intern-syntax-id-value name)
+                      parsed-params
+                      parsed-ret
+                      (try body-result))
                     (if qualified
-                      ast.ast-decl-marker-qualified-type-literal
+                      4
                       0)))))
             (Err
               (parse-kind-message

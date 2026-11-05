@@ -118,3 +118,47 @@ stdout empty
 stderr contains error[E0505]: invalid user expression
 stderr after ^error\[E0505\]:
 next-line .*main.tl:5:13$
+
+# An error authored by any macro's template, not only cond's, rejects the
+# user's invocation: the primary span and the expansion note both name the
+# invocation, and nothing points into the template's own source lines.
+case user-template-comptime-error-location
+each check compile build
+file main.tl
+(import stdlib.comptime)
+(defmacro (needs-default) : i64
+  `(comptime (comptime.comptime-error "sewing plan needs a default")))
+
+(define (main) : i64
+  (needs-default))
+end-file
+run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: sewing plan needs a default
+stderr after ^error\[E0505\]:
+next-line .*main.tl:6:3$
+stderr count = 2 main\.tl:6:3$
+stderr contains in expansion of macro `needs-default` invoked here
+stderr count = 0 main\.tl:[23]:
+
+# The same holds for an invocation nested inside another expression.
+case user-template-comptime-error-nested-location
+each check compile build
+file main.tl
+(import stdlib.comptime)
+(defmacro (needs-default) : i64
+  `(comptime (comptime.comptime-error "sewing plan needs a default")))
+
+(define (main) : i64
+  (+ 1 (needs-default)))
+end-file
+run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: sewing plan needs a default
+stderr after ^error\[E0505\]:
+next-line .*main.tl:6:8$
+stderr count = 2 main\.tl:6:8$
+stderr contains in expansion of macro `needs-default` invoked here
+stderr count = 0 main\.tl:[23]:

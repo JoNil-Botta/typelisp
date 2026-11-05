@@ -10361,6 +10361,25 @@
   [body : i64]) : AstDecl
   (DefMacro (ast-global-shared-view ast-decl-meta-runtime) name params ret body))
 
+;; Declaration marker bit (beside must-use 1 and opaque 2) recorded by the
+;; parser on a `defmacro` whose transformer body has a `(type T)` literal
+;; naming a type through an import alias or module name (#9633).
+(define ast-decl-marker-qualified-type-literal : i64
+  4)
+
+(define (ast-decl-def-macro-id-with-markers
+  [name : i64]
+  [params : AstMacroParamList]
+  [ret : AstType]
+  [body : i64]
+  [markers : i64]) : AstDecl
+  (DefMacro
+    (ast-decl-meta-runtime-with-aggregate-markers markers)
+    name
+    params
+    ret
+    body))
+
 (define (ast-decl-extern-id
   [name : i64]
   [kind : AstExternKind]
@@ -10471,6 +10490,14 @@
 
 (define (ast-decl-opaque? [decl : (& decl AstDecl)]) : bool
   (not (= (bit-and (ast-decl-aggregate-markers decl) 2) 0)))
+
+(define (ast-decl-names-qualified-type-literal? [decl : (& decl AstDecl)]) : bool
+  (not
+    (=
+      (bit-and
+        (ast-decl-aggregate-markers decl)
+        ast-decl-marker-qualified-type-literal)
+      0)))
 
 (define (ast-decl-with-meta [meta : AstDeclMeta] [inner : AstDecl]) : AstDecl
   (let

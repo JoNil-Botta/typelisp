@@ -8161,6 +8161,29 @@
           (MalformedForm)
           "parse: comptime expects exactly one expression"))]))
 
+;; Whether a `(type T)` literal parsed inside the current `defmacro` body
+;; names a type through an import alias or module name. Transformer CTFE has no
+;; import scope, so expansion resolves such a body's literals in the defining
+;; module; the parser records the fact on the declaration (#9633).
+(define compiler-parse-qualified-type-literal-seen : bool
+  false)
+
+;; Set once any parsed `defmacro` carries that marker. Until then expansion
+;; skips the marker read entirely.
+(define compiler-parse-qualified-type-literal-macro-seen : bool
+  false)
+
+;; A written type naming a declaration through a dotted alias or module name.
+;; Composite written types count conservatively.
+(define (parse-ast-type-qualified? [ty : (& ast.AstType)]) : bool
+  (match ty
+    [(or (Var name) (VarArgs name _)) (ci.intern-dotted? name)]
+    [(or (CFunc _ _) (Func _ _) (Tuple _) (Array _ _) (DynArray _) (Slice _)
+         (Box _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Region _ _)
+         (Invalidate _ _))
+      true]
+    [_ false]))
+
 (define (parse-ast-type-literal
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -8169,6 +8192,9 @@
     [(List (slice ty) _)
       (let
         [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
+        (when
+          (parse-ast-type-qualified? (& parsed-ty))
+          (set! compiler-parse-qualified-type-literal-seen true))
         (Ok
           (ast.ast-node-pool-context-expr-push
             pools
@@ -10589,19 +10615,31 @@
                 params)
               (let
                 [parsed-ret (try (parse-ast-type-spanned dispatch pools ret))]
-                [parsed-body
-                  (try
-                    (parse-ast-body-tail
-                      dispatch
-                      pools
-                      (reader.spanned-sexpr-drop rest 3)
-                      "parse: malformed defmacro"))]
+                [enclosing-seen : bool
+                  compiler-parse-qualified-type-literal-seen]
+                [_ (set! compiler-parse-qualified-type-literal-seen false)]
+                [body-result : ResultAstExpr
+                  (parse-ast-body-tail
+                    dispatch
+                    pools
+                    (reader.spanned-sexpr-drop rest 3)
+                    "parse: malformed defmacro")]
+                [qualified : bool compiler-parse-qualified-type-literal-seen]
+                (set!
+                  compiler-parse-qualified-type-literal-seen
+                  (or enclosing-seen qualified))
+                (when
+                  qualified
+                  (set! compiler-parse-qualified-type-literal-macro-seen true))
                 (Ok
-                  (ast.ast-decl-def-macro-id
+                  (ast.ast-decl-def-macro-id-with-markers
                     (ci.intern-syntax-id-value name)
                     parsed-params
                     parsed-ret
-                    parsed-body))))
+                    (try body-result)
+                    (if qualified
+                      ast.ast-decl-marker-qualified-type-literal
+                      0)))))
             (Err
               (parse-kind-message
                 (MalformedForm)

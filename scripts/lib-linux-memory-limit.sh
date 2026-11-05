@@ -673,6 +673,25 @@ linux_memory_limit_release_gate() {
     rmdir -- "${_linux_memory_limit_gate_dir:?}"
 }
 
+linux_memory_limit_wait_for_process_group() {
+    _linux_memory_limit_isolation_ms=0
+    while :; do
+        _linux_memory_limit_pgid=$(ps -o pgid= -p "$_linux_memory_limit_pid" 2>/dev/null \
+            | awk 'NR == 1 { print $1 }')
+        _linux_memory_limit_isolation_ms=$(awk \
+            -v start="$1" \
+            'NR == 1 { printf "%.0f\n", ($1 - start) * 1000 }' /proc/uptime) || return 1
+        if [ -z "$_linux_memory_limit_pgid" ] ||
+            [ "$_linux_memory_limit_pgid" -eq "$_linux_memory_limit_pid" ]; then
+            return 0
+        fi
+        [ "$_linux_memory_limit_isolation_ms" -lt 5000 ] || return 1
+        # setsid can still be waiting to run on a busy host. Keep user code
+        # gated and use elapsed monotonic time rather than a short retry count.
+        sleep 0.01
+    done
+}
+
 linux_memory_limit_sample_process_group() {
     _linux_memory_limit_bytes=$1
     shift
@@ -729,6 +748,11 @@ linux_memory_limit_sample_process_group() {
         return 1
     }
     _linux_memory_limit_gate="$_linux_memory_limit_gate_dir/start"
+    _linux_memory_limit_isolation_start=$(awk 'NR == 1 { print $1 }' /proc/uptime) || {
+        linux_memory_limit_release_gate || true
+        echo "process-group sampler cannot read monotonic launch time" >&2
+        return 1
+    }
     setsid sh -c '
         gate=$1
         leaf=$2
@@ -746,20 +770,13 @@ linux_memory_limit_sample_process_group() {
     ' sh "$_linux_memory_limit_gate" "$_linux_memory_limit_leaf" \
         "$_linux_memory_limit_workload" "$@" &
     _linux_memory_limit_pid=$!
-    _linux_memory_limit_pgid=$(ps -o pgid= -p "$_linux_memory_limit_pid" 2>/dev/null \
-        | awk 'NR == 1 { print $1 }')
-    _linux_memory_limit_isolation_attempt=0
-    while [ -n "$_linux_memory_limit_pgid" ] \
-        && [ "$_linux_memory_limit_pgid" -ne "$_linux_memory_limit_pid" ] \
-        && [ "$_linux_memory_limit_isolation_attempt" -lt 20 ]; do
-        # The parent can briefly observe the forked child before `setsid`
-        # replaces it. Wait for the new session instead of treating that race
-        # as a missing platform capability.
-        sleep 0.01
-        _linux_memory_limit_isolation_attempt=$((_linux_memory_limit_isolation_attempt + 1))
-        _linux_memory_limit_pgid=$(ps -o pgid= -p "$_linux_memory_limit_pid" 2>/dev/null \
-            | awk 'NR == 1 { print $1 }')
-    done
+    if ! linux_memory_limit_wait_for_process_group "$_linux_memory_limit_isolation_start"; then
+        kill "$_linux_memory_limit_pid" 2>/dev/null || true
+        wait "$_linux_memory_limit_pid" 2>/dev/null || true
+        linux_memory_limit_release_gate || true
+        echo "process-group sampler failed to isolate command process group after ${_linux_memory_limit_isolation_ms} ms (limit 5000 ms)" >&2
+        return 1
+    fi
 
     if [ -z "$_linux_memory_limit_pgid" ]; then
         if wait "$_linux_memory_limit_pid"; then
@@ -773,13 +790,7 @@ linux_memory_limit_sample_process_group() {
         linux_memory_limit_release_gate || true
         return "$_linux_memory_limit_status"
     fi
-    if [ "$_linux_memory_limit_pgid" -ne "$_linux_memory_limit_pid" ]; then
-        kill "$_linux_memory_limit_pid" 2>/dev/null || true
-        wait "$_linux_memory_limit_pid" 2>/dev/null || true
-        linux_memory_limit_release_gate || true
-        echo "process-group sampler failed to isolate command process group" >&2
-        return 1
-    fi
+    echo "process-group sampler isolated command process group after ${_linux_memory_limit_isolation_ms} ms" >&2
 
     _linux_memory_limit_sample_attempt=0
     _linux_memory_limit_rss=0

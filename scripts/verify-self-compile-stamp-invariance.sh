@@ -21,6 +21,17 @@ target/ci-verify-opt2-reference.path
 target/ci-verify-compile-profile-cli.path
 target/self-compile/measurement'
 
+stamp_run_logged() {
+    _stamp_log=$1
+    shift
+    _stamp_status=0
+    "$@" > "$_stamp_log" 2>&1 || _stamp_status=$?
+    if [ "$_stamp_status" -ne 0 ]; then
+        cat "$_stamp_log" >&2
+    fi
+    return "$_stamp_status"
+}
+
 stamp_state() {
     _ss_action=$1
     _ss_root=$2
@@ -100,7 +111,20 @@ stamp_restore_self_test() {
         [ "$_st_status" -eq 17 ]
         diff -r "$_st_case/expected" "$_st_root/target"
     done
+    set +e
+    (
+        set -e
+        stamp_run_logged "$_st_dir/command.log" sh -c \
+            'echo "process-group sampler failed to isolate command process group after 5000 ms" >&2; exit 17'
+        echo must-not-run
+    ) > "$_st_dir/caller.stdout" 2> "$_st_dir/caller.stderr"
+    _st_status=$?
+    set -e
+    [ "$_st_status" -eq 17 ]
+    [ ! -s "$_st_dir/caller.stdout" ]
+    cmp "$_st_dir/command.log" "$_st_dir/caller.stderr"
     echo 'stamp restoration failure-injection self-test passed'
+    echo 'stamp logged-command failure self-test passed'
 }
 
 case "${1:-}" in
@@ -153,12 +177,13 @@ trap restore EXIT
 git -c advice.detachedHead=false checkout --quiet --detach "$COMMIT_B"
 # A fresh work directory and the same retained seed; no output from the first
 # bootstrap can satisfy the second bootstrap's fixpoint or provenance checks.
-env -u BASH_ENV scripts/run-memory-bounded.sh --limit-mib 6144 \
+stamp_run_logged "$OUT/bootstrap-b.log" \
+    env -u BASH_ENV scripts/run-memory-bounded.sh --limit-mib 6144 \
     --timeout-seconds 1800 --report "$OUT/bootstrap-b.memory" -- \
     env -u BASH_ENV TYPELISP_BIN="$SEED" \
     TYPELISP_INLINE_TEST_WORKERS=1 TYPELISP_BUILD_INVARIANCE_WORKERS=1 \
     TYPELISP_BOOTSTRAP_WORKDIR="$OUT/bootstrap-b" \
-    scripts/ci-verify.sh --gates bootstrap-fixpoint > "$OUT/bootstrap-b.log" 2>&1
+    scripts/ci-verify.sh --gates bootstrap-fixpoint
 COMPILER_B=$(cat target/ci-verify-stage2.path)
 cmp "$OUT/bootstrap-b/stage2.s" "$OUT/bootstrap-b/stage3.s"
 cmp "$COMPILER_B" "$OUT/bootstrap-b/stage2"
@@ -170,10 +195,10 @@ cp target/embedded-stdlib-tlci/stdlib.tlci.tlch "$OUT/b.tlch"
 cmp "$OUT/a.tlci" "$OUT/b.tlci"
 cmp "$OUT/a.tlch" "$OUT/b.tlch"
 
-env -u BASH_ENV scripts/run-memory-bounded.sh --limit-mib 6144 \
+stamp_run_logged "$OUT/measure-b.log" \
+    env -u BASH_ENV scripts/run-memory-bounded.sh --limit-mib 6144 \
     --timeout-seconds 1800 --report "$OUT/measure-b.memory" -- \
-    env -u BASH_ENV scripts/self-compile.sh measure --compiler "$COMPILER_B" \
-    > "$OUT/measure-b.log" 2>&1
+    env -u BASH_ENV scripts/self-compile.sh measure --compiler "$COMPILER_B"
 cp "$GATE" "$OUT/b.tsv"
 cp target/self-compile/measurement/gate.cachegrind.out "$OUT/b.cachegrind.out"
 sc_record_validate "$OUT/b.tsv" gate

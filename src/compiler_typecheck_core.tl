@@ -113294,10 +113294,12 @@
   (if (and
     parser.compiler-parse-qualified-type-literal-macro-seen
     (macro-declaration-names-qualified-type-literal? ctx declaration-id))
-    (match body
-      [(or (Spanned body-id _) (MacroExpansion body-id _ _))
-        (macro-transformer-type-literal-env-at ctx module-id body-id env)]
-      [_ env])
+    ;; The whole body: a multi-form body is an unspanned `Begin`.
+    (macro-transformer-type-literal-env-at
+      ctx
+      module-id
+      (clone (deref body))
+      env)
     env))
 
 (define (macro-declaration-names-qualified-type-literal?
@@ -113312,7 +113314,7 @@
 (define (macro-transformer-type-literal-env-at
   [ctx : TcContext]
   [module-id : i64]
-  [body-id : i64]
+  [body : ast.AstExpr]
   [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
   (let
     [module-ctx : TcContext
@@ -113327,10 +113329,7 @@
             module-id)])]
     [resolutions : ctfe_support.CtfeTypeLiteralResolutions
       (ctfe_support.ctfe-type-literal-resolutions-empty)]
-    (tc-ctfe-type-literal-resolutions-into
-      module-ctx
-      (&mut resolutions)
-      (tc-context-expr-get ctx body-id))
+    (tc-ctfe-type-literal-resolutions-into module-ctx (&mut resolutions) body)
     (if (ast.ast-type-list-empty? (& resolutions.written))
       env
       (ctfe_support.ctfe-env-with-type-literals env resolutions))))

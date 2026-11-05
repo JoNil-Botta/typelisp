@@ -92,6 +92,11 @@
 (defmacro (alias-array-size) : i64
   (comptime.expr-int (size-of (type (Array dep.Point 3)))))
 
+;; A body of several forms is one unspanned sequence; its literals resolve too.
+(defmacro (alias-size-two-forms) : i64
+  (size-of (type i64))
+  (comptime.expr-int (comptime (size-of (type dep.Point)))))
+
 (defmacro (other-size) : i64
   (comptime.expr-int
     (comptime (size-of (type comptime_layout_imported_other.Point)))))
@@ -124,7 +129,11 @@
         (= (alias-size) (comptime (size-of (type dep.Point))))
         (= (alias-size) (comptime (size-of (type LocalPoint)))))
       (+= score 3))
-    (when (= (module-size) (alias-size)) (+= score 2))
+    (when
+      (and
+        (= (module-size) (alias-size))
+        (= (alias-size-two-forms) (alias-size)))
+      (+= score 2))
     (when
       (and
         (= (alias-offset) (comptime (offset-of (type dep.CPoint) y)))

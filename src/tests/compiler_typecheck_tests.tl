@@ -7567,7 +7567,11 @@
   (expr-int (comptime (offset-of (type geom.Point) y))))
 (defmacro (alias-align) : i64 (expr-int (align-of (type g.Point))))
 (defmacro (other-size) : i64 (expr-int (size-of (type other.Point))))
+(defmacro (two-form-size) : i64
+  (size-of (type i64))
+  (expr-int (comptime (size-of (type g.Point)))))
 (define (a) : (Array i64 16) (make-array i64 (alias-size)))
+(define (e) : (Array i64 16) (make-array i64 (two-form-size)))
 (define (b) : (Array i64 8) (make-array i64 (module-offset)))
 (define (c) : (Array i64 8) (make-array i64 (alias-align)))
 (define (d) : (Array i64 1) (make-array i64 (other-size)))

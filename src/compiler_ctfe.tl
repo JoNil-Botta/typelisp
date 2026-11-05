@@ -5137,12 +5137,14 @@
                     (string.copy name)
                     (& (ctfe-env-layouts env))
                     (& ty))]
+                ;; Anchor an unknown type at the type operand: in a
+                ;; transformer body the query node itself carries no span.
                 (if (< answer 0)
                   (Err
                     (box
                       (ctfe-diagnostic-at-expr
                         (ComptimeEvaluation)
-                        expr
+                        (& arg)
                         (str_cat.str-cat name " expects a known type argument"))))
                   (Ok (I64 answer) arg-fuel)))]
             [_
@@ -5218,6 +5220,7 @@
 (define (ctfe-eval-offset-from-type
   [ty : (& ast.AstType)]
   [field-name-id : i64]
+  [type-arg : (& ast.AstExpr)]
   [expr : (& ast.AstExpr)]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
@@ -5232,11 +5235,12 @@
         (box
           (ctfe-diagnostic-at-expr
             (ComptimeEvaluation)
-            expr
+            type-arg
             "offset-of requires struct layout type")))]))
 
 (define (ctfe-eval-offset-value
   [value : (& CompilerCtfeValue)]
+  [type-arg : (& ast.AstExpr)]
   [field-arg : (& ast.AstExpr)]
   [expr : (& ast.AstExpr)]
   [env : CtfeEnv]
@@ -5245,7 +5249,13 @@
     [(Type ty)
       (match (ctfe-offset-field-name field-arg env)
         [(Some field-name-id)
-          (ctfe-eval-offset-from-type (& ty) field-name-id expr env fuel)]
+          (ctfe-eval-offset-from-type
+            (& ty)
+            field-name-id
+            type-arg
+            expr
+            env
+            fuel)]
         [(None)
           (Err
             (box
@@ -5275,7 +5285,13 @@
       (match (compiler-ctfe-eval (& type-arg) env fuel)
         [(Err d) (Err d)]
         [(Ok value arg-fuel)
-          (ctfe-eval-offset-value (& value) (& field-arg) expr env arg-fuel)]))
+          (ctfe-eval-offset-value
+            (& value)
+            (& type-arg)
+            (& field-arg)
+            expr
+            env
+            arg-fuel)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr

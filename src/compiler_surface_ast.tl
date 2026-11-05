@@ -994,13 +994,16 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [_context : (&mut context codec.SurfaceAstWriteContext)]
     [meta : ast.AstDeclMeta]) : unit
+    ;; Only the aggregate bits (must-use 1, opaque 2) are surface data. The
+    ;; parser's qualified-type-literal bit on a `defmacro` (#9633) stays local:
+    ;; a hydrated macro reads as unmarked, and schema 19 remains valid.
     (match (deref meta.value)
       [(Runtime markers)
         (codec.surface-ast-write-i64! out 0)
-        (codec.surface-ast-write-i64! out markers)]
+        (codec.surface-ast-write-i64! out (bit-and markers 3))]
       [(Comptime generated markers)
         (codec.surface-ast-write-i64! out 1)
-        (codec.surface-ast-write-i64! out markers)
+        (codec.surface-ast-write-i64! out (bit-and markers 3))
         (match generated
           [(No) (codec.surface-ast-write-i64! out 0)]
           [(Some generator item args key)

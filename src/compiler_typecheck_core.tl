@@ -63193,11 +63193,10 @@
     (tc-macro-layout-query-call ctx env name args)
     (tc-layout-query-runtime-call name args)))
 
-;; Transformer operands of type `type` are typed `Expr` in the transformer
-;; environment, like the reflection helpers' type operands; transformer CTFE
-;; rejects an operand that does not evaluate to a type value. A `(type T)`
-;; literal operand keeps its existing diagnostic: the `(comptime ...)` fold
-;; resolves it. `offset-of` names its field syntactically, as in a fold.
+;; Type values in the transformer environment are typed `Expr`: a `[T : type]`
+;; operand, a `(type T)` literal and a reflection helper's type result alike.
+;; Transformer CTFE rejects an operand that does not evaluate to a type value.
+;; `offset-of` names its field syntactically, as in a fold.
 (define (tc-macro-layout-query-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -63205,38 +63204,31 @@
   [args : ast.AstExprList]) : ResultTcType
   (let
     [expr-bases : i64 (tc-context-expr-bases ctx)]
-    [type-arg : ast.AstExpr
-      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-    (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& type-arg))
-      [(TypeLiteral _) (tc-layout-query-runtime-call name args)]
-      [_
-        (let
-          [type-arg-ty : ast.AstType
-            (try (tc-expr-with-expected-or-actual ctx env type-arg (Expr)))]
-          (cond
-            [(not (tc-type-compatible? (Expr) type-arg-ty))
-              (Err
-                (tc-kind-message
-                  (TypeMismatch)
-                  (str_cat.str-cat
-                    "typecheck: "
-                    name
-                    " expects a type argument")))]
-            [(and
-                (= args.len 2)
-                (match (ast.ast-expr-unspan-with-segment-bases
-                  expr-bases
-                  (&
-                    (tc-context-expr-get
-                      ctx
-                      (ast.ast-expr-list-get (& args) 1 0))))
-                  [(Var _) false]
-                  [_ true]))
-              (Err
-                (tc-kind-message
-                  (TypeMismatch)
-                  "typecheck: offset-of expects a field name"))]
-            [else (Ok (I64))]))])))
+    [type-arg-ty : ast.AstType
+      (try
+        (tc-expr-with-expected-or-actual
+          ctx
+          env
+          (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))
+          (Expr)))]
+    (cond
+      [(not (tc-type-compatible? (Expr) type-arg-ty))
+        (Err
+          (tc-kind-message
+            (TypeMismatch)
+            (str_cat.str-cat "typecheck: " name " expects a type argument")))]
+      [(and
+          (= args.len 2)
+          (match (ast.ast-expr-unspan-with-segment-bases
+            expr-bases
+            (& (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))))
+            [(Var _) false]
+            [_ true]))
+        (Err
+          (tc-kind-message
+            (TypeMismatch)
+            "typecheck: offset-of expects a field name"))]
+      [else (Ok (I64))])))
 
 (define (tc-reflection-query-runtime-call [name : String]) : ResultTcType
   (Err
@@ -87910,6 +87902,22 @@
         [_ (try (tc-foreach2-bound-ok ctx env inner-start))]
         (tc-foreach2-bound-ok ctx env inner-end)))))
 
+;; A `(type T)` literal outside a fold. A transformer body runs at compile
+;; time, so there the literal is a type value like a `[T : type]` operand,
+;; typed `Expr` the same way (sections 5.17, 5.18; #9634). Kept out of line:
+;; `tc-expr-inner` is the hottest typing dispatch.
+(define (tc-type-literal-expr-type [ctx : TcContext] [ty-id : i64]) : ResultTcType
+  (if (tc-macro-walk-field
+    (tc-context-macro-state ctx)
+    defmacro-transformer-active)
+    (Ok (Expr))
+    (Err
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag (ComptimeConstraint))
+        "type value "
+        (tc-type-render (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
+        " is compile-time only"))))
+
 (define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (match expr
     [(Spanned inner-box span)
@@ -87938,13 +87946,7 @@
                     name))]
               (tc-expr-id ctx env virtual-id))
             (tc-var-expr-after-local-field-check ctx env name name-text))))]
-    [(TypeLiteral ty-id)
-      (Err
-        (str_cat.str-cat
-          (cdiag.compiler-diagnostic-typecheck-tag (ComptimeConstraint))
-          "type value "
-          (tc-type-render (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
-          " is compile-time only"))]
+    [(TypeLiteral ty-id) (tc-type-literal-expr-type ctx ty-id)]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
         [(Some ty) (tc-init-expr ctx env ty)]
@@ -113276,10 +113278,54 @@
       (ast.ast-node-pool-context-shared-view (& syntax-pools)))
     (tc-context-install-pools! ctx)))
 
+;; Transformer CTFE has no import scope. A source `defmacro` whose body has a
+;; `(type T)` literal naming a type through an import alias or module name
+;; carries the parser's declaration marker 4; expanding it resolves every type
+;; literal of the body in the macro's defining module, the way an ordinary fold
+;; resolves its literals (#8112), so `(type g.Point)` there names the
+;; declaration an annotation of `g.Point` names in that module (#9633). Other
+;; transformers read no marker until such a macro has been parsed.
+(define (macro-transformer-type-literal-env
+  [ctx : TcContext]
+  [module-id : i64]
+  [declaration-id : i64]
+  [body : (& ast.AstExpr)]
+  [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
+  (if (and
+    (not (= (bit-and parser.compiler-parse-qualified-type-literal-state 2) 0))
+    (match (csym.compiler-symbols-decl-at-index
+      (tc-context-symbols ctx)
+      declaration-id)
+      [(Ok decl)
+        (not (= (bit-and (ast.ast-decl-aggregate-markers (& decl)) 4) 0))]
+      [(Err _) false]))
+    (let
+      [module-ctx : TcContext
+        (cond
+          [(= ctx.module-id module-id) ctx]
+          [(csym.compiler-symbol-root-module-id? module-id)
+            (tc-context-with-module-id ctx "" module-id)]
+          [else
+            (tc-context-with-module-id
+              ctx
+              (tc-env-key-name-text module-id)
+              module-id)])]
+      [resolutions : ctfe_support.CtfeTypeLiteralResolutions
+        (ctfe_support.ctfe-type-literal-resolutions-empty)]
+      ;; The whole body: a multi-form body is an unspanned `Begin`.
+      (tc-ctfe-type-literal-resolutions-into
+        module-ctx
+        (&mut resolutions)
+        (clone (deref body)))
+      (if (ast.ast-type-list-empty? (& resolutions.written))
+        env
+        (ctfe_support.ctfe-env-with-type-literals env resolutions)))
+    env))
+
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
-  ;; lint-allow: unused-variable -- used by compile-profile builds.
   [fallback-module-id : i64]
+  [declaration-id : i64]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [macro-name-id : i64]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
@@ -113300,7 +113346,12 @@
     (match (ctfe_support.ctfe-eval-node
       (& body)
       (ctfe_support.ctfe-env-extend-id
-        env
+        (macro-transformer-type-literal-env
+          ctx
+          fallback-module-id
+          declaration-id
+          (& body)
+          env)
         (ctfe_support.ctfe-hygiene-enabled-id)
         (& (Bool true)))
       (ctfe_support.ctfe-fuel-limit))
@@ -113447,6 +113498,7 @@
           (macro-eval-transformer-interpreted-with-env
             ctx
             fallback-module-id
+            declaration-id
             macro-name-id
             macro-name
             body
@@ -113543,6 +113595,7 @@
       (match (macro-eval-transformer-interpreted-with-env
         ctx
         fallback-module-id
+        declaration-id
         macro-name-id
         macro-name
         body
@@ -113574,6 +113627,7 @@
         (match (macro-eval-transformer-interpreted-with-env
           ctx
           fallback-module-id
+          declaration-id
           macro-name-id
           macro-name
           body

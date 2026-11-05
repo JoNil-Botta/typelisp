@@ -2937,6 +2937,32 @@
 
 ;; `(:opaque)` is the second aggregate marker bit (#6999), parsed like
 ;; `(:must-use)` and composing with it and with the other aggregate metadata.
+;; A `defmacro` whose body has a `(type T)` literal naming a type through a
+;; dotted alias or module name carries marker bit 4 (#9633); unqualified and
+;; scalar literals, and literals outside the body, leave it clear.
+(define (compiler-parse-qualified-type-literal-marker-ok?) : bool
+  (and
+    (=
+      (compiler-parse-first-decl-markers
+        "(defmacro (m) : i64 (expr-int (comptime (size-of (type g.Point)))))")
+      4)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defmacro (m) : i64 (expr-int (size-of (type (Array geom.Point 2)))))")
+      4)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defmacro (m) : i64 (expr-int (size-of (type Point))))")
+      0)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defmacro (m) : i64 (expr-int (size-of (type i64))))")
+      0)
+    (=
+      (compiler-parse-first-decl-markers
+        "(define x : i64 (comptime (size-of (type g.Point))))")
+      0)))
+
 (define (compiler-parse-opaque-metadata-ok?) : bool
   (and
     (= (compiler-parse-first-decl-markers "(defstruct Handle (id i64))") 0)
@@ -3455,6 +3481,7 @@
     [(not (compiler-parse-repr-c-error-tests-ok?)) false]
     [(not (compiler-parse-must-use-metadata-ok?)) false]
     [(not (compiler-parse-opaque-metadata-ok?)) false]
+    [(not (compiler-parse-qualified-type-literal-marker-ok?)) false]
     [(not (compiler-parse-cleanup-error-tests-ok?)) false]
     [(not (compiler-parse-error-ok? "(module)" "parse: malformed module"))
       false]

@@ -54,6 +54,16 @@ in `compiler-typecheck-macro-layout-query-tests-ok?` keep runtime queries,
 queries in emitted runtime code, invalid operands, constrained kinds and
 unresolved operands rejected.
 
+`macro_layout_literal` queries other compile-time type values in transformer
+bodies: `(type T)` literals directly and inside a nested `(comptime ...)`, a
+type returned by `struct-field-type` from a literal and from an operand, and
+imported type literals through an alias or the module name, including a
+same-named type in another module. Each answer is compared with an ordinary
+`(comptime ...)` fold, and imported answers also with a local declaration of the
+same shape. It returns 42 at opt0/1/2 on both hosts. The matching typecheck rows
+in `compiler-typecheck-macro-layout-literal-tests-ok?` keep queries after a
+transformer, in emitted runtime code, and on an unknown imported type rejected.
+
 `macro_struct_pattern` checks positional, named and nested struct patterns from
 expression macros against direct-source controls at opt0/1/2 on both hosts.
 Owned and shared scrutinees retain their field binding modes, including String

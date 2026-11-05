@@ -7376,7 +7376,157 @@
 (module main)
 (import geom as g)
 (define (f) : i64 (size-of (type g.Point)))"
-      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
+    (compiler-typecheck-macro-layout-query-tests-ok?)))
+
+;; A macro transformer body is a compile-time-required context (#9628): layout
+;; queries run on its `type` operand directly and inside a nested `(comptime
+;; ...)`. The answers size fixed arrays, so a wrong value is a return type
+;; mismatch, and each transformer branches on a query before emitting. Runtime
+;; uses, including runtime code a transformer emits, keep their rejection.
+(define (compiler-typecheck-macro-layout-query-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(import stdlib.comptime)
+(defstruct Pair (a i64) (b i64))
+(defstruct Mixed (tag u8) (wide i64) (small i32))
+(defmacro (size-direct [T : type]) : i64
+  (if (> (size-of T) 8)
+    (comptime.expr-int (size-of T))
+    (comptime.expr-int 0)))
+(defmacro (size-wrapped [T : type]) : i64
+  (comptime.expr-int (comptime (size-of T))))
+(defmacro (align-direct [T : type]) : i64
+  (comptime.expr-int (align-of T)))
+(defmacro (align-wrapped [T : type]) : i64
+  (if (= (comptime (align-of T)) 4)
+    (comptime.expr-int (comptime (align-of T)))
+    (comptime.expr-int 0)))
+(defmacro (offset-direct [T : type (:kind struct)]) : i64
+  (comptime.expr-int (offset-of T small)))
+(defmacro (offset-wrapped [T : type]) : i64
+  (comptime.expr-int (comptime (offset-of T b))))
+(defmacro (scalar-size [T : type (:kind i64 i32)]) : i64
+  (comptime.expr-int (+ (size-of T) (comptime (align-of T)))))
+(define (a) : (Array i64 16) (make-array i64 (size-direct Pair)))
+(define (b) : (Array i64 24) (make-array i64 (size-wrapped Mixed)))
+(define (c) : (Array i64 4) (make-array i64 (align-direct i32)))
+(define (d) : (Array i64 4) (make-array i64 (align-wrapped i32)))
+(define (e) : (Array i64 16) (make-array i64 (offset-direct Mixed)))
+(define (f) : (Array i64 8) (make-array i64 (offset-wrapped Pair)))
+(define (g) : (Array i64 16) (make-array i64 (scalar-size i64)))
+(define (main) : i64 0)")
+    ;; Definitions are checked before any call, and an operand imported
+    ;; through an alias resolves like an annotation.
+    (compiler-typecheck-ok?
+      "(import stdlib.comptime)
+(defmacro (unused [T : type]) : i64
+  (comptime.expr-int (+ (size-of T) (comptime (offset-of T y)))))
+(define (main) : i64 0)")
+    (compiler-typecheck-ok? (compiler-typecheck-macro-layout-imported-source))
+    ;; Controls that already worked: a literal type in a fold, `type-kind`, and
+    ;; a transformer that emits the fold instead of evaluating it.
+    (compiler-typecheck-ok?
+      "(import stdlib.comptime)
+(defmacro (literal [T : type]) : i64
+  (comptime.expr-int (comptime (size-of (type i64)))))
+(defmacro (kind [T : type]) : i64
+  (if (__tl_string_eq (type-kind T) \"i64\")
+    (comptime.expr-int 8)
+    (comptime.expr-int 0)))
+(defmacro (emitted [T : type]) : i64
+  `(comptime (size-of (type ,T))))
+(define (main) : (Array i64 24)
+  (make-array i64 (+ (literal i32) (+ (kind i64) (emitted i64)))))")
+    ;; Runtime uses keep the runtime rejection beside a macro that queries.
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (bytes [T : type]) : i64 (comptime.expr-int (size-of T)))
+(define (runtime) : i64 (size-of (type i64)))
+(define (main) : i64 (bytes i64))"
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(define (helper) : i64 (align-of (type i64)))
+(defmacro (bytes [T : type]) : i64 (comptime.expr-int (helper)))
+(define (main) : i64 0)"
+      "typecheck: align-of is compile-time only; wrap it in (comptime ...)")
+    ;; Emitted runtime code receives no type metadata: an unfolded query in a
+    ;; transformer's output is a runtime use.
+    (compiler-typecheck-error-ok?
+      "(defmacro (bytes [T : type]) : i64 `(size-of (type ,T)))
+(define (main) : i64 (bytes i64))"
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
+    (compiler-typecheck-error-ok?
+      "(defstruct Pair (a i64) (b i64))
+(defmacro (field [T : type]) : i64 `(offset-of ,T b))
+(define (main) : i64 (field Pair))"
+      "typecheck: offset-of is compile-time only; wrap it in (comptime ...)")
+    (compiler-typecheck-error-ok?
+      "(define (bytes [comptime T : type]) : i64 (size-of T))
+(define (main) : i64 (bytes (type i64)))"
+      "type-valued comptime parameter 'T' cannot be used as a runtime value")
+    ;; Invalid operands, arity and constrained kinds at the definition.
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (bytes [T : type]) : i64 (comptime.expr-int (size-of 5)))
+(define (main) : i64 0)"
+      "typecheck: size-of expects a type argument")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (bytes [T : type]) : i64 (comptime.expr-int (align-of T T)))
+(define (main) : i64 0)"
+      "typecheck: align-of expects exactly one type argument")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (field [T : type]) : i64 (comptime.expr-int (offset-of T (+ 1 2))))
+(define (main) : i64 0)"
+      "typecheck: offset-of expects a field name")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (field [T : type (:kind struct enum)]) : i64
+  (comptime.expr-int (offset-of T b)))
+(define (main) : i64 0)"
+      "typecheck: macro field constrained type operand T cannot use offset-of; requires struct")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (field [T : type (:kind i64)]) : i64
+  (comptime.expr-int (comptime (offset-of T b))))
+(define (main) : i64 0)"
+      "typecheck: macro field constrained type operand T cannot use offset-of; requires struct")
+    ;; Invalid and unresolved operands at the call.
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (field [T : type]) : i64 (comptime.expr-int (offset-of T b)))
+(define (main) : i64 (field i64))"
+      "offset-of requires struct layout type")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defstruct Pair (a i64) (b i64))
+(defmacro (field [T : type]) : i64
+  (comptime.expr-int (comptime (offset-of T missing))))
+(define (main) : i64 (field Pair))"
+      "offset-of unknown field missing")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (bytes [e : Expr]) : i64 (comptime.expr-int (size-of e)))
+(define (main) : i64 (bytes 5))"
+      "size-of expects a type argument")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (bytes [T : type]) : i64 (comptime.expr-int (comptime (size-of T))))
+(define (main) : i64 (bytes Missing))"
+      "typecheck: unknown type Missing; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")))
+
+(define (compiler-typecheck-macro-layout-imported-source) : String
+  "(module geom)
+(defstruct Point (x i64) (y i32))
+(module main)
+(import geom as g)
+(defmacro (bytes [T : type]) : i64 (expr-int (size-of T)))
+(defmacro (y-offset [T : type]) : i64 (expr-int (comptime (offset-of T y))))
+(define (sized) : (Array i64 16) (make-array i64 (bytes g.Point)))
+(define (offset) : (Array i64 8) (make-array i64 (y-offset g.Point)))")
 
 (define (compiler-typecheck-imported-layout-source) : String
   "(module geom)

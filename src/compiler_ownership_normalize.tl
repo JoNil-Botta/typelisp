@@ -5726,6 +5726,28 @@
             0))]
       [(typed.TypedTypeValueResult.Err error) (normalize-int-typed error)])))
 
+;; `normalize-box-type!` for a box the place owns: 0 for a view of a box (a
+;; region-tagged box read through a reference), whose class names the box it
+;; views as its referent.
+(define (normalize-owned-box-type!
+  [state : (& state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [container : i64]) : NormalizeInt
+  (if (and
+    (>= container 0)
+    (< container (array-length state.classes))
+    (> (array-ref state.classes container).reference 0)
+    (=
+      (try
+        (normalize-box-type!
+          store
+          lease
+          (array-ref state.classes container).referent))
+      1))
+    (NormalizeInt.Ok 0)
+    (normalize-box-type! store lease container)))
+
 (define (normalize-box-ast-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(ast.AstType.Box _) true]
@@ -5780,13 +5802,17 @@
         ;; A box holding references is classed as a holder of their loans,
         ;; yet its contents are still the box's own: they are reached through
         ;; the whole box and hold its loans, as a reference's referent does
-        ;; not.
+        ;; not. A view of a box (one read through a reference, #8927) is not
+        ;; the box: its contents are the referent's, reached through its loan.
         [box-step? : bool
           (and
             (= step.ordinal -1)
             (or
               (normalize-box-class? (& state) step.container)
-              (= (try (normalize-box-type! store lease step.container)) 1)))]
+              (=
+                (try
+                  (normalize-owned-box-type! state store lease step.container))
+                1)))]
         [target : NormalizePlaceRoute
           (cond
             ;; Below an unnamed part only referents are out of reach; an

@@ -528,7 +528,7 @@ stdlib/tests/format_unused_named_reject.tl|fail|format: unused named argument un
 stdlib/tests/format_width_overflow_reject.tl|fail|format: width integer overflow
 stdlib/tests/fs_api.tl|pass|-
 stdlib/tests/core_macros_cond_flat_reject.tl|fail|typecheck: ExprClause macro operand expects bracket syntax
-stdlib/tests/core_macros_cond_missing_else.tl|fail|core-cond-missing-else
+stdlib/tests/core_macros_cond_missing_else.tl|fail|cond requires a final [else ...] arm
 stdlib/tests/core_macros_cond_else_not_final.tl|fail|core-cond-else-must-be-final
 stdlib/tests/core_macros_cond_non_bool.tl|fail|typecheck: if condition must be bool
 stdlib/tests/core_macros_cond_branch_mismatch.tl|fail|typecheck: if branches must match

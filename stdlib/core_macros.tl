@@ -169,7 +169,7 @@
 (defmacro (cond [arms : ExprClause ...]) : Expr
   (comptime.expr-clause-list-fold-if
     arms
-    (comptime.expr-var "core-cond-missing-else")
+    `(comptime (comptime.comptime-error "cond requires a final [else ...] arm"))
     (comptime.expr-var "core-cond-else-must-be-final")))
 
 ;: Add `delta` to the numeric value stored in `place`.

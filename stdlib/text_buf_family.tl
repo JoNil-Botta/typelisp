@@ -95,6 +95,9 @@
         prefix-available?))))
 
 ;: Emit the complete owned TextBuf family.
+;:
+;: Its `char-string` and `append-char` helpers append one restricted byte;
+;: see the `stdlib.text_buf` module documentation.
 (defmacro (owned) : Decls
   `(begin
     (defstruct TextBufStringStore
@@ -263,6 +266,10 @@
           (TextBuf
             (stdlib.text_buf.chunk-cons chunk buf.chunks)
             (+ buf.len chunk-len)))))
+    ;: Return a one-byte String for `c`. A `char` is one byte, not a Unicode
+    ;: scalar: only TAB, LF, CR and bytes 32-126 are admitted, and any other
+    ;: byte panics with `text-buf: unsupported non-printable char`. Append
+    ;: whole strings or source byte slices to keep UTF-8 text.
     (define (char-string [c : char]) : String
       (let
         [code : i64 (cast c : i64)]
@@ -273,6 +280,8 @@
           [(and (>= code 32) (<= code 126))
             (string.substring text-buf-ascii-printable-table (- code 32) 1)]
           [else (io.panic "text-buf: unsupported non-printable char")])))
+    ;: Append the one-byte char `c`, with `char-string`'s byte restriction and
+    ;: panic.
     (define (append-char [buf : TextBuf] [c : char]) : TextBuf
       (stdlib.text_buf.append buf (stdlib.text_buf.char-string c)))
     (define (append-int [buf : TextBuf] [value : i64]) : TextBuf
@@ -529,6 +538,9 @@
       (stdlib.text_buf.clear buf))))
 
 ;: Emit the complete borrowed TextBuf family.
+;:
+;: Its `append-char` helper appends one restricted byte; see the
+;: `stdlib.text_buf` module documentation.
 (defmacro (borrowed) : Decls
   `(begin
     (defenum TextBufBorrowedChunk
@@ -761,10 +773,14 @@
           buf
           (unsafe
             (stdlib.text_buf_borrowed.append-slice-unchecked buf text 0 n)))))
+    ;: True when `append-char` admits `c`: TAB, LF, CR or a byte in 32-126.
     (define (append-char-supported? [c : char]) : bool
       (let
         [code : i64 (cast c : i64)]
         (or (= code 9) (= code 10) (= code 13) (and (>= code 32) (<= code 126)))))
+    ;: Append the one-byte char `c`. Only TAB, LF, CR and bytes 32-126 are
+    ;: admitted; any other byte panics with `text-buf-borrowed: unsupported
+    ;: non-printable char`. Append borrowed slices to keep UTF-8 text.
     (define (append-char [buf : (TextBufBorrowed text)] [c : char]) : (TextBufBorrowed
         text)
       (if (not (stdlib.text_buf_borrowed.append-char-supported? c))

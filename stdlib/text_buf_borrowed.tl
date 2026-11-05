@@ -13,6 +13,12 @@
 ;# The borrowed and owned TextBuf declaration bodies are generated from
 ;# `stdlib/text_buf_family.tl`; this module keeps the borrowed compatibility
 ;# namespace and small inline API test surface.
+;#
+;# `append-char` appends one byte, not a Unicode scalar, and admits only TAB,
+;# LF, CR and bytes 32-126; any other byte panics with
+;# `text-buf-borrowed: unsupported non-printable char`. Append borrowed slices
+;# of the source with `append-slice` to keep UTF-8 text intact; the
+;# `stdlib.text_buf` module documentation covers the restriction.
 ;; lint-allow: unused-import
 ;; lint-allow: unused-import
 (import stdlib.arena)

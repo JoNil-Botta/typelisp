@@ -254,6 +254,59 @@ EOF
     echo '[linux-memory-limit] kernel/RSS observation race and RSS-only termination passed'
 )
 
+exercise_delayed_process_group() (
+    TYPELISP_MEMORY_ISOLATION_SETSID=$(command -v setsid)
+    export TYPELISP_MEMORY_ISOLATION_SETSID
+    mkdir "$WORKDIR/isolation-bin"
+    cat > "$WORKDIR/isolation-bin/setsid" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' "$$" > "$TYPELISP_MEMORY_ISOLATION_DIR/launcher.pid"
+case $TYPELISP_MEMORY_ISOLATION_MODE in
+    slow)
+        sleep 0.5
+        exec "$TYPELISP_MEMORY_ISOLATION_SETSID" "$@"
+        ;;
+    failure) exec sleep 30 ;;
+esac
+EOF
+    chmod +x "$WORKDIR/isolation-bin/setsid"
+    for TYPELISP_MEMORY_ISOLATION_MODE in slow failure; do
+        TYPELISP_MEMORY_ISOLATION_DIR="$WORKDIR/isolation-$TYPELISP_MEMORY_ISOLATION_MODE"
+        export TYPELISP_MEMORY_ISOLATION_MODE TYPELISP_MEMORY_ISOLATION_DIR
+        mkdir "$TYPELISP_MEMORY_ISOLATION_DIR"
+        status=0
+        PATH="$WORKDIR/isolation-bin:$PATH" \
+            "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 --timeout-seconds 10 \
+            --report "$TYPELISP_MEMORY_ISOLATION_DIR/report" -- \
+            sh -c 'echo launched' \
+            > "$TYPELISP_MEMORY_ISOLATION_DIR/stdout" \
+            2> "$TYPELISP_MEMORY_ISOLATION_DIR/stderr" || status=$?
+        if [ "$TYPELISP_MEMORY_ISOLATION_MODE" = slow ]; then
+            [ "$status" -eq 0 ] &&
+                grep -Fxq launched "$TYPELISP_MEMORY_ISOLATION_DIR/stdout" || {
+                    cat "$TYPELISP_MEMORY_ISOLATION_DIR/stderr" >&2
+                    fail "delayed process-group creation returned $status"
+                }
+            elapsed=$(sed -n 's/^process-group sampler isolated command process group after \([0-9]*\) ms$/\1/p' \
+                "$TYPELISP_MEMORY_ISOLATION_DIR/stderr")
+            [ "${elapsed:-0}" -ge 400 ] || fail 'delayed isolation lost its measured wait'
+        else
+            [ "$status" -eq 1 ] && [ ! -s "$TYPELISP_MEMORY_ISOLATION_DIR/stdout" ] ||
+                fail "failed process-group creation ran its command or returned $status"
+            elapsed=$(sed -n 's/^process-group sampler failed to isolate command process group after \([0-9]*\) ms (limit 5000 ms)$/\1/p' \
+                "$TYPELISP_MEMORY_ISOLATION_DIR/stderr")
+            [ "${elapsed:-0}" -ge 5000 ] && [ "$elapsed" -lt 10000 ] ||
+                fail 'isolation failure lost its bounded measured wait'
+        fi
+        read -r launcher < "$TYPELISP_MEMORY_ISOLATION_DIR/launcher.pid"
+        if kill -0 "$launcher" 2>/dev/null; then
+            fail "process-group isolation left launcher $launcher alive"
+        fi
+    done
+    echo '[linux-memory-limit] delayed process-group creation and real isolation failure passed'
+)
+
 exercise_sampled_backend() {
     _sampled_prefix="$WORKDIR/sampled"
     "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 32 \
@@ -944,6 +997,7 @@ if [ -n "$_linux_memory_limit_node" ]; then
 fi
 exercise_backend systemd-user-cgroup
 exercise_sampled_observation_races
+exercise_delayed_process_group
 exercise_sampled_backend
 exercise_nested_backend systemd-user-cgroup
 exercise_hierarchy

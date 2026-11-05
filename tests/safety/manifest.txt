@@ -1642,6 +1642,11 @@ box_field_shared_view_return_reject|check-fail|tests/safety/box_field_shared_vie
 box_field_shared_let_origin_reject|check-fail|tests/safety/box_field_shared_let_reject.tl|tests/safety/box_field_shared_let_reject.tl:10:18|tests/safety/box_field_shared_let_reject.tl:9:20
 box_field_shared_let_windows_reject|check-fail-windows|tests/safety/box_field_shared_let_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
 box_field_shared_origin_ok|run-exit|tests/safety/box_field_shared_origin_ok.tl|42|-
+box_field_shared_nested_view_take_reject|check-fail|tests/safety/box_field_shared_nested_view_take_reject.tl|tests/safety/box_field_shared_nested_view_take_reject.tl:13:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_view_contents_take_reject|check-fail|tests/safety/box_field_shared_view_contents_take_reject.tl|tests/safety/box_field_shared_view_contents_take_reject.tl:14:14|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+box_field_shared_view_construct_reject|check-fail|tests/safety/box_field_shared_view_construct_reject.tl|tests/safety/box_field_shared_view_construct_reject.tl:9:13|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_match_binder_write_reject|check-fail|tests/safety/box_field_shared_match_binder_write_reject.tl|tests/safety/box_field_shared_match_binder_write_reject.tl:12:33|error[E0207]: typecheck: cannot mutably borrow `b` behind a shared reference
+box_field_shared_nested_view_ok|run-exit|tests/safety/box_field_shared_nested_view_ok.tl|42|-
 deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|tests/safety/deref_raw_pointer_reject.tl:2:3|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
 # A raw-pointer deref is an unsafe place only as a struct-field projection
 # receiver; a (Ptr T) pointee is read-only.

@@ -27,6 +27,29 @@
 ;# The buffer and rendered strings allocate in the active arena: the default
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
+;#
+;# ## Char helpers append one restricted byte
+;#
+;# A `char` is one byte, not a Unicode scalar. The char helpers `char-string`,
+;# `append-char` and `append-char!`, and the borrowed family's `append-char`,
+;# admit only TAB, LF, CR and the printable ASCII bytes 32-126. Any other byte
+;# panics with `text-buf: unsupported non-printable char` (the borrowed family
+;# reports `text-buf-borrowed: unsupported non-printable char`). They are not a
+;# general byte builder: forwarding UTF-8 text one `string.char-at` byte at a
+;# time aborts at the first non-ASCII byte.
+;#
+;# To keep UTF-8 text intact, append whole strings or byte slices of the
+;# source instead. In `"Mönster"`, bytes 1 and 2 spell `ö`:
+;#
+;# ```typelisp
+;# (import stdlib.text_buf)
+;# (import stdlib.string)
+;# (define (main) : i64
+;#   (let [source : String "Mönster"] [buf : text_buf.TextBuf (text_buf.empty)]
+;#     (text_buf.append! buf (string.substring (& source) 1 2))
+;#     (text_buf.append-char! buf '!')
+;#     (if (string.eq (text_buf.render buf) "ö!") 42 1)))
+;# ```
 ;; lint-allow: unused-import
 ;; lint-allow: unused-import
 (import stdlib.arena)
@@ -50,7 +73,11 @@
     [text-buf-append-chunk : String ,chunk]
     (set! ,buf (append ,buf text-buf-append-chunk))))
 
-;: Mutably append one char byte to `buf`.
+;: Mutably append the one-byte char `c` to `buf`.
+;:
+;: Like `char-string`, this admits only TAB, LF, CR and bytes 32-126 and panics
+;: with `text-buf: unsupported non-printable char` for any other byte. Append
+;: whole strings or source byte slices with `append!` to keep UTF-8 text.
 (defmacro (append-char! [buf : comptime.Expr] [c : char]) : unit
   `(append! ,buf (char-string ,c)))
 

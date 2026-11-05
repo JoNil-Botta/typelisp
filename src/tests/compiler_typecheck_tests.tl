@@ -7377,7 +7377,8 @@
 (import geom as g)
 (define (f) : i64 (size-of (type g.Point)))"
       "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
-    (compiler-typecheck-macro-layout-query-tests-ok?)))
+    (compiler-typecheck-macro-layout-query-tests-ok?)
+    (compiler-typecheck-macro-layout-literal-tests-ok?)))
 
 ;; A macro transformer body is a compile-time-required context (#9628): layout
 ;; queries run on its `type` operand directly and inside a nested `(comptime
@@ -7517,6 +7518,89 @@
 (defmacro (bytes [T : type]) : i64 (comptime.expr-int (comptime (size-of T))))
 (define (main) : i64 (bytes Missing))"
       "typecheck: unknown type Missing; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead")))
+
+;; Any compile-time type value in a transformer body takes a layout query
+;; directly, with the wrapped form giving the same answer (#9634, D-C127): a
+;; `(type T)` literal and a type returned by reflection, from a literal or from
+;; an operand. Imported type literals there resolve in the macro's module like
+;; an annotation (#9633). The answers size fixed arrays, so a wrong value is a
+;; return type mismatch; leaving the transformer restores runtime rejection.
+(define (compiler-typecheck-macro-layout-literal-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(import stdlib.comptime)
+(defstruct Mixed (tag u8) (wide i64) (small i32))
+(defstruct Holder (tag u8) (inner Mixed))
+(defenum Shape (Dot) (Box Mixed))
+(defmacro (size-direct) : i64
+  (if (= (size-of (type Mixed)) (comptime (size-of (type Mixed))))
+    (comptime.expr-int (size-of (type Mixed)))
+    (comptime.expr-int 0)))
+(defmacro (align-direct) : i64 (comptime.expr-int (align-of (type i32))))
+(defmacro (offset-direct) : i64
+  (comptime.expr-int (offset-of (type Mixed) small)))
+(defmacro (enum-direct) : i64 (comptime.expr-int (size-of (type Shape))))
+(defmacro (field-direct) : i64
+  (comptime.expr-int (size-of (struct-field-type (type Holder) 1))))
+(defmacro (field-wrapped) : i64
+  (comptime.expr-int (comptime (align-of (struct-field-type (type Holder) 1)))))
+(defmacro (operand-field-direct [T : type]) : i64
+  (comptime.expr-int (offset-of (struct-field-type T 1) small)))
+(define (a) : (Array i64 24) (make-array i64 (size-direct)))
+(define (b) : (Array i64 4) (make-array i64 (align-direct)))
+(define (c) : (Array i64 16) (make-array i64 (offset-direct)))
+(define (d) : (Array i64 32) (make-array i64 (enum-direct)))
+(define (e) : (Array i64 24) (make-array i64 (field-direct)))
+(define (f) : (Array i64 8) (make-array i64 (field-wrapped)))
+(define (g) : (Array i64 16) (make-array i64 (operand-field-direct Holder)))
+(define (main) : i64 0)")
+    (compiler-typecheck-ok?
+      "(module geom)
+(defstruct Point (x i64) (y i32))
+(module other)
+(defstruct Point (x i8))
+(module main)
+(import geom as g)
+(import other)
+(defmacro (alias-size) : i64 (expr-int (comptime (size-of (type g.Point)))))
+(defmacro (module-offset) : i64
+  (expr-int (comptime (offset-of (type geom.Point) y))))
+(defmacro (alias-align) : i64 (expr-int (align-of (type g.Point))))
+(defmacro (other-size) : i64 (expr-int (size-of (type other.Point))))
+(define (a) : (Array i64 16) (make-array i64 (alias-size)))
+(define (b) : (Array i64 8) (make-array i64 (module-offset)))
+(define (c) : (Array i64 8) (make-array i64 (alias-align)))
+(define (d) : (Array i64 1) (make-array i64 (other-size)))
+(define (main) : i64 0)")
+    ;; Leaving a querying transformer restores the runtime rejection: an
+    ;; `Expr` parameter and a literal are runtime values again.
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (bytes) : i64 (comptime.expr-int (size-of (type i64))))
+(define (after [x : Expr]) : i64 (size-of x))
+(define (main) : i64 (bytes))"
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
+    (compiler-typecheck-error-ok?
+      "(import stdlib.comptime)
+(defmacro (bytes) : i64 (comptime.expr-int (size-of (type i64))))
+(define (after) : Expr (type i64))
+(define (main) : i64 (bytes))"
+      "type value i64 is compile-time only")
+    (compiler-typecheck-error-ok?
+      "(defmacro (bytes) : i64 `(align-of (type i64)))
+(define (main) : i64 (bytes))"
+      "typecheck: align-of is compile-time only; wrap it in (comptime ...)")
+    ;; An unknown imported type is reported at the query's type operand.
+    (compiler-typecheck-error-location-ok?
+      "(module geom)
+(defstruct Point (x i64) (y i32))
+(module main)
+(import geom as g)
+(defmacro (bytes) : i64 (expr-int (comptime (size-of (type g.Missing)))))
+(define (main) : i64 (bytes))"
+      "size-of expects a known type argument"
+      5
+      54)))
 
 (define (compiler-typecheck-macro-layout-imported-source) : String
   "(module geom)

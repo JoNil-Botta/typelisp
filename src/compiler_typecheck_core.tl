@@ -63193,11 +63193,10 @@
     (tc-macro-layout-query-call ctx env name args)
     (tc-layout-query-runtime-call name args)))
 
-;; Transformer operands of type `type` are typed `Expr` in the transformer
-;; environment, like the reflection helpers' type operands; transformer CTFE
-;; rejects an operand that does not evaluate to a type value. A `(type T)`
-;; literal operand keeps its existing diagnostic: the `(comptime ...)` fold
-;; resolves it. `offset-of` names its field syntactically, as in a fold.
+;; Type values in the transformer environment are typed `Expr`: a `[T : type]`
+;; operand, a `(type T)` literal and a reflection helper's type result alike.
+;; Transformer CTFE rejects an operand that does not evaluate to a type value.
+;; `offset-of` names its field syntactically, as in a fold.
 (define (tc-macro-layout-query-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -63205,38 +63204,31 @@
   [args : ast.AstExprList]) : ResultTcType
   (let
     [expr-bases : i64 (tc-context-expr-bases ctx)]
-    [type-arg : ast.AstExpr
-      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-    (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& type-arg))
-      [(TypeLiteral _) (tc-layout-query-runtime-call name args)]
-      [_
-        (let
-          [type-arg-ty : ast.AstType
-            (try (tc-expr-with-expected-or-actual ctx env type-arg (Expr)))]
-          (cond
-            [(not (tc-type-compatible? (Expr) type-arg-ty))
-              (Err
-                (tc-kind-message
-                  (TypeMismatch)
-                  (str_cat.str-cat
-                    "typecheck: "
-                    name
-                    " expects a type argument")))]
-            [(and
-                (= args.len 2)
-                (match (ast.ast-expr-unspan-with-segment-bases
-                  expr-bases
-                  (&
-                    (tc-context-expr-get
-                      ctx
-                      (ast.ast-expr-list-get (& args) 1 0))))
-                  [(Var _) false]
-                  [_ true]))
-              (Err
-                (tc-kind-message
-                  (TypeMismatch)
-                  "typecheck: offset-of expects a field name"))]
-            [else (Ok (I64))]))])))
+    [type-arg-ty : ast.AstType
+      (try
+        (tc-expr-with-expected-or-actual
+          ctx
+          env
+          (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))
+          (Expr)))]
+    (cond
+      [(not (tc-type-compatible? (Expr) type-arg-ty))
+        (Err
+          (tc-kind-message
+            (TypeMismatch)
+            (str_cat.str-cat "typecheck: " name " expects a type argument")))]
+      [(and
+          (= args.len 2)
+          (match (ast.ast-expr-unspan-with-segment-bases
+            expr-bases
+            (& (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))))
+            [(Var _) false]
+            [_ true]))
+        (Err
+          (tc-kind-message
+            (TypeMismatch)
+            "typecheck: offset-of expects a field name"))]
+      [else (Ok (I64))])))
 
 (define (tc-reflection-query-runtime-call [name : String]) : ResultTcType
   (Err
@@ -87939,12 +87931,20 @@
               (tc-expr-id ctx env virtual-id))
             (tc-var-expr-after-local-field-check ctx env name name-text))))]
     [(TypeLiteral ty-id)
-      (Err
-        (str_cat.str-cat
-          (cdiag.compiler-diagnostic-typecheck-tag (ComptimeConstraint))
-          "type value "
-          (tc-type-render (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
-          " is compile-time only"))]
+      ;; A transformer body runs at compile time, so a `(type T)` literal there
+      ;; is a type value like a `[T : type]` operand, typed `Expr` the same way
+      ;; (sections 5.17, 5.18; #9634).
+      (if (tc-macro-walk-field
+        (tc-context-macro-state ctx)
+        defmacro-transformer-active)
+        (Ok (Expr))
+        (Err
+          (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag (ComptimeConstraint))
+            "type value "
+            (tc-type-render
+              (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))
+            " is compile-time only")))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
         [(Some ty) (tc-init-expr ctx env ty)]
@@ -94991,7 +94991,12 @@
   ;; transformer does, and a nested `(comptime ...)` naming one of these
   ;; operands is evaluated with the transformer's operand values (#9628).
   (defmacro-transformer-active bool)
-  (defmacro-transformer-operands TcStringList))
+  (defmacro-transformer-operands TcStringList)
+  ;; Per transformer body node id of the program being expanded: 2 when the
+  ;; body names a type through an import alias or module name, so expansion
+  ;; resolves its type literals in the defining module (#9633), else 1.
+  ;; Cleared with the dependency-catalog slot cache at expansion entry.
+  (macro-transformer-qualified-literals tc_i64_i64_map.Map))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -95118,7 +95123,8 @@
     0
     0
     false
-    (Nil)))
+    (Nil)
+    (tc_i64_i64_map.with-capacity 16)))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -111920,8 +111926,12 @@
   (let
     [cache : tc_i64_i64_map.Map
       (tc-macro-walk-field state macro-dependency-catalog-slot-cache)]
+    [qualified : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-transformer-qualified-literals)]
     (tc_i64_i64_map.clear-ref! (&mut cache))
-    (tc-macro-walk-set! state macro-dependency-catalog-slot-cache cache)))
+    (tc-macro-walk-set! state macro-dependency-catalog-slot-cache cache)
+    (tc_i64_i64_map.clear-ref! (&mut qualified))
+    (tc-macro-walk-set! state macro-transformer-qualified-literals qualified)))
 
 (define (macro-dependency-catalog-slot-cache-value-or
   [state : TcMacroState]
@@ -113276,9 +113286,120 @@
       (ast.ast-node-pool-context-shared-view (& syntax-pools)))
     (tc-context-install-pools! ctx)))
 
+;; Whether a written type names a type through an import alias or a module
+;; name, as in `(type g.Point)`. Composite written types are counted
+;; conservatively; transformer CTFE already finds an unqualified name.
+(define (macro-type-literal-qualified? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match ty
+    [(or (Var name) (VarArgs name _)) (tc-selected-dotted-name? ctx name)]
+    [(or (CFunc _ _) (Func _ _) (Tuple _) (Array _ _) (DynArray _) (Slice _)
+         (Box _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Region _ _)
+         (Invalidate _ _))
+      true]
+    [_ false]))
+
+(define (macro-expr-has-qualified-type-literal?
+  [ctx : TcContext]
+  [expr : ast.AstExpr]) : bool
+  (match (& expr)
+    [(ast.AstExpr.TypeLiteral ty-id)
+      (macro-type-literal-qualified? ctx (tc-context-type-get ctx ty-id))]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        [count : i64 (ast.ast-expr-list-len (& children))]
+        [index : i64 0]
+        [found : bool false]
+        (while (and (not found) (< index count))
+          (set!
+            found
+            (macro-expr-has-qualified-type-literal?
+              ctx
+              (tc-context-expr-get
+                ctx
+                (ast.ast-expr-list-get (& children) index -1))))
+          (set! index (+ index 1)))
+        found)]))
+
+;; The syntactic answer of `macro-expr-has-qualified-type-literal?` for one
+;; transformer body, keyed by its node id and computed on the first expansion
+;; in this program.
+(define (macro-transformer-qualified-literals?
+  [ctx : TcContext]
+  [body-id : i64]) : bool
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [cache : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-transformer-qualified-literals)]
+    [cached : i64 (tc_i64_i64_map.get-value-or (& cache) body-id 0)]
+    (if (= cached 0)
+      (let
+        [qualified : bool
+          (macro-expr-has-qualified-type-literal?
+            ctx
+            (tc-context-expr-get ctx body-id))]
+        (if (tc_i64_i64_map.needs-grow? (&mut cache))
+          (in-arena
+            (unsafe
+              (arena.Arena (tc-macro-state-owner-arena state)))
+            (tc_i64_i64_map.grow! (&mut cache)))
+          unit)
+        (tc_i64_i64_map.insert-ref!
+          (&mut cache)
+          body-id
+          (if qualified
+            2
+            1))
+        (tc-macro-walk-set! state macro-transformer-qualified-literals cache)
+        qualified)
+      (= cached 2))))
+
+;; Transformer CTFE has no import scope. When a source transformer body names a
+;; type through an import alias or module name, resolve its `(type T)` literals
+;; in the macro's defining module, the way an ordinary fold resolves its
+;; literals (#8112), so `(type g.Point)` there names the declaration an
+;; annotation of `g.Point` names in that module (#9633). A source body is
+;; spanned; it is reached through its node id.
+(define (macro-transformer-type-literal-env
+  [ctx : TcContext]
+  [module-id : i64]
+  [body : (& ast.AstExpr)]
+  [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
+  (match body
+    [(or (Spanned body-id _) (MacroExpansion body-id _ _))
+      (macro-transformer-type-literal-env-at ctx module-id body-id env)]
+    [_ env]))
+
+(define (macro-transformer-type-literal-env-at
+  [ctx : TcContext]
+  [module-id : i64]
+  [body-id : i64]
+  [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
+  (if (not (macro-transformer-qualified-literals? ctx body-id))
+    env
+    (let
+      [module-ctx : TcContext
+        (cond
+          [(= ctx.module-id module-id) ctx]
+          [(csym.compiler-symbol-root-module-id? module-id)
+            (tc-context-with-module-id ctx "" module-id)]
+          [else
+            (tc-context-with-module-id
+              ctx
+              (tc-env-key-name-text module-id)
+              module-id)])]
+      [resolutions : ctfe_support.CtfeTypeLiteralResolutions
+        (ctfe_support.ctfe-type-literal-resolutions-empty)]
+      (tc-ctfe-type-literal-resolutions-into
+        module-ctx
+        (&mut resolutions)
+        (tc-context-expr-get ctx body-id))
+      (if (ast.ast-type-list-empty? (& resolutions.written))
+        env
+        (ctfe_support.ctfe-env-with-type-literals env resolutions)))))
+
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
-  ;; lint-allow: unused-variable -- used by compile-profile builds.
   [fallback-module-id : i64]
   ;; lint-allow: unused-variable -- used by compile-profile builds.
   [macro-name-id : i64]
@@ -113300,7 +113421,7 @@
     (match (ctfe_support.ctfe-eval-node
       (& body)
       (ctfe_support.ctfe-env-extend-id
-        env
+        (macro-transformer-type-literal-env ctx fallback-module-id (& body) env)
         (ctfe_support.ctfe-hygiene-enabled-id)
         (& (Bool true)))
       (ctfe_support.ctfe-fuel-limit))

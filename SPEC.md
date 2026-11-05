@@ -7723,8 +7723,15 @@ modules keep distinct layouts. `offset-of` requires a struct type and
 a field that exists on that struct. `size-of` and `align-of` also work for enum
 types using the TypeLisp tagged-union layout from section 3.5.3. All three
 forms are valid only in compile-time-required contexts such as comptime
-parameters, generated declaration evaluation, and explicit `(comptime expr)`
-folds. To use a query result at runtime, the program must fold it through normal
+parameter evaluation, macro transformer evaluation, generated declaration
+evaluation, and explicit `(comptime expr)` folds. During macro transformer
+evaluation, the `type-expr` operand may be any expression that evaluates at
+compile time to a type value, including a `(type T)` literal, a bound macro
+operand declared `[T : type]`, or a type value returned by reflection; no
+additional `(comptime ...)` wrapper is required, and the wrapped form gives the
+same result. A query in syntax the transformer emits is checked where that
+syntax is placed, so emitted runtime code is still rejected unless it folds the
+query. To use a query result at runtime, the program must fold it through normal
 comptime evaluation and store the resulting `i64`; the compiler must not expose
 type or layout metadata as a runtime value.
 

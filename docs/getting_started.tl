@@ -55,9 +55,14 @@
 ;#
 ;# ## 3. Move semantics, and the error you will hit first
 ;#
-;# Scalars, raw pointers and non-capturing function values copy. Everything
-;# else -- `String`, arrays, tuples, structs, enums, capturing closures --
-;# **moves**.
+;# Scalars, raw pointers, shared references and non-capturing function values
+;# are `Copy`. `String`, `ByteBuf`, `(Box T)`, mutable references and the other
+;# move-only leaves always **move**. Fixed arrays, tuples, structs, enums and
+;# capturing closures are decided recursively: they are `Copy` when every part
+;# is `Copy`, and move otherwise. A struct or enum declared with
+;# `(:cleanup ...)` always moves, as does one whose classification reaches its
+;# own type again. `docs/memory-model.md` lists the cases; SPEC.md section
+;# 4.7.2 is the precise rule.
 ;#
 ;# An aggregate parameter written by value owns its argument. Passing a
 ;# non-`Copy` value therefore moves it into the callee; passing a `Copy` value

@@ -44,6 +44,16 @@ under caches does not exercise a cache inside the bundle. Removing the two
 transparent-cache cases in the phase-token head helpers must make this matrix
 fail.
 
+`macro_layout_operand` evaluates `size-of`, `align-of` and `offset-of` on
+macro `type` operands during transformer evaluation, directly and inside a
+nested `(comptime ...)`, for constrained and unconstrained operands and an
+operand imported through an alias. Each transformer branches on a query before
+it emits, and each answer is compared with a `(comptime ...)` fold over the
+same type. It returns 42 at opt0/1/2 on both hosts. The matching typecheck rows
+in `compiler-typecheck-macro-layout-query-tests-ok?` keep runtime queries,
+queries in emitted runtime code, invalid operands, constrained kinds and
+unresolved operands rejected.
+
 `macro_struct_pattern` checks positional, named and nested struct patterns from
 expression macros against direct-source controls at opt0/1/2 on both hosts.
 Owned and shared scrutinees retain their field binding modes, including String

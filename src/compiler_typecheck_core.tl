@@ -55227,11 +55227,15 @@
           (ctfe_support.ctfe-fuel-limit))
           [(Ok value _) (tc-ctfe-value-type-with-expected ctx value expected)]
           [(Err diag)
-            (let
-              [diag-view : cdiag.CompilerDiagnostic
-                (cdiag.compiler-diagnostic-box-shared-view diag)]
-              (Err
-                (cdiag.compiler-diagnostic-typecheck-error-text (& diag-view))))]))]
+            (if (tc-defmacro-transformer-comptime?
+              ctx
+              (tc-context-expr-get ctx inner-box))
+              (tc-expr-with-expected-or-actual ctx env inner expected)
+              (let
+                [diag-view : cdiag.CompilerDiagnostic
+                  (cdiag.compiler-diagnostic-box-shared-view diag)]
+                (Err
+                  (cdiag.compiler-diagnostic-typecheck-error-text (& diag-view)))))]))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id maybe-ty-id)
         [(No) (tc-init-expr ctx env expected)]
@@ -63167,6 +63171,73 @@
     (tc-offset-layout-query-runtime-call args)
     (tc-one-arg-layout-query-runtime-call name args)))
 
+;; An unshadowed layout query outside a `(comptime ...)` fold. In a macro
+;; transformer body it runs when the transformer does (sections 3.7.1.1, 5.17,
+;; 5.18), on a type value such as a `[T : type]` operand, which transformer CTFE
+;; binds to the operand's resolved concrete type (#9628). Everywhere else it is
+;; a runtime use.
+(define (tc-layout-query-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [args : ast.AstExprList]) : ResultTcType
+  (if (and
+    (=
+      args.len
+      (if (string.eq name "offset-of")
+        2
+        1))
+    (tc-macro-walk-field
+      (tc-context-macro-state ctx)
+      defmacro-transformer-active))
+    (tc-macro-layout-query-call ctx env name args)
+    (tc-layout-query-runtime-call name args)))
+
+;; Transformer operands of type `type` are typed `Expr` in the transformer
+;; environment, like the reflection helpers' type operands; transformer CTFE
+;; rejects an operand that does not evaluate to a type value. A `(type T)`
+;; literal operand keeps its existing diagnostic: the `(comptime ...)` fold
+;; resolves it. `offset-of` names its field syntactically, as in a fold.
+(define (tc-macro-layout-query-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [args : ast.AstExprList]) : ResultTcType
+  (let
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    [type-arg : ast.AstExpr
+      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+    (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& type-arg))
+      [(TypeLiteral _) (tc-layout-query-runtime-call name args)]
+      [_
+        (let
+          [type-arg-ty : ast.AstType
+            (try (tc-expr-with-expected-or-actual ctx env type-arg (Expr)))]
+          (cond
+            [(not (tc-type-compatible? (Expr) type-arg-ty))
+              (Err
+                (tc-kind-message
+                  (TypeMismatch)
+                  (str_cat.str-cat
+                    "typecheck: "
+                    name
+                    " expects a type argument")))]
+            [(and
+                (= args.len 2)
+                (match (ast.ast-expr-unspan-with-segment-bases
+                  expr-bases
+                  (&
+                    (tc-context-expr-get
+                      ctx
+                      (ast.ast-expr-list-get (& args) 1 0))))
+                  [(Var _) false]
+                  [_ true]))
+              (Err
+                (tc-kind-message
+                  (TypeMismatch)
+                  "typecheck: offset-of expects a field name"))]
+            [else (Ok (I64))]))])))
+
 (define (tc-reflection-query-runtime-call [name : String]) : ResultTcType
   (Err
     (str_cat.str-cat
@@ -64605,7 +64676,7 @@
           [slice-call-kind : TcSliceViewCallKind info.slice-call-kind]
           [arena-owner-kind : i64 info.arena-owner-kind]
           (cond
-            [(= info.arm 1) (tc-layout-query-runtime-call name args)]
+            [(= info.arm 1) (tc-layout-query-call ctx env name args)]
             [(= info.arm 2)
               (tc-one-length-handle-builtin-call ctx env func args (I64))]
             [(= info.arm 3)
@@ -88596,11 +88667,16 @@
           (ctfe_support.ctfe-fuel-limit))
           [(Ok value _) (tc-ctfe-value-type ctx value)]
           [(Err diag)
-            (let
-              [diagnostic : cdiag.CompilerDiagnostic
-                (cdiag.compiler-diagnostic-box-shared-view diag)]
-              (Err
-                (cdiag.compiler-diagnostic-typecheck-error-text (& diagnostic))))]))]
+            (if (tc-defmacro-transformer-comptime?
+              ctx
+              (tc-context-expr-get ctx inner-box))
+              (tc-expr ctx env inner)
+              (let
+                [diagnostic : cdiag.CompilerDiagnostic
+                  (cdiag.compiler-diagnostic-box-shared-view diag)]
+                (Err
+                  (cdiag.compiler-diagnostic-typecheck-error-text
+                    (& diagnostic)))))]))]
     [(Quote _) (Ok (Expr))]
     [(Quasiquote template-box)
       (let
@@ -91552,6 +91628,66 @@
     Nil
     template))
 
+(define (tc-macro-param-names-at
+  [params : (& params ast.AstMacroParamList)]
+  [index : i64]
+  [names : TcStringList]) : TcStringList
+  (if (>= index (ast.ast-macro-param-list-len params))
+    names
+    (match (ast.ast-macro-param-list-get
+      params
+      index
+      (ast.ast-macro-param-fallback))
+      [(Param param-name _ _ _)
+        (tc-macro-param-names-at
+          params
+          (+ index 1)
+          (tc-string-list-add names (tc-env-key-name-text param-name)))])))
+
+;; Types a transformer body under the rules of macro transformer evaluation
+;; (#9628): see `defmacro-transformer-active`. The enclosing setting is restored
+;; afterwards, so the scope is exactly this body.
+(define (tc-defmacro-transformer-body-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& params ast.AstMacroParamList)]
+  [body : ast.AstExpr]) : ResultTcType
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [saved-active : bool
+      (tc-macro-walk-field state defmacro-transformer-active)]
+    [saved-operands : TcStringList
+      (tc-macro-walk-field state defmacro-transformer-operands)]
+    (tc-macro-walk-set! state defmacro-transformer-active true)
+    (tc-macro-walk-set!
+      state
+      defmacro-transformer-operands
+      (tc-macro-param-names-at params 0 Nil))
+    (let
+      [result : ResultTcType (tc-expr ctx env body)]
+      (tc-macro-walk-set! state defmacro-transformer-active saved-active)
+      (tc-macro-walk-set! state defmacro-transformer-operands saved-operands)
+      result)))
+
+;; Whether a `(comptime inner)` that did not fold at definition time belongs to
+;; the transformer being checked: it names one of the transformer's operands,
+;; whose values exist only once the transformer runs. Transformer CTFE evaluates
+;; such a fold in place with those values, so it is typed like the surrounding
+;; transformer body. Callers ask only after the definition-time fold failed.
+(define (tc-defmacro-transformer-comptime?
+  [ctx : TcContext]
+  [inner : ast.AstExpr]) : bool
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    (and
+      (tc-macro-walk-field state defmacro-transformer-active)
+      (tc-expr-uses-free-names?
+        (tc-context-expr-bases ctx)
+        inner
+        (tc-macro-walk-field state defmacro-transformer-operands)
+        Nil
+        false))))
+
 (define (tc-check-defmacro
   [name : i64]
   [ctx : TcContext]
@@ -91567,7 +91703,11 @@
         (tc-macro-helper-env-cached (tc-context-macro-state ctx) top-env)
         params)]
     [expr-result : ResultTcType
-      (tc-expr ctx macro-env (tc-global-shared-view body))]
+      (tc-defmacro-transformer-body-expr
+        ctx
+        macro-env
+        (& params)
+        (tc-global-shared-view body))]
     [got (try expr-result)]
     [_
       (try
@@ -94845,7 +94985,13 @@
   (dotted-macro-journal-ids (__tl_dyn-array i64))
   (dotted-macro-journal-exprs (__tl_dyn-array ast.AstExpr))
   (dotted-macro-journal-len i64)
-  (dotted-macro-journal-depth i64))
+  (dotted-macro-journal-depth i64)
+  ;; Set only while `tc-check-defmacro` types a transformer body. That body is
+  ;; compile-time code (section 3.7.1.1), so a layout query in it runs when the
+  ;; transformer does, and a nested `(comptime ...)` naming one of these
+  ;; operands is evaluated with the transformer's operand values (#9628).
+  (defmacro-transformer-active bool)
+  (defmacro-transformer-operands TcStringList))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -94970,7 +95116,9 @@
     (__tl_make-array i64 0)
     (__tl_make-array ast.AstExpr 0)
     0
-    0))
+    0
+    false
+    (Nil)))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize

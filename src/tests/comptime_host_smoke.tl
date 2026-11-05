@@ -16,6 +16,7 @@
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 (import compiler_intern_state as cis)
 (import stdlib.io)
 (import stdlib.string)
@@ -1556,16 +1557,16 @@
       (&mut clauses)
       (ast.ast-expr-clause else-node result))
     (let
-      [before : i64 (ast.ast-node-pool-len)]
+      [before : i64 (ast.ast-node-pool-context-expr-len pools)]
       [valid : i64
         (ctfe.ctfe-expr-clause-list-error-terminal pools (& clauses) "missing")]
-      [after-valid : i64 (ast.ast-node-pool-len)]
+      [after-valid : i64 (ast.ast-node-pool-context-expr-len pools)]
       [missing : i64
         (ctfe.ctfe-expr-clause-list-error-terminal pools (& empty) "missing")]
       (and
         (= valid result)
         (= before after-valid)
-        (= (ast.ast-node-pool-len) (+ before 4))
+        (= (ast.ast-node-pool-context-expr-len pools) (+ before 4))
         (match (ast.ast-node-pool-context-expr-get (& pools) missing)
           [(Comptime _) true]
           [_ false])))))
@@ -1705,6 +1706,7 @@
     [(Err _) false]))
 
 (define (main) : i64
+  (cbi.compiler-builtin-initialize-for-parse!)
   (cond
     [(not (host-smoke-construct-ok?))
       (io.panic "comptime host smoke: construction")]

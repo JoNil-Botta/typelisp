@@ -132,35 +132,55 @@
             (ptr-cast
               (secret.storage-data schedule.expanded.handle.storage)
               : (Ptr u8)))]
+        [scratch : (Array u64 8) (make-array u64 8)]
+        [planes : (MutPtr u64)
+          (unsafe
+            (ptr-cast (ptr-addr-of scratch) : (MutPtr u64)))]
         [round : i64 1]
+        ;; The production round helpers act on the cipher's bit planes; each
+        ;; observation writes the planes back through the production output.
         (unsafe
-          (aes.add-round-key! data keys 0))
+          (aes.absorb! (ptr-cast data : (Ptr u8)) planes 0))
+        (unsafe
+          (aes.add-round-key! planes keys 0))
         (while (<= round 10)
           (let
             [offset : i64 (* (- round 1) 4)]
+            (unsafe
+              (aes.squeeze! (ptr-cast planes : (Ptr u64)) data))
             (assert-state
               (& state)
               (string.copy (& (array-ref expected offset))))
             (unsafe
-              (aes.sub-bytes! data))
+              (aes.sub-bytes! planes))
+            (unsafe
+              (aes.squeeze! (ptr-cast planes : (Ptr u64)) data))
             (assert-state
               (& state)
               (string.copy (& (array-ref expected (+ offset 1)))))
             (unsafe
-              (aes.shift-rows! data))
+              (aes.shift-rows! planes))
+            (unsafe
+              (aes.squeeze! (ptr-cast planes : (Ptr u64)) data))
             (assert-state
               (& state)
               (string.copy (& (array-ref expected (+ offset 2)))))
             (when
               (< round 10)
               (unsafe
-                (aes.mix-columns! data))
+                (aes.mix-columns! planes))
+              (unsafe
+                (aes.squeeze! (ptr-cast planes : (Ptr u64)) data))
               (assert-state
                 (& state)
                 (string.copy (& (array-ref expected (+ offset 3))))))
             (unsafe
-              (aes.add-round-key! data keys round)))
+              (aes.add-round-key! planes keys round)))
           (set! round (+ round 1)))
+        (unsafe
+          (aes.squeeze! (ptr-cast planes : (Ptr u64)) data))
+        (unsafe
+          (secret.wipe-words! planes 8))
         (assert-state (& state) (string.copy (& (array-ref expected 39))))
         (secret.close-fixed state))
       (aes.close-128 schedule)]

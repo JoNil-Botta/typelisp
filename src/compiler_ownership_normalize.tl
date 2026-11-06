@@ -5726,27 +5726,29 @@
             0))]
       [(typed.TypedTypeValueResult.Err error) (normalize-int-typed error)])))
 
-;; `normalize-box-type!` for a box the place owns: 0 for a view of a box (a
-;; region-tagged box read through a reference), whose class names the box it
-;; views as its referent.
-(define (normalize-owned-box-type!
+;; 1 when typed type `container`, a box, is a view of one (a region-tagged
+;; box read through a reference): its class names the box it views as its
+;; referent.
+(define (normalize-box-view!
   [state : (& state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [container : i64]) : NormalizeInt
   (if (and
-    (>= container 0)
     (< container (array-length state.classes))
     (> (array-ref state.classes container).reference 0)
-    (=
-      (try
-        (normalize-box-type!
-          store
-          lease
-          (array-ref state.classes container).referent))
-      1))
-    (NormalizeInt.Ok 0)
-    (normalize-box-type! store lease container)))
+    (>= (array-ref state.classes container).referent 0))
+    (match (typed.typed-type-value-at!
+      store
+      lease
+      (array-ref state.classes container).referent)
+      [(typed.TypedTypeValueResult.Ok value)
+        (NormalizeInt.Ok
+          (if (normalize-box-ast-type? (& value))
+            1
+            0))]
+      [(typed.TypedTypeValueResult.Err error) (normalize-int-typed error)])
+    (NormalizeInt.Ok 0)))
 
 (define (normalize-box-ast-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
@@ -5809,10 +5811,11 @@
             (= step.ordinal -1)
             (or
               (normalize-box-class? (& state) step.container)
-              (=
-                (try
-                  (normalize-owned-box-type! state store lease step.container))
-                1)))]
+              (and
+                (= (try (normalize-box-type! store lease step.container)) 1)
+                (=
+                  (try (normalize-box-view! state store lease step.container))
+                  0))))]
         [target : NormalizePlaceRoute
           (cond
             ;; Below an unnamed part only referents are out of reach; an

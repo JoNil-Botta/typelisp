@@ -1200,8 +1200,15 @@
 
 (define tc-macro-state-slot-type-walk : i64
   19)
+
+;; Serial bound: production never reaches it; tests lower it to force wraps.
 (define tc-walk-serial-limit : i64
   1152921504606846976)
+
+(cfg
+  test
+  (define (tc-walk-serial-limit-set! [limit : i64]) : unit
+    (set! tc-walk-serial-limit limit)))
 
 ;; The bound job (its TcJobState address) and its table address: a saved and
 ;; restored current pointer, never an owning table. 0 = unbound (bypass). The
@@ -1676,36 +1683,13 @@
             (set! (array-ref (deref table).stamps id) (+ (* serial 2) 1))
             (set! (array-ref (deref table).results id) value)))))))
 
-(define (tc-type-node-find [node : (& ast.AstType)]) : i64
-  (let
-    [mask : i64 (- ast.ty-node-dedup-capacity 1)]
-    [slots : (Ptr i64)
-      (unsafe
-        (int->ptr ast.ty-node-dedup-slots-data-address : (Ptr i64)))]
-    [idx : i64
-      (ast.ty-node-dedup-slot-index (ast.ty-node-hash-value node) mask)]
-    [result : i64 -2]
-    (while (= result -2)
-      (let
-        [slot : i64
-          (unsafe
-            (ptr-read (ptr-offset slots idx)))]
-        (if (= slot 0)
-          (set! result -1)
-          (if (and
-            (< (- slot 1) (ast.ty-node-pool-len))
-            (ast.ty-node-shallow-eq? (- slot 1) node))
-            (set! result (- slot 1))
-            (set! idx (bit-and (+ idx 1) mask))))))
-    result))
-
+;; Complete a type-valued child of a stamping walk with the id of its answer,
+;; interning the answer when needed (only stamping walks reach this).
 (define (tc-walk-store-type!
   [serial : i64]
   [id : i64]
   [answer : (& ast.AstType)]) : unit
-  (let
-    [found : i64 (tc-type-node-find answer)]
-    (when (>= found 0) (tc-walk-store! serial id found))))
+  (tc-walk-store! serial id (ast.ty-node-push answer)))
 
 (define (tc-walk-reopen! [serial : i64] [id : i64]) : unit
   (begin

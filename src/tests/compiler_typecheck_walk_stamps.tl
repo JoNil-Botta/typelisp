@@ -10,6 +10,7 @@
 (import compiler_parse_core as parser)
 (import compiler_typecheck_api)
 (import sym_i64_env)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.iterator)
 (import stdlib.io)
 (cfg test (import stdlib.test))
@@ -59,15 +60,79 @@
 (define (walk-loan-free? [id : i64]) : bool
   (tc.tc-selected-type-loan-free? (ast.ty-node-get id)))
 
-;; Fan-out 63 / 64 / 65 at one root: the plain prefix, the boundary visit and
-;; the first stamped visit all answer as the plain walk does.
-(define (walk-boundary-test) : unit
+;; A one-element tuple around `id`: its element visit is the root, so every
+;; fan-out visit inside `id` counts toward that one root's budget.
+(define (walk-wrap [id : i64]) : i64
+  (let
+    [items : ast.AstTypeList (ast.ast-type-list-with-capacity 1)]
+    (ast.ast-type-list-push (&mut items) id)
+    (walk-tuple items)))
+
+;; The bound table's last issued serial (0 with no table).
+(define (walk-table-serial) : i64
+  (let
+    [address : i64 (tc.tc-type-walk-table)]
+    (if (= address 0)
+      0
+      (unsafe
+        (deref (int->ptr (cast address : u64) : (Ptr tc.TcTypeWalkTable))).serial))))
+
+;; Serials one full walk of `id` issues in `family` (2 loan-free, 0 region tag).
+(define (walk-serials-issued [family : i64] [id : i64]) : i64
+  (let
+    [before : i64 (walk-table-serial)]
+    (if (= family 2)
+      (walk-expect "wrapped loan-free" (walk-loan-free? id))
+      (walk-expect "wrapped no region tag" (not (walk-region-tag? id))))
+    (- (walk-table-serial) before)))
+
+;; Fan-out 62..66 below one root: the root visit plus `count` leaves. The first
+;; B = 64 visits are plain, so a serial opens exactly when count >= 64; every
+;; answer matches the plain walk. Unwrapped flat tuples are separate roots
+;; (each leaf is its own root) and must never open a serial. `mode` 1 expects
+;; that boundary exactly, 0 expects no serial issued (limit 1 or unbound), -1
+;; leaves the counts unchecked (limit 4 wraps and restarts them).
+(define (walk-boundary-test [mode : i64]) : unit
   (let
     [r : i64 (ci.intern "walk-r")]
     [plain : i64 (walk-push ast.AstType.I64)]
     [region : i64 (walk-push (ast.AstType.Region r plain))]
     [reference : i64 (walk-push (ast.AstType.Ref r plain))]
     (for [count (iterator.range 62 67)]
+      (let
+        [want : i64
+          (if (>= count 64)
+            1
+            0)]
+        [loan-free : i64
+          (walk-serials-issued 2 (walk-wrap (walk-flat count plain)))]
+        [region-tag : i64
+          (walk-serials-issued 0 (walk-wrap (walk-flat count plain)))]
+        [unwrapped : i64 (walk-serials-issued 2 (walk-flat count plain))]
+        (when
+          (= mode 1)
+          (walk-expect "loan-free serial at the boundary" (= loan-free want))
+          (walk-expect "region-tag serial at the boundary" (= region-tag want))
+          (walk-expect "unwrapped leaves are separate roots" (= unwrapped 0)))
+        ;; Stamping off: no serial is issued (a refused open may wrap the
+        ;; counter back, so the difference can be negative).
+        (when
+          (= mode 0)
+          (walk-expect
+            "serial issued with stamping off"
+            (and (<= loan-free 0) (<= region-tag 0) (<= unwrapped 0))))
+        (walk-expect
+          "wrapped region tag"
+          (walk-region-tag? (walk-wrap (walk-flat count region))))
+        (walk-expect
+          "wrapped loan"
+          (not (walk-loan-free? (walk-wrap (walk-flat count reference)))))
+        (walk-expect
+          "wrapped collect"
+          (tc.tc-name-id-list-contains
+            (tc.tc-type-collect-regions
+              (ast.ty-node-get (walk-wrap (walk-flat count reference))))
+            r)))
       (walk-expect
         "flat region tag"
         (walk-region-tag? (walk-flat count region)))
@@ -234,6 +299,75 @@
       (tc.tc-type-walk-table-release! serial)
       (walk-expect "serial table not released" (= (walk-job-table serial) 0)))))
 
+;; Source text of a binary tuple DAG of `depth` levels over leaf `kind`
+;; (0 i64, 1 a small S-bearing tuple).
+(define (walk-source-leaf [kind : i64]) : String
+  (if (= kind 0)
+    "i64"
+    "(Tuple S (Tuple (Tuple i64 i64) (Tuple i64 i64)))"))
+
+(define (walk-source-dag [depth : i64] [kind : i64]) : String
+  (if (= depth 0)
+    (walk-source-leaf kind)
+    (str_cat.str-cat
+      "(Tuple "
+      (walk-source-dag (- depth 1) kind)
+      " "
+      (walk-source-dag (- depth 1) kind)
+      ")")))
+
+;; Struct S holds a 128-leaf i64 DAG (copyable) or also a Box (move-only).
+;; `twice` copies a value whose type walks that same i64 DAG first (255
+;; fan-out visits, so the root's serial is open) and only then reaches S:
+;; S's nominal frame then walks its field (the shared DAG IDs) under its own
+;; serial while the enclosing serial stays open.
+(define (walk-context-source [copyable : bool]) : String
+  (str_cat.str-cat
+    "(defstruct S (f "
+    (walk-source-dag 7 0)
+    ") (n i64)"
+    (if copyable
+      ")"
+      " (b (Box i64)))")
+    "\n(define (twice [x : (Tuple "
+    (walk-source-dag 7 0)
+    " "
+    (walk-source-dag 4 1)
+    ")]) : i64 (let [p x] [q x] 0))\n(define (main) : i64 0)\n"))
+
+;; One check of the context source with the serial job bound around it (so
+;; its table survives the check): the verdict must be `copyable`; returns the
+;; serials the check issued.
+(define (walk-context-run [copyable : bool]) : i64
+  (let
+    [serial : tc.TcJobState (tc.tc-serial-job-state)]
+    [outer : tc.TcTypeWalkBinding (tc.tc-type-walk-bind! serial)]
+    [ok : bool
+      (match (check_core.compiler-check-source
+        "tests/walk_context.tl"
+        (walk-context-source copyable))
+        [(Ok _ _) true]
+        [(Err _ _) false])]
+    [issued : i64 (walk-table-serial)]
+    (tc.tc-type-walk-restore! outer)
+    (tc.tc-type-walk-table-release! serial)
+    (walk-expect "context check verdict" (= ok copyable))
+    (walk-expect "context check left walk words open" (walk-words-idle?))
+    issued))
+
+;; Copyable / move-only / copyable in turn, stamping on (serials issued, so
+;; nominal frames run under an open serial) and stamping off (limit 1): the
+;; verdicts never carry across checks or contexts and match the plain walk.
+(define (walk-context-test) : unit
+  (walk-expect "A stamps" (>= (walk-context-run true) 2))
+  (walk-expect "B stamps" (>= (walk-context-run false) 2))
+  (walk-expect "A again stamps" (>= (walk-context-run true) 2))
+  (tc.tc-walk-serial-limit-set! 1)
+  (walk-expect "A plain" (= (walk-context-run true) 0))
+  (walk-expect "B plain" (= (walk-context-run false) 0))
+  (walk-expect "A plain again" (= (walk-context-run true) 0))
+  (tc.tc-walk-serial-limit-set! 1152921504606846976))
+
 ;; Error injection: a failing check whose types fan out runs under its own
 ;; binding; afterwards the caller's binding is back and every word is idle.
 (define (walk-failing-check-test [job : tc.TcJobState]) : unit
@@ -263,17 +397,17 @@
       [outer : tc.TcTypeWalkBinding (tc.tc-type-walk-bind! job)]
       (ast.ast-node-pool-context-install!
         (ast.ast-node-pool-context-new-with-capacities 8 8))
-      (walk-boundary-test)
+      (walk-boundary-test 1)
       (walk-dag-test 40)
       (walk-expect "words idle after walks" (walk-words-idle?))
       ;; Forced serial wrap and exhaustion: limit 4 wraps whenever no serial
       ;; is open and nested walks past it run unstamped; limit 1 never
       ;; stamps. Both stay exact (small DAGs: unstamped walks unfold).
       (tc.tc-walk-serial-limit-set! 4)
-      (walk-boundary-test)
+      (walk-boundary-test -1)
       (walk-dag-test 12)
       (tc.tc-walk-serial-limit-set! 1)
-      (walk-boundary-test)
+      (walk-boundary-test 0)
       (walk-dag-test 12)
       (tc.tc-walk-serial-limit-set! 1152921504606846976)
       (walk-expect "words idle after wrap" (walk-words-idle?))
@@ -281,6 +415,7 @@
       (ast.ast-node-pool-context-install! installed)
       (walk-repl-test job)
       (walk-failing-check-test job)
+      (walk-context-test)
       (ast.ast-node-pool-context-install!
         (ast.ast-node-pool-context-new-with-capacities 8 8))
       ;; Release in between: the next walk starts a fresh table.
@@ -292,7 +427,7 @@
         (tc.tc-type-walk-restore! again)
         (tc.tc-type-walk-table-release! job))
       ;; Unbound: no table, the plain walks stay exact (small depth only).
-      (walk-boundary-test)
+      (walk-boundary-test 0)
       (walk-expect "words idle at the end" (walk-words-idle?))
       (ast.ast-node-pool-context-install! installed))))
 

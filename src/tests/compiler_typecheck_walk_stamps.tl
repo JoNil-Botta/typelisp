@@ -341,9 +341,26 @@
     (walk-source-dag 4 1)
     "))]) : i64 (let [p x] [q x] 0))\n(define (main) : i64 0)\n"))
 
+;; The bound table's undo-log capacity (0 with no table). The log starts empty
+;; and grows only when a serial overwrites a stamp written since the
+;; outermost open serial began, i.e. only when serials nest: a nonzero
+;; capacity after a check witnesses a nested serial and its undo/restore.
+(define (walk-table-undo-capacity) : i64
+  (let
+    [address : i64 (tc.tc-type-walk-table)]
+    (if (= address 0)
+      0
+      (unsafe
+        (array-length
+          (deref (int->ptr (cast address : u64) : (Ptr tc.TcTypeWalkTable))).undo)))))
+
+;; The undo-log capacity the last `walk-check-run` check left.
+(define walk-last-undo : i64
+  0)
+
 ;; One check of `source` with the serial job bound around it (so its table
 ;; survives the check): the verdict must be `want`; returns the serials the
-;; check issued.
+;; check issued and records its undo-log capacity in `walk-last-undo`.
 (define (walk-check-run [source : String] [want : bool]) : i64
   (let
     [serial : tc.TcJobState (tc.tc-serial-job-state)]
@@ -353,8 +370,10 @@
         [(Ok _ _) true]
         [(Err _ _) false])]
     [issued : i64 (walk-table-serial)]
+    [undo : i64 (walk-table-undo-capacity)]
     (tc.tc-type-walk-restore! outer)
     (tc.tc-type-walk-table-release! serial)
+    (set! walk-last-undo undo)
     (walk-expect "walk check verdict" (= ok want))
     (walk-expect "walk check left walk words open" (walk-words-idle?))
     issued))
@@ -415,26 +434,67 @@
     (= (walk-check-run (walk-lifetime-source 2) false) 0))
   (tc.tc-walk-serial-limit-set! 1152921504606846976))
 
+;; S with a lifetime parameter: its `StructArgs` move-kind query skips the
+;; declaration-level memo, so its first visit inside the root always walks
+;; the frame body (copyable, or move-only with a Box).
+(define (walk-context-lifetime-source [copyable : bool]) : String
+  (str_cat.str-cat
+    "(defstruct S (:lifetimes r) (f "
+    (walk-source-dag 7 0)
+    ") (v (& r i64))"
+    (if copyable
+      ")"
+      " (b (Box i64)))")
+    "\n(define (twice [x : (Tuple (Tuple "
+    (walk-source-dag 7 0)
+    " (S a)))]) : i64 (let [p x] [q x] 0))\n(define (main) : i64 0)\n"))
+
 ;; Copyable / move-only / copyable in turn. With stamping on, the big field
-;; issues more serials than the small one in the same outer walk: the extra
-;; ones open inside S's frame while the outer serial is open. With stamping
-;; off (limit 1) none are issued. Verdicts match either way and never carry
-;; across checks (each check releases its table).
+;; nests: S's frame walks the shared DAG under a second serial while the
+;; outer one is open, overwriting outer stamps (undo log used) and issuing
+;; more serials than the same walk with a lone i64 field (no undo). The
+;; lifetime-parameterised S nests too. With stamping off (limit 1) nothing is
+;; issued. Verdicts match either way and never carry across checks (each
+;; check releases its table).
 (define (walk-context-test) : unit
   (let
     [a-big : i64 (walk-context-run true false)]
+    [a-big-undo : i64 walk-last-undo]
     [a-small : i64 (walk-context-run true true)]
+    [a-small-undo : i64 walk-last-undo]
     [b-big : i64 (walk-context-run false false)]
+    [b-big-undo : i64 walk-last-undo]
     [b-small : i64 (walk-context-run false true)]
+    [b-small-undo : i64 walk-last-undo]
     [a-again : i64 (walk-context-run true false)]
+    [a-again-undo : i64 walk-last-undo]
     (walk-expect "A stamps" (>= a-small 1))
     (walk-expect "A frame opens a nested serial" (> a-big a-small))
     (walk-expect "B frame opens a nested serial" (> b-big b-small))
-    (walk-expect "A again issues the same serials" (= a-again a-big)))
+    (walk-expect "A again issues the same serials" (= a-again a-big))
+    (walk-expect "A frame nests (undo used)" (> a-big-undo 0))
+    (walk-expect "B frame nests (undo used)" (> b-big-undo 0))
+    (walk-expect "A again nests (undo used)" (> a-again-undo 0))
+    (walk-expect "small fields never nest" (= (+ a-small-undo b-small-undo) 0)))
+  (walk-expect
+    "lifetime S stamps"
+    (>= (walk-check-run (walk-context-lifetime-source true) true) 1))
+  (walk-expect "lifetime S frame nests" (> walk-last-undo 0))
+  (walk-expect
+    "lifetime move-only S stamps"
+    (>= (walk-check-run (walk-context-lifetime-source false) false) 1))
+  (walk-expect "lifetime move-only S frame nests" (> walk-last-undo 0))
   (tc.tc-walk-serial-limit-set! 1)
   (walk-expect "A plain" (= (walk-context-run true false) 0))
   (walk-expect "B plain" (= (walk-context-run false false) 0))
   (walk-expect "A plain again" (= (walk-context-run true false) 0))
+  (walk-expect
+    "lifetime S plain"
+    (= (walk-check-run (walk-context-lifetime-source true) true) 0))
+  (walk-expect
+    "lifetime move-only S plain"
+    (= (walk-check-run (walk-context-lifetime-source false) false) 0))
+  (walk-expect "plain never nests" (= walk-last-undo 0))
   (tc.tc-walk-serial-limit-set! 1152921504606846976))
 
 ;; Arena erasure: `take` brands `r` through its owner parameter, and its

@@ -177,3 +177,23 @@ removal/short-window controls must fail. The GCTR target change is reanalyzed in
 [the shared stack review](../crypto-aes/stack-scrub-review.md): opt1 remains at
 31 stores; the extra opt2 outgoing slot holds the public status-result pointer; the false selector stays in a register. GHASH
 keeps its 48 B wipe and the same 38 opt1 stores, with no new opt2 secret slot.
+
+## Lowering census composition (Refs #9029)
+
+The opt2 pins were requalified after composing the loop-exposure lowering change
+onto `20cf1d567`. On each target, only the actual open root and `main` differ:
+four local label definitions and all their references use the inlining ordinal
+33 instead of 34. A verified bijection of those labels reproduces the complete
+old bodies exactly; no opcode, register, immediate, address, external call or
+symbol inventory changes. The assembled `.text` sections of both AES and GCM
+audits are byte-identical to the base at opt1 and opt2 on both targets. The pin
+checker still hashes complete labels and bodies without extra normalization.
+
+GHASH and GCTR bodies, their stack stores and the 48 B GHASH wipe are unchanged.
+The shared scrub intervals and every derived call-tree depth are unchanged in
+all four target/opt cells. The native Linux positives and all 32 removal/shrink
+mutants pass; Windows native execution remains a hosted-CI requirement. Fresh
+three-repeat D-C155 measurements retain +405 Ir per standalone block for each
+AES variant, +0.097653% seal and +0.098010% open per 16 KiB record. The Windows
+opt2 scrub path remains 435 static instructions. PR #9664 tracks the required independent D-C150/D-C155 exposure reviews
+and full hosted acceptance.

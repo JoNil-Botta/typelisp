@@ -48933,8 +48933,11 @@
 
 ;; A declaration's top-level move kind (empty stack, no lifetime arguments) is
 ;; fixed for one CompilerSymbols stamp, so it is memoized beside the declaration's
-;; type-handle cache slot. Recursive and lifetime-applied queries classify
-;; directly: a cycle-truncated inner answer must not become the declaration's.
+;; type-handle cache slot. Only top-level queries publish: a cycle-truncated
+;; inner answer must not become the declaration's. A nested query without
+;; lifetime arguments may read the published answer, because a larger stack
+;; only adds cut-offs at declarations on a path to this one, and those cut off
+;; the top-level walk too. Lifetime-applied queries classify directly.
 (define (tc-type-move-kind-nominal-with-stack
   [ctx : TcContext]
   [name-id : i64]
@@ -48951,47 +48954,43 @@
         (tc-context-symbols-ref (& ctx))
         name-id
         tc-type-handle-lookup-caller-move-kind)]
+    [declaration-level : bool (= (tc-lifetime-list-count lifetimes) 0)]
     (if (not (csym.compiler-symbols-handle-found? handle))
       (MoveOnly)
-      (if (and
-        (match stack
-          [(Nil) true]
-          [_ false])
-        (= (tc-lifetime-list-count lifetimes) 0))
-        (let
-          [cached : i64
+      (let
+        [cached : i64
+          (if declaration-level
             (tc-type-handle-cache-move-kind
               nominal-state
               (tc-context-symbols-ref (& ctx))
-              name-id)]
-          (if (= cached 1)
-            (Copyable)
-            (if (= cached 2)
-              (MoveOnly)
-              (let
-                [kind : TcMoveKind
-                  (tc-type-move-kind-nominal-handle
-                    ctx
-                    name-id
-                    handle
-                    lifetimes
-                    stack
-                    type-id
-                    completed)]
+              name-id)
+            0)]
+        (cond
+          [(= cached 1) (Copyable)]
+          [(= cached 2) (MoveOnly)]
+          [else
+            (let
+              [kind : TcMoveKind
+                (tc-type-move-kind-nominal-handle
+                  ctx
+                  name-id
+                  handle
+                  lifetimes
+                  stack
+                  type-id
+                  completed)]
+              (when
+                (and
+                  declaration-level
+                  (match stack
+                    [(Nil) true]
+                    [_ false]))
                 (tc-type-handle-cache-move-kind-set!
                   nominal-state
                   (tc-context-symbols-ref (& ctx))
                   name-id
-                  (tc-move-kind-code kind))
-                kind))))
-        (tc-type-move-kind-nominal-handle
-          ctx
-          name-id
-          handle
-          lifetimes
-          stack
-          type-id
-          completed)))))
+                  (tc-move-kind-code kind)))
+              kind)])))))
 
 (define (tc-type-move-kind-nominal-handle
   [ctx : TcContext]

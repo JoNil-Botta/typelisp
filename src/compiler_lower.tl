@@ -15930,9 +15930,10 @@
     (unsafe
       (set!
         (deref
-          (compiler-lower-function-state-ptr
-            (lower-state-function-state state))).address-exposure-mode
-        (if scan.facts.complete 1 -1)))
+          (compiler-lower-function-state-ptr (lower-state-function-state state))).address-exposure-mode
+        (if scan.facts.complete
+          1
+          -1)))
     (match scan
       [(LowerExposureScan _ _ facts)
         (unsafe
@@ -15948,8 +15949,11 @@
         (match (sym_i64_env.sym-i64-view remaining)
           [(SymI64ViewNil) (set! done true)]
           [(SymI64ViewBind name var-id rest)
-            (when (= var-id (sym_i64_env.sym-i64-lookup-id-or env name -1))
-              (begin (lower-exposure-seed state 0 -1 name var-id) unit))
+            (when
+              (= var-id (sym_i64_env.sym-i64-lookup-id-or env name -1))
+              (begin
+                (lower-exposure-seed state 0 -1 name var-id)
+                unit))
             (set! remaining rest)])))))
 
 (define (lower-exposure-enter-scope!
@@ -24267,12 +24271,12 @@
                   type-env
                   (lower-global-shared-view body))
                   [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
-                  (lower-exposure-census!
-                    ctx
-                    bound-state
-                    bound-env
-                    bound-type-env
-                    (clone body))
+                    (lower-exposure-census!
+                      ctx
+                      bound-state
+                      bound-env
+                      bound-type-env
+                      (clone body))
                     (match (lower-spmd-complete-function
                       bound-state
                       (lower-tail-expr

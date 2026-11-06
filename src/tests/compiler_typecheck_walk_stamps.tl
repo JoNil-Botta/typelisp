@@ -317,24 +317,29 @@
       (walk-source-dag (- depth 1) kind)
       ")")))
 
-;; Struct S holds a 128-leaf i64 DAG (copyable) or also a Box (move-only).
-;; `twice` copies a value whose type walks that same i64 DAG first (255
-;; fan-out visits, so the root's serial is open) and only then reaches S:
-;; S's nominal frame then walks its field (the shared DAG IDs) under its own
-;; serial while the enclosing serial stays open.
-(define (walk-context-source [copyable : bool]) : String
+;; Struct S holds a 128-leaf i64 DAG `f` (or, with `small`, a lone i64) and,
+;; when move-only, a Box. `twice` copies one root, `(Tuple (Tuple D E))`: the
+;; root first walks D (the same 128-leaf DAG, 255 fan-out visits, so the
+;; root's serial is open) and only then reaches S inside E. S's first
+;; (uncached) move-kind frame walks `f` as its own root, which opens a second
+;; serial while the outer one is open and overwrites the outer stamps of the
+;; shared DAG IDs (restored from the undo log on close). `small` keeps the
+;; same outer walk with nothing to stamp inside the frame.
+(define (walk-context-source [copyable : bool] [small : bool]) : String
   (str_cat.str-cat
     "(defstruct S (f "
-    (walk-source-dag 7 0)
+    (if small
+      "i64"
+      (walk-source-dag 7 0))
     ") (n i64)"
     (if copyable
       ")"
       " (b (Box i64)))")
-    "\n(define (twice [x : (Tuple "
+    "\n(define (twice [x : (Tuple (Tuple "
     (walk-source-dag 7 0)
     " "
     (walk-source-dag 4 1)
-    ")]) : i64 (let [p x] [q x] 0))\n(define (main) : i64 0)\n"))
+    "))]) : i64 (let [p x] [q x] 0))\n(define (main) : i64 0)\n"))
 
 ;; One check of `source` with the serial job bound around it (so its table
 ;; survives the check): the verdict must be `want`; returns the serials the
@@ -354,8 +359,8 @@
     (walk-expect "walk check left walk words open" (walk-words-idle?))
     issued))
 
-(define (walk-context-run [copyable : bool]) : i64
-  (walk-check-run (walk-context-source copyable) copyable))
+(define (walk-context-run [copyable : bool] [small : bool]) : i64
+  (walk-check-run (walk-context-source copyable small) copyable))
 
 ;; A depth-8 DAG of `T` values (each holds an `S` holding a reference to a
 ;; local), clear, under an arena owner (gated), or escaping its scope: struct
@@ -410,17 +415,61 @@
     (= (walk-check-run (walk-lifetime-source 2) false) 0))
   (tc.tc-walk-serial-limit-set! 1152921504606846976))
 
-;; Copyable / move-only / copyable in turn, stamping on (serials issued, so
-;; nominal frames run under an open serial) and stamping off (limit 1): the
-;; verdicts never carry across checks or contexts and match the plain walk.
+;; Copyable / move-only / copyable in turn. With stamping on, the big field
+;; issues more serials than the small one in the same outer walk: the extra
+;; ones open inside S's frame while the outer serial is open. With stamping
+;; off (limit 1) none are issued. Verdicts match either way and never carry
+;; across checks (each check releases its table).
 (define (walk-context-test) : unit
-  (walk-expect "A stamps" (>= (walk-context-run true) 2))
-  (walk-expect "B stamps" (>= (walk-context-run false) 2))
-  (walk-expect "A again stamps" (>= (walk-context-run true) 2))
+  (let
+    [a-big : i64 (walk-context-run true false)]
+    [a-small : i64 (walk-context-run true true)]
+    [b-big : i64 (walk-context-run false false)]
+    [b-small : i64 (walk-context-run false true)]
+    [a-again : i64 (walk-context-run true false)]
+    (walk-expect "A stamps" (>= a-small 1))
+    (walk-expect "A frame opens a nested serial" (> a-big a-small))
+    (walk-expect "B frame opens a nested serial" (> b-big b-small))
+    (walk-expect "A again issues the same serials" (= a-again a-big)))
   (tc.tc-walk-serial-limit-set! 1)
-  (walk-expect "A plain" (= (walk-context-run true) 0))
-  (walk-expect "B plain" (= (walk-context-run false) 0))
-  (walk-expect "A plain again" (= (walk-context-run true) 0))
+  (walk-expect "A plain" (= (walk-context-run true false) 0))
+  (walk-expect "B plain" (= (walk-context-run false false) 0))
+  (walk-expect "A plain again" (= (walk-context-run true false) 0))
+  (tc.tc-walk-serial-limit-set! 1152921504606846976))
+
+;; Arena erasure: `take` brands `r` through its owner parameter, and its
+;; parameter type is one root, `(Tuple (Tuple D L))`, whose last leaf L is
+;; `(in r i64)` (tagged) or `i64` (plain) after the 255-visit DAG D. Calls
+;; erase the signature's arena regions: the tagged root walks the tag and
+;; rebuilds the type (stamped erasure), the plain one returns unchanged.
+(define (walk-arena-source [tagged : bool]) : String
+  (str_cat.str-cat
+    "(import stdlib.arena)\n(define (take [_owner : (& a (arena.Arena r))] [_x : "
+    (walk-arena-source-root tagged)
+    "]) : i64 2)\n(define (pass [owner : (& a (arena.Arena r))] [x : "
+    (walk-arena-source-root tagged)
+    "]) : i64 (take owner x))\n(define (main) : i64 0)\n"))
+
+(define (walk-arena-source-root [tagged : bool]) : String
+  (str_cat.str-cat
+    "(Tuple (Tuple "
+    (walk-source-dag 7 0)
+    (if tagged
+      " (in r i64)))"
+      " i64))")))
+
+(define (walk-arena-test) : unit
+  (let
+    [tagged : i64 (walk-check-run (walk-arena-source true) true)]
+    [plain : i64 (walk-check-run (walk-arena-source false) true)]
+    (walk-expect "arena erasure stamps" (> tagged plain)))
+  (tc.tc-walk-serial-limit-set! 1)
+  (walk-expect
+    "arena tagged plain"
+    (= (walk-check-run (walk-arena-source true) true) 0))
+  (walk-expect
+    "arena untagged plain"
+    (= (walk-check-run (walk-arena-source false) true) 0))
   (tc.tc-walk-serial-limit-set! 1152921504606846976))
 
 ;; Error injection: a failing check whose types fan out runs under its own
@@ -472,6 +521,7 @@
       (walk-failing-check-test job)
       (walk-context-test)
       (walk-lifetime-test)
+      (walk-arena-test)
       (ast.ast-node-pool-context-install!
         (ast.ast-node-pool-context-new-with-capacities 8 8))
       ;; Release in between: the next walk starts a fresh table.

@@ -49709,7 +49709,7 @@
 ;; lifetime arguments may read the published answer, because a larger stack
 ;; only adds cut-offs at declarations on a path to this one, and those cut off
 ;; the top-level walk too. Lifetime-applied queries classify directly.
-(define (tc-type-move-kind-nominal-with-stack-walk
+(define (tc-type-move-kind-nominal-with-stack
   [ctx : TcContext]
   [name-id : i64]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
@@ -49762,26 +49762,6 @@
                   name-id
                   (tc-move-kind-code kind)))
               kind)])))))
-
-;; A nominal frame of move-kind: its fields are walked with their own stack,
-;; so they form their own root walks.
-(define (tc-type-move-kind-nominal-with-stack
-  [ctx : TcContext]
-  [name-id : i64]
-  [lifetimes : (& lifetimes ast.AstLifetimeList)]
-  [stack : TcNameIdList]
-  [type-id : i64]
-  [completed : (&mut completed TcNameIdList)]) : TcMoveKind
-  (tc-walk-frame
-    tc-walk-visits-8
-    tc-walk-serial-8
-    (tc-type-move-kind-nominal-with-stack-walk
-      ctx
-      name-id
-      lifetimes
-      stack
-      type-id
-      completed)))
 
 (define (tc-type-move-kind-id
   [ctx : TcContext]
@@ -49844,14 +49824,20 @@
         (Copyable)]
       [else
         (let
-          [result : TcMoveKind
-            (tc-type-move-kind-nominal-fields
-              ctx
-              nominal-id
-              handle
-              lifetimes
-              stack
-              completed)]
+          [result
+            : TcMoveKind
+            ;; Only field descent needs a nominal frame: the fields walk
+            ;; with their own stack and form their own root walks.
+            (tc-walk-frame
+              tc-walk-visits-8
+              tc-walk-serial-8
+              (tc-type-move-kind-nominal-fields
+                ctx
+                nominal-id
+                handle
+                lifetimes
+                stack
+                completed))]
           ;; Only a completed Copyable answer is independent of the path.
           ;; A conservative cycle cutoff must never enter this memo.
           ;; The key is canonical even when the AST pool appends fresh IDs.
@@ -124192,7 +124178,15 @@
       (tc-selected-nominal-holds-reference? ctx walk name true)]
     [_ false]))
 
-(define (tc-selected-nominal-holds-reference-walk?
+;; The walk cuts a declaration already on the path, so from the root it
+;; decides whether a reference is reachable through fields and payloads. Below
+;; the root, a declaration's `false` is that reachability only when no cut in
+;; its sub-walk hit a declaration above it (a cut at itself or deeper hides
+;; nothing reachable from it); its `true` always is (a real path). An exact
+;; `false` also holds for every declaration its sub-walk entered, since each
+;; is reachable from it. Those answers are kept, and replacing a sub-walk by a
+;; kept answer leaves every enclosing answer as the walk would compute it.
+(define (tc-selected-nominal-holds-reference?
   [ctx : TcContext]
   [walk : (&mut walk TcSelectedHoldsWalk)]
   [name : i64]
@@ -124231,10 +124225,16 @@
             (set! walk.entered (+ first 1))
             (set! walk.low depth)
             (let
-              [found : bool
-                (if enum?
-                  (tc-selected-enum-payloads-hold-reference? ctx walk name)
-                  (tc-selected-struct-fields-hold-reference? ctx walk name))]
+              [found
+                : bool
+                ;; A cut or memo hit never descends. Only a new declaration's
+                ;; fields and payloads need their own walk serial.
+                (tc-walk-frame
+                  tc-walk-visits-7
+                  tc-walk-serial-7
+                  (if enum?
+                    (tc-selected-enum-payloads-hold-reference? ctx walk name)
+                    (tc-selected-struct-fields-hold-reference? ctx walk name)))]
               (set! walk.depth depth)
               (cond
                 [found
@@ -124253,24 +124253,6 @@
                 [else unit])
               (when (< outer-low walk.low) (set! walk.low outer-low))
               found)))))))
-
-;; The walk cuts a declaration already on the path, so from the root it
-;; decides whether a reference is reachable through fields and payloads. Below
-;; the root, a declaration's `false` is that reachability only when no cut in
-;; its sub-walk hit a declaration above it (a cut at itself or deeper hides
-;; nothing reachable from it); its `true` always is (a real path). An exact
-;; `false` also holds for every declaration its sub-walk entered, since each
-;; is reachable from it. Those answers are kept, and replacing a sub-walk by a
-;; kept answer leaves every enclosing answer as the walk would compute it.
-(define (tc-selected-nominal-holds-reference?
-  [ctx : TcContext]
-  [walk : (&mut walk TcSelectedHoldsWalk)]
-  [name : i64]
-  [enum? : bool]) : bool
-  (tc-walk-frame
-    tc-walk-visits-7
-    tc-walk-serial-7
-    (tc-selected-nominal-holds-reference-walk? ctx walk name enum?)))
 
 (define (tc-selected-holds-reference-id?
   [ctx : TcContext]

@@ -1905,9 +1905,11 @@
     (ot.opt-test-instrs (ir.CompilerIrInstr.Jump next))))
 
 (define (smoke-heavy-pass-large-exit-block) : ir.CompilerIrBlock
-  (irt.block "exit:
+  (irt.block
+    "exit:
        %3 = add %0, %1 : i64
-       return %3"))
+       %4 = add %2, %3 : i64
+       return %4"))
 
 (define (smoke-heavy-pass-large-tail-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -1937,7 +1939,7 @@
     (ot.opt-test-symbol "heavy_pass_large")
     (ot.opt-gvn-test-params)
     (I64)
-    4
+    5
     (smoke-heavy-pass-large-blocks)
     Ordinary))
 
@@ -1960,7 +1962,7 @@
         (if (=
           (ot.opt-gvn-count-binops-blocks
             (ir.compiler-ir-block-list-view optimized-blocks))
-          1)
+          2)
           42
           3)])))
 

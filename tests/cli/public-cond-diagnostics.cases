@@ -216,6 +216,8 @@ run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-
 exit 1
 stdout empty
 stderr contains error[E0505]: invalid macro name cond allows [else ...] only as the final arm: choose another name
+stderr after ^error\[E0505\]:
+next-line .*main.tl:6:5$
 
 # A message-named generated binding (comptime.expr-let-scope) cannot capture a
 # cond terminal, and neither can a binding named comptime.comptime-error.
@@ -226,6 +228,17 @@ stdout empty
 stderr contains error[E0505]: cond allows [else ...] only as the final arm
 stderr after ^error\[E0505\]:
 next-line .*cond_else_not_final_generated_capture_reject.tl:7:6$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-missing-else-generated-capture
+run {{each}} "{{root}}/tests/safety/cond_missing_else_generated_capture_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond requires a final [else ...] arm
+stderr after ^error\[E0505\]:
+next-line .*cond_missing_else_generated_capture_reject.tl:7:6$
 stderr not-contains runtime variable
 stderr not-contains core-cond-else-must-be-final
 stderr not-contains stdlib/core_macros.tl:

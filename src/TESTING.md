@@ -532,7 +532,8 @@ descriptor's slot from its referent. The safety corpus keeps stored scalar
 mutable borrows rejected with E0207; immediate call borrows stay supported.
 `compiler-lower-staged-borrow-does-not-expose-slot` and the broad native fixture
 keep staged scalar and register-group writebacks correct across loops
-without falsely exposing the original local slots.
+without falsely exposing the original local slots. Acyclic pre-/post-address
+controls preserve both private early reads and required later materialization.
 
 `addr_taken_frame_slots.tl` keeps scalar, narrow, parameter, loop-carried and
 callable-copy storage private while a derived pointer remains live, at opt0/1/2

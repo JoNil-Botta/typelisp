@@ -535,7 +535,7 @@
   (loop-written-roots lower_i64_i64_map.Map)
   ;; Right-hand-side expression ids of the `set!` forms inside some loop.
   (loop-set-values lower_i64_i64_map.Map)
-  ;; -1 unavailable or invalidated; 0 proven address-free; 1 lexical census.
+  ;; -1 unavailable or invalidated; 0 no loop exposure; 1 lexical census.
   (address-exposure-mode i64)
   (address-exposure LowerAddressExposure))
 
@@ -1866,7 +1866,8 @@
 (defstruct LowerExposureScan
   (ctx tc_core.TcContext)
   (state LowerState)
-  (facts LowerAddressExposure))
+  (facts LowerAddressExposure)
+  (loop? bool))
 
 (define (lower-state-from-box [data : (Box LowerStateData)]) : LowerState
   (LowerState
@@ -15570,6 +15571,17 @@
 
 ;; Binding forms establish lexical scope here; every ordinary operand comes
 ;; from the shared child schema. A lambda owns a separate census after capture.
+(define (lower-exposure-walk-loop-id!
+  [scan : (&mut scan LowerExposureScan)]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [id : i64]) : unit
+  (let
+    [previous-loop? : bool scan.loop?]
+    (set! scan.loop? true)
+    (lower-exposure-walk-id! scan env type-env id)
+    (set! scan.loop? previous-loop?)))
+
 (define (lower-exposure-walk!
   [scan : (&mut scan LowerExposureScan)]
   [env : sym_i64_env.SymI64Env]
@@ -15580,6 +15592,12 @@
     [state : LowerState (clone scan.state)]
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [unwrapped : ast.AstExpr (ast.ast-expr-unspan-with-pools pools (& expr))]
+    [previous-loop? : bool scan.loop?]
+    (when
+      (match (& unwrapped)
+        [(While _ _) true]
+        [_ false])
+      (set! scan.loop? true))
     (match (clone unwrapped)
       [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) unit]
       [(Let payload)
@@ -15660,7 +15678,7 @@
           [(Foreach name ty start end body)
             (lower-exposure-walk-id! scan env type-env start)
             (lower-exposure-walk-id! scan env type-env end)
-            (lower-exposure-walk-id!
+            (lower-exposure-walk-loop-id!
               scan
               (lower-exposure-bind! scan env 0 body name)
               (tc_core.tc-bind-id type-env name ty)
@@ -15679,7 +15697,7 @@
             (lower-exposure-walk-id! scan env type-env end)
             (lower-exposure-walk-id! scan env type-env second-start)
             (lower-exposure-walk-id! scan env type-env second-end)
-            (lower-exposure-walk-id!
+            (lower-exposure-walk-loop-id!
               scan
               (lower-exposure-bind!
                 scan
@@ -15693,7 +15711,7 @@
                 second-ty)
               body)])]
       [(ForeachActive name body)
-        (lower-exposure-walk-id!
+        (lower-exposure-walk-loop-id!
           scan
           (lower-exposure-bind! scan env 0 body name)
           (tc_core.tc-bind-id type-env name (I64))
@@ -15704,7 +15722,7 @@
             (lower-exposure-walk-id! scan env type-env start)
             (lower-exposure-walk-id! scan env type-env end)
             (lower-exposure-walk-id! scan env type-env init)
-            (lower-exposure-walk-id!
+            (lower-exposure-walk-loop-id!
               scan
               (lower-exposure-bind! scan env 0 value name)
               (tc_core.tc-bind-id type-env name ty)
@@ -15720,8 +15738,8 @@
                 (lower-exposure-bind! scan env 0 body index)]
               [index-types : tc_core.TcTypeEnv
                 (tc_core.tc-bind-id type-env index index-ty)]
-              (lower-exposure-walk-id! scan index-env index-types value)
-              (lower-exposure-walk-id!
+              (lower-exposure-walk-loop-id! scan index-env index-types value)
+              (lower-exposure-walk-loop-id!
                 scan
                 (lower-exposure-bind! scan index-env 0 body prefix)
                 (tc_core.tc-bind-id index-types prefix prefix-ty)
@@ -15737,8 +15755,12 @@
                 (lower-exposure-bind! scan env 0 body index)]
               [index-types : tc_core.TcTypeEnv
                 (tc_core.tc-bind-id type-env index index-ty)]
-              (lower-exposure-walk-id! scan index-env index-types predicate)
-              (lower-exposure-walk-id!
+              (lower-exposure-walk-loop-id!
+                scan
+                index-env
+                index-types
+                predicate)
+              (lower-exposure-walk-loop-id!
                 scan
                 (lower-exposure-bind! scan index-env 0 body slot)
                 (tc_core.tc-bind-id index-types slot slot-ty)
@@ -15758,7 +15780,7 @@
               (ast.ast-for-owned-state-index-name (& payload)))]
           [ty : ast.AstType (lower-exposure-type scan env type-env source)]
           (lower-exposure-walk-id! scan env type-env source)
-          (lower-exposure-walk-id!
+          (lower-exposure-walk-loop-id!
             scan
             (lower-exposure-bind!
               scan
@@ -15793,7 +15815,7 @@
             (ast.ast-for-owned-step-done-name (& payload)))
           (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
             [(Array element _)
-              (lower-exposure-walk-id!
+              (lower-exposure-walk-loop-id!
                 scan
                 (lower-exposure-bind! scan env 0 body name)
                 (tc_core.tc-bind-id
@@ -15832,11 +15854,13 @@
       [_
         (match (& unwrapped)
           [(PtrAddrOf place)
-            (lower-exposure-place!
-              scan
-              env
-              type-env
-              (lower-context-expr-get ctx place))]
+            (when
+              scan.loop?
+              (lower-exposure-place!
+                scan
+                env
+                type-env
+                (lower-context-expr-get ctx place)))]
           [_ unit])
         (let
           [children : ast.AstExprList (ast.ast-expr-child-ids unwrapped)]
@@ -15845,7 +15869,8 @@
               scan
               env
               type-env
-              (ast.ast-expr-list-get (& children) index -1))))])))
+              (ast.ast-expr-list-get (& children) index -1))))])
+    (set! scan.loop? previous-loop?)))
 
 ;; Borrowing a by-value local uses a fresh frame slot: immediate mutable call
 ;; borrows write back explicitly, and stored mutable borrows are rejected. A
@@ -15853,18 +15878,37 @@
 ;; borrows and reference reborrows already denote their referents. Only raw
 ;; address-of needs lexical exposure facts; incremental marks still track any
 ;; addresses generated by lowering. Nested functions own their own census.
-;; A complete empty census needs neither binding identities nor type queries.
+;; Only loop-enclosed addresses need facts in advance: a later acyclic address
+;; cannot reach an earlier read. The normal incremental map still records it
+;; when emitted. A complete empty census needs no binding/type reconstruction.
 (define (lower-exposure-has-address?
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]
+  [loop? : bool]
   [budget : (&mut budget i64)]) : bool
   (when (<= (deref budget) 0) (return true))
   (set! (deref budget) (- (deref budget) 1))
   (match (& expr)
-    [(PtrAddrOf _) true]
+    [(PtrAddrOf place)
+      (or
+        loop?
+        (lower-exposure-has-address?
+          ctx
+          (lower-context-expr-get ctx place)
+          false
+          budget))]
     [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) false]
     [_
       (let
+        [child-loop? : bool
+          (or
+            loop?
+            (match (& expr)
+              [(or (While _ _) (Foreach _) (ForeachActive _ _) (SpmdReduce _)
+                   (SpmdScan _) (SpmdCompact _) (ForOwnedState _)
+                   (ForOwnedStep _))
+                true]
+              [_ false]))]
         [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
         (for [index (iterator.range 0 children.len)]
           (when
@@ -15873,6 +15917,7 @@
               (lower-context-expr-get
                 ctx
                 (ast.ast-expr-list-get (& children) index -1))
+              child-loop?
               budget)
             (return true)))
         false)]))
@@ -15886,7 +15931,7 @@
   (let
     [budget : i64 lower-written-roots-scan-budget]
     (unless
-      (lower-exposure-has-address? ctx (clone body) (&mut budget))
+      (lower-exposure-has-address? ctx (clone body) false (&mut budget))
       (unsafe
         (set!
           (deref
@@ -15904,7 +15949,8 @@
           true
           (lower_exposure_map.with-capacity 8)
           (lower_i64_i64_map.with-capacity 0)
-          (__tl_make-array i64 0)))]
+          (__tl_make-array i64 0))
+        false)]
     [source-env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [remaining : sym_i64_env.SymI64Env env]
     [done : bool false]
@@ -15925,7 +15971,7 @@
           1
           -1)))
     (match scan
-      [(LowerExposureScan _ _ facts)
+      [(LowerExposureScan _ _ facts _)
         (unsafe
           (set!
             (deref

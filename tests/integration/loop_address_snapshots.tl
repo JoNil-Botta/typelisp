@@ -187,6 +187,21 @@
       (+= i 1))
     ok))
 
+(define (late-acyclic [seed : i64]) : bool
+  (let
+    [pair : Pair (Pair seed 41)]
+    [y : i64 0]
+    [q : (MutPtr i64)
+      (unsafe
+        (ptr-addr-of y))]
+    [saved : i64 (first pair.left (write-99! q))]
+    [p : (MutPtr i64)
+      (unsafe
+        (ptr-addr-of pair.left))]
+    (unsafe
+      (ptr-write! p 17))
+    (and (= saved seed) (= pair.left 17) (= pair.right 41))))
+
 (define (main) : i64
   (let
     [counts : (Array i64 4) (array 0 1 2 4)]
@@ -219,6 +234,10 @@
             (= (captured count) want-argument)
             (staged-writeback count))))
       (+= index 1))
-    (if (and ok (= (shadowed 42) 42) (= (read-only-tail 42) 42))
+    (if (and
+      ok
+      (= (shadowed 42) 42)
+      (= (read-only-tail 42) 42)
+      (late-acyclic 42))
       42
       1)))

@@ -2225,12 +2225,25 @@
       (pair-bump! (&mut pair)) (set! i (+ i 1))) result))
 (define (staged-scalar [x : i64]) : i64
   (first x (begin (bump! (&mut x)) 0)))
+(define (late-acyclic-pair [pair : Pair]) : i64
+  (let [result : i64 (+ pair.left pair.right)]
+    (unsafe (ptr-addr-of pair.left)) result))
+(define (post-acyclic-pair [pair : Pair]) : i64
+  (unsafe (ptr-addr-of pair.left)) (+ pair.left pair.right))
 (define (main) : i64 (+ (staged-pair (Pair 1 41) 2) (staged-scalar 1)))"))
     [(Some functions)
       (test.assert-i64-eq
         (lower-test-count functions "staged-pair" (HomeAddrOf))
         1
         "only the unrelated raw-addressed local has its own slot exposed")
+      (test.assert-i64-eq
+        (lower-test-count functions "late-acyclic-pair" (HomeAddrOf))
+        1
+        "an acyclic later raw address cannot affect earlier reads")
+      (test.assert-i64-eq
+        (lower-test-count functions "post-acyclic-pair" (HomeAddrOf))
+        3
+        "incremental marks still materialize reads after an emitted address")
       (test.assert-i64-eq
         (lower-test-snapshot-before-effect
           functions

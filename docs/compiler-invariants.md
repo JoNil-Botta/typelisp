@@ -426,7 +426,10 @@ referent instead. Borrowing a by-value local stages a fresh frame slot, with
 explicit post-call writeback for immediate mutable borrows. Such a borrow does
 not expose the local slot; stored mutable by-value borrows remain rejected.
 
-A complete address-free body needs no binding table. Otherwise only complete
+The advance census marks addresses enclosed by loops, including outer loops:
+a later acyclic address cannot affect an earlier read. Incremental marks still
+cover every emitted address and therefore subsequent reads in straight-line
+code. A body without loop exposure needs no binding table. Otherwise only complete
 lexical facts can prove a binding unexposed; missing/synthesized bindings and
 incomplete facts remain conservative. Incremental marks still cover generated
 addresses. Splicing an SPMD helper invalidates the function's census, including

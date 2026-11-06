@@ -926,7 +926,7 @@
   `(let
     [cell : (__tl_dyn-array TcJobStateData) (__tl_make-array TcJobStateData 1)]
     [owner : i64 (arena.tl_arena_current)]
-    [macro-state-addresses : (__tl_dyn-array i64) (__tl_make-array i64 19)]
+    [macro-state-addresses : (__tl_dyn-array i64) (__tl_make-array i64 20)]
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slots 0-10 hold the lazy macro substates and slot 11 is
@@ -1161,6 +1161,111 @@
   [data : Expr]) : Expr
   `(unsafe
     (ptr-write! (int->ptr (cast ,address : u64) : (MutPtr ,_payload)) ,data)))
+
+;; #9581: the job's type-walk table, behind the job's lazy address directory
+;; (`tc-macro-state-slot-type-walk`). Its arrays live in the job's owner
+;; arena, so retiring the job releases them.
+;;
+;; `canon` holds completed region-stripped canonical IDs + 1 (0 = not yet
+;; computed) for the installed pool identified by `cell` and `generation`:
+;; pool nodes are immutable and hash-consed, so an entry stays valid until a
+;; truncation or pool install bumps the generation, which clears it.
+(defstruct TcTypeWalkTable
+  (owner i64)
+  (cell u64)
+  (generation i64)
+  (canon (__tl_dyn-array i64))
+  (canon-len i64))
+
+(define tc-macro-state-slot-type-walk : i64
+  19)
+
+;; The bound job (its TcJobState address) and its table address: a saved and
+;; restored current pointer, never an owning table. 0 = unbound (bypass).
+(define tc-type-walk-job : i64
+  0)
+(define tc-type-walk-address : i64
+  0)
+
+(defstruct TcTypeWalkBinding
+  (job i64)
+  (address i64))
+
+;: Bind `job` as the owner of every type-walk table access until the matching
+;: `tc-type-walk-restore!`.
+(define (tc-type-walk-bind! [job : TcJobState]) : TcTypeWalkBinding
+  (let
+    [saved : TcTypeWalkBinding
+      (TcTypeWalkBinding tc-type-walk-job tc-type-walk-address)]
+    (unless
+      (= tc-type-walk-job job.address)
+      (set! tc-type-walk-job job.address)
+      (set!
+        tc-type-walk-address
+        (tc-macro-state-slot-address
+          (tc-job-state-macro-state job)
+          tc-macro-state-slot-type-walk)))
+    saved))
+
+(define (tc-type-walk-restore! [saved : TcTypeWalkBinding]) : unit
+  (set! tc-type-walk-job saved.job)
+  (set! tc-type-walk-address saved.address))
+
+(define (tc-type-walk-table-new [job : TcJobState]) : i64
+  (let
+    [state : TcMacroState (tc-job-state-macro-state job)]
+    [owner : i64 (tc-macro-state-owner-arena state)]
+    [address : i64 0]
+    (in-arena
+      (unsafe
+        (arena.Arena owner))
+      (let
+        [cell : (__tl_dyn-array TcTypeWalkTable)
+          (__tl_make-array TcTypeWalkTable 1)]
+        (set!
+          (array-ref cell 0)
+          (TcTypeWalkTable owner (cast 0 : u64) -1 (__tl_make-array i64 0) 0))
+        (set!
+          address
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (__tl_array-data cell) : (Ptr TcTypeWalkTable))))
+            : i64))))
+    (tc-macro-state-slot-address-set!
+      state
+      tc-macro-state-slot-type-walk
+      address)
+    address))
+
+;; The bound job's table, validated against the installed pool; 0 when no job
+;; is bound or an explicit reader/context pool is active (bypass, exact).
+(define (tc-type-walk-table) : i64
+  (if (or
+    (= tc-type-walk-job 0)
+    ast.ast-node-pool-reader-explicit?
+    ast.ast-node-pool-compat-context-explicit?)
+    0
+    (begin
+      (when
+        (= tc-type-walk-address 0)
+        (set!
+          tc-type-walk-address
+          (tc-type-walk-table-new (TcJobState tc-type-walk-job))))
+      (let
+        [table : (MutPtr TcTypeWalkTable)
+          (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
+        (unsafe
+          (unless
+            (and
+              (= (deref table).cell ast.ty-node-pool-revision-cell)
+              (= (deref table).generation (ast.ty-node-pool-generation-value)))
+            (for [at (iterator.range 0 (deref table).canon-len)]
+              (set! (array-ref (deref table).canon at) 0))
+            (set! (deref table).canon-len 0)
+            (set! (deref table).cell ast.ty-node-pool-revision-cell)
+            (set! (deref table).generation (ast.ty-node-pool-generation-value))))
+        tc-type-walk-address))))
 
 (define (tc-nominal-cache-state-ptr [state : TcNominalCacheState]) : (MutPtr
     TcNominalCacheStateData)
@@ -46739,11 +46844,9 @@
   (if (>= index (ast.ast-type-list-len a))
     true
     (and
-      (tc-type-eq
-        (ast.ty-node-get
-          (ast.ast-type-list-get a index (ast.ast-type-id-fallback)))
-        (ast.ty-node-get
-          (ast.ast-type-list-get b index (ast.ast-type-id-fallback))))
+      (tc-type-eq-id
+        (ast.ast-type-list-get a index (ast.ast-type-id-fallback))
+        (ast.ast-type-list-get b index (ast.ast-type-id-fallback)))
       (tc-type-list-eq-at? a b (+ index 1)))))
 
 (define (tc-nominal-name-id-eq? [a : i64] [b : i64]) : bool
@@ -46834,16 +46937,14 @@
             (tc-type-list-eq
               (ast.ast-type-list-box-shared-view a-args)
               (ast.ast-type-list-box-shared-view b-args))
-            (tc-type-eq (ast.ty-node-get a-ret) (ast.ty-node-get b-ret)))]
+            (tc-type-eq-id a-ret b-ret))]
         [_ false])]
     [(CFunc a-signature a-mode)
       (match b
         [(CFunc b-signature b-mode)
           (and
             (ast.ast-c-function-mode-eq? a-mode b-mode)
-            (tc-type-eq
-              (ast.ty-node-get a-signature)
-              (ast.ty-node-get b-signature)))]
+            (tc-type-eq-id a-signature b-signature))]
         [_ false])]
     [(Tuple a-elems)
       (match b
@@ -46855,48 +46956,37 @@
     [(Array a-elem a-len)
       (match b
         [(Array b-elem b-len)
-          (and
-            (= a-len b-len)
-            (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem)))]
+          (and (= a-len b-len) (tc-type-eq-id a-elem b-elem))]
         [_ false])]
     [(DynArray a-elem)
       (match b
-        [(DynArray b-elem)
-          (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem))]
+        [(DynArray b-elem) (tc-type-eq-id a-elem b-elem)]
         [_ false])]
     [(Slice a-elem)
       (match b
-        [(Slice b-elem)
-          (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem))]
+        [(Slice b-elem) (tc-type-eq-id a-elem b-elem)]
         [_ false])]
     [(Box a-elem)
       (match b
-        [(Box b-elem)
-          (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem))]
+        [(Box b-elem) (tc-type-eq-id a-elem b-elem)]
         [_ false])]
     [(Ptr a-elem)
       (match b
-        [(Ptr b-elem)
-          (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem))]
+        [(Ptr b-elem) (tc-type-eq-id a-elem b-elem)]
         [_ false])]
     [(MutPtr a-elem)
       (match b
-        [(MutPtr b-elem)
-          (tc-type-eq (ast.ty-node-get a-elem) (ast.ty-node-get b-elem))]
+        [(MutPtr b-elem) (tc-type-eq-id a-elem b-elem)]
         [_ false])]
     [(Ref a-region a-inner)
       (match b
         [(Ref b-region b-inner)
-          (and
-            (= a-region b-region)
-            (tc-type-eq (ast.ty-node-get a-inner) (ast.ty-node-get b-inner)))]
+          (and (= a-region b-region) (tc-type-eq-id a-inner b-inner))]
         [_ false])]
     [(MutRef a-region a-inner)
       (match b
         [(MutRef b-region b-inner)
-          (and
-            (= a-region b-region)
-            (tc-type-eq (ast.ty-node-get a-inner) (ast.ty-node-get b-inner)))]
+          (and (= a-region b-region) (tc-type-eq-id a-inner b-inner))]
         [_ false])]
     [(Region _ inner)
       (tc-type-eq-core
@@ -46905,9 +46995,7 @@
     [(Invalidate a-lifetime a-inner)
       (match b
         [(Invalidate b-lifetime b-inner)
-          (and
-            (= a-lifetime b-lifetime)
-            (tc-type-eq (ast.ty-node-get a-inner) (ast.ty-node-get b-inner)))]
+          (and (= a-lifetime b-lifetime) (tc-type-eq-id a-inner b-inner))]
         [_ false])]
     [(Enum a-name)
       (match b
@@ -46949,17 +47037,157 @@
               (ast.ast-lifetime-list-box-shared-view b-lifetimes)))]
         [_ false])]))
 
-(define (tc-type-eq [a : ast.AstType] [b : ast.AstType]) : bool
+(define (tc-type-eq-walk [a : ast.AstType] [b : ast.AstType]) : bool
   (if (or
     (tc-poison-type? (tc-global-shared-view a))
     (tc-poison-type? (tc-global-shared-view b)))
     true
     (match (tc-global-shared-view a)
-      [(Region _ inner) (tc-type-eq (ast.ty-node-get inner) b)]
+      [(Region _ inner) (tc-type-eq-walk (ast.ty-node-get inner) b)]
       [_
         (match (tc-global-shared-view b)
-          [(Region _ inner) (tc-type-eq a (ast.ty-node-get inner))]
+          [(Region _ inner) (tc-type-eq-walk a (ast.ty-node-get inner))]
           [_ (tc-type-eq-core a b)])])))
+
+;; Equality's canonical column: completed region-stripped canonical IDs. A
+;; canonical match is only ever a positive answer; unequal canonical IDs take
+;; the structural walk.
+(define (tc-type-canon-store! [address : i64] [id : i64] [canon : i64]) : unit
+  (let
+    [table : (MutPtr TcTypeWalkTable)
+      (tc-state-cell-ptr address TcTypeWalkTable)]
+    (unsafe
+      (when
+        (>= id (array-length (deref table).canon))
+        ;; Geometric growth in the owner arena: superseded arrays sum to at
+        ;; most the final capacity.
+        (let
+          [grown : (__tl_dyn-array i64)
+            (in-arena
+              (arena.Arena (deref table).owner)
+              (__tl_make-array
+                i64
+                (+ id (+ 1024 (array-length (deref table).canon)))))]
+          (for [at (iterator.range 0 (deref table).canon-len)]
+            (set! (array-ref grown at) (array-ref (deref table).canon at)))
+          (set! (deref table).canon grown)))
+      (when
+        (>= id (deref table).canon-len)
+        (for [at (iterator.range (deref table).canon-len (+ id 1))]
+          (set! (array-ref (deref table).canon at) 0))
+        (set! (deref table).canon-len (+ id 1)))
+      (set! (array-ref (deref table).canon id) (+ canon 1)))))
+
+(define (tc-type-canon-wrap
+  [id : i64]
+  [child : i64]
+  [canon : i64]
+  [node : ast.AstType]) : i64
+  (if (= child canon)
+    (ast.ty-node-push (& (ast.ty-node-get id)))
+    (ast.ty-node-push (& node))))
+
+(define (tc-type-canon-compute [address : i64] [id : i64]) : i64
+  (match (ast.ty-node-get id)
+    [(Region _ inner) (tc-type-canon-id address inner)]
+    [(Tuple elems)
+      (let
+        [list : ast.AstTypeList (ast.ast-type-list-box-shared-view elems)]
+        [len : i64 (ast.ast-type-list-len (& list))]
+        [out : ast.AstTypeList (ast.ast-type-list-with-capacity len)]
+        [changed : bool false]
+        (for [at (iterator.range 0 len)]
+          (let
+            [child : i64
+              (ast.ast-type-list-get (& list) at (ast.ast-type-id-fallback))]
+            [canon : i64 (tc-type-canon-id address child)]
+            (unless (= child canon) (set! changed true))
+            (ast.ast-type-list-push (&mut out) canon)))
+        (if changed
+          (ast.ty-node-push (& (ast.ast-ty-tuple out)))
+          (ast.ty-node-push (& (ast.ty-node-get id)))))]
+    [(Box elem)
+      (let
+        [canon : i64 (tc-type-canon-id address elem)]
+        (tc-type-canon-wrap
+          id
+          elem
+          canon
+          (ast.ast-ty-box (& (ast.ty-node-get canon)))))]
+    [(Ptr elem)
+      (let
+        [canon : i64 (tc-type-canon-id address elem)]
+        (tc-type-canon-wrap
+          id
+          elem
+          canon
+          (ast.ast-ty-ptr (& (ast.ty-node-get canon)))))]
+    [(MutPtr elem)
+      (let
+        [canon : i64 (tc-type-canon-id address elem)]
+        (tc-type-canon-wrap
+          id
+          elem
+          canon
+          (ast.ast-ty-mut-ptr (& (ast.ty-node-get canon)))))]
+    [(DynArray elem)
+      (let
+        [canon : i64 (tc-type-canon-id address elem)]
+        (tc-type-canon-wrap
+          id
+          elem
+          canon
+          (ast.ast-ty-dyn-array (& (ast.ty-node-get canon)))))]
+    [(Slice elem)
+      (let
+        [canon : i64 (tc-type-canon-id address elem)]
+        (tc-type-canon-wrap
+          id
+          elem
+          canon
+          (ast.ast-ty-slice (& (ast.ty-node-get canon)))))]
+    [(Array elem count)
+      (let
+        [canon : i64 (tc-type-canon-id address elem)]
+        (tc-type-canon-wrap
+          id
+          elem
+          canon
+          (ast.ast-ty-array (& (ast.ty-node-get canon)) count)))]
+    ;; Other shapes keep their lifetime/nominal payload exactly and are only
+    ;; re-interned; their region-bearing children stay on the structural walk.
+    [_ (ast.ty-node-push (& (ast.ty-node-get id)))]))
+
+(define (tc-type-canon-id [address : i64] [id : i64]) : i64
+  (let
+    [table : (Ptr TcTypeWalkTable) (tc-state-cell-view address TcTypeWalkTable)]
+    [known : i64
+      (unsafe
+        (if (< id (deref table).canon-len)
+          (array-ref (deref table).canon id)
+          0))]
+    (if (> known 0)
+      (- known 1)
+      (let
+        [canon : i64 (tc-type-canon-compute address id)]
+        (tc-type-canon-store! address id canon)
+        canon))))
+
+;; Child-ID equality: identical or canonically identical ids are equal; any
+;; other pair (including different canonical ids) takes the structural walk.
+(define (tc-type-eq-id [a : i64] [b : i64]) : bool
+  (if (= a b)
+    true
+    (let
+      [address : i64 (tc-type-walk-table)]
+      (if (and
+        (> address 0)
+        (= (tc-type-canon-id address a) (tc-type-canon-id address b)))
+        true
+        (tc-type-eq-walk (ast.ty-node-get a) (ast.ty-node-get b))))))
+
+(define (tc-type-eq [a : ast.AstType] [b : ast.AstType]) : bool
+  (tc-type-eq-walk a b))
 
 (define (tc-never-type? [ty : ast.AstType]) : bool
   (match ty
@@ -128504,7 +128732,37 @@
                         (set! cur-paths rest-paths)])))]))]))
     result))
 
+;; The job's type-walk table is bound for the whole check and restored on
+;; every return (the bound body returns its result; nothing unwinds past it).
 (define (tc-typecheck-specialized-program-checked-inner
+  [load-state : cload.CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [body-state : TcBodyState]
+  [semantic-observer : TcSemanticObserver]) : ResultCompilerTypecheckChecked
+  (let
+    [binding : TcTypeWalkBinding (tc-type-walk-bind! body-state.job-state)]
+    [result : ResultCompilerTypecheckChecked
+      (tc-typecheck-specialized-program-checked-bound
+        load-state
+        prefix-cache
+        program
+        paths
+        stdlib-roots
+        cache-scope
+        pools
+        source-names
+        body-state
+        semantic-observer)]
+    (tc-type-walk-restore! binding)
+    result))
+
+(define (tc-typecheck-specialized-program-checked-bound
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
   [program : ast.AstProgram]

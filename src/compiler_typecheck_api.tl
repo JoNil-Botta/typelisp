@@ -422,7 +422,20 @@
     [(Program decls-box)
       (typecheck-compiler-source-decls-have-stdlib-import? (deref decls-box))]))
 
+;; The REPL checks in the serial job: bind its type-walk table for the request
+;; and restore the previous binding on every return.
 (define (typecheck-compiler-repl-expr
+  [decls : ast.AstDeclList]
+  [expr : ast.AstExpr]) : tc_core.ResultTcType
+  (let
+    [binding : tc_core.TcTypeWalkBinding
+      (tc_core.tc-type-walk-bind! (tc_core.tc-serial-job-state))]
+    [result : tc_core.ResultTcType
+      (typecheck-compiler-repl-expr-bound decls expr)]
+    (tc_core.tc-type-walk-restore! binding)
+    result))
+
+(define (typecheck-compiler-repl-expr-bound
   [decls : ast.AstDeclList]
   [expr : ast.AstExpr]) : tc_core.ResultTcType
   (let

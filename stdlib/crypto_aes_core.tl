@@ -14,8 +14,10 @@
 ;# depends only on public variant/loop indices. Volatile word stores wipe fixed
 ;# local scratch.
 ;# Code-shape and paired-work checks are regression evidence, not a timing proof
-;# or side-channel audit. Fatal OOM/panic/abort and register/cache/dump erasure
-;# are outside the cleanup guarantee. This is not an ECB mode or policy API.
+;# or side-channel audit. Fatal OOM/panic/abort and register, compiler stack
+;# spill slot, cache and dump erasure are outside the cleanup guarantee; the
+;# circuit's temporaries spill at every optimization level. This is not an ECB
+;# mode or policy API.
 ;#
 ;# Usage: `(import stdlib.crypto_aes_core)`
 ;#

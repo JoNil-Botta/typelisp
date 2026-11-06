@@ -54,6 +54,11 @@ target linux-x86_64 windows-x86_64
 opt 1 2
 assemble
 repeatable
+if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_absorb_bang
+  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_absorb_bang
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|loop[a-z]*|call[[:space:]]*\*)
+  not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
+end-if
 if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime
   in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime
   not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call|loop[a-z]*)

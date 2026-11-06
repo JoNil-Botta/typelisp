@@ -145,6 +145,8 @@ an unrelated crash. Each positive must return 42. Both native opt levels therefo
 run two positives and 32 negatives per host. Keeping an unused helper cannot pass;
 removing a wrapper's authentication-failure reclaim cannot hide behind the success
 path. The compiler and exact generated input identities are recorded per run.
+The same required both-host gate also runs the seven focused AES/GCM inline
+vector, negative, lifecycle and source-work files at both opt1 and opt2.
 
 The ordinary full AES/GCM body pins now include every emitted shared reclaim
 function and actual caller. They preserve branch/address/round/scratch coverage.

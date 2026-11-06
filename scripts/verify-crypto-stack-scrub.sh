@@ -11,12 +11,29 @@ base=${CRYPTO_STACK_SCRUB_WORKDIR:-target/exp/crypto-stack-scrub}
 mkdir -p "$base"
 work=$(mktemp -d "$base/run.XXXXXX")
 sha256sum -c tests/fixtures/crypto-aes/stack-residue-mutants.sha256
-sha256sum "$COMPILER" scripts/check-crypto-stack-scrub.sh \
+cat > "$work/inline-files.txt" <<'EOF'
+stdlib/tests/crypto_aes_lifecycle_inline.tl
+stdlib/tests/crypto_aes_kat_inline.tl
+stdlib/tests/crypto_aes128_gcm_kat_inline.tl
+stdlib/tests/crypto_aes128_gcm_inline.tl
+stdlib/tests/crypto_aes_core_inline.tl
+stdlib/tests/crypto_aes_fips_inline.tl
+stdlib/tests/crypto_aes_work_inline.tl
+EOF
+sha256sum "$COMPILER" "$0" scripts/check-crypto-stack-scrub.sh \
+    stdlib/crypto_aes_core.tl stdlib/crypto_aes128_gcm.tl \
+    stdlib/crypto_ghash_core.tl stdlib/crypto_secret.tl \
+    stdlib/crypto_stack_scrub.tl \
     tests/fixtures/crypto-aes/stack-residue.tl \
     tests/fixtures/crypto-aes/stack-residue-mutants.tsv > "$work/inputs.sha256"
+while IFS= read -r input; do
+    sha256sum "$input" >> "$work/inputs.sha256"
+done < "$work/inline-files.txt"
 printf 'target\topt\tmutant\texit\n' > "$work/results.tsv"
 tab=$(printf '\t')
 for opt in 1 2; do
+    "$COMPILER" test --batch "$work/inline-files.txt" \
+        --stdlib-root "$ROOT/stdlib" --opt-level "$opt"
     "$COMPILER" compile tests/fixtures/crypto-aes/stack-residue.tl \
         --stdlib-root "$ROOT/stdlib" --target "$NL_BOOTSTRAP_TARGET" \
         --opt-level "$opt" -o "$work/opt$opt.s"

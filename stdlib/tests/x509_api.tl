@@ -1238,19 +1238,18 @@
         [(x509.ServiceIdentityErr _) (test.assert-true false "mixed SAN match")])
       (service-match (& certificate) "192.0.2.2" 5)))
   (let
-    [reference : x509.ServiceReference
-      (x509.Dns (ptr-null : (Ptr x509.ServiceDnsName)))]
+    [reference : x509.ServiceReference (x509.Dns (x509.ServiceDnsName ""))]
     [references : x509.ServiceReferences (x509.service-references-new)]
     (match (x509.service-reference-add!
       (&mut references)
       reference
       (x509.service-identity-default-limits))
       [(x509.ServiceReferenceAdded)
-        (test.assert-true false "null DNS reference accepted")]
+        (test.assert-true false "empty DNS reference accepted")]
       [(x509.ServiceReferenceAddErr error)
         (test.assert-true
           (= error.kind (x509.InvalidReference))
-          "null reference failure")]))
+          "empty reference failure")]))
   (let
     [certificate : x509.Certificate
       (service-certificate (service-dns "wanted.test"))]
@@ -1261,7 +1260,60 @@
       (x509.service-identity-default-limits)
       (x509.IdentityMismatch))))
 
+(define (service-record-error [input : String]) : unit
+  (let
+    [references : x509.ServiceReferences (x509.service-references-new)]
+    [record : x509.ServiceReference
+      (x509.Dns (x509.ServiceDnsName (clone input)))]
+    [certificate : x509.Certificate (init : x509.Certificate)]
+    (match (x509.service-reference-add!
+      (&mut references)
+      record
+      (x509.service-identity-default-limits))
+      [(x509.ServiceReferenceAdded)
+        (test.assert-true false "invalid record inserted")]
+      [(x509.ServiceReferenceAddErr error)
+        (test.assert-true
+          (= error.kind (x509.InvalidReference))
+          "record insertion error")])
+    (test.assert-i64-eq references.length 0 "failed append unchanged")
+    (set!
+      (array-ref references.values 0)
+      (x509.Dns (x509.ServiceDnsName input)))
+    (set! references.length 1)
+    (service-error
+      (& certificate)
+      (& references)
+      (x509.service-identity-default-limits)
+      (x509.InvalidReference))))
+
 (define (service-bound-tests) : unit
+  (service-record-error "")
+  (service-record-error "UPPER.test")
+  (service-record-error "example.test.")
+  (service-record-error "a..test")
+  (service-record-error "192.0.2.1")
+  (service-record-error (service-repeat 97 255))
+  (service-record-error (service-repeat 255 1))
+  (let
+    [oversized : String (service-repeat 97 1048576)]
+    [before : i64 (profile.alloc-total)]
+    [result : x509.ServiceReferenceResult
+      (x509.service-reference (& oversized))]
+    [after : i64 (profile.alloc-total)]
+    (test.assert-i64-eq
+      after
+      before
+      "oversized reference preflight allocates nothing")
+    (match result
+      [(x509.ServiceReferenceOk _)
+        (test.assert-true false "oversized reference accepted")]
+      [(x509.ServiceReferenceErr error)
+        (test.assert-true
+          (= error.kind (x509.DnsNameTooLong))
+          "oversized reference error")
+        (test.assert-i64-eq error.offset 254 "oversized reference bound")])
+    (service-input-error (str_cat.str-cat oversized ":") (x509.DnsNameTooLong)))
   (let
     [certificate : x509.Certificate
       (service-certificate (service-dns "match.test"))]

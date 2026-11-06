@@ -1,8 +1,20 @@
-; Checked DNS reference bytes cannot be changed through a foreign field access.
+; Editing public DNS records and bypassing insertion still fails at matching.
 (import stdlib.x509)
 
-(define (length [name : (& name x509.ServiceDnsName)]) : i64
-  name.length)
-
 (define (main) : i64
-  0)
+  (let
+    [name : x509.ServiceDnsName (x509.ServiceDnsName "example.test")]
+    [references : x509.ServiceReferences (x509.service-references-new)]
+    [certificate : x509.Certificate (init : x509.Certificate)]
+    (set! name.canonical "192.0.2.1")
+    (set! (array-ref references.values 0) (x509.Dns name))
+    (set! references.length 1)
+    (match (x509.service-identity
+      (& certificate)
+      (& references)
+      (x509.service-identity-default-limits))
+      [(x509.ServiceIdentityMatch _ _) 1]
+      [(x509.ServiceIdentityErr error)
+        (if (= error.kind (x509.InvalidReference))
+          42
+          2)])))

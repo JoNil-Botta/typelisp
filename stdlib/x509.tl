@@ -1460,18 +1460,16 @@
           (set! index (+ index 1)))
         (CertificatesOk out))]))
 
-;: Canonical ASCII service name, excluding its optional terminal root dot.
-;: Only immutable pointers cross the module boundary. Constructors validate
-;: before allocating this fixed-size value in the active arena.
+;: Owned lowercase ASCII service name, excluding its terminal root dot.
+;: Construct with service-reference. Public records are checked at both list
+;: insertion and matching, so edited/forged values cannot bypass validation.
 (defstruct ServiceDnsName
-  (:opaque)
-  (octets (Array u8 253))
-  (length i64))
+  (canonical String))
 
-;: Independently supplied reference identity. DNS pointers must come from
-;: service-reference and remain within their allocation arena's lifetime.
+;: Independently supplied reference identity. DNS owns its String storage;
+;: no raw pointer or borrowed allocation handle is exposed by this API.
 (defenum ServiceReference
-  (Dns (Ptr ServiceDnsName))
+  (Dns ServiceDnsName)
   (Ip ip.IpAddr))
 
 ;: Stable public failure categories; no input or certificate bytes are retained.
@@ -1533,10 +1531,6 @@
 (defenum ServiceDnsShape
   (ServiceDnsValid i64 bool)
   (ServiceDnsInvalid ServiceIdentityError))
-
-;: Arena allocation for a fixed-size, public, immutable validated DNS value.
-(unsafe
-  (extern (service-identity-alloc [size : i64]) : (MutPtr u8) (:symbol "tl_alloc")))
 
 ;: Default reference/SAN bounds and RFC wildcard matching.
 (define (service-identity-default-limits) : ServiceIdentityLimits
@@ -1649,9 +1643,13 @@
     (ServiceDnsValid end wildcard)))
 
 ;: Classify strict IPv4/IPv6 before DNS; never consume URI brackets, zones,
-;: prefixes, ports, SNI or certificate data. Only this checked constructor
-;: publishes a DNS pointer. One optional final DNS root dot is discarded.
+;: prefixes, ports, SNI or certificate data. Preflight the entire byte bound
+;: before even the IP classifier scans input. DNS construction allocates only
+;: bounded canonical storage. One optional final DNS root dot is discarded.
 (define (service-reference [input : (& input str)]) : ServiceReferenceResult
+  (when
+    (> (string-length input) 254)
+    (return (ServiceReferenceErr (ServiceIdentityError (DnsNameTooLong) 254))))
   (match (ip.parse-ip input)
     [(ip.IpOk address) (return (ServiceReferenceOk (Ip address)))]
     [(ip.IpErr _) unit])
@@ -1661,12 +1659,14 @@
       [(ServiceDnsInvalid error) (ServiceReferenceErr error)]
       [(ServiceDnsValid length _)
         (let
-          [canonical : (Array u8 253) (make-array u8 253)]
+          [canonical : byte_buf.ByteBuf (byte_buf.with-capacity length)]
           [index : i64 0]
           (while (< index length)
             (set!
-              (array-ref canonical index)
-              (service-ascii-lower (byte_buf.bytes-ref bytes index)))
+              canonical
+              (byte_buf.push
+                canonical
+                (service-ascii-lower (byte_buf.bytes-ref bytes index))))
             (set! index (+ index 1)))
           ; A terminal dot must not permit numeric IPv4 to become a DNS-ID.
           (match (ip.parse-ipv4 (string.substring-view input 0 length))
@@ -1674,19 +1674,28 @@
               (return
                 (ServiceReferenceErr (ServiceIdentityError (InvalidDnsName) 0)))]
             [(ip.Ipv4Err _) unit])
-          (let
-            [storage : (MutPtr ServiceDnsName)
-              (unsafe
-                (ptr-cast
-                  (service-identity-alloc
-                    (comptime (size-of (type ServiceDnsName))))
-                  : (MutPtr ServiceDnsName)))]
-            (unsafe
-              (ptr-write! storage (ServiceDnsName canonical length)))
-            (ServiceReferenceOk
-              (Dns
-                (unsafe
-                  (ptr-cast storage : (Ptr ServiceDnsName)))))))])))
+          (ServiceReferenceOk
+            (Dns (ServiceDnsName (byte_buf.to-string canonical)))))])))
+
+;: Validate public DNS records once before reference traversal. Canonical
+;: storage must be lowercase, rootless, bounded LDH text and never a numeric
+;: IPv4 spelling. The shared IP parser decides the latter without allocation.
+(define (service-dns-canonical? [name : (& name ServiceDnsName)]) : bool
+  (let
+    [text : (& name str) (& name.canonical)]
+    [length : i64 (string-length text)]
+    [index : i64 0]
+    (match (service-dns-shape (byte_buf.str-as-bytes text) false)
+      [(ServiceDnsInvalid _) (return false)]
+      [(ServiceDnsValid end _) (when (!= end length) (return false))])
+    (while (< index length)
+      (let
+        [value : u8 (cast (string-ref text index) : u8)]
+        (when (!= value (service-ascii-lower value)) (return false)))
+      (set! index (+ index 1)))
+    (match (ip.parse-ipv4 text)
+      [(ip.Ipv4Ok _) false]
+      [(ip.Ipv4Err _) true])))
 
 ;: Append only within a valid configured cap. Failure leaves the list unchanged.
 (define (service-reference-add!
@@ -1703,10 +1712,10 @@
       (or (< length 0) (>= length limits.max-references))
       (return
         (ServiceReferenceAddErr (ServiceIdentityError (ReferenceLimit) 0))))
-    (match reference
+    (match (& reference)
       [(Dns name)
         (when
-          (ptr-null? name)
+          (not (service-dns-canonical? name))
           (return
             (ServiceReferenceAddErr
               (ServiceIdentityError (InvalidReference) length))))]
@@ -1718,30 +1727,36 @@
 ;: Compare one validated presented DNS shape with one checked reference.
 ;: No allocation, lowercase copy or unbounded substring construction occurs.
 (define (service-dns-matches?
-  [name : (Ptr ServiceDnsName)]
+  [name : (& name ServiceDnsName)]
   [presented : (& presented bytes)]
   [length : i64]
   [wildcard : bool]) : bool
-  (when (ptr-null? name) (return false))
   (let
-    [reference : ServiceDnsName
-      (unsafe
-        (ptr-read name))]
+    [reference : (& name str) (& name.canonical)]
+    [reference-length : i64 (string-length reference)]
     [cursor : i64 0]
     [offset : i64 0]
     (when
+      (or
+        (< reference-length 1)
+        (> reference-length 253)
+        (< length 1)
+        (> length 253)
+        (> length (byte_buf.bytes-length presented)))
+      (return false))
+    (when
       wildcard
       (while (and
-        (< offset reference.length)
-        (!= (array-ref reference.octets offset) 46))
+        (< offset reference-length)
+        (!= (string-ref reference offset) '.'))
         (set! offset (+ offset 1)))
-      (when (= offset reference.length) (return false))
+      (when (= offset reference-length) (return false))
       (set! cursor 1))
-    (when (!= (- reference.length offset) (- length cursor)) (return false))
+    (when (!= (- reference-length offset) (- length cursor)) (return false))
     (while (< cursor length)
       (when
         (!=
-          (array-ref reference.octets offset)
+          (cast (string-ref reference offset) : u8)
           (service-ascii-lower (byte_buf.bytes-ref presented cursor)))
         (return false))
       (set! cursor (+ cursor 1))
@@ -1776,10 +1791,10 @@
       (> presented-count limits.max-presented)
       (return (ServiceIdentityErr (ServiceIdentityError (PresentedLimit) 0))))
     (while (< index count)
-      (match (array-ref references.values index)
+      (match (& (array-ref references.values index))
         [(Dns name)
           (when
-            (ptr-null? name)
+            (not (service-dns-canonical? name))
             (return
               (ServiceIdentityErr
                 (ServiceIdentityError (InvalidReference) index))))]
@@ -1825,7 +1840,7 @@
           valid
           (set! supported true)
           (while (< reference-index count)
-            (match (array-ref references.values reference-index)
+            (match (& (array-ref references.values reference-index))
               [(Dns name)
                 (when
                   (and
@@ -1842,7 +1857,7 @@
                   (match san.address
                     [(Address presented)
                       (when
-                        (ip.ip-eq? (& address) (& presented))
+                        (ip.ip-eq? address (& presented))
                         (return (ServiceIdentityMatch reference-index index)))]
                     [(NoAddress) unit]))])
             (set! reference-index (+ reference-index 1)))))

@@ -62,8 +62,10 @@ match, unsupported SAN kinds, absent SAN with a matching Common Name, matched
 reference/SAN indices, stable non-secret errors, and 64 × 1024 adversarial
 mismatches. Wrong IP widths and malformed SAN DER fail before matching.
 Profile-enabled tests verify allocation-free successful and adversarial
-mismatch searches. Safety fixtures reject foreign DNS construction/field
-access, escape of a DNS reference from its allocation arena, and insertion
+mismatch searches and immediate, allocation-free rejection of 1 MiB inputs
+before IP classification. Safety fixtures reject numeric-IP DNS forgery and
+public-field edits at accepted API boundaries, raw-pointer substitution, owned
+DNS field extraction across arena reset, whole-reference escape and insertion
 of a scoped reference into a longer-lived list.
 `*.com` and `*.co.uk` positives explicitly pin the lack of PSL enforcement;
 caller wildcard refusal is tested independently. Full Punycode/IDNA symmetry

@@ -219,6 +219,7 @@
       (canon-eq-raw-dag 4 ast.AstType.I64)
       (canon-eq-raw-dag 4 ast.AstType.I64))
     (tc.tc-type-walk-restore! inner)
+    (tc.tc-type-walk-table-release! job-b)
     (when (!= tc.tc-type-walk-job job.address) (io.panic "job A binding lost"))
     (when (!= (tc.tc-type-walk-table) address-a) (io.panic "job A table lost"))))
 
@@ -255,6 +256,7 @@
       (canon-eq-failing-check-test job)
       (canon-eq-expansion-binding-test job)
       (tc.tc-type-walk-restore! outer)
+      (tc.tc-type-walk-table-release! job)
       ;; Unbound: the table bypasses and equality stays exact.
       (canon-eq-fresh-pool)
       (when (!= (tc.tc-type-walk-table) 0) (io.panic "unbound table"))

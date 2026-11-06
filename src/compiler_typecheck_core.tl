@@ -128807,6 +128807,8 @@
 
 ;; The job's type-walk table is bound for the whole check and restored on
 ;; every return (the bound body returns its result; nothing unwinds past it).
+;; The outermost check of a job also releases the table, so no job (driver,
+;; lint, LSP or test) keeps it past its checks.
 (define (tc-typecheck-specialized-program-checked-inner
   [load-state : cload.CompilerLoadSessionState]
   [prefix-cache : TcPrefixSnapshotCacheState]
@@ -128832,6 +128834,9 @@
         source-names
         body-state
         semantic-observer)]
+    (unless
+      (= binding.job body-state.job-state.address)
+      (tc-type-walk-table-release! body-state.job-state))
     (tc-type-walk-restore! binding)
     result))
 

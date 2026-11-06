@@ -8,6 +8,11 @@
 ;# they are outside the wipe guarantee, including at default release opt2.
 (import stdlib.crypto_secret as secret)
 
+;: High limb of the public reflected reduction polynomial for Algorithm 1.
+;: The low limb is zero; this names x^128+x^7+x^2+x+1 in GHASH bit order.
+(define (reduction-high) : u64
+  (cast 0xe100000000000000 : u64))
+
 ;: Regression work count only; no secret values escape the production path.
 (cfg
   test
@@ -97,9 +102,7 @@
                   (ptr-offset work 2)
                   (bit-xor
                     (shr high (cast 1 : u64))
-                    (bit-and
-                      (cast 0xe100000000000000 : u64)
-                      (secret.mask-u64 low))))
+                    (bit-and (reduction-high) (secret.mask-u64 low))))
                 (ptr-write!
                   (ptr-offset work 3)
                   (bit-or (shr low (cast 1 : u64)) (shl high (cast 63 : u64))))))

@@ -6,7 +6,8 @@
 ;# usage accounting and rekey policy. This module has no protocol state.
 ;#
 ;# Borrowed inputs and fresh allocating outputs exclude in-place overlap.
-;# `open` authenticates the entire tag before allocating/writing plaintext.
+;# `open` preallocates fresh storage, then authenticates the entire tag before
+;# writing any plaintext or publishing an output value.
 ;# Returned authenticated plaintext is an explicit public ByteBuf boundary.
 ;# Inner loops allocate nothing. Cleanup wipes schedule, H and fixed scratch
 ;# on structured paths. Synchronous calls have no cancellation checkpoint.
@@ -168,21 +169,29 @@
 
 ;: Constructor implementation consumes the same nominal key transfer as AES.
 (define (construct-key [input : aes.RawKey]) : GcmKeyResult
-  (match (aes.construct-128 input)
-    [(Aes128Err error) (GcmKeyErr (GcmAes error))]
-    [(Aes128Ok schedule)
+  (match (aes.check-fixed (& input.value) 16)
+    [(SecretErr error)
+      (aes.close-raw-key input)
+      (GcmKeyErr (GcmAes (aes.AesSecret error)))]
+    [(SecretOk)
       (let
         [zero : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
         [h : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
-        (match (aes.encrypt-128! (& schedule) (& zero) (&mut h))
-          [(AesOk)
-            (secret.close-fixed zero)
-            (GcmKeyOk (GcmKey schedule h))]
-          [(AesErr error)
+        (match (aes.construct-128 input)
+          [(Aes128Err error)
             (secret.close-fixed zero)
             (secret.close-fixed h)
-            (aes.close-128 schedule)
-            (GcmKeyErr (GcmAes error))]))]))
+            (GcmKeyErr (GcmAes error))]
+          [(Aes128Ok schedule)
+            (match (aes.encrypt-128! (& schedule) (& zero) (&mut h))
+              [(AesOk)
+                (secret.close-fixed zero)
+                (GcmKeyOk (GcmKey schedule h))]
+              [(AesErr error)
+                (secret.close-fixed zero)
+                (secret.close-fixed h)
+                (aes.close-128 schedule)
+                (GcmKeyErr (GcmAes error))])]))]))
 
 ;: Consume one live exact-16 key; the raw key is wiped by the shared core.
 (defmacro (new [key : Expr]) : GcmKeyResult
@@ -350,7 +359,7 @@
               (set! output.len length)
               (GcmSealOk (GcmSealed output tag)))])))))
 
-;: Authenticate completely before allocating or writing any plaintext.
+;: Preallocate before keyed work; authenticate completely before plaintext writes.
 (define (open
   [key : (& key GcmKey)]
   [nonce : (& nonce GcmNonce)]
@@ -364,48 +373,51 @@
     (match (validate-lengths aad-length length)
       [(GcmErr error) (return (GcmOpenErr error))]
       [(GcmOk) unit])
-    (with
-      ([counter (secret.fixed-zero (secret.Secret16)) secret.close-fixed]
-        [stream (secret.fixed-zero (secret.Secret16)) secret.close-fixed])
-      (match (unsafe
-        (prepare! key nonce (&mut counter) (&mut stream)))
-        [(GcmErr error) (GcmOpenErr error)]
-        [(GcmOk)
-          (let
-            [counter-data : (MutPtr u8)
-              (unsafe
-                (secret.storage-data counter.handle.storage))]
-            [stream-data : (MutPtr u8)
-              (unsafe
-                (secret.storage-data stream.handle.storage))]
-            (unsafe
-              (ghash.authenticate!
-                (ptr-cast (secret.storage-data key.h.handle.storage) : (Ptr u8))
-                (buf.bytes-data aad)
-                aad-length
-                (buf.bytes-data ciphertext)
-                length
-                stream-data))
-            (if (!=
-              (unsafe
-                (secret.difference-bits
-                  (ptr-cast stream-data : (Ptr u8))
-                  (ptr-cast (ptr-addr-of received.octets) : (Ptr u8))
-                  16))
-              (cast 0 : u64))
-              (GcmOpenErr (GcmAuthentication))
-              (let
-                [output : buf.ByteBuf (buf.with-capacity length)]
+    (let
+      [output : buf.ByteBuf (buf.with-capacity length)]
+      (with
+        ([counter (secret.fixed-zero (secret.Secret16)) secret.close-fixed]
+          [stream (secret.fixed-zero (secret.Secret16)) secret.close-fixed])
+        (match (unsafe
+          (prepare! key nonce (&mut counter) (&mut stream)))
+          [(GcmErr error) (GcmOpenErr error)]
+          [(GcmOk)
+            (let
+              [counter-data : (MutPtr u8)
                 (unsafe
-                  (gctr!
-                    key
-                    nonce
-                    (buf.bytes-data ciphertext)
-                    length
-                    (__tl_array-data output.slots)
-                    (&mut counter)
-                    (&mut stream)
-                    counter-data
-                    (ptr-cast stream-data : (Ptr u8))))
-                (set! output.len length)
-                (GcmOpenOk output))))]))))
+                  (secret.storage-data counter.handle.storage))]
+              [stream-data : (MutPtr u8)
+                (unsafe
+                  (secret.storage-data stream.handle.storage))]
+              (unsafe
+                (ghash.authenticate!
+                  (ptr-cast
+                    (secret.storage-data key.h.handle.storage)
+                    : (Ptr u8))
+                  (buf.bytes-data aad)
+                  aad-length
+                  (buf.bytes-data ciphertext)
+                  length
+                  stream-data))
+              (if (!=
+                (unsafe
+                  (secret.difference-bits
+                    (ptr-cast stream-data : (Ptr u8))
+                    (ptr-cast (ptr-addr-of received.octets) : (Ptr u8))
+                    16))
+                (cast 0 : u64))
+                (GcmOpenErr (GcmAuthentication))
+                (begin
+                  (unsafe
+                    (gctr!
+                      key
+                      nonce
+                      (buf.bytes-data ciphertext)
+                      length
+                      (__tl_array-data output.slots)
+                      (&mut counter)
+                      (&mut stream)
+                      counter-data
+                      (ptr-cast stream-data : (Ptr u8))))
+                  (set! output.len length)
+                  (GcmOpenOk output))))])))))

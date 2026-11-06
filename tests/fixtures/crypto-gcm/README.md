@@ -70,14 +70,15 @@ and result discriminants. GCTR indices/counters depend only on the validated
 payload length; no operation uses a block after 0xffffffff. Open's sole
 content-dependent decision is the final authentication result after the full
 16-byte `crypto_secret.difference-bits` loop. The rejected path has no GCTR
-call or plaintext output allocation. Both paths close their fixed secret
+call or plaintext write. Output storage is preallocated before keyed work;
+it contains no decrypted bytes on refusal. Both paths close their fixed secret
 scratch. Payload processing has no allocation or recoverable result after
 the validated AES(J0) seam; an unreachable AES invariant failure is fatal.
 The complete containing bodies pin inlining and these control/address facts;
 retaining an unused helper alone cannot satisfy the gate.
 
-Local secret-memory payload peaks are 272 bytes for key setup (raw key,
-schedule and expansion planes, or schedule/H/zero block and cipher planes), 320 bytes for seal and
+Local secret-memory payload peaks are 304 bytes for key setup (raw key,
+schedule, preallocated H/zero blocks and expansion planes), 320 bytes for seal and
 304 bytes for open (context plus operation scratch and GHASH locals).
 These are source-level secret storage bounds, excluding compiler spills,
 registers and allocator metadata; assembly frame sizes and runtime allocator

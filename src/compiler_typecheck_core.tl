@@ -1180,10 +1180,35 @@
   (revision i64)
   (generation i64)
   (canon (__tl_dyn-array i64))
-  (canon-len i64))
+  (canon-len i64)
+  ;; Walk-scoped traversal results (#9581 A''): an entry is serial * 2 while
+  ;; in progress and serial * 2 + 1 once completed. Serials never repeat above
+  ;; `floor`; a pool change raises `floor` to the last issued serial.
+  (stamps (__tl_dyn-array i64))
+  (results (__tl_dyn-array i64))
+  (len i64)
+  (serial i64)
+  (floor i64)
+  (base i64)
+  (open i64)
+  ;; (id, entry, result) triples a nested walk overwrote, restored when it
+  ;; closes, and the undo mark of every open serial (serials nest LIFO).
+  (undo (__tl_dyn-array i64))
+  (undo-len i64)
+  (marks (__tl_dyn-array i64))
+  (marks-len i64))
 
 (define tc-macro-state-slot-type-walk : i64
   19)
+
+;; Serial bound: production never reaches it; tests lower it to force wraps.
+(define tc-walk-serial-limit : i64
+  1152921504606846976)
+
+(cfg
+  test
+  (define (tc-walk-serial-limit-set! [limit : i64]) : unit
+    (set! tc-walk-serial-limit limit)))
 
 ;; The bound job (its TcJobState address) and its table address: a saved and
 ;; restored current pointer, never an owning table. 0 = unbound (bypass). The
@@ -1194,13 +1219,116 @@
 (define tc-type-walk-address : i64
   0)
 
+;; Per-family walk state, two separate words (no packing): the current root
+;; walk's fan-out visits (counting stops at B = 64; 0 = no root walk in
+;; progress) and its open serial (0 = none yet, -1 = stamping unavailable).
+(define tc-walk-visits-0 : i64
+  0)
+(define tc-walk-serial-0 : i64
+  0)
+(define tc-walk-visits-1 : i64
+  0)
+(define tc-walk-serial-1 : i64
+  0)
+(define tc-walk-visits-2 : i64
+  0)
+(define tc-walk-serial-2 : i64
+  0)
+(define tc-walk-visits-3 : i64
+  0)
+(define tc-walk-serial-3 : i64
+  0)
+(define tc-walk-visits-4 : i64
+  0)
+(define tc-walk-serial-4 : i64
+  0)
+(define tc-walk-visits-5 : i64
+  0)
+(define tc-walk-serial-5 : i64
+  0)
+(define tc-walk-visits-6 : i64
+  0)
+(define tc-walk-serial-6 : i64
+  0)
+(define tc-walk-visits-7 : i64
+  0)
+(define tc-walk-serial-7 : i64
+  0)
+(define tc-walk-visits-8 : i64
+  0)
+(define tc-walk-serial-8 : i64
+  0)
+(define tc-walk-visits-9 : i64
+  0)
+(define tc-walk-serial-9 : i64
+  0)
+(define tc-walk-visits-10 : i64
+  0)
+(define tc-walk-serial-10 : i64
+  0)
+(define tc-walk-hit : i64
+  0)
+
 (defstruct TcTypeWalkBinding
   (job i64)
   (address i64))
 
 ;: Bind `job` as the owner of every type-walk table access until the matching
 ;: `tc-type-walk-restore!`.
+;; No family walk may span a change of the bound job: its serial and the
+;; stamps it reads belong to the previous job's table. Every binding change
+;; therefore requires all walk words at 0 (fail-closed).
+(define (tc-walk-words-idle!) : unit
+  (unless
+    (=
+      0
+      (bit-or
+        tc-walk-visits-0
+        (bit-or
+          tc-walk-serial-0
+          (bit-or
+            tc-walk-visits-1
+            (bit-or
+              tc-walk-serial-1
+              (bit-or
+                tc-walk-visits-2
+                (bit-or
+                  tc-walk-serial-2
+                  (bit-or
+                    tc-walk-visits-3
+                    (bit-or
+                      tc-walk-serial-3
+                      (bit-or
+                        tc-walk-visits-4
+                        (bit-or
+                          tc-walk-serial-4
+                          (bit-or
+                            tc-walk-visits-5
+                            (bit-or
+                              tc-walk-serial-5
+                              (bit-or
+                                tc-walk-visits-6
+                                (bit-or
+                                  tc-walk-serial-6
+                                  (bit-or
+                                    tc-walk-visits-7
+                                    (bit-or
+                                      tc-walk-serial-7
+                                      (bit-or
+                                        tc-walk-visits-8
+                                        (bit-or
+                                          tc-walk-serial-8
+                                          (bit-or
+                                            tc-walk-visits-9
+                                            (bit-or
+                                              tc-walk-serial-9
+                                              (bit-or
+                                                tc-walk-visits-10
+                                                tc-walk-serial-10))))))))))))))))))))))
+    (io.panic "typecheck: a type walk is open across a job binding")))
+
 (define (tc-type-walk-bind! [job : TcJobState]) : TcTypeWalkBinding
+  (tc-walk-words-idle!)
   (let
     [saved : TcTypeWalkBinding
       (TcTypeWalkBinding tc-type-walk-job tc-type-walk-address)]
@@ -1211,6 +1339,7 @@
 ;: Leave the type-walk table unbound (exact walks) until the matching
 ;: `tc-type-walk-restore!`.
 (define (tc-type-walk-unbind!) : TcTypeWalkBinding
+  (tc-walk-words-idle!)
   (let
     [saved : TcTypeWalkBinding
       (TcTypeWalkBinding tc-type-walk-job tc-type-walk-address)]
@@ -1219,6 +1348,7 @@
     saved))
 
 (define (tc-type-walk-restore! [saved : TcTypeWalkBinding]) : unit
+  (tc-walk-words-idle!)
   (set! tc-type-walk-job saved.job)
   (set! tc-type-walk-address 0))
 
@@ -1235,7 +1365,24 @@
           (__tl_make-array TcTypeWalkTable 1)]
         (set!
           (array-ref cell 0)
-          (TcTypeWalkTable owner (cast 0 : u64) -1 -1 (__tl_make-array i64 0) 0))
+          (TcTypeWalkTable
+            owner
+            (cast 0 : u64)
+            -1
+            -1
+            (__tl_make-array i64 0)
+            0
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0)
+            0
+            0
+            0
+            0
+            0
+            (__tl_make-array i64 0)
+            0
+            (__tl_make-array i64 0)
+            0))
         (set!
           address
           (cast
@@ -1307,8 +1454,247 @@
               (deref table).revision
               (ast.ast-type-pool-cursor-live-revision
                 ast.ty-node-pool-revision-cell))
-            (set! (deref table).generation (ast.ty-node-pool-generation-value))))
+            (set! (deref table).generation (ast.ty-node-pool-generation-value))
+            (set! (deref table).floor (deref table).serial)))
         tc-type-walk-address))))
+
+(define (tc-type-walk-grown
+  [owner : i64]
+  [items : (__tl_dyn-array i64)]
+  [used : i64]
+  [needed : i64]) : (__tl_dyn-array i64)
+  (let
+    [capacity : i64 (+ needed (+ 1024 (array-length items)))]
+    [grown : (__tl_dyn-array i64)
+      (in-arena
+        (unsafe
+          (arena.Arena owner))
+        (__tl_make-array i64 capacity))]
+    (for [at (iterator.range 0 used)]
+      (set! (array-ref grown at) (array-ref items at)))
+    grown))
+
+(define (tc-type-walk-reserve! [address : i64] [id : i64]) : unit
+  (let
+    [table : (MutPtr TcTypeWalkTable)
+      (tc-state-cell-ptr address TcTypeWalkTable)]
+    (unsafe
+      (when
+        (>= id (array-length (deref table).stamps))
+        (set!
+          (deref table).stamps
+          (tc-type-walk-grown
+            (deref table).owner
+            (deref table).stamps
+            (deref table).len
+            (+ id 1)))
+        (set!
+          (deref table).results
+          (tc-type-walk-grown
+            (deref table).owner
+            (deref table).results
+            (deref table).len
+            (+ id 1))))
+      (when
+        (>= id (deref table).len)
+        (for [at (iterator.range (deref table).len (+ id 1))]
+          (set! (array-ref (deref table).stamps at) 0))
+        (set! (deref table).len (+ id 1))))))
+
+(define (tc-walk-open! [_family : i64] [job : i64]) : i64
+  (cfg d2-stamps-off (return -1))
+  (let
+    [address : i64
+      (if (or (= job 0) (= job tc-type-walk-job))
+        (tc-type-walk-table)
+        0)]
+    (if (= address 0)
+      -1
+      (let
+        [table : (MutPtr TcTypeWalkTable)
+          (tc-state-cell-ptr address TcTypeWalkTable)]
+        (unsafe
+          (when
+            (and
+              (>= (+ (deref table).serial 1) tc-walk-serial-limit)
+              (= (deref table).open 0))
+            ;; Wrap with no open walk: every entry dies, serials restart.
+            (for [at (iterator.range 0 (deref table).len)]
+              (set! (array-ref (deref table).stamps at) 0))
+            (set! (deref table).serial 0)
+            (set! (deref table).floor 0))
+          (if (>= (+ (deref table).serial 1) tc-walk-serial-limit)
+            -1
+            (begin
+              (set! (deref table).serial (+ (deref table).serial 1))
+              (when
+                (= (deref table).open 0)
+                (set! (deref table).base (deref table).serial))
+              (set! (deref table).open (+ (deref table).open 1))
+              (when
+                (>= (deref table).marks-len (array-length (deref table).marks))
+                (set!
+                  (deref table).marks
+                  (tc-type-walk-grown
+                    (deref table).owner
+                    (deref table).marks
+                    (deref table).marks-len
+                    (+ (deref table).marks-len 1))))
+              (set!
+                (array-ref (deref table).marks (deref table).marks-len)
+                (deref table).undo-len)
+              (set! (deref table).marks-len (+ (deref table).marks-len 1))
+              (deref table).serial)))))))
+
+(define (tc-walk-close!) : unit
+  (when
+    (> tc-type-walk-address 0)
+    (let
+      [table : (MutPtr TcTypeWalkTable)
+        (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
+      (unsafe
+        (let
+          [mark : i64
+            (array-ref (deref table).marks (- (deref table).marks-len 1))]
+          [at : i64 (deref table).undo-len]
+          (while (> at mark)
+            (set! at (- at 3))
+            (let
+              [id : i64 (array-ref (deref table).undo at)]
+              (set!
+                (array-ref (deref table).stamps id)
+                (array-ref (deref table).undo (+ at 1)))
+              (set!
+                (array-ref (deref table).results id)
+                (array-ref (deref table).undo (+ at 2)))))
+          (set! (deref table).undo-len mark)
+          (set! (deref table).marks-len (- (deref table).marks-len 1))
+          (set! (deref table).open (- (deref table).open 1)))))))
+
+;: Run `body` as a nominal frame: its fields walk with another stack, so
+;: they form their own root walks and never share a serial with the
+;: enclosing walk. With no serial open only the visit count is saved and a
+;: serial the body opened closes at its end; otherwise both words are saved,
+;: zeroed and restored.
+(defmacro (tc-walk-frame [visits : Expr] [serial : Expr] [body : Expr]) : Expr
+  `(let
+    [walk-frame-visits : i64 ,visits]
+    [walk-frame-serial : i64 ,serial]
+    [walk-frame-result
+      (begin
+        (set! ,visits 0)
+        (unless (= walk-frame-serial 0) (set! ,serial 0))
+        ,body)]
+    (when (> ,serial 0) (tc-walk-close!))
+    (set! ,visits walk-frame-visits)
+    (set! ,serial walk-frame-serial)
+    walk-frame-result))
+
+;: One fan-out child visit. The visit that finds `visits` at 0 is the root
+;: of a walk; its return closes the walk's serial and resets both words. A
+;: root's first B = 64 visits run `plain` (main's own call); later ones open
+;: the root's serial once and run `stamped`, which reuses completed results
+;: of the same root walk.
+(defmacro (tc-walk-fan
+  [visits : Expr]
+  [serial : Expr]
+  [family : Expr]
+  [job : Expr]
+  [plain : Expr]
+  [stamped : Expr]) : Expr
+  `(if (= ,visits 0)
+    (let
+      [walk-fan-result
+        (begin
+          (set! ,visits 1)
+          ,plain)]
+      (when (> ,serial 0) (tc-walk-close!))
+      (set! ,serial 0)
+      (set! ,visits 0)
+      walk-fan-result)
+    (if (< ,visits 64)
+      (begin
+        (set! ,visits (+ ,visits 1))
+        ,plain)
+      (begin
+        (when (= ,serial 0) (set! ,serial (tc-walk-open! ,family ,job)))
+        ,stamped))))
+
+(define (tc-walk-probe-table! [_family : i64] [serial : i64] [id : i64]) : i64
+  (when (or (= (tc-type-walk-table) 0) (< id 0)) (return 0))
+  (tc-type-walk-reserve! tc-type-walk-address id)
+  (let
+    [table : (MutPtr TcTypeWalkTable)
+      (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
+    (unsafe
+      (if (<= serial (deref table).floor)
+        0
+        (let
+          [entry : i64 (array-ref (deref table).stamps id)]
+          (cond
+            [(= entry (+ (* serial 2) 1))
+              (set! tc-walk-hit (array-ref (deref table).results id))
+              2]
+            [(= entry (* serial 2)) 0]
+            [else
+              (when
+                (>= (shr entry 1) (deref table).base)
+                (when
+                  (>=
+                    (+ (deref table).undo-len 3)
+                    (array-length (deref table).undo))
+                  (set!
+                    (deref table).undo
+                    (tc-type-walk-grown
+                      (deref table).owner
+                      (deref table).undo
+                      (deref table).undo-len
+                      (+ (deref table).undo-len 3))))
+                (set! (array-ref (deref table).undo (deref table).undo-len) id)
+                (set!
+                  (array-ref (deref table).undo (+ (deref table).undo-len 1))
+                  entry)
+                (set!
+                  (array-ref (deref table).undo (+ (deref table).undo-len 2))
+                  (array-ref (deref table).results id))
+                (set! (deref table).undo-len (+ (deref table).undo-len 3)))
+              (set! (array-ref (deref table).stamps id) (* serial 2))
+              1]))))))
+
+(define (tc-walk-store! [serial : i64] [id : i64] [value : i64]) : unit
+  (when
+    (and (> serial 0) (> tc-type-walk-address 0))
+    (let
+      [table : (MutPtr TcTypeWalkTable)
+        (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
+      (unsafe
+        (when
+          (and
+            (< id (deref table).len)
+            (= (array-ref (deref table).stamps id) (* serial 2)))
+          (set! (array-ref (deref table).stamps id) (+ (* serial 2) 1))
+          (set! (array-ref (deref table).results id) value))))))
+
+;; Complete a type-valued child of a stamping walk with the id of its answer,
+;; interning the answer when needed (only stamping walks reach this).
+(define (tc-walk-store-type!
+  [serial : i64]
+  [id : i64]
+  [answer : (& ast.AstType)]) : unit
+  (tc-walk-store! serial id (ast.ty-node-push answer)))
+
+(define (tc-walk-reopen! [serial : i64] [id : i64]) : unit
+  (when
+    (and (> serial 0) (> tc-type-walk-address 0))
+    (let
+      [table : (MutPtr TcTypeWalkTable)
+        (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
+      (unsafe
+        (when
+          (and
+            (< id (deref table).len)
+            (= (array-ref (deref table).stamps id) (+ (* serial 2) 1)))
+          (set! (array-ref (deref table).stamps id) (* serial 2)))))))
 
 (define (tc-nominal-cache-state-ptr [state : TcNominalCacheState]) : (MutPtr
     TcNominalCacheStateData)
@@ -37900,8 +38286,15 @@
   [index : i64]) : bool
   (if (>= index (ast.ast-type-list-len types))
     false
-    (if (tc-type-contains-region-tag?
-      (ast.ty-node-get
+    (if (tc-walk-fan
+      tc-walk-visits-0
+      tc-walk-serial-0
+      0
+      0
+      (tc-type-contains-region-tag?
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+      (tc-type-contains-region-tag-id?
         (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
       true
       (tc-type-list-contains-region-tag-at? types (+ index 1)))))
@@ -37912,7 +38305,13 @@
       (if (tc-type-list-contains-region-tag?
         (ast.ast-type-list-box-shared-view args))
         true
-        (tc-type-contains-region-tag? (ast.ty-node-get ret)))]
+        (tc-walk-fan
+          tc-walk-visits-0
+          tc-walk-serial-0
+          0
+          0
+          (tc-type-contains-region-tag? (ast.ty-node-get ret))
+          (tc-type-contains-region-tag-id? ret)))]
     [(Tuple elems)
       (tc-type-list-contains-region-tag?
         (ast.ast-type-list-box-shared-view elems))]
@@ -37921,6 +38320,26 @@
       (tc-type-contains-region-tag? (ast.ty-node-get elem))]
     [(Region _ _) true]
     [_ false]))
+
+(define (tc-type-contains-region-tag-id? [id : i64]) : bool
+  (let
+    [code : i64
+      (if (> tc-walk-serial-0 0)
+        (tc-walk-probe-table! 0 tc-walk-serial-0 id)
+        0)]
+    (if (= code 2)
+      (= tc-walk-hit 1)
+      (let
+        [answer : bool (tc-type-contains-region-tag? (ast.ty-node-get id))]
+        (when
+          (= code 1)
+          (tc-walk-store!
+            tc-walk-serial-0
+            id
+            (if answer
+              1
+              0)))
+        answer))))
 
 (define (tc-type-list-without-regions [types : ast.AstTypeList]) : ast.AstTypeList
   (if (tc-type-list-contains-region-tag? (tc-global-shared-view types))
@@ -37934,8 +38353,15 @@
     (ast.ast-type-list-new)
     (ast.ast-type-cons
       (&
-        (tc-type-without-regions
-          (ast.ty-node-get
+        (tc-walk-fan
+          tc-walk-visits-1
+          tc-walk-serial-1
+          1
+          0
+          (tc-type-without-regions
+            (ast.ty-node-get
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+          (tc-type-without-regions-id
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       (& (tc-type-list-without-regions-at types (+ index 1))))))
 
@@ -37946,7 +38372,14 @@
         (ast.ast-ty-func
           (tc-type-list-without-regions
             (ast.ast-type-list-box-shared-view args))
-          (& (tc-type-without-regions (ast.ty-node-get ret))))]
+          (&
+            (tc-walk-fan
+              tc-walk-visits-1
+              tc-walk-serial-1
+              1
+              0
+              (tc-type-without-regions (ast.ty-node-get ret))
+              (tc-type-without-regions-id ret))))]
       [(Tuple elems)
         (ast.ast-ty-tuple
           (tc-type-list-without-regions
@@ -37994,6 +38427,19 @@
           (ast.ast-lifetime-list-box-shared-view lifetimes))]
       [_ ty])
     ty))
+
+(define (tc-type-without-regions-id [id : i64]) : ast.AstType
+  (let
+    [code : i64
+      (if (> tc-walk-serial-1 0)
+        (tc-walk-probe-table! 1 tc-walk-serial-1 id)
+        0)]
+    (if (= code 2)
+      (ast.ty-node-get tc-walk-hit)
+      (let
+        [answer : ast.AstType (tc-type-without-regions (ast.ty-node-get id))]
+        (when (= code 1) (tc-walk-store-type! tc-walk-serial-1 id (& answer)))
+        answer))))
 
 (define (tc-type-list-contains-region [types : ast.AstTypeList] [region : i64]) : bool
   (tc-type-list-contains-region-at? (& types) region 0))
@@ -38927,20 +39373,36 @@
     out
     (tc-type-list-collect-regions-at
       types
-      (tc-type-collect-regions-into
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-        out)
+      (tc-walk-fan
+        tc-walk-visits-3
+        tc-walk-serial-3
+        3
+        0
+        (tc-type-collect-regions-into
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+          out)
+        (tc-type-collect-regions-id
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))
+          out))
       (+ index 1))))
 
 (define (tc-type-collect-regions-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
   (match ty
     [(Func args ret)
-      (tc-type-collect-regions-into
-        (ast.ty-node-get ret)
-        (tc-type-list-collect-regions
-          (ast.ast-type-list-box-shared-view args)
-          out))]
+      (let
+        [arg-types : ast.AstTypeList (ast.ast-type-list-box-shared-view args)]
+        (tc-walk-fan
+          tc-walk-visits-3
+          tc-walk-serial-3
+          3
+          0
+          (tc-type-collect-regions-into
+            (ast.ty-node-get ret)
+            (tc-type-list-collect-regions arg-types out))
+          (tc-type-collect-regions-id
+            ret
+            (tc-type-list-collect-regions arg-types out))))]
     [(Tuple elems)
       (tc-type-list-collect-regions
         (ast.ast-type-list-box-shared-view elems)
@@ -38956,6 +39418,20 @@
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
       (tc-lifetime-list-to-name-id-list-into (deref lifetimes) out)]
     [_ out]))
+
+(define (tc-type-collect-regions-id [id : i64] [out : TcNameIdList]) : TcNameIdList
+  (let
+    [code : i64
+      (if (> tc-walk-serial-3 0)
+        (tc-walk-probe-table! 3 tc-walk-serial-3 id)
+        0)]
+    (if (= code 2)
+      out
+      (let
+        [answer : TcNameIdList
+          (tc-type-collect-regions-into (ast.ty-node-get id) out)]
+        (when (= code 1) (tc-walk-store! tc-walk-serial-3 id 1))
+        answer))))
 
 (define (tc-type-collect-regions [ty : ast.AstType]) : TcNameIdList
   (tc-type-collect-regions-into ty Nil))
@@ -49108,13 +49584,23 @@
     true
     (and
       (tc-move-kind-copyable?
-        (tc-type-move-kind-with-stack
-          ctx
-          (tc-context-type-get
+        (tc-walk-fan
+          tc-walk-visits-8
+          tc-walk-serial-8
+          8
+          (tc-context-job-state ctx).address
+          (tc-type-move-kind-with-stack
             ctx
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-          stack
-          completed))
+            (tc-context-type-get
+              ctx
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+            stack
+            completed)
+          (tc-type-move-kind-id
+            ctx
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))
+            stack
+            completed)))
       (tc-type-move-kind-copyable-type-list-at
         ctx
         types
@@ -49223,7 +49709,7 @@
 ;; lifetime arguments may read the published answer, because a larger stack
 ;; only adds cut-offs at declarations on a path to this one, and those cut off
 ;; the top-level walk too. Lifetime-applied queries classify directly.
-(define (tc-type-move-kind-nominal-with-stack
+(define (tc-type-move-kind-nominal-with-stack-walk
   [ctx : TcContext]
   [name-id : i64]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
@@ -49276,6 +49762,57 @@
                   name-id
                   (tc-move-kind-code kind)))
               kind)])))))
+
+;; A nominal frame of move-kind: its fields are walked with their own stack,
+;; so they form their own root walks.
+(define (tc-type-move-kind-nominal-with-stack
+  [ctx : TcContext]
+  [name-id : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [stack : TcNameIdList]
+  [type-id : i64]
+  [completed : (&mut completed TcNameIdList)]) : TcMoveKind
+  (tc-walk-frame
+    tc-walk-visits-8
+    tc-walk-serial-8
+    (tc-type-move-kind-nominal-with-stack-walk
+      ctx
+      name-id
+      lifetimes
+      stack
+      type-id
+      completed)))
+
+(define (tc-type-move-kind-id
+  [ctx : TcContext]
+  [id : i64]
+  [stack : TcNameIdList]
+  [completed : (&mut completed TcNameIdList)]) : TcMoveKind
+  (let
+    [code : i64
+      (if (> tc-walk-serial-8 0)
+        (tc-walk-probe-table! 8 tc-walk-serial-8 id)
+        0)]
+    (if (= code 2)
+      (if (= tc-walk-hit 1)
+        (Copyable)
+        (MoveOnly))
+      (let
+        [answer : TcMoveKind
+          (tc-type-move-kind-with-stack
+            ctx
+            (tc-context-type-get ctx id)
+            stack
+            completed)]
+        (when
+          (= code 1)
+          (tc-walk-store!
+            tc-walk-serial-8
+            id
+            (if (tc-move-kind-copyable? answer)
+              1
+              0)))
+        answer))))
 
 (define (tc-type-move-kind-nominal-handle
   [ctx : TcContext]
@@ -122222,15 +122759,44 @@
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index (ast.ast-type-list-len (& types))))
-      (if (tc-type-reaches-cleanup?
-        ctx
-        (tc-context-type-get
+      (if (tc-walk-fan
+        tc-walk-visits-6
+        tc-walk-serial-6
+        6
+        (tc-context-job-state ctx).address
+        (tc-type-reaches-cleanup?
+          ctx
+          (tc-context-type-get
+            ctx
+            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
+        (tc-type-reaches-cleanup-id?
           ctx
           (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
         (set! found true)
         unit)
       (+= index 1))
     found))
+
+(define (tc-type-reaches-cleanup-id? [ctx : TcContext] [id : i64]) : bool
+  (let
+    [code : i64
+      (if (> tc-walk-serial-6 0)
+        (tc-walk-probe-table! 6 tc-walk-serial-6 id)
+        0)]
+    (if (= code 2)
+      (= tc-walk-hit 1)
+      (let
+        [answer : bool
+          (tc-type-reaches-cleanup? ctx (tc-context-type-get ctx id))]
+        (when
+          (= code 1)
+          (tc-walk-store!
+            tc-walk-serial-6
+            id
+            (if answer
+              1
+              0)))
+        answer))))
 
 (define (tc-struct-field-cleanup-outside-message
   [struct-name : String]
@@ -123626,15 +124192,7 @@
       (tc-selected-nominal-holds-reference? ctx walk name true)]
     [_ false]))
 
-;; The walk cuts a declaration already on the path, so from the root it
-;; decides whether a reference is reachable through fields and payloads. Below
-;; the root, a declaration's `false` is that reachability only when no cut in
-;; its sub-walk hit a declaration above it (a cut at itself or deeper hides
-;; nothing reachable from it); its `true` always is (a real path). An exact
-;; `false` also holds for every declaration its sub-walk entered, since each
-;; is reachable from it. Those answers are kept, and replacing a sub-walk by a
-;; kept answer leaves every enclosing answer as the walk would compute it.
-(define (tc-selected-nominal-holds-reference?
+(define (tc-selected-nominal-holds-reference-walk?
   [ctx : TcContext]
   [walk : (&mut walk TcSelectedHoldsWalk)]
   [name : i64]
@@ -123696,6 +124254,48 @@
               (when (< outer-low walk.low) (set! walk.low outer-low))
               found)))))))
 
+;; The walk cuts a declaration already on the path, so from the root it
+;; decides whether a reference is reachable through fields and payloads. Below
+;; the root, a declaration's `false` is that reachability only when no cut in
+;; its sub-walk hit a declaration above it (a cut at itself or deeper hides
+;; nothing reachable from it); its `true` always is (a real path). An exact
+;; `false` also holds for every declaration its sub-walk entered, since each
+;; is reachable from it. Those answers are kept, and replacing a sub-walk by a
+;; kept answer leaves every enclosing answer as the walk would compute it.
+(define (tc-selected-nominal-holds-reference?
+  [ctx : TcContext]
+  [walk : (&mut walk TcSelectedHoldsWalk)]
+  [name : i64]
+  [enum? : bool]) : bool
+  (tc-walk-frame
+    tc-walk-visits-7
+    tc-walk-serial-7
+    (tc-selected-nominal-holds-reference-walk? ctx walk name enum?)))
+
+(define (tc-selected-holds-reference-id?
+  [ctx : TcContext]
+  [walk : (&mut walk TcSelectedHoldsWalk)]
+  [id : i64]) : bool
+  (let
+    [code : i64
+      (if (> tc-walk-serial-7 0)
+        (tc-walk-probe-table! 7 tc-walk-serial-7 id)
+        0)]
+    (if (= code 2)
+      (= tc-walk-hit 1)
+      (let
+        [answer : bool
+          (tc-selected-holds-reference-in? ctx walk (ast.ty-node-get id))]
+        (when
+          (= code 1)
+          (tc-walk-store!
+            tc-walk-serial-7
+            id
+            (if answer
+              1
+              0)))
+        answer))))
+
 (define (tc-selected-struct-fields-hold-reference?
   [ctx : TcContext]
   [walk : (&mut walk TcSelectedHoldsWalk)]
@@ -123756,10 +124356,19 @@
     (while (and (not found) (< index (ast.ast-type-list-len (& types))))
       (set!
         found
-        (tc-selected-holds-reference-in?
-          ctx
-          walk
-          (ast.ty-node-get
+        (tc-walk-fan
+          tc-walk-visits-7
+          tc-walk-serial-7
+          7
+          (tc-context-job-state ctx).address
+          (tc-selected-holds-reference-in?
+            ctx
+            walk
+            (ast.ty-node-get
+              (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
+          (tc-selected-holds-reference-id?
+            ctx
+            walk
             (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))))
       (set! index (+ index 1)))
     found))
@@ -123776,8 +124385,18 @@
         (while (and (not found) (< index (ast.ast-type-list-len (& list))))
           (set!
             found
-            (tc-selected-type-contains-view?
-              (ast.ty-node-get
+            (tc-walk-fan
+              tc-walk-visits-10
+              tc-walk-serial-10
+              10
+              0
+              (tc-selected-type-contains-view?
+                (ast.ty-node-get
+                  (ast.ast-type-list-get
+                    (& list)
+                    index
+                    (ast.ast-type-id-fallback))))
+              (tc-selected-type-contains-view-id?
                 (ast.ast-type-list-get
                   (& list)
                   index
@@ -123795,6 +124414,26 @@
     [(ast.AstType.MutRef _ inner)
       (tc-selected-type-contains-view? (ast.ty-node-get inner))]
     [_ false]))
+
+(define (tc-selected-type-contains-view-id? [id : i64]) : bool
+  (let
+    [code : i64
+      (if (> tc-walk-serial-10 0)
+        (tc-walk-probe-table! 10 tc-walk-serial-10 id)
+        0)]
+    (if (= code 2)
+      (= tc-walk-hit 1)
+      (let
+        [answer : bool (tc-selected-type-contains-view? (ast.ty-node-get id))]
+        (when
+          (= code 1)
+          (tc-walk-store!
+            tc-walk-serial-10
+            id
+            (if answer
+              1
+              0)))
+        answer))))
 
 ;; The referent of a reference or a view (`Unit` for any other type).
 (define (tc-selected-referent [ctx : TcContext] [resolved : ast.AstType]) : ast.AstType
@@ -124041,10 +124680,22 @@
         (while (and (not found) (< index (ast.ast-type-list-len (& list))))
           (set!
             found
-            (tc-selected-arena-tagged?
-              ctx
-              regions
-              (ast.ty-node-get
+            (tc-walk-fan
+              tc-walk-visits-4
+              tc-walk-serial-4
+              4
+              (tc-context-job-state ctx).address
+              (tc-selected-arena-tagged?
+                ctx
+                regions
+                (ast.ty-node-get
+                  (ast.ast-type-list-get
+                    (& list)
+                    index
+                    (ast.ast-type-id-fallback))))
+              (tc-selected-arena-tagged-id?
+                ctx
+                regions
                 (ast.ast-type-list-get
                   (& list)
                   index
@@ -124068,6 +124719,30 @@
     [(ast.AstType.MutRef _ inner)
       (tc-selected-arena-tagged? ctx regions (ast.ty-node-get inner))]
     [_ false]))
+
+(define (tc-selected-arena-tagged-id?
+  [ctx : TcContext]
+  [regions : (& regions (__tl_dyn-array i64))]
+  [id : i64]) : bool
+  (let
+    [code : i64
+      (if (> tc-walk-serial-4 0)
+        (tc-walk-probe-table! 4 tc-walk-serial-4 id)
+        0)]
+    (if (= code 2)
+      (= tc-walk-hit 1)
+      (let
+        [answer : bool
+          (tc-selected-arena-tagged? ctx regions (ast.ty-node-get id))]
+        (when
+          (= code 1)
+          (tc-walk-store!
+            tc-walk-serial-4
+            id
+            (if answer
+              1
+              0)))
+        answer))))
 
 (define (tc-selected-arena-erase-lifetimes
   [ctx : TcContext]
@@ -124101,10 +124776,19 @@
     (ast.ast-type-list-new)
     (ast.ast-type-cons
       (&
-        (tc-selected-arena-erase
-          ctx
-          regions
-          (ast.ty-node-get
+        (tc-walk-fan
+          tc-walk-visits-5
+          tc-walk-serial-5
+          5
+          (tc-context-job-state ctx).address
+          (tc-selected-arena-erase
+            ctx
+            regions
+            (ast.ty-node-get
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+          (tc-selected-arena-erase-id
+            ctx
+            regions
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       (& (tc-selected-arena-erase-list-at ctx regions types (+ index 1))))))
 
@@ -124175,6 +124859,23 @@
           (& (tc-selected-arena-erase ctx regions (ast.ty-node-get inner))))]
       [_ ty])))
 
+(define (tc-selected-arena-erase-id
+  [ctx : TcContext]
+  [regions : (& regions (__tl_dyn-array i64))]
+  [id : i64]) : ast.AstType
+  (let
+    [code : i64
+      (if (> tc-walk-serial-5 0)
+        (tc-walk-probe-table! 5 tc-walk-serial-5 id)
+        0)]
+    (if (= code 2)
+      (ast.ty-node-get tc-walk-hit)
+      (let
+        [answer : ast.AstType
+          (tc-selected-arena-erase ctx regions (ast.ty-node-get id))]
+        (when (= code 1) (tc-walk-store-type! tc-walk-serial-5 id (& answer)))
+        answer))))
+
 ;; No reference, region tag or lifetime argument other than the arena pseudo
 ;; region anywhere in an erased type: a value that holds no loans.
 (define (tc-selected-type-loan-free? [ty : ast.AstType]) : bool
@@ -124200,8 +124901,18 @@
         (while (and free? (< index (ast.ast-type-list-len (& list))))
           (set!
             free?
-            (tc-selected-type-loan-free?
-              (ast.ty-node-get
+            (tc-walk-fan
+              tc-walk-visits-2
+              tc-walk-serial-2
+              2
+              0
+              (tc-selected-type-loan-free?
+                (ast.ty-node-get
+                  (ast.ast-type-list-get
+                    (& list)
+                    index
+                    (ast.ast-type-id-fallback))))
+              (tc-selected-type-loan-free-id?
                 (ast.ast-type-list-get
                   (& list)
                   index
@@ -124219,6 +124930,26 @@
     ;; A raw pointer carries no loan, whatever it points to
     ;; (`tc-selected-type-class`), also as an element or field.
     [_ true]))
+
+(define (tc-selected-type-loan-free-id? [id : i64]) : bool
+  (let
+    [code : i64
+      (if (> tc-walk-serial-2 0)
+        (tc-walk-probe-table! 2 tc-walk-serial-2 id)
+        0)]
+    (if (= code 2)
+      (= tc-walk-hit 1)
+      (let
+        [answer : bool (tc-selected-type-loan-free? (ast.ty-node-get id))]
+        (when
+          (= code 1)
+          (tc-walk-store!
+            tc-walk-serial-2
+            id
+            (if answer
+              1
+              0)))
+        answer))))
 
 (define (tc-selected-pseudo-lifetimes? [lifetimes : ast.AstLifetimeList]) : bool
   (let
@@ -125195,6 +125926,7 @@
   [ty : ast.AstType]
   [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]
   [depth : i64]) : unit
+  (when (> depth tc-walk-variance-reach) (set! tc-walk-variance-reach depth))
   (if (> depth (ownership_normalize.ownership-normalize-depth-limit))
     (set! out.incomplete? true)
     (match ty
@@ -125224,11 +125956,17 @@
           (ast.ast-type-list-box-shared-view args)
           out
           (+ depth 1))
-        (tc-selected-nominal-variances-in!
-          ctx
-          (ast.ty-node-get ret)
-          out
-          (+ depth 1))]
+        (tc-walk-fan
+          tc-walk-visits-9
+          tc-walk-serial-9
+          9
+          (tc-context-job-state ctx).address
+          (tc-selected-nominal-variances-in!
+            ctx
+            (ast.ty-node-get ret)
+            out
+            (+ depth 1))
+          (tc-selected-nominal-variances-id! ctx ret out (+ depth 1)))]
       [(or (ast.AstType.EnumArgs name lifetimes)
            (ast.AstType.StructArgs name lifetimes))
         (tc-selected-nominal-variance-add!
@@ -125247,13 +125985,62 @@
   (let
     [index : i64 0]
     (while (< index (ast.ast-type-list-len (& types)))
-      (tc-selected-nominal-variances-in!
-        ctx
-        (ast.ty-node-get
-          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
-        out
-        depth)
+      (tc-walk-fan
+        tc-walk-visits-9
+        tc-walk-serial-9
+        9
+        (tc-context-job-state ctx).address
+        (tc-selected-nominal-variances-in!
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
+          out
+          depth)
+        (tc-selected-nominal-variances-id!
+          ctx
+          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))
+          out
+          depth))
       (set! index (+ index 1)))))
+
+(define tc-walk-variance-reach : i64
+  0)
+
+(define (tc-selected-nominal-variances-id!
+  [ctx : TcContext]
+  [id : i64]
+  [out : (&mut out ownership_normalize.OwnershipNormalizeVariances)]
+  [depth : i64]) : unit
+  (let
+    [code : i64
+      (if (> tc-walk-serial-9 0)
+        (tc-walk-probe-table! 9 tc-walk-serial-9 id)
+        0)]
+    (if (and (= code 2) (>= depth (shr tc-walk-hit 12)))
+      (let
+        [height : i64 (bit-and tc-walk-hit 4095)]
+        (when
+          (>
+            (+ depth height)
+            (ownership_normalize.ownership-normalize-depth-limit))
+          (set! out.incomplete? true))
+        (when
+          (> (+ depth height) tc-walk-variance-reach)
+          (set! tc-walk-variance-reach (+ depth height))))
+      (let
+        [outer : i64 tc-walk-variance-reach]
+        (set! tc-walk-variance-reach depth)
+        (when (= code 2) (tc-walk-reopen! tc-walk-serial-9 id))
+        (tc-selected-nominal-variances-in! ctx (ast.ty-node-get id) out depth)
+        (when
+          (> code 0)
+          (tc-walk-store!
+            tc-walk-serial-9
+            id
+            (+ (* depth 4096) (- tc-walk-variance-reach depth))))
+        (when
+          (> outer tc-walk-variance-reach)
+          (set! tc-walk-variance-reach outer))))))
 
 (define (tc-selected-nominal-variance-add!
   [ctx : TcContext]

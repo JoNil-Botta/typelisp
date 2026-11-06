@@ -1501,7 +1501,7 @@
           (set! (array-ref (deref table).stamps at) 0))
         (set! (deref table).len (+ id 1))))))
 
-(define (tc-walk-open! [family : i64] [job : i64]) : i64
+(define (tc-walk-open! [_family : i64] [job : i64]) : i64
   (cfg d2-stamps-off (return -1))
   (let
     [address : i64
@@ -1509,8 +1509,7 @@
         (tc-type-walk-table)
         0)]
     (if (= address 0)
-      (begin
-        -1)
+      -1
       (let
         [table : (MutPtr TcTypeWalkTable)
           (tc-state-cell-ptr address TcTypeWalkTable)]
@@ -1621,7 +1620,7 @@
         (when (= ,serial 0) (set! ,serial (tc-walk-open! ,family ,job)))
         ,stamped))))
 
-(define (tc-walk-probe-table! [family : i64] [serial : i64] [id : i64]) : i64
+(define (tc-walk-probe-table! [_family : i64] [serial : i64] [id : i64]) : i64
   (when (or (= (tc-type-walk-table) 0) (< id 0)) (return 0))
   (tc-type-walk-reserve! tc-type-walk-address id)
   (let
@@ -1634,54 +1633,47 @@
           [entry : i64 (array-ref (deref table).stamps id)]
           (cond
             [(= entry (+ (* serial 2) 1))
-              (begin
-                (set! tc-walk-hit (array-ref (deref table).results id))
-                2)]
-            [(= entry (* serial 2))
-              (begin
-                0)]
+              (set! tc-walk-hit (array-ref (deref table).results id))
+              2]
+            [(= entry (* serial 2)) 0]
             [else
-              (begin
+              (when
+                (>= (shr entry 1) (deref table).base)
                 (when
-                  (>= (shr entry 1) (deref table).base)
-                  (when
-                    (>=
-                      (+ (deref table).undo-len 3)
-                      (array-length (deref table).undo))
-                    (set!
+                  (>=
+                    (+ (deref table).undo-len 3)
+                    (array-length (deref table).undo))
+                  (set!
+                    (deref table).undo
+                    (tc-type-walk-grown
+                      (deref table).owner
                       (deref table).undo
-                      (tc-type-walk-grown
-                        (deref table).owner
-                        (deref table).undo
-                        (deref table).undo-len
-                        (+ (deref table).undo-len 3))))
-                  (set!
-                    (array-ref (deref table).undo (deref table).undo-len)
-                    id)
-                  (set!
-                    (array-ref (deref table).undo (+ (deref table).undo-len 1))
-                    entry)
-                  (set!
-                    (array-ref (deref table).undo (+ (deref table).undo-len 2))
-                    (array-ref (deref table).results id))
-                  (set! (deref table).undo-len (+ (deref table).undo-len 3)))
-                (set! (array-ref (deref table).stamps id) (* serial 2))
-                1)]))))))
+                      (deref table).undo-len
+                      (+ (deref table).undo-len 3))))
+                (set! (array-ref (deref table).undo (deref table).undo-len) id)
+                (set!
+                  (array-ref (deref table).undo (+ (deref table).undo-len 1))
+                  entry)
+                (set!
+                  (array-ref (deref table).undo (+ (deref table).undo-len 2))
+                  (array-ref (deref table).results id))
+                (set! (deref table).undo-len (+ (deref table).undo-len 3)))
+              (set! (array-ref (deref table).stamps id) (* serial 2))
+              1]))))))
 
 (define (tc-walk-store! [serial : i64] [id : i64] [value : i64]) : unit
-  (begin
-    (when
-      (and (> serial 0) (> tc-type-walk-address 0))
-      (let
-        [table : (MutPtr TcTypeWalkTable)
-          (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
-        (unsafe
-          (when
-            (and
-              (< id (deref table).len)
-              (= (array-ref (deref table).stamps id) (* serial 2)))
-            (set! (array-ref (deref table).stamps id) (+ (* serial 2) 1))
-            (set! (array-ref (deref table).results id) value)))))))
+  (when
+    (and (> serial 0) (> tc-type-walk-address 0))
+    (let
+      [table : (MutPtr TcTypeWalkTable)
+        (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
+      (unsafe
+        (when
+          (and
+            (< id (deref table).len)
+            (= (array-ref (deref table).stamps id) (* serial 2)))
+          (set! (array-ref (deref table).stamps id) (+ (* serial 2) 1))
+          (set! (array-ref (deref table).results id) value))))))
 
 ;; Complete a type-valued child of a stamping walk with the id of its answer,
 ;; interning the answer when needed (only stamping walks reach this).
@@ -1692,18 +1684,17 @@
   (tc-walk-store! serial id (ast.ty-node-push answer)))
 
 (define (tc-walk-reopen! [serial : i64] [id : i64]) : unit
-  (begin
-    (when
-      (and (> serial 0) (> tc-type-walk-address 0))
-      (let
-        [table : (MutPtr TcTypeWalkTable)
-          (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
-        (unsafe
-          (when
-            (and
-              (< id (deref table).len)
-              (= (array-ref (deref table).stamps id) (+ (* serial 2) 1)))
-            (set! (array-ref (deref table).stamps id) (* serial 2))))))))
+  (when
+    (and (> serial 0) (> tc-type-walk-address 0))
+    (let
+      [table : (MutPtr TcTypeWalkTable)
+        (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
+      (unsafe
+        (when
+          (and
+            (< id (deref table).len)
+            (= (array-ref (deref table).stamps id) (+ (* serial 2) 1)))
+          (set! (array-ref (deref table).stamps id) (* serial 2)))))))
 
 (define (tc-nominal-cache-state-ptr [state : TcNominalCacheState]) : (MutPtr
     TcNominalCacheStateData)
@@ -39399,21 +39390,19 @@
 (define (tc-type-collect-regions-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
   (match ty
     [(Func args ret)
-      (tc-walk-fan
-        tc-walk-visits-3
-        tc-walk-serial-3
-        3
-        0
-        (tc-type-collect-regions-into
-          (ast.ty-node-get ret)
-          (tc-type-list-collect-regions
-            (ast.ast-type-list-box-shared-view args)
-            out))
-        (tc-type-collect-regions-id
-          ret
-          (tc-type-list-collect-regions
-            (ast.ast-type-list-box-shared-view args)
-            out)))]
+      (let
+        [arg-types : ast.AstTypeList (ast.ast-type-list-box-shared-view args)]
+        (tc-walk-fan
+          tc-walk-visits-3
+          tc-walk-serial-3
+          3
+          0
+          (tc-type-collect-regions-into
+            (ast.ty-node-get ret)
+            (tc-type-list-collect-regions arg-types out))
+          (tc-type-collect-regions-id
+            ret
+            (tc-type-list-collect-regions arg-types out))))]
     [(Tuple elems)
       (tc-type-list-collect-regions
         (ast.ast-type-list-box-shared-view elems)

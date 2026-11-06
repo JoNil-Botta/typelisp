@@ -1211,6 +1211,16 @@
           tc-macro-state-slot-type-walk)))
     saved))
 
+;: Leave the type-walk table unbound (exact walks) until the matching
+;: `tc-type-walk-restore!`.
+(define (tc-type-walk-unbind!) : TcTypeWalkBinding
+  (let
+    [saved : TcTypeWalkBinding
+      (TcTypeWalkBinding tc-type-walk-job tc-type-walk-address)]
+    (set! tc-type-walk-job 0)
+    (set! tc-type-walk-address 0)
+    saved))
+
 (define (tc-type-walk-restore! [saved : TcTypeWalkBinding]) : unit
   (set! tc-type-walk-job saved.job)
   (set! tc-type-walk-address saved.address))
@@ -121823,8 +121833,9 @@
               (Ok program paths)))])]
     [(Err diag) (Err diag)]))
 
-;; Expansion checks macro operands (equality included) for `job-state`:
-;; bind its type-walk table for the whole expansion and restore on return.
+;; Expansion checks macro operands (equality included) while another job's
+;; table may be bound: run it unbound (the exact structural walk, as before
+;; this table existed) and restore the caller's binding on return.
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
   [program : ast.AstProgram]
@@ -121836,7 +121847,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [intern-state-input : ci.InternCompatState]) : ResultMacroExpand
   (let
-    [binding : TcTypeWalkBinding (tc-type-walk-bind! job-state)]
+    [binding : TcTypeWalkBinding (tc-type-walk-unbind!)]
     [result : ResultMacroExpand
       (macro-expand-program-bound
         load-state

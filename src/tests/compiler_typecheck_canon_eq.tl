@@ -168,7 +168,7 @@
       (io.panic "same job allocated twice"))
     (tc.tc-type-walk-restore! outer)))
 
-;; Macro expansion binds its own job and restores the caller's binding, on
+;; Macro expansion runs unbound and restores the caller's binding, on
 ;; success and on failure.
 (define (canon-eq-expansion-binding-test [job : tc.TcJobState]) : unit
   (match (check_core.compiler-check-source

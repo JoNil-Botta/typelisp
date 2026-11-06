@@ -52,6 +52,25 @@ malformed X.400 names, schema and budget errors, every RSA truncation, fixed-see
 DER/PEM mutations, and Gregorian conversion across years 0001–9999. It exits 42
 without output. Fixture provenance and hashes live in `fixtures/x509/README.md`.
 
+The same cross-module driver runs RFC 9525 identity coverage on both hosts;
+five named inline tests also expose DNS, wildcard, IP and resource cases to
+`typelisp test`. They cover canonical ASCII/A-label case, optional root dots,
+length and invalid-byte boundaries, typed U-label refusal, reserved/empty
+`xn--` syntax, strict IPv4-first classification, equivalent compressed IPv6,
+exact family/byte separation, invalid presented identifiers followed by a
+match, unsupported SAN kinds, absent SAN with a matching Common Name, matched
+reference/SAN indices, stable non-secret errors, and 64 × 1024 adversarial
+mismatches. Wrong IP widths and malformed SAN DER fail before matching.
+Profile-enabled tests verify allocation-free successful and adversarial
+mismatch searches and immediate, allocation-free rejection of 1 MiB inputs
+before IP classification. Safety fixtures reject numeric-IP DNS forgery and
+public-field edits at accepted API boundaries, raw-pointer substitution, owned
+DNS field extraction across arena reset, whole-reference escape and insertion
+of a scoped reference into a longer-lived list.
+`*.com` and `*.co.uk` positives explicitly pin the lack of PSL enforcement;
+caller wildcard refusal is tested independently. Full Punycode/IDNA symmetry
+and the U-label constructor remain with #7269.
+
 `string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second
 byte in each constrained range, every truncation/continuation position, scalar

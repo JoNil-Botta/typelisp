@@ -3,6 +3,7 @@
 (import stdlib.crypto_sha256 as sha)
 (import stdlib.net.ip)
 (import stdlib.pem)
+(import stdlib.profile)
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.test)
@@ -921,6 +922,549 @@
           [(x509.CertificatesOk bundle)
             (test.assert-i64-eq (certificates.len (& bundle)) 1 "PEM count")])])))
 
+(define (service-certificate [san : byte_buf.ByteBuf]) : x509.Certificate
+  (let
+    [extensions : byte_buf.ByteBuf
+      (tlv 48 (append (hex "0603551d11") (tlv 4 (tlv 48 san))))]
+    [encoded : byte_buf.ByteBuf (synthetic extensions)]
+    (match (x509.parse-der
+      (byte_buf.as-bytes (& encoded))
+      (x509.default-limits))
+      [(x509.CertificateOk certificate) certificate]
+      [(x509.CertificateErr _)
+        (test.assert-true false "valid identity certificate")
+        (init : x509.Certificate)])))
+
+(define (service-dns [text : String]) : byte_buf.ByteBuf
+  (tlv 130 (byte_buf.from-string text)))
+
+(define (service-ref [text : (& text str)]) : x509.ServiceReference
+  (match (x509.service-reference text)
+    [(x509.ServiceReferenceOk reference) reference]
+    [(x509.ServiceReferenceErr _)
+      (test.assert-true false "valid service reference")
+      (x509.Ip (ip.V4 (ip.ipv4 0 0 0 0)))]))
+
+(define (service-refs [text : (& text str)]) : x509.ServiceReferences
+  (let
+    [references : x509.ServiceReferences (x509.service-references-new)]
+    (match (x509.service-reference-add!
+      (&mut references)
+      (service-ref text)
+      (x509.service-identity-default-limits))
+      [(x509.ServiceReferenceAdded) unit]
+      [(x509.ServiceReferenceAddErr _)
+        (test.assert-true false "append reference")])
+    references))
+
+(define (service-match
+  [certificate : (& certificate x509.Certificate)]
+  [reference : String]
+  [expected-san : i64]) : unit
+  (let
+    [references : x509.ServiceReferences (service-refs (& reference))]
+    (match (x509.service-identity
+      certificate
+      (& references)
+      (x509.service-identity-default-limits))
+      [(x509.ServiceIdentityMatch reference-index san-index)
+        (test.assert-i64-eq reference-index 0 "matched reference index")
+        (test.assert-i64-eq san-index expected-san "matched SAN index")]
+      [(x509.ServiceIdentityErr _)
+        (test.assert-true false "identity must match")])))
+
+(define (service-error
+  [certificate : (& certificate x509.Certificate)]
+  [references : (& references x509.ServiceReferences)]
+  [limits : x509.ServiceIdentityLimits]
+  [kind : x509.ServiceIdentityErrorKind]) : unit
+  (match (x509.service-identity certificate references limits)
+    [(x509.ServiceIdentityMatch _ _)
+      (test.assert-true false "unexpected identity match")]
+    [(x509.ServiceIdentityErr error)
+      (test.assert-true (= error.kind kind) "identity failure category")]))
+
+(define (service-mismatch
+  [certificate : (& certificate x509.Certificate)]
+  [reference : String]) : unit
+  (let
+    [references : x509.ServiceReferences (service-refs (& reference))]
+    (service-error
+      certificate
+      (& references)
+      (x509.service-identity-default-limits)
+      (x509.IdentityMismatch))))
+
+(define (service-input-error
+  [text : String]
+  [kind : x509.ServiceIdentityErrorKind]) : unit
+  (match (x509.service-reference (& text))
+    [(x509.ServiceReferenceOk _)
+      (test.assert-true false "invalid reference accepted")]
+    [(x509.ServiceReferenceErr error)
+      (test.assert-true (= error.kind kind) "reference failure category")]))
+
+(define (service-repeat [byte : u8] [count : i64]) : String
+  (let
+    [out : byte_buf.ByteBuf (byte_buf.with-capacity count)]
+    [index : i64 0]
+    (while (< index count)
+      (set! out (byte_buf.push out byte))
+      (set! index (+ index 1)))
+    (byte_buf.to-string out)))
+
+(define (service-dns-tests) : unit
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (service-dns "EXample.Test."))]
+    (service-match (& certificate) "example.test" 0)
+    (service-match (& certificate) "ExAmPlE.TeSt." 0)
+    (service-mismatch (& certificate) "example.other")
+    (service-mismatch (& certificate) "www.example.test")
+    (service-mismatch (& certificate) "192.0.2.1"))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (service-dns "XN--BCHER-KVA.Test"))]
+    (service-match (& certificate) "xn--bcher-kva.test." 0))
+  (let
+    [certificate : x509.Certificate (service-certificate (service-dns "COM"))]
+    (service-match (& certificate) "com." 0))
+  (service-input-error "bücher.test" (x509.InternationalizedNameUnsupported))
+  (service-input-error
+    (str_cat.str-cat (service-repeat 255 1) ".test")
+    (x509.InternationalizedNameUnsupported))
+  (service-input-error "" (x509.InvalidDnsName))
+  (service-input-error "." (x509.InvalidDnsName))
+  (service-input-error ".test" (x509.InvalidDnsName))
+  (service-input-error "test..name" (x509.InvalidDnsName))
+  (service-input-error "test.." (x509.InvalidDnsName))
+  (service-input-error "-test.name" (x509.InvalidDnsName))
+  (service-input-error "test-.name" (x509.InvalidDnsName))
+  (service-input-error "xn--.test" (x509.InvalidDnsName))
+  (service-input-error "ab--cd.test" (x509.InvalidDnsName))
+  (service-input-error "*.test" (x509.InvalidDnsName))
+  (service-input-error "test.*" (x509.InvalidDnsName))
+  (service-input-error "test_1.name" (x509.InvalidDnsName))
+  (service-input-error
+    (str_cat.str-cat "test" (service-repeat 0 1) ".name")
+    (x509.InvalidDnsName))
+  (service-input-error
+    (str_cat.str-cat "test" (service-repeat 31 1) ".name")
+    (x509.InvalidDnsName))
+  (service-input-error
+    (str_cat.str-cat "test" (service-repeat 127 1) ".name")
+    (x509.InvalidDnsName))
+  (service-input-error "[::1]" (x509.InvalidDnsName))
+  (service-input-error "fe80::1%eth0" (x509.InvalidDnsName))
+  (service-input-error "192.0.2.1:443" (x509.InvalidDnsName))
+  (service-input-error "192.0.2.0/24" (x509.InvalidDnsName))
+  (let
+    [label : String (service-repeat 97 63)]
+    [maximum : String
+      (str_cat.str-cat
+        (clone label)
+        "."
+        (clone label)
+        "."
+        (clone label)
+        "."
+        (service-repeat 98 61))]
+    [certificate : x509.Certificate
+      (service-certificate (service-dns (clone maximum)))]
+    (service-match (& certificate) (clone maximum) 0)
+    (service-match (& certificate) (str_cat.str-cat (clone maximum) ".") 0)
+    (service-input-error
+      (str_cat.str-cat (clone maximum) "a")
+      (x509.DnsNameTooLong))
+    (service-input-error
+      (str_cat.str-cat (clone maximum) "a.")
+      (x509.DnsNameTooLong))
+    (service-input-error (service-repeat 97 64) (x509.InvalidDnsName))
+    (let
+      [other : String
+        (str_cat.str-cat
+          (clone label)
+          "."
+          (clone label)
+          "."
+          (clone label)
+          "."
+          (service-repeat 98 60)
+          "c")]
+      (service-mismatch (& certificate) other))))
+
+(define (service-wildcard-tests) : unit
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (service-dns "*.EXAMPLE.test."))]
+    (service-match (& certificate) "www.example.test" 0)
+    (service-match (& certificate) "xn--bcher-kva.example.test." 0)
+    (service-mismatch (& certificate) "example.test")
+    (service-mismatch (& certificate) "a.b.example.test")
+    (let
+      [references : x509.ServiceReferences (service-refs "www.example.test")]
+      [limits : x509.ServiceIdentityLimits
+        (x509.service-identity-default-limits)]
+      (set! limits.wildcards (x509.DisallowWildcards))
+      (service-error
+        (& certificate)
+        (& references)
+        limits
+        (x509.NoSupportedPresentedIdentifier))))
+  ; RFC matching deliberately does not enforce PSL policy or count suffix labels.
+  (let
+    [certificate : x509.Certificate (service-certificate (service-dns "*.com"))]
+    (service-match (& certificate) "example.com" 0))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (service-dns "*.co.uk"))]
+    (service-match (& certificate) "example.co.uk" 0))
+  (let
+    [invalid : (Array String 11)
+      (array
+        "*"
+        "*foo.test"
+        "foo*.test"
+        "f*o.test"
+        "a.*.test"
+        "*.*.test"
+        "**.test"
+        "-a.test"
+        "ab--cd.test"
+        "xn--.test"
+        "a..test")]
+    [index : i64 0]
+    (while (< index 11)
+      (let
+        [certificate : x509.Certificate
+          (service-certificate (service-dns (clone (array-ref invalid index))))]
+        [references : x509.ServiceReferences (service-refs "a.test")]
+        (service-error
+          (& certificate)
+          (& references)
+          (x509.service-identity-default-limits)
+          (x509.NoSupportedPresentedIdentifier)))
+      (set! index (+ index 1))))
+  (let
+    [san : byte_buf.ByteBuf
+      (append (service-dns "*foo.test") (service-dns "wrong.test"))]
+    (set! san (append san (service-dns "*.example.test")))
+    (set!
+      san
+      (append san (tlv 134 (byte_buf.from-string "https://irrelevant.test"))))
+    (set! san (append san (service-dns "a..test")))
+    (let
+      [certificate : x509.Certificate (service-certificate san)]
+      (service-match (& certificate) "www.example.test" 2)))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate
+        (append (service-dns "a..test") (service-dns "exact.test")))]
+    (service-match (& certificate) "exact.test" 1)))
+
+(define (service-ip-tests) : unit
+  (let
+    [san : byte_buf.ByteBuf
+      (append (service-dns "192.0.2.1") (tlv 135 (hex "c0000201")))]
+    [certificate : x509.Certificate (service-certificate san)]
+    (service-match (& certificate) "192.0.2.1" 1)
+    (service-input-error "192.0.2.1." (x509.InvalidDnsName))
+    (service-mismatch (& certificate) "192.0.2.2")
+    (service-mismatch (& certificate) "::ffff:192.0.2.1")
+    (service-mismatch (& certificate) "192.000.2.1")
+    (service-mismatch (& certificate) "3221225985")
+    (service-mismatch (& certificate) "0xc0000201")
+    (service-mismatch (& certificate) "0300.0.2.1"))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (service-dns "192.0.2.1"))]
+    (service-mismatch (& certificate) "192.0.2.1"))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (tlv 135 (hex "20010db8000000000000000000000001")))]
+    (service-match (& certificate) "2001:db8::1" 0)
+    (service-match (& certificate) "2001:0DB8:0:0:0:0:0:0001" 0)
+    (service-mismatch (& certificate) "2001:db8::2")
+    (service-mismatch (& certificate) "192.0.2.1"))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (tlv 135 (hex "00000000000000000000ffffc0000201")))]
+    (service-match (& certificate) "::ffff:c000:201" 0)
+    (service-match (& certificate) "0:0:0:0:0:ffff:192.0.2.1" 0)
+    (service-mismatch (& certificate) "192.0.2.1"))
+  ; Wrong-length IP and malformed SAN DER fail at the parser boundary.
+  (let
+    [encoded : byte_buf.ByteBuf
+      (synthetic (extension 17 false "30058703c00002"))]
+    [_error : der.Error (expect-rejected (byte_buf.as-bytes (& encoded)))]
+    unit)
+  (let
+    [encoded : byte_buf.ByteBuf (synthetic (extension 17 false "3080"))]
+    [_error : der.Error (expect-rejected (byte_buf.as-bytes (& encoded)))]
+    unit))
+
+(define (service-mixed-tests) : unit
+  (let
+    [san : byte_buf.ByteBuf
+      (tlv 134 (byte_buf.from-string "https://wanted.test"))]
+    (set! san (append san (tlv 135 (hex "c0000201"))))
+    (set! san (append san (service-dns "wrong.test")))
+    (set!
+      san
+      (append
+        san
+        (service-dns (str_cat.str-cat "a" (service-repeat 0 1) ".test"))))
+    (set! san (append san (service-dns "wanted.test")))
+    (set! san (append san (tlv 135 (hex "c0000202"))))
+    (let
+      [certificate : x509.Certificate (service-certificate san)]
+      [references : x509.ServiceReferences (service-refs "wanted.test")]
+      [before : i64 (profile.alloc-total)]
+      [result : x509.ServiceIdentityResult
+        (x509.service-identity
+          (& certificate)
+          (& references)
+          (x509.service-identity-default-limits))]
+      [after : i64 (profile.alloc-total)]
+      (cfg
+        compile-profile
+        (test.assert-true (> before 0) "allocation counters active")
+        unit)
+      (test.assert-i64-eq after before "identity search allocates nothing")
+      (match result
+        [(x509.ServiceIdentityMatch reference-index san-index)
+          (test.assert-i64-eq reference-index 0 "mixed reference index")
+          (test.assert-i64-eq san-index 4 "mixed SAN index")]
+        [(x509.ServiceIdentityErr _) (test.assert-true false "mixed SAN match")])
+      (service-match (& certificate) "192.0.2.2" 5)))
+  (let
+    [reference : x509.ServiceReference (x509.Dns (x509.ServiceDnsName ""))]
+    [references : x509.ServiceReferences (x509.service-references-new)]
+    (match (x509.service-reference-add!
+      (&mut references)
+      reference
+      (x509.service-identity-default-limits))
+      [(x509.ServiceReferenceAdded)
+        (test.assert-true false "empty DNS reference accepted")]
+      [(x509.ServiceReferenceAddErr error)
+        (test.assert-true
+          (= error.kind (x509.InvalidReference))
+          "empty reference failure")]))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (service-dns "wanted.test"))]
+    [references : x509.ServiceReferences (service-refs "wrong.test")]
+    (service-error
+      (& certificate)
+      (& references)
+      (x509.service-identity-default-limits)
+      (x509.IdentityMismatch))))
+
+(define (service-record-error [input : String]) : unit
+  (let
+    [references : x509.ServiceReferences (x509.service-references-new)]
+    [record : x509.ServiceReference
+      (x509.Dns (x509.ServiceDnsName (clone input)))]
+    [certificate : x509.Certificate (init : x509.Certificate)]
+    (match (x509.service-reference-add!
+      (&mut references)
+      record
+      (x509.service-identity-default-limits))
+      [(x509.ServiceReferenceAdded)
+        (test.assert-true false "invalid record inserted")]
+      [(x509.ServiceReferenceAddErr error)
+        (test.assert-true
+          (= error.kind (x509.InvalidReference))
+          "record insertion error")])
+    (test.assert-i64-eq references.length 0 "failed append unchanged")
+    (set!
+      (array-ref references.values 0)
+      (x509.Dns (x509.ServiceDnsName input)))
+    (set! references.length 1)
+    (service-error
+      (& certificate)
+      (& references)
+      (x509.service-identity-default-limits)
+      (x509.InvalidReference))))
+
+(define (service-bound-tests) : unit
+  (service-record-error "")
+  (service-record-error "UPPER.test")
+  (service-record-error "example.test.")
+  (service-record-error "a..test")
+  (service-record-error "192.0.2.1")
+  (service-record-error (service-repeat 97 255))
+  (service-record-error (service-repeat 255 1))
+  (let
+    [oversized : String (service-repeat 97 1048576)]
+    [before : i64 (profile.alloc-total)]
+    [result : x509.ServiceReferenceResult
+      (x509.service-reference (& oversized))]
+    [after : i64 (profile.alloc-total)]
+    (test.assert-i64-eq
+      after
+      before
+      "oversized reference preflight allocates nothing")
+    (match result
+      [(x509.ServiceReferenceOk _)
+        (test.assert-true false "oversized reference accepted")]
+      [(x509.ServiceReferenceErr error)
+        (test.assert-true
+          (= error.kind (x509.DnsNameTooLong))
+          "oversized reference error")
+        (test.assert-i64-eq error.offset 254 "oversized reference bound")])
+    (service-input-error (str_cat.str-cat oversized ":") (x509.DnsNameTooLong)))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate (service-dns "match.test"))]
+    [references : x509.ServiceReferences (x509.service-references-new)]
+    [limits : x509.ServiceIdentityLimits (x509.service-identity-default-limits)]
+    (service-error (& certificate) (& references) limits (x509.EmptyReferences))
+    (set! references (service-refs "other.test"))
+    (match (x509.service-reference-add!
+      (&mut references)
+      (service-ref "match.test")
+      limits)
+      [(x509.ServiceReferenceAdded) unit]
+      [(x509.ServiceReferenceAddErr _)
+        (test.assert-true false "second reference")])
+    (match (x509.service-identity (& certificate) (& references) limits)
+      [(x509.ServiceIdentityMatch reference-index san-index)
+        (test.assert-i64-eq reference-index 1 "second reference identity")
+        (test.assert-i64-eq san-index 0 "first SAN")]
+      [(x509.ServiceIdentityErr _)
+        (test.assert-true false "second reference match")])
+    (set! limits.max-references 1)
+    (service-error (& certificate) (& references) limits (x509.ReferenceLimit))
+    (set! limits.max-references 0)
+    (match (x509.service-reference-add!
+      (&mut references)
+      (service-ref "extra.test")
+      limits)
+      [(x509.ServiceReferenceAdded)
+        (test.assert-true false "append exceeded bound")]
+      [(x509.ServiceReferenceAddErr error)
+        (test.assert-true
+          (= error.kind (x509.ReferenceLimit))
+          "append bound error")])
+    (set! limits (x509.service-identity-default-limits))
+    (set! limits.max-presented 0)
+    (service-error (& certificate) (& references) limits (x509.PresentedLimit))
+    (set! limits.max-presented -1)
+    (service-error
+      (& certificate)
+      (& references)
+      limits
+      (x509.InvalidIdentityLimits))
+    (set! limits.max-presented 4097)
+    (service-error
+      (& certificate)
+      (& references)
+      limits
+      (x509.InvalidIdentityLimits))
+    (set! limits (x509.service-identity-default-limits))
+    (set! limits.max-references 65)
+    (service-error
+      (& certificate)
+      (& references)
+      limits
+      (x509.InvalidIdentityLimits)))
+  (let
+    [encoded : byte_buf.ByteBuf (synthetic (byte_buf.new))]
+    [references : x509.ServiceReferences (service-refs "A")]
+    (match (x509.parse-der
+      (byte_buf.as-bytes (& encoded))
+      (x509.default-limits))
+      [(x509.CertificateOk certificate)
+        ; The synthetic certificate's Common Name is A. It is never consulted.
+        (service-error
+          (& certificate)
+          (& references)
+          (x509.service-identity-default-limits)
+          (x509.NoSupportedPresentedIdentifier))]
+      [(x509.CertificateErr _) (test.assert-true false "SAN-absent fixture")]))
+  (let
+    [certificate : x509.Certificate
+      (service-certificate
+        (tlv 134 (byte_buf.from-string "https://match.test")))]
+    [references : x509.ServiceReferences (service-refs "match.test")]
+    (service-error
+      (& certificate)
+      (& references)
+      (x509.service-identity-default-limits)
+      (x509.NoSupportedPresentedIdentifier)))
+  (let
+    [san : byte_buf.ByteBuf (byte_buf.new)]
+    [index : i64 0]
+    [limits : x509.ServiceIdentityLimits (x509.service-identity-default-limits)]
+    [references : x509.ServiceReferences (x509.service-references-new)]
+    (set! limits.max-references 64)
+    (while (< index 64)
+      (match (x509.service-reference-add!
+        (&mut references)
+        (service-ref "long-mismatch.test")
+        limits)
+        [(x509.ServiceReferenceAdded) unit]
+        [(x509.ServiceReferenceAddErr _)
+          (test.assert-true false "reference cap boundary")])
+      (set! index (+ index 1)))
+    (match (x509.service-reference-add!
+      (&mut references)
+      (service-ref "extra.test")
+      limits)
+      [(x509.ServiceReferenceAdded)
+        (test.assert-true false "hard reference cap")]
+      [(x509.ServiceReferenceAddErr error)
+        (test.assert-true
+          (= error.kind (x509.ReferenceLimit))
+          "hard reference cap failure")])
+    (set! index 0)
+    (while (< index 1024)
+      (set! san (append san (service-dns "long-mismatch.tesu")))
+      (set! index (+ index 1)))
+    (let
+      [certificate : x509.Certificate (service-certificate san)]
+      [before : i64 (profile.alloc-total)]
+      [result : x509.ServiceIdentityResult
+        (x509.service-identity (& certificate) (& references) limits)]
+      [after : i64 (profile.alloc-total)]
+      (test.assert-i64-eq after before "adversarial mismatch allocates nothing")
+      (match result
+        [(x509.ServiceIdentityMatch _ _)
+          (test.assert-true false "adversarial mismatch")]
+        [(x509.ServiceIdentityErr error)
+          (test.assert-true
+            (= error.kind (x509.IdentityMismatch))
+            "adversarial category")])
+      (service-error
+        (& certificate)
+        (& references)
+        limits
+        (x509.IdentityMismatch))
+      (set! limits.max-presented 1023)
+      (service-error
+        (& certificate)
+        (& references)
+        limits
+        (x509.PresentedLimit))))
+  (let
+    [error : x509.ServiceIdentityError
+      (x509.ServiceIdentityError (x509.IdentityMismatch) 123)]
+    (test.assert-owned-string-eq
+      (x509.service-identity-error-message error)
+      "service identity mismatch"
+      "stable non-secret diagnostic")))
+
+(test x509-service-dns (service-dns-tests))
+
+(test x509-service-wildcards (service-wildcard-tests))
+
+(test x509-service-ip (service-ip-tests))
+
+(test x509-service-mixed (service-mixed-tests))
+
+(test x509-service-bounds (service-bound-tests))
+
 (define (main) : i64
   (let
     [epoch : String "700101000000Z"]
@@ -977,4 +1521,9 @@
     (mutation-corpus)
     (field-negatives)
     (custom-attribute)
+    (service-dns-tests)
+    (service-wildcard-tests)
+    (service-ip-tests)
+    (service-mixed-tests)
+    (service-bound-tests)
     42))

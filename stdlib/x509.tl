@@ -12,6 +12,16 @@
 ;# fails the whole certificate with UnsupportedGeneralName(3), never a partial
 ;# SAN/constraint list. Invalid encodings retain malformed-DER/schema errors.
 ;#
+;# `service-reference` constructs independent ASCII DNS/IP references;
+;# `service-identity` matches only parsed leaf SANs under RFC 9525. It never
+;# reads subject/Common Name or SNI and makes no trust/path/validity decision.
+;# DNS matching accepts one root dot and complete left-most-label wildcards.
+;# The caller can disallow wildcards; allowing them provides no PSL protection.
+;# V1 rejects U-labels with InternationalizedNameUnsupported. ASCII xn-- labels
+;# are compared case-insensitively; full IDNA2008 validation belongs to #7269.
+;# All identity data is public. Comparison is variable-time; this module
+;# processes no secret state and adds no secret stack-spill exposure.
+;#
 ;# ```typelisp
 ;# (import stdlib.x509)
 ;# (import stdlib.byte_buf)
@@ -21,10 +31,24 @@
 ;#       [(x509.CertificateOk _) 1]
 ;#       [(x509.CertificateErr error) (if (= error.offset 0) 42 1)])))
 ;# ```
+;#
+;# ```typelisp
+;# (import stdlib.x509)
+;# (define (main) : i64
+;#   (match (x509.service-reference "www.example.test.")
+;#     [(x509.ServiceReferenceErr _) 1]
+;#     [(x509.ServiceReferenceOk reference)
+;#       (let [references : x509.ServiceReferences (x509.service-references-new)]
+;#         (match (x509.service-reference-add! (&mut references) reference
+;#           (x509.service-identity-default-limits))
+;#           [(x509.ServiceReferenceAdded) 42]
+;#           [(x509.ServiceReferenceAddErr _) 1]))]))
+;# ```
 (import stdlib.asn1_der as der)
 (import stdlib.byte_buf)
 (import stdlib.net.ip)
 (import stdlib.pem)
+(import stdlib.string)
 (import stdlib.vector)
 (import stdlib.x509_time as time)
 (import (vector.vector pem.Block core) as pem_blocks)
@@ -1435,3 +1459,413 @@
               [(CertificateOk certificate) (certificates.push! out certificate)]))
           (set! index (+ index 1)))
         (CertificatesOk out))]))
+
+;: Owned lowercase ASCII service name, excluding its terminal root dot.
+;: Construct with service-reference. Public records are checked at both list
+;: insertion and matching, so edited/forged values cannot bypass validation.
+(defstruct ServiceDnsName
+  (canonical String))
+
+;: Independently supplied reference identity. DNS owns its String storage;
+;: no raw pointer or borrowed allocation handle is exposed by this API.
+(defenum ServiceReference
+  (Dns ServiceDnsName)
+  (Ip ip.IpAddr))
+
+;: Stable public failure categories; no input or certificate bytes are retained.
+(defenum ServiceIdentityErrorKind
+  (InternationalizedNameUnsupported)
+  (InvalidDnsName)
+  (DnsNameTooLong)
+  (InvalidIdentityLimits)
+  (ReferenceLimit)
+  (EmptyReferences)
+  (InvalidReference)
+  (PresentedLimit)
+  (NoSupportedPresentedIdentifier)
+  (IdentityMismatch))
+
+;: Byte offset for input errors, reference index for InvalidReference, otherwise
+;: zero. Diagnostics never echo certificate bodies or unrelated SAN values.
+(defstruct ServiceIdentityError
+  (kind ServiceIdentityErrorKind)
+  (offset i64))
+
+;: A validated DNS/IP reference or an input failure without partial identity.
+(defenum ServiceReferenceResult
+  (ServiceReferenceOk ServiceReference)
+  (ServiceReferenceErr ServiceIdentityError))
+
+;: Complete append or refusal without changing the caller's reference list.
+(defenum ServiceReferenceStatus
+  (ServiceReferenceAdded)
+  (ServiceReferenceAddErr ServiceIdentityError))
+
+;: Caller-owned bounded list. Use service-references-new and service-reference-add!.
+;: Matching rechecks the configured bound even if callers alter this collection.
+(defstruct ServiceReferences
+  (values (Array ServiceReference 64))
+  (length i64))
+
+;: Explicit wildcard policy; allowing wildcards does not enforce a public suffix
+;: policy. No PSL, label-count heuristic, SNI or subject fallback is consulted.
+(defenum ServiceWildcardPolicy
+  (AllowWildcards)
+  (DisallowWildcards))
+
+;: Checked per-call limits; maxima are 64 references and 4096 parsed SANs.
+;: DNS values are independently bounded to 253 non-root text octets.
+(defstruct ServiceIdentityLimits
+  (max-references i64)
+  (max-presented i64)
+  (wildcards ServiceWildcardPolicy))
+
+;: First SAN in parser order, then first reference in caller order. The indices
+;: identify the actual reference as required by RFC 9525 section 6.6. Success
+;: proves identity only: trust, validity, signatures and path policy are separate.
+(defenum ServiceIdentityResult
+  (ServiceIdentityMatch i64 i64)
+  (ServiceIdentityErr ServiceIdentityError))
+
+;: Internal validated presented-name shape; length omits the terminal root dot.
+(defenum ServiceDnsShape
+  (ServiceDnsValid i64 bool)
+  (ServiceDnsInvalid ServiceIdentityError))
+
+;: Default reference/SAN bounds and RFC wildcard matching.
+(define (service-identity-default-limits) : ServiceIdentityLimits
+  (ServiceIdentityLimits 16 1024 (AllowWildcards)))
+
+;: Validate limits before traversal, growth or copying.
+(define (service-identity-limits-valid? [limits : ServiceIdentityLimits]) : bool
+  (and
+    (>= limits.max-references 0)
+    (<= limits.max-references 64)
+    (>= limits.max-presented 0)
+    (<= limits.max-presented 4096)))
+
+;: Return an empty fixed-capacity list without arena allocation.
+(define (service-references-new) : ServiceReferences
+  (ServiceReferences (make-array ServiceReference 64) 0))
+
+;: ASCII case folding for public DNS bytes, independent of locale.
+(define (service-ascii-lower [value : u8]) : u8
+  (if (and (>= value 65) (<= value 90))
+    (+ value 32)
+    value))
+
+;: Validate ASCII LDH labels once, including NR-LDH/reserved-prefix syntax.
+;: V1 treats xn-- suffixes as ASCII; Unicode/Punycode symmetry validation and
+;: U-label conversion belong to #7269. Presented errors are ignored by matching.
+(define (service-dns-shape [input : (& input bytes)] [presented : bool]) : ServiceDnsShape
+  (let
+    [length : i64 (byte_buf.bytes-length input)]
+    [end : i64 length]
+    [start : i64 0]
+    [cursor : i64 0]
+    [wildcard : bool false]
+    (when
+      (> length 254)
+      (return (ServiceDnsInvalid (ServiceIdentityError (DnsNameTooLong) 254))))
+    (when
+      (and (> end 0) (= (byte_buf.bytes-ref input (- end 1)) 46))
+      (set! end (- end 1)))
+    (when
+      (> end 253)
+      (return (ServiceDnsInvalid (ServiceIdentityError (DnsNameTooLong) 253))))
+    (while (<= cursor end)
+      (if (or (= cursor end) (= (byte_buf.bytes-ref input cursor) 46))
+        (let
+          [width : i64 (- cursor start)]
+          (when
+            (or (= width 0) (> width 63))
+            (return
+              (ServiceDnsInvalid (ServiceIdentityError (InvalidDnsName) start))))
+          (if (and
+            presented
+            (= start 0)
+            (= width 1)
+            (= (byte_buf.bytes-ref input 0) 42))
+            (set! wildcard true)
+            (begin
+              (when
+                (= (byte_buf.bytes-ref input start) 42)
+                (return
+                  (ServiceDnsInvalid
+                    (ServiceIdentityError (InvalidDnsName) start))))
+              (when
+                (or
+                  (= (byte_buf.bytes-ref input start) 45)
+                  (= (byte_buf.bytes-ref input (- cursor 1)) 45))
+                (return
+                  (ServiceDnsInvalid
+                    (ServiceIdentityError (InvalidDnsName) start))))
+              (when
+                (and
+                  (>= width 4)
+                  (= (byte_buf.bytes-ref input (+ start 2)) 45)
+                  (= (byte_buf.bytes-ref input (+ start 3)) 45)
+                  (not
+                    (and
+                      (=
+                        (service-ascii-lower (byte_buf.bytes-ref input start))
+                        120)
+                      (=
+                        (service-ascii-lower
+                          (byte_buf.bytes-ref input (+ start 1)))
+                        110)
+                      (> width 4))))
+                (return
+                  (ServiceDnsInvalid
+                    (ServiceIdentityError (InvalidDnsName) start))))))
+          (set! start (+ cursor 1)))
+        (let
+          [value : u8 (byte_buf.bytes-ref input cursor)]
+          [lower : u8 (service-ascii-lower value)]
+          (when
+            (>= value 128)
+            (return
+              (ServiceDnsInvalid
+                (ServiceIdentityError (InternationalizedNameUnsupported) cursor))))
+          (when
+            (not
+              (or
+                (and (>= lower 97) (<= lower 122))
+                (and (>= value 48) (<= value 57))
+                (= value 45)
+                (and presented (= cursor 0) (= value 42))))
+            (return
+              (ServiceDnsInvalid (ServiceIdentityError (InvalidDnsName) cursor))))))
+      (set! cursor (+ cursor 1)))
+    (when
+      (and wildcard (= end 1))
+      (return (ServiceDnsInvalid (ServiceIdentityError (InvalidDnsName) 0))))
+    (ServiceDnsValid end wildcard)))
+
+;: Classify strict IPv4/IPv6 before DNS; never consume URI brackets, zones,
+;: prefixes, ports, SNI or certificate data. Preflight the entire byte bound
+;: before even the IP classifier scans input. DNS construction allocates only
+;: bounded canonical storage. One optional final DNS root dot is discarded.
+(define (service-reference [input : (& input str)]) : ServiceReferenceResult
+  (when
+    (> (string-length input) 254)
+    (return (ServiceReferenceErr (ServiceIdentityError (DnsNameTooLong) 254))))
+  (match (ip.parse-ip input)
+    [(ip.IpOk address) (return (ServiceReferenceOk (Ip address)))]
+    [(ip.IpErr _) unit])
+  (let
+    [bytes : (& input bytes) (byte_buf.str-as-bytes input)]
+    (match (service-dns-shape bytes false)
+      [(ServiceDnsInvalid error) (ServiceReferenceErr error)]
+      [(ServiceDnsValid length _)
+        (let
+          [canonical : byte_buf.ByteBuf (byte_buf.with-capacity length)]
+          [index : i64 0]
+          (while (< index length)
+            (set!
+              canonical
+              (byte_buf.push
+                canonical
+                (service-ascii-lower (byte_buf.bytes-ref bytes index))))
+            (set! index (+ index 1)))
+          ; A terminal dot must not permit numeric IPv4 to become a DNS-ID.
+          (match (ip.parse-ipv4 (string.substring-view input 0 length))
+            [(ip.Ipv4Ok _)
+              (return
+                (ServiceReferenceErr (ServiceIdentityError (InvalidDnsName) 0)))]
+            [(ip.Ipv4Err _) unit])
+          (ServiceReferenceOk
+            (Dns (ServiceDnsName (byte_buf.to-string canonical)))))])))
+
+;: Validate public DNS records once before reference traversal. Canonical
+;: storage must be lowercase, rootless, bounded LDH text and never a numeric
+;: IPv4 spelling. The shared IP parser decides the latter without allocation.
+(define (service-dns-canonical? [name : (& name ServiceDnsName)]) : bool
+  (let
+    [text : (& name str) (& name.canonical)]
+    [length : i64 (string-length text)]
+    [index : i64 0]
+    (match (service-dns-shape (byte_buf.str-as-bytes text) false)
+      [(ServiceDnsInvalid _) (return false)]
+      [(ServiceDnsValid end _) (when (!= end length) (return false))])
+    (while (< index length)
+      (let
+        [value : u8 (cast (string-ref text index) : u8)]
+        (when (!= value (service-ascii-lower value)) (return false)))
+      (set! index (+ index 1)))
+    (match (ip.parse-ipv4 text)
+      [(ip.Ipv4Ok _) false]
+      [(ip.Ipv4Err _) true])))
+
+;: Append only within a valid configured cap. Failure leaves the list unchanged.
+(define (service-reference-add!
+  [references : (&mut references ServiceReferences)]
+  [reference : ServiceReference]
+  [limits : ServiceIdentityLimits]) : ServiceReferenceStatus
+  (when
+    (not (service-identity-limits-valid? limits))
+    (return
+      (ServiceReferenceAddErr (ServiceIdentityError (InvalidIdentityLimits) 0))))
+  (let
+    [length : i64 references.length]
+    (when
+      (or (< length 0) (>= length limits.max-references))
+      (return
+        (ServiceReferenceAddErr (ServiceIdentityError (ReferenceLimit) 0))))
+    (match (& reference)
+      [(Dns name)
+        (when
+          (not (service-dns-canonical? name))
+          (return
+            (ServiceReferenceAddErr
+              (ServiceIdentityError (InvalidReference) length))))]
+      [(Ip _) unit])
+    (set! (array-ref references.values length) reference)
+    (set! references.length (+ length 1))
+    (ServiceReferenceAdded)))
+
+;: SAN-only RFC 9525 DNS/IP matching. Invalid DNS/wildcard SANs are ignored;
+;: malformed SAN DER and IP widths have already failed parse-der. Bounds are
+;: checked before traversal, including SANs after an otherwise matching entry.
+;: Public addresses/names use variable-time comparisons and no secret state.
+(define (service-identity
+  [certificate : (& certificate Certificate)]
+  [references : (& references ServiceReferences)]
+  [limits : ServiceIdentityLimits]) : ServiceIdentityResult
+  (when
+    (not (service-identity-limits-valid? limits))
+    (return
+      (ServiceIdentityErr (ServiceIdentityError (InvalidIdentityLimits) 0))))
+  (let
+    [count : i64 references.length]
+    [presented-count : i64
+      (general_names.len (& certificate.subject-alt-names))]
+    [index : i64 0]
+    [supported : bool false]
+    (when
+      (or (< count 0) (> count limits.max-references))
+      (return (ServiceIdentityErr (ServiceIdentityError (ReferenceLimit) 0))))
+    (when
+      (= count 0)
+      (return (ServiceIdentityErr (ServiceIdentityError (EmptyReferences) 0))))
+    (when
+      (> presented-count limits.max-presented)
+      (return (ServiceIdentityErr (ServiceIdentityError (PresentedLimit) 0))))
+    (while (< index count)
+      (match (& (array-ref references.values index))
+        [(Dns name)
+          (when
+            (not (service-dns-canonical? name))
+            (return
+              (ServiceIdentityErr
+                (ServiceIdentityError (InvalidReference) index))))]
+        [(Ip _) unit])
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index presented-count)
+      (let
+        [san : GeneralName
+          (general_names.get
+            (& certificate.subject-alt-names)
+            index
+            (GeneralName -1 (der.Range 0 0) (der.Range 0 0) (NoAddress)))]
+        [reference-index : i64 0]
+        [dns-length : i64 0]
+        [wildcard : bool false]
+        [valid : bool false]
+        (when
+          (= san.kind 2)
+          ; Public certificate fields can be modified; guard ranges before view.
+          (when
+            (and
+              (>= san.value.start 0)
+              (>= san.value.length 0)
+              (<= san.value.start (byte_buf.len (& certificate.der)))
+              (<=
+                san.value.length
+                (- (byte_buf.len (& certificate.der)) san.value.start)))
+            (match (service-dns-shape (view certificate san.value) true)
+              [(ServiceDnsInvalid _) unit]
+              [(ServiceDnsValid length has-wildcard)
+                (set! dns-length length)
+                (set! wildcard has-wildcard)
+                (set!
+                  valid
+                  (or (not wildcard) (= limits.wildcards (AllowWildcards))))])))
+        (when
+          (= san.kind 7)
+          (match san.address
+            [(Address _) (set! valid true)]
+            [(NoAddress) unit]))
+        (when
+          valid
+          (set! supported true)
+          (while (< reference-index count)
+            (match (& (array-ref references.values reference-index))
+              [(Dns name)
+                (when
+                  (= san.kind 2)
+                  (let
+                    [text : (& name str) (& name.canonical)]
+                    [reference-length : i64 (string-length text)]
+                    [presented : (& certificate bytes)
+                      (view certificate san.value)]
+                    [cursor : i64 0]
+                    [offset : i64 0]
+                    [matched : bool true]
+                    (when
+                      wildcard
+                      (while (and
+                        (< offset reference-length)
+                        (!= (string-ref text offset) '.'))
+                        (set! offset (+ offset 1)))
+                      (when (= offset reference-length) (set! matched false))
+                      (set! cursor 1))
+                    (when
+                      (!= (- reference-length offset) (- dns-length cursor))
+                      (set! matched false))
+                    (while (and matched (< cursor dns-length))
+                      (when
+                        (!=
+                          (cast (string-ref text offset) : u8)
+                          (service-ascii-lower
+                            (byte_buf.bytes-ref presented cursor)))
+                        (set! matched false))
+                      (set! cursor (+ cursor 1))
+                      (set! offset (+ offset 1)))
+                    (when
+                      matched
+                      (return (ServiceIdentityMatch reference-index index)))))]
+              [(Ip address)
+                (when
+                  (= san.kind 7)
+                  (match san.address
+                    [(Address presented)
+                      (when
+                        (ip.ip-eq? address (& presented))
+                        (return (ServiceIdentityMatch reference-index index)))]
+                    [(NoAddress) unit]))])
+            (set! reference-index (+ reference-index 1)))))
+      (set! index (+ index 1)))
+    (ServiceIdentityErr
+      (ServiceIdentityError
+        (if supported
+          (IdentityMismatch)
+          (NoSupportedPresentedIdentifier))
+        0))))
+
+;: Stable non-secret rendering, independent of SAN/input text and addresses.
+(define (service-identity-error-message [error : ServiceIdentityError]) : String
+  (match error.kind
+    [(InternationalizedNameUnsupported)
+      "internationalized service name unsupported"]
+    [(InvalidDnsName) "invalid ASCII service name"]
+    [(DnsNameTooLong) "service name too long"]
+    [(InvalidIdentityLimits) "invalid service identity limits"]
+    [(ReferenceLimit) "service reference limit exceeded"]
+    [(EmptyReferences) "empty service reference list"]
+    [(InvalidReference) "invalid service reference"]
+    [(PresentedLimit) "presented identity limit exceeded"]
+    [(NoSupportedPresentedIdentifier)
+      "no supported presented service identifier"]
+    [(IdentityMismatch) "service identity mismatch"]))

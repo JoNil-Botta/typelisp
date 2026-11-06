@@ -3,6 +3,10 @@
 (import compiler_typecheck_core as tc)
 (import compiler_check_core as check_core)
 (import compiler_intern as ci)
+(import compiler_parse_core as parser)
+(import stdlib.vector)
+(import (vector.vector String) as canon_svec)
+(import sym_i64_env)
 (import stdlib.iterator)
 (import stdlib.io)
 (cfg test (import stdlib.test))
@@ -180,6 +184,7 @@
   (when
     (!= tc.tc-type-walk-job job.address)
     (io.panic "binding not restored after a macro expansion"))
+  (canon-eq-expect-no-table "a macro check")
   (match (check_core.compiler-check-source
     "tests/canon_eq_macro_bad.tl"
     "(defmacro (twice [x : Expr]) : Expr `(tuple ,x ,x))
@@ -223,6 +228,33 @@
     (when (!= tc.tc-type-walk-job job.address) (io.panic "job A binding lost"))
     (when (!= (tc.tc-type-walk-table) address-a) (io.panic "job A table lost"))))
 
+;; A check's job keeps no type-walk table once the check returns, even a
+;; temporary job that is never reset or retired (the typed-lint fallback).
+(define (canon-eq-job-table [job : tc.TcJobState]) : i64
+  (tc.tc-macro-state-slot-address
+    (tc.tc-job-state-macro-state job)
+    tc.tc-macro-state-slot-type-walk))
+
+(define (canon-eq-expect-no-table [label : String]) : unit
+  (when (!= (canon-eq-job-table (tc.tc-serial-job-state)) 0) (io.panic label)))
+
+(define (canon-eq-temporary-job-test) : unit
+  (let
+    [job : tc.TcJobState (tc.tc-job-state-new)]
+    [roots : canon_svec.Vec (canon_svec.new)]
+    (match (check_core.compiler-check-source-with-roots-and-cfg-and-job-state
+      "tests/canon_eq_temporary_job.tl"
+      "(define (pair [x : i64]) : (Tuple i64 i64) (tuple x x))
+(define (main) : i64 (let [p (pair 1)] [q (ann p : (Tuple i64 i64))] 0))"
+      roots
+      (parser.compiler-cfg-empty)
+      job)
+      [(Ok _ _) unit]
+      [(Err _ _) (io.panic "temporary-job source rejected")])
+    (when
+      (!= (canon-eq-job-table job) 0)
+      (io.panic "temporary job kept its type-walk table"))))
+
 ;; A failing check runs its own job binding and restores the caller's.
 (define (canon-eq-failing-check-test [job : tc.TcJobState]) : unit
   (match (check_core.compiler-check-source
@@ -232,7 +264,8 @@
     [(Err _ _) unit])
   (when
     (!= tc.tc-type-walk-job job.address)
-    (io.panic "binding not restored after a failing check")))
+    (io.panic "binding not restored after a failing check"))
+  (canon-eq-expect-no-table "a failing check"))
 
 (cfg
   test
@@ -255,6 +288,7 @@
       (ast.ast-node-pool-context-install! installed)
       (canon-eq-failing-check-test job)
       (canon-eq-expansion-binding-test job)
+      (canon-eq-temporary-job-test)
       (tc.tc-type-walk-restore! outer)
       (tc.tc-type-walk-table-release! job)
       ;; Unbound: the table bypasses and equality stays exact.

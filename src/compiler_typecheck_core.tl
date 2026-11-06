@@ -43048,8 +43048,11 @@
       (set! (deref data).type-name-handle handle)
       (set! (deref data).type-name-valid true))))
 
+;; Direct-mapped: a slot taken by another name drops its handle and move-kind
+;; answer, so the capacity keeps the live names a small fraction of the slots,
+;; where how numeric IDs happen to collide rarely matters (#9571).
 (define tc-type-handle-cache-capacity : i64
-  4096)
+  16384)
 
 (defmacro (tc-type-handle-cache-field [state : Expr] [field : Expr] [_T : type]) : Expr
   `(unsafe
@@ -123032,9 +123035,11 @@
 ;; stamp word moves, or the job's derived caches are reset
 ;; (`tc-type-resolution-cache-state-reset!`), the table's generation advances
 ;; and every entry is dead, so a live entry is what the walk would compute
-;; again. A collision only replaces an entry.
+;; again. A collision only replaces an entry; the capacity keeps the live
+;; entries a small fraction of the slots, where how numeric IDs happen to
+;; collide rarely matters (#9571).
 (define tc-selected-holds-memo-capacity : i64
-  4096)
+  16384)
 (define tc-selected-holds-memo-header : i64
   12)
 (define tc-selected-holds-memo-stride : i64

@@ -47092,7 +47092,7 @@
     [(Region _ inner) (tc-type-canon-id address inner)]
     [(Tuple elems)
       (let
-        [list : ast.AstTypeList (ast.ast-type-list-box-shared-view elems)]
+        [list : ast.AstTypeList (deref elems)]
         [len : i64 (ast.ast-type-list-len (& list))]
         [out : ast.AstTypeList (ast.ast-type-list-with-capacity len)]
         [changed : bool false]

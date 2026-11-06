@@ -20297,13 +20297,26 @@
             (match next
               [(TcSelectedSink.Capture store lease bindings)
                 (let
+                  [own : ast.AstType
+                    (tc-selected-place-own-type! store lease (& place) (& type))]
+                  ;; A view of a box (read through a reference, #8927) names
+                  ;; the referent's box: its contents are that storage, owned
+                  ;; as the referent's own, not a view a take could reborrow.
+                  [view-inner : i64
+                    (match (& own)
+                      [(ast.AstType.Region region rest)
+                        (if (tc-selected-arena-region-in?
+                          ctx
+                          (& (typed.typed-arena-regions-copy (& store)))
+                          region)
+                          -1
+                          rest)]
+                      [_ -1])]
                   [owned : ast.AstType
                     (tc-project-from-region-container
-                      (tc-selected-place-own-type!
-                        store
-                        lease
-                        (& place)
-                        (& type))
+                      (if (< view-inner 0)
+                        own
+                        (ast.ty-node-get view-inner))
                       (ast.ty-node-get inner))]
                   (tc-selected-place-project
                     contents

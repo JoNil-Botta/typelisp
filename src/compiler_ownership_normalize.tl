@@ -5726,6 +5726,30 @@
             0))]
       [(typed.TypedTypeValueResult.Err error) (normalize-int-typed error)])))
 
+;; 1 when typed type `container`, a box, is a view of one (a region-tagged
+;; box read through a reference): its class names the box it views as its
+;; referent.
+(define (normalize-box-view!
+  [state : (& state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [container : i64]) : NormalizeInt
+  (if (and
+    (< container (array-length state.classes))
+    (> (array-ref state.classes container).reference 0)
+    (>= (array-ref state.classes container).referent 0))
+    (match (typed.typed-type-value-at!
+      store
+      lease
+      (array-ref state.classes container).referent)
+      [(typed.TypedTypeValueResult.Ok value)
+        (NormalizeInt.Ok
+          (if (normalize-box-ast-type? (& value))
+            1
+            0))]
+      [(typed.TypedTypeValueResult.Err error) (normalize-int-typed error)])
+    (NormalizeInt.Ok 0)))
+
 (define (normalize-box-ast-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(ast.AstType.Box _) true]
@@ -5780,13 +5804,18 @@
         ;; A box holding references is classed as a holder of their loans,
         ;; yet its contents are still the box's own: they are reached through
         ;; the whole box and hold its loans, as a reference's referent does
-        ;; not.
+        ;; not. A view of a box (one read through a reference, #8927) is not
+        ;; the box: its contents are the referent's, reached through its loan.
         [box-step? : bool
           (and
             (= step.ordinal -1)
             (or
               (normalize-box-class? (& state) step.container)
-              (= (try (normalize-box-type! store lease step.container)) 1)))]
+              (and
+                (= (try (normalize-box-type! store lease step.container)) 1)
+                (=
+                  (try (normalize-box-view! state store lease step.container))
+                  0))))]
         [target : NormalizePlaceRoute
           (cond
             ;; Below an unnamed part only referents are out of reach; an

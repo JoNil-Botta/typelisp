@@ -1,7 +1,7 @@
 ;; Non-Copy array elements through a reference cannot bind by value.
 (define (take [r : (& r (Array String 2))]) : i64
   (let
-    [text (array-ref r 0)]
+    [_text (array-ref r 0)]
     0))
 
 (define (main) : i64

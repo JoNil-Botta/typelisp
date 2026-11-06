@@ -518,6 +518,31 @@ and unsafe callable ABI families beside this ordering regression. The
 `compiler-lower-operand-snapshot-shape` lowering test pins that ordinary and
 tail callees are copied only when an argument writes their storage.
 
+`loop_address_argument.tl`, `loop_address_callee.tl` and
+`loop_address_snapshots.tl` run at opt0/1/2 on both hosts. The first two pin
+the original loop-carried raw-pointer programs; the broad fixture compares
+automatic and explicit snapshots for zero, one and multiple iterations,
+conditional exposure, parameters, captured locals and register-aggregate
+projections. `compiler-lower-loop-address-exposure` checks that the value used
+by each consumer was captured before its mutating call, and keeps shadowed,
+unrelated, nested-lambda and read-only controls. An addressed reference slot
+retains its existing value copy. Cached lexical environments remain covered.
+`compiler-lower-borrowed-view-element-exposure` distinguishes a borrowed
+descriptor's slot from its referent. The safety corpus keeps stored scalar
+mutable borrows rejected with E0207; immediate call borrows stay supported.
+`compiler-lower-staged-borrow-does-not-expose-slot` and the broad native fixture
+keep staged scalar and register-group writebacks correct across loops
+without falsely exposing the original local slots. Acyclic pre-/post-address
+controls preserve both private early reads and required later materialization.
+The fused-precheck equivalence regression compares every loop form, conditions
+and bounds, nested lambda/quote/comptime boundaries and independent small
+budgets with the canonical standalone traversal. Its helper-invalidation
+regression checks that a synthesized body clears both the cached summary and
+full census. Full-corpus qualification also uses a diagnostic compiler that
+checks every available summary against the canonical pre-check and emits IR
+from that canonical result, then compares it with the production compiler.
+
+
 `addr_taken_frame_slots.tl` keeps scalar, narrow, parameter, loop-carried and
 callable-copy storage private while a derived pointer remains live, at opt0/1/2
 on both hosts. `regalloc-stack-only-address-slots` checks the same exclusion

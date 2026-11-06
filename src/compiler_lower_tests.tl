@@ -1834,6 +1834,287 @@
         [(Err _) false])]
     [(Err _) false]))
 
+;; The canonical standalone traversal is the independent oracle for the
+;; summary carried by existing write/set-value walks. This tests the actual
+;; cached field as well as independent small budgets and an incomplete carrier.
+(define (lower-test-precheck-carrier-agrees?
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]
+  [carrier-budget : i64]
+  [address-budget : i64]) : bool
+  (let
+    [roots : lower_i64_i64_map.Map (lower_i64_i64_map.new)]
+    [values : lower_i64_i64_map.Map (lower_i64_i64_map.new)]
+    [canonical-budget : i64 address-budget]
+    [summary : lower.LowerExposurePrecheck
+      (lower.LowerExposurePrecheck false address-budget carrier-budget 0)]
+    [canonical : bool
+      (lower.lower-exposure-has-address?
+        ctx
+        (clone expr)
+        false
+        (&mut canonical-budget))]
+    [complete : bool
+      (lower.lower-loop-written-roots-scan!
+        ctx
+        expr
+        (&mut roots)
+        (&mut values)
+        (&mut summary))]
+    (if (or complete summary.found)
+      (= summary.found canonical)
+      ;; The result is unavailable, so production must run the oracle.
+      (= carrier-budget 0))))
+
+(define (lower-test-precheck-cached?
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]
+  [want : bool]) : bool
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    [budget : i64 lower.lower-written-roots-scan-budget]
+    [canonical : bool
+      (lower.lower-exposure-has-address? ctx (clone expr) false (&mut budget))]
+    (lower.lower-function-state-scan-written-roots! ctx state expr)
+    (let
+      [cached : i64
+        (unsafe
+          (deref (lower.compiler-lower-function-state-view state)).address-precheck)]
+      [ok : bool
+        (and (>= cached 0) (= (!= cached 0) canonical) (= canonical want))]
+      ok)))
+
+(test
+  compiler-lower-fused-precheck-loop-and-boundary-equivalence
+  (let
+    [active : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 128 8)]
+    [name : i64 (ci.intern-generated-name "summary-local")]
+    [other : i64 (ci.intern-generated-name "summary-index")]
+    [plain : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [variable : i64 (ast.ast-node-pool-context-expr-push pools (Var name))]
+    [address : i64
+      (ast.ast-node-pool-context-expr-push pools (PtrAddrOf variable))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools)]
+    [body : ast.AstExprList
+      (ast.ast-expr-cons address (& (ast.ast-expr-list-new)))]
+    [plain-body : ast.AstExprList
+      (ast.ast-expr-cons plain (& (ast.ast-expr-list-new)))]
+    [loops : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr 0)]
+    (ast.ast-node-pool-context-install! pools)
+    (__tl_array-push! loops (While plain (clone body)))
+    (__tl_array-push! loops (While address (clone plain-body)))
+    (__tl_array-push!
+      loops
+      (Foreach (box (ast.AstForeach.Foreach name (I64) plain plain address))))
+    (__tl_array-push!
+      loops
+      (Foreach
+        (box
+          (ast.AstForeach.Foreach2
+            name
+            (I64)
+            plain
+            plain
+            other
+            (I64)
+            plain
+            plain
+            address))))
+    (__tl_array-push! loops (ForeachActive name address))
+    (__tl_array-push!
+      loops
+      (SpmdReduce
+        (box
+          (ast.AstSpmdReduce.Reduce (Sum) name (I64) plain plain plain address))))
+    (__tl_array-push!
+      loops
+      (SpmdScan
+        (box
+          (ast.AstSpmdScan.Scan
+            (Sum)
+            name
+            (I64)
+            plain
+            plain
+            other
+            (I64)
+            plain
+            plain
+            address))))
+    (__tl_array-push!
+      loops
+      (SpmdCompact
+        (box
+          (ast.AstSpmdCompact.Compact
+            name
+            (I64)
+            plain
+            plain
+            other
+            (I64)
+            plain
+            plain
+            address))))
+    (__tl_array-push!
+      loops
+      (ForOwnedState
+        (ast.ast-for-owned-state-payload variable variable plain address)))
+    (__tl_array-push!
+      loops
+      (ForOwnedStep
+        (ast.ast-for-owned-step-payload
+          variable
+          variable
+          variable
+          -1
+          variable
+          address)))
+    ;; Keep the canonical pre-check's conservative treatment of loop bounds;
+    ;; the unchanged lexical census still handles once-only initialization.
+    (__tl_array-push!
+      loops
+      (Foreach (box (ast.AstForeach.Foreach name (I64) address plain plain))))
+    (for [index (iterator.range 0 (array-length loops))]
+      (let
+        [expr : ast.AstExpr (clone (array-ref loops index))]
+        (test.assert-true
+          (lower-test-precheck-cached? ctx (clone expr) true)
+          "every loop and condition/bound retains its exact canonical summary")
+        (for [limit (iterator.range 0 12)]
+          (test.assert-true
+            (lower-test-precheck-carrier-agrees? ctx (clone expr) 10000 limit)
+            "the independent address budget preserves canonical exhaustion"))
+        (test.assert-true
+          (lower-test-precheck-carrier-agrees? ctx expr 0 10000)
+          "an incomplete carrier cannot cache a negative answer")))
+    (let
+      [inner : i64
+        (ast.ast-node-pool-context-expr-push pools (While plain (clone body)))]
+      [boundaries : (__tl_dyn-array ast.AstExpr)
+        (__tl_make-array ast.AstExpr 0)]
+      (__tl_array-push!
+        boundaries
+        (Lambda
+          (box (ast.AstLambda.Lambda (ast.ast-param-list-new) (No) inner))))
+      (__tl_array-push! boundaries (Quote inner))
+      (__tl_array-push! boundaries (Quasiquote inner))
+      (__tl_array-push! boundaries (Comptime inner))
+      (for [index (iterator.range 0 (array-length boundaries))]
+        (let
+          [boundary : i64
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (clone (array-ref boundaries index)))]
+          [outer : ast.AstExpr
+            (While
+              plain
+              (ast.ast-expr-cons boundary (& (ast.ast-expr-list-new))))]
+          (test.assert-true
+            (lower-test-precheck-cached? ctx (clone outer) false)
+            "nested lambda/quote/comptime bodies do not contribute to the parent")
+          (for [limit (iterator.range 0 8)]
+            (test.assert-true
+              (lower-test-precheck-carrier-agrees?
+                ctx
+                (clone outer)
+                10000
+                limit)
+              "ignored descendants consume no address-summary budget")))))
+    (test.assert-true
+      (lower-test-precheck-cached? ctx (PtrAddrOf variable) false)
+      "an acyclic address is not a loop-exposure summary")
+    (ast.ast-node-pool-context-install! active)))
+
+(test
+  compiler-lower-fused-precheck-helper-invalidation
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    (test.assert-i64-eq
+      (unsafe
+        (deref (lower.compiler-lower-function-state-view state)).address-precheck)
+      -1
+      "an unscanned state requires the canonical fallback")
+    (unsafe
+      (set!
+        (deref (lower.compiler-lower-function-state-ptr state)).address-precheck
+        0))
+    (unsafe
+      (set!
+        (deref (lower.compiler-lower-function-state-ptr state)).address-exposure-mode
+        1))
+    (lower.compiler-lower-function-state-raw-address-free-set! state true)
+    (lower.compiler-lower-function-state-body-proofs-invalidate! state)
+    (test.assert-true
+      (and
+        (=
+          (unsafe
+            (deref (lower.compiler-lower-function-state-view state)).address-precheck)
+          -1)
+        (=
+          (unsafe
+            (deref (lower.compiler-lower-function-state-view state)).address-exposure-mode)
+          -1)
+        (not (lower.compiler-lower-function-state-raw-address-free? state)))
+      "the helper-splice path invalidates the cached summary and census together")
+    unit))
+
+;; A small shared DAG exhausts the real production budget without a huge
+;; source or a test-only limit. The carrier cannot cache `false` from a prefix.
+(test
+  compiler-lower-fused-precheck-incomplete-carrier-fallback
+  (let
+    [active : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 4)]
+    [tree : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    (ast.ast-node-pool-context-install! pools)
+    (for [_index (iterator.range 0 21)]
+      (set!
+        tree
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (Begin
+            (ast.ast-expr-cons
+              tree
+              (& (ast.ast-expr-cons tree (& (ast.ast-expr-list-new)))))))))
+    (let
+      [ctx : tc_core.TcContext
+        (tc_core.tc-context-new
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          0
+          pools)]
+      [body : ast.AstExpr (ast.ast-node-pool-context-expr-get pools tree)]
+      [budget : i64 lower.lower-written-roots-scan-budget]
+      (test.assert-true
+        (lower.lower-exposure-has-address? ctx (clone body) false (&mut budget))
+        "canonical exhaustion conservatively requires the census")
+      (lower.lower-function-state-scan-written-roots! ctx state body)
+      (test.assert-i64-eq
+        (unsafe
+          (deref (lower.compiler-lower-function-state-view state)).address-precheck)
+        -1
+        "the incomplete production carrier leaves the standalone fallback available"))
+    (ast.ast-node-pool-context-install! active)))
+
 ;; Call and operator operands, and indirect callees in ordinary and tail
 ;; calls, copy storage only when later evaluation can write it. Unrelated
 ;; writes and calls retain only their assignment copy; a write to the operand
@@ -1881,6 +2162,378 @@
   (test.assert-true
     (compiler-lower-operand-snapshot-shape-ok?)
     "snapshot only storage that later evaluation can write"))
+
+;; Each loop puts its binding before the loop and its effect/consumer in one
+;; separate arm. The consumed var must be captured in that arm before the
+;; effect, rather than merely being copied somewhere in the function.
+(define (lower-test-captured-use?
+  [captured : (& captured (__tl_dyn-array bool))]
+  [_role : ir.CompilerIrOperandRole]
+  [found : bool]
+  [value : ir.CompilerIrValue]) : bool
+  (or
+    found
+    (match value
+      [(Var id)
+        (and (>= id 0) (< id (array-length captured)) (array-ref captured id))]
+      [_ false])))
+
+(define (lower-test-snapshot-before-effect
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [name : String]
+  [effect : String]
+  [consumer : String]) : i64
+  (match (lower-test-function-seq-find functions name)
+    [(No) -1]
+    [(Some func)
+      (match func
+        [(Function _ _ _ vars (Array blocks) _)
+          (for [block-index
+            (iterator.range 0 (ir.compiler-ir-block-seq-count blocks))]
+            (match (ir.compiler-ir-block-seq-borrow blocks block-index)
+              [(Block _ instrs)
+                (let
+                  [captured : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+                  [effect-seen : bool false]
+                  (for [index (iterator.range 0 instrs.len)]
+                    (let
+                      [instr : ir.CompilerIrInstr
+                        (clone (array-ref instrs.slots index))]
+                      [used : i64
+                        (if (string.eq consumer "")
+                          (match (clone instr)
+                            [(or (CallIndirect _ (Var value) _ _)
+                                 (TailCallIndirect (Var value) _ _))
+                              value]
+                            [_ -1])
+                          (match (clone instr)
+                            [(or (Call _ target args _)
+                                 (TailCall target args _))
+                              (if (string.eq
+                                (ir.compiler-ir-symbol-text target)
+                                consumer)
+                                (match args
+                                  [(Two (Var value) _) value]
+                                  [_ -1])
+                                -1)]
+                            [_ -1]))]
+                      (when
+                        (and effect-seen (>= used 0) (< used vars))
+                        (return
+                          (if (array-ref captured used)
+                            1
+                            0)))
+                      (if (lower-test-instr-call-name? (clone instr) effect)
+                        (set! effect-seen true)
+                        (when
+                          (and
+                            (not effect-seen)
+                            (or
+                              (>
+                                (lower-test-instr-copy-mov-count (clone instr))
+                                0)
+                              (> (lower-test-instr-load-count (clone instr)) 0)
+                              (match (ir.compiler-ir-instr-effect (& instr))
+                                [(Pure)
+                                  (ir.compiler-ir-instr-fold-uses
+                                    (clone instr)
+                                    false
+                                    lower-test-captured-use?
+                                    (& captured))]
+                                [_ false])))
+                          (let
+                            [dst : i64 (ir.compiler-ir-instr-dst (& instr))]
+                            (when
+                              (and (>= dst 0) (< dst vars))
+                              (set! (array-ref captured dst) true))))))))]))
+          -2]
+        [_ -2])]))
+
+(define (compiler-lower-cached-exposure-source) : String
+  (let
+    [source : String ""]
+    (for [variant (iterator.range 0 3)]
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          "\n(define (cached-"
+          (if (= variant 0)
+            "param"
+            (if (= variant 1)
+              "local"
+              "shadow"))
+          " [x : i64] [q : (MutPtr i64)] [n : i64] "))
+      (when
+        (= variant 0)
+        (for [index (iterator.range 0 40)]
+          (set!
+            source
+            (str_cat.str-cat
+              source
+              "[arg"
+              (string.int->string index)
+              " : i64] "))))
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          ") : i64 (let "
+          (if (= variant 1)
+            "[x : i64 1] "
+            "")))
+      (for [index (iterator.range 0 40)]
+        (set!
+          source
+          (str_cat.str-cat
+            source
+            "[pad"
+            (string.int->string index)
+            " : i64 0] ")))
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          "[result : i64 0] [i : i64 0] (while (< i n) "
+          "(when (= i 1) (set! result (first x (write-99! q)))) "
+          (if (= variant 2)
+            "(let [x : i64 17] (unsafe (ptr-addr-of x)) unit) "
+            "(set! q (unsafe (ptr-addr-of x))) ")
+          "(set! i (+ i 1))) result))\n")))
+    (set!
+      source
+      (str_cat.str-cat
+        source
+        "(define (cached-param-call [q : (MutPtr i64)]) : i64 (cached-param 1 q 2 "))
+    (for [_index (iterator.range 0 40)]
+      (set! source (str_cat.str-cat source "0 ")))
+    (str_cat.str-cat source "))")))
+
+(define (compiler-lower-loop-exposure-source) : String
+  (str_cat.str-cat
+    "(define x : i64 77)
+(define global-slot : i64 0)
+(defstruct Pair (left i64) (right i64))
+(defenum Choice (Value i64))
+(define (first [a : i64] [_b : i64]) : i64 a)
+(define (first-ref [a : (& i64)] [_b : i64]) : i64 (deref a))
+(define (inc [x : i64]) : i64 (+ x 1))
+(define (dec [x : i64]) : i64 (- x 1))
+(define (write-99! [q : (MutPtr i64)]) : i64 (unsafe (ptr-write! q 99)) 0)
+(define (write-dec! [p : (MutPtr (-> i64 i64))]) : i64 (unsafe (ptr-write! p dec)) 41)
+(define (loop-argument [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (set! q (unsafe (ptr-addr-of x))) (set! i (+ i 1))) result))
+(define (loop-callee [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (f (write-dec! p))))
+      (set! p (unsafe (ptr-addr-of f))) (set! i (+ i 1))) result))
+(define (loop-wrapped [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result ((begin unit f) (write-dec! p))))
+      (when (> i 0) (set! p (unsafe (ptr-addr-of f)))) (set! i (+ i 1))) result))
+(define (projection [q : (MutPtr i64)] [n : i64]) : i64
+  (let [pair : Pair (Pair 1 41)] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first pair.left (write-99! q))))
+      (set! q (unsafe (ptr-addr-of pair.left))) (set! i (+ i 1))) result))
+(define (match-bound [choice : Choice] [q0 : (MutPtr i64)] [n : i64]) : i64
+  (match choice [(Value x)
+    (let [q : (MutPtr i64) q0] [result : i64 0] [i : i64 0]
+      (while (< i n)
+        (when (= i 1) (set! result (first x (write-99! q))))
+        (set! q (unsafe (ptr-addr-of x))) (set! i (+ i 1))) result)]))
+(define (shadowed [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (let [x : i64 17] (unsafe (ptr-addr-of x)) unit) (set! i (+ i 1))) result))
+(define (match-shadowed [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [choice : Choice (Value 17)] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (match choice [(Value x) (unsafe (ptr-addr-of x) unit)])
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (set! i (+ i 1))) result))
+(define (unrelated [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [y : i64 0] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (set! q (unsafe (ptr-addr-of y))) (set! i (+ i 1))) result))
+(define (lambda-boundary [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [nested (lambda () : i64
+                 (let [p : (MutPtr i64) (unsafe (ptr-addr-of x))]
+                   (unsafe (ptr-read p))))]
+       [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q)))) (set! i (+ i 1)))
+    (+ result (nested))))
+(define (ref-slot [x : (& i64)] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first-ref x (write-99! q))))
+      (unsafe (ptr-addr-of x) unit) (set! i (+ i 1))) result))
+(define (ref-unrelated [x : (& i64)] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [y : i64 0] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first-ref x (write-99! q))))
+      (set! q (unsafe (ptr-addr-of y))) (set! i (+ i 1))) result))
+(define (acyclic-argument [x : i64]) : i64
+  (let [q : (MutPtr i64) (unsafe (ptr-addr-of x))]
+    (first x (write-99! q))))
+(define (acyclic-callee [f : (-> i64 i64)]) : i64
+  (let [p : (MutPtr (-> i64 i64)) (unsafe (ptr-addr-of f))]
+    (f (write-dec! p))))
+(define (global-argument [x : i64] [q : (MutPtr i64)]) : i64
+  (unsafe (ptr-addr-of global-slot))
+  (let [result : i64 0] [i : i64 0]
+    (while (< i 2)
+      (set! result (first x (write-99! q))) (set! i (+ i 1))) result))
+(define (global-callee [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))]) : i64
+  (unsafe (ptr-addr-of global-slot))
+  (let [result : i64 0] [i : i64 0]
+    (while (< i 2)
+      (set! result (f (write-dec! p))) (set! i (+ i 1))) result))
+(define (readonly-argument [x : i64] [y : i64]) : i64
+  (let [result (first x (+ y 1))] (unsafe (ptr-addr-of x)) result))
+(define (readonly-callee [f : (-> i64 i64)] [y : i64]) : i64
+  (let [result (f (+ y 1))] (unsafe (ptr-addr-of f)) result))
+(define (main) : i64
+  (let [y : i64 0] [q : (MutPtr i64) (unsafe (ptr-addr-of y))]
+       [g dec] [p : (MutPtr (-> i64 i64)) (unsafe (ptr-addr-of g))]
+    (+ (loop-argument 1 q 2) (loop-callee inc p 2) (loop-wrapped inc p 2)
+       (projection q 2) (match-bound (Value 1) q 2) (shadowed 1 q 2)
+       (match-shadowed 1 q 2) (unrelated 1 q 2)
+       (lambda-boundary 1 q 2) (ref-slot (& y) q 2) (ref-unrelated (& y) q 2)
+       (cached-param-call q) (cached-local 1 q 2) (cached-shadow 1 q 2)
+       (acyclic-argument 1) (acyclic-callee inc)
+       (global-argument 1 q) (global-callee inc p)
+       (readonly-argument 1 y) (readonly-callee inc y))))"
+    (compiler-lower-cached-exposure-source)))
+
+(test
+  compiler-lower-loop-address-exposure
+  (match (lower-test-functions
+    (let
+      [result : lower.ResultCompilerLower
+        (lower.lower-compiler-source (compiler-lower-loop-exposure-source))]
+      (match (& result)
+        [(Err diag)
+          (test.assert-true false (cdiag.compiler-diagnostic-message diag))]
+        [_ unit])
+      result))
+    [(Some functions)
+      (let
+        [names : (Array String 18)
+          (array
+            "loop-argument"
+            "loop-callee"
+            "loop-wrapped"
+            "projection"
+            "match-bound"
+            "shadowed"
+            "match-shadowed"
+            "unrelated"
+            "lambda-boundary"
+            "ref-slot"
+            "ref-unrelated"
+            "cached-param"
+            "cached-local"
+            "cached-shadow"
+            "acyclic-argument"
+            "acyclic-callee"
+            "global-argument"
+            "global-callee")]
+        (for [index (iterator.range 0 18)]
+          (let
+            [callee? : bool
+              (or (= index 1) (= index 2) (= index 15) (= index 17))]
+            (test.assert-i64-eq
+              (lower-test-snapshot-before-effect
+                functions
+                (string.copy (array-ref names index))
+                (if callee?
+                  "write-dec!"
+                  "write-99!")
+                (if callee?
+                  ""
+                  (if (or (= index 9) (= index 10))
+                    "first-ref"
+                    "first")))
+              ;; A raw address of a reference slot retains main's value copy;
+              ;; an unrelated reference keeps its ordinary borrow path.
+              (if (or
+                (< index 5)
+                (= index 9)
+                (= index 11)
+                (= index 12)
+                (= index 14)
+                (= index 15))
+                1
+                0)
+              (string.copy (array-ref names index)))))
+        (test.assert-i64-eq
+          (lower-test-count functions "readonly-argument" (CopyMov))
+          1
+          "an addressed argument needs no snapshot before a read-only tail")
+        (test.assert-i64-eq
+          (lower-test-count functions "readonly-callee" (CopyMov))
+          1
+          "an addressed callee needs no snapshot before a read-only tail"))]
+    [_ (test.assert-true false "loop exposure fixture lowers")]))
+
+;; A staged mutable call borrow never lends the original register slot. Even
+;; an unrelated raw address must not introduce own-slot reloads for the pair.
+;; Explicit scalar writeback still requires the evaluation snapshot.
+(test
+  compiler-lower-staged-borrow-does-not-expose-slot
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(defstruct Pair (left i64) (right i64))
+(define (first [a : i64] [_b : i64]) : i64 a)
+(define (inc [x : i64]) : i64 (+ x 1))
+(define (dec [x : i64]) : i64 (- x 1))
+(define (bump! [x : (&mut x i64)]) : unit (set! (deref x) (+ (deref x) 1)))
+(define (pair-bump! [x : (&mut x Pair)]) : unit (set! x.left (+ x.left 1)))
+(define (staged-pair [pair : Pair] [n : i64]) : i64
+  (let [y : i64 0] [i : i64 0] [result : i64 0]
+    (unsafe (ptr-addr-of y))
+    (while (< i n)
+      (set! result (+ pair.left pair.right))
+      (pair-bump! (&mut pair)) (set! i (+ i 1))) result))
+(define (staged-scalar [x : i64]) : i64
+  (first x (begin (bump! (&mut x)) 0)))
+(define (late-acyclic-pair [pair : Pair]) : i64
+  (let [result : i64 (+ pair.left pair.right)]
+    (unsafe (ptr-addr-of pair.left)) result))
+(define (post-acyclic-pair [pair : Pair]) : i64
+  (unsafe (ptr-addr-of pair.left)) (+ pair.left pair.right))
+(define (main) : i64 (+ (staged-pair (Pair 1 41) 2) (staged-scalar 1)))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-count functions "staged-pair" (HomeAddrOf))
+        1
+        "only the unrelated raw-addressed local has its own slot exposed")
+      (test.assert-i64-eq
+        (lower-test-count functions "late-acyclic-pair" (HomeAddrOf))
+        1
+        "an acyclic later raw address cannot affect earlier reads")
+      (test.assert-i64-eq
+        (lower-test-count functions "post-acyclic-pair" (HomeAddrOf))
+        3
+        "incremental marks still materialize reads after an emitted address")
+      (test.assert-i64-eq
+        (lower-test-snapshot-before-effect
+          functions
+          "staged-scalar"
+          "bump!"
+          "first")
+        1
+        "explicit scalar writeback preserves operand evaluation order")]
+    [_ (test.assert-true false "staged mutable call borrows lower")]))
 
 (test
   compiler-lower-never-callee
@@ -4590,6 +5243,7 @@
 ;; own lower-test-instr-K-count predicate.
 (defenum LowerTestInstr
   (AddrOf)
+  (HomeAddrOf)
   (Alloc)
   (Binop)
   (Bitcast)
@@ -4627,6 +5281,10 @@
   [kind : LowerTestInstr]) : i64
   (match kind
     [(AddrOf) (lower-test-instr-addr-of-count instr)]
+    [(HomeAddrOf)
+      (match instr
+        [(AddrOf _ _ 0) 1]
+        [_ 0])]
     [(Alloc) (lower-test-instr-alloc-count instr)]
     [(Binop) (lower-test-instr-binop-count instr)]
     [(Bitcast) (lower-test-instr-bitcast-count instr)]
@@ -17770,3 +18428,31 @@
         (test.assert-true
           (lower-test-source-blocks-exit? source "probe" (clone label))
           label)))))
+
+(test
+  compiler-lower-borrowed-view-element-exposure
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(extern (sink-address [address : u64]) : unit)
+(define (bump [value : (&mut i64)]) : unit
+  (set! (deref value) (+ (deref value) 1)))
+(define (element [items : (&mut source (Slice i64))] [n : i64]) : i64
+  (let [i : i64 0]
+    (while (< i n) (bump (&mut (array-ref items i))) (set! i (+ i 1))) n))
+(define (slot [items : (&mut source (Slice i64))] [n : i64]) : i64
+  (let [i : i64 0]
+    (while (< i n)
+      (sink-address (unsafe (ptr->int (ptr-addr-of items)))) (set! i (+ i 1))) n))
+(define (main) : i64
+  (let [items : (Array i64 2) (array 1 2)]
+    (+ (element (slice-mut-view (&mut items) 0 2) 2)
+       (slot (slice-mut-view (&mut items) 0 2) 2))))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-count functions "element" (AddrOf))
+        0
+        "borrowing an element does not expose the borrowed view descriptor")
+      (test.assert-true
+        (> (lower-test-count functions "slot" (AddrOf)) 0)
+        "a raw address of the view variable still exposes its descriptor slot")]
+    [_ (test.assert-true false "borrowed view exposure fixture lowers")]))

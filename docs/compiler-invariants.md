@@ -413,6 +413,39 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+Address exposure belongs to `CompilerLowerFunctionState`. Before either an
+ordinary or capturing function emits its body, lowering scans that expanded
+body through the shared AST child schema, handling binders and function
+boundaries explicitly. A scope ID, binding ordinal and hygienic name identify
+each source binding; the census environment resolves the nearest binding.
+Parameters, captures, `let`/resource bindings and pattern/loop scope entry seed
+the existing IR-variable address map when their actual variables are known.
+No future IR-variable number is predicted. Raw addresses of projected register
+aggregates expose their root slot; projecting through a reference exposes its
+referent instead. Borrowing a by-value local stages a fresh frame slot, with
+explicit post-call writeback for immediate mutable borrows. Such a borrow does
+not expose the local slot; stored mutable by-value borrows remain rejected.
+
+The advance census marks addresses enclosed by loops, including outer loops:
+a later acyclic address cannot affect an earlier read. Incremental marks still
+cover every emitted address and therefore subsequent reads in straight-line
+code. A body without loop exposure needs no binding table. Its exact quick summary
+is carried by the already-required loop discovery/set-value traversal. The
+address budget is independent of the carrier budget, and nested function,
+quote and comptime descendants do not consume it. An incomplete carrier keeps
+the result unavailable and uses the canonical standalone pre-check; exhaustion
+of the address budget retains that pre-check's conservative `true`. The full
+lexical census and actual-variable seeding are unchanged. Otherwise only complete
+lexical facts can prove a binding unexposed; missing/synthesized bindings and
+incomplete facts remain conservative. Incremental marks still cover generated
+addresses. Splicing an SPMD helper invalidates the function's census, including
+facts already seeded into branch states. The census and AST IDs never outlive
+their function/AST owner. Thus an address created later in source traversal can
+already require an earlier snapshot when a loop carries it across iterations.
+Unexposed scalar slots may retain their values without a copy despite unrelated
+addresses elsewhere; memory-class storage keeps its existing ownership and
+raw-address proof, since a private pointer slot does not prove a private referent.
+
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left
 global reads are materialized before an effectful right operand. Short-circuit

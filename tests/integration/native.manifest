@@ -1266,3 +1266,6 @@ mir_by_value_borrow_unretained_ok|all|0,1,2|tests/safety/mir_by_value_borrow_unr
 mir_storage_backed_borrow_retained_ok|all|0,1,2|tests/safety/mir_storage_backed_borrow_retained_ok.tl|42|-|-|-|-
 mir_by_value_borrow_distinct_lifetime_ok|all|0,1,2|tests/safety/mir_by_value_borrow_distinct_lifetime_ok.tl|42|-|-|-|-
 string_raw_integer_writers_ok|all|0,1,2|tests/safety/string_raw_integer_writers_ok.tl|42|-|-|stdlib/string.tl|-
+loop_address_argument|all|0,1,2|tests/integration/loop_address_argument.tl|1|-|-|-|-
+loop_address_callee|all|0,1,2|tests/integration/loop_address_callee.tl|42|-|-|-|-
+loop_address_snapshots|all|0,1,2|tests/integration/loop_address_snapshots.tl|42|-|-|-|-

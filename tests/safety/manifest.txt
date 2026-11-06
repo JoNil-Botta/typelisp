@@ -2674,3 +2674,4 @@ cond_missing_else_comptime_const_reject|check-fail|tests/safety/cond_missing_els
 cond_else_not_final_comptime_const_reject|check-fail|tests/safety/cond_else_not_final_comptime_const_reject.tl|tests/safety/cond_else_not_final_comptime_const_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
 cond_missing_else_comptime_nested_reject|check-fail|tests/safety/cond_missing_else_comptime_nested_reject.tl|tests/safety/cond_missing_else_comptime_nested_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
 cond_else_not_final_comptime_nested_reject|check-fail|tests/safety/cond_else_not_final_comptime_nested_reject.tl|tests/safety/cond_else_not_final_comptime_nested_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
+loop_address_stored_mut_borrow_reject|check-fail|tests/safety/loop_address_stored_mut_borrow_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument

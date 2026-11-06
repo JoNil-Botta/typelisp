@@ -111,6 +111,7 @@ stage2-sha-512-wipe-asm-shape-gate	linux-2	-
 stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	linux-2	-
 stage2-crypto-aes-fixed-work-asm-shape-gate	linux-2	-
 stage2-crypto-gcm-fixed-work-asm-shape-gate	linux-2	-
+stage2-crypto-stack-residue	linux-2	windows-2
 stage2-crypto-gcm-native-report	linux-2	windows-2
 stage2-by-value-aggregate-abi-shape-gate	linux-2	-
 stage2-examples	linux-2	windows-2

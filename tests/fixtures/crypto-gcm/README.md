@@ -95,6 +95,11 @@ of H or an expected-tag mask can undermine GCM authentication. The linked
 AES core has its own separately disclosed block/key-expansion residue.
 This implementation makes no stronger erasure or side-channel claim.
 
+At opt2 (default), GHASH multiply keeps H-derived state in registers and its wiped 48 B scratch, while GCTR's direct stores hold public metadata; at opt1, dead slots allow H recovery and retain the last keystream, plaintext and ciphertext byte, all within the conditional key-recovery consequence of the existing D-C132 AES residue.
+The table's `reserve` means the literal `sub rsp` reservation, excluding pushes; historical `gcm-spills.tsv` caller values 1528 / 1384 B are not the final Linux opt2 `construct_key` / `gcm_audit_open` reservations, which are 1736 / 1432 B.
+The passing code-head gate receipt is `target/exp/issue-7312/resume-b3/qualification-release.log`; `shape-prealloc.log` is a stale-pin probe, not a passing qualification, and this disclosure-only update changes no code or pins.
+[D-C150 and the shared #9648 scope record](https://github.com/JoNil-Botta/typelisp/issues/9648#issuecomment-6680744411) accept this disclosed residue without a pre-merge scrub under the bodies pinned at `b364bbcd6` and their stated exposure ceiling.
+
 The following counts are static instruction sites per emitted frame, not
 dynamic stores per message. `reserve` is the `sub rsp` reservation, excluding
 pushes. `mov` counts direct mov-to-stack stores; `RMW` counts direct stack

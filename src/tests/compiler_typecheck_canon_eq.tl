@@ -190,6 +190,20 @@
     (!= tc.tc-type-walk-job job.address)
     (io.panic "binding not restored after a failing macro expansion")))
 
+;; A file-state reset releases the job's table; the next use allocates a
+;; fresh one and equality stays exact.
+(define (canon-eq-release-test [job : tc.TcJobState]) : unit
+  (let
+    [before : i64 (tc.tc-type-walk-table)]
+    (when (= before 0) (io.panic "no table before release"))
+    (tc.tc-type-walk-table-release! job)
+    (canon-eq-expect
+      "after release"
+      true
+      (canon-eq-raw-dag 8 ast.AstType.I64)
+      (canon-eq-raw-dag 8 ast.AstType.I64))
+    (when (= (tc.tc-type-walk-table) 0) (io.panic "no table after release"))))
+
 ;; Interleaved jobs: B's binding runs inside A's; A's binding and table come
 ;; back intact.
 (define (canon-eq-jobs-test [job : tc.TcJobState]) : unit
@@ -236,6 +250,7 @@
       (canon-eq-context-reset-test)
       (canon-eq-jobs-test job)
       (canon-eq-same-job-nesting-test)
+      (canon-eq-release-test job)
       (ast.ast-node-pool-context-install! installed)
       (canon-eq-failing-check-test job)
       (canon-eq-expansion-binding-test job)

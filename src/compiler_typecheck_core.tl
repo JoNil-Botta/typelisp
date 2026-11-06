@@ -1164,8 +1164,9 @@
     (ptr-write! (int->ptr (cast ,address : u64) : (MutPtr ,_payload)) ,data)))
 
 ;; #9581: the job's type-walk table, behind the job's lazy address directory
-;; (`tc-macro-state-slot-type-walk`). Its arrays live in the job's owner
-;; arena, so retiring the job releases them.
+;; (`tc-macro-state-slot-type-walk`). The table and its arrays live in their
+;; own small arena (`owner`), released at every file-state reset (each batch
+;; entry) and when the job retires.
 ;;
 ;; `canon` holds completed region-stripped canonical IDs + 1 (0 = not yet
 ;; computed) for the installed pool identified by its cursor cell, the cell's
@@ -1185,7 +1186,9 @@
   19)
 
 ;; The bound job (its TcJobState address) and its table address: a saved and
-;; restored current pointer, never an owning table. 0 = unbound (bypass).
+;; restored current pointer, never an owning table. 0 = unbound (bypass). The
+;; address is only a cache of the job's slot: binding changes reset it, so a
+;; released table is never reached through a restored binding.
 (define tc-type-walk-job : i64
   0)
 (define tc-type-walk-address : i64
@@ -1201,14 +1204,8 @@
   (let
     [saved : TcTypeWalkBinding
       (TcTypeWalkBinding tc-type-walk-job tc-type-walk-address)]
-    (unless
-      (= tc-type-walk-job job.address)
-      (set! tc-type-walk-job job.address)
-      (set!
-        tc-type-walk-address
-        (tc-macro-state-slot-address
-          (tc-job-state-macro-state job)
-          tc-macro-state-slot-type-walk)))
+    (set! tc-type-walk-job job.address)
+    (set! tc-type-walk-address 0)
     saved))
 
 ;: Leave the type-walk table unbound (exact walks) until the matching
@@ -1223,12 +1220,12 @@
 
 (define (tc-type-walk-restore! [saved : TcTypeWalkBinding]) : unit
   (set! tc-type-walk-job saved.job)
-  (set! tc-type-walk-address saved.address))
+  (set! tc-type-walk-address 0))
 
 (define (tc-type-walk-table-new [job : TcJobState]) : i64
   (let
     [state : TcMacroState (tc-job-state-macro-state job)]
-    [owner : i64 (tc-macro-state-owner-arena state)]
+    [owner : i64 (arena.tl_arena_make_small)]
     [address : i64 0]
     (in-arena
       (unsafe
@@ -1252,6 +1249,23 @@
       address)
     address))
 
+;: Release the job's type-walk table (file-state reset, job retirement).
+(define (tc-type-walk-table-release! [job : TcJobState]) : unit
+  (let
+    [state : TcMacroState (tc-job-state-macro-state job)]
+    [address : i64
+      (tc-macro-state-slot-address state tc-macro-state-slot-type-walk)]
+    (when
+      (> address 0)
+      (let
+        [owner : i64
+          (unsafe
+            (deref (tc-state-cell-view address TcTypeWalkTable)).owner)]
+        (tc-macro-state-slot-address-set! state tc-macro-state-slot-type-walk 0)
+        (when (= tc-type-walk-job job.address) (set! tc-type-walk-address 0))
+        (unsafe
+          (arena.tl_arena_destroy owner))))))
+
 ;; The bound job's table, validated against the installed pool; 0 when no job
 ;; is bound or an explicit reader/context pool is active (bypass, exact).
 (define (tc-type-walk-table) : i64
@@ -1263,8 +1277,6 @@
     (begin
       (when
         (= tc-type-walk-address 0)
-        ;; A nested binding of the same job may have allocated the table
-        ;; after this binding captured it; reuse the job's entry.
         (set!
           tc-type-walk-address
           (tc-macro-state-slot-address
@@ -2740,6 +2752,7 @@
     (tc-global-call-effects-finish! job)
     (tc-job-state-release-selected-file-storage! job)
     (tc-job-state-reset-advisories! job)
+    (tc-type-walk-table-release! job)
     (tc-job-state-release-scratch-arenas! job)
     (tc-checked-let-binding-facts-finish!
       (tc-job-state-checked-let-binding-facts job))
@@ -129088,6 +129101,7 @@
         (surface_facts.surface-typecheck-facts-recording-abort!)
         unit)
       (tc-unbound-suggestion-snapshot-reset!)
+      (tc-type-walk-table-release! job-state)
       (tc-job-state-release-scratch-arenas! job-state)
       (tc-job-state-release-type-env-scoped-state! job-state)
       (ctfe_support.ctfe-builtin-reset!)

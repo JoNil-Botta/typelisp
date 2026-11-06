@@ -39,34 +39,34 @@
 (define (ecdsa-der-integer [der : (& der bytes)] [offset : i64]) : EcdsaDerIntegerResult
   (let
     [length : i64 (byte_buf.bytes-length der)]
-    (if (or (< offset 0) (> offset (- length 2)))
-      (return (EcdsaDerIntegerInvalid))
-      unit)
-    (if (!= (byte_buf.bytes-ref der offset) (cast 2 : u8))
-      (return (EcdsaDerIntegerInvalid))
-      unit)
+    (when
+      (or (< offset 0) (> offset (- length 2)))
+      (return (EcdsaDerIntegerInvalid)))
+    (when
+      (!= (byte_buf.bytes-ref der offset) (cast 2 : u8))
+      (return (EcdsaDerIntegerInvalid)))
     (let
       [count : i64 (cast (byte_buf.bytes-ref der (+ offset 1)) : i64)]
       [start : i64 (+ offset 2)]
-      (if (or (< count 1) (> count 33) (> count (- length start)))
-        (return (EcdsaDerIntegerInvalid))
-        unit)
+      (when
+        (or (< count 1) (> count 33) (> count (- length start)))
+        (return (EcdsaDerIntegerInvalid)))
       (let
         [first : u8 (byte_buf.bytes-ref der start)]
         [padding : i64
           (if (= first (cast 0 : u8))
             1
             0)]
-        (if (or
-          (>= first (cast 128 : u8))
-          (and
-            (= padding 1)
-            (or
-              (= count 1)
-              (< (byte_buf.bytes-ref der (+ start 1)) (cast 128 : u8))))
-          (> (- count padding) 32))
-          (return (EcdsaDerIntegerInvalid))
-          unit)
+        (when
+          (or
+            (>= first (cast 128 : u8))
+            (and
+              (= padding 1)
+              (or
+                (= count 1)
+                (< (byte_buf.bytes-ref der (+ start 1)) (cast 128 : u8))))
+            (> (- count padding) 32))
+          (return (EcdsaDerIntegerInvalid)))
         (let
           [width : i64 (- count padding)]
           [octets : (Array u8 32) (make-array u8 32)]
@@ -117,14 +117,12 @@
   [signature : (& signature bytes)]) : P256EcdsaVerifyResult
   (let
     [length : i64 (byte_buf.bytes-length signature)]
-    (if (or (< length 8) (> length 72))
-      (return (P256EcdsaInvalidSignature))
-      unit)
-    (if (or
-      (!= (byte_buf.bytes-ref signature 0) (cast 0x30 : u8))
-      (!= (cast (byte_buf.bytes-ref signature 1) : i64) (- length 2)))
-      (return (P256EcdsaInvalidSignature))
-      unit)
+    (when (or (< length 8) (> length 72)) (return (P256EcdsaInvalidSignature)))
+    (when
+      (or
+        (!= (byte_buf.bytes-ref signature 0) (cast 0x30 : u8))
+        (!= (cast (byte_buf.bytes-ref signature 1) : i64) (- length 2)))
+      (return (P256EcdsaInvalidSignature)))
     (match (ecdsa-der-integer signature 2)
       [(EcdsaDerIntegerInvalid) (P256EcdsaInvalidSignature)]
       [(EcdsaDerIntegerOk r)

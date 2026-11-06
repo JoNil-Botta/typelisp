@@ -1724,45 +1724,6 @@
     (set! references.length (+ length 1))
     (ServiceReferenceAdded)))
 
-;: Compare one validated presented DNS shape with one checked reference.
-;: No allocation, lowercase copy or unbounded substring construction occurs.
-(define (service-dns-matches?
-  [name : (& name ServiceDnsName)]
-  [presented : (& presented bytes)]
-  [length : i64]
-  [wildcard : bool]) : bool
-  (let
-    [reference : (& name str) (& name.canonical)]
-    [reference-length : i64 (string-length reference)]
-    [cursor : i64 0]
-    [offset : i64 0]
-    (when
-      (or
-        (< reference-length 1)
-        (> reference-length 253)
-        (< length 1)
-        (> length 253)
-        (> length (byte_buf.bytes-length presented)))
-      (return false))
-    (when
-      wildcard
-      (while (and
-        (< offset reference-length)
-        (!= (string-ref reference offset) '.'))
-        (set! offset (+ offset 1)))
-      (when (= offset reference-length) (return false))
-      (set! cursor 1))
-    (when (!= (- reference-length offset) (- length cursor)) (return false))
-    (while (< cursor length)
-      (when
-        (!=
-          (cast (string-ref reference offset) : u8)
-          (service-ascii-lower (byte_buf.bytes-ref presented cursor)))
-        (return false))
-      (set! cursor (+ cursor 1))
-      (set! offset (+ offset 1)))
-    true))
-
 ;: SAN-only RFC 9525 DNS/IP matching. Invalid DNS/wildcard SANs are ignored;
 ;: malformed SAN DER and IP widths have already failed parse-der. Bounds are
 ;: checked before traversal, including SANs after an otherwise matching entry.
@@ -1843,14 +1804,38 @@
             (match (& (array-ref references.values reference-index))
               [(Dns name)
                 (when
-                  (and
-                    (= san.kind 2)
-                    (service-dns-matches?
-                      name
-                      (view certificate san.value)
-                      dns-length
-                      wildcard))
-                  (return (ServiceIdentityMatch reference-index index)))]
+                  (= san.kind 2)
+                  (let
+                    [text : (& name str) (& name.canonical)]
+                    [reference-length : i64 (string-length text)]
+                    [presented : (& certificate bytes)
+                      (view certificate san.value)]
+                    [cursor : i64 0]
+                    [offset : i64 0]
+                    [matched : bool true]
+                    (when
+                      wildcard
+                      (while (and
+                        (< offset reference-length)
+                        (!= (string-ref text offset) '.'))
+                        (set! offset (+ offset 1)))
+                      (when (= offset reference-length) (set! matched false))
+                      (set! cursor 1))
+                    (when
+                      (!= (- reference-length offset) (- dns-length cursor))
+                      (set! matched false))
+                    (while (and matched (< cursor dns-length))
+                      (when
+                        (!=
+                          (cast (string-ref text offset) : u8)
+                          (service-ascii-lower
+                            (byte_buf.bytes-ref presented cursor)))
+                        (set! matched false))
+                      (set! cursor (+ cursor 1))
+                      (set! offset (+ offset 1)))
+                    (when
+                      matched
+                      (return (ServiceIdentityMatch reference-index index)))))]
               [(Ip address)
                 (when
                   (= san.kind 7)

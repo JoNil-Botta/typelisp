@@ -209,6 +209,8 @@ compress/zlib.tl
 concurrency_registry.tl
 core_macros.tl
 crypto_aes_core.tl
+crypto_aes128_gcm.tl
+crypto_ghash_core.tl
 crypto_hkdf_sha256.tl
 crypto_hmac_sha256.tl
 crypto_p256.tl
@@ -323,6 +325,7 @@ stdlib/tests/deflate_api.tl|42|-|-|-
 stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_aes_api.tl|42|-|-|-
+stdlib/tests/crypto_aes128_gcm_api.tl|42|-|-|-
 stdlib/tests/crypto_hkdf_sha256_api.tl|42|-|-|-
 stdlib/tests/crypto_hkdf_sha256_parity.tl|42|-|-|-
 stdlib/tests/crypto_hmac_sha256_api.tl|42|-|-|-
@@ -429,6 +432,15 @@ stdlib/tests/net_tls_transcript_construct_reject.tl|fail|opaque type
 stdlib/tests/net_tls_transcript_project_reject.tl|fail|opaque type
 stdlib/tests/net_tls_transcript_escape_reject.tl|fail|region-tagged value cannot escape with-arena
 stdlib/tests/crypto_aes_core_inline.tl|pass|-
+stdlib/tests/crypto_aes128_gcm_support.tl|pass|-
+stdlib/tests/crypto_aes128_gcm_inline.tl|pass|-
+stdlib/tests/crypto_aes128_gcm_kat_inline.tl|pass|-
+stdlib/tests/crypto_aes128_gcm_clone_reject.tl|fail|clone unsupported type
+stdlib/tests/crypto_aes128_gcm_format_reject.tl|fail|format: unsupported nominal type
+stdlib/tests/crypto_aes128_gcm_key_reuse_reject.tl|fail|use of moved value `key`
+stdlib/tests/crypto_aes128_gcm_tag_reject.tl|fail|argument 5 type mismatch
+stdlib/tests/crypto_aes128_gcm_unsafe_reject.tl|fail|requires unsafe context
+stdlib/tests/crypto_ghash_unsafe_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_aes_fips_inline.tl|pass|-
 stdlib/tests/crypto_aes_kat_inline.tl|pass|-
 stdlib/tests/crypto_aes_lifecycle_inline.tl|pass|-

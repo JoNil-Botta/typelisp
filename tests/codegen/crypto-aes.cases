@@ -80,3 +80,36 @@ not-match \(extern|\(import stdlib\.(ffi|runtime)
 not-match ^\(define \((to-string|debug|show|format|clone|hash|serialize|to-bytes|as-bytes|to-hex|schedule-byte|schedule-word)
 not-match ^\(defdispatch
 not-match (S[Bb][Oo][Xx].*[Tt]able|[Tt]-[Tt]able)
+
+# Every retained and actual inlined AES/GHASH/GCM caller is hash-pinned.
+# The complete body/inventory pins fail closed on changed or missing work.
+case gcm-production-shape
+source tests/fixtures/crypto-gcm/audit.tl
+args --stdlib-root {{root}}/stdlib
+target linux-x86_64 windows-x86_64
+opt 1 2
+assemble
+repeatable
+in fn _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_multiply_bang
+contains $63
+not-match ^[[:space:]]+(cmpb|testb|set[a-z]+|cmov[a-z]+)
+not-match \(%rip\)|\(,%
+match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang$
+exec scripts/check-crypto-aes-shape.sh "{{dir}}/out.s" "{{dir}}/audit" "{{root}}/tests/fixtures/crypto-gcm/shape-{{target}}-opt{{opt}}.sha256" gcm
+
+case gcm-no-duplicate-aes
+do none
+target -
+opt -
+in file stdlib/crypto_aes128_gcm.tl
+narrow tl-code
+contains (aes.encrypt-128!
+contains (secret.difference-bits
+not-match \(define \((sbox|gf-mul|expand|cipher|sub-bytes|shift-rows|mix-columns|add-round-key)
+not-match \(extern|\(import stdlib\.(ffi|runtime)
+not-match ^\(define \((to-string|debug|show|format|clone|hash|serialize|to-bytes|as-bytes|to-hex)
+not-match ^\(defdispatch
+in file stdlib/crypto_ghash_core.tl
+narrow tl-code
+not-match \(extern|\(import stdlib\.(ffi|runtime)
+not-match \(Array (u8|u64) (128|256|512|1024)\)

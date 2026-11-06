@@ -26,6 +26,16 @@ esac
 # scripts/verify-stdlib.sh.
 reject_diag() {
     case "$1" in
+        stdlib/tests/crypto_aes128_gcm_clone_reject.tl)
+            printf 'clone unsupported type' ;;
+        stdlib/tests/crypto_aes128_gcm_format_reject.tl)
+            printf 'format: unsupported nominal type' ;;
+        stdlib/tests/crypto_aes128_gcm_key_reuse_reject.tl)
+            printf 'use of moved value `key`' ;;
+        stdlib/tests/crypto_aes128_gcm_tag_reject.tl)
+            printf 'argument 5 type mismatch' ;;
+        stdlib/tests/crypto_ghash_unsafe_reject.tl|stdlib/tests/crypto_aes128_gcm_unsafe_reject.tl)
+            printf 'requires unsafe context' ;;
         stdlib/tests/net_tls_transcript_construct_reject.tl|stdlib/tests/net_tls_transcript_project_reject.tl)
             printf 'opaque type' ;;
         stdlib/tests/net_tls_transcript_escape_reject.tl)

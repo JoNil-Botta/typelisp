@@ -169,7 +169,11 @@
     (when
       (!= (tc.tc-type-walk-table) first)
       (io.panic "same job allocated twice"))
-    (tc.tc-type-walk-restore! outer)))
+    (tc.tc-type-walk-restore! outer)
+    (tc.tc-type-walk-table-release! job)
+    (when
+      (!= (canon-eq-job-table job) 0)
+      (io.panic "nesting job kept its table"))))
 
 ;; Macro expansion runs unbound and restores the caller's binding, on
 ;; success and on failure.

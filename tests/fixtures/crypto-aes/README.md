@@ -55,10 +55,13 @@ schedule cleanup, and allocation counts. Compile-fail witnesses reject key
 reuse, cross-variant schedules, clone, format, raw reads and public round choice.
 
 The test-only `source-work` tally counts visited arithmetic/byte-work sites in
-production helpers. GF multiplication contributes six work units plus the five
-units of `xtime` at each of eight steps; the S-box affine site contributes
-seventeen (twelve rotation operations and five XORs). Other sites account for
-fixed byte copies/XORs and public round work.
+production helpers: each site adds its source operators plus memory reads and
+writes. The Boyar-Peralta circuit contributes 135 units (119 gates and sixteen
+plane accesses), ShiftRows 21 per plane, MixColumns 124, the 8x8 bit transpose
+18, plane loading/XOR 114 and plane output 91 besides their two transposes.
+Key expansion adds 26 per schedule word, 11 per RotWord/round constant and five
+per `xtime`. Totals are 5,352/6,073 setup/block units for AES-128 and
+6,884/8,381 for AES-256.
 The tally is a reproducible source instrumentation metric, not machine
 instructions, cycle counts or a universal count of all language operations.
 It vanishes without `cfg test`. Key and state inputs differing in first,

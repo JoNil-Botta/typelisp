@@ -4537,9 +4537,74 @@
 (define (compiler-typecheck-raw-append-dag-ok? [depth : i64] [applied : bool]) : bool
   (compiler-typecheck-raw-append-wide-dag-ok? depth applied 2))
 
+;; Nested queries without lifetime arguments read a declaration's published
+;; top-level kind. Publishing every leaf and cycle member first makes each
+;; container walk answer its nested fields from the memo; the answers must
+;; match the walk-only results, including a member reached inside its own cycle.
+(define (compiler-typecheck-move-kind-nested-memo-tests-ok?) : bool
+  (match (parser.parse-ast-source
+    "(defstruct Leaf (value i64))
+(defstruct Text (text String))
+(defstruct Ring (next RingTail))
+(defstruct RingTail (back Ring))
+(defstruct Holder (leaf Leaf) (pair (Tuple Leaf (Array Leaf 2))))
+(defenum Pick (None) (Some Holder) (Other Leaf))
+(defenum PoisonPick (None) (Bad Text))
+(defstruct Outer (pick Pick) (holder Holder))
+(defstruct OuterPoison (pick PoisonPick) (holder Holder))
+(defstruct RingHolder (leaf Leaf) (ring RingTail))
+(defstruct RefLeaf (:lifetimes a) (value (& a Text)) (leaf Leaf))
+(defstruct RefOuter (:lifetimes a) (inner (RefLeaf a)) (holder Holder))")
+    [(Ok program)
+      (match (csym.build-compiler-symbols program)
+        [(Ok symbols)
+          (match (csym.build-compiler-registries program)
+            [(Ok registries)
+              (let
+                [ctx : tc_core.TcContext
+                  (tc_core.tc-context-new
+                    program
+                    symbols
+                    registries
+                    ""
+                    cbi.compiler-builtin-id-fix-empty
+                    (ast.ast-node-pool-context-capture-active))]
+                [ref-outer : ast.AstType
+                  (ast.ast-ty-struct-args
+                    (ci.intern "RefOuter")
+                    (ast.ast-lifetime-cons
+                      cbi.compiler-builtin-id-fix-n
+                      (& (ast.ast-lifetime-list-new))))]
+                (and
+                  (tc_core.tc-type-copyable? ctx (Struct (ci.intern "Leaf")))
+                  (tc_core.tc-type-move-only? ctx (Struct (ci.intern "Text")))
+                  (tc_core.tc-type-move-only? ctx (Struct (ci.intern "Ring")))
+                  (tc_core.tc-type-move-only?
+                    ctx
+                    (Struct (ci.intern "RingTail")))
+                  (tc_core.tc-type-copyable? ctx (Struct (ci.intern "Holder")))
+                  (tc_core.tc-type-copyable? ctx (Enum (ci.intern "Pick")))
+                  (tc_core.tc-type-move-only?
+                    ctx
+                    (Enum (ci.intern "PoisonPick")))
+                  (tc_core.tc-type-copyable? ctx (Struct (ci.intern "Outer")))
+                  (tc_core.tc-type-move-only?
+                    ctx
+                    (Struct (ci.intern "OuterPoison")))
+                  (tc_core.tc-type-move-only?
+                    ctx
+                    (Struct (ci.intern "RingHolder")))
+                  (tc_core.tc-type-copyable? ctx ref-outer)
+                  (tc_core.tc-type-copyable? ctx (Struct (ci.intern "Outer")))
+                  (tc_core.tc-type-move-only? ctx (Struct (ci.intern "Ring")))))]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
+
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
   (and
     (compiler-typecheck-move-kind-fixture-tests-ok?)
+    (compiler-typecheck-move-kind-nested-memo-tests-ok?)
     (compiler-typecheck-raw-append-dag-ok? 14 false)
     (compiler-typecheck-raw-append-dag-ok? 18 false)
     (compiler-typecheck-raw-append-dag-ok? 18 true)

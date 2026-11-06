@@ -20297,13 +20297,26 @@
             (match next
               [(TcSelectedSink.Capture store lease bindings)
                 (let
+                  [own : ast.AstType
+                    (tc-selected-place-own-type! store lease (& place) (& type))]
+                  ;; A view of a box (read through a reference, #8927) names
+                  ;; the referent's box: its contents are that storage, owned
+                  ;; as the referent's own, not a view a take could reborrow.
+                  [view-inner : i64
+                    (match (& own)
+                      [(ast.AstType.Region region rest)
+                        (if (tc-selected-arena-region-in?
+                          ctx
+                          (& (typed.typed-arena-regions-copy (& store)))
+                          region)
+                          -1
+                          rest)]
+                      [_ -1])]
                   [owned : ast.AstType
                     (tc-project-from-region-container
-                      (tc-selected-place-own-type!
-                        store
-                        lease
-                        (& place)
-                        (& type))
+                      (if (< view-inner 0)
+                        own
+                        (ast.ty-node-get view-inner))
                       (ast.ty-node-get inner))]
                   (tc-selected-place-project
                     contents
@@ -43048,8 +43061,11 @@
       (set! (deref data).type-name-handle handle)
       (set! (deref data).type-name-valid true))))
 
+;; Direct-mapped: a slot taken by another name drops its handle and move-kind
+;; answer, so the capacity keeps the live names a small fraction of the slots,
+;; where how numeric IDs happen to collide rarely matters (#9571).
 (define tc-type-handle-cache-capacity : i64
-  4096)
+  16384)
 
 (defmacro (tc-type-handle-cache-field [state : Expr] [field : Expr] [_T : type]) : Expr
   `(unsafe
@@ -48930,8 +48946,11 @@
 
 ;; A declaration's top-level move kind (empty stack, no lifetime arguments) is
 ;; fixed for one CompilerSymbols stamp, so it is memoized beside the declaration's
-;; type-handle cache slot. Recursive and lifetime-applied queries classify
-;; directly: a cycle-truncated inner answer must not become the declaration's.
+;; type-handle cache slot. Only top-level queries publish: a cycle-truncated
+;; inner answer must not become the declaration's. A nested query without
+;; lifetime arguments may read the published answer, because a larger stack
+;; only adds cut-offs at declarations on a path to this one, and those cut off
+;; the top-level walk too. Lifetime-applied queries classify directly.
 (define (tc-type-move-kind-nominal-with-stack
   [ctx : TcContext]
   [name-id : i64]
@@ -48948,47 +48967,43 @@
         (tc-context-symbols-ref (& ctx))
         name-id
         tc-type-handle-lookup-caller-move-kind)]
+    [declaration-level : bool (= (tc-lifetime-list-count lifetimes) 0)]
     (if (not (csym.compiler-symbols-handle-found? handle))
       (MoveOnly)
-      (if (and
-        (match stack
-          [(Nil) true]
-          [_ false])
-        (= (tc-lifetime-list-count lifetimes) 0))
-        (let
-          [cached : i64
+      (let
+        [cached : i64
+          (if declaration-level
             (tc-type-handle-cache-move-kind
               nominal-state
               (tc-context-symbols-ref (& ctx))
-              name-id)]
-          (if (= cached 1)
-            (Copyable)
-            (if (= cached 2)
-              (MoveOnly)
-              (let
-                [kind : TcMoveKind
-                  (tc-type-move-kind-nominal-handle
-                    ctx
-                    name-id
-                    handle
-                    lifetimes
-                    stack
-                    type-id
-                    completed)]
+              name-id)
+            0)]
+        (cond
+          [(= cached 1) (Copyable)]
+          [(= cached 2) (MoveOnly)]
+          [else
+            (let
+              [kind : TcMoveKind
+                (tc-type-move-kind-nominal-handle
+                  ctx
+                  name-id
+                  handle
+                  lifetimes
+                  stack
+                  type-id
+                  completed)]
+              (when
+                (and
+                  declaration-level
+                  (match stack
+                    [(Nil) true]
+                    [_ false]))
                 (tc-type-handle-cache-move-kind-set!
                   nominal-state
                   (tc-context-symbols-ref (& ctx))
                   name-id
-                  (tc-move-kind-code kind))
-                kind))))
-        (tc-type-move-kind-nominal-handle
-          ctx
-          name-id
-          handle
-          lifetimes
-          stack
-          type-id
-          completed)))))
+                  (tc-move-kind-code kind)))
+              kind)])))))
 
 (define (tc-type-move-kind-nominal-handle
   [ctx : TcContext]
@@ -123032,9 +123047,11 @@
 ;; stamp word moves, or the job's derived caches are reset
 ;; (`tc-type-resolution-cache-state-reset!`), the table's generation advances
 ;; and every entry is dead, so a live entry is what the walk would compute
-;; again. A collision only replaces an entry.
+;; again. A collision only replaces an entry; the capacity keeps the live
+;; entries a small fraction of the slots, where how numeric IDs happen to
+;; collide rarely matters (#9571).
 (define tc-selected-holds-memo-capacity : i64
-  4096)
+  16384)
 (define tc-selected-holds-memo-header : i64
   12)
 (define tc-selected-holds-memo-stride : i64

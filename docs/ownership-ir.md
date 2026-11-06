@@ -437,9 +437,17 @@ owned `T` is expected (an argument or constructor field of type `T`, a result,
 an `if` or `match` joining into `T`, an element of an owned array) is a take
 of its referent (`tc-selected-place-acquire`, `tc-infer-selected-view-take`),
 so the graph rejects it as it rejects any other move out of a reference. A
-`let` whose annotation names the plain `T` binds the view itself when its
-region is visible there, as typing binds it; otherwise the binding needs the
-owned value, a take. Reads that only lend stay reads: `&`, `clone` and other
+`let` initialized by a direct field-read chain rooted at a name, or by a name
+already bound to a view, keeps the view when its annotation names the plain
+`T` and all of its lifetimes are visible there (SPEC section 3.9). The form is
+determined after macro expansion. The annotation preserves the region, loan
+origin and shared or mutable permissions; otherwise the binding needs the
+owned value, a take. Compound initializers such as an `if` or `match` producing
+plain `T` still consume their selected value, even when both alternatives are
+views. A non-Copy `array-ref` or `tuple-ref` element read through a shared or
+mutable reference is also a take when bound by value, annotated or not; it has
+no field/name kept-view exception (SPEC sections 3.10 and 4.7).
+Reads that only lend stay reads: `&`, `clone` and other
 builtin read operands, a field projection, an argument of a shared-reference
 formal. A `&mut` element or field passed where a `&mut` is expected is
 reborrowed (`&mut *p[i]`, `&mut *h.r`, Rust's reborrow coercion), not moved

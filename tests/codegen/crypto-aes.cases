@@ -54,18 +54,43 @@ target linux-x86_64 windows-x86_64
 opt 1 2
 assemble
 repeatable
+if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_absorb_bang
+  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_absorb_bang
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|loop[a-z]*|call[[:space:]]*\*)
+  not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
+end-if
 if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime
   in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_xtime
-  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call)
-  not-match \(%rip\)|\(,%
-else
-  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_gf_mul
-  contains $27
-  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call)
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call|loop[a-z]*)
+  not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
 end-if
-in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_gf_mul
-not-match ^[[:space:]]+(cmpb|testb|set[a-z]+|cmov[a-z]+)
-not-match \(%rip\)|\(,%
+if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_transpose_8x8
+  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_transpose_8x8
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call|loop[a-z]*)
+  not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
+end-if
+if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rotate_rows_1
+  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rotate_rows_1
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call|loop[a-z]*)
+  not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
+end-if
+if-fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rotate_rows_2
+  in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rotate_rows_2
+  not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call|loop[a-z]*)
+  not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
+end-if
+# The Boolean circuit, MixColumns and output planes are straight-line at every
+# level: no edge, table reference or register-indexed address. Only opt1
+# MixColumns/output keep direct calls to the pure rotation/transpose helpers.
+in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang
+not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|call|loop[a-z]*)
+not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
+in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_mix_columns_bang
+not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|loop[a-z]*|call[[:space:]]*\*)
+not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
+in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_squeeze_bang
+not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|loop[a-z]*|call[[:space:]]*\*)
+not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
 in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang
 match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang$
 exec scripts/check-crypto-aes-shape.sh "{{dir}}/out.s" "{{dir}}/audit" "{{root}}/tests/fixtures/crypto-aes/shape-{{target}}-opt{{opt}}.sha256"

@@ -16278,15 +16278,6 @@
             (&
               (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry"))))))))
 
-;; Keep the existing bound on CFG analysis and SSA construction. Inputs above
-;; it retain valid pre-SSA IR and the later non-SSA passes, independent of the
-;; compact edge-capture representation used within the bound.
-(define (opt-ssa-block-budget) : i64
-  4096)
-
-(define (opt-ssa-context-within-budget? [context : (& context OptCfgContext)]) : bool
-  (<= (opt-cfg-index-block-count context.index) (opt-ssa-block-budget)))
-
 (define (opt-ssa-construct-with-context-result
   [func : (& ir.CompilerIrFunction)]
   [params : (& ir.CompilerIrParamSeq)]
@@ -16346,8 +16337,6 @@
               [(opt-ssa-blocks-have-candidate-phi-dst? (& facts) blocks)
                 (Result func context)]
               [(not (opt-ssa-any-candidate? facts)) (Result func context)]
-              [(not (opt-ssa-context-within-budget? context))
-                (Result func context)]
               [(opt-ssa-entry-has-preds? context) (Result func context)]
               [else
                 (opt-ssa-construct-with-context-result
@@ -16844,7 +16833,10 @@
         [items : opt_global_fact_vec.Vec facts.items]
         [slots : (& items (__tl_dyn-array OptGlobalFact))
           (opt_global_fact_vec.slots (& items))]
-        [count : i64 (opt_global_fact_vec.len (& items))]
+        [count : i64
+          (opt-whole-function-lookup-count
+            (opt-cfg-index-block-count doms.index)
+            (opt_global_fact_vec.len (& items)))]
         [index : i64 0]
         (while (< index count)
           (match (opt-global-fact-answer
@@ -61048,15 +61040,18 @@
     (owned_view.compiler-owned-reference-shared-view blocks))
     [(Result next _) next]))
 
-;; Whole-function transforms keep a pathological-CFG work cap. Loop transforms
-;; do not use this value: every loop pass applies its own natural-loop-local
-;; admission checks.
-(define (opt-heavy-pass-block-limit) : i64
-  1026)
+;; Large functions still visit every instruction and run every transform.
+;; Bound searches through equivalent facts from unrelated sibling blocks:
+;; their hash bucket can grow with the function even at a fixed load factor.
+;; Keep the former whole-function tier's complete searches unchanged. #9649
+;; owns a complete indexed search beyond this bounded fallback.
+(define (opt-whole-function-lookup-count [blocks : i64] [count : i64]) : i64
+  (if (or (<= blocks 1026) (<= count 64))
+    count
+    64))
 
-;; The inliner uses a separate crossing guard. Raising it with the heavy-pass
-;; limit costs self-compile time, so it keeps its own boundary until the
-;; inliner has a cost model that pays for larger callers directly.
+;; The inliner's crossing guard remains independent of pass admission. Larger
+;; callers need an inlining cost model that pays for their expansion directly.
 (define (opt-inline-heavy-gate-block-limit) : i64
   1024)
 
@@ -102339,12 +102334,6 @@
                 type-segment-bases
                 (opt-pass-func s)))
             s)))]
-    [run-heavy? : bool
-      (<=
-        (let
-          [blocks (opt-pass-blocks s)]
-          (ir.compiler-ir-block-list-count blocks))
-        (opt-heavy-pass-block-limit))]
     ;; Dominator and natural-loop analyses use the integer CFG index. Their
     ;; admission decisions are loop-local, so an unrelated block elsewhere in
     ;; the enclosing function must not turn the loop pipeline off.
@@ -102423,19 +102412,17 @@
     [s
       (opt-stage
         "gvn"
-        (if run-heavy?
-          (match (opt-gvn-blocks-with-context-and-call-memory-result
-            load-cse-profile
-            type-segment-bases
-            (& (opt-pass-ctx s))
-            (& (opt-pass-params s))
-            (& summaries.call-memory)
-            summaries.global-cell
-            (opt-pass-frame s)
-            (& (opt-pass-blocks s)))
-            [(Result blocks frame)
-              (opt-pass-with-frame-blocks frame (& blocks) s)])
-          s))]
+        (match (opt-gvn-blocks-with-context-and-call-memory-result
+          load-cse-profile
+          type-segment-bases
+          (& (opt-pass-ctx s))
+          (& (opt-pass-params s))
+          (& summaries.call-memory)
+          summaries.global-cell
+          (opt-pass-frame s)
+          (& (opt-pass-blocks s)))
+          [(Result blocks frame)
+            (opt-pass-with-frame-blocks frame (& blocks) s)]))]
     [gvn-frame : i64 (opt-pass-frame s)]
     ;; Dominated bounds-check dedup rides the same context: it only deletes
     ;; mid-block BoundsCheck instructions and REORDERS a constant-offset run's
@@ -102602,19 +102589,15 @@
     [s
       (opt-stage
         "bit_test"
-        (if run-heavy?
-          (opt-pass-with-result-context
-            (& (opt-bit-test-function-pass (opt-pass-func s)))
-            (& s))
-          s))]
+        (opt-pass-with-result-context
+          (& (opt-bit-test-function-pass (opt-pass-func s)))
+          (& s)))]
     [s
       (opt-stage
         "switch"
-        (if run-heavy?
-          (opt-pass-with-result-context
-            (& (opt-switch-form-function-pass (opt-pass-func s)))
-            (& s))
-          s))]
+        (opt-pass-with-result-context
+          (& (opt-switch-form-function-pass (opt-pass-func s)))
+          (& s)))]
     ;; Thread one OptCfgContext per block-state through the preheaders ->
     ;; rotate_ssa -> scratch_reset -> licm -> induction -> unroll -> global_gvn
     ;; chain. Each pass's output blocks are fed verbatim to the next, so the
@@ -102930,41 +102913,33 @@
     [s
       (opt-stage
         "global_gvn"
-        (if run-heavy?
-          (opt-pass-with-func
-            (&
-              (opt-global-value-number-function-with-context
-                type-segment-bases
-                (& (opt-pass-ctx s))
-                verified?
-                (opt-pass-func s)))
-            s)
+        (opt-pass-with-func
+          (&
+            (opt-global-value-number-function-with-context
+              type-segment-bases
+              (& (opt-pass-ctx s))
+              verified?
+              (opt-pass-func s)))
           s))]
     [s
       (opt-stage
         "divrem_safety"
-        (if run-heavy?
-          (opt-pass-with-blocks
-            (&
-              (opt-divrem-safety-blocks-with-context
-                (opt-pass-frame s)
-                type-segment-bases
-                (& summaries.representations)
-                (opt-pass-ctx s)
-                (& (opt-pass-params s))
-                (opt-pass-blocks s)))
-            s)
+        (opt-pass-with-blocks
+          (&
+            (opt-divrem-safety-blocks-with-context
+              (opt-pass-frame s)
+              type-segment-bases
+              (& summaries.representations)
+              (opt-pass-ctx s)
+              (& (opt-pass-params s))
+              (opt-pass-blocks s)))
           s))]
     [s
       (opt-stage
         "bit_length"
-        (if run-heavy?
-          (opt-pass-with-blocks
-            (&
-              (opt-bit-length-idiom-blocks
-                (opt-pass-frame s)
-                (opt-pass-blocks s)))
-            s)
+        (opt-pass-with-blocks
+          (&
+            (opt-bit-length-idiom-blocks (opt-pass-frame s) (opt-pass-blocks s)))
           s))]
     ;; Split multi-use Geps into per-use single-use Geps so the backend's
     ;; indexed-memory fusion fires on every Load/StorePtr (the quicksort swap
@@ -102972,11 +102947,8 @@
     [s
       (opt-stage-unobserved
         "gep_split"
-        (if run-heavy?
-          (opt-pass-with-cfg-func
-            (&
-              (opt-gep-split-function type-segment-bases (& (opt-pass-func s))))
-            s)
+        (opt-pass-with-cfg-func
+          (& (opt-gep-split-function type-segment-bases (& (opt-pass-func s))))
           s))]
     ;; Second rotation round. `flag_exit` is what makes a guarded compare loop
     ;; rotatable at all: it retires the monotone flag's re-test and folds every
@@ -103027,10 +102999,8 @@
     [s
       (opt-stage
         "rotate_ssa"
-        (if run-heavy?
-          (opt-pass-with-cfg-func
-            (& (opt-uniform-phi-rotate-gated (& (opt-pass-func s))))
-            s)
+        (opt-pass-with-cfg-func
+          (& (opt-uniform-phi-rotate-gated (& (opt-pass-func s))))
           s))]
     ;; Sink loop-closing compares next to their branches so the backend's
     ;; compare+branch fusion fires past the flag-safe pointer-increment Gep
@@ -103049,12 +103019,10 @@
         "successor_sink"
         (opt-pass-with-ctx-result
           (&
-            (if run-heavy?
-              (opt-successor-sink-function-with-context-result
-                type-segment-bases
-                (opt-cfg-context-build (opt-pass-blocks s))
-                (opt-pass-func s))
-              (Result (opt-pass-func s) (opt-cfg-context-empty))))
+            (opt-successor-sink-function-with-context-result
+              type-segment-bases
+              (opt-cfg-context-build (opt-pass-blocks s))
+              (opt-pass-func s)))
           (& s)))]
     ;; GS-1's guard-first dominator sink. Its slot is pinned between here and
     ;; `bool_branch_late`, for four reasons. It has to be BELOW every pass that
@@ -103072,15 +103040,13 @@
     [s
       (opt-stage
         "guard_sink"
-        (if run-heavy?
-          (opt-pass-with-cfg-func
-            (&
-              (match (opt-guard-sink-function-with-context-result
-                (& summaries.global-cell)
-                (opt-pass-ctx s)
-                (opt-pass-func s))
-                [(Result f _) f]))
-            s)
+        (opt-pass-with-cfg-func
+          (&
+            (match (opt-guard-sink-function-with-context-result
+              (& summaries.global-cell)
+              (opt-pass-ctx s)
+              (opt-pass-func s))
+              [(Result f _) f]))
           s))]
     ;; BCE versioning runs after the early bool-branch pass and may be the
     ;; final CFG rewrite at the two-iteration fixpoint cap. Lower its
@@ -103090,21 +103056,19 @@
     [s
       (opt-stage
         "bool_branch_late"
-        (if run-heavy?
-          (opt-pass-with-rewrite
-            (&
-              (opt-bool-branch-chain-function-with-context-result
-                type-segment-bases
-                (&
-                  (if (let
-                    [blocks (opt-pass-blocks s)]
-                    (opt-bool-branch-chain-blocks-have-candidate? blocks))
-                    (opt-cfg-context-build (opt-pass-blocks s))
-                    (opt-cfg-context-empty)))
-                false
-                (& (opt-pass-func s))))
-            (& s))
-          s))]
+        (opt-pass-with-rewrite
+          (&
+            (opt-bool-branch-chain-function-with-context-result
+              type-segment-bases
+              (&
+                (if (let
+                  [blocks (opt-pass-blocks s)]
+                  (opt-bool-branch-chain-blocks-have-candidate? blocks))
+                  (opt-cfg-context-build (opt-pass-blocks s))
+                  (opt-cfg-context-empty)))
+              false
+              (& (opt-pass-func s))))
+          (& s)))]
     ;; Below every loop pass on purpose: it consumes a loop the versioner and
     ;; the dominating-comparison fold have both already refused, and it reads
     ;; the ROTATED shape (preheader jump, latch compare) that rotation and LICM
@@ -103113,10 +103077,8 @@
     [s
       (opt-stage
         "ubound"
-        (if run-heavy?
-          (opt-pass-with-result
-            (& (opt-ubound-function-pass type-segment-bases (opt-pass-func s)))
-            s)
+        (opt-pass-with-result
+          (& (opt-ubound-function-pass type-segment-bases (opt-pass-func s)))
           s))]
     ;; The compare/branch fusion pass does not run here but BELOW the whole
     ;; pipeline fixpoint (`opt-cmp-dup-final-pass`). Its copies exist only to
@@ -129952,38 +129914,34 @@
   [func : (& func ir.CompilerIrFunction)]) : OptLateRewriteResult
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function name params ret-ty frame blocks function-abi)
-      (if (<=
-        (ir.compiler-ir-block-list-count blocks)
-        (opt-heavy-pass-block-limit))
-        (let
-          [context : OptCfgContext
-            (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-          (match (let
-            [natural-loops
-              (opt-cfg-natural-loops-with-context
-                (compiler-opt-global-shared-view blocks)
-                context)]
-            (opt-scratch-reset-apply-loops
-              type-segment-bases
-              (& context)
+      (let
+        [context : OptCfgContext
+          (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+        (match (let
+          [natural-loops
+            (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
-              frame
-              (opt_natural_loop_vec.view natural-loops)))
-            [(Result next-blocks next-frame changed)
-              (if changed
-                (Result
-                  (Function
-                    name
-                    params
-                    ret-ty
-                    next-frame
-                    next-blocks
-                    function-abi)
-                  true)
-                (Result
-                  (owned_view.compiler-owned-reference-shared-view func)
-                  false))]))
-        (Result (owned_view.compiler-owned-reference-shared-view func) false))]))
+              context)]
+          (opt-scratch-reset-apply-loops
+            type-segment-bases
+            (& context)
+            (compiler-opt-global-shared-view blocks)
+            frame
+            (opt_natural_loop_vec.view natural-loops)))
+          [(Result next-blocks next-frame changed)
+            (if changed
+              (Result
+                (Function
+                  name
+                  params
+                  ret-ty
+                  next-frame
+                  next-blocks
+                  function-abi)
+                true)
+              (Result
+                (owned_view.compiler-owned-reference-shared-view func)
+                false))]))]))
 
 ;; --- identical function merging ---------------------------------------------
 ;;
@@ -140854,7 +140812,8 @@
     [cursor : i64
       (- (opt_i64_i64_map.get-value-or (& heads) (array-ref bhash id) 0) 1)]
     [found : bool false]
-    (while (and (not found) (>= cursor 0))
+    [remaining : i64 (opt-whole-function-lookup-count block-count block-count)]
+    (while (and (not found) (>= cursor 0) (> remaining 0))
       (if (and
         (not (= cursor id))
         (>= (array-ref cond-var cursor) 0)
@@ -140892,6 +140851,7 @@
               id))))
         (set! found true)
         unit)
+      (-= remaining 1)
       (set! cursor (array-ref bchain cursor)))
     found))
 

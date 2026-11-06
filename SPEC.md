@@ -1854,17 +1854,39 @@ region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
 function.
 
-**Views read through a reference.** Reading a region-taggable value by value
-through a reference, such as `r.items` for `r : (& r S)` or an element of an
-array reached through a reference, produces a value tagged with the
-reference's lifetime. A Copy value is an ordinary copy. A move-only value is a
-*view*: it shares the referent's storage, so it may be read, matched, lent with
-`(& ...)`, passed where the region rules admit it, and bound by value (the
-binder is a view too). A view cannot become an owned value of its plain type:
-an `if` or `match` join with an owned value, a `let` declared with the plain
-type, or a function result would move the value out from behind the reference,
-which section 3.4's `deref` rule rejects ("cannot move non-Copy value through
-shared reference"). A view keeps the references it was read through. Read
+**Views read through a reference.** Reading a region-taggable field through a
+reference, such as `r.items` for `r : (& r S)`, produces a value tagged with the
+reference's lifetime. A Copy value is an ordinary copy. A move-only field value
+is a *view*: it shares the referent's storage, so it may be read, matched, lent
+with `(& ...)`, passed where the region rules admit it, and kept in a binding
+under the field/name rule below. An `array-ref` or `tuple-ref` element read
+through a `&` or `&mut` reference does not have this kept-view binding exception:
+a by-value binding of a non-Copy element is a move out of the reference and is
+rejected with `E0208`, with or without a plain type annotation (sections 3.10
+and 4.7).
+
+A view cannot become an owned value of its plain type: using it where ownership
+of `T` is required, such as a function result of plain type `T`, an argument or
+constructor field of plain type `T`, a store into an owned slot, an element of
+an owned array, or an `if` or `match` result of plain type `T`, would move the
+non-Copy value out of borrowed storage and is rejected with `E0208` under
+section 3.10's move-out rule. A `let` initialized by a direct field-read chain
+rooted at a name, or by a name already bound to a view, keeps that view when its
+annotation names the view's plain type and all of the view's lifetimes are
+visible at the binding. The annotation checks the underlying type; it does not
+confer ownership, remove the region tag or loan origin, or change the view's
+shared or mutable access permissions. The corresponding unannotated field/name
+binding also keeps the view. If the view's lifetimes are not visible at an
+annotated binding, the binding requires the owned value and the initializer is
+rejected with `E0208`. This kept-view binding rule does not extend to arbitrary
+initializer expressions: an `if` or `match` producing plain `T` still consumes
+its selected value, including when both alternatives name views. A subsequent
+ownership-consuming use of a bound view is rejected at that use; writes and
+mutable lends follow the shared-view and mutable-view rules below. To obtain
+an owned copy, bind an explicit `(clone ...)`; a field/name view binding may
+instead name its visible region explicitly as `(in r T)`.
+
+A view keeps the references it was read through. Read
 through `&mut` references only, it is a *mutable view*: writing its elements
 or fields, `replace!` of its parts and lending it with `(&mut ...)` write the
 referent itself, and a view read through it, a copy of it, or a binding of a
@@ -1930,12 +1952,14 @@ Reference types are lifetime-bearing:
   value)` writes through an owned fixed array or a mutable array reference. Private
   `__tl_array-push!` mutates private dynamic buffers. Borrowed `str` source
   semantics are specified in section 3.11.
-- A value read through a reference does not own the referent. `(deref r)`, or
-  a field, tuple-element or element projection through `r` or through
-  `(deref r)`, may be used by value only when its type is `Copy`. A by-value
-  use of a non-`Copy` value read this way is a move out of the reference and
-  is rejected as a move violation (`E0208`): pass, bind or return a borrow
-  `(& ...)` of it, or an owned clone.
+- A value read through a reference does not own the referent. A Copy value may
+  be copied. An ownership-consuming use of a non-Copy value read through either
+  a shared or mutable reference is a move out of the reference and is rejected
+  as a move violation (`E0208`). Keeping a field/name view in a binding as
+  specified in section 3.9 is not such a move. Binding a non-Copy result of
+  `deref` on a reference, `array-ref` on an array reference, or `tuple-ref` on a
+  tuple reference by value remains a move; pass, bind or return a borrow
+  `(& ...)` of the value instead, or an owned clone.
 
 In function signatures, the ordinary spelling elides the lifetime name:
 

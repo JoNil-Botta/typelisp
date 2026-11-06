@@ -28640,6 +28640,50 @@
         [(No) true]
         [(Some _) false]))))
 
+;; A crowded bucket must keep the full search on the old whole-function tier,
+;; and decline a distant match on a large function without substituting an
+;; unrelated expression. A nearby valid fact remains usable in both tiers.
+(test
+  global-facts-large-bucket
+  (let
+    [key : opt.OptGlobalExprKey (BinKey (Add) (Var 1) (Var 2) (I64))]
+    [other : opt.OptGlobalExprKey (BinKey (Sub) (Var 1) (Var 2) (I64))]
+    [facts : opt.OptGlobalFacts (opt.opt-global-facts-new)]
+    [buckets : (__tl_dyn-array opt.OptGlobalFacts)
+      (__tl_make-array opt.OptGlobalFacts 1)]
+    [small : opt.OptDomInfo
+      (opt-cfg-dominators (irt.blocks "entry:\n  return 0"))]
+    [large : opt.OptDomInfo
+      (opt-cfg-dominators
+        (opt.opt-function-blocks (& (opt-ssa-large-function))))]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (for [index (iterator.range 0 64)]
+      (set!
+        facts
+        (opt-global-facts-push facts (Expr (clone other) (+ index 10) 0 1))))
+    (set!
+      (array-ref buckets 0)
+      (opt-global-facts-push facts (Expr (clone key) 7 0 1)))
+    (let
+      [table : opt.OptGlobalFactTable (opt.OptGlobalFactTable buckets)]
+      [probe : opt.OptGlobalFact (Expr key 8 0 0)]
+      [nearby : opt.OptGlobalFact (Expr other 8 0 0)]
+      (test.assert-true
+        (match (opt.opt-global-fact-lookup bases table (& probe) small 0 2)
+          [(Some (Var 7)) true]
+          [_ false])
+        "small function searches the complete bucket")
+      (test.assert-true
+        (match (opt.opt-global-fact-lookup bases table (& probe) large 0 2)
+          [(No) true]
+          [_ false])
+        "large function safely declines a distant match")
+      (test.assert-true
+        (match (opt.opt-global-fact-lookup bases table (& nearby) large 0 2)
+          [(Some (Var 10)) true]
+          [_ false])
+        "large function retains a nearby valid fact"))))
+
 (define (opt-gvn-hash-collision-guard-ok?) : bool
   (let
     [key : opt.OptExprKey (BinKey (Add) (Var 1) (Var 2) (I64))]
@@ -33450,9 +33494,9 @@
     [(not (opt-gsplit-refused? (opt-gsplit-foreign-def-text))) 12]
     [else 42]))
 
-(define (opt-ssa-over-budget-function) : ir.CompilerIrFunction
+(define (opt-ssa-large-function) : ir.CompilerIrFunction
   (let
-    [count : i64 (+ (opt.opt-ssa-block-budget) 1)]
+    [count : i64 4097]
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock count)]
     (for [index (iterator.range 0 count)]
@@ -33463,7 +33507,14 @@
             (& (str_cat.str-cat "ssa_budget_" (string.int->string index))))
           (ir.compiler-ir-instr-seq2
             (Mov 0 (I64 index) (I64))
-            (irt.instr "return %0")))))
+            (if (= (+ index 1) count)
+              (irt.instr "return %0")
+              (Jump
+                (ir.compiler-ir-label
+                  (&
+                    (str_cat.str-cat
+                      "ssa_budget_"
+                      (string.int->string (+ index 1)))))))))))
     (Function
       (opt-test-symbol "ssa_over_budget")
       (ir.compiler-ir-param-seq-empty)
@@ -33509,7 +33560,7 @@
         (ast.ast-global-shared-view nominal-ty))]
     [nominal-unsupported-index : ir.CompilerIrRepresentationIndex
       (opt-ssa-representation-index-for-function nominal-unsupported)]
-    [over-budget : ir.CompilerIrFunction (opt-ssa-over-budget-function)]
+    [over-budget : ir.CompilerIrFunction (opt-ssa-large-function)]
     [over-budget-out : ir.CompilerIrFunction
       (opt.opt-ssa-construct-function
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -33604,7 +33655,12 @@
             nominal-unsupported
             nominal-unsupported-index))
         22]
-      [(not (opt.opt-function-eq bases over-budget over-budget-out)) 23]
+      [(not
+          (opt.opt-verify-single-defs?
+            (& (opt.opt-function-params (& over-budget-out)))
+            (opt.opt-function-frame (& over-budget-out))
+            (& (opt.opt-function-blocks (& over-budget-out)))))
+        23]
       [else 42])))
 
 ;; The raw tail-recursion-to-loop shape targets the function ENTRY block and its

@@ -14,8 +14,8 @@ mkdir -p "$work"
 # metadata/comments; CR normalization makes the same target host-independent.
 awk -v output="$work" -v family="$family" '
 function selected(name) {
-    if (family == "gcm") return name ~ /^_tl_stdlib_crypto_(aes_core|aes128_gcm|ghash_core)_/ || name ~ /^gcm_audit_(seal|open)(\$typelisp)?$/ || name ~ /^_tl_stdlib_crypto_secret_stdlib_crypto_secret_(difference_bits|wipe_words_bang)$/ || name == "main"
-    return name ~ /^_tl_stdlib_crypto_aes_core_/ || name ~ /^aes_audit_production_(128|256)(\$typelisp)?$/ || name == "main"
+    if (family == "gcm") return name ~ /^_tl_stdlib_crypto_(aes_core|aes128_gcm|ghash_core|stack_scrub)_/ || name ~ /^gcm_audit_(seal|open)(\$typelisp)?$/ || name ~ /^_tl_stdlib_crypto_secret_stdlib_crypto_secret_(difference_bits|wipe_words_bang)$/ || name == "main"
+    return name ~ /^_tl_stdlib_crypto_(aes_core|stack_scrub)_/ || name ~ /^aes_audit_production_(128|256)(\$typelisp)?$/ || name == "main"
 }
 /^[[:space:]]*\.globl / {
     name = $2

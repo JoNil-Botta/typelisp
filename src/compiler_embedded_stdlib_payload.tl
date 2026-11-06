@@ -45,6 +45,8 @@
 
 (include-str-lzss payload-crypto-secret "../stdlib/crypto_secret.tl")
 
+(include-str-lzss payload-crypto-stack-scrub "../stdlib/crypto_stack_scrub.tl")
+
 (include-str-lzss payload-crypto-sha1-git "../stdlib/crypto_sha1_git.tl")
 
 (include-str-lzss payload-crypto-sha256 "../stdlib/crypto_sha256.tl")
@@ -234,6 +236,8 @@
       (compiler-embedded-stdlib-payload-copy payload-crypto-hmac-sha256)]
     [(string.eq suffix "crypto_secret.tl")
       (compiler-embedded-stdlib-payload-copy payload-crypto-secret)]
+    [(string.eq suffix "crypto_stack_scrub.tl")
+      (compiler-embedded-stdlib-payload-copy payload-crypto-stack-scrub)]
     [(string.eq suffix "crypto_sha1_git.tl")
       (compiler-embedded-stdlib-payload-copy payload-crypto-sha1-git)]
     [(string.eq suffix "crypto_sha256.tl")

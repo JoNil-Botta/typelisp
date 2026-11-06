@@ -416,11 +416,15 @@ The `string_caller_result.tl`, `io_caller_result.tl`, and
 `io_caller_result.tl` is an explicit binary-to-text materialization boundary;
 borrowed process runtime wrappers likewise copy at their owned boundary.
 
-AES/GCM volatile cleanup covers the explicit secret owners and named scratch,
-not compiler-generated stack spill slots, registers, caches or dumps. Opt2 is
-the default release profile and is included in that limitation. The GCM
-fixture documentation discloses GHASH frame/store counts and the shared
-[#9648 hardening follow-up](https://github.com/JoNil-Botta/typelisp/issues/9648).
+AES/GCM volatile cleanup covers explicit secret owners and named scratch.
+A shared best-effort stack scrub reclaims retired arithmetic/setup frames after
+public AES operations and the complete tree after GCM key setup, seal or open,
+including authentication failure. Public single-block calls pay approximately
+405 Ir (4.25% AES-128 / 3.10% AES-256); composed stdlib modes use one tree scrub
+per operation. This is not an erasure guarantee: compiler spills still occur at
+default release opt2, and registers/caches/dumps remain excluded. There is no
+timing/side-channel certification. The [fixture review](../tests/fixtures/crypto-aes/stack-scrub-review.md)
+records the remaining conditional key-recovery exposure and boundary checks.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|

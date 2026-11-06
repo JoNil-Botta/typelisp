@@ -18,6 +18,12 @@
 ;# spill slot, cache and dump erasure are outside the cleanup guarantee; the
 ;# circuit's temporaries spill at every optimization level. This is not an ECB
 ;# mode or policy API.
+;# Public single-block calls pay a best-effort stack scrub of approximately
+;# 405 Ir (4.25% AES-128 / 3.10% AES-256); composed stdlib modes use one tree
+;# scrub per operation. Not an erasure guarantee; registers/caches/dumps excluded;
+;# no timing/side-channel certification. The default opt2 core still spills.
+;# If surviving last-round state is disclosed with the public ciphertext, the
+;# recovered last round key can be inverted to recover the AES-128 key.
 ;#
 ;# Usage: `(import stdlib.crypto_aes_core)`
 ;#
@@ -40,6 +46,7 @@
 ;#     [(aes.Aes128Err _) 1]))
 ;# ```
 (import stdlib.crypto_secret as secret)
+(import stdlib.crypto_stack_scrub as scrub)
 (cfg test (import stdlib.test))
 
 ;: Test-only tally of visited source work sites, never secret values. Each
@@ -637,7 +644,9 @@
     (unsafe
       (absorb! (ptr-offset schedule (* round 16)) state 0xffffffffffffffff))))
 
-;: Validated 10/14-round forward core on eight local bit planes. Publish only
+;: Validated 10/14-round forward core on eight local bit planes. The public
+;: selector adds helper-frame reclamation; internal modes reclaim the whole tree.
+;: Publish only
 ;: the finished ciphertext; no allocation, owner mutation, checked indexing or
 ;: recoverable work occurs. The plane scratch is wiped after the last round.
 (unsafe
@@ -645,7 +654,8 @@
     [schedule : (Ptr u8)]
     [source : (Ptr u8)]
     [destination : (MutPtr u8)]
-    [rounds : i64]) : unit
+    [rounds : i64]
+    [scrub-block : bool]) : unit
     (let
       [scratch : (Array u64 8) (make-array u64 8)]
       [state : (MutPtr u64)
@@ -675,7 +685,8 @@
       (unsafe
         (squeeze! (ptr-cast state : (Ptr u64)) destination))
       (unsafe
-        (secret.wipe-words! state 8)))))
+        (secret.wipe-words! state 8))
+      (when scrub-block (scrub.block!)))))
 
 ;: Require exact live fixed storage, including its public capacity.
 (define (check-fixed [owner : (& owner secret.SecretFixed)] [length : i64]) : secret.SecretStatus
@@ -752,11 +763,11 @@
 
 ;: Consume an exact live 16-byte key through the nominal owner-transfer seam.
 (defmacro (new-128 [key : Expr]) : Aes128Result
-  `(construct-128 (RawKey ,key)))
+  `(construct-public-128 (RawKey ,key)))
 
 ;: Consume an exact live 32-byte key through the nominal owner-transfer seam.
 (defmacro (new-256 [key : Expr]) : Aes256Result
-  `(construct-256 (RawKey ,key)))
+  `(construct-public-256 (RawKey ,key)))
 
 ;: Whether two validated backing ranges overlap; subtraction avoids overflow.
 (unsafe
@@ -784,7 +795,8 @@
     [source : (& source secret.SecretFixed)]
     [destination : (&mut destination secret.SecretFixed)]
     [length : i64]
-    [rounds : i64]) : AesStatus
+    [rounds : i64]
+    [scrub-block : bool]) : AesStatus
     (cond
       [(not
           (unsafe
@@ -831,7 +843,7 @@
                     (AesErr (AesOverlap))
                     (begin
                       (unsafe
-                        (cipher! keys input output rounds))
+                        (cipher! keys input output rounds scrub-block))
                       (AesOk))))])])])))
 
 ;: Borrow a live AES-128 schedule repeatedly; exact-16 owners must be disjoint.
@@ -840,7 +852,7 @@
   [source : (& source secret.SecretFixed)]
   [destination : (&mut destination secret.SecretFixed)]) : AesStatus
   (unsafe
-    (encrypt-checked! (& schedule.expanded) source destination 176 10)))
+    (encrypt-checked! (& schedule.expanded) source destination 176 10 true)))
 
 ;: Borrow a live AES-256 schedule repeatedly; exact-16 owners must be disjoint.
 (define (encrypt-256!
@@ -848,7 +860,7 @@
   [source : (& source secret.SecretFixed)]
   [destination : (&mut destination secret.SecretFixed)]) : AesStatus
   (unsafe
-    (encrypt-checked! (& schedule.expanded) source destination 240 14)))
+    (encrypt-checked! (& schedule.expanded) source destination 240 14 true)))
 
 (cfg
   test
@@ -864,3 +876,27 @@
       (test.assert-true
         (= (sbox (cast 0x53 : u8)) (cast 0xed : u8))
         "FIPS S-box example"))))
+
+;: Internal composition seam. The enclosing synchronous stdlib operation must
+;: reclaim its complete retired tree before returning, including failures.
+(unsafe
+  (define (encrypt-composed-128!
+    [schedule : (& schedule Aes128Schedule)]
+    [source : (& source secret.SecretFixed)]
+    [destination : (&mut destination secret.SecretFixed)]) : AesStatus
+    (unsafe
+      (encrypt-checked! (& schedule.expanded) source destination 176 10 false))))
+
+;: Public construction finishes raw-key cleanup before reclaiming its tree.
+(define (construct-public-128 [input : RawKey]) : Aes128Result
+  (let
+    [result : Aes128Result (construct-128 input)]
+    (scrub.setup!)
+    result))
+
+;: AES-256 uses the same setup reclaim mechanism and validated expansion.
+(define (construct-public-256 [input : RawKey]) : Aes256Result
+  (let
+    [result : Aes256Result (construct-256 input)]
+    (scrub.setup!)
+    result))

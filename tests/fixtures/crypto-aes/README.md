@@ -81,3 +81,32 @@ renewed review; an inlined helper is inspected in its actual containing body.
 These checks are regression boundaries, not a timing proof or completed
 side-channel review. Fatal OOM/panic/abort can bypass cleanup. Volatile memory
 wipes make no promise about registers, caches, core dumps or swap.
+
+## Best-effort retired-stack hardening (D-C132 / D-C155)
+
+Public single-block calls pay a best-effort stack scrub of approximately 405 Ir
+(4.25% AES-128 / 3.10% AES-256); composed stdlib modes use one tree scrub per
+operation. Not an erasure guarantee; registers/caches/dumps excluded; no
+timing/side-channel certification. Opt2 is the default release profile and still
+produces secret spills. If surviving final-round state is obtained together with
+the public ciphertext, it can reveal the last round key and therefore the AES-128
+key. The scrub reduces retired-frame residence; it does not rule out that attack.
+
+The internal composed AES seam retains the same typed validation and cipher.
+GCM uses it for H, J0 and payload blocks and reclaims its full tree once per key
+setup, seal or open, including authentication refusal. Standalone constructors
+reclaim their expanded-schedule call tree after raw-key cleanup. No caller batch
+API or optimization-level cfg is introduced.
+
+`stage2-crypto-stack-residue` is required on both native hosts. Its checked-in
+fixture exercises eight distinct public boundaries. The harness compiles the
+actual closure at opt1 and opt2, recomputes call-frame/red-zone bounds and the
+emitted reclaim array interval, then seeds every word of that retired interval
+before the real reclaim. It requires zero residue and exactly one hit per
+boundary. The pinned manifest independently removes and shortens each boundary
+scrub; all 32 negative executions must return the residue-failure status, with
+unchanged cryptographic/result checks. An unused helper cannot satisfy it.
+
+See [stack-scrub-review.md](stack-scrub-review.md) for address intervals, stack
+store classes, ABI/save exclusions, the changed GCTR target and the D-C150 ceiling.
+The compiler-erasure proposal remains separate and is not implemented.

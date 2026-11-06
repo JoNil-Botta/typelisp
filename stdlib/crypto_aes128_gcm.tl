@@ -38,8 +38,13 @@
 ;#             [_ 1]))]
 ;#       [_ 1])))
 ;# ```
+;# H/J0/GCTR use the internal validated AES path. Key setup, seal and open
+;# reclaim retired keyed frames once at exit, including authentication failure.
+;# This is best-effort stack hardening, not an erasure guarantee; default opt2
+;# still spills, and registers/caches/dumps and timing certification are excluded.
 (import stdlib.crypto_aes_core as aes)
 (import stdlib.crypto_secret as secret)
+(import stdlib.crypto_stack_scrub as scrub)
 (import stdlib.crypto_ghash_core as ghash)
 (import stdlib.byte_buf as buf)
 
@@ -168,7 +173,7 @@
         (GcmTagOk (GcmTag octets))))))
 
 ;: Constructor implementation consumes the same nominal key transfer as AES.
-(define (construct-key [input : aes.RawKey]) : GcmKeyResult
+(define (construct-key-operation [input : aes.RawKey]) : GcmKeyResult
   (match (aes.check-fixed (& input.value) 16)
     [(SecretErr error)
       (aes.close-raw-key input)
@@ -183,7 +188,8 @@
             (secret.close-fixed h)
             (GcmKeyErr (GcmAes error))]
           [(Aes128Ok schedule)
-            (match (aes.encrypt-128! (& schedule) (& zero) (&mut h))
+            (match (unsafe
+              (aes.encrypt-composed-128! (& schedule) (& zero) (&mut h)))
               [(AesOk)
                 (secret.close-fixed zero)
                 (GcmKeyOk (GcmKey schedule h))]
@@ -246,7 +252,8 @@
       (while (< offset length)
         (unsafe
           (counter! nonce block counter-data))
-        (match (aes.encrypt-128! (& key.schedule) counter stream)
+        (match (unsafe
+          (aes.encrypt-composed-128! (& key.schedule) counter stream))
           [(AesOk) unit]
           [(AesErr _) (checked.size-abort "GCM validated AES invariant\n")])
         (cfg test (set! payload-blocks (+ payload-blocks 1)) unit)
@@ -283,12 +290,13 @@
             nonce
             (cast 1 : u32)
             (secret.storage-data counter.handle.storage)))
-        (match (aes.encrypt-128! (& key.schedule) counter stream)
+        (match (unsafe
+          (aes.encrypt-composed-128! (& key.schedule) counter stream))
           [(AesOk) (GcmOk)]
           [(AesErr error) (GcmErr (GcmAes error))])])))
 
 ;: Fresh output means no caller-buffer aliasing. Validate/allocate before AES.
-(define (seal
+(define (seal-operation
   [key : (& key GcmKey)]
   [nonce : (& nonce GcmNonce)]
   [aad : (& aad bytes)]
@@ -360,7 +368,7 @@
               (GcmSealOk (GcmSealed output tag)))])))))
 
 ;: Preallocate before keyed work; authenticate completely before plaintext writes.
-(define (open
+(define (open-operation
   [key : (& key GcmKey)]
   [nonce : (& nonce GcmNonce)]
   [aad : (& aad bytes)]
@@ -421,3 +429,34 @@
                       (ptr-cast stream-data : (Ptr u8))))
                   (set! output.len length)
                   (GcmOpenOk output))))])))))
+
+;: Internal operations finish all owner cleanup before the shared tree scrub.
+;: This wrapper also covers structured validation and authentication failures.
+(define (construct-key [input : aes.RawKey]) : GcmKeyResult
+  (let
+    [result : GcmKeyResult (construct-key-operation input)]
+    (scrub.tree!)
+    result))
+
+;: Seal publishes its result only after reclaiming retired keyed frames.
+(define (seal
+  [key : (& key GcmKey)]
+  [nonce : (& nonce GcmNonce)]
+  [aad : (& aad bytes)]
+  [plaintext : (& plaintext bytes)]) : GcmSealResult
+  (let
+    [result : GcmSealResult (seal-operation key nonce aad plaintext)]
+    (scrub.tree!)
+    result))
+
+;: Authentication failure and successful open share the same final tree scrub.
+(define (open
+  [key : (& key GcmKey)]
+  [nonce : (& nonce GcmNonce)]
+  [aad : (& aad bytes)]
+  [ciphertext : (& ciphertext bytes)]
+  [tag : (& tag GcmTag)]) : GcmOpenResult
+  (let
+    [result : GcmOpenResult (open-operation key nonce aad ciphertext tag)]
+    (scrub.tree!)
+    result))

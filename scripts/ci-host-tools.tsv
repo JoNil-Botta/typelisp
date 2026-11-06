@@ -8,6 +8,7 @@
 # on all of them. check: shell text evaluated in the checkout root, succeeding
 # when the tool is usable. install: how to get the tool.
 tool	hosts	gates	check	install
+awk and sha256sum	all	stage2-crypto-stack-residue	command -v awk && command -v sha256sum	install awk and GNU coreutils (included with Git Bash on Windows)
 GCM section reader	all	stage2-crypto-gcm-native-report	command -v llvm-readobj || command -v objdump	install LLVM (llvm-readobj) or GNU binutils (objdump)
 clang for Windows GCM assembly	linux	stage2-crypto-gcm-fixed-work-asm-shape-gate	command -v clang	install Clang to assemble the Windows x86-64 GCM audit output
 systemd user memory limits	linux	stage2-ownership-model,stage2-inline-aggregate-scaling,stage2-linux-stack-protection	. "$ROOT/scripts/lib-linux-memory-limit.sh" && linux_memory_limit_systemd_available	run with a user systemd manager supporting MemoryMax and MemorySwapMax

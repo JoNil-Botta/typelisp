@@ -31,3 +31,7 @@ tests/fixtures/elf-object/*.expected text eol=lf
 tests/fixtures/elf-dso/*.in binary
 tests/fixtures/elf-dso/*.expected text eol=lf
 tests/fixtures/elf-dso/producer.manifest text eol=lf
+
+# Stack-residue mutation recipes are SHA256-pinned on both native hosts.
+tests/fixtures/crypto-aes/stack-residue-mutants.tsv text eol=lf
+tests/fixtures/crypto-aes/stack-residue-mutants.sha256 text eol=lf

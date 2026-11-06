@@ -132,7 +132,8 @@ labels (`.LfN_`) are normalized. Their pins changed only because the module
 now has a different number of functions.
 
 Like registers, compiler-managed stack spill slots are outside the
-volatile-wipe guarantee; only the named scratch arrays are wiped. The stated
+volatile-wipe guarantee. The original bitsliced revision wiped only its named
+scratch arrays; the D-C155 boundary update below adds best-effort reclamation. The stated
 guarantee is unchanged, but the actual opt2 exposure is not, and this is a
 disclosed adverse cost of the change.
 
@@ -143,7 +144,8 @@ disclosed adverse cost of the change.
   wiped scratch. The remaining `cipher!`/`expand!` frame stores held public
   values: lengths, pointers, `rcon` and callee-saved/argument homes.
 - The new opt2 bodies spill circuit temporaries and plane values, and nothing
-  wipes those dead slots. Each count below is mov-to-stack writes, plus
+  wiped those dead slots before the boundary update below. Each count below is
+  mov-to-stack writes, plus
   read-modify-write writes to frame slots, plus the callee-saved `pushq` saves
   in the prologue:
   - Linux: `sub-bytes!` (200 B frame) has 49 mov-to-stack + 6 pushes, and
@@ -158,7 +160,7 @@ disclosed adverse cost of the change.
   which uses optimizer level 2. This exposure therefore applies to default
   builds.
 
-Both callers of the circuit leave residue:
+Before the final boundary reclaim, both callers of the circuit leave residue:
 
 - Block encryption: the last round's values remain in dead stack after
   `cipher!` returns. Together with the public ciphertext, final-round S-box
@@ -169,8 +171,20 @@ Both callers of the circuit leave residue:
   words (for AES-128, the SubWord of w[39]) therefore remain in dead stack
   after `new-128`/`new-256` return.
 
-A best-effort scrub of the dead stack region after both the block call and
-schedule construction is tracked as P1 hardening follow-up #9648. It depends on
+The D-C155 update below implements the P1 best-effort scrub of the dead stack
+region after both the block call and schedule construction in #9648. It depends on
 frame layout, so it would not be a guarantee. D-C132 accepted this residue as
 an explicit security/performance tradeoff. None of these checks is a timing or
 side-channel certification.
+
+## D-C155 boundary update
+
+The raw cipher and validation remain shared. A public selector performs block
+helper-frame reclamation after the existing plane wipe; GCM selects the internal
+path and reclaims its complete tree after each key/seal/open operation. Public
+constructors reclaim the setup chain after the consumed key has been wiped.
+The complete new reclaim bodies and all containing callers are now part of the
+shape inventory. Old instruction counts above describe the original bitsliced
+core. The [stack review](stack-scrub-review.md) records the current intervals,
+residue controls and changed GCTR call target. This is a best-effort reduction
+of the disclosed exposure, never an erasure or side-channel guarantee.

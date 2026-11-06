@@ -88,6 +88,8 @@ reject_diag() {
             printf 'format: unsupported nominal type struct_stdlib.crypto_aes_core/Aes256Schedule' ;;
         stdlib/tests/crypto_aes_raw_reject.tl)
             printf 'ptr-read requires unsafe context' ;;
+        stdlib/tests/crypto_aes_composed_reject.tl)
+            printf 'encrypt-composed-128! requires unsafe context' ;;
         stdlib/tests/crypto_aes_rounds_reject.tl)
             printf 'encrypt-checked! requires unsafe context' ;;
         stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl|stdlib/tests/crypto_hkdf_sha256_view_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl)

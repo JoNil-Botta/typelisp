@@ -166,8 +166,9 @@ explicit caller policy. With `AllowWildcards`, `*.com` matches `example.com`
 and `*.co.uk` matches `example.co.uk`: RFC matching provides no PSL enforcement.
 No suffix list or label-count guess is shipped. IP families and exact network
 octets remain distinct, including IPv4 versus IPv4-mapped IPv6. Brackets,
-zones, ports and network prefixes are refused. Subject/Common Name/RDN, SNI
-and certificate contents never create caller references. This API verifies
+zones, ports, network prefixes and numeric IPv4 spellings with a terminal
+dot are refused. Subject/Common Name/RDN, SNI and certificate contents never
+create caller references. This API verifies
 leaf identity only; path authorization, trust, signatures, validity and TLS
 configuration remain separate responsibilities. All names/addresses are
 public and comparisons are variable-time; no secrets or secret spill residue

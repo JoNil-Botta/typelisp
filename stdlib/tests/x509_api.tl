@@ -1168,7 +1168,7 @@
       (append (service-dns "192.0.2.1") (tlv 135 (hex "c0000201")))]
     [certificate : x509.Certificate (service-certificate san)]
     (service-match (& certificate) "192.0.2.1" 1)
-    (service-match (& certificate) "192.0.2.1." 1)
+    (service-input-error "192.0.2.1." (x509.InvalidDnsName))
     (service-mismatch (& certificate) "192.0.2.2")
     (service-mismatch (& certificate) "::ffff:192.0.2.1")
     (service-mismatch (& certificate) "192.000.2.1")

@@ -1670,8 +1670,9 @@
             (set! index (+ index 1)))
           ; A terminal dot must not permit numeric IPv4 to become a DNS-ID.
           (match (ip.parse-ipv4 (string.substring-view input 0 length))
-            [(ip.Ipv4Ok address)
-              (return (ServiceReferenceOk (Ip (ip.V4 address))))]
+            [(ip.Ipv4Ok _)
+              (return
+                (ServiceReferenceErr (ServiceIdentityError (InvalidDnsName) 0)))]
             [(ip.Ipv4Err _) unit])
           (let
             [storage : (MutPtr ServiceDnsName)

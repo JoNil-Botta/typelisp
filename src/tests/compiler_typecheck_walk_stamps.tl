@@ -10,6 +10,7 @@
 (import compiler_parse_core as parser)
 (import compiler_typecheck_api)
 (import sym_i64_env)
+(import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.iterator)
 (import stdlib.io)
@@ -335,25 +336,79 @@
     (walk-source-dag 4 1)
     ")]) : i64 (let [p x] [q x] 0))\n(define (main) : i64 0)\n"))
 
-;; One check of the context source with the serial job bound around it (so
-;; its table survives the check): the verdict must be `copyable`; returns the
-;; serials the check issued.
-(define (walk-context-run [copyable : bool]) : i64
+;; One check of `source` with the serial job bound around it (so its table
+;; survives the check): the verdict must be `want`; returns the serials the
+;; check issued.
+(define (walk-check-run [source : String] [want : bool]) : i64
   (let
     [serial : tc.TcJobState (tc.tc-serial-job-state)]
     [outer : tc.TcTypeWalkBinding (tc.tc-type-walk-bind! serial)]
     [ok : bool
-      (match (check_core.compiler-check-source
-        "tests/walk_context.tl"
-        (walk-context-source copyable))
+      (match (check_core.compiler-check-source "tests/walk_context.tl" source)
         [(Ok _ _) true]
         [(Err _ _) false])]
     [issued : i64 (walk-table-serial)]
     (tc.tc-type-walk-restore! outer)
     (tc.tc-type-walk-table-release! serial)
-    (walk-expect "context check verdict" (= ok copyable))
-    (walk-expect "context check left walk words open" (walk-words-idle?))
+    (walk-expect "walk check verdict" (= ok want))
+    (walk-expect "walk check left walk words open" (walk-words-idle?))
     issued))
+
+(define (walk-context-run [copyable : bool]) : i64
+  (walk-check-run (walk-context-source copyable) copyable))
+
+;; A depth-8 DAG of `T` values (each holds an `S` holding a reference to a
+;; local), clear, under an arena owner (gated), or escaping its scope: struct
+;; frames for holds-reference and move-kind, arena tagging and erasure, and
+;; loan checks all walk 256 shared leaves under one root.
+(define (walk-lifetime-chain [depth : i64]) : String
+  (if (= depth 0)
+    "[local : i64 0] [x0 (T (S (& local)))]"
+    (str_cat.str-cat
+      (walk-lifetime-chain (- depth 1))
+      " [x"
+      (string.int->string depth)
+      " (tuple x"
+      (string.int->string (- depth 1))
+      " x"
+      (string.int->string (- depth 1))
+      ")]")))
+
+(define (walk-lifetime-source [kind : i64]) : String
+  (str_cat.str-cat
+    "(import stdlib.arena)\n(defstruct S (:lifetimes r) (value (& r i64)))\n(defstruct T (:lifetimes r) (value (S r)))\n(define (probe) : i64 (let "
+    (if (= kind 0)
+      (walk-lifetime-chain 8)
+      (if (= kind 1)
+        (str_cat.str-cat "[owner (arena.make)] " (walk-lifetime-chain 8))
+        (str_cat.str-cat
+          "[owner (arena.make)] [keep (let "
+          (walk-lifetime-chain 8)
+          " x8)]")))
+    " 0))\n(define (main) : i64 0)\n"))
+
+;; Clear and gated pass, escape fails (E0205 on main), stamping on and off.
+(define (walk-lifetime-test) : unit
+  (walk-expect
+    "clear stamps"
+    (>= (walk-check-run (walk-lifetime-source 0) true) 1))
+  (walk-expect
+    "gated stamps"
+    (>= (walk-check-run (walk-lifetime-source 1) true) 1))
+  (walk-expect
+    "escape stamps"
+    (>= (walk-check-run (walk-lifetime-source 2) false) 1))
+  (tc.tc-walk-serial-limit-set! 1)
+  (walk-expect
+    "clear plain"
+    (= (walk-check-run (walk-lifetime-source 0) true) 0))
+  (walk-expect
+    "gated plain"
+    (= (walk-check-run (walk-lifetime-source 1) true) 0))
+  (walk-expect
+    "escape plain"
+    (= (walk-check-run (walk-lifetime-source 2) false) 0))
+  (tc.tc-walk-serial-limit-set! 1152921504606846976))
 
 ;; Copyable / move-only / copyable in turn, stamping on (serials issued, so
 ;; nominal frames run under an open serial) and stamping off (limit 1): the
@@ -416,6 +471,7 @@
       (walk-repl-test job)
       (walk-failing-check-test job)
       (walk-context-test)
+      (walk-lifetime-test)
       (ast.ast-node-pool-context-install!
         (ast.ast-node-pool-context-new-with-capacities 8 8))
       ;; Release in between: the next walk starts a fresh table.

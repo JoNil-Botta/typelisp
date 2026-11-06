@@ -1882,6 +1882,328 @@
     (compiler-lower-operand-snapshot-shape-ok?)
     "snapshot only storage that later evaluation can write"))
 
+;; Each loop puts its binding before the loop and its effect/consumer in one
+;; separate arm. The consumed var must be captured in that arm before the
+;; effect, rather than merely being copied somewhere in the function.
+(define (lower-test-captured-use?
+  [captured : (& captured (__tl_dyn-array bool))]
+  [_role : ir.CompilerIrOperandRole]
+  [found : bool]
+  [value : ir.CompilerIrValue]) : bool
+  (or
+    found
+    (match value
+      [(Var id)
+        (and (>= id 0) (< id (array-length captured)) (array-ref captured id))]
+      [_ false])))
+
+(define (lower-test-snapshot-before-effect
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [name : String]
+  [effect : String]
+  [consumer : String]) : i64
+  (match (lower-test-function-seq-find functions name)
+    [(No) -1]
+    [(Some func)
+      (match func
+        [(Function _ _ _ vars (Array blocks) _)
+          (for [block-index
+            (iterator.range 0 (ir.compiler-ir-block-seq-count blocks))]
+            (match (ir.compiler-ir-block-seq-borrow blocks block-index)
+              [(Block _ instrs)
+                (let
+                  [captured : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+                  [effect-seen : bool false]
+                  (for [index (iterator.range 0 instrs.len)]
+                    (let
+                      [instr : ir.CompilerIrInstr
+                        (clone (array-ref instrs.slots index))]
+                      [used : i64
+                        (if (string.eq consumer "")
+                          (match (clone instr)
+                            [(or (CallIndirect _ (Var value) _ _)
+                                 (TailCallIndirect (Var value) _ _))
+                              value]
+                            [_ -1])
+                          (match (clone instr)
+                            [(or (Call _ target args _)
+                                 (TailCall target args _))
+                              (if (string.eq
+                                (ir.compiler-ir-symbol-text target)
+                                consumer)
+                                (match args
+                                  [(Two (Var value) _) value]
+                                  [_ -1])
+                                -1)]
+                            [_ -1]))]
+                      (when
+                        (and effect-seen (>= used 0) (< used vars))
+                        (return
+                          (if (array-ref captured used)
+                            1
+                            0)))
+                      (if (lower-test-instr-call-name? (clone instr) effect)
+                        (set! effect-seen true)
+                        (when
+                          (and
+                            (not effect-seen)
+                            (or
+                              (>
+                                (lower-test-instr-copy-mov-count (clone instr))
+                                0)
+                              (> (lower-test-instr-load-count (clone instr)) 0)
+                              (match (ir.compiler-ir-instr-effect (& instr))
+                                [(Pure)
+                                  (ir.compiler-ir-instr-fold-uses
+                                    (clone instr)
+                                    false
+                                    lower-test-captured-use?
+                                    (& captured))]
+                                [_ false])))
+                          (let
+                            [dst : i64 (ir.compiler-ir-instr-dst (& instr))]
+                            (when
+                              (and (>= dst 0) (< dst vars))
+                              (set! (array-ref captured dst) true))))))))]))
+          -2]
+        [_ -2])]))
+
+(define (compiler-lower-cached-exposure-source) : String
+  (let
+    [source : String ""]
+    (for [variant (iterator.range 0 3)]
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          "\n(define (cached-"
+          (if (= variant 0)
+            "param"
+            (if (= variant 1)
+              "local"
+              "shadow"))
+          " [x : i64] [q : (MutPtr i64)] [n : i64] "))
+      (when
+        (= variant 0)
+        (for [index (iterator.range 0 40)]
+          (set!
+            source
+            (str_cat.str-cat
+              source
+              "[arg"
+              (string.int->string index)
+              " : i64] "))))
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          ") : i64 (let "
+          (if (= variant 1)
+            "[x : i64 1] "
+            "")))
+      (for [index (iterator.range 0 40)]
+        (set!
+          source
+          (str_cat.str-cat
+            source
+            "[pad"
+            (string.int->string index)
+            " : i64 0] ")))
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          "[result : i64 0] [i : i64 0] (while (< i n) "
+          "(when (= i 1) (set! result (first x (write-99! q)))) "
+          (if (= variant 2)
+            "(let [x : i64 17] (unsafe (ptr-addr-of x)) unit) "
+            "(set! q (unsafe (ptr-addr-of x))) ")
+          "(set! i (+ i 1))) result))\n")))
+    (set!
+      source
+      (str_cat.str-cat
+        source
+        "(define (cached-param-call [q : (MutPtr i64)]) : i64 (cached-param 1 q 2 "))
+    (for [_index (iterator.range 0 40)]
+      (set! source (str_cat.str-cat source "0 ")))
+    (str_cat.str-cat source "))")))
+
+(define (compiler-lower-loop-exposure-source) : String
+  (str_cat.str-cat
+    "(define x : i64 77)
+(define global-slot : i64 0)
+(defstruct Pair (left i64) (right i64))
+(defenum Choice (Value i64))
+(define (first [a : i64] [_b : i64]) : i64 a)
+(define (first-ref [a : (& i64)] [_b : i64]) : i64 (deref a))
+(define (inc [x : i64]) : i64 (+ x 1))
+(define (dec [x : i64]) : i64 (- x 1))
+(define (write-99! [q : (MutPtr i64)]) : i64 (unsafe (ptr-write! q 99)) 0)
+(define (write-dec! [p : (MutPtr (-> i64 i64))]) : i64 (unsafe (ptr-write! p dec)) 41)
+(define (loop-argument [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (set! q (unsafe (ptr-addr-of x))) (set! i (+ i 1))) result))
+(define (loop-callee [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (f (write-dec! p))))
+      (set! p (unsafe (ptr-addr-of f))) (set! i (+ i 1))) result))
+(define (loop-wrapped [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result ((begin unit f) (write-dec! p))))
+      (when (> i 0) (set! p (unsafe (ptr-addr-of f)))) (set! i (+ i 1))) result))
+(define (projection [q : (MutPtr i64)] [n : i64]) : i64
+  (let [pair : Pair (Pair 1 41)] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first pair.left (write-99! q))))
+      (set! q (unsafe (ptr-addr-of pair.left))) (set! i (+ i 1))) result))
+(define (match-bound [choice : Choice] [q0 : (MutPtr i64)] [n : i64]) : i64
+  (match choice [(Value x)
+    (let [q : (MutPtr i64) q0] [result : i64 0] [i : i64 0]
+      (while (< i n)
+        (when (= i 1) (set! result (first x (write-99! q))))
+        (set! q (unsafe (ptr-addr-of x))) (set! i (+ i 1))) result)]))
+(define (shadowed [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (let [x : i64 17] (unsafe (ptr-addr-of x)) unit) (set! i (+ i 1))) result))
+(define (match-shadowed [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [choice : Choice (Value 17)] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (match choice [(Value x) (unsafe (ptr-addr-of x) unit)])
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (set! i (+ i 1))) result))
+(define (unrelated [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [y : i64 0] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (set! q (unsafe (ptr-addr-of y))) (set! i (+ i 1))) result))
+(define (lambda-boundary [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [nested (lambda () : i64
+                 (let [p : (MutPtr i64) (unsafe (ptr-addr-of x))]
+                   (unsafe (ptr-read p))))]
+       [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first x (write-99! q)))) (set! i (+ i 1)))
+    (+ result (nested))))
+(define (ref-slot [x : (& i64)] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first-ref x (write-99! q))))
+      (unsafe (ptr-addr-of x) unit) (set! i (+ i 1))) result))
+(define (ref-unrelated [x : (& i64)] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [y : i64 0] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (when (= i 1) (set! result (first-ref x (write-99! q))))
+      (set! q (unsafe (ptr-addr-of y))) (set! i (+ i 1))) result))
+(define (acyclic-argument [x : i64]) : i64
+  (let [q : (MutPtr i64) (unsafe (ptr-addr-of x))]
+    (first x (write-99! q))))
+(define (acyclic-callee [f : (-> i64 i64)]) : i64
+  (let [p : (MutPtr (-> i64 i64)) (unsafe (ptr-addr-of f))]
+    (f (write-dec! p))))
+(define (global-argument [x : i64] [q : (MutPtr i64)]) : i64
+  (unsafe (ptr-addr-of global-slot))
+  (let [result : i64 0] [i : i64 0]
+    (while (< i 2)
+      (set! result (first x (write-99! q))) (set! i (+ i 1))) result))
+(define (global-callee [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))]) : i64
+  (unsafe (ptr-addr-of global-slot))
+  (let [result : i64 0] [i : i64 0]
+    (while (< i 2)
+      (set! result (f (write-dec! p))) (set! i (+ i 1))) result))
+(define (readonly-argument [x : i64] [y : i64]) : i64
+  (let [result (first x (+ y 1))] (unsafe (ptr-addr-of x)) result))
+(define (readonly-callee [f : (-> i64 i64)] [y : i64]) : i64
+  (let [result (f (+ y 1))] (unsafe (ptr-addr-of f)) result))
+(define (main) : i64
+  (let [y : i64 0] [q : (MutPtr i64) (unsafe (ptr-addr-of y))]
+       [g dec] [p : (MutPtr (-> i64 i64)) (unsafe (ptr-addr-of g))]
+    (+ (loop-argument 1 q 2) (loop-callee inc p 2) (loop-wrapped inc p 2)
+       (projection q 2) (match-bound (Value 1) q 2) (shadowed 1 q 2)
+       (match-shadowed 1 q 2) (unrelated 1 q 2)
+       (lambda-boundary 1 q 2) (ref-slot (& y) q 2) (ref-unrelated (& y) q 2)
+       (cached-param-call q) (cached-local 1 q 2) (cached-shadow 1 q 2)
+       (acyclic-argument 1) (acyclic-callee inc)
+       (global-argument 1 q) (global-callee inc p)
+       (readonly-argument 1 y) (readonly-callee inc y))))"
+    (compiler-lower-cached-exposure-source)))
+
+(test
+  compiler-lower-loop-address-exposure
+  (match (lower-test-functions
+    (let
+      [result : lower.ResultCompilerLower
+        (lower.lower-compiler-source (compiler-lower-loop-exposure-source))]
+      (match (& result)
+        [(Err diag)
+          (test.assert-true false (cdiag.compiler-diagnostic-message diag))]
+        [_ unit])
+      result))
+    [(Some functions)
+      (let
+        [names : (Array String 18)
+          (array
+            "loop-argument"
+            "loop-callee"
+            "loop-wrapped"
+            "projection"
+            "match-bound"
+            "shadowed"
+            "match-shadowed"
+            "unrelated"
+            "lambda-boundary"
+            "ref-slot"
+            "ref-unrelated"
+            "cached-param"
+            "cached-local"
+            "cached-shadow"
+            "acyclic-argument"
+            "acyclic-callee"
+            "global-argument"
+            "global-callee")]
+        (for [index (iterator.range 0 18)]
+          (let
+            [callee? : bool
+              (or (= index 1) (= index 2) (= index 15) (= index 17))]
+            (test.assert-i64-eq
+              (lower-test-snapshot-before-effect
+                functions
+                (string.copy (array-ref names index))
+                (if callee?
+                  "write-dec!"
+                  "write-99!")
+                (if callee?
+                  ""
+                  (if (or (= index 9) (= index 10))
+                    "first-ref"
+                    "first")))
+              ;; A raw address of a reference slot retains main's value copy;
+              ;; an unrelated reference keeps its ordinary borrow path.
+              (if (or
+                (< index 5)
+                (= index 9)
+                (= index 11)
+                (= index 12)
+                (= index 14)
+                (= index 15))
+                1
+                0)
+              (string.copy (array-ref names index)))))
+        (test.assert-i64-eq
+          (lower-test-count functions "readonly-argument" (CopyMov))
+          1
+          "an addressed argument needs no snapshot before a read-only tail")
+        (test.assert-i64-eq
+          (lower-test-count functions "readonly-callee" (CopyMov))
+          1
+          "an addressed callee needs no snapshot before a read-only tail"))]
+    [_ (test.assert-true false "loop exposure fixture lowers")]))
+
 (test
   compiler-lower-never-callee
   (let
@@ -17770,3 +18092,31 @@
         (test.assert-true
           (lower-test-source-blocks-exit? source "probe" (clone label))
           label)))))
+
+(test
+  compiler-lower-borrowed-view-element-exposure
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(extern (sink-address [address : u64]) : unit)
+(define (bump [value : (&mut i64)]) : unit
+  (set! (deref value) (+ (deref value) 1)))
+(define (element [items : (&mut source (Slice i64))] [n : i64]) : i64
+  (let [i : i64 0]
+    (while (< i n) (bump (&mut (array-ref items i))) (set! i (+ i 1))) n))
+(define (slot [items : (&mut source (Slice i64))] [n : i64]) : i64
+  (let [i : i64 0]
+    (while (< i n)
+      (sink-address (unsafe (ptr->int (ptr-addr-of items)))) (set! i (+ i 1))) n))
+(define (main) : i64
+  (let [items : (Array i64 2) (array 1 2)]
+    (+ (element (slice-mut-view (&mut items) 0 2) 2)
+       (slot (slice-mut-view (&mut items) 0 2) 2))))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-count functions "element" (AddrOf))
+        0
+        "borrowing an element does not expose the borrowed view descriptor")
+      (test.assert-true
+        (> (lower-test-count functions "slot" (AddrOf)) 0)
+        "a raw address of the view variable still exposes its descriptor slot")]
+    [_ (test.assert-true false "borrowed view exposure fixture lowers")]))

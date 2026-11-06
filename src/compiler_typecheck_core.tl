@@ -936,7 +936,8 @@
       ;; slot 14 lazily owns the non-macro lazy-import table, and slots 15-16
       ;; own the nominal/type-name and clone families. Profile/test builds use
       ;; slot 17 for the job-owned typecheck metrics view; slot 18 lazily owns
-      ;; the module declaration/import index in every build.
+      ;; the module declaration/import index in every build, and slot 19 the
+      ;; type-walk table (canonical type IDs for equality).
       (set! (array-ref macro-state-addresses 12) owner)
       (cfg
         (any compile-profile test)
@@ -1167,12 +1168,15 @@
 ;; arena, so retiring the job releases them.
 ;;
 ;; `canon` holds completed region-stripped canonical IDs + 1 (0 = not yet
-;; computed) for the installed pool identified by `cell` and `generation`:
-;; pool nodes are immutable and hash-consed, so an entry stays valid until a
-;; truncation or pool install bumps the generation, which clears it.
+;; computed) for the installed pool identified by its cursor cell, the cell's
+;; live revision and the pool generation: pool nodes are immutable and
+;; hash-consed, so an entry stays valid until a truncation through any alias
+;; (which moves the live revision) or a pool install (which bumps the
+;; generation) clears it.
 (defstruct TcTypeWalkTable
   (owner i64)
   (cell u64)
+  (revision i64)
   (generation i64)
   (canon (__tl_dyn-array i64))
   (canon-len i64))
@@ -1224,7 +1228,7 @@
           (__tl_make-array TcTypeWalkTable 1)]
         (set!
           (array-ref cell 0)
-          (TcTypeWalkTable owner (cast 0 : u64) -1 (__tl_make-array i64 0) 0))
+          (TcTypeWalkTable owner (cast 0 : u64) -1 -1 (__tl_make-array i64 0) 0))
         (set!
           address
           (cast
@@ -1249,9 +1253,18 @@
     (begin
       (when
         (= tc-type-walk-address 0)
+        ;; A nested binding of the same job may have allocated the table
+        ;; after this binding captured it; reuse the job's entry.
         (set!
           tc-type-walk-address
-          (tc-type-walk-table-new (TcJobState tc-type-walk-job))))
+          (tc-macro-state-slot-address
+            (tc-job-state-macro-state (TcJobState tc-type-walk-job))
+            tc-macro-state-slot-type-walk))
+        (when
+          (= tc-type-walk-address 0)
+          (set!
+            tc-type-walk-address
+            (tc-type-walk-table-new (TcJobState tc-type-walk-job)))))
       (let
         [table : (MutPtr TcTypeWalkTable)
           (tc-state-cell-ptr tc-type-walk-address TcTypeWalkTable)]
@@ -1259,11 +1272,19 @@
           (unless
             (and
               (= (deref table).cell ast.ty-node-pool-revision-cell)
+              (=
+                (deref table).revision
+                (ast.ast-type-pool-cursor-live-revision
+                  ast.ty-node-pool-revision-cell))
               (= (deref table).generation (ast.ty-node-pool-generation-value)))
             (for [at (iterator.range 0 (deref table).canon-len)]
               (set! (array-ref (deref table).canon at) 0))
             (set! (deref table).canon-len 0)
             (set! (deref table).cell ast.ty-node-pool-revision-cell)
+            (set!
+              (deref table).revision
+              (ast.ast-type-pool-cursor-live-revision
+                ast.ty-node-pool-revision-cell))
             (set! (deref table).generation (ast.ty-node-pool-generation-value))))
         tc-type-walk-address))))
 
@@ -121802,7 +121823,35 @@
               (Ok program paths)))])]
     [(Err diag) (Err diag)]))
 
+;; Expansion checks macro operands (equality included) for `job-state`:
+;; bind its type-walk table for the whole expansion and restore on return.
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
+  [load-state : cload.CompilerLoadSessionState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [job-state : TcJobState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [intern-state-input : ci.InternCompatState]) : ResultMacroExpand
+  (let
+    [binding : TcTypeWalkBinding (tc-type-walk-bind! job-state)]
+    [result : ResultMacroExpand
+      (macro-expand-program-bound
+        load-state
+        program
+        paths
+        pools
+        source-names
+        job-state
+        stdlib-roots
+        cfgs
+        intern-state-input)]
+    (tc-type-walk-restore! binding)
+    result))
+
+(define (macro-expand-program-bound
   [load-state : cload.CompilerLoadSessionState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]

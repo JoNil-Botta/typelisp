@@ -49,6 +49,11 @@
 
 ;; Region transparency at the root and below a wrapper; reference lifetimes
 ;; are never canonicalised away.
+(define (canon-eq-push-raw [ty : ast.AstType]) : i64
+  (let
+    [node : ast.AstType ty]
+    (ast.ty-node-push-raw (& node))))
+
 (define (canon-eq-push [ty : ast.AstType]) : i64
   (let
     [node : ast.AstType ty]
@@ -122,6 +127,69 @@
       (when (!= y2 y) (io.panic "fresh pool did not reuse ids"))
       (canon-eq-expect "second pool, equal ids, other contents" false x2 y2))))
 
+;; Context reset (truncation through the installed context, which does not
+;; bump the global generation): warmed canonical IDs must not survive into
+;; reused IDs. The cell's live revision moves, so the table clears.
+(define (canon-eq-context-reset-test) : unit
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [expr-mark : i64 (ast.ast-node-pool-len)]
+    [type-mark : i64 (ast.ty-node-pool-len)]
+    [x : i64 (canon-eq-push-raw ast.AstType.I64)]
+    [y : i64 (canon-eq-push-raw ast.AstType.I64)]
+    (canon-eq-expect
+      "warm boxes"
+      true
+      (canon-eq-push (ast.AstType.Box x))
+      (canon-eq-push (ast.AstType.Box y)))
+    (ast.ast-node-pool-context-reset-to! pools expr-mark type-mark)
+    (let
+      [x2 : i64 (canon-eq-push-raw ast.AstType.I64)]
+      [y2 : i64 (canon-eq-push-raw ast.AstType.Bool)]
+      (when (!= x2 x) (io.panic "reset did not reuse ids"))
+      (when (!= y2 y) (io.panic "reset did not reuse ids"))
+      (canon-eq-expect
+        "boxes over reused ids after a context reset"
+        false
+        (canon-eq-push (ast.AstType.Box x2))
+        (canon-eq-push (ast.AstType.Box y2))))))
+
+;; A nested binding of the same job before the first allocation: the table
+;; allocated inside is the job's table afterwards too (no second table).
+(define (canon-eq-same-job-nesting-test) : unit
+  (let
+    [job : tc.TcJobState (tc.tc-job-state-new)]
+    [outer : tc.TcTypeWalkBinding (tc.tc-type-walk-bind! job)]
+    [inner : tc.TcTypeWalkBinding (tc.tc-type-walk-bind! job)]
+    [first : i64 (tc.tc-type-walk-table)]
+    (tc.tc-type-walk-restore! inner)
+    (when
+      (!= (tc.tc-type-walk-table) first)
+      (io.panic "same job allocated twice"))
+    (tc.tc-type-walk-restore! outer)))
+
+;; Macro expansion binds its own job and restores the caller's binding, on
+;; success and on failure.
+(define (canon-eq-expansion-binding-test [job : tc.TcJobState]) : unit
+  (match (check_core.compiler-check-source
+    "tests/canon_eq_macro_ok.tl"
+    "(defmacro (twice [x : Expr]) : Expr `(tuple ,x ,x))
+(define (main) : i64 (let [p (twice 1)] 0))")
+    [(Ok _ _) unit]
+    [(Err _ _) (io.panic "macro source rejected")])
+  (when
+    (!= tc.tc-type-walk-job job.address)
+    (io.panic "binding not restored after a macro expansion"))
+  (match (check_core.compiler-check-source
+    "tests/canon_eq_macro_bad.tl"
+    "(defmacro (twice [x : Expr]) : Expr `(tuple ,x ,x))
+(define (main) : i64 (let [p (twice (+ 1 \"x\"))] 0))")
+    [(Ok _ _) (io.panic "failing macro source checked")]
+    [(Err _ _) unit])
+  (when
+    (!= tc.tc-type-walk-job job.address)
+    (io.panic "binding not restored after a failing macro expansion")))
+
 ;; Interleaved jobs: B's binding runs inside A's; A's binding and table come
 ;; back intact.
 (define (canon-eq-jobs-test [job : tc.TcJobState]) : unit
@@ -165,9 +233,12 @@
       (canon-eq-poison-test)
       (canon-eq-truncate-test)
       (canon-eq-pools-test)
+      (canon-eq-context-reset-test)
       (canon-eq-jobs-test job)
+      (canon-eq-same-job-nesting-test)
       (ast.ast-node-pool-context-install! installed)
       (canon-eq-failing-check-test job)
+      (canon-eq-expansion-binding-test job)
       (tc.tc-type-walk-restore! outer)
       ;; Unbound: the table bypasses and equality stays exact.
       (canon-eq-fresh-pool)

@@ -1,4 +1,5 @@
-# Missing final else is an authored macro error at the user's cond form.
+# A missing final else, or an else before the final arm, is an authored macro
+# error at the user's cond form.
 # Check, compile and build reject before target code generation or linking.
 do none
 target linux-x86_64 windows-x86_64
@@ -76,6 +77,324 @@ next-line .*cond_missing_else_spliced_reject.tl:5:13$
 stderr contains in expansion of macro `identity` invoked here
 stderr not-contains core-cond-missing-else
 stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_reject.tl:2:3$
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains core-cond-missing-else
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-middle
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_middle_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_middle_reject.tl:2:3$
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains core-cond-missing-else
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-nested
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_nested_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_nested_reject.tl:2:15$
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains core-cond-missing-else
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-qualified
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_qualified_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_qualified_reject.tl:4:3$
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains core-cond-missing-else
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-generated
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_generated_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_generated_reject.tl:2:4$
+stderr contains in expansion of macro `choose` invoked here
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains core-cond-missing-else
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-spliced
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_spliced_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_spliced_reject.tl:5:13$
+stderr contains in expansion of macro `identity` invoked here
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains core-cond-missing-else
+stderr not-contains stdlib/core_macros.tl:
+
+# A user binding that spells a former internal sentinel name cannot capture
+# a cond terminal: the program is still rejected at the user's cond.
+case cond-missing-else-capture
+run {{each}} "{{root}}/tests/safety/cond_missing_else_capture_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond requires a final [else ...] arm
+stderr after ^error\[E0505\]:
+next-line .*cond_missing_else_capture_reject.tl:7:5$
+stderr not-contains unbound name
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-capture
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_capture_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_capture_reject.tl:4:5$
+stderr not-contains unbound name
+stderr not-contains stdlib/core_macros.tl:
+
+# Inside (comptime ...), compile-time evaluation reports the same authored
+# error at the user's comptime form.
+case cond-missing-else-comptime
+run {{each}} "{{root}}/tests/safety/cond_missing_else_comptime_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond requires a final [else ...] arm
+stderr after ^error\[E0505\]:
+next-line .*cond_missing_else_comptime_reject.tl:2:3$
+stderr not-contains runtime variable
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-comptime
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_comptime_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_comptime_reject.tl:2:3$
+stderr not-contains runtime variable
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-comptime-capture
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_comptime_capture_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_comptime_capture_reject.tl:2:3$
+stderr not-contains runtime variable
+stderr not-contains stdlib/core_macros.tl:
+
+# A user's authored error that merely mentions a cond message keeps its text.
+case user-error-mentioning-cond-message
+file main.tl
+(defmacro (identity [value : Expr]) : Expr
+  value)
+
+(define (main) : i64
+  (identity
+    (comptime
+      (comptime-error
+        "invalid macro name cond allows [else ...] only as the final arm: choose another name"))))
+end-file
+run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: invalid macro name cond allows [else ...] only as the final arm: choose another name
+
+# A message-named generated binding (comptime.expr-let-scope) cannot capture a
+# cond terminal, and neither can a binding named comptime.comptime-error.
+case cond-else-not-final-generated-capture
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_generated_capture_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_generated_capture_reject.tl:7:6$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-generated-capture-comptime
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_generated_capture_comptime_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_generated_capture_comptime_reject.tl:10:3$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-missing-else-generated-capture-comptime
+run {{each}} "{{root}}/tests/safety/cond_missing_else_generated_capture_comptime_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond requires a final [else ...] arm
+stderr after ^error\[E0505\]:
+next-line .*cond_missing_else_generated_capture_comptime_reject.tl:10:3$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-error-binding
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_error_binding_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_error_binding_reject.tl:7:6$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-missing-else-error-binding
+run {{each}} "{{root}}/tests/safety/cond_missing_else_error_binding_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond requires a final [else ...] arm
+stderr after ^error\[E0505\]:
+next-line .*cond_missing_else_error_binding_reject.tl:4:57$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-missing-else-comptime-const
+run {{each}} "{{root}}/tests/safety/cond_missing_else_comptime_const_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond requires a final [else ...] arm
+stderr after ^error\[E0505\]:
+next-line .*cond_missing_else_comptime_const_reject.tl:2:3$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-comptime-const
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_comptime_const_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_comptime_const_reject.tl:2:3$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-missing-else-comptime-nested
+run {{each}} "{{root}}/tests/safety/cond_missing_else_comptime_nested_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond requires a final [else ...] arm
+stderr after ^error\[E0505\]:
+next-line .*cond_missing_else_comptime_nested_reject.tl:2:3$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+case cond-else-not-final-comptime-nested
+run {{each}} "{{root}}/tests/safety/cond_else_not_final_comptime_nested_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: cond allows [else ...] only as the final arm
+stderr after ^error\[E0505\]:
+next-line .*cond_else_not_final_comptime_nested_reject.tl:2:3$
+stderr not-contains runtime variable
+stderr not-contains core-cond-else-must-be-final
+stderr not-contains stdlib/core_macros.tl:
+
+# Message negatives: a user's authored error that contains a cond message, and
+# a legitimate generated binding spelled with a cond message, behave as on main.
+case user-error-containing-missing-else-message
+file main.tl
+(defmacro (identity [value : Expr]) : Expr
+  value)
+
+(define (main) : i64
+  (identity
+    (comptime
+      (comptime-error
+        "invalid macro name cond requires a final [else ...] arm: choose another name"))))
+end-file
+run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]: invalid macro name cond requires a final [else ...] arm: choose another name
+stderr after ^error\[E0505\]:
+next-line .*main.tl:6:5$
+
+case generated-binding-cond-message-type-error
+file main.tl
+(import stdlib.comptime)
+(defmacro (generated-binding) : Expr
+  (comptime.expr-let-scope
+    "cond allows [else ...] only as the final arm"
+    (comptime.expr-int 7)
+    (comptime.expr-var "cond allows [else ...] only as the final arm")))
+
+(define (main) : i64
+  (generated-binding))
+end-file
+run {{each}} "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found i32
+stderr after ^error\[E0206\]:
+next-line .*main.tl:9:3$
+
+case generated-binding-cond-message-valid
+each -
+file main.tl
+(import stdlib.comptime)
+(defmacro (generated-binding) : Expr
+  (comptime.expr-let-scope
+    "cond allows [else ...] only as the final arm"
+    (comptime.expr-int 7)
+    (comptime.expr-var "cond allows [else ...] only as the final arm")))
+
+(define (seven) : i32
+  (generated-binding))
+
+(define (main) : i64
+  (if (= (seven) 7) 0 1))
+end-file
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/valid.s"
+exit 0
+stdout contains Wrote
+
+# A valid cond inside comptime still folds.
+case cond-comptime-valid
+each -
+file main.tl
+(define k : i64 (comptime (cond [false 1] [else 2])))
+
+(define (main) : i64
+  (- (comptime (+ 1 (cond [false 1] [true 1] [else 3]))) k))
+end-file
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/valid.s"
+exit 0
+stdout contains Wrote
 
 case cond-arm-type-error
 file main.tl

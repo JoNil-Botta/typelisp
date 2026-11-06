@@ -86,9 +86,17 @@ tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	
 tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	IR observability consumes golden snapshots and their guarded source fixtures.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
 tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate,stage2-stdlib-modules-and-fixtures	@corpus	Secret-wipe shapes and both-host native generation cleanup controls consumed by the stdlib verifier.
-tests/codegen/crypto-aes.cases	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Exact case file named by the AES fixed-work gate.
+tests/codegen/crypto-aes.cases	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Exact case file named by the AES and GCM fixed-work gates.
+tests/fixtures/crypto-gcm/*	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@corpus	GCM complete-body pins, linked audit roots and official vector provenance; both shape gates share the case inventory.
+stdlib/crypto_aes128_gcm.tl	stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-crypto-gcm-native-report,stage2-inline-typelisp-tests	@stdlib	Typed GCM public API, lifecycle and native report.
+stdlib/crypto_ghash_core.tl	stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-crypto-gcm-native-report,stage2-inline-typelisp-tests	@stdlib	Internal GHASH arithmetic, wiping and fixed-work evidence.
+tools/crypto-gcm-bench/*	stage2-crypto-gcm-native-report	@corpus	GCM setup, one-block and bulk measurement driver.
+tools/crypto-gcm-kat/*	stage2-inline-typelisp-tests	@corpus	Hash-pinned public GCM vector conversion.
+scripts/check-crypto-aes-shape.sh	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Shared complete-body AES/GCM extractor.
+scripts/measure-crypto-gcm.sh	stage2-crypto-gcm-native-report	@corpus	Both-target native GCM measurement wrapper.
+scripts/regenerate-crypto-gcm-kat.sh	stage2-inline-typelisp-tests	@corpus	Offline official GCM vector regeneration, pinned by source hashes and count.
 tests/fixtures/crypto-aes/README.md	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
-tests/fixtures/crypto-aes/shape-*	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	AES shape-pin family, including target/optimization-templated references in the case inventory.
+tests/fixtures/crypto-aes/shape-*	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	AES shape-pin family, including target/optimization-templated references in the shared case inventory.
 tests/fixtures/crypto-aes/shape-review.md	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
 tests/fixtures/crypto-aes/sources.sha256	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.
 tests/fixtures/crypto-aes/shape-linux-x86_64-opt1.sha256	stage2-crypto-aes-fixed-work-asm-shape-gate	@corpus	Reviewed AES fixture provenance or complete-body shape pin; rerun the AES regression owner.

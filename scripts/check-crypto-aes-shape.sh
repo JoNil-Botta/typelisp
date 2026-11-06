@@ -2,16 +2,19 @@
 set -eu
 # Extract complete retained/inlined AES bodies, then compare reviewed hashes.
 # No update/bless mode: changing these pins requires a new assembly review.
-[ "$#" -eq 3 ] || { echo 'usage: check-crypto-aes-shape.sh <assembly> <fresh-output-dir> <reviewed-pins>' >&2; exit 2; }
+[ "$#" -eq 3 ] || [ "$#" -eq 4 ] || { echo 'usage: check-crypto-aes-shape.sh <assembly> <fresh-output-dir> <reviewed-pins> [gcm]' >&2; exit 2; }
 assembly=$1
 work=$2
 pins=$3
+family=${4:-aes}
+case "$family" in aes|gcm) ;; *) echo 'unknown crypto audit family' >&2; exit 2 ;; esac
 mkdir -p "$work"
 : > "$work/symbols"
 # Keep all instructions, labels and instruction operands. Omit only assembler
 # metadata/comments; CR normalization makes the same target host-independent.
-awk -v output="$work" '
+awk -v output="$work" -v family="$family" '
 function selected(name) {
+    if (family == "gcm") return name ~ /^_tl_stdlib_crypto_(aes_core|aes128_gcm|ghash_core)_/ || name ~ /^gcm_audit_(seal|open)(\$typelisp)?$/ || name ~ /^_tl_stdlib_crypto_secret_stdlib_crypto_secret_(difference_bits|wipe_words_bang)$/ || name == "main"
     return name ~ /^_tl_stdlib_crypto_aes_core_/ || name ~ /^aes_audit_production_(128|256)(\$typelisp)?$/ || name == "main"
 }
 /^[[:space:]]*\.globl / {
@@ -37,7 +40,9 @@ active {
 }
 ' "$assembly"
 [ -s "$work/symbols" ] || { echo 'missing AES audit roots' >&2; exit 1; }
-for required in main aes_audit_production_128 aes_audit_production_256; do
+roots='main aes_audit_production_128 aes_audit_production_256'
+if [ "$family" = gcm ]; then roots='main gcm_audit_seal gcm_audit_open'; fi
+for required in $roots; do
     grep -Fx "$required" "$work/symbols" >/dev/null || { echo "missing production root: $required" >&2; exit 1; }
 done
 : > "$work/actual.sha256"

@@ -106,6 +106,8 @@ stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/
 stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases
 stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	linux	stage2 crypto secret wipe/fixed-work asm shape gate	bootstrap-fixpoint	stage2	512	-	scripts/verify-codegen-cases.sh --only 'secret-*' tests/codegen/crypto-secret.cases
 stage2-crypto-aes-fixed-work-asm-shape-gate	linux	stage2 crypto AES fixed-work asm shape gate	bootstrap-fixpoint	stage2	512	-	scripts/verify-codegen-cases.sh --only 'aes-*' tests/codegen/crypto-aes.cases
+stage2-crypto-gcm-fixed-work-asm-shape-gate	linux	stage2 crypto GCM fixed-work asm shape gate	bootstrap-fixpoint	stage2	512	-	scripts/verify-codegen-cases.sh --only 'gcm-*' tests/codegen/crypto-aes.cases
+stage2-crypto-gcm-native-report	all	stage2 crypto GCM native performance report	bootstrap-fixpoint	stage2	6144	-	scripts/measure-crypto-gcm.sh
 stage2-by-value-aggregate-abi-shape-gate	linux	stage2 by-value aggregate ABI shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh tests/codegen/by-value-aggregate-abi.cases
 stage2-examples	all	stage2 examples	bootstrap-fixpoint	stage2	512	-	scripts/verify-examples.sh
 benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-tests	bootstrap-fixpoint	stage2	256	-	scripts/bench.sh --self-test

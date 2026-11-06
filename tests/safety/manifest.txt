@@ -55,6 +55,7 @@ free_name_scan_macro_binding_ok|run-exit|tests/safety/free_name_scan_macro_bindi
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
 rsa_verify_digest_as_message_reject|check-fail|tests/safety/rsa_verify_digest_as_message_reject.tl|-|expected (& message bytes), found (& digest stdlib.crypto_sha256/Sha256Digest)
+p256_ecdsa_digest_as_message_reject|check-fail|tests/safety/p256_ecdsa_digest_as_message_reject.tl|-|expected (& message bytes), found (& digest stdlib.crypto_sha256/Sha256Digest)
 shared_view_bridge_reinterpret_reject|check-fail|tests/safety/shared_view_bridge_reinterpret_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as
 shared_view_bridge_alias_reject|check-fail|tests/safety/shared_view_bridge_alias_reject.tl|-|typecheck: unbound name core.__tl-compiler-owned-shared-view-dyn-ref-as
 shared_view_bridge_owner_reject|check-fail|tests/safety/shared_view_bridge_owner_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as

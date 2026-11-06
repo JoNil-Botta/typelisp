@@ -855,6 +855,7 @@ stdlib_math_ieee|all|-,0,1,2|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib
 float_exponent_literals|all|-|tests/integration/float_exponent_literals.tl|42|-|-|stdlib/math.tl|-
 private_intrinsic_provenance|all|-|tests/integration/private_intrinsic_provenance.tl|42|-|-|private_intrinsic_provenance_provider.tl private_intrinsic_provenance_shadow_provider.tl|-
 stdlib_math_table_payloads|all|0,1,2|tests/integration/stdlib_math_table_payloads.tl|42|-|-|stdlib/math.tl stdlib/byte_buf.tl stdlib/crypto_sha256.tl stdlib/iterator.tl stdlib/string.tl|-
+crypto_p256_ecdsa|all|0,1,2|tests/integration/crypto_p256_ecdsa.tl|42|-|-|stdlib/tests/crypto_p256_ecdsa_api.tl stdlib/crypto_p256_ecdsa.tl stdlib/crypto_p256.tl stdlib/crypto_sha256.tl stdlib/byte_buf.tl stdlib/string.tl stdlib/test.tl|-
 stdlib_math_exp|all|-,0,1,2|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl|-
 stdlib_math_log|all|-,0,1,2|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl|-
 stdlib_math_pow|all|-,0,1,2|tests/integration/stdlib_math_pow.tl|0|-|-|stdlib/math.tl|-

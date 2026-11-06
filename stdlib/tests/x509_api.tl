@@ -1196,14 +1196,12 @@
   (let
     [encoded : byte_buf.ByteBuf
       (synthetic (extension 17 false "30058703c00002"))]
-    (let
-      [_error : der.Error (expect-rejected (byte_buf.as-bytes (& encoded)))]
-      unit))
+    [_error : der.Error (expect-rejected (byte_buf.as-bytes (& encoded)))]
+    unit)
   (let
     [encoded : byte_buf.ByteBuf (synthetic (extension 17 false "3080"))]
-    (let
-      [_error : der.Error (expect-rejected (byte_buf.as-bytes (& encoded)))]
-      unit)))
+    [_error : der.Error (expect-rejected (byte_buf.as-bytes (& encoded)))]
+    unit))
 
 (define (service-mixed-tests) : unit
   (let

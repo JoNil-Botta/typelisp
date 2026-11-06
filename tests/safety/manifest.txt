@@ -1647,6 +1647,17 @@ box_field_shared_view_contents_take_reject|check-fail|tests/safety/box_field_sha
 box_field_shared_view_construct_reject|check-fail|tests/safety/box_field_shared_view_construct_reject.tl|tests/safety/box_field_shared_view_construct_reject.tl:9:13|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
 box_field_shared_match_binder_write_reject|check-fail|tests/safety/box_field_shared_match_binder_write_reject.tl|tests/safety/box_field_shared_match_binder_write_reject.tl:12:33|error[E0207]: typecheck: cannot mutably borrow `b` behind a shared reference
 box_field_shared_nested_view_ok|run-exit|tests/safety/box_field_shared_nested_view_ok.tl|42|-
+# Acceptance shapes of #8927: branch-selected, tuple projection, region-qualified (arena) Box, aliases and a store into an owned place.
+box_field_shared_branch_reject|check-fail|tests/safety/box_field_shared_branch_reject.tl|tests/safety/box_field_shared_branch_reject.tl:11:9|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_tuple_reject|check-fail|tests/safety/box_field_shared_tuple_reject.tl|tests/safety/box_field_shared_tuple_reject.tl:9:18|error[E0207]: typecheck: cannot mutably borrow `r.pair.0` behind a shared reference
+box_field_shared_region_reject|check-fail|tests/safety/box_field_shared_region_reject.tl|tests/safety/box_field_shared_region_reject.tl:14:14|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_alias_reject|check-fail|tests/safety/box_field_shared_alias_reject.tl|tests/safety/box_field_shared_alias_reject.tl:12:18|error[E0207]: typecheck: cannot mutably borrow `alias.b` behind a shared reference
+box_field_shared_store_reject|check-fail|tests/safety/box_field_shared_store_reject.tl|tests/safety/box_field_shared_store_reject.tl:10:17|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_branch_reject_windows|check-fail-windows|tests/safety/box_field_shared_branch_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_tuple_reject_windows|check-fail-windows|tests/safety/box_field_shared_tuple_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `r.pair.0` behind a shared reference
+box_field_shared_region_reject_windows|check-fail-windows|tests/safety/box_field_shared_region_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_alias_reject_windows|check-fail-windows|tests/safety/box_field_shared_alias_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `alias.b` behind a shared reference
+box_field_shared_store_reject_windows|check-fail-windows|tests/safety/box_field_shared_store_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
 deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|tests/safety/deref_raw_pointer_reject.tl:2:3|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
 # A raw-pointer deref is an unsafe place only as a struct-field projection
 # receiver; a (Ptr T) pointee is read-only.

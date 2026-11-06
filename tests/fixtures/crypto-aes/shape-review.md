@@ -143,10 +143,20 @@ disclosed adverse cost of the change.
   wiped scratch. The remaining `cipher!`/`expand!` frame stores held public
   values: lengths, pointers, `rcon` and callee-saved/argument homes.
 - The new opt2 bodies spill circuit temporaries and plane values, and nothing
-  wipes those dead slots. On Linux, `sub-bytes!` (200-byte frame) makes 49
-  stack stores and `mix-columns!` 10. On Windows, `sub-bytes!` (440-byte frame)
-  makes 50 and `mix-columns!` 13; those counts include callee-saved register
-  saves.
+  wipes those dead slots. Each count below is mov-to-stack writes, plus
+  read-modify-write writes to frame slots, plus the callee-saved `pushq` saves
+  in the prologue:
+  - Linux: `sub-bytes!` (200 B frame) has 49 mov-to-stack + 6 pushes, and
+    `mix-columns!` has 10 stores + 6 pushes. Linux also parks some values in
+    XMM registers.
+  - Windows: `sub-bytes!` (440 B frame) has 50 mov-to-stack + 1 RMW
+    (`andq %r15, 8(%rsp)`) + 6 pushes, and `mix-columns!` has 13 stores + 6
+    pushes. `sub-block!` also makes one store, a post-S-box SubWord plane
+    value. `squeeze!` makes one, which holds only the public ciphertext when
+    called from `cipher!`. Linux `sub-block!` and `squeeze!` make none.
+- opt2 is the default release profile: package builds default to `release`,
+  which uses optimizer level 2. This exposure therefore applies to default
+  builds.
 
 Both callers of the circuit leave residue:
 
@@ -160,5 +170,7 @@ Both callers of the circuit leave residue:
   after `new-128`/`new-256` return.
 
 A best-effort scrub of the dead stack region after both the block call and
-schedule construction is a possible follow-up. It depends on frame layout, so
-it would not be a guarantee.
+schedule construction is tracked as P1 hardening follow-up #9648. It depends on
+frame layout, so it would not be a guarantee. D-C132 accepted this residue as
+an explicit security/performance tradeoff. None of these checks is a timing or
+side-channel certification.

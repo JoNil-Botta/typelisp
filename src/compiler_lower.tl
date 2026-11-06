@@ -514,6 +514,14 @@
   (scopes lower_i64_i64_map.Map)
   (exposed (__tl_dyn-array i64)))
 
+;; The carrier walk counts the same nodes as the canonical quick pre-check.
+;; A found address or exhausted independent budget is an exact `true` result.
+(defstruct LowerExposurePrecheck
+  (found bool)
+  (budget i64)
+  (walk-budget i64)
+  (mode i64))
+
 (defstruct CompilerLowerFunctionStateData
   (owner-address i64)
   (inline-helper-stack LowerIdSet)
@@ -535,6 +543,8 @@
   (loop-written-roots lower_i64_i64_map.Map)
   ;; Right-hand-side expression ids of the `set!` forms inside some loop.
   (loop-set-values lower_i64_i64_map.Map)
+  ;; -1 unavailable; otherwise the exact canonical quick-precheck result.
+  (address-precheck i64)
   ;; -1 unavailable or invalidated; 0 no loop exposure; 1 lexical census.
   (address-exposure-mode i64)
   (address-exposure LowerAddressExposure))
@@ -8627,6 +8637,7 @@
         (lower_i64_i64_map.with-capacity 0)
         (lower_i64_i64_map.with-capacity 0)
         -1
+        -1
         (LowerAddressExposure
           false
           false
@@ -8716,6 +8727,19 @@
     (set!
       (deref (compiler-lower-function-state-ptr state)).written-roots-complete
       false)))
+
+;; A synthesized helper changes this function's analyzed body. Keep all
+;; body-derived proofs, including the fused quick summary, invalid together.
+(define (compiler-lower-function-state-body-proofs-invalidate!
+  [state : CompilerLowerFunctionState]) : unit
+  (compiler-lower-function-state-raw-address-free-set! state false)
+  (compiler-lower-function-state-written-roots-invalidate! state)
+  (unsafe
+    (set! (deref (compiler-lower-function-state-ptr state)).address-precheck -1))
+  (unsafe
+    (set!
+      (deref (compiler-lower-function-state-ptr state)).address-exposure-mode
+      -1)))
 
 ;; Fail-closed: true unless the complete scanned body never writes `name`.
 (define (compiler-lower-function-state-name-written?
@@ -9303,12 +9327,7 @@
             (lower-spmd-inline-recursive-message))))]
     ;; The spliced helper body was not part of this state's scanned
     ;; body, so its raw addresses and written names are unproven.
-    (compiler-lower-function-state-raw-address-free-set! function-state false)
-    (compiler-lower-function-state-written-roots-invalidate! function-state)
-    (unsafe
-      (set!
-        (deref (compiler-lower-function-state-ptr function-state)).address-exposure-mode
-        -1))
+    (compiler-lower-function-state-body-proofs-invalidate! function-state)
     (compiler-lower-function-state-inline-helper-stack-set!
       function-state
       (lower-id-set-insert (lower-global-shared-view previous) handle))
@@ -15881,6 +15900,30 @@
 ;; Only loop-enclosed addresses need facts in advance: a later acyclic address
 ;; cannot reach an earlier read. The normal incremental map still records it
 ;; when emitted. A complete empty census needs no binding/type reconstruction.
+;; Return the children's quick-precheck mode: -1 stops only this analysis,
+;; 0 is outside a loop, 1 is inside. The required write/set-value walks still
+;; visit their original children, even across a nested-function boundary.
+(define (lower-exposure-precheck-step!
+  [summary : (&mut summary LowerExposurePrecheck)]
+  [expr : (& expr ast.AstExpr)]) : i64
+  (let
+    [mode : i64 summary.mode]
+    (when (or (< mode 0) summary.found) (return -1))
+    (when (<= summary.budget 0) (set! summary.found true) (return -1))
+    (set! summary.budget (- summary.budget 1))
+    (match expr
+      [(PtrAddrOf _)
+        (if (= mode 1)
+          (begin
+            (set! summary.found true)
+            -1)
+          0)]
+      [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) -1]
+      [(or (While _ _) (Foreach _) (ForeachActive _ _) (SpmdReduce _)
+           (SpmdScan _) (SpmdCompact _) (ForOwnedState _) (ForOwnedStep _))
+        1]
+      [_ mode])))
+
 (define (lower-exposure-has-address?
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]
@@ -15929,9 +15972,18 @@
   [type-env : tc_core.TcTypeEnv]
   [body : ast.AstExpr]) : unit
   (let
+    [summary : i64
+      (unsafe
+        (deref
+          (compiler-lower-function-state-view
+            (lower-state-function-state state))).address-precheck)]
     [budget : i64 lower-written-roots-scan-budget]
+    [needed : bool
+      (if (>= summary 0)
+        (!= summary 0)
+        (lower-exposure-has-address? ctx (clone body) false (&mut budget)))]
     (unless
-      (lower-exposure-has-address? ctx (clone body) false (&mut budget))
+      needed
       (unsafe
         (set!
           (deref
@@ -27315,6 +27367,8 @@
     [loop-roots : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 8)]
     [loop-set-values : lower_i64_i64_map.Map
       (lower_i64_i64_map.with-capacity 8)]
+    [precheck : LowerExposurePrecheck
+      (LowerExposurePrecheck false lower-written-roots-scan-budget budget 0)]
     [loop-complete : bool
       (and
         complete
@@ -27323,7 +27377,17 @@
           body
           (&mut loop-roots)
           (&mut loop-set-values)
-          (&mut budget)))]
+          (&mut precheck)))]
+    ;; An incomplete carrier cannot establish `false`: use the canonical
+    ;; standalone traversal later. A discovered `true` is already exact.
+    (unsafe
+      (set!
+        (deref (compiler-lower-function-state-ptr function-state)).address-precheck
+        (if precheck.found
+          1
+          (if loop-complete
+            0
+            -1))))
     (compiler-lower-function-state-written-roots-set!
       function-state
       roots
@@ -27334,17 +27398,18 @@
       loop-set-values)))
 
 ;; Names written inside some loop: each loop node's whole subtree is scanned
-;; with the written-roots scanner into the shared set.
+;; with the written-roots scanner into the shared set. The loop discovery and
+;; set-value walks together carry the exact address pre-check in preorder.
 (define (lower-loop-written-roots-scan!
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]
   [roots : (&mut roots lower_i64_i64_map.Map)]
   [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
-  (if (<= (deref budget) 0)
+  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
+  (if (<= precheck.walk-budget 0)
     false
     (begin
-      (set! (deref budget) (- (deref budget) 1))
+      (set! precheck.walk-budget (- precheck.walk-budget 1))
       (if (match (& expr)
         [(ast.AstExpr.While _ _) true]
         [(ast.AstExpr.ForOwnedState _) true]
@@ -27357,15 +27422,24 @@
             ctx
             (lower-global-shared-view expr)
             roots
-            budget)
-          (lower-loop-set-values-collect! ctx expr set-values budget))
-        (lower-loop-written-roots-children?
-          ctx
-          (ast.ast-expr-child-ids expr)
-          0
-          roots
-          set-values
-          budget)))))
+            (&mut precheck.walk-budget))
+          ;; This walk observes the loop root, so it is not counted twice.
+          (lower-loop-set-values-collect! ctx expr set-values precheck))
+        (let
+          [previous-mode : i64 precheck.mode]
+          [child-mode : i64 (lower-exposure-precheck-step! precheck (& expr))]
+          (set! precheck.mode child-mode)
+          (let
+            [complete : bool
+              (lower-loop-written-roots-children?
+                ctx
+                (ast.ast-expr-child-ids expr)
+                0
+                roots
+                set-values
+                precheck)]
+            (set! precheck.mode previous-mode)
+            complete))))))
 
 (define (lower-loop-written-roots-children?
   [ctx : tc_core.TcContext]
@@ -27373,7 +27447,7 @@
   [index : i64]
   [roots : (&mut roots lower_i64_i64_map.Map)]
   [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
+  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
   (if (>= index children.len)
     true
     (and
@@ -27384,42 +27458,52 @@
           (ast.ast-expr-list-get (& children) index -1))
         roots
         set-values
-        budget)
+        precheck)
       (lower-loop-written-roots-children?
         ctx
         children
         (+ index 1)
         roots
         set-values
-        budget))))
+        precheck))))
 
-;; Record the right-hand-side id of every `set!` in a loop subtree.
+;; Record the right-hand-side id of every `set!` in a loop subtree. The
+;; independent address budget ignores nested-function/quoted descendants,
+;; whereas this original set-value traversal keeps its existing coverage.
 (define (lower-loop-set-values-collect!
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]
   [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
-  (if (<= (deref budget) 0)
+  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
+  (if (<= precheck.walk-budget 0)
     false
     (begin
-      (set! (deref budget) (- (deref budget) 1))
+      (set! precheck.walk-budget (- precheck.walk-budget 1))
       (match (& expr)
         [(ast.AstExpr.Set _ value-box)
           (lower_i64_i64_map.insert-ref! set-values value-box 1)]
         [_ unit])
-      (lower-loop-set-values-children?
-        ctx
-        (ast.ast-expr-child-ids expr)
-        0
-        set-values
-        budget))))
+      (let
+        [previous-mode : i64 precheck.mode]
+        [child-mode : i64 (lower-exposure-precheck-step! precheck (& expr))]
+        (set! precheck.mode child-mode)
+        (let
+          [complete : bool
+            (lower-loop-set-values-children?
+              ctx
+              (ast.ast-expr-child-ids expr)
+              0
+              set-values
+              precheck)]
+          (set! precheck.mode previous-mode)
+          complete)))))
 
 (define (lower-loop-set-values-children?
   [ctx : tc_core.TcContext]
   [children : ast.AstExprList]
   [index : i64]
   [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
+  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
   (if (>= index children.len)
     true
     (and
@@ -27429,13 +27513,13 @@
           ctx
           (ast.ast-expr-list-get (& children) index -1))
         set-values
-        budget)
+        precheck)
       (lower-loop-set-values-children?
         ctx
         children
         (+ index 1)
         set-values
-        budget))))
+        precheck))))
 
 ;; Record `name` (and the root binding of a dotted field spelling) as written.
 ;; A structural key (a macro-hygienic binder) is an exact binding identity and

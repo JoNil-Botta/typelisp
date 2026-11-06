@@ -1834,6 +1834,287 @@
         [(Err _) false])]
     [(Err _) false]))
 
+;; The canonical standalone traversal is the independent oracle for the
+;; summary carried by existing write/set-value walks. This tests the actual
+;; cached field as well as independent small budgets and an incomplete carrier.
+(define (lower-test-precheck-carrier-agrees?
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]
+  [carrier-budget : i64]
+  [address-budget : i64]) : bool
+  (let
+    [roots : lower_i64_i64_map.Map (lower_i64_i64_map.new)]
+    [values : lower_i64_i64_map.Map (lower_i64_i64_map.new)]
+    [canonical-budget : i64 address-budget]
+    [summary : lower.LowerExposurePrecheck
+      (lower.LowerExposurePrecheck false address-budget carrier-budget 0)]
+    [canonical : bool
+      (lower.lower-exposure-has-address?
+        ctx
+        (clone expr)
+        false
+        (&mut canonical-budget))]
+    [complete : bool
+      (lower.lower-loop-written-roots-scan!
+        ctx
+        expr
+        (&mut roots)
+        (&mut values)
+        (&mut summary))]
+    (if (or complete summary.found)
+      (= summary.found canonical)
+      ;; The result is unavailable, so production must run the oracle.
+      (= carrier-budget 0))))
+
+(define (lower-test-precheck-cached?
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]
+  [want : bool]) : bool
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    [budget : i64 lower.lower-written-roots-scan-budget]
+    [canonical : bool
+      (lower.lower-exposure-has-address? ctx (clone expr) false (&mut budget))]
+    (lower.lower-function-state-scan-written-roots! ctx state expr)
+    (let
+      [cached : i64
+        (unsafe
+          (deref (lower.compiler-lower-function-state-view state)).address-precheck)]
+      [ok : bool
+        (and (>= cached 0) (= (!= cached 0) canonical) (= canonical want))]
+      ok)))
+
+(test
+  compiler-lower-fused-precheck-loop-and-boundary-equivalence
+  (let
+    [active : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 128 8)]
+    [name : i64 (ci.intern-generated-name "summary-local")]
+    [other : i64 (ci.intern-generated-name "summary-index")]
+    [plain : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [variable : i64 (ast.ast-node-pool-context-expr-push pools (Var name))]
+    [address : i64
+      (ast.ast-node-pool-context-expr-push pools (PtrAddrOf variable))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools)]
+    [body : ast.AstExprList
+      (ast.ast-expr-cons address (& (ast.ast-expr-list-new)))]
+    [plain-body : ast.AstExprList
+      (ast.ast-expr-cons plain (& (ast.ast-expr-list-new)))]
+    [loops : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr 0)]
+    (ast.ast-node-pool-context-install! pools)
+    (__tl_array-push! loops (While plain (clone body)))
+    (__tl_array-push! loops (While address (clone plain-body)))
+    (__tl_array-push!
+      loops
+      (Foreach (box (ast.AstForeach.Foreach name (I64) plain plain address))))
+    (__tl_array-push!
+      loops
+      (Foreach
+        (box
+          (ast.AstForeach.Foreach2
+            name
+            (I64)
+            plain
+            plain
+            other
+            (I64)
+            plain
+            plain
+            address))))
+    (__tl_array-push! loops (ForeachActive name address))
+    (__tl_array-push!
+      loops
+      (SpmdReduce
+        (box
+          (ast.AstSpmdReduce.Reduce (Sum) name (I64) plain plain plain address))))
+    (__tl_array-push!
+      loops
+      (SpmdScan
+        (box
+          (ast.AstSpmdScan.Scan
+            (Sum)
+            name
+            (I64)
+            plain
+            plain
+            other
+            (I64)
+            plain
+            plain
+            address))))
+    (__tl_array-push!
+      loops
+      (SpmdCompact
+        (box
+          (ast.AstSpmdCompact.Compact
+            name
+            (I64)
+            plain
+            plain
+            other
+            (I64)
+            plain
+            plain
+            address))))
+    (__tl_array-push!
+      loops
+      (ForOwnedState
+        (ast.ast-for-owned-state-payload variable variable plain address)))
+    (__tl_array-push!
+      loops
+      (ForOwnedStep
+        (ast.ast-for-owned-step-payload
+          variable
+          variable
+          variable
+          -1
+          variable
+          address)))
+    ;; Keep the canonical pre-check's conservative treatment of loop bounds;
+    ;; the unchanged lexical census still handles once-only initialization.
+    (__tl_array-push!
+      loops
+      (Foreach (box (ast.AstForeach.Foreach name (I64) address plain plain))))
+    (for [index (iterator.range 0 (array-length loops))]
+      (let
+        [expr : ast.AstExpr (clone (array-ref loops index))]
+        (test.assert-true
+          (lower-test-precheck-cached? ctx (clone expr) true)
+          "every loop and condition/bound retains its exact canonical summary")
+        (for [limit (iterator.range 0 12)]
+          (test.assert-true
+            (lower-test-precheck-carrier-agrees? ctx (clone expr) 10000 limit)
+            "the independent address budget preserves canonical exhaustion"))
+        (test.assert-true
+          (lower-test-precheck-carrier-agrees? ctx expr 0 10000)
+          "an incomplete carrier cannot cache a negative answer")))
+    (let
+      [inner : i64
+        (ast.ast-node-pool-context-expr-push pools (While plain (clone body)))]
+      [boundaries : (__tl_dyn-array ast.AstExpr)
+        (__tl_make-array ast.AstExpr 0)]
+      (__tl_array-push!
+        boundaries
+        (Lambda
+          (box (ast.AstLambda.Lambda (ast.ast-param-list-new) (No) inner))))
+      (__tl_array-push! boundaries (Quote inner))
+      (__tl_array-push! boundaries (Quasiquote inner))
+      (__tl_array-push! boundaries (Comptime inner))
+      (for [index (iterator.range 0 (array-length boundaries))]
+        (let
+          [boundary : i64
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (clone (array-ref boundaries index)))]
+          [outer : ast.AstExpr
+            (While
+              plain
+              (ast.ast-expr-cons boundary (& (ast.ast-expr-list-new))))]
+          (test.assert-true
+            (lower-test-precheck-cached? ctx (clone outer) false)
+            "nested lambda/quote/comptime bodies do not contribute to the parent")
+          (for [limit (iterator.range 0 8)]
+            (test.assert-true
+              (lower-test-precheck-carrier-agrees?
+                ctx
+                (clone outer)
+                10000
+                limit)
+              "ignored descendants consume no address-summary budget")))))
+    (test.assert-true
+      (lower-test-precheck-cached? ctx (PtrAddrOf variable) false)
+      "an acyclic address is not a loop-exposure summary")
+    (ast.ast-node-pool-context-install! active)))
+
+(test
+  compiler-lower-fused-precheck-helper-invalidation
+  (let
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    (test.assert-i64-eq
+      (unsafe
+        (deref (lower.compiler-lower-function-state-view state)).address-precheck)
+      -1
+      "an unscanned state requires the canonical fallback")
+    (unsafe
+      (set!
+        (deref (lower.compiler-lower-function-state-ptr state)).address-precheck
+        0))
+    (unsafe
+      (set!
+        (deref (lower.compiler-lower-function-state-ptr state)).address-exposure-mode
+        1))
+    (lower.compiler-lower-function-state-raw-address-free-set! state true)
+    (lower.compiler-lower-function-state-body-proofs-invalidate! state)
+    (test.assert-true
+      (and
+        (=
+          (unsafe
+            (deref (lower.compiler-lower-function-state-view state)).address-precheck)
+          -1)
+        (=
+          (unsafe
+            (deref (lower.compiler-lower-function-state-view state)).address-exposure-mode)
+          -1)
+        (not (lower.compiler-lower-function-state-raw-address-free? state)))
+      "the helper-splice path invalidates the cached summary and census together")
+    unit))
+
+;; A small shared DAG exhausts the real production budget without a huge
+;; source or a test-only limit. The carrier cannot cache `false` from a prefix.
+(test
+  compiler-lower-fused-precheck-incomplete-carrier-fallback
+  (let
+    [active : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 4)]
+    [tree : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    (ast.ast-node-pool-context-install! pools)
+    (for [_index (iterator.range 0 21)]
+      (set!
+        tree
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (Begin
+            (ast.ast-expr-cons
+              tree
+              (& (ast.ast-expr-cons tree (& (ast.ast-expr-list-new)))))))))
+    (let
+      [ctx : tc_core.TcContext
+        (tc_core.tc-context-new
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          0
+          pools)]
+      [body : ast.AstExpr (ast.ast-node-pool-context-expr-get pools tree)]
+      [budget : i64 lower.lower-written-roots-scan-budget]
+      (test.assert-true
+        (lower.lower-exposure-has-address? ctx (clone body) false (&mut budget))
+        "canonical exhaustion conservatively requires the census")
+      (lower.lower-function-state-scan-written-roots! ctx state body)
+      (test.assert-i64-eq
+        (unsafe
+          (deref (lower.compiler-lower-function-state-view state)).address-precheck)
+        -1
+        "the incomplete production carrier leaves the standalone fallback available"))
+    (ast.ast-node-pool-context-install! active)))
+
 ;; Call and operator operands, and indirect callees in ordinary and tail
 ;; calls, copy storage only when later evaluation can write it. Unrelated
 ;; writes and calls retain only their assignment copy; a write to the operand

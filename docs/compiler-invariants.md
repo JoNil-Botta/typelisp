@@ -429,7 +429,13 @@ not expose the local slot; stored mutable by-value borrows remain rejected.
 The advance census marks addresses enclosed by loops, including outer loops:
 a later acyclic address cannot affect an earlier read. Incremental marks still
 cover every emitted address and therefore subsequent reads in straight-line
-code. A body without loop exposure needs no binding table. Otherwise only complete
+code. A body without loop exposure needs no binding table. Its exact quick summary
+is carried by the already-required loop discovery/set-value traversal. The
+address budget is independent of the carrier budget, and nested function,
+quote and comptime descendants do not consume it. An incomplete carrier keeps
+the result unavailable and uses the canonical standalone pre-check; exhaustion
+of the address budget retains that pre-check's conservative `true`. The full
+lexical census and actual-variable seeding are unchanged. Otherwise only complete
 lexical facts can prove a binding unexposed; missing/synthesized bindings and
 incomplete facts remain conservative. Incremental marks still cover generated
 addresses. Splicing an SPMD helper invalidates the function's census, including

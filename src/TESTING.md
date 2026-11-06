@@ -534,6 +534,14 @@ mutable borrows rejected with E0207; immediate call borrows stay supported.
 keep staged scalar and register-group writebacks correct across loops
 without falsely exposing the original local slots. Acyclic pre-/post-address
 controls preserve both private early reads and required later materialization.
+The fused-precheck equivalence regression compares every loop form, conditions
+and bounds, nested lambda/quote/comptime boundaries and independent small
+budgets with the canonical standalone traversal. Its helper-invalidation
+regression checks that a synthesized body clears both the cached summary and
+full census. Full-corpus qualification also uses a diagnostic compiler that
+checks every available summary against the canonical pre-check and emits IR
+from that canonical result, then compares it with the production compiler.
+
 
 `addr_taken_frame_slots.tl` keeps scalar, narrow, parameter, loop-carried and
 callable-copy storage private while a derived pointer remains live, at opt0/1/2

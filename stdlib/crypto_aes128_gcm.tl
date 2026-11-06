@@ -21,7 +21,6 @@
 ;# ```typelisp
 ;# (import stdlib.crypto_aes128_gcm as gcm)
 ;# (import stdlib.crypto_secret as secret)
-(import stdlib.crypto_stack_scrub as scrub)
 
 ;# (import stdlib.byte_buf as buf)
 ;# (define (main) : i64
@@ -46,6 +45,7 @@
 ;# still spills, and registers/caches/dumps and timing certification are excluded.
 (import stdlib.crypto_aes_core as aes)
 (import stdlib.crypto_secret as secret)
+(import stdlib.crypto_stack_scrub as scrub)
 (import stdlib.crypto_ghash_core as ghash)
 (import stdlib.byte_buf as buf)
 

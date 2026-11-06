@@ -406,7 +406,7 @@ src/tests/test_cli_entry_memory_smoke.tl	stage2-native-integration-corpus	@compi
 src/tests/test_cli_entry_state_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 src/tests/tlci_loader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/math.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
-stdlib/crypto_aes_core.tl	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Primary shared AES implementation, local arithmetic checks and both-target assembly-shape source.
+stdlib/crypto_aes_core.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Shared AES core changes affect both mode and public reclaim chains.
 stdlib/tests/crypto_aes_api.tl	embedded-stdlib-tlci-image,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary installed-module and native macro identity witness for both AES constructors.
 stdlib/tests/crypto_aes_core_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
 stdlib/tests/crypto_aes_fips_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
@@ -736,4 +736,3 @@ stdlib/crypto_stack_scrub.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed
 tests/fixtures/crypto-aes/*	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Crypto AES pins, both-target stack geometry and per-boundary residue mutants.
 scripts/check-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Actual interval analysis and emitted-code residue probes.
 scripts/verify-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Both-host native coverage and pinned negative execution.
-stdlib/crypto_aes_core.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Shared AES core changes affect both mode and public reclaim chains.

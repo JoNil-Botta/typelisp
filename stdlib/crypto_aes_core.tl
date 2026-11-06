@@ -33,7 +33,6 @@
 ;# ```typelisp
 ;# (import stdlib.crypto_aes_core as aes)
 ;# (import stdlib.crypto_secret as secret)
-(import stdlib.crypto_stack_scrub as scrub)
 
 ;# (define (main) : i64
 ;#   (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
@@ -48,6 +47,7 @@
 ;#     [(aes.Aes128Err _) 1]))
 ;# ```
 (import stdlib.crypto_secret as secret)
+(import stdlib.crypto_stack_scrub as scrub)
 (cfg test (import stdlib.test))
 
 ;: Test-only tally of visited source work sites, never secret values. Each

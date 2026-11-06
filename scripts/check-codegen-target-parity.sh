@@ -193,17 +193,23 @@ compile_ir() {
 
     out="$out_dir/opt${opt_level}_$name.ir"
     echo "[$target opt$opt_level] $source -> $out"
-    parity_stdlib="$ROOT/stdlib"
     if [ "$name" = crypto_aes128_gcm ]; then
-        source="$CRYPTO_PARITY_ROOT/main.tl"
-        parity_stdlib="$CRYPTO_PARITY_ROOT/stdlib"
+        # Compile inside the shadow source tree: the importing source tree has
+        # precedence over explicit stdlib roots, including transitive imports.
+        case "$COMPILER" in /* | [A-Za-z]:*) parity_compiler=$COMPILER ;; *) parity_compiler="$ROOT/$COMPILER" ;; esac
+        case "$out" in /* | [A-Za-z]:*) parity_out=$out ;; *) parity_out="$ROOT/$out" ;; esac
+        (cd "$CRYPTO_PARITY_ROOT" && "$parity_compiler" compile main.tl \
+            --emit-ir --target "$target" --opt-level "$opt_level" \
+            --stdlib-root stdlib -o "$parity_out")
+        if [ "$opt_level" = 0 ] && cmp -s "$out" "$CRYPTO_PARITY_ROOT/$target.ir"; then
+            echo "crypto reclaim test double was not selected for $target" >&2
+            exit 1
+        fi
+    else
+        "$COMPILER" compile "$source" \
+            --emit-ir --target "$target" --opt-level "$opt_level" \
+            --stdlib-root "$ROOT/stdlib" -o "$out"
     fi
-    "$COMPILER" compile "$source" \
-        --emit-ir \
-        --target "$target" \
-        --opt-level "$opt_level" \
-        --stdlib-root "$parity_stdlib" \
-        -o "$out"
 }
 
 compile_all() {

@@ -6,7 +6,6 @@
 (import compiler_parse_core as parser)
 (import stdlib.vector)
 (import (vector.vector String) as canon_svec)
-(import sym_i64_env)
 (import stdlib.iterator)
 (import stdlib.io)
 (cfg test (import stdlib.test))

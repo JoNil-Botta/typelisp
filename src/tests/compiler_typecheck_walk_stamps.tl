@@ -5,6 +5,7 @@
 (import compiler_ast_types as ast)
 (import compiler_typecheck_core as tc)
 (import compiler_intern as ci)
+(import compiler_symbols as csym)
 (import compiler_check_core as check_core)
 (import compiler_load)
 (import compiler_parse_core as parser)
@@ -300,6 +301,50 @@
       (tc.tc-type-walk-table-release! serial)
       (walk-expect "serial table not released" (= (walk-job-table serial) 0)))))
 
+;; Stamped arena erasure (family 5), called directly: a binary DAG of `depth`
+;; levels whose every leaf is `(Region <arena pseudo region> i64)` erases to
+;; the same DAG over i64. `tagged?` (family 4) stops at the first leaf
+;; (depth + 1 visits), so at depth 40 it never opens a serial: every serial
+;; the call issues is an erasure serial, and the call finishes at all only
+;; because completed erasures of repeated subtrees are reused (2^40 leaves
+;; unstamped). Returns the serials issued.
+(define (walk-erase-run [job : tc.TcJobState] [depth : i64]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc.TcContext
+      (tc.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        "walk-erase"
+        (ci.intern "walk-erase")
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [plain : i64 (walk-push ast.AstType.I64)]
+    [tagged : i64
+      (walk-push
+        (ast.AstType.Region (tc.tc-selected-arena-pseudo-region) plain))]
+    [dag : i64 (walk-dag depth tagged)]
+    [want : i64 (walk-dag depth plain)]
+    [none : (__tl_dyn-array i64) (tc.tc-selected-no-i64s)]
+    [before : i64 (walk-table-serial)]
+    [erased : ast.AstType
+      (tc.tc-selected-arena-erase ctx (& none) (ast.ty-node-get dag))]
+    [issued : i64 (- (walk-table-serial) before)]
+    [erased-id : i64 (walk-push erased)]
+    (walk-expect
+      "tagged DAG is arena-tagged"
+      (tc.tc-selected-arena-tagged? ctx (& none) (ast.ty-node-get dag)))
+    (walk-expect
+      "erased DAG equals the plain DAG"
+      (tc.tc-type-eq (ast.ty-node-get erased-id) (ast.ty-node-get want)))
+    (walk-expect
+      "erased DAG is untagged"
+      (not
+        (tc.tc-selected-arena-tagged? ctx (& none) (ast.ty-node-get erased-id))))
+    issued))
+
 ;; Source text of a binary tuple DAG of `depth` levels over leaf `kind`
 ;; (0 i64, 1 a small S-bearing tuple).
 (define (walk-source-leaf [kind : i64]) : String
@@ -563,6 +608,7 @@
         (ast.ast-node-pool-context-new-with-capacities 8 8))
       (walk-boundary-test 1)
       (walk-dag-test 40)
+      (walk-expect "erasure stamps" (>= (walk-erase-run job 40) 1))
       (walk-expect "words idle after walks" (walk-words-idle?))
       ;; Forced serial wrap and exhaustion: limit 4 wraps whenever no serial
       ;; is open and nested walks past it run unstamped; limit 1 never
@@ -573,6 +619,9 @@
       (tc.tc-walk-serial-limit-set! 1)
       (walk-boundary-test 0)
       (walk-dag-test 12)
+      (walk-expect
+        "plain erasure issues no serial"
+        (<= (walk-erase-run job 12) 0))
       (tc.tc-walk-serial-limit-set! 1152921504606846976)
       (walk-expect "words idle after wrap" (walk-words-idle?))
       ;; REPL requests and a failing check, under the test job's binding.

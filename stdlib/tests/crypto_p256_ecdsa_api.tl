@@ -280,6 +280,20 @@
           (buf.str-as-bytes "sample")
           (buf.bytes-slice-view (buf.as-bytes (& der)) 0 length))
         false)
+      ;; Keep the outer frame valid too, so truncated INTEGER headers and
+      ;; contents reach their own bounds checks instead of the SEQUENCE check.
+      (if (>= length 8)
+        (let
+          [truncated : buf.ByteBuf
+            (buf.from-bytes-range (buf.as-bytes (& der)) 0 length)]
+          (set! truncated (buf.set! truncated 1 (cast (- length 2) : u8)))
+          (expect-result
+            (ecdsa.verify-sha256
+              key
+              (buf.str-as-bytes "sample")
+              (buf.as-bytes (& truncated)))
+            false))
+        unit)
       (set! length (+ length 1)))
     (while (< slot 6)
       (let

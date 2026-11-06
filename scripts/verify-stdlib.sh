@@ -214,6 +214,7 @@ crypto_ghash_core.tl
 crypto_hkdf_sha256.tl
 crypto_hmac_sha256.tl
 crypto_p256.tl
+crypto_p256_ecdsa.tl
 crypto_rsa_core.tl
 crypto_rsa_verify.tl
 crypto_random.tl
@@ -324,6 +325,7 @@ stdlib/tests/x509_api.tl|42|-|-|-
 stdlib/tests/deflate_api.tl|42|-|-|-
 stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
+stdlib/tests/crypto_p256_ecdsa_api.tl|42|-|-|-
 stdlib/tests/crypto_aes_api.tl|42|-|-|-
 stdlib/tests/crypto_aes128_gcm_api.tl|42|-|-|-
 stdlib/tests/crypto_aes128_gcm_parity.tl|42|-|-|-

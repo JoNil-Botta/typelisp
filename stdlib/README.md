@@ -134,12 +134,52 @@ so this section only maps the modules by area. Import a module with
   `net/url`, `net_windows_winsock`, `ssh_known_hosts_parse`, `ssh_wire_core`,
   `crypto_sha1_git`,
   `crypto_sha256`, `crypto_sha512`, `crypto_rsa_core`, `crypto_rsa_verify`,
-  `crypto_p256`, `crypto_secret`, `crypto_aes_core`, `crypto_aes128_gcm`,
-  `crypto_ghash_core`, `crypto_hkdf_sha256`,
+  `crypto_p256`, `crypto_p256_ecdsa`, `crypto_secret`, `crypto_aes_core`,
+  `crypto_aes128_gcm`, `crypto_ghash_core`, `crypto_hkdf_sha256`,
   `crypto_hmac_sha256`,
   `x509_time`, `x509` (owned certificate models,
   exact signed bytes and parsed extensions; no trust/signature decisions).
   See [certificate parsing](../docs/x509.md) for limits and the supported profile.
+
+`x509.service-reference` classifies independently supplied strict IPv4/IPv6
+text before DNS and returns `ServiceReference.Ip` or `Dns` over an owned,
+validated ASCII domain String. The 254-byte input cap is checked before
+classification scans input. At most one terminal DNS root dot is omitted
+from comparison. NR-LDH labels and syntactically valid `xn--` labels compare
+as ASCII; apparent A-label prefixes and names are case-insensitive. V1 does
+not decode or certify Punycode/IDNA symmetry, and rejects non-ASCII reference
+bytes with `InternationalizedNameUnsupported`; #7269 owns full IDNA2008
+conversion/validation and the later canonical-result constructor.
+
+Build a caller-owned list with `service-references-new` and
+`service-reference-add!`, then pass the parsed leaf certificate, list and
+`ServiceIdentityLimits` to `service-identity`. Defaults allow 16 references
+and 1024 SANs; configurable bounds are 0..64 and 0..4096. Both counts are
+checked before traversal. The result returns the matched reference and SAN
+indices (SAN order, then reference order), or stable typed errors for invalid
+references/limits, empty references, no supported presented identifier and
+identity mismatch. Diagnostics contain no certificate bodies or SAN text.
+The owned DNS value exposes no raw allocation pointer. Public records must
+still pass canonical validation at insertion and again before matching: edited
+names, root dots in canonical storage and numeric IPv4 values in a `Dns` record
+are rejected as `InvalidReference`. Thus direct record construction cannot
+turn a numeric IP into a DNS identity or bypass the reference checks.
+
+Only `dNSName` and typed `iPAddress` SANs participate. Invalid presented DNS
+syntax is ignored while searching later entries; malformed SAN DER and wrong
+IP widths are parser failures. DNS wildcards are one complete left-most label
+and match exactly one nonempty reference label. `DisallowWildcards` is an
+explicit caller policy. With `AllowWildcards`, `*.com` matches `example.com`
+and `*.co.uk` matches `example.co.uk`: RFC matching provides no PSL enforcement.
+No suffix list or label-count guess is shipped. IP families and exact network
+octets remain distinct, including IPv4 versus IPv4-mapped IPv6. Brackets,
+zones, ports, network prefixes and numeric IPv4 spellings with a terminal
+dot are refused. Subject/Common Name/RDN, SNI and certificate contents never
+create caller references. This API verifies
+leaf identity only; path authorization, trust, signatures, validity and TLS
+configuration remain separate responsibilities. All names/addresses are
+public and comparisons are variable-time; no secrets or secret spill residue
+are introduced.
 
 `net/dns/wire` is the pure DNS codec for the future stub resolver (Refs #7472).
 It encodes one IN/A or IN/AAAA question with caller ID/RD and optional EDNS0
@@ -430,6 +470,7 @@ fixture documentation discloses GHASH frame/store counts and the shared
 | `leb128.tl` | `decode-unsigned`, `decode-signed`, `unsigned-size`, and `signed-size` read the caller's private dynamic-buffer bytes or a scalar and allocate nothing. `push-unsigned!` and `push-signed!` append the minimal encoding through `byte_buf_core.byte-buf-builder-push` and allocate only when the builder grows in the active arena. |
 | `asn1_der.tl`, `x509_time.tl` | DER validation and Gregorian conversion allocate no payload storage, using fixed stack arrays and scalar limits. Borrowed ranges keep the original owner alive. |
 | `pem.tl`, `x509.tl` | Validated budgets bound active-arena payload/decoded buffers and metadata vectors before growth. Successful certificates own one exact DER copy; range views borrow it without copying. Errors expose no partial result, though internal arena allocations live until their arena is reset. |
+| `x509.tl` service identity | Accepted DNS references own a bounded canonical String, constructed through a buffer of at most 253 bytes. The owned String retains normal arena lifetime and move checks; no raw pointer is exported or dereferenced by identity matching. IP construction and the fixed-capacity 64-element reference list allocate nothing. Reference validation occurs once before SAN traversal; validation and matching allocate nothing, with at most SAN-count × reference-count × 253 byte comparisons plus bounded reference/SAN validation. No attacker-sized lowercase strings are built. |
 | `base64.tl` | Every planner and codec takes a nonnegative `max-output-bytes` as its last argument and rejects excess output before allocation or mutation. `encoded-length-count`, `encoded-length`, and `decoded-length` use checked scalar arithmetic without allocating; decoding rejects oversized input lengths before scanning, then validates canonical syntax and the exact output limit. `encode` and `decode` allocate one exact active-arena `ByteBuf`. `encode-into` and `decode-into` allocate nothing: after validating limits, syntax, destination capacity, and non-overlap, they write from offset zero into caller-owned backing storage. Every failure preserves its length and physical bytes. |
 | `compress/deflate.tl` | `decoder-new` validates limits and initial work before initializing fixed inline tables and allocating at most 32 KiB of history backing bytes in the active arena. `step!` allocates nothing and retains no chunk borrow; it reuses that workspace across blocks and suspensions. `decode` uses the same engine and grows its output only within the caller's bound. Retired geometric backing arrays and the decoder's history backing remain in the owning arena until it is dropped; the retired arrays' combined capacity is less than three times `max-output`. |
 | `compress/adler32.tl` and `compress/zlib.tl` | Adler-32 is scalar arithmetic over borrowed bytes and allocates nothing. `zlib.decoder-new` allocates only the raw decoder's bounded history; `step!` and `set-dictionary!` allocate nothing, retain no chunk or dictionary borrow, and copy at most `window-bytes` dictionary bytes into that history. `decode` and `decode-with-dictionary` grow output exactly as `deflate.decode` does, within the caller's bound. |
@@ -445,6 +486,7 @@ fixture documentation discloses GHASH frame/store counts and the shared
 | `crypto_rsa_core.tl` | Key parsing rejects negative, noncanonical, undersized, oversized, or even public values before arithmetic allocation. Limb arrays allocate only at a selected 2048/3072/4096/8192-bit public capacity. Setup retains modulus and `R^2 mod n`; each public exponentiation allocates one exact-width result plus bounded 32-bit-limb results and 64-bit `2n+2` REDC scratch in the active arena. `public-exponentiation-retained-bytes-upper-bound` reports a conservative per-call bound from the checked public class, actual modulus limbs, and at-most-32-bit exponent. No routine accepts secret operands or claims constant-time behavior. |
 | `crypto_rsa_verify.tl` | Both public message verifiers reuse `crypto_rsa_core`'s checked exact-width exponentiation and one SHA-256 digest. PKCS#1 compares the complete fixed DER encoding without another output buffer. PSS bounds its MGF1 mask to the RSA maximum of 1024 bytes before allocation, then retains one mask, one decoded DB, a 72-byte recomputation input, and at most one 36-byte seed/counter input per mask digest block in the active arena. Rejection never publishes a partial result. |
 | `crypto_p256.tl` | Field, scalar and point arithmetic, `public-mul`, `public-double-mul`, inversion and point validation work on fixed eight-limb arrays and a ten-word Montgomery accumulator held by value, and allocate nothing. `field-to-bytes`, `scalar-to-bytes` and `public-point-to-bytes` each allocate one exact 32- or 65-byte `ByteBuf` in the active arena. Parsers reject a wrong length, a non-canonical coordinate or scalar, a wrong SEC1 prefix, an off-curve point and the identity before returning a value. `public-mul` and `public-double-mul` branch on their scalars, and the field and scalar helpers branch on operand values: they are public-input routines with no constant-time claim, and secret scalars must not reach them. |
+| `crypto_p256_ecdsa.tl` | `verify-sha256` takes a validated `crypto_p256.P256PublicPoint`, exact message bytes, and one complete strict DER signature. It returns typed valid/invalid/hash-error/core-error outcomes, hashes the message once with SHA-256, and accepts mathematically valid high-S signatures. Obtain received keys through `public-point-parse` first. The bounded parser rejects nonminimal lengths/INTEGERs, zero/out-of-range scalars, extra elements and trailing bytes before verification. Fixed arrays and borrowed byte views allocate nothing. Verification uses explicitly public, variable-time P-256 arithmetic; no secret scalar, signing or ECDH path enters this module. Stack spills can retain public message/hash/signature intermediates; there is no secret erasure or constant-time claim. |
 | `crypto_random.fill-random!` | Fills an exact caller-owned mutable `bytes` view from the operating-system cryptographic source without allocating output storage. Zero-length views succeed without a host call. Linux uses direct x86-64 `getrandom` with flags zero in at most 256-byte requests and checks partial/interrupted results. Windows loads `bcrypt.dll` through kernel32, validates and calls `BCryptGenRandom(NULL, ..., BCRYPT_USE_SYSTEM_PREFERRED_RNG)` through a raw C function pointer while its DLL reference remains live, then unloads it. Every failure is structured and wipes the complete valid view; there is no PRNG, clock, identifier, file, or third-party fallback. `fill-random-with!` is the low-level checked adapter seam for deterministic tests and explicitly injected protocol providers. |
 | `crypto_sha1_git.*` | `new`, `update!`, `finalize!`, `git-digest`, byte access/equality, the raw source seam, and the exact 20-byte consuming sink allocate nothing; a state retains one 64-byte partial block. `to-hex` allocates one exact 40-byte lowercase Git object-ID `String`. The byte counter admits exactly the FIPS SHA-1 domain below 2^64 bits and finalization clears and poisons the state. Compression scratch and explicit state/digest wipe hooks use volatile stores. This allocation behavior does not rehabilitate SHA-1: the API is compatibility-only and forbidden for new security uses. |
 | `crypto_sha256.*` | `new`, `update!`, `finalize!`, `digest`, the unsafe scoped raw-source/exact-sink adapters, digest byte access/equality, and the checked length machinery allocate nothing; a state retains exactly one 64-byte partial block. `to-hex` allocates one exact 64-byte lowercase `String`. The byte counter admits exactly the FIPS SHA-256 domain below 2^64 bits. Compression scratch and explicit consuming state/digest wipe hooks use volatile stores. Digests are ordinary public values; the unsafe adapters preserve caller-owned lifetime, generation, and non-overlap checks, and the wipe hooks are a narrow secret-derived-caller seam rather than a side-channel or whole-machine erasure claim. |

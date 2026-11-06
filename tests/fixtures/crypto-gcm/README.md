@@ -139,8 +139,8 @@ ciphertext pointer; Windows `multiply!` spills the accumulator pointer. The
 table still counts them and the pushes rather than treating them as erased
 storage. It does not establish an all-callers absence of secret residue.
 The P1 best-effort scrub follow-up is [#9648](https://github.com/JoNil-Botta/typelisp/issues/9648).
-Per D-C132 it does not gate GCM; this module will reuse that shared work rather
-than introducing a separate scrub or a compiler-level erasure claim.
+Per D-C132 it does not gate GCM; this module reuses that shared work as described below, with no compiler-level
+erasure claim.
 
 The pins and spill table were requalified against the actual landed bitsliced
 AES closure at main `b3a7c356bbeadf791b44f0b9e17509c7463e4267`, including
@@ -153,3 +153,27 @@ The linked shared AES bodies are covered by the
 current main's independent `aes-*` gate as well as these GCM closure pins.
 Every GHASH frame/store/RMW/push count in the table is unchanged. This records
 no new spill exposure from composition and does not retire the disclosed risk.
+
+## D-C155 shared tree reclamation
+
+Key construction, seal and open now run the shared `crypto_stack_scrub` mechanism
+once after their structured operation result and owner cleanup. Authentication
+failure reaches the same final reclaim. H, J0 and GCTR use the internal validated
+AES path over the same cipher, so a record does not run a public-block scrub for
+each payload block. Future composed stdlib modes use this same pattern.
+
+This is best-effort hardening. Compiler spills remain outside an erasure guarantee;
+opt2 is still the default and still generates secret copies. Registers, caches,
+dumps and fatal exits remain excluded; there is no timing/side-channel certification.
+A disclosed AES residue can still conditionally yield the AES key, and opt1 GHASH
+residue can reveal H. The final reclaim reduces their lifetime in retired frames.
+The prior D-C132/D-C150 disclosures describe the pre-scrub exposure; they are not
+replaced by a claim of certified absence.
+
+The required both-host `stage2-crypto-stack-residue` gate covers key setup, seal,
+successful open and authentication refusal, plus both standalone AES variants.
+It checks actual emitted intervals and seeded residue at opt1/opt2, and all
+removal/short-window controls must fail. The GCTR target change is reanalyzed in
+[the shared stack review](../crypto-aes/stack-scrub-review.md): opt1 remains at
+31 stores; the extra opt2 outgoing slot holds the public status-result pointer; the false selector stays in a register. GHASH
+keeps its 48 B wipe and the same 38 opt1 stores, with no new opt2 secret slot.

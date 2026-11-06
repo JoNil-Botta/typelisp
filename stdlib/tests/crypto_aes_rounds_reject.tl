@@ -5,4 +5,4 @@
   [schedule : (& schedule aes.Aes128Schedule)]
   [source : (& source secret.SecretFixed)]
   [destination : (&mut destination secret.SecretFixed)]) : aes.AesStatus
-  (aes.encrypt-checked! (& schedule.expanded) source destination 176 14))
+  (aes.encrypt-checked! (& schedule.expanded) source destination 176 14 true))

@@ -1,0 +1,18 @@
+# Name, phase (negative replaces the call with a 64-byte window), expected exit.
+positive	0	42
+remove-aes128-setup	1	1
+remove-aes128-block	2	1
+remove-aes256-setup	3	1
+remove-aes256-block	4	1
+remove-gcm-key	5	1
+remove-gcm-seal	6	1
+remove-gcm-open	7	1
+remove-gcm-auth-failure	8	1
+shrink-aes128-setup	-1	1
+shrink-aes128-block	-2	1
+shrink-aes256-setup	-3	1
+shrink-aes256-block	-4	1
+shrink-gcm-key	-5	1
+shrink-gcm-seal	-6	1
+shrink-gcm-open	-7	1
+shrink-gcm-auth-failure	-8	1

@@ -1,4 +1,6 @@
 ; Reproducible native report for the admitted portable implementation.
+; Optional third argument overrides the record count and suppresses reporting,
+; so Cachegrind (N - 0)/N cancels identical setup/reference/teardown work.
 ; Timings are observations, never thresholds or a variant-selection rule.
 (import stdlib.crypto_aes128_gcm as gcm)
 (import stdlib.crypto_secret as secret)
@@ -55,9 +57,13 @@
     [aad : String "aad!!"]
     [nonce : gcm.GcmNonce (gcm.GcmNonce (make-array u8 12))]
     [rounds : i64
-      (if (= length 16384)
-        32
-        512)]
+      (if (= (io.arg-count) 3)
+        (let
+          [argument : String (io.arg 2)]
+          (string.>int (& argument)))
+        (if (= length 16384)
+          32
+          512))]
     (set! plain.len length)
     (match (gcm.new (secret.fixed-zero (secret.Secret16)))
       [(GcmKeyOk key)
@@ -103,15 +109,17 @@
                 (let
                   [elapsed : i64 (- (profile.now-ticks) start)]
                   [allocated : i64 (- (profile.alloc-total) before)]
-                  (report
-                    (if decrypt
-                      "open"
-                      "seal")
-                    length
-                    rounds
-                    elapsed
-                    allocated
-                    checksum)))]
+                  (when
+                    (not (= (io.arg-count) 3))
+                    (report
+                      (if decrypt
+                        "open"
+                        "seal")
+                      length
+                      rounds
+                      elapsed
+                      allocated
+                      checksum))))]
             [_ (io.panic "GCM benchmark reference")]))]
       [_ (io.panic "GCM benchmark context")])))
 
@@ -163,7 +171,7 @@
 (define (main) : i64
   (let
     [mode : String
-      (if (= (io.arg-count) 2)
+      (if (>= (io.arg-count) 2)
         (io.arg 1)
         "all")]
     (cond

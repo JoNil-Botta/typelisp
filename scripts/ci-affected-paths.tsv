@@ -88,8 +88,8 @@ tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,
 tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate,stage2-stdlib-modules-and-fixtures	@corpus	Secret-wipe shapes and both-host native generation cleanup controls consumed by the stdlib verifier.
 tests/codegen/crypto-aes.cases	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Exact case file named by the AES and GCM fixed-work gates.
 tests/fixtures/crypto-gcm/*	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@corpus	GCM complete-body pins, linked audit roots and official vector provenance; both shape gates share the case inventory.
-stdlib/crypto_aes128_gcm.tl	stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-crypto-gcm-native-report,stage2-inline-typelisp-tests	@stdlib	Typed GCM public API, lifecycle and native report.
-stdlib/crypto_ghash_core.tl	stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-crypto-gcm-native-report,stage2-inline-typelisp-tests	@stdlib	Internal GHASH arithmetic, wiping and fixed-work evidence.
+stdlib/crypto_aes128_gcm.tl	stage2-crypto-stack-residue,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-crypto-gcm-native-report,stage2-inline-typelisp-tests	@stdlib	Typed GCM public API, lifecycle and native report.
+stdlib/crypto_ghash_core.tl	stage2-crypto-stack-residue,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-crypto-gcm-native-report,stage2-inline-typelisp-tests	@stdlib	Internal GHASH arithmetic, wiping and fixed-work evidence.
 tools/crypto-gcm-bench/*	stage2-crypto-gcm-native-report	@corpus	GCM setup, one-block and bulk measurement driver.
 tools/crypto-gcm-kat/*	stage2-inline-typelisp-tests	@corpus	Hash-pinned public GCM vector conversion.
 scripts/check-crypto-aes-shape.sh	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Shared complete-body AES/GCM extractor.
@@ -732,3 +732,8 @@ scripts/verify-linux-stack-protection.sh	stage2-linux-stack-protection	-	Linux s
 scripts/verify-linux-stack-combinations.sh	stage2-linux-stack-protection	-	Entry/transient combinations on the minimum foreign guard.
 scripts/verify-linux-stack-edges.sh	stage2-linux-stack-protection	-	Linux stack failure, host and unwind witnesses.
 tests/fixtures/linux-stack-protection.fixtures.cases	stage2-linux-stack-protection,stage2-public-tool-surface	@corpus	Declared Linux stack witness primaries.
+stdlib/crypto_stack_scrub.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Shared crypto reclaim sizes and volatile stores require all residue, mutant and shape cells.
+tests/fixtures/crypto-aes/*	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Crypto AES pins, both-target stack geometry and per-boundary residue mutants.
+scripts/check-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Actual interval analysis and emitted-code residue probes.
+scripts/verify-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Both-host native coverage and pinned negative execution.
+stdlib/crypto_aes_core.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Shared AES core changes affect both mode and public reclaim chains.

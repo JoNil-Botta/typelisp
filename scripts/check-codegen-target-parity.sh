@@ -158,6 +158,32 @@ EOF
     fi
 }
 
+# The crypto reclaim layout intentionally varies by target (D-C155). Preserve
+# aggregate-IR parity for the cryptographic implementation with a no-op boundary
+# double, while checking that the real source retains distinct target layouts.
+# Native residue/mutant and complete-body shape gates cover the actual mechanism.
+prepare_crypto_parity() {
+    mkdir -p "$WORKDIR"
+    CRYPTO_PARITY_ROOT=$(mktemp -d "$WORKDIR/crypto-target-neutral.XXXXXX")
+    cp -R "$ROOT/stdlib" "$CRYPTO_PARITY_ROOT/stdlib"
+    cp "$ROOT/stdlib/tests/crypto_aes128_gcm_parity.tl" "$CRYPTO_PARITY_ROOT/main.tl"
+    cat > "$CRYPTO_PARITY_ROOT/stdlib/crypto_stack_scrub.tl" <<'EOF'
+; Test double for aggregate-IR comparison only; never assembled or executed.
+(define (block!) : unit unit)
+(define (setup!) : unit unit)
+(define (tree!) : unit unit)
+EOF
+    for crypto_target in linux-x86_64 windows-x86_64; do
+        "$COMPILER" compile stdlib/tests/crypto_aes128_gcm_parity.tl \
+            --emit-ir --target "$crypto_target" --opt-level 0 \
+            --stdlib-root "$ROOT/stdlib" -o "$CRYPTO_PARITY_ROOT/$crypto_target.ir"
+    done
+    if cmp -s "$CRYPTO_PARITY_ROOT/linux-x86_64.ir" "$CRYPTO_PARITY_ROOT/windows-x86_64.ir"; then
+        echo 'crypto reclaim target layout unexpectedly lost its cfg selection' >&2
+        exit 1
+    fi
+}
+
 compile_ir() {
     target=$1
     opt_level=$2
@@ -167,11 +193,16 @@ compile_ir() {
 
     out="$out_dir/opt${opt_level}_$name.ir"
     echo "[$target opt$opt_level] $source -> $out"
+    parity_stdlib="$ROOT/stdlib"
+    if [ "$name" = crypto_aes128_gcm ]; then
+        source="$CRYPTO_PARITY_ROOT/main.tl"
+        parity_stdlib="$CRYPTO_PARITY_ROOT/stdlib"
+    fi
     "$COMPILER" compile "$source" \
         --emit-ir \
         --target "$target" \
         --opt-level "$opt_level" \
-        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$parity_stdlib" \
         -o "$out"
 }
 
@@ -220,6 +251,7 @@ compare_outputs() {
 check_optimizer_target_free
 check_target_dispatch_boundary
 check_emit_ir_target_honored
+prepare_crypto_parity
 
 rm -rf "$LINUX_DIR" "$WINDOWS_DIR"
 mkdir -p "$LINUX_DIR" "$WINDOWS_DIR"

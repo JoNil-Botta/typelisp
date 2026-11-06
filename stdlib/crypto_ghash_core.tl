@@ -6,6 +6,8 @@
 ;# bit first, with masked reduction by x^128+x^7+x^2+x+1. No keyed hash API.
 ;# Compiler spill slots retain secret-derived copies outside explicit scratch;
 ;# they are outside the wipe guarantee, including at default release opt2.
+;# The enclosing GCM operation reclaims its retired tree at exit on every
+;# structured path; this best-effort mechanism does not certify erasure.
 (import stdlib.crypto_secret as secret)
 
 ;: High limb of the public reflected reduction polynomial for Algorithm 1.

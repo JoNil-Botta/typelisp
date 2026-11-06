@@ -21,7 +21,6 @@
 ;# ```typelisp
 ;# (import stdlib.crypto_aes128_gcm as gcm)
 ;# (import stdlib.crypto_secret as secret)
-
 ;# (import stdlib.byte_buf as buf)
 ;# (define (main) : i64
 ;#   (let [nonce : gcm.GcmNonce (gcm.GcmNonce (make-array u8 12))]

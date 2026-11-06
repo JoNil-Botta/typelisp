@@ -408,11 +408,11 @@ src/tests/tlci_loader_smoke.tl	stage2-native-integration-corpus	@compiler	Declar
 stdlib/math.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/crypto_aes_core.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Shared AES core changes affect both mode and public reclaim chains.
 stdlib/tests/crypto_aes_api.tl	embedded-stdlib-tlci-image,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary installed-module and native macro identity witness for both AES constructors.
-stdlib/tests/crypto_aes_core_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
-stdlib/tests/crypto_aes_fips_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
-stdlib/tests/crypto_aes_kat_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
-stdlib/tests/crypto_aes_lifecycle_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
-stdlib/tests/crypto_aes_work_inline.tl	stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_core_inline.tl	stage2-crypto-stack-residue,stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_fips_inline.tl	stage2-crypto-stack-residue,stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_kat_inline.tl	stage2-crypto-stack-residue,stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_lifecycle_inline.tl	stage2-crypto-stack-residue,stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
+stdlib/tests/crypto_aes_work_inline.tl	stage2-crypto-stack-residue,stage2-inline-typelisp-tests,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary cross-module AES vector, lifecycle or paired-work inline fixture.
 stdlib/tests/crypto_aes_clone_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
 stdlib/tests/crypto_aes_format_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
 stdlib/tests/crypto_aes_key_reuse_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
@@ -736,3 +736,6 @@ stdlib/crypto_stack_scrub.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed
 tests/fixtures/crypto-aes/*	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Crypto AES pins, both-target stack geometry and per-boundary residue mutants.
 scripts/check-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Actual interval analysis and emitted-code residue probes.
 scripts/verify-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Both-host native coverage and pinned negative execution.
+stdlib/crypto_secret.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.
+stdlib/tests/crypto_aes128_gcm_inline.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.
+stdlib/tests/crypto_aes128_gcm_kat_inline.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.

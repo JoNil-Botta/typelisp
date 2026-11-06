@@ -33,7 +33,6 @@
 ;# ```typelisp
 ;# (import stdlib.crypto_aes_core as aes)
 ;# (import stdlib.crypto_secret as secret)
-
 ;# (define (main) : i64
 ;#   (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
 ;#     [(aes.Aes128Ok schedule)

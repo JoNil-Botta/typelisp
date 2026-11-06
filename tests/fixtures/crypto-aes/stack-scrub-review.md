@@ -150,6 +150,11 @@ vector, negative, lifecycle and source-work files at both opt1 and opt2.
 
 The ordinary full AES/GCM body pins now include every emitted shared reclaim
 function and actual caller. They preserve branch/address/round/scratch coverage.
+Moving the scrub imports out of the header examples changes only function-number
+labels in three AES bodies and four or five GCM bodies per target/opt cell.
+The refreshed pins retain identical inventories and instructions/operands after
+normalizing only those `.Lf` function-number prefixes; no arithmetic or address
+change is hidden by the refresh.
 Windows runtime execution is required in hosted CI; Linux cross-assembly alone is
 not credited as Windows runtime evidence.
 

@@ -1927,7 +1927,7 @@
 
 (define (smoke-heavy-pass-large-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
-    (opt.opt-blocks-collect smoke-heavy-pass-large-tail-blocks! 1 1024)
+    (opt.opt-blocks-collect smoke-heavy-pass-large-tail-blocks! 1 4096)
     (irt.block "entry:
          %2 = add %0, %1 : i64
          jump b1")))
@@ -1954,12 +1954,7 @@
           type-segment-bases
           func
           (opt.opt-program-summaries-empty)))]
-    (unless (> (ir.compiler-ir-block-list-count blocks) 1024) (return 1))
-    (unless
-      (<=
-        (ir.compiler-ir-block-list-count blocks)
-        (opt.opt-heavy-pass-block-limit))
-      (return 2))
+    (unless (> (ir.compiler-ir-block-list-count blocks) 4096) (return 1))
     (match optimized
       [(Function _ _ _ _ optimized-blocks _)
         (if (=

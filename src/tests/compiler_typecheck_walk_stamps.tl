@@ -388,8 +388,10 @@
 
 ;; The bound table's undo-log capacity (0 with no table). The log starts empty
 ;; and grows only when a serial overwrites a stamp written since the
-;; outermost open serial began, i.e. only when serials nest: a nonzero
-;; capacity after a check witnesses a nested serial and its undo/restore.
+;; outermost open serial began: a nonzero capacity after a check witnesses a
+;; second serial (of any family) opened while one was open, overwriting
+;; shared IDs that its close restores. The paired small-field checks tie it
+;; to the nominal frame.
 (define (walk-table-undo-capacity) : i64
   (let
     [address : i64 (tc.tc-type-walk-table)]
@@ -542,11 +544,12 @@
   (walk-expect "plain never nests" (= walk-last-undo 0))
   (tc.tc-walk-serial-limit-set! 1152921504606846976))
 
-;; Arena erasure: `take` brands `r` through its owner parameter, and its
-;; parameter type is one root, `(Tuple (Tuple D L))`, whose last leaf L is
-;; `(in r i64)` (tagged) or `i64` (plain) after the 255-visit DAG D. Calls
-;; erase the signature's arena regions: the tagged root walks the tag and
-;; rebuilds the type (stamped erasure), the plain one returns unchanged.
+;; Arena erasure call site: `take` brands `r` through its owner parameter,
+;; and its parameter type is one root, `(Tuple (Tuple D L))`, whose last leaf
+;; L is `(in r i64)` (tagged) or `i64` (plain) after the 255-visit DAG D. A
+;; tagged root makes the call site run more stamped `tagged?` (family 4)
+;; walks over the untagged D; erasure itself returns D unchanged, so stamped
+;; erasure (family 5) is witnessed directly by `walk-erase-run` instead.
 (define (walk-arena-source [tagged : bool]) : String
   (str_cat.str-cat
     "(import stdlib.arena)\n(define (take [_owner : (& a (arena.Arena r))] [_x : "
@@ -567,7 +570,7 @@
   (let
     [tagged : i64 (walk-check-run (walk-arena-source true) true)]
     [plain : i64 (walk-check-run (walk-arena-source false) true)]
-    (walk-expect "arena erasure stamps" (> tagged plain)))
+    (walk-expect "arena call site stamps tagged walks" (> tagged plain)))
   (tc.tc-walk-serial-limit-set! 1)
   (walk-expect
     "arena tagged plain"

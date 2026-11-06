@@ -76,8 +76,8 @@ the validated AES(J0) seam; an unreachable AES invariant failure is fatal.
 The complete containing bodies pin inlining and these control/address facts;
 retaining an unused helper alone cannot satisfy the gate.
 
-Local secret-memory payload peaks are 240 bytes for key setup (schedule,
-H, zero block and AES block/row scratch), 320 bytes for seal and
+Local secret-memory payload peaks are 272 bytes for key setup (raw key,
+schedule and expansion planes, or schedule/H/zero block and cipher planes), 320 bytes for seal and
 304 bytes for open (context plus operation scratch and GHASH locals).
 These are source-level secret storage bounds, excluding compiler spills,
 registers and allocator metadata; assembly frame sizes and runtime allocator
@@ -135,3 +135,12 @@ storage. It does not establish an all-callers absence of secret residue.
 The P1 best-effort scrub follow-up is [#9648](https://github.com/JoNil-Botta/typelisp/issues/9648).
 Per D-C132 it does not gate GCM; this module will reuse that shared work rather
 than introducing a separate scrub or a compiler-level erasure claim.
+
+The pins and spill table were requalified against the actual landed bitsliced
+AES closure at main `b3a7c356bbeadf791b44f0b9e17509c7463e4267`, including
+the large-function SSA optimizer from PR #9652. GHASH and GCM bodies reproduce
+their prior instruction/operand/control shapes after normalizing only local
+function-numbered labels. The linked shared AES bodies are covered by the
+current main's independent `aes-*` gate as well as these GCM closure pins.
+Every GHASH frame/store/RMW/push count in the table is unchanged. This records
+no new spill exposure from composition and does not retire the disclosed risk.

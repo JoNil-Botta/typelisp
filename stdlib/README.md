@@ -376,6 +376,12 @@ The `string_caller_result.tl`, `io_caller_result.tl`, and
 `io_caller_result.tl` is an explicit binary-to-text materialization boundary;
 borrowed process runtime wrappers likewise copy at their owned boundary.
 
+AES/GCM volatile cleanup covers the explicit secret owners and named scratch,
+not compiler-generated stack spill slots, registers, caches or dumps. Opt2 is
+the default release profile and is included in that limitation. The GCM
+fixture documentation discloses GHASH frame/store counts and the shared
+[#9648 hardening follow-up](https://github.com/JoNil-Botta/typelisp/issues/9648).
+
 | Functions | Allocation behavior |
 |-----------|---------------------|
 | `string_utf8.decode-at`, `decode-before`, `iterator`, `next`, `next-back`, `validate`, `count`, `boundary-at`, `slice-range`, `encode` | Checked Unicode scalar mechanics over borrowed byte strings, without allocation or replacement. Iterator errors are yielded once before stable exhaustion. Count/boundary/scalar-range checks validate the complete input. Encoding writes shortest-form UTF-8 into caller-provided mutable bytes and leaves them unchanged on invalid scalar or insufficient space. Ordinary `String`/`char` operations remain byte-oriented; runtime byte strings need not be valid UTF-8. |

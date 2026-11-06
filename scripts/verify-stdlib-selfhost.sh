@@ -49,7 +49,7 @@ reject_diag() {
         stdlib/tests/core_macros_cond_missing_else.tl)
             printf 'cond requires a final [else ...] arm' ;;
         stdlib/tests/core_macros_cond_else_not_final.tl)
-            printf 'core-cond-else-must-be-final' ;;
+            printf 'cond allows [else ...] only as the final arm' ;;
         stdlib/tests/core_macros_cond_branch_mismatch.tl)
             printf 'typecheck: if branches must match' ;;
         stdlib/tests/core_macros_cond_non_bool.tl)

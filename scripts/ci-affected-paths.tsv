@@ -98,7 +98,7 @@ tests/fixtures/crypto-aes/shape-windows-x86_64-opt2.sha256	stage2-crypto-aes-fix
 tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.
 tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast,stage2-sde-fallback	@corpus	Exact case file named by the lane and broadcast gates.
 tests/cli/public-*.cases	stage2-public-tool-surface	@corpus	Public command transcripts discovered by the public-tool runner.
-tests/safety/cond_missing_else*_reject.tl	stage2-public-tool-surface	@corpus	Primary rejection fixtures in the public conditional diagnostic matrix.
+tests/safety/cond_*_reject.tl	stage2-public-tool-surface	@corpus	Primary rejection fixtures in the public conditional diagnostic matrix.
 tests/cli/selfhost-surface.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact command-surface corpus named by the CLI smoke runner.
 tests/cli/selfhost-build-run.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact build/run corpus named by the CLI smoke runner.
 tests/cli/host-action.cases	stage2-cli-host-action-smoke	@corpus	The host-action smoke runner directly consumes this transcript.

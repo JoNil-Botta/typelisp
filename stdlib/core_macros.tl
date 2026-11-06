@@ -170,7 +170,8 @@
   (comptime.expr-clause-list-fold-if
     arms
     `(comptime (comptime.comptime-error "cond requires a final [else ...] arm"))
-    (comptime.expr-var "core-cond-else-must-be-final")))
+    `(comptime
+      (comptime.comptime-error "cond allows [else ...] only as the final arm"))))
 
 ;: Add `delta` to the numeric value stored in `place`.
 ;:

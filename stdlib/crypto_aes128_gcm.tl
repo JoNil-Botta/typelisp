@@ -41,7 +41,9 @@
 (import stdlib.crypto_secret as secret)
 (import stdlib.crypto_ghash_core as ghash)
 (import stdlib.byte_buf as buf)
-(import stdlib.io)
+
+; Reuse the existing runtime-fatal ABI without pulling platform I/O into GCM.
+(import stdlib.checked_size as checked)
 
 ;: Public errors contain only status/lengths, never secret intermediates.
 (defenum GcmError
@@ -237,7 +239,7 @@
           (counter! nonce block counter-data))
         (match (aes.encrypt-128! (& key.schedule) counter stream)
           [(AesOk) unit]
-          [(AesErr _) (io.panic "GCM validated AES invariant")])
+          [(AesErr _) (checked.size-abort "GCM validated AES invariant\n")])
         (cfg test (set! payload-blocks (+ payload-blocks 1)) unit)
         (let
           [count : i64

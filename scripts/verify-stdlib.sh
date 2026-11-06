@@ -326,6 +326,7 @@ stdlib/tests/zlib_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_aes_api.tl|42|-|-|-
 stdlib/tests/crypto_aes128_gcm_api.tl|42|-|-|-
+stdlib/tests/crypto_aes128_gcm_parity.tl|42|-|-|-
 stdlib/tests/crypto_hkdf_sha256_api.tl|42|-|-|-
 stdlib/tests/crypto_hkdf_sha256_parity.tl|42|-|-|-
 stdlib/tests/crypto_hmac_sha256_api.tl|42|-|-|-

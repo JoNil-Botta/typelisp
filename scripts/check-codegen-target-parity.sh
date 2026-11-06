@@ -66,7 +66,7 @@ stdlib_net_owner_parity tests/integration/stdlib_net_owner_parity.tl
 net_tls_transcript stdlib/tests/net_tls_transcript_parity.tl
 crypto_hkdf_sha256 stdlib/tests/crypto_hkdf_sha256_parity.tl
 crypto_hmac_sha256 stdlib/tests/crypto_hmac_sha256_parity.tl
-crypto_aes128_gcm stdlib/tests/crypto_aes128_gcm_api.tl
+crypto_aes128_gcm stdlib/tests/crypto_aes128_gcm_parity.tl
 control_flow tests/integration/control_flow.tl
 char_comparisons tests/integration/char_comparisons.tl
 char_comparison_immediates tests/integration/char_comparison_immediates.tl

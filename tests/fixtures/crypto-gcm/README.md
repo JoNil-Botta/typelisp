@@ -138,9 +138,12 @@ than introducing a separate scrub or a compiler-level erasure claim.
 
 The pins and spill table were requalified against the actual landed bitsliced
 AES closure at main `b3a7c356bbeadf791b44f0b9e17509c7463e4267`, including
-the large-function SSA optimizer from PR #9652. GHASH and GCM bodies reproduce
-their prior instruction/operand/control shapes after normalizing only local
-function-numbered labels. The linked shared AES bodies are covered by the
+the large-function SSA optimizer from PR #9652. GHASH and GCM bulk work reproduce
+their prior instruction/operand/control shapes after normalizing local
+function-numbered labels. GCTR's unreachable invariant-failure path now calls
+the existing runtime-fatal ABI through `checked_size`, avoiding platform I/O;
+the pure parity witness exercises real seal, successful open and bad-tag open.
+The linked shared AES bodies are covered by the
 current main's independent `aes-*` gate as well as these GCM closure pins.
 Every GHASH frame/store/RMW/push count in the table is unchanged. This records
 no new spill exposure from composition and does not retire the disclosed risk.

@@ -144,6 +144,49 @@
       (unsafe
         (ptr-read q)))))
 
+;; Immediate mutable borrows stage temporary storage and write back by name.
+;; Raw exposure of an unrelated slot must not change that representation.
+(define (bump! [x : (&mut x i64)]) : unit
+  (set! (deref x) (+ (deref x) 1)))
+
+(define (pair-bump! [pair : (&mut pair Pair)]) : unit
+  (set! pair.left (+ pair.left 1)))
+
+(define (staged-writeback [count : i64]) : bool
+  (let
+    [x : i64 1]
+    [pair : Pair (Pair 1 41)]
+    [y : i64 0]
+    [i : i64 0]
+    [ok : bool true]
+    (unsafe
+      (ptr-addr-of y))
+    (while (< i count)
+      (let
+        [scalar-before : i64
+          (first
+            x
+            (begin
+              (bump! (&mut x))
+              0))]
+        [pair-before : i64
+          (first
+            pair.left
+            (begin
+              (pair-bump! (&mut pair))
+              0))]
+        (set!
+          ok
+          (and
+            ok
+            (= scalar-before (+ i 1))
+            (= x (+ i 2))
+            (= pair-before (+ i 1))
+            (= pair.left (+ i 2))
+            (= pair.right 41))))
+      (+= i 1))
+    ok))
+
 (define (main) : i64
   (let
     [counts : (Array i64 4) (array 0 1 2 4)]
@@ -173,7 +216,8 @@
             (= (callee inc count true true) want-callee)
             (= (callee inc count false false) unexposed-callee)
             (= (projection count) want-argument)
-            (= (captured count) want-argument))))
+            (= (captured count) want-argument)
+            (staged-writeback count))))
       (+= index 1))
     (if (and ok (= (shadowed 42) 42) (= (read-only-tail 42) 42))
       42

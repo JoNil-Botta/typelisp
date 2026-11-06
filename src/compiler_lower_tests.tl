@@ -2204,6 +2204,43 @@
           "an addressed callee needs no snapshot before a read-only tail"))]
     [_ (test.assert-true false "loop exposure fixture lowers")]))
 
+;; A staged mutable call borrow never lends the original register slot. Even
+;; an unrelated raw address must not introduce own-slot reloads for the pair.
+;; Explicit scalar writeback still requires the evaluation snapshot.
+(test
+  compiler-lower-staged-borrow-does-not-expose-slot
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(defstruct Pair (left i64) (right i64))
+(define (first [a : i64] [_b : i64]) : i64 a)
+(define (inc [x : i64]) : i64 (+ x 1))
+(define (dec [x : i64]) : i64 (- x 1))
+(define (bump! [x : (&mut x i64)]) : unit (set! (deref x) (+ (deref x) 1)))
+(define (pair-bump! [x : (&mut x Pair)]) : unit (set! x.left (+ x.left 1)))
+(define (staged-pair [pair : Pair] [n : i64]) : i64
+  (let [y : i64 0] [i : i64 0] [result : i64 0]
+    (unsafe (ptr-addr-of y))
+    (while (< i n)
+      (set! result (+ pair.left pair.right))
+      (pair-bump! (&mut pair)) (set! i (+ i 1))) result))
+(define (staged-scalar [x : i64]) : i64
+  (first x (begin (bump! (&mut x)) 0)))
+(define (main) : i64 (+ (staged-pair (Pair 1 41) 2) (staged-scalar 1)))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-count functions "staged-pair" (HomeAddrOf))
+        1
+        "only the unrelated raw-addressed local has its own slot exposed")
+      (test.assert-i64-eq
+        (lower-test-snapshot-before-effect
+          functions
+          "staged-scalar"
+          "bump!"
+          "first")
+        1
+        "explicit scalar writeback preserves operand evaluation order")]
+    [_ (test.assert-true false "staged mutable call borrows lower")]))
+
 (test
   compiler-lower-never-callee
   (let
@@ -4912,6 +4949,7 @@
 ;; own lower-test-instr-K-count predicate.
 (defenum LowerTestInstr
   (AddrOf)
+  (HomeAddrOf)
   (Alloc)
   (Binop)
   (Bitcast)
@@ -4949,6 +4987,10 @@
   [kind : LowerTestInstr]) : i64
   (match kind
     [(AddrOf) (lower-test-instr-addr-of-count instr)]
+    [(HomeAddrOf)
+      (match instr
+        [(AddrOf _ _ 0) 1]
+        [_ 0])]
     [(Alloc) (lower-test-instr-alloc-count instr)]
     [(Binop) (lower-test-instr-binop-count instr)]
     [(Bitcast) (lower-test-instr-bitcast-count instr)]

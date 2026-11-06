@@ -420,8 +420,11 @@ boundaries explicitly. A scope ID, binding ordinal and hygienic name identify
 each source binding; the census environment resolves the nearest binding.
 Parameters, captures, `let`/resource bindings and pattern/loop scope entry seed
 the existing IR-variable address map when their actual variables are known.
-No future IR-variable number is predicted. Projected register aggregates expose
-their root slot; projecting through a reference exposes its referent instead.
+No future IR-variable number is predicted. Raw addresses of projected register
+aggregates expose their root slot; projecting through a reference exposes its
+referent instead. Borrowing a by-value local stages a fresh frame slot, with
+explicit post-call writeback for immediate mutable borrows. Such a borrow does
+not expose the local slot; stored mutable by-value borrows remain rejected.
 
 A complete address-free body needs no binding table. Otherwise only complete
 lexical facts can prove a binding unexposed; missing/synthesized bindings and

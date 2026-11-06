@@ -1200,14 +1200,6 @@
 
 (define tc-macro-state-slot-type-walk : i64
   19)
-(cfg
-  (not d2-stamps-off)
-  (define tc-walk-prefix : i64
-    64))
-(cfg
-  d2-stamps-off
-  (define tc-walk-prefix : i64
-    4611686018427387904))
 (define tc-walk-serial-limit : i64
   1152921504606846976)
 
@@ -1219,67 +1211,49 @@
   0)
 (define tc-type-walk-address : i64
   0)
-(define tc-walk-depth-0 : i64
-  0)
+
+;; Per-family walk state, two separate words (no packing): the current root
+;; walk's fan-out visits (counting stops at B = 64; 0 = no root walk in
+;; progress) and its open serial (0 = none yet, -1 = stamping unavailable).
 (define tc-walk-visits-0 : i64
   0)
 (define tc-walk-serial-0 : i64
-  0)
-(define tc-walk-depth-1 : i64
   0)
 (define tc-walk-visits-1 : i64
   0)
 (define tc-walk-serial-1 : i64
   0)
-(define tc-walk-depth-2 : i64
-  0)
 (define tc-walk-visits-2 : i64
   0)
 (define tc-walk-serial-2 : i64
-  0)
-(define tc-walk-depth-3 : i64
   0)
 (define tc-walk-visits-3 : i64
   0)
 (define tc-walk-serial-3 : i64
   0)
-(define tc-walk-depth-4 : i64
-  0)
 (define tc-walk-visits-4 : i64
   0)
 (define tc-walk-serial-4 : i64
-  0)
-(define tc-walk-depth-5 : i64
   0)
 (define tc-walk-visits-5 : i64
   0)
 (define tc-walk-serial-5 : i64
   0)
-(define tc-walk-depth-6 : i64
-  0)
 (define tc-walk-visits-6 : i64
   0)
 (define tc-walk-serial-6 : i64
-  0)
-(define tc-walk-depth-7 : i64
   0)
 (define tc-walk-visits-7 : i64
   0)
 (define tc-walk-serial-7 : i64
   0)
-(define tc-walk-depth-8 : i64
-  0)
 (define tc-walk-visits-8 : i64
   0)
 (define tc-walk-serial-8 : i64
   0)
-(define tc-walk-depth-9 : i64
-  0)
 (define tc-walk-visits-9 : i64
   0)
 (define tc-walk-serial-9 : i64
-  0)
-(define tc-walk-depth-10 : i64
   0)
 (define tc-walk-visits-10 : i64
   0)
@@ -1294,7 +1268,60 @@
 
 ;: Bind `job` as the owner of every type-walk table access until the matching
 ;: `tc-type-walk-restore!`.
+;; No family walk may span a change of the bound job: its serial and the
+;; stamps it reads belong to the previous job's table. Every binding change
+;; therefore requires all walk words at 0 (fail-closed).
+(define (tc-walk-words-idle!) : unit
+  (unless
+    (=
+      0
+      (bit-or
+        tc-walk-visits-0
+        (bit-or
+          tc-walk-serial-0
+          (bit-or
+            tc-walk-visits-1
+            (bit-or
+              tc-walk-serial-1
+              (bit-or
+                tc-walk-visits-2
+                (bit-or
+                  tc-walk-serial-2
+                  (bit-or
+                    tc-walk-visits-3
+                    (bit-or
+                      tc-walk-serial-3
+                      (bit-or
+                        tc-walk-visits-4
+                        (bit-or
+                          tc-walk-serial-4
+                          (bit-or
+                            tc-walk-visits-5
+                            (bit-or
+                              tc-walk-serial-5
+                              (bit-or
+                                tc-walk-visits-6
+                                (bit-or
+                                  tc-walk-serial-6
+                                  (bit-or
+                                    tc-walk-visits-7
+                                    (bit-or
+                                      tc-walk-serial-7
+                                      (bit-or
+                                        tc-walk-visits-8
+                                        (bit-or
+                                          tc-walk-serial-8
+                                          (bit-or
+                                            tc-walk-visits-9
+                                            (bit-or
+                                              tc-walk-serial-9
+                                              (bit-or
+                                                tc-walk-visits-10
+                                                tc-walk-serial-10))))))))))))))))))))))
+    (io.panic "typecheck: a type walk is open across a job binding")))
+
 (define (tc-type-walk-bind! [job : TcJobState]) : TcTypeWalkBinding
+  (tc-walk-words-idle!)
   (let
     [saved : TcTypeWalkBinding
       (TcTypeWalkBinding tc-type-walk-job tc-type-walk-address)]
@@ -1305,6 +1332,7 @@
 ;: Leave the type-walk table unbound (exact walks) until the matching
 ;: `tc-type-walk-restore!`.
 (define (tc-type-walk-unbind!) : TcTypeWalkBinding
+  (tc-walk-words-idle!)
   (let
     [saved : TcTypeWalkBinding
       (TcTypeWalkBinding tc-type-walk-job tc-type-walk-address)]
@@ -1313,6 +1341,7 @@
     saved))
 
 (define (tc-type-walk-restore! [saved : TcTypeWalkBinding]) : unit
+  (tc-walk-words-idle!)
   (set! tc-type-walk-job saved.job)
   (set! tc-type-walk-address 0))
 
@@ -1536,53 +1565,54 @@
           (set! (deref table).marks-len (- (deref table).marks-len 1))
           (set! (deref table).open (- (deref table).open 1)))))))
 
-(defmacro (tc-walk-frame
-  [depth : Expr]
-  [visits : Expr]
-  [serial : Expr]
-  [body : Expr]) : Expr
+;: Run `body` as a nominal frame: its fields walk with another stack, so
+;: they form their own root walks and never share a serial with the
+;: enclosing walk. With no serial open only the visit count is saved and a
+;: serial the body opened closes at its end; otherwise both words are saved,
+;: zeroed and restored.
+(defmacro (tc-walk-frame [visits : Expr] [serial : Expr] [body : Expr]) : Expr
   `(let
-    [walk-frame-depth : i64 ,depth]
     [walk-frame-visits : i64 ,visits]
     [walk-frame-serial : i64 ,serial]
     [walk-frame-result
       (begin
-        (set! ,depth 0)
         (set! ,visits 0)
-        (set! ,serial 0)
+        (unless (= walk-frame-serial 0) (set! ,serial 0))
         ,body)]
     (when (> ,serial 0) (tc-walk-close!))
-    (set! ,depth walk-frame-depth)
     (set! ,visits walk-frame-visits)
     (set! ,serial walk-frame-serial)
     walk-frame-result))
 
+;: One fan-out child visit. The visit that finds `visits` at 0 is the root
+;: of a walk; its return closes the walk's serial and resets both words. A
+;: root's first B = 64 visits run `plain` (main's own call); later ones open
+;: the root's serial once and run `stamped`, which reuses completed results
+;: of the same root walk.
 (defmacro (tc-walk-fan
-  [depth : Expr]
   [visits : Expr]
   [serial : Expr]
   [family : Expr]
   [job : Expr]
   [plain : Expr]
   [stamped : Expr]) : Expr
-  `(let
-    [walk-fan-result
-      (begin
-        (set! ,depth (+ ,depth 1))
-        (if (< ,visits 64)
-          (begin
-            (set! ,visits (+ ,visits 1))
-            ,plain)
-          (begin
-            (when (= ,serial 0) (set! ,serial (tc-walk-open! ,family ,job)))
-            ,stamped)))]
-    (set! ,depth (- ,depth 1))
-    (when
-      (= ,depth 0)
+  `(if (= ,visits 0)
+    (let
+      [walk-fan-result
+        (begin
+          (set! ,visits 1)
+          ,plain)]
       (when (> ,serial 0) (tc-walk-close!))
       (set! ,serial 0)
-      (set! ,visits 0))
-    walk-fan-result))
+      (set! ,visits 0)
+      walk-fan-result)
+    (if (< ,visits 64)
+      (begin
+        (set! ,visits (+ ,visits 1))
+        ,plain)
+      (begin
+        (when (= ,serial 0) (set! ,serial (tc-walk-open! ,family ,job)))
+        ,stamped))))
 
 (define (tc-walk-probe-table! [family : i64] [serial : i64] [id : i64]) : i64
   (when (or (= (tc-type-walk-table) 0) (< id 0)) (return 0))
@@ -38282,7 +38312,6 @@
   (if (>= index (ast.ast-type-list-len types))
     false
     (if (tc-walk-fan
-      tc-walk-depth-0
       tc-walk-visits-0
       tc-walk-serial-0
       0
@@ -38302,7 +38331,6 @@
         (ast.ast-type-list-box-shared-view args))
         true
         (tc-walk-fan
-          tc-walk-depth-0
           tc-walk-visits-0
           tc-walk-serial-0
           0
@@ -38351,7 +38379,6 @@
     (ast.ast-type-cons
       (&
         (tc-walk-fan
-          tc-walk-depth-1
           tc-walk-visits-1
           tc-walk-serial-1
           1
@@ -38372,7 +38399,6 @@
             (ast.ast-type-list-box-shared-view args))
           (&
             (tc-walk-fan
-              tc-walk-depth-1
               tc-walk-visits-1
               tc-walk-serial-1
               1
@@ -39373,7 +39399,6 @@
     (tc-type-list-collect-regions-at
       types
       (tc-walk-fan
-        tc-walk-depth-3
         tc-walk-visits-3
         tc-walk-serial-3
         3
@@ -39391,7 +39416,6 @@
   (match ty
     [(Func args ret)
       (tc-walk-fan
-        tc-walk-depth-3
         tc-walk-visits-3
         tc-walk-serial-3
         3
@@ -49588,7 +49612,6 @@
     (and
       (tc-move-kind-copyable?
         (tc-walk-fan
-          tc-walk-depth-8
           tc-walk-visits-8
           tc-walk-serial-8
           8
@@ -49777,7 +49800,6 @@
   [type-id : i64]
   [completed : (&mut completed TcNameIdList)]) : TcMoveKind
   (tc-walk-frame
-    tc-walk-depth-8
     tc-walk-visits-8
     tc-walk-serial-8
     (tc-type-move-kind-nominal-with-stack-walk
@@ -122765,7 +122787,6 @@
     [found : bool false]
     (while (and (not found) (< index (ast.ast-type-list-len (& types))))
       (if (tc-walk-fan
-        tc-walk-depth-6
         tc-walk-visits-6
         tc-walk-serial-6
         6
@@ -124274,7 +124295,6 @@
   [name : i64]
   [enum? : bool]) : bool
   (tc-walk-frame
-    tc-walk-depth-7
     tc-walk-visits-7
     tc-walk-serial-7
     (tc-selected-nominal-holds-reference-walk? ctx walk name enum?)))
@@ -124364,7 +124384,6 @@
       (set!
         found
         (tc-walk-fan
-          tc-walk-depth-7
           tc-walk-visits-7
           tc-walk-serial-7
           7
@@ -124394,7 +124413,6 @@
           (set!
             found
             (tc-walk-fan
-              tc-walk-depth-10
               tc-walk-visits-10
               tc-walk-serial-10
               10
@@ -124690,7 +124708,6 @@
           (set!
             found
             (tc-walk-fan
-              tc-walk-depth-4
               tc-walk-visits-4
               tc-walk-serial-4
               4
@@ -124787,7 +124804,6 @@
     (ast.ast-type-cons
       (&
         (tc-walk-fan
-          tc-walk-depth-5
           tc-walk-visits-5
           tc-walk-serial-5
           5
@@ -124913,7 +124929,6 @@
           (set!
             free?
             (tc-walk-fan
-              tc-walk-depth-2
               tc-walk-visits-2
               tc-walk-serial-2
               2
@@ -125969,7 +125984,6 @@
           out
           (+ depth 1))
         (tc-walk-fan
-          tc-walk-depth-9
           tc-walk-visits-9
           tc-walk-serial-9
           9
@@ -125999,7 +126013,6 @@
     [index : i64 0]
     (while (< index (ast.ast-type-list-len (& types)))
       (tc-walk-fan
-        tc-walk-depth-9
         tc-walk-visits-9
         tc-walk-serial-9
         9

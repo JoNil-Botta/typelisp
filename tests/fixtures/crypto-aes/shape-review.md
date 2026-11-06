@@ -134,15 +134,31 @@ now has a different number of functions.
 Like registers, compiler-managed stack spill slots are outside the
 volatile-wipe guarantee; only the named scratch arrays are wiped. The stated
 guarantee is unchanged, but the actual opt2 exposure is not, and this is a
-disclosed adverse cost of the change. At opt1 both the previous and the new
-helpers keep secret locals in frame slots. At opt2 the previous `sbox`,
-`gf-mul` and `sub-bytes!` bodies made no stack stores. There, secret round
-values stayed in registers and the wiped scratch, and the few `cipher!`/
-`expand!` spills held public values. The new opt2 `sub-bytes!` (200-byte frame,
-49 stack stores) and `mix-columns!` (10 stack stores) spill circuit temporaries
-and plane values, and nothing wipes those dead slots. The last round's
-values remain in dead stack after `cipher!` returns. Together with the public
-ciphertext, final-round S-box state would reveal the last round key, from which
-AES-128's key schedule can be inverted. A best-effort scrub of the dead stack
-region after the block call is a possible follow-up. It depends on frame
-layout, so it would not be a guarantee.
+disclosed adverse cost of the change.
+
+- At opt1, both the previous and the new helpers keep secret locals in frame
+  slots.
+- At opt2, the previous `sbox`, `gf-mul` and `sub-bytes!` bodies made no stack
+  stores on either target. Secret round values stayed in registers and the
+  wiped scratch. The remaining `cipher!`/`expand!` frame stores held public
+  values: lengths, pointers, `rcon` and callee-saved/argument homes.
+- The new opt2 bodies spill circuit temporaries and plane values, and nothing
+  wipes those dead slots. On Linux, `sub-bytes!` (200-byte frame) makes 49
+  stack stores and `mix-columns!` 10. On Windows, `sub-bytes!` (440-byte frame)
+  makes 50 and `mix-columns!` 13; those counts include callee-saved register
+  saves.
+
+Both callers of the circuit leave residue:
+
+- Block encryption: the last round's values remain in dead stack after
+  `cipher!` returns. Together with the public ciphertext, final-round S-box
+  state would reveal the last round key, from which AES-128's key schedule can
+  be inverted.
+- Schedule construction: `expand!` runs every SubWord through `sub-block!` and
+  the same spilling `sub-bytes!`. Temporaries derived only from key-schedule
+  words (for AES-128, the SubWord of w[39]) therefore remain in dead stack
+  after `new-128`/`new-256` return.
+
+A best-effort scrub of the dead stack region after both the block call and
+schedule construction is a possible follow-up. It depends on frame layout, so
+it would not be a guarantee.

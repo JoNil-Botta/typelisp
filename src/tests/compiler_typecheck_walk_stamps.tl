@@ -5,6 +5,11 @@
 (import compiler_ast_types as ast)
 (import compiler_typecheck_core as tc)
 (import compiler_intern as ci)
+(import compiler_check_core as check_core)
+(import compiler_load)
+(import compiler_parse_core as parser)
+(import compiler_typecheck_api)
+(import sym_i64_env)
 (import stdlib.iterator)
 (import stdlib.io)
 (cfg test (import stdlib.test))
@@ -120,6 +125,7 @@
         (walk-region-tag?
           (walk-push (tc.tc-type-without-regions (ast.ty-node-get with-region))))))))
 
+;; Every family's visit and serial word (families 0..10).
 (define (walk-words-idle?) : bool
   (=
     0
@@ -139,7 +145,113 @@
                   tc.tc-walk-visits-3
                   (bit-or
                     tc.tc-walk-serial-3
-                    (bit-or tc.tc-walk-visits-10 tc.tc-walk-serial-10)))))))))))
+                    (bit-or
+                      tc.tc-walk-visits-4
+                      (bit-or
+                        tc.tc-walk-serial-4
+                        (bit-or
+                          tc.tc-walk-visits-5
+                          (bit-or
+                            tc.tc-walk-serial-5
+                            (bit-or
+                              tc.tc-walk-visits-6
+                              (bit-or
+                                tc.tc-walk-serial-6
+                                (bit-or
+                                  tc.tc-walk-visits-7
+                                  (bit-or
+                                    tc.tc-walk-serial-7
+                                    (bit-or
+                                      tc.tc-walk-visits-8
+                                      (bit-or
+                                        tc.tc-walk-serial-8
+                                        (bit-or
+                                          tc.tc-walk-visits-9
+                                          (bit-or
+                                            tc.tc-walk-serial-9
+                                            (bit-or
+                                              tc.tc-walk-visits-10
+                                              tc.tc-walk-serial-10)))))))))))))))))))))))
+
+(define (walk-job-table [job : tc.TcJobState]) : i64
+  (tc.tc-macro-state-slot-address
+    (tc.tc-job-state-macro-state job)
+    tc.tc-macro-state-slot-type-walk))
+
+;; One REPL request against a fixed session: `want` is whether it checks.
+(define (walk-repl-request [source : String] [want : bool]) : unit
+  (match (compiler_load.compiler-load-source
+    (& "tests/walk_repl_session.tl")
+    (&
+      "(define (pair [x : i64]) : (Tuple i64 i64) (tuple x x))
+(define (quad [x : i64]) : (Tuple (Tuple i64 i64) (Tuple i64 i64))
+  (tuple (pair x) (pair x)))")
+    (sym_i64_env.sym-i64-empty))
+    [(Ok decls _)
+      (match (parser.parse-ast-repl-source (& source))
+        [(Ok item)
+          (match item
+            [(AstReplExpr expr)
+              (match (compiler_typecheck_api.typecheck-compiler-repl-expr
+                decls
+                (ast.ast-node-get expr))
+                [(Ok _) (walk-expect "REPL request failed" want)]
+                [(Err _) (walk-expect "REPL request checked" (not want))])]
+            [(AstReplDecl _) (io.panic "REPL request parsed as a declaration")])]
+        [(Err _) (io.panic "REPL request did not parse")])]
+    [(Err _) (io.panic "REPL session did not load")]))
+
+;; Repeated and failing REPL requests: each binds the serial job, releases its
+;; table when that binding was the outermost, restores the caller's binding,
+;; and leaves every walk word idle.
+(define (walk-repl-test [job : tc.TcJobState]) : unit
+  (let
+    [serial : tc.TcJobState (tc.tc-serial-job-state)]
+    (for [_round (iterator.range 0 3)]
+      (walk-repl-request "(quad 1)" true)
+      (walk-repl-request "(+ 1 \"x\")" false)
+      (walk-repl-request "(tuple (quad 1) (quad 2))" true)
+      (walk-repl-request "(quad \"x\")" false)
+      (walk-expect
+        "REPL binding not restored"
+        (= tc.tc-type-walk-job job.address))
+      (walk-expect "REPL kept the serial table" (= (walk-job-table serial) 0))
+      (walk-expect "REPL left walk words open" (walk-words-idle?)))
+    ;; Inside a binding of the serial job itself the request is nested: the
+    ;; table stays for the enclosing binding, which releases it.
+    (let
+      [outer : tc.TcTypeWalkBinding (tc.tc-type-walk-bind! serial)]
+      [table : i64 (tc.tc-type-walk-table)]
+      (walk-repl-request "(quad 1)" true)
+      (walk-repl-request "(quad \"x\")" false)
+      (walk-expect
+        "nested REPL lost the binding"
+        (= tc.tc-type-walk-job serial.address))
+      (walk-expect
+        "nested REPL released the table"
+        (= (walk-job-table serial) table))
+      (tc.tc-type-walk-restore! outer)
+      (tc.tc-type-walk-table-release! serial)
+      (walk-expect "serial table not released" (= (walk-job-table serial) 0)))))
+
+;; Error injection: a failing check whose types fan out runs under its own
+;; binding; afterwards the caller's binding is back and every word is idle.
+(define (walk-failing-check-test [job : tc.TcJobState]) : unit
+  (match (check_core.compiler-check-source
+    "tests/walk_failing.tl"
+    "(define (main) : i64
+  (let [p (tuple 1 1)] [q (tuple p p)] [r (tuple q q)] [s (tuple r r)]
+    [t (ann s : (Tuple (Tuple (Tuple (Tuple i64 i64) (Tuple i64 i64)) (Tuple (Tuple i64 i64) (Tuple i64 i64))) (Tuple (Tuple (Tuple i64 i64) (Tuple i64 i64)) (Tuple (Tuple i64 i64) (Tuple i64 bool)))))]
+    0))")
+    [(Ok _ _) (io.panic "failing walk source checked")]
+    [(Err _ _) unit])
+  (walk-expect
+    "binding not restored after a failing check"
+    (= tc.tc-type-walk-job job.address))
+  (walk-expect "failing check left walk words open" (walk-words-idle?))
+  (walk-expect
+    "failing check kept the serial table"
+    (= (walk-job-table (tc.tc-serial-job-state)) 0)))
 
 (cfg
   test
@@ -165,6 +277,12 @@
       (walk-dag-test 12)
       (tc.tc-walk-serial-limit-set! 1152921504606846976)
       (walk-expect "words idle after wrap" (walk-words-idle?))
+      ;; REPL requests and a failing check, under the test job's binding.
+      (ast.ast-node-pool-context-install! installed)
+      (walk-repl-test job)
+      (walk-failing-check-test job)
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 8 8))
       ;; Release in between: the next walk starts a fresh table.
       (tc.tc-type-walk-restore! outer)
       (tc.tc-type-walk-table-release! job)

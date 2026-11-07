@@ -5097,6 +5097,45 @@
 (define (compiler-load-runtime-prelude-path-shared-view) : String
   (compiler-load-global-shared-view compiler-load-runtime-prelude-path))
 
+;; The stdlib modules every implicit prelude load reads: the runtime and core
+;; macro roots, plus what core_macros imports (clone, comptime).
+(define compiler-load-comptime-prelude-path : String
+  "stdlib/comptime.tl")
+
+(define (compiler-load-implicit-prelude-module-path? [path : (& path str)]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (or
+      (string.eq normalized compiler-load-runtime-prelude-path)
+      (string.eq normalized compiler-load-core-macro-prelude-path)
+      (string.eq normalized compiler-load-clone-prelude-path)
+      (string.eq normalized compiler-load-comptime-prelude-path))))
+
+;; A rootless prelude reads its modules from the embedded stdlib, whose inline
+;; tests are blanked (#8713), and a named source with the same canonical path
+;; is then deduplicated against that copy (#8813). For such a source that no
+;; configured root resolves, add the source's own stdlib root so the prelude
+;; reads the named file. Other paths keep `roots` unchanged.
+(define (compiler-load-roots-with-implicit-prelude-source
+  [path : (& path str)]
+  [roots : svec.Vec]) : svec.Vec
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (if (and
+      (compiler-load-implicit-prelude-module-path? (& normalized))
+      (io.file-exists? (string.copy path))
+      (match (compiler-load-resolve-stdlib-root
+        (& (compiler-load-stdlib-suffix (& normalized)))
+        (& roots))
+        [(CompilerLoadSomePath _) false]
+        [(CompilerLoadNoPath) true]))
+      ;; Copy first: callers share one `roots` across sources, and pushing
+      ;; would publish this source's root (and its arena) to the next one.
+      (compiler-load-string-vec-push-copy
+        (clone roots)
+        (string.substring (& normalized) 0 7))
+      roots)))
+
 ;; Prelude source selection is physical, but its loader path is deliberately
 ;; canonical. That keeps module identity, import restoration, diagnostics, and
 ;; deduplication independent of the absolute/relative spelling of a stdlib root.

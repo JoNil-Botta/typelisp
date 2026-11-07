@@ -107534,6 +107534,284 @@
               depth
               out)])])))
 
+;; A nested macro call's bracket-clause operand that the callee declares as an
+;; ExprBindingClause introduces a binder, even though hygiene sees only a call.
+;; Rename a template head as a binder (SPEC section 3.7.2) and scope it over the
+;; operands after it, so caller syntax spliced there keeps its own binding. A
+;; caller-supplied head is not template syntax and still binds as written. The
+;; callee is resolved from the symbol table through its renamed head: a macro
+;; visible at the definition site, otherwise the core macro prelude.
+(define (macro-hygiene-module-macro-decl
+  [expr-bases : i64]
+  [macro-name : MacroHygieneContext]
+  [module-id : i64]
+  [name-id : i64]) : MacroMaybeDecl
+  (let
+    [lookup-module-id : i64
+      (if (csym.compiler-symbol-root-module-id? module-id)
+        cbi.compiler-builtin-id-fix-empty
+        module-id)]
+    [handle : i64
+      (if (< name-id 0)
+        (csym.compiler-symbols-missing-handle)
+        (csym.compiler-symbols-lookup-macro-in-module-id-or
+          (macro-hygiene-symbols macro-name)
+          lookup-module-id
+          name-id
+          (csym.compiler-symbols-missing-handle)))]
+    (if (csym.compiler-symbols-handle-found? handle)
+      (let
+        [index : i64 (csym.compiler-symbol-handle-index handle)]
+        (match (csym.compiler-symbols-decl-at-index
+          (macro-hygiene-symbols macro-name)
+          index)
+          [(Ok decl) (macro-decl-from-decl expr-bases decl module-id index)]
+          [(Err _) (No)]))
+      (No))))
+
+(define (macro-hygiene-callee-macro-decl
+  [expr-bases : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [head-id : i64]) : MacroMaybeDecl
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (macro-hygiene-env-structural-session env)]
+    [callee-id : i64 (macro-hygiene-rename-var-id env macro-name head-id)]
+    (cond
+      [(macro-hygiene-global-id? session callee-id)
+        (macro-hygiene-module-macro-decl
+          expr-bases
+          macro-name
+          (macro-hygiene-global-module-id session callee-id)
+          (macro-hygiene-global-source-name-id-or session callee-id -1))]
+      [(and
+          (>= callee-id 0)
+          (< callee-id (ci.intern-capacity))
+          (< (tc-name-first-dot-id session callee-id) 0))
+        (let
+          [prelude : MacroMaybeDecl
+            (macro-hygiene-module-macro-decl
+              expr-bases
+              macro-name
+              cbi.compiler-builtin-id-core-macros-module
+              callee-id)]
+          (match (& prelude)
+            [(No)
+              (macro-hygiene-module-macro-decl
+                expr-bases
+                macro-name
+                cbi.compiler-builtin-id-core-macros-legacy-module
+                callee-id)]
+            [_ prelude]))]
+      [else (No)])))
+
+(define (macro-hygiene-binding-clause-param-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(Var name)
+      (and
+        (>= name 0)
+        (< name (ci.intern-pool-len))
+        (=
+          (ci.intern-dotted-final-id name)
+          cbi.compiler-builtin-id-fix-ExprBindingClause))]
+    [_ false]))
+
+(define (macro-hygiene-bracket-clause? [expr-bases : i64] [expr-id : i64]) : bool
+  (let
+    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
+    (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+      [(BracketClause _) true]
+      [_ false])))
+
+(define (macro-hygiene-has-bracket-clause?
+  [expr-bases : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]) : bool
+  (and
+    (< index exprs.len)
+    (or
+      (macro-hygiene-bracket-clause?
+        expr-bases
+        (ast.ast-expr-list-get exprs index 0))
+      (macro-hygiene-has-bracket-clause? expr-bases exprs (+ index 1)))))
+
+(define (macro-hygiene-binding-clause-head
+  [expr-bases : i64]
+  [head-id : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]) : MacroHygieneName
+  (match (ast.ast-expr-segment-bases-get expr-bases head-id)
+    [(Spanned inner-box span)
+      (match (macro-hygiene-binding-clause-head
+        expr-bases
+        inner-box
+        env
+        macro-name
+        depth)
+        [(Name inner next-env)
+          (let
+            [replacement : ast.AstExpr (Spanned inner span)]
+            (Name
+              (ast.ast-node-pool-context-expr-push-borrowed
+                (& env.pools)
+                (& replacement))
+              next-env))])]
+    [(Var name)
+      (match (macro-hygiene-bind-name-id env macro-name depth name)
+        [(Name renamed-id next-env)
+          (Name
+            (macro-hygiene-expr-push env (ast.AstExpr.Var renamed-id))
+            next-env)])]
+    [_ (Name (macro-hygiene-expr expr-bases head-id env macro-name depth) env)]))
+
+;; The clause's type and initializer stay in the scope before its binder.
+(define (macro-hygiene-binding-clause
+  [expr-bases : i64]
+  [expr-id : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]) : MacroHygieneName
+  (match (ast.ast-expr-segment-bases-get expr-bases expr-id)
+    [(Spanned inner-box span)
+      (match (macro-hygiene-binding-clause
+        expr-bases
+        inner-box
+        env
+        macro-name
+        depth)
+        [(Name inner next-env)
+          (let
+            [replacement : ast.AstExpr (Spanned inner span)]
+            (Name
+              (ast.ast-node-pool-context-expr-push-borrowed
+                (& env.pools)
+                (& replacement))
+              next-env))])]
+    [(BracketClause items)
+      (if (< items.len 1)
+        (Name (macro-hygiene-expr expr-bases expr-id env macro-name depth) env)
+        (match (macro-hygiene-binding-clause-head
+          expr-bases
+          (ast.ast-expr-list-get (& items) 0 0)
+          env
+          macro-name
+          depth)
+          [(Name head-out next-env)
+            (let
+              [out : ast.AstExprList
+                (ast.ast-expr-list-with-capacity items.len)]
+              (ast.ast-expr-list-push (&mut out) head-out)
+              (macro-hygiene-expr-list-into
+                expr-bases
+                (& items)
+                1
+                env
+                macro-name
+                depth
+                (&mut out))
+              (Name
+                (ast.ast-expr-bracket-clause-with-pools env.pools out)
+                next-env))]))]
+    [_ (Name (macro-hygiene-expr expr-bases expr-id env macro-name depth) env)]))
+
+;; Map operands to parameters as macro-bind-params does: a non-final
+;; variadic collects the maximal bracket-clause run, a final one the rest.
+(define (macro-hygiene-binding-call-args-into
+  [expr-bases : i64]
+  [args : (& args ast.AstExprList)]
+  [index : i64]
+  [params : (& params ast.AstMacroParamList)]
+  [param-index : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]
+  [out : (&mut out ast.AstExprList)]) : unit
+  (unless
+    (>= index args.len)
+    (let
+      [arg-id : i64 (ast.ast-expr-list-get args index 0)]
+      [param-count : i64 (ast.ast-macro-param-list-len params)]
+      [in-range? : bool (< param-index param-count)]
+      [clause? : bool (macro-hygiene-bracket-clause? expr-bases arg-id)]
+      (match (ast.ast-macro-param-list-get
+        params
+        param-index
+        (ast.ast-macro-param-fallback))
+        [(Param _ ty variadic _)
+          (if (and
+            in-range?
+            variadic
+            (< param-index (- param-count 1))
+            (not clause?))
+            (macro-hygiene-binding-call-args-into
+              expr-bases
+              args
+              index
+              params
+              (+ param-index 1)
+              env
+              macro-name
+              depth
+              out)
+            (let
+              [next-param-index : i64
+                (if (and in-range? (not variadic))
+                  (+ param-index 1)
+                  param-index)]
+              (match (if (and
+                in-range?
+                clause?
+                (macro-hygiene-binding-clause-param-type? ty))
+                (macro-hygiene-binding-clause
+                  expr-bases
+                  arg-id
+                  env
+                  macro-name
+                  depth)
+                (MacroHygieneName.Name
+                  (macro-hygiene-expr expr-bases arg-id env macro-name depth)
+                  env))
+                [(Name arg-out next-env)
+                  (ast.ast-expr-list-push out arg-out)
+                  (macro-hygiene-binding-call-args-into
+                    expr-bases
+                    args
+                    (+ index 1)
+                    params
+                    next-param-index
+                    next-env
+                    macro-name
+                    depth
+                    out)])))]))))
+
+(define (macro-hygiene-call-args
+  [expr-bases : i64]
+  [head-id : i64]
+  [args : ast.AstExprList]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]) : ast.AstExprList
+  (match (if (macro-hygiene-has-bracket-clause? expr-bases (& args) 0)
+    (macro-hygiene-callee-macro-decl expr-bases env macro-name head-id)
+    (MacroMaybeDecl.No))
+    [(Some _ _ _ params _ _)
+      (let
+        [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
+        (macro-hygiene-binding-call-args-into
+          expr-bases
+          (& args)
+          0
+          (& params)
+          0
+          env
+          macro-name
+          depth
+          (&mut out))
+        out)]
+    [(No) (macro-hygiene-expr-list expr-bases args env macro-name depth)]))
+
 ;; Captured/shared nodes keep the copy path. Uniquely owned span wrappers
 ;; commit directly: a temporary wrapper's provenance must not survive the
 ;; temporary's rollback. Other owned replacements still commit the final append.
@@ -107676,8 +107954,9 @@
                   env
                   macro-name
                   depth)
-                (macro-hygiene-expr-list
+                (macro-hygiene-call-args
                   expr-bases
+                  name-id
                   args
                   call-env
                   macro-name

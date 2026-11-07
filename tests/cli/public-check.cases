@@ -993,6 +993,28 @@ stderr contains main.tl:7:17
 stderr contains in expansion of macro `stdlib.core_macros/for` invoked here
 stderr not-contains expr-type requires a typechecked Expr
 
+# #9671: a `for` binder written in a macro template is hygienic, so a caller
+# reference spliced under it with no caller binding is unbound, not captured.
+case check-macro-template-binding-clause-unbound
+file main.tl
+(import stdlib.iterator)
+
+(defmacro (m [p : Expr]) : bool
+  `(let [found false]
+    (for [i (iterator.range 0 4)]
+      (if ,p (set! found true) unit))
+    found))
+
+(define (main) : i64
+  (if (m (> i 2)) 42 1))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name i
+stderr contains main.tl:10:13
+stderr contains in expansion of macro `m` invoked here
+
 # #5448: a batch entry that fails during macro expansion fails the entry and
 # exits nonzero cleanly; the driver must not segfault (exit 139).
 case normal-macro-error-compile-batch

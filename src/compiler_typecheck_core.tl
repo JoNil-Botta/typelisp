@@ -113913,7 +113913,6 @@
                     ctx
                     fallback-module
                     fallback-module-id
-                    macro-name-id
                     (tc-global-shared-view params)))
                 (macro-hygiene-produced-eval-start-with-pools!
                   (tc-context-macro-state ctx)
@@ -114262,7 +114261,6 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          macro-name-id
           (tc-global-shared-view params)))
       (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
       (cfg compile-profile (compiler-tc-macro-profile-start))
@@ -114316,7 +114314,6 @@
               ctx
               fallback-module
               fallback-module-id
-              macro-name-id
               params)
             expanded-args
             env)]))))
@@ -114413,7 +114410,6 @@
           ctx
           fallback-module
           fallback-module-id
-          macro-name-id
           params)
         expanded-args
         env)
@@ -114445,7 +114441,6 @@
             ctx
             fallback-module
             fallback-module-id
-            macro-name-id
             params)
           expanded-args
           env)
@@ -114601,15 +114596,17 @@
           (&mut out)))]
     (Ok out)))
 
+;; A binding-prefix transformer has the signature
+;; `[bindings : ExprBindingClause ...] [body : Expr ...]`, as `for`, `any?` and
+;; `all?` do. Its bodies run under the clause binders, so they are expanded
+;; only after the transformer has introduced those binders. The check uses
+;; the signature alone, so a user macro of the same shape is treated alike.
 (define (macro-binding-prefix-transformer?
   [ctx : TcContext]
   [fallback-module : String]
   [fallback-module-id : i64]
-  [macro-name-id : i64]
   [params : ast.AstMacroParamList]) : bool
-  (if (or
-    (not (string.eq (ci.intern-str macro-name-id) "for"))
-    (not (= (ast.ast-macro-param-list-len (& params)) 2)))
+  (if (not (= (ast.ast-macro-param-list-len (& params)) 2))
     false
     (match (ast.ast-macro-param-list-get
       (& params)
@@ -114664,7 +114661,6 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          macro-name-id
           (tc-global-shared-view params))
           (macro-expand-binding-prefix-args
             ctx

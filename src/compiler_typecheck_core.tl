@@ -31165,7 +31165,17 @@
 (define tc-unqualified-import-has-ambiguity : bool
   false)
 
+;; Bare value keys bound by an entry-module unqualified import (`m.*`,
+;; `m.item`). The entry module's identity is empty, so these imports share
+;; the bare top-env namespace; only the entry module may see them.
+(define tc-entry-unqualified-import-names : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define tc-entry-unqualified-import-any : bool
+  false)
+
 (define (tc-unqualified-import-ambiguity-reset!) : unit
+  (set! tc-entry-unqualified-import-names (sym_i64_env.sym-i64-empty))
+  (set! tc-entry-unqualified-import-any false)
   (set! tc-unqualified-import-owner-modules (sym_i64_env.sym-i64-empty))
   (set!
     tc-unqualified-import-ambiguous-first-modules
@@ -31224,10 +31234,79 @@
                 source-id))))
         (if (tc-name-bound-id-with-top-env-membership? env binding-id)
           unit
-          (set!
-            tc-unqualified-import-owner-modules
-            (sym_i64_env.sym-i64-bind-id owner-modules key-id source-id)))))
+          (begin
+            (when
+              (csym.compiler-symbol-root-module-id? importer-module-id)
+              (set!
+                tc-entry-unqualified-import-names
+                (sym_i64_env.sym-i64-bind-id
+                  tc-entry-unqualified-import-names
+                  binding-id
+                  source-id))
+              (set! tc-entry-unqualified-import-any true))
+            (set!
+              tc-unqualified-import-owner-modules
+              (sym_i64_env.sym-i64-bind-id owner-modules key-id source-id))))))
     unit))
+
+;; Source-name form of `tc-entry-unqualified-import-hidden?`.
+(define (tc-entry-unqualified-import-hidden-source-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (and
+    tc-entry-unqualified-import-any
+    (tc-entry-unqualified-import-hidden?
+      ctx
+      env
+      name-id
+      (tc-env-name-key-id (tc-type-env-structural-session env) name-id))))
+
+;; The source lookup key of a bound bare `name-id`: its module-scoped key when
+;; the bare binding is a hidden entry-module import, which leaves the name as
+;; unbound in this module as it is without that import.
+(define (tc-entry-unqualified-import-visible-key-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : i64
+  (if (tc-entry-unqualified-import-hidden-source-id? ctx env name-id)
+    (tc-module-name-id-by-id (tc-context-module-id ctx) name-id)
+    name-id))
+
+;; Display-key form of `tc-entry-unqualified-import-visible-key-id`.
+(define (tc-entry-unqualified-import-visible-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : String
+  (if (tc-entry-unqualified-import-hidden-source-id? ctx env name-id)
+    (tc-env-key-display
+      (tc-context-structural-session ctx)
+      (tc-module-name-id-by-id (tc-context-module-id ctx) name-id))
+    name))
+
+;; Whether a bare top-env hit for `env-name-id` in a named module is only an
+;; entry-module unqualified import, which that module cannot see (#9678). A
+;; named module reaches its own imports through its module-scoped key, and
+;; lexical bindings keep precedence.
+(define (tc-entry-unqualified-import-hidden?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [env-name-id : i64]) : bool
+  (and
+    tc-entry-unqualified-import-any
+    (> (string.string-length (tc-context-module ctx)) 0)
+    (sym_i64_env.sym-i64-contains-id
+      tc-entry-unqualified-import-names
+      env-name-id)
+    (not (tc-name-qualified-id? (tc-context-structural-session ctx) name-id))
+    (not
+      (or
+        (and
+          (tc-type-env-scoped-runtime-active? env)
+          (>= (tc-type-env-scoped-runtime-lookup-index env env-name-id) 0))
+        (tc-name-bound-before-hygiene-global-boundary-id? env env-name-id)))))
 
 (define (tc-bind-import-alias-value-id
   [ctx : TcContext]
@@ -36132,7 +36211,17 @@
           env-name-id
           false)
           [(ResultTcBinding.Ok ty unsafe? origin)
-            (ResultTcBinding.Ok ty unsafe? origin)]
+            (if (tc-entry-unqualified-import-hidden?
+              ctx
+              env
+              name-id
+              env-name-id)
+              (tc-binding-unrepresented
+                (tc-lookup-persistent-key-id
+                  env
+                  (tc-module-name-id-by-id module-id name-id)
+                  name-id))
+              (ResultTcBinding.Ok ty unsafe? origin))]
           [(ResultTcBinding.Fault error) (ResultTcBinding.Fault error)]
           [(ResultTcBinding.Err message)
             (if (and
@@ -42812,7 +42901,29 @@
           "typecheck: unbound name "
           display-name)
         message)]
-    [(No) message]))
+    [(No)
+      ;; A name hidden from this module as an entry-module import resolves to
+      ;; its unbound module-scoped key; report the source spelling.
+      (if (and
+        tc-entry-unqualified-import-any
+        (sym_i64_env.sym-i64-contains-id
+          tc-entry-unqualified-import-names
+          source-name-id)
+        (string.eq
+          message
+          (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag (UnboundName))
+            "typecheck: unbound name "
+            (tc-env-key-display
+              (tc-context-structural-session ctx)
+              (tc-module-name-id-by-id
+                (tc-context-module-id ctx)
+                source-name-id)))))
+        (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag (UnboundName))
+          "typecheck: unbound name "
+          (ci.intern-str source-name-id))
+        message)]))
 
 (define (tc-dotted-prefix-depth [name-id : i64]) : i64
   (let
@@ -43270,7 +43381,7 @@
         (tc-name-first-dot-id (tc-context-structural-session ctx) name-id)]
       (if (< first-dot 0)
         (if (tc-source-name-bound-exact-id? env name-id)
-          (Ok name)
+          (Ok (tc-entry-unqualified-import-visible-key ctx env name name-id))
           (match (tc-current-module-source-lookup-key ctx env name name-id)
             [(Some key) (Ok key)]
             [(No) (Ok name)]))
@@ -43340,7 +43451,7 @@
         (tc-name-first-dot-id (tc-context-structural-session ctx) name-id)]
       (if (< first-dot 0)
         (if (tc-source-name-bound-exact-id? env name-id)
-          (Ok name name-id)
+          (Ok name (tc-entry-unqualified-import-visible-key-id ctx env name-id))
           (match (tc-current-module-source-lookup-key-id ctx env name-id)
             [(Some key-id)
               (Ok
@@ -56795,7 +56906,11 @@
   [env : TcTypeEnv]
   [name-id : i64]) : bool
   (or
-    (tc-name-bound-id? env name-id)
+    (if (tc-entry-unqualified-import-hidden-source-id? ctx env name-id)
+      (tc-name-bound-id?
+        env
+        (tc-module-name-id-by-id (tc-context-module-id ctx) name-id))
+      (tc-name-bound-id? env name-id))
     (let
       [module-id : i64 (tc-context-type-module-id ctx)]
       (and

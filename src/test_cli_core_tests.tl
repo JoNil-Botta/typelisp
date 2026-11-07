@@ -12,6 +12,7 @@
 (import compiler_ast_types_tests as ast_tests)
 (import compiler_backend as backend)
 (import compiler_builtin_ids as cbi)
+(import compiler_cfg_core as cfg_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_driver_core as driver)
 (import compiler_intern as ci)
@@ -19,8 +20,10 @@
 (import compiler_ir_types as ir)
 (import compiler_load)
 (import compiler_lower as lower)
+(import compiler_profile_state as profile_state)
 (import compiler_typecheck_api)
 (import stdlib.string)
+(import sym_i64_env)
 (import test_cli_core as tltest)
 
 (define (tltest-write-text [path : (& path str)] [contents : String]) : unit
@@ -1672,3 +1675,72 @@
           (tltest.tltest-harness-lower-mode (Windows) (Avx512)))
         4))
     (io.panic "test CLI backend mode did not select its paired lower mode")))
+
+;; #8813: a named module of the implicit prelude gets its own stdlib root unless
+;; a configured root already resolves it; other sources keep their roots.
+(test
+  test-cli-prelude-source-roots-name-the-source-root
+  (let
+    [configured-in : cli_svec.Vec (cli_svec.new)]
+    [_ : unit (cli_svec.push-ref! (&mut configured-in) "stdlib")]
+    [own : cli_svec.Vec
+      (tltest.tltest-source-roots "stdlib/core_macros.tl" (cli_svec.new))]
+    [dotted : cli_svec.Vec
+      (tltest.tltest-source-roots "./stdlib/runtime.tl" (cli_svec.new))]
+    [configured : cli_svec.Vec
+      (tltest.tltest-source-roots "stdlib/core_macros.tl" configured-in)]
+    [ordinary : cli_svec.Vec
+      (tltest.tltest-source-roots "stdlib/math.tl" (cli_svec.new))]
+    (unless
+      (and
+        (= (cli_svec.len (& own)) 1)
+        (string.eq (cli_svec.get (& own) 0 "") "stdlib/")
+        (= (cli_svec.len (& dotted)) 1)
+        (string.eq (cli_svec.get (& dotted) 0 "") "stdlib/")
+        (= (cli_svec.len (& configured)) 1)
+        (string.eq (cli_svec.get (& configured) 0 "") "stdlib")
+        (= (cli_svec.len (& ordinary)) 0))
+      (io.panic "test CLI prelude source roots mismatch"))))
+
+(define (tltest-paths-all-implicit-prelude?
+  [paths : (& paths ast.AstDeclPathList)]) : bool
+  (match (ast.ast-decl-path-list-step paths)
+    [(Nil) true]
+    [(Cons path rest)
+      (and
+        (compiler_load.compiler-load-implicit-prelude-module-path? path)
+        (tltest-paths-all-implicit-prelude? rest))]))
+
+(define (tltest-paths-contain?
+  [paths : (& paths ast.AstDeclPathList)]
+  [want : (& want str)]) : bool
+  (match (ast.ast-decl-path-list-step paths)
+    [(Nil) false]
+    [(Cons path rest)
+      (or (string.eq path want) (tltest-paths-contain? rest want))]))
+
+;; The implicit prelude module set is written out beside the prelude paths.
+;; Keep it equal to what a test-configured prelude load actually reads, so a
+;; new prelude import cannot silently lose its inline tests again (#8813).
+(test
+  test-cli-implicit-prelude-module-set-matches-prelude-load
+  (let
+    [roots : cli_svec.Vec (cli_svec.new)]
+    [_ : unit (cli_svec.push-ref! (&mut roots) "stdlib")]
+    [cfgs : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-enable (cfg_core.compiler-cfg-empty) "test")]
+    (match (driver.compiler-driver-load-runtime-prelude-cold-and-profile-state
+      roots
+      cfgs
+      (profile_state.compiler-profile-state-new))
+      [(Ok _ paths _ _)
+        (unless
+          (and
+            (tltest-paths-all-implicit-prelude? (& paths))
+            (tltest-paths-contain? (& paths) "stdlib/runtime.tl")
+            (tltest-paths-contain? (& paths) "stdlib/core_macros.tl")
+            (tltest-paths-contain? (& paths) "stdlib/clone.tl")
+            (tltest-paths-contain? (& paths) "stdlib/comptime.tl"))
+          (io.panic
+            "test CLI implicit prelude module set drifted from the prelude load"))]
+      [(Err _) (io.panic "test CLI implicit prelude load failed")])))

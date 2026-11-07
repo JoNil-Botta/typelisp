@@ -1386,26 +1386,6 @@
       [(None) (None)])
     (None)))
 
-(define (opt-binop-operand-type
-  [type-segment-bases : i64]
-  [op : (& op ir.CompilerIrBinOp)]
-  [lhs-ty : ast.AstType]
-  [rhs-ty : (& rhs-ty ast.AstType)]
-  [result-ty : (& result-ty ast.AstType)]) : ast.AstType
-  (match op
-    [(or (Eq) (Ne) (Lt) (Le) (Gt) (Ge))
-      (if (opt-type-eq type-segment-bases lhs-ty (& (I64)))
-        (owned_view.compiler-owned-reference-shared-view rhs-ty)
-        (if (and
-          (opt-type-eq type-segment-bases lhs-ty (& (F64)))
-          (opt-type-eq type-segment-bases rhs-ty (& (F32))))
-          (owned_view.compiler-owned-reference-shared-view rhs-ty)
-          lhs-ty))]
-    [(or (Shl _) (Shr _)) lhs-ty]
-    ;; Bitwise masks use the instruction width, even when a known operand
-    ;; originated in narrower storage.
-    [_ (owned_view.compiler-owned-reference-shared-view result-ty)]))
-
 (define (opt-signed-min [ty : (& ty ast.AstType)]) : i64
   (match ty
     [(I64) (- (- 0 9223372036854775807) 1)]
@@ -1691,23 +1671,23 @@
             (owned_view.compiler-owned-reference-shared-view to-ty)))])))
 
 (define (opt-fold-binop
-  [type-segment-bases : i64]
+  [_type-segment-bases : i64]
   [op : (& ir.CompilerIrBinOp)]
   [lhs : (& OptKnownConst)]
   [rhs : (& OptKnownConst)]
-  [result-ty : (& result-ty ast.AstType)]) : ir.CompilerIrMaybeValue
+  [operand-ty : (& operand-ty ast.AstType)]) : ir.CompilerIrMaybeValue
   (match (owned_view.compiler-owned-reference-shared-view lhs)
-    [(SomeConst lhs-value lhs-ty)
+    [(SomeConst lhs-value _)
       (match (owned_view.compiler-owned-reference-shared-view rhs)
-        [(SomeConst rhs-value rhs-ty)
+        [(SomeConst rhs-value _)
           (let
-            [operand-ty : ast.AstType
-              (opt-binop-operand-type
-                type-segment-bases
-                op
-                lhs-ty
-                rhs-ty
-                result-ty)]
+            ;; A constant carries its defining type, but the consumer owns
+            ;; width and signedness. In particular a packed u64 word may be
+            ;; compared as i64; inferring u64 here can select an unsafe arm.
+            [rhs-ty : ast.AstType
+              (ir.compiler-ir-binop-rhs-type
+                (owned_view.compiler-owned-reference-shared-view op)
+                (owned_view.compiler-owned-reference-shared-view operand-ty))]
             (cond
               [(opt-bool-type? operand-ty)
                 (opt-fold-bool op (& lhs-value) (& rhs-value))]
@@ -1716,14 +1696,14 @@
                   op
                   (& lhs-value)
                   (& rhs-value)
-                  (& operand-ty)
+                  operand-ty
                   (& rhs-ty))]
               [(opt-float-type? operand-ty)
                 (opt-fold-float-binop
                   op
                   (& lhs-value)
                   (& rhs-value)
-                  (& operand-ty))]
+                  operand-ty)]
               [else (No)]))]
         [(NoConst) (No)])]
     [(NoConst) (No)]))

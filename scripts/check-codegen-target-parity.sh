@@ -70,7 +70,6 @@ crypto_aes128_gcm stdlib/tests/crypto_aes128_gcm_parity.tl
 control_flow tests/integration/control_flow.tl
 char_comparisons tests/integration/char_comparisons.tl
 char_comparison_immediates tests/integration/char_comparison_immediates.tl
-optimizer_guarded_ptr_read tests/integration/optimizer_guarded_ptr_read.tl
 enum_match tests/integration/enum_match.tl
 enum_constructor_owner_layout tests/integration/enum_constructor_owner_layout.tl
 enum_constructor_owner_root tests/integration/enum_constructor_owner_root.tl

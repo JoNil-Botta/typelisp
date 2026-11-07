@@ -31262,6 +31262,59 @@
       name-id
       (tc-env-name-key-id (tc-type-env-structural-session env) name-id))))
 
+;; The default environment prebinds a few builtin values (`cpuid`, `xgetbv`). An
+;; entry-module unqualified import that rebinds one keeps the default binding
+;; under its default-alias key, so other modules still see the builtin.
+(define (tc-entry-unqualified-import-default-alias-key [name-id : i64]) : i64
+  (tc-module-name-id-by-id (tc-default-boundary-id) name-id))
+
+(define (tc-entry-unqualified-import-default-alias-env
+  [env : TcTypeEnv]
+  [alias-id : i64]
+  [importer-module-id : i64]
+  [import-unqualified : bool]
+  [name-id : i64]) : TcTypeEnv
+  (let
+    [binding-id : i64 (tc-module-name-id-by-id alias-id name-id)]
+    (if (and
+      import-unqualified
+      (csym.compiler-symbol-root-module-id? importer-module-id)
+      (tc-name-bound-id-with-top-env-membership? env binding-id)
+      (tc-default-builtin-unshadowed-scan-id? env binding-id))
+      (match (tc-lookup-id env binding-id)
+        [(Ok default-ty)
+          (set!
+            tc-entry-unqualified-import-names
+            (sym_i64_env.sym-i64-bind-id
+              tc-entry-unqualified-import-names
+              binding-id
+              importer-module-id))
+          (set! tc-entry-unqualified-import-any true)
+          (tc-bind-id
+            env
+            (tc-entry-unqualified-import-default-alias-key binding-id)
+            default-ty)]
+        [(Err _) env])
+      env)))
+
+;; The key a hidden entry-module import resolves to in a named module: that
+;; module's own scoped key, else the default binding the import shadowed, else
+;; the (unbound) module-scoped key.
+(define (tc-entry-unqualified-import-hidden-key-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : i64
+  (let
+    [module-key-id : i64
+      (tc-module-name-id-by-id (tc-context-module-id ctx) name-id)]
+    [default-key-id : i64
+      (tc-entry-unqualified-import-default-alias-key name-id)]
+    (if (and
+      (not (tc-source-name-bound-exact-id? env module-key-id))
+      (tc-source-name-bound-exact-id? env default-key-id))
+      default-key-id
+      module-key-id)))
+
 ;; The source lookup key of a bound bare `name-id`: its module-scoped key when
 ;; the bare binding is a hidden entry-module import, which leaves the name as
 ;; unbound in this module as it is without that import.
@@ -31270,7 +31323,7 @@
   [env : TcTypeEnv]
   [name-id : i64]) : i64
   (if (tc-entry-unqualified-import-hidden-source-id? ctx env name-id)
-    (tc-module-name-id-by-id (tc-context-module-id ctx) name-id)
+    (tc-entry-unqualified-import-hidden-key-id ctx env name-id)
     name-id))
 
 ;; Display-key form of `tc-entry-unqualified-import-visible-key-id`.
@@ -31282,7 +31335,7 @@
   (if (tc-entry-unqualified-import-hidden-source-id? ctx env name-id)
     (tc-env-key-display
       (tc-context-structural-session ctx)
-      (tc-module-name-id-by-id (tc-context-module-id ctx) name-id))
+      (tc-entry-unqualified-import-hidden-key-id ctx env name-id))
     name))
 
 ;; Whether a bare top-env hit for `env-name-id` in a named module is only an
@@ -31325,7 +31378,15 @@
     source-module-id
     import-unqualified
     name-id)
-  (tc-bind-id env (tc-module-name-id-by-id alias-id name-id) ty))
+  (tc-bind-id
+    (tc-entry-unqualified-import-default-alias-env
+      env
+      alias-id
+      importer-module-id
+      import-unqualified
+      name-id)
+    (tc-module-name-id-by-id alias-id name-id)
+    ty))
 
 (define (tc-bind-import-alias-value-unsafe-id
   [ctx : TcContext]
@@ -31344,7 +31405,15 @@
     source-module-id
     import-unqualified
     name-id)
-  (tc-bind-unsafe-id env (tc-module-name-id-by-id alias-id name-id) ty))
+  (tc-bind-unsafe-id
+    (tc-entry-unqualified-import-default-alias-env
+      env
+      alias-id
+      importer-module-id
+      import-unqualified
+      name-id)
+    (tc-module-name-id-by-id alias-id name-id)
+    ty))
 
 ;; Raw arena authority is a constructor effect of the canonical declaration,
 ;; not a property inferred from the spelling of a call. All environment routes
@@ -36219,7 +36288,7 @@
               (tc-binding-unrepresented
                 (tc-lookup-persistent-key-id
                   env
-                  (tc-module-name-id-by-id module-id name-id)
+                  (tc-entry-unqualified-import-hidden-key-id ctx env name-id)
                   name-id))
               (ResultTcBinding.Ok ty unsafe? origin))]
           [(ResultTcBinding.Fault error) (ResultTcBinding.Fault error)]
@@ -56909,7 +56978,7 @@
     (if (tc-entry-unqualified-import-hidden-source-id? ctx env name-id)
       (tc-name-bound-id?
         env
-        (tc-module-name-id-by-id (tc-context-module-id ctx) name-id))
+        (tc-entry-unqualified-import-hidden-key-id ctx env name-id))
       (tc-name-bound-id? env name-id))
     (let
       [module-id : i64 (tc-context-type-module-id ctx)]

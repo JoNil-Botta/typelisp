@@ -8401,10 +8401,6 @@
       (asm-has? param-text "    movq %rdi, %r13\n" "    leaq 16(%rbp), %r12\n")
       (asm-lacks? param-text "movq 16(%rbp),"))))
 
-;; Structural borrowed-slice ABI classification must not depend on a nominal
-;; aggregate map entry.  The private type pool below has no Pack-producing
-;; function, so the empty program index exercises the structural short-circuit
-;; in both the backend and register allocator classifiers.
 ;; Region- and Invalidate-wrapped scalars keep their inner type's signedness
 ;; in every backend classifier (#9688). Source cannot spell an Invalidate
 ;; scalar (SPEC 3.3), so the private pool below builds both wrappers directly,
@@ -8499,6 +8495,10 @@
     (compiler-backend-wrapped-scalar-signedness-ok?)
     (io.panic "a Region/Invalidate-wrapped scalar lost its inner signedness")))
 
+;; Structural borrowed-slice ABI classification must not depend on a nominal
+;; aggregate map entry.  The private type pool below has no Pack-producing
+;; function, so the empty program index exercises the structural short-circuit
+;; in both the backend and register allocator classifiers.
 (define (compiler-backend-slice-reference-abi-classifiers-ok?) : bool
   (let
     [pools : ast.AstNodePoolContext

@@ -1670,37 +1670,112 @@
             (owned_view.compiler-owned-reference-shared-view from-ty)
             (owned_view.compiler-owned-reference-shared-view to-ty)))])))
 
+;; Equality and bit tests compare the same bits under either signedness.
+(define (opt-compare-sign-independent? [op : (& op ir.CompilerIrBinOp)]) : bool
+  (match op
+    [(or (Eq) (Ne) (BitTestEq) (BitTestNe)) true]
+    [_ false]))
+
+;; Enum tags, pointers and function values: 8-byte words the backend orders
+;; signed, exactly like I64.
+(define (opt-compare-word-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(or (Enum _) (Ptr _) (MutPtr _) (CFunc _ _) (Func _ _)) true]
+    [_ false]))
+
+(define (opt-fold-scalar-binop
+  [op : (& ir.CompilerIrBinOp)]
+  [lhs-value : (& ir.CompilerIrValue)]
+  [rhs-value : (& ir.CompilerIrValue)]
+  [ty : (& ty ast.AstType)]
+  [rhs-ty : (& rhs-ty ast.AstType)]) : ir.CompilerIrMaybeValue
+  (cond
+    [(opt-bool-type? ty) (opt-fold-bool op lhs-value rhs-value)]
+    [(opt-int-or-char-type? ty)
+      (opt-fold-int-char-binop op lhs-value rhs-value ty rhs-ty)]
+    [(opt-float-type? ty) (opt-fold-float-binop op lhs-value rhs-value ty)]
+    [else (No)]))
+
+;; Folds a comparison exactly as the backend compares operands typed `ty`:
+;; compiler-backend-type-size gives the width, and ordering is unsigned only
+;; for U*/Char (compiler-backend-unsigned-rel-ty?). Region and Invalidate
+;; wrappers compare at their inner width but still order signed, so only a
+;; signed or word inner type folds for ordering; an unsigned inner type folds
+;; only for sign-independent ops. Other non-scalar types do not fold.
+(define (opt-fold-backend-compare
+  [type-segment-bases : i64]
+  [op : (& ir.CompilerIrBinOp)]
+  [lhs-value : (& ir.CompilerIrValue)]
+  [rhs-value : (& ir.CompilerIrValue)]
+  [ty : (& ty ast.AstType)]) : ir.CompilerIrMaybeValue
+  (match ty
+    [(or (Enum _) (Ptr _) (MutPtr _) (CFunc _ _) (Func _ _))
+      (opt-fold-int-char-binop op lhs-value rhs-value (& (I64)) (& (I64)))]
+    [(or (Region _ inner) (Invalidate _ inner))
+      (let
+        [inner-ty : ast.AstType
+          (ast.ast-type-segment-bases-get type-segment-bases inner)]
+        (match (& inner-ty)
+          [(or (Region _ _) (Invalidate _ _))
+            (opt-fold-backend-compare
+              type-segment-bases
+              op
+              lhs-value
+              rhs-value
+              (& inner-ty))]
+          [_
+            (if (or
+              (opt-signed-integer-type? (& inner-ty))
+              (opt-compare-word-type? (& inner-ty))
+              (and
+                (opt-compare-sign-independent? op)
+                (opt-int-or-char-type? (& inner-ty))))
+              (opt-fold-backend-compare
+                type-segment-bases
+                op
+                lhs-value
+                rhs-value
+                (& inner-ty))
+              (No))]))]
+    [_ (opt-fold-scalar-binop op lhs-value rhs-value ty ty)]))
+
 (define (opt-fold-binop
-  [_type-segment-bases : i64]
+  [type-segment-bases : i64]
   [op : (& ir.CompilerIrBinOp)]
   [lhs : (& OptKnownConst)]
   [rhs : (& OptKnownConst)]
   [operand-ty : (& operand-ty ast.AstType)]) : ir.CompilerIrMaybeValue
   (match (owned_view.compiler-owned-reference-shared-view lhs)
-    [(SomeConst lhs-value _)
+    [(SomeConst lhs-value lhs-ty)
       (match (owned_view.compiler-owned-reference-shared-view rhs)
         [(SomeConst rhs-value _)
-          (let
-            ;; A constant carries its defining type, but the consumer owns
-            ;; width and signedness. In particular a packed u64 word may be
-            ;; compared as i64; inferring u64 here can select an unsafe arm.
-            [rhs-ty : ast.AstType
-              (ir.compiler-ir-binop-rhs-type
-                (owned_view.compiler-owned-reference-shared-view op)
-                (owned_view.compiler-owned-reference-shared-view operand-ty))]
-            (cond
-              [(opt-bool-type? operand-ty)
-                (opt-fold-bool op (& lhs-value) (& rhs-value))]
-              [(opt-int-or-char-type? operand-ty)
-                (opt-fold-int-char-binop
-                  op
-                  (& lhs-value)
-                  (& rhs-value)
-                  operand-ty
-                  (& rhs-ty))]
-              [(opt-float-type? operand-ty)
-                (opt-fold-float-binop op (& lhs-value) (& rhs-value) operand-ty)]
-              [else (No)]))]
+          ;; A constant carries its defining type, but the consumer owns
+          ;; width and signedness. In particular a packed u64 word may be
+          ;; compared as i64; inferring u64 here can select an unsafe arm.
+          ;; A comparison folds as the backend compares it
+          ;; (compiler-backend-binop-operand-ty): with its own type, except
+          ;; that a legacy Bool-typed comparison reads the lhs value's type,
+          ;; which the constant carries (an integer literal is I64).
+          (if (ir.compiler-ir-binop-compare? op)
+            (opt-fold-backend-compare
+              type-segment-bases
+              op
+              (& lhs-value)
+              (& rhs-value)
+              (if (opt-bool-type? operand-ty)
+                (& lhs-ty)
+                operand-ty))
+            (let
+              [rhs-ty : ast.AstType
+                (ir.compiler-ir-binop-rhs-type
+                  (owned_view.compiler-owned-reference-shared-view op)
+                  (owned_view.compiler-owned-reference-shared-view operand-ty))]
+              (opt-fold-scalar-binop
+                op
+                (& lhs-value)
+                (& rhs-value)
+                operand-ty
+                (& rhs-ty))))]
         [(NoConst) (No)])]
     [(NoConst) (No)]))
 

@@ -219,6 +219,15 @@ if ! cmp -s "$ENVELOPE_A" "$ENVELOPE_B"; then
     echo "embedded stdlib tlci envelope build is not deterministic" >&2
     exit 1
 fi
+# The frontend surface names prelude sources root-relatively (`stdlib/...`), so
+# the image must not depend on, or show users, this checkout's location (#9667).
+for ROOT_SPELLING in "$ROOT" \
+    $(cygpath -m "$ROOT" 2>/dev/null || :) $(cygpath -w "$ROOT" 2>/dev/null || :); do
+    if grep -aFq -e "$ROOT_SPELLING/stdlib" -e "$ROOT_SPELLING\\stdlib" "$IMAGE_A"; then
+        echo "embedded stdlib tlci image records the checkout root: $ROOT_SPELLING" >&2
+        exit 1
+    fi
+done
 "$COMPILER" run tools/embedded-stdlib-tlci/verify-envelope.tl \
     --stdlib-root stdlib --stdlib-root src -- \
     "$IMAGE_A" "$ENVELOPE_A"

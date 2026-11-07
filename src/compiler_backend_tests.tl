@@ -8405,6 +8405,100 @@
 ;; aggregate map entry.  The private type pool below has no Pack-producing
 ;; function, so the empty program index exercises the structural short-circuit
 ;; in both the backend and register allocator classifiers.
+;; Region- and Invalidate-wrapped scalars keep their inner type's signedness
+;; in every backend classifier (#9688). Source cannot spell an Invalidate
+;; scalar (SPEC 3.3), so the private pool below builds both wrappers directly,
+;; including a nested Region.
+(define (compiler-backend-wrapped-scalar-signedness-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [u8-id : i64 (ast.ast-node-pool-context-type-push pools (U8))]
+    [u16-id : i64 (ast.ast-node-pool-context-type-push pools (U16))]
+    [u32-id : i64 (ast.ast-node-pool-context-type-push pools (U32))]
+    [u64-id : i64 (ast.ast-node-pool-context-type-push pools (U64))]
+    [i8-id : i64 (ast.ast-node-pool-context-type-push pools (I8))]
+    [i16-id : i64 (ast.ast-node-pool-context-type-push pools (I16))]
+    [i64-id : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+    [region-u32-id : i64
+      (ast.ast-node-pool-context-type-push pools (Region 3 u32-id))]
+    [region-u64 : ast.AstType (Region 3 u64-id)]
+    [region-region-u32 : ast.AstType (Region 4 region-u32-id)]
+    [region-i64 : ast.AstType (Region 3 i64-id)]
+    [region-i8 : ast.AstType (Region 3 i8-id)]
+    [invalidate-u8 : ast.AstType (ast.ast-ty-invalidate-id 5 u8-id)]
+    [invalidate-u16 : ast.AstType (ast.ast-ty-invalidate-id 5 u16-id)]
+    [invalidate-i16 : ast.AstType (ast.ast-ty-invalidate-id 5 i16-id)]
+    [invalidate-i8 : ast.AstType (ast.ast-ty-invalidate-id 5 i8-id)]
+    [invalidate-u8-copy : ast.AstType (ast.ast-ty-invalidate-id 5 u8-id)]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [lt-op-1 : ir.CompilerIrBinOp (ir.CompilerIrBinOp.Lt)]
+    [gt-op-2 : ir.CompilerIrBinOp (ir.CompilerIrBinOp.Gt)]
+    [lt-op-3 : ir.CompilerIrBinOp (ir.CompilerIrBinOp.Lt)]
+    [ge-op-4 : ir.CompilerIrBinOp (ir.CompilerIrBinOp.Ge)]
+    [le-op-5 : ir.CompilerIrBinOp (ir.CompilerIrBinOp.Le)]
+    (and
+      (backend.compiler-backend-unsigned-rel-ty? bases region-u64)
+      (backend.compiler-backend-unsigned-rel-ty? bases region-region-u32)
+      (backend.compiler-backend-unsigned-rel-ty? bases invalidate-u8)
+      (not (backend.compiler-backend-unsigned-rel-ty? bases region-i64))
+      (not (backend.compiler-backend-unsigned-rel-ty? bases invalidate-i16))
+      (backend.compiler-backend-type-signed? bases region-i64)
+      (backend.compiler-backend-type-signed? bases invalidate-i16)
+      (not (backend.compiler-backend-type-signed? bases region-u64))
+      (not (backend.compiler-backend-type-signed? bases invalidate-u8))
+      (=
+        (backend.compiler-backend-normalized-signed-immediate
+          bases
+          255
+          region-i8)
+        -1)
+      (=
+        (backend.compiler-backend-normalized-signed-immediate
+          bases
+          255
+          invalidate-i8)
+        -1)
+      (=
+        (backend.compiler-backend-normalized-unsigned-immediate
+          bases
+          -1
+          invalidate-u16)
+        (cast 65535 : u64))
+      (=
+        (backend.compiler-backend-normalized-unsigned-immediate
+          bases
+          -1
+          invalidate-u8-copy)
+        (cast 255 : u64))
+      (string.eq
+        (backend.compiler-backend-compare-true-jcc bases lt-op-1 invalidate-u8)
+        "jb")
+      (string.eq
+        (backend.compiler-backend-compare-false-jcc bases gt-op-2 region-u64)
+        "jbe")
+      (string.eq
+        (backend.compiler-backend-compare-true-jcc bases lt-op-3 region-i64)
+        "jl")
+      (string.eq
+        (backend.compiler-backend-compare-setcc
+          bases
+          ge-op-4
+          (owned_view.compiler-owned-shared-view region-region-u32))
+        "setae")
+      (string.eq
+        (backend.compiler-backend-compare-cmov
+          bases
+          le-op-5
+          (owned_view.compiler-owned-shared-view invalidate-u16))
+        "cmovbe"))))
+
+(test
+  backend-wrapped-scalars-keep-inner-signedness
+  (unless
+    (compiler-backend-wrapped-scalar-signedness-ok?)
+    (io.panic "a Region/Invalidate-wrapped scalar lost its inner signedness")))
+
 (define (compiler-backend-slice-reference-abi-classifiers-ok?) : bool
   (let
     [pools : ast.AstNodePoolContext
@@ -13907,6 +14001,7 @@ f:
         [(Ok asm) (string.eq asm "    movq %r12, %r13\n")]
         [(Err _) false])
       (match (backend.compiler-backend-emit-unop
+        (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         1
         (Neg)
@@ -13933,6 +14028,7 @@ f:
         "    testq %r9, %r9\n    je 1f\n    bsrq %r9, %r9\n    addq $1, %r9\n    jmp 2f\n1:\n    xorq %r9, %r9\n2:\n")
       (asm-ok?
         (backend.compiler-backend-emit-unop
+          (ast.ast-node-pool-reader-type-segment-bases)
           (regalloc.compiler-reg-assignment-table-empty)
           1
           (BitLength)
@@ -13942,6 +14038,7 @@ f:
         (has "    jle 1f\n    bsrq " "\n2:\n"))
       (asm-ok?
         (backend.compiler-backend-emit-unop
+          (ast.ast-node-pool-reader-type-segment-bases)
           (regalloc.compiler-reg-assignment-table-empty)
           1
           (BitLength)
@@ -28087,6 +28184,7 @@ entry:
 (define (compiler-backend-direct-f64-neg-home-ok?) : bool
   (asm-ok?
     (backend.compiler-backend-emit-unop
+      (ast.ast-node-pool-reader-type-segment-bases)
       (reg-homes "%0=%xmm2 %1=%xmm3")
       1
       (Neg)
@@ -28102,6 +28200,7 @@ entry:
 (define (compiler-backend-spill-f64-neg-home-ok?) : bool
   (asm-ok?
     (backend.compiler-backend-emit-unop
+      (ast.ast-node-pool-reader-type-segment-bases)
       (reg-homes "%0=%xmm3 %1=spill:-16")
       1
       (Neg)
@@ -28123,6 +28222,7 @@ entry:
       (reg-homes "%0=%xmm3 %1=spill:-16")]
     (and
       (match (backend.compiler-backend-emit-unop
+        (ast.ast-node-pool-reader-type-segment-bases)
         direct
         1
         (Sqrt)
@@ -28134,6 +28234,7 @@ entry:
           (string.eq asm "    movsd %xmm2, %xmm3\n    sqrtsd %xmm3, %xmm3\n")]
         [(Err _) false])
       (match (backend.compiler-backend-emit-unop
+        (ast.ast-node-pool-reader-type-segment-bases)
         direct
         1
         (Sqrt)
@@ -28145,6 +28246,7 @@ entry:
           (string.eq asm "    movss %xmm2, %xmm3\n    sqrtss %xmm3, %xmm3\n")]
         [(Err _) false])
       (match (backend.compiler-backend-emit-unop
+        (ast.ast-node-pool-reader-type-segment-bases)
         spill
         1
         (Sqrt)
@@ -28158,6 +28260,7 @@ entry:
             "    movsd %xmm3, %xmm2\n    sqrtsd %xmm2, %xmm2\n    movsd %xmm2, -16(%rbp)\n")]
         [(Err _) false])
       (match (backend.compiler-backend-emit-unop
+        (ast.ast-node-pool-reader-type-segment-bases)
         spill
         1
         (Sqrt)
@@ -29823,6 +29926,7 @@ entry:
 (define (compiler-backend-spill-unop-home-ok?) : bool
   (asm-ok?
     (backend.compiler-backend-emit-unop
+      (ast.ast-node-pool-reader-type-segment-bases)
       (reg-homes "%0=%r12 %1=spill:-16")
       1
       (Neg)

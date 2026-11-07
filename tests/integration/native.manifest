@@ -1269,3 +1269,4 @@ string_raw_integer_writers_ok|all|0,1,2|tests/safety/string_raw_integer_writers_
 loop_address_argument|all|0,1,2|tests/integration/loop_address_argument.tl|1|-|-|-|-
 loop_address_callee|all|0,1,2|tests/integration/loop_address_callee.tl|42|-|-|-|-
 loop_address_snapshots|all|0,1,2|tests/integration/loop_address_snapshots.tl|42|-|-|-|-
+region_scalar_signedness|all|0,1,2|tests/integration/region_scalar_signedness.tl|42|-|-|-|-

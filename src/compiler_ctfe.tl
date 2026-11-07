@@ -3959,9 +3959,13 @@
       (let
         [source-id : i64
           (ctfe-name-source-id-for-session
-            (cis.intern-structural-session-handle-from-source-names source-names)
+            (cis.intern-structural-session-handle-from-source-names
+              source-names)
             name-id)]
-        (Some (if (>= source-id 0) source-id name-id)))]
+        (Some
+          (if (>= source-id 0)
+            source-id
+            name-id)))]
     [(None) (None)]))
 
 ;; Module indexes use the same source/generated Name identity that a String-to-

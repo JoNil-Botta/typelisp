@@ -303,6 +303,7 @@
           (& state)
           (& decls)
           alias
+          cbi.compiler-builtin-id-fix-empty
           bound-5
           (sym_i64_env.sym-i64-empty))))))
 

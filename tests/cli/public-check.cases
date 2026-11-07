@@ -768,6 +768,33 @@ end-file
 file root/pairs.tl
 (defstruct Pair
   (value i64))
+(defstruct Outer
+  (broken Pair))
+end-file
+file root/nested/broken.tl
+;; Loading this unused import would report its type error.
+(define (oops) : i64 true)
+end-file
+file shadow-global.tl
+(import shadow_lib as unused)
+(import pairs)
+(define shadow_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64 shadow_lib.value)
+end-file
+file shadow-global-set.tl
+(import shadow_lib as unused)
+(import pairs)
+(define shadow_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64
+  (begin
+    (set! shadow_lib.value 41)
+    shadow_lib.value))
+end-file
+file shadow-dotted-param.tl
+(import nested.broken as unused)
+(import pairs)
+(define (read [nested : pairs.Outer]) : i64 nested.broken.value)
+(define (main) : i64 (read (pairs.Outer (pairs.Pair 42))))
 end-file
 file shadow-param.tl
 (import shadow_lib as unused)
@@ -831,6 +858,22 @@ stderr empty
 stdout match Wrote[ ]
 step check-local-projection-let
 run check "{{dir}}/shadow-let.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-global-projection
+run check "{{dir}}/shadow-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-global-projection
+run compile "{{dir}}/shadow-global.tl" -o "{{dir}}/shadow-global.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-global-projection-set
+run check "{{dir}}/shadow-global-set.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-dotted-root-local-projection
+run check "{{dir}}/shadow-dotted-param.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout contains Type checking passed!
 step check-type-under-shadowing-local

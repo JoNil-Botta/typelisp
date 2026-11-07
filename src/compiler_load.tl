@@ -7163,9 +7163,32 @@
       (ci.intern-compat-state-leading-dot-id (& interns) head)
       head)))
 
-;; `value-context` marks expression and place names. There a dotted name whose
-;; leading segment is a local binding is a projection (SPEC 4.4.3), not a
-;; canonical module path; type and pattern names are never projections.
+;; In an expression or place, SPEC 4.4.3 resolves a canonical-prefixed name as
+;; a projection when its leading segment is a local binding. Otherwise an
+;; existing fully qualified value wins, and a visible global root also selects
+;; projection. So it is a use of the import only when no local binds the root
+;; and the module's surface declares the member. A member the surface lacks is
+;; a projection or an unknown name either way, whether or not the import loads.
+(define (compiler-load-session-state-lazy-canonical-value-use?
+  [state : (& CompilerLoadSessionState)]
+  [name : i64]
+  [canonical : i64]
+  [summary : (& summary CompilerLoadSurfaceSummary)]
+  [locals : sym_i64_env.SymI64Env]) : bool
+  (and
+    (not
+      (sym_i64_env.sym-i64-contains-id
+        locals
+        (compiler-load-session-state-lazy-name-root-id state name)))
+    (compiler-load-lazy-surface-decls-direct-name?
+      summary.decls
+      (compiler-load-session-state-lazy-qualified-member-id
+        state
+        name
+        canonical))))
+
+;; `value-context` marks expression and place names, where a canonical prefix
+;; can also be a projection; type and pattern names are never projections.
 (define (compiler-load-session-state-lazy-name-demand
   [state : (& CompilerLoadSessionState)]
   [name : i64]
@@ -7206,12 +7229,14 @@
           name
           alias
           canonical)
-        (not
-          (and
-            value-context
-            (sym_i64_env.sym-i64-contains-id
-              locals
-              (compiler-load-session-state-lazy-name-root-id state name)))))
+        (or
+          (not value-context)
+          (compiler-load-session-state-lazy-canonical-value-use?
+            state
+            name
+            canonical
+            summary
+            locals)))
       (let
         [member-id : i64
           (compiler-load-session-state-lazy-qualified-member-id

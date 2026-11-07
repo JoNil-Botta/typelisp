@@ -25,6 +25,7 @@
 # suite-members: space-separated smoke drivers the row's source runs.
 char_comparisons|all|0,1,2|tests/integration/char_comparisons.tl|42|-|-|-|-
 char_comparison_immediates|all|0,1,2|tests/integration/char_comparison_immediates.tl|42|-|-|-|-
+optimizer_guarded_ptr_read|all|0,1,2|tests/integration/optimizer_guarded_ptr_read.tl|134|-|-|-|-
 ownership_split_many|all|0,1,2|tests/integration/ownership_split_many.tl|42|-|-|-|stage-stdlib
 stdlib_deflate|all|0,1,2|tests/integration/stdlib_deflate.tl|42|-|-|-|stage-stdlib
 deflate_embedded_example|all|0,1,2|examples/deflate_decode.tl|42|deflate decode score: 42\n|-|-|-

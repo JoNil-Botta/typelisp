@@ -8058,7 +8058,7 @@
     [spanned : i64 (ast.ast-expr-span-wrapper-inner func)]
     (if (>= spanned 0)
       (compiler-load-session-state-lazy-call-head-demand
-        (owned_view.compiler-owned-shared-view state)
+        state
         spanned
         alias
         canonical
@@ -8076,7 +8076,7 @@
             compiler-load-lazy-name-context-call-head)]
         [_
           (compiler-load-session-state-lazy-expr-demand
-            (owned_view.compiler-owned-shared-view state)
+            state
             func
             alias
             canonical
@@ -8103,17 +8103,18 @@
         locals
         compiler-load-lazy-name-context-value)]
     [(Call func args)
+      ;; Borrow the session for the arguments first; the head is its last use.
       (compiler-load-lazy-alias-demand-merge
-        (compiler-load-session-state-lazy-call-head-demand
-          (owned_view.compiler-owned-shared-view state)
-          func
+        (compiler-load-session-state-lazy-expr-list-demand
+          (& state)
+          (& args)
           alias
           canonical
           summary
           locals)
-        (compiler-load-session-state-lazy-expr-list-demand
-          (& state)
-          (& args)
+        (compiler-load-session-state-lazy-call-head-demand
+          state
+          func
           alias
           canonical
           summary

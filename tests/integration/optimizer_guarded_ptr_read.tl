@@ -3,6 +3,7 @@
 (import compiler_intern_state as cis)
 
 (define (main) : i64
-  (if (cis.intern-structural-session-valid? (cis.InternStructuralSessionHandle -1))
+  (if (cis.intern-structural-session-valid?
+    (cis.InternStructuralSessionHandle -1))
     7
     134))

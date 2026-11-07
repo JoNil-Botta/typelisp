@@ -78761,7 +78761,9 @@
         "typecheck: unknown struct field "
         (csym.compiler-struct-field-key
           (tc-nominal-name-id-display struct-name-id)
-          (ci.intern-str field-id)))]
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            field-id)))]
     [decl-result : ResultTcStructDecl (tc-struct-decl-id ctx struct-name-id)]
     (match decl-result
       [(Ok decl)

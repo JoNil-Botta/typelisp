@@ -1255,6 +1255,7 @@ divrem_addr_taken|all|0,1,2|tests/integration/divrem_addr_taken.tl|135|-|-|stdli
 mul_shift_addr_taken|all|0,1,2|tests/integration/mul_shift_addr_taken.tl|3|-|-|stdlib/io.tl stdlib/string.tl|-
 pure_call_addr_taken|all|0,1,2|tests/integration/pure_call_addr_taken.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
 gep_offset_addr_taken|all|0,1,2|tests/integration/gep_offset_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+gep_offset_exit_base|all|0,1,2|tests/integration/gep_offset_exit_base.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 induction_addr_taken|all|0,1,2|tests/integration/induction_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 
 # Safety positive controls retain native writeback and bounds at every level.

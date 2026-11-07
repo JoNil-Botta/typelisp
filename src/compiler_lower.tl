@@ -15910,30 +15910,6 @@
 ;; Only loop-enclosed addresses need facts in advance: a later acyclic address
 ;; cannot reach an earlier read. The normal incremental map still records it
 ;; when emitted. A complete empty census needs no binding/type reconstruction.
-;; Return the children's quick-precheck mode: -1 stops only this analysis,
-;; 0 is outside a loop, 1 is inside. The required write/set-value walks still
-;; visit their original children, even across a nested-function boundary.
-(define (lower-exposure-precheck-step!
-  [summary : (&mut summary LowerExposurePrecheck)]
-  [expr : (& expr ast.AstExpr)]) : i64
-  (let
-    [mode : i64 summary.mode]
-    (when (or (< mode 0) summary.found) (return -1))
-    (when (<= summary.budget 0) (set! summary.found true) (return -1))
-    (set! summary.budget (- summary.budget 1))
-    (match expr
-      [(PtrAddrOf _)
-        (if (= mode 1)
-          (begin
-            (set! summary.found true)
-            -1)
-          0)]
-      [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) -1]
-      [(or (While _ _) (Foreach _) (ForeachActive _ _) (SpmdReduce _)
-           (SpmdScan _) (SpmdCompact _) (ForOwnedState _) (ForOwnedStep _))
-        1]
-      [_ mode])))
-
 (define (lower-exposure-has-address?
   [ctx : tc_core.TcContext]
   [expr : ast.AstExpr]
@@ -27425,36 +27401,64 @@
     false
     (begin
       (set! precheck.walk-budget (- precheck.walk-budget 1))
-      (if (match (& expr)
-        [(ast.AstExpr.While _ _) true]
-        [(ast.AstExpr.ForOwnedState _) true]
-        [(ast.AstExpr.ForOwnedStep _) true]
-        [(ast.AstExpr.Foreach _) true]
-        [(ast.AstExpr.ForeachActive _ _) true]
-        [_ false])
-        (and
-          (lower-written-roots-scan-node!
-            ctx
-            (lower-global-shared-view expr)
-            roots
-            (&mut precheck.walk-budget))
-          ;; This walk observes the loop root, so it is not counted twice.
-          (lower-loop-set-values-collect! ctx expr set-values precheck))
-        (let
-          [previous-mode : i64 precheck.mode]
-          [child-mode : i64 (lower-exposure-precheck-step! precheck (& expr))]
-          (set! precheck.mode child-mode)
-          (let
-            [complete : bool
-              (lower-loop-written-roots-children?
-                ctx
-                (ast.ast-expr-child-ids expr)
-                0
-                roots
-                set-values
-                precheck)]
-            (set! precheck.mode previous-mode)
-            complete))))))
+      (let
+        [previous-mode : i64 precheck.mode]
+        [child-mode : i64 previous-mode]
+        [loop? : bool
+          (match (& expr)
+            [(or (ast.AstExpr.While _ _) (ast.AstExpr.ForOwnedState _)
+                 (ast.AstExpr.ForOwnedStep _) (ast.AstExpr.Foreach _)
+                 (ast.AstExpr.ForeachActive _ _))
+              true]
+            [(ast.AstExpr.PtrAddrOf _)
+              (when (= previous-mode 1) (set! child-mode -2))
+              false]
+            [(or (ast.AstExpr.Lambda _) (ast.AstExpr.Quote _)
+                 (ast.AstExpr.Quasiquote _) (ast.AstExpr.Comptime _))
+              (set! child-mode -1)
+              false]
+            [(or (ast.AstExpr.SpmdReduce _) (ast.AstExpr.SpmdScan _)
+                 (ast.AstExpr.SpmdCompact _))
+              (set! child-mode 1)
+              false]
+            [_ false])]
+        (if loop?
+          (and
+            (lower-written-roots-scan-node!
+              ctx
+              (lower-global-shared-view expr)
+              roots
+              (&mut precheck.walk-budget))
+            ;; This walk observes the loop root, so it is not counted twice.
+            (lower-loop-set-values-collect! ctx expr set-values precheck))
+          (begin
+            ;; -2 is a loop-enclosed address, -1 an analysis boundary.
+            ;; Classification shares the carrier dispatch; its budget still
+            ;; counts only nodes visited by the independent canonical check.
+            (cond
+              [(or (< previous-mode 0) precheck.found)
+                (set! child-mode previous-mode)]
+              [(<= precheck.budget 0)
+                (set! precheck.found true)
+                (set! child-mode previous-mode)]
+              [else
+                (set! precheck.budget (- precheck.budget 1))
+                (when (= child-mode -2)
+                  (set! precheck.found true)
+                  (set! child-mode previous-mode))])
+            (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
+            (let
+              [complete : bool
+                (lower-loop-written-roots-children?
+                  ctx
+                  (ast.ast-expr-child-ids expr)
+                  0
+                  roots
+                  set-values
+                  precheck)]
+              (when (!= child-mode previous-mode)
+                (set! precheck.mode previous-mode))
+              complete)))))))
 
 (define (lower-loop-written-roots-children?
   [ctx : tc_core.TcContext]
@@ -27494,14 +27498,35 @@
     false
     (begin
       (set! precheck.walk-budget (- precheck.walk-budget 1))
-      (match (& expr)
-        [(ast.AstExpr.Set _ value-box)
-          (lower_i64_i64_map.insert-ref! set-values value-box 1)]
-        [_ unit])
       (let
         [previous-mode : i64 precheck.mode]
-        [child-mode : i64 (lower-exposure-precheck-step! precheck (& expr))]
-        (set! precheck.mode child-mode)
+        [child-mode : i64 previous-mode]
+        (match (& expr)
+          [(ast.AstExpr.Set _ value-box)
+            (lower_i64_i64_map.insert-ref! set-values value-box 1)]
+          [(ast.AstExpr.PtrAddrOf _)
+            (when (= previous-mode 1) (set! child-mode -2))]
+          [(or (ast.AstExpr.Lambda _) (ast.AstExpr.Quote _)
+               (ast.AstExpr.Quasiquote _) (ast.AstExpr.Comptime _))
+            (set! child-mode -1)]
+          [(or (ast.AstExpr.While _ _) (ast.AstExpr.Foreach _)
+               (ast.AstExpr.ForeachActive _ _) (ast.AstExpr.SpmdReduce _)
+               (ast.AstExpr.SpmdScan _) (ast.AstExpr.SpmdCompact _)
+               (ast.AstExpr.ForOwnedState _) (ast.AstExpr.ForOwnedStep _))
+            (set! child-mode 1)]
+          [_ unit])
+        (cond
+          [(or (< previous-mode 0) precheck.found)
+            (set! child-mode previous-mode)]
+          [(<= precheck.budget 0)
+            (set! precheck.found true)
+            (set! child-mode previous-mode)]
+          [else
+            (set! precheck.budget (- precheck.budget 1))
+            (when (= child-mode -2)
+              (set! precheck.found true)
+              (set! child-mode previous-mode))])
+        (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
         (let
           [complete : bool
             (lower-loop-set-values-children?
@@ -27510,7 +27535,7 @@
               0
               set-values
               precheck)]
-          (set! precheck.mode previous-mode)
+          (when (!= child-mode previous-mode) (set! precheck.mode previous-mode))
           complete)))))
 
 (define (lower-loop-set-values-children?

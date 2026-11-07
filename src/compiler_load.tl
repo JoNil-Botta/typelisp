@@ -7150,13 +7150,30 @@
       name
       canonical)))
 
+(define (compiler-load-session-state-lazy-name-root-id
+  [state : (& CompilerLoadSessionState)]
+  [name : i64]) : i64
+  (let
+    [interns : ci.InternCompatState (compiler-load-session-state-interns state)]
+    [head : i64
+      (if (ci.intern-compat-state-qualified? (& interns) name)
+        (ci.intern-compat-state-qualified-module-id (& interns) name)
+        name)]
+    (if (ci.intern-compat-state-dotted? (& interns) head)
+      (ci.intern-compat-state-leading-dot-id (& interns) head)
+      head)))
+
+;; `value-context` marks expression and place names. There a dotted name whose
+;; leading segment is a local binding is a projection (SPEC 4.4.3), not a
+;; canonical module path; type and pattern names are never projections.
 (define (compiler-load-session-state-lazy-name-demand
   [state : (& CompilerLoadSessionState)]
   [name : i64]
   [alias : i64]
   [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
-  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  [locals : sym_i64_env.SymI64Env]
+  [value-context : bool]) : CompilerLoadLazyAliasDemand
   (if (compiler-load-session-state-lazy-qualified-observer-active? state)
     (compiler-load-session-state-lazy-qualified-observer-note-secondary!
       (&mut (compiler-load-session-state-shared-view state))
@@ -7183,11 +7200,18 @@
             (compiler-load-lazy-alias-demand-qualified member-id))))]
     ;; SPEC 4.4.3 also accepts the imported module's full canonical path, so
     ;; a name under that identity is a use like the alias.
-    [(compiler-load-session-state-lazy-name-canonical-qualified?
-        state
-        name
-        alias
-        canonical)
+    [(and
+        (compiler-load-session-state-lazy-name-canonical-qualified?
+          state
+          name
+          alias
+          canonical)
+        (not
+          (and
+            value-context
+            (sym_i64_env.sym-i64-contains-id
+              locals
+              (compiler-load-session-state-lazy-name-root-id state name)))))
       (let
         [member-id : i64
           (compiler-load-session-state-lazy-qualified-member-id
@@ -7306,7 +7330,8 @@
         alias
         canonical
         summary
-        locals)]
+        locals
+        false)]
     ;; A C-function type's signature is not an alias use.
     [(CFunc _ _) (compiler-load-lazy-alias-demand-none)]
     [_
@@ -7626,7 +7651,8 @@
           alias
           canonical
           summary
-          locals)
+          locals
+          false)
         (compiler-load-session-state-lazy-pattern-list-demand
           (& state)
           (& (deref patterns))
@@ -7949,7 +7975,8 @@
         alias
         canonical
         summary
-        locals)]
+        locals
+        true)]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body)
@@ -8010,7 +8037,8 @@
           alias
           canonical
           summary
-          locals)
+          locals
+          true)
         (compiler-load-session-state-lazy-expr-demand
           state
           value
@@ -8452,7 +8480,8 @@
                 alias
                 canonical
                 summary
-                locals)]
+                locals
+                true)]
             (if (or
               name-demand.direct
               (compiler-load-session-state-lazy-name-qualified-by-id?

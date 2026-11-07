@@ -758,6 +758,34 @@ file outside.tl
 end-file
 file root/nested/moduleless_dep.tl
 (define (get) : i64 7)
+(defstruct Box
+  (value i64))
+end-file
+file root/shadow_lib.tl
+;; Loading this unused import would report its type error.
+(define (broken) : i64 true)
+end-file
+file root/pairs.tl
+(defstruct Pair
+  (value i64))
+end-file
+file shadow-param.tl
+(import shadow_lib as unused)
+(import pairs)
+(define (read [shadow_lib : pairs.Pair]) : i64 shadow_lib.value)
+(define (main) : i64 (read (pairs.Pair 42)))
+end-file
+file shadow-let.tl
+(import shadow_lib as unused)
+(import pairs)
+(define (main) : i64
+  (let [shadow_lib (pairs.Pair 42)]
+    shadow_lib.value))
+end-file
+file shadowed-type.tl
+(import nested.moduleless_dep)
+(define (size [nested : i64] [b : nested.moduleless_dep.Box]) : i64 nested)
+(define (main) : i64 0)
 end-file
 file root-user.tl
 (import nested.moduleless_dep)
@@ -793,6 +821,22 @@ step compile-moduleless-under-root
 run compile "{{dir}}/root-user.tl" -o "{{dir}}/root-user.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout match Wrote[ ]
+step check-local-projection-param
+run check "{{dir}}/shadow-param.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-local-projection-param
+run compile "{{dir}}/shadow-param.tl" -o "{{dir}}/shadow-param.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-local-projection-let
+run check "{{dir}}/shadow-let.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-type-under-shadowing-local
+run check "{{dir}}/shadowed-type.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
 step check-outside-checkout
 cwd {{dir}}
 run check "{{dir}}/outside.tl" --stdlib-root "{{root}}/stdlib"

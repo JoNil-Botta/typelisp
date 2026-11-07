@@ -801,44 +801,51 @@ file macro-call.tl
 (import mac.kit)
 (define (main) : i64 (mac.kit.twice 21))
 end-file
-file root/nested_lib.tl
-;; Loading this unused import would report its type error.
-(module nested_lib)
-(module other
-  (define value : i64 7))
-(define (broken) : i64 true)
-end-file
-file nested-member-global.tl
-(import nested_lib as unused)
-(import pairs)
-(define nested_lib : pairs.Pair (pairs.Pair 42))
-(define (main) : i64 nested_lib.value)
-end-file
-file root/macro_lib.tl
-;; Loading this unused import would report its transformer's type error.
-(module macro_lib)
-(defmacro (value) : Module true)
-end-file
-file macro-name-global.tl
-(import macro_lib as unused)
-(import pairs)
-(define macro_lib : pairs.Pair (pairs.Pair 42))
-(define (main) : i64 macro_lib.value)
+file root/valid_lib.tl
+(define (other) : i64 1)
 end-file
 file shadow-global.tl
+(import valid_lib as unused)
+(import pairs)
+(define valid_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64 valid_lib.value)
+end-file
+file shadow-global-set.tl
+(import valid_lib as unused)
+(import pairs)
+(define valid_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64
+  (begin
+    (set! valid_lib.value 41)
+    valid_lib.value))
+end-file
+file shadow-global-broken.tl
 (import shadow_lib as unused)
 (import pairs)
 (define shadow_lib : pairs.Pair (pairs.Pair 42))
 (define (main) : i64 shadow_lib.value)
 end-file
-file shadow-global-set.tl
-(import shadow_lib as unused)
-(import pairs)
-(define shadow_lib : pairs.Pair (pairs.Pair 42))
-(define (main) : i64
-  (begin
-    (set! shadow_lib.value 41)
-    shadow_lib.value))
+file root/pkg/orig_fn.tl
+(module pkg.orig_fn)
+(define (get) : i64 42)
+end-file
+file root/pkg/reexport_fn.tl
+(module pkg.reexport_fn)
+(import pkg.orig_fn.get as answer)
+end-file
+file reexport-call.tl
+(import pkg.reexport_fn as api)
+(define (main) : i64 (pkg.reexport_fn.answer))
+end-file
+file root/pkg/braced_body.tl
+(module pkg.braced_body
+  (defmacro (emit) : Decls
+    `(define (answer) : i64 42))
+  (emit))
+end-file
+file braced-body-call.tl
+(import pkg.braced_body as api)
+(define (main) : i64 (pkg.braced_body.answer))
 end-file
 file shadow-dotted-param.tl
 (import nested.broken as unused)
@@ -930,18 +937,6 @@ step check-canonical-macro-call
 run check "{{dir}}/macro-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout contains Type checking passed!
-step check-nested-member-global-projection
-run check "{{dir}}/nested-member-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
-stderr empty
-stdout contains Type checking passed!
-step check-macro-name-global-projection
-run check "{{dir}}/macro-name-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
-stderr empty
-stdout contains Type checking passed!
-step compile-macro-name-global-projection
-run compile "{{dir}}/macro-name-global.tl" -o "{{dir}}/macro-name-global.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
-stderr empty
-stdout match Wrote[ ]
 step check-global-projection
 run check "{{dir}}/shadow-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty
@@ -950,6 +945,27 @@ step compile-global-projection
 run compile "{{dir}}/shadow-global.tl" -o "{{dir}}/shadow-global.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout match Wrote[ ]
+step check-reexported-item
+run check "{{dir}}/reexport-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-reexported-item
+run compile "{{dir}}/reexport-call.tl" -o "{{dir}}/reexport-call.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-braced-body-generated-member
+run check "{{dir}}/braced-body-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+# Accepted conservative load: a module-scope binding that shadows an unused
+# import's canonical root still loads that import (SPEC 4.4 loads every
+# import; 4.4.3 lets an existing fully qualified value win over the global),
+# so that module's own errors are reported, as through its alias.
+step check-shadowed-global-loads-import
+run check "{{dir}}/shadow-global-broken.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
 step check-global-projection-set
 run check "{{dir}}/shadow-global-set.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty

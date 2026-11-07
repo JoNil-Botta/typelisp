@@ -15424,7 +15424,8 @@
       [key : i64
         (cis.intern-structural-key-raw
           (cis.intern-structural-session-composite-triple-key
-            (compiler-lower-state-structural-session (lower-state-owner (clone scan.state)))
+            (compiler-lower-state-structural-session
+              (lower-state-owner (clone scan.state)))
             kind
             scope
             name))]
@@ -16086,7 +16087,8 @@
                   (lower_i64_i64_map.contains?
                     (& facts.bindings)
                     (cis.intern-structural-session-find-composite-triple-raw
-                      (compiler-lower-state-structural-session (lower-state-owner state))
+                      (compiler-lower-state-structural-session
+                        (lower-state-owner state))
                       0
                       scope
                       name))

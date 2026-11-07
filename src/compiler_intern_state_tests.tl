@@ -358,9 +358,14 @@
   (*
     (intern-structural-session-record-capacity handle)
     (ci.intern-structural-record-slot-bytes)))
+
 ;; Snapshot exact storage and contents, rather than hashes, so a read-only
 ;; lookup cannot hide record growth, cache promotion or identity allocation.
-(defmacro (intern-lookup-image-array! [image : Expr] [cursor : Expr] [items : Expr] [width : Expr]) : unit
+(defmacro (intern-lookup-image-array!
+  [image : Expr]
+  [cursor : Expr]
+  [items : Expr]
+  [width : Expr]) : unit
   `(let
     [address : u64 (ci.intern-i64-array-address ,items)]
     [count : i64 (array-length ,items)]
@@ -369,14 +374,44 @@
     (set! (array-ref ,image ,cursor) count)
     (+= ,cursor 1)
     (for [index (iterator.range 0 (* count ,width))]
-      (set! (array-ref ,image ,cursor) (cast (ci.intern-active-u8-ref address index) : i64))
+      (set!
+        (array-ref ,image ,cursor)
+        (cast (ci.intern-active-u8-ref address index) : i64))
       (+= ,cursor 1))))
 
-(define (intern-lookup-image [state : (& state ci.InternCompatState)]) : (__tl_dyn-array i64)
+(define (intern-lookup-image [state : (& state ci.InternCompatState)]) : (__tl_dyn-array
+    i64)
   (let
-    [table : ci.InternStructuralTable
-      (owned_view.compiler-owned-array-element-shared-view state.structural-table-cell 0)]
-    [image : (__tl_dyn-array i64) (__tl_make-array i64 (+ 16 30 (* (array-length table.kinds) 1) (* (array-length table.lefts) 8) (* (array-length table.middles) 8) (* (array-length table.rights) 8) (* (array-length table.rendered-names) (comptime (size-of (type String)))) (* (array-length table.generated-symbol-handles) 8) (* (array-length table.map-slots) 8) (* (array-length table.structural-cache-raws) 8) (* (array-length state.table-id) 8) (* (array-length state.reset-generation) 8) (* (array-length state.pool-count) 8) (* (array-length state.generated-next-id) 8) (* (array-length state.persistent-arena) 8) (* (array-length state.persistent-arena-floor-mark) 8) (* (array-length (__tl-project-field (array-ref ci.intern-structural-table-cell 0) structural-cache-raws)) 8)))]
+    [table : (& state ci.InternStructuralTable)
+      (& (array-ref state.structural-table-cell 0))]
+    [image : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (+
+          16
+          30
+          (* (array-length table.kinds) 1)
+          (* (array-length table.lefts) 8)
+          (* (array-length table.middles) 8)
+          (* (array-length table.rights) 8)
+          (*
+            (array-length table.rendered-names)
+            (comptime (size-of (type String))))
+          (* (array-length table.generated-symbol-handles) 8)
+          (* (array-length table.map-slots) 8)
+          (* (array-length table.structural-cache-raws) 8)
+          (* (array-length state.table-id) 8)
+          (* (array-length state.reset-generation) 8)
+          (* (array-length state.pool-count) 8)
+          (* (array-length state.generated-next-id) 8)
+          (* (array-length state.persistent-arena) 8)
+          (* (array-length state.persistent-arena-floor-mark) 8)
+          (*
+            (array-length
+              (__tl-project-field
+                (array-ref ci.intern-structural-table-cell 0)
+                structural-cache-raws))
+            8)))]
     [cursor : i64 0]
     (set! (array-ref image cursor) table.owner)
     (+= cursor 1)
@@ -400,21 +435,35 @@
     (+= cursor 1)
     (set! (array-ref image cursor) ci.intern-active-structural-len)
     (+= cursor 1)
-    (set! (array-ref image cursor) (cast ci.intern-active-structural-kinds-address : i64))
+    (set!
+      (array-ref image cursor)
+      (cast ci.intern-active-structural-kinds-address : i64))
     (+= cursor 1)
-    (set! (array-ref image cursor) (cast ci.intern-active-structural-lefts-address : i64))
+    (set!
+      (array-ref image cursor)
+      (cast ci.intern-active-structural-lefts-address : i64))
     (+= cursor 1)
-    (set! (array-ref image cursor) (cast ci.intern-active-structural-middles-address : i64))
+    (set!
+      (array-ref image cursor)
+      (cast ci.intern-active-structural-middles-address : i64))
     (+= cursor 1)
-    (set! (array-ref image cursor) (cast ci.intern-active-structural-rights-address : i64))
+    (set!
+      (array-ref image cursor)
+      (cast ci.intern-active-structural-rights-address : i64))
     (+= cursor 1)
-    (set! (array-ref image cursor) (cast ci.intern-active-structural-cache-raws-address : i64))
+    (set!
+      (array-ref image cursor)
+      (cast ci.intern-active-structural-cache-raws-address : i64))
     (+= cursor 1)
     (intern-lookup-image-array! image cursor table.kinds 1)
     (intern-lookup-image-array! image cursor table.lefts 8)
     (intern-lookup-image-array! image cursor table.middles 8)
     (intern-lookup-image-array! image cursor table.rights 8)
-    (intern-lookup-image-array! image cursor table.rendered-names (comptime (size-of (type String))))
+    (intern-lookup-image-array!
+      image
+      cursor
+      table.rendered-names
+      (comptime (size-of (type String))))
     (intern-lookup-image-array! image cursor table.generated-symbol-handles 8)
     (intern-lookup-image-array! image cursor table.map-slots 8)
     (intern-lookup-image-array! image cursor table.structural-cache-raws 8)
@@ -423,11 +472,17 @@
     (intern-lookup-image-array! image cursor state.pool-count 8)
     (intern-lookup-image-array! image cursor state.generated-next-id 8)
     (intern-lookup-image-array! image cursor state.persistent-arena 8)
-    (intern-lookup-image-array! image cursor state.persistent-arena-floor-mark 8)
     (intern-lookup-image-array!
       image
       cursor
-      (__tl-project-field (array-ref ci.intern-structural-table-cell 0) structural-cache-raws)
+      state.persistent-arena-floor-mark
+      8)
+    (intern-lookup-image-array!
+      image
+      cursor
+      (__tl-project-field
+        (array-ref ci.intern-structural-table-cell 0)
+        structural-cache-raws)
       8)
     (test.assert-i64-eq cursor (array-length image) "complete snapshot")
     image))
@@ -443,50 +498,109 @@
     [before : (__tl_dyn-array i64) (intern-lookup-image state)]
     [current : i64 (arena.tl_arena_current)]
     [persistent : i64 (array-ref state.persistent-arena 0)]
-    [table : ci.InternStructuralTable
-      (owned_view.compiler-owned-array-element-shared-view state.structural-table-cell 0)]
-    [current-bump : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes current)]
-    [persistent-bump : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes persistent)]
-    [records-bump : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes table.records-arena)]
-    [map-bump : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes table.map-arena)]
-    [actual : i64 (cis.intern-structural-session-find-composite-triple-raw session left middle right)]
-    [current-after : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes current)]
-    [persistent-after : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes persistent)]
-    [records-after : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes table.records-arena)]
-    [map-after : i64 (allocation_profile.compiler-allocation-profile-arena-bump-bytes table.map-arena)]
+    [table : (& state ci.InternStructuralTable)
+      (& (array-ref state.structural-table-cell 0))]
+    [current-bump : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes current)]
+    [persistent-bump : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        persistent)]
+    [records-bump : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        table.records-arena)]
+    [map-bump : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        table.map-arena)]
+    [actual : i64
+      (cis.intern-structural-session-find-composite-triple-raw
+        session
+        left
+        middle
+        right)]
+    [current-after : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes current)]
+    [persistent-after : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        persistent)]
+    [records-after : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        table.records-arena)]
+    [map-after : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        table.map-arena)]
     [after : (__tl_dyn-array i64) (intern-lookup-image state)]
     (test.assert-i64-eq actual expected "exact hit or missing sentinel")
-    (test.assert-i64-eq current-bump current-after "lookup does not allocate in current arena")
-    (test.assert-i64-eq persistent-bump persistent-after "lookup does not allocate persistent records")
-    (test.assert-i64-eq records-bump records-after "lookup does not allocate record arena")
+    (test.assert-i64-eq
+      current-bump
+      current-after
+      "lookup does not allocate in current arena")
+    (test.assert-i64-eq
+      persistent-bump
+      persistent-after
+      "lookup does not allocate persistent records")
+    (test.assert-i64-eq
+      records-bump
+      records-after
+      "lookup does not allocate record arena")
     (test.assert-i64-eq map-bump map-after "lookup does not allocate map arena")
-    (test.assert-i64-eq (array-length before) (array-length after) "storage lengths unchanged")
+    (test.assert-i64-eq
+      (array-length before)
+      (array-length after)
+      "storage lengths unchanged")
     (for [index (iterator.range 0 (array-length before))]
-      (test.assert-i64-eq (array-ref before index) (array-ref after index) "storage and cache bytes unchanged"))))
+      (test.assert-i64-eq
+        (array-ref before index)
+        (array-ref after index)
+        "storage and cache bytes unchanged"))))
 
 (test
   compiler-intern-triple-lookup-only
   (let
     [saved : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [state : ci.InternCompatState (ci.intern-compat-state-new)]
-    [session : cis.InternStructuralSessionHandle (intern-identity-test-session (& state))]
+    [session : cis.InternStructuralSessionHandle
+      (intern-identity-test-session (& state))]
     [left : i64 9223372036854775807]
     [middle : i64 -9223372036854775807]
     [right : i64 -1]
     [first : i64
       (cis.intern-structural-key-raw
-        (cis.intern-structural-session-composite-triple-key session left middle right))]
-    [table : ci.InternStructuralTable
-      (owned_view.compiler-owned-array-element-shared-view state.structural-table-cell 0)]
-    [bucket : i64 (ci.intern-structural-table-first-slot table (ci.intern-structural-kind-triple) left middle right)]
+        (cis.intern-structural-session-composite-triple-key
+          session
+          left
+          middle
+          right))]
+    [table : (& state ci.InternStructuralTable)
+      (& (array-ref state.structural-table-cell 0))]
+    [bucket : i64
+      (ci.intern-structural-table-first-slot
+        table
+        (ci.intern-structural-kind-triple)
+        left
+        middle
+        right)]
     [other : i64 0]
-    (while (not (= bucket (ci.intern-structural-table-first-slot table (ci.intern-structural-kind-triple) other middle right)))
+    (while (not
+      (=
+        bucket
+        (ci.intern-structural-table-first-slot
+          table
+          (ci.intern-structural-kind-triple)
+          other
+          middle
+          right)))
       (+= other 1))
     (let
       [second : i64
         (cis.intern-structural-key-raw
-          (cis.intern-structural-session-composite-triple-key session other middle right))]
-      (test.assert-false (= first second) "colliding full-width triples remain distinct")
+          (cis.intern-structural-session-composite-triple-key
+            session
+            other
+            middle
+            right))]
+      (test.assert-false
+        (= first second)
+        "colliding full-width triples remain distinct")
       ;; Inactive owner: lookup must not install or touch the active cache.
       (intern-lookup-unchanged! (& state) session left middle right first)
       (intern-lookup-unchanged! (& state) session other middle right second)
@@ -498,7 +612,10 @@
       (intern-lookup-unchanged! (& state) session left middle 0 -1))
     (ci.intern-compat-state-install! (& saved))
     (ci.intern-compat-state-reset! (&mut state))
-    (test.assert-false (cis.intern-structural-session-valid? session) "reset rejects stale session")
+    (test.assert-false
+      (cis.intern-structural-session-valid? session)
+      "reset rejects stale session")
     (let
-      [fresh : cis.InternStructuralSessionHandle (intern-identity-test-session (& state))]
+      [fresh : cis.InternStructuralSessionHandle
+        (intern-identity-test-session (& state))]
       (intern-lookup-unchanged! (& state) fresh left middle right -1))))

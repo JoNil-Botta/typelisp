@@ -88564,8 +88564,11 @@
     [_ (No)]))
 
 ;; Every use of the Add anywhere in the function is an eligible Gep index, and
-;; there is at least one. A use outside the loop is fine: the derived base
-;; dominates the preheader, which dominates every block the Add dominates.
+;; there is at least one. A use outside the loop is fine for the INDEX: the
+;; derived base lives in the preheader, which dominates every block the Add
+;; dominates. The Gep's BASE is a separate question -- an after-loop Gep can
+;; name a base defined after the loop -- which
+;; `opt-gep-offset-drop-variant-bases-instrs!` answers.
 (define (opt-gep-offset-uses-all-geps?
   [dst : i64]
   [uses : (& uses (__tl_dyn-array i64))]
@@ -88837,13 +88840,36 @@
             cand-inv
             cand-var)])]))
 
-;; Correctness filter: the derived base is emitted in the preheader, so every
-;; Gep that indexes on a candidate must name a base the loop does not define
-;; and that is outside the taint closure, including uses after the loop.
+;; A var whose value exists at the end of block `block-id` (before its
+;; terminator, where the derived bases are inserted): a parameter, or a var
+;; whose single SSA definition sits in a block dominating `block-id`. A
+;; definition in `block-id` itself precedes the insertion point because no
+;; terminator defines a var.
+(define (opt-gep-offset-available-at-end?
+  [var : i64]
+  [def-block : (& def-block (__tl_dyn-array i64))]
+  [doms : (& doms OptDomInfo)]
+  [block-id : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length def-block))
+    (let
+      [id : i64 (array-ref def-block var)]
+      (or (< id 0) (opt-dom-info-dominates-id? doms id block-id)))))
+
+;; Correctness filter: the derived base is emitted at the end of the preheader,
+;; so every Gep that indexes on a candidate, including uses after the loop, must
+;; name a base that the loop does not define, that is outside the taint closure,
+;; and that is already available there. The last test matters only for a Gep
+;; outside the loop: an exit block can define a fresh base and index it with
+;; the loop's Add, and hoisting `Gep base, I` would read that base before its
+;; definition (#9510). Such a Gep drops the whole Add, so it stays as it was.
 (define (opt-gep-offset-drop-variant-bases-instrs!
   [instrs : (& ir.CompilerIrInstrSeq)]
   [def-block : (& def-block (__tl_dyn-array i64))]
   [body : (& body OptLoopBody)]
+  [doms : (& doms OptDomInfo)]
+  [preheader-id : i64]
   [cand : (&mut cand (__tl_dyn-array i64))]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -88860,7 +88886,13 @@
                   [(Var b)
                     (if (or
                       (opt-gep-offset-var-in-loop? b def-block body)
-                      (opt-loop-taint-var? (& opt-loop-taint) b))
+                      (opt-loop-taint-var? (& opt-loop-taint) b)
+                      (not
+                        (opt-gep-offset-available-at-end?
+                          b
+                          def-block
+                          doms
+                          preheader-id)))
                       (set! (array-ref cand idx) 0)
                       unit)]
                   [_ (set! (array-ref cand idx) 0)])
@@ -88872,6 +88904,8 @@
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [def-block : (& def-block (__tl_dyn-array i64))]
   [body : (& body OptLoopBody)]
+  [doms : (& doms OptDomInfo)]
+  [preheader-id : i64]
   [cand : (&mut cand (__tl_dyn-array i64))]) : unit
   (match blocks
     [(slice) unit]
@@ -88882,8 +88916,16 @@
             (& instrs)
             def-block
             body
+            doms
+            preheader-id
             cand)
-          (opt-gep-offset-drop-variant-bases-blocks! rest def-block body cand)])]))
+          (opt-gep-offset-drop-variant-bases-blocks!
+            rest
+            def-block
+            body
+            doms
+            preheader-id
+            cand)])]))
 
 ;; In-loop uses that the rewrite removes: a base named by a surviving
 ;; candidate's Gep, and the invariant operand of a surviving candidate Add.
@@ -89208,6 +89250,7 @@
   [type-segment-bases : i64]
   [loop : (& OptNaturalLoop)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
+  [context : (& context OptCfgContext)]
   [frame : i64]
   [uses : (& uses (__tl_dyn-array i64))]
   [gep-uses : (& gep-uses (__tl_dyn-array i64))]
@@ -89272,6 +89315,10 @@
                 (ir.compiler-ir-block-list-view blocks)
                 def-block
                 body
+                (& context.doms)
+                (match (opt-cfg-index-id (& context.index) preheader)
+                  [(Some id) id]
+                  [(None) (- 0 1)])
                 (&mut cand))]
             [_counts : unit
               (opt-gep-offset-count-split-uses-blocks!
@@ -89311,6 +89358,7 @@
   [type-segment-bases : i64]
   [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : (& blocks ir.CompilerIrBlockList)]
+  [context : (& context OptCfgContext)]
   [frame : i64]
   [uses : (& uses (__tl_dyn-array i64))]
   [gep-uses : (& gep-uses (__tl_dyn-array i64))]
@@ -89329,6 +89377,7 @@
         type-segment-bases
         rest
         blocks
+        context
         frame
         uses
         gep-uses
@@ -89343,6 +89392,7 @@
           type-segment-bases
           loop
           blocks
+          context
           frame
           uses
           gep-uses
@@ -89536,6 +89586,7 @@
           type-segment-bases
           (opt_natural_loop_vec.view natural-loops)
           blocks
+          context
           frame
           uses
           gep-uses

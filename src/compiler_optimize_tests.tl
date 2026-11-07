@@ -45958,6 +45958,92 @@
     42
     "a loop whose preheader cannot be synthesized only skips itself: later candidate loops still get theirs and split"))
 
+;; #9510: the loop's Add feeds only a Gep AFTER the loop. `after?` places that
+;; Gep's base in the exit block, where the preheader cannot read it, so the pass
+;; must leave the function exactly as it was; otherwise the base is defined in
+;; `entry`, dominates the preheader `pre`, and the access still splits.
+(define (opt-gep-exit-base-test-function [after? : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @gep_after(n=%0:i64, start=%1:i64, p=%2:u64) -> i64 vars 24 {
+     entry:\n"
+      (if after?
+        ""
+        "%13 = mov %2 : u64\n")
+      "%21 = gt %0, 0 : i64
+     branch %21, pre, done
+     pre:
+     jump loop
+     loop:
+     %5 = phi [0, pre], [%6, loop] : i64
+     %9 = add %1, %5 : i64
+     %6 = add %5, 1 : i64
+     %7 = lt %6, %0 : i64
+     branch %7, loop, exit
+     exit:\n"
+      (if after?
+        "%13 = mov %2 : u64\n"
+        "")
+      "%10 = gep %13, %9 : i64
+     %11 = load %10 : i64
+     return %11
+     done:
+     return 0
+     }")))
+
+(test
+  gep-offset-exit-gep-base-must-reach-preheader
+  (for [mode (iterator.range 0 2)]
+    (opt.opt-loop-taint-install! 0 (& (irt.blocks "entry:\nreturn")))
+    (let
+      [after? : bool (= mode 1)]
+      [func (opt-gep-exit-base-test-function after?)]
+      [out
+        (opt-gep-offset-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (opt-gep-exit-base-test-function after?))]
+      [blocks (opt.opt-function-blocks out)]
+      [input-blocks (opt.opt-function-blocks func)]
+      (test.assert-true
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+        "input verifies")
+      (test.assert-true
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+        "output verifies")
+      (test.assert-i64-eq
+        (opt.opt-function-frame out)
+        (if after?
+          24
+          25)
+        "an after-loop base must not split; a before-loop base splits")
+      (test.assert-i64-eq
+        (opt-gep-offset-test-geps-in blocks (ir.compiler-ir-label "pre"))
+        (if after?
+          0
+          1)
+        "the derived base is hoisted into the preheader only when its base reaches it")
+      (test.assert-true
+        (opt.opt-value-eq
+          (&
+            (opt-gep-nested-test-gep-offset-in
+              blocks
+              (ir.compiler-ir-label "exit")
+              0))
+          (&
+            (Var
+              (if after?
+                9
+                5))))
+        "the exit Gep keeps the Add when unsplit and indexes on the counter when split")
+      (when
+        after?
+        (test.assert-true
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            blocks
+            input-blocks)
+          "an unsplit function is left exactly as it was")))))
+
 ;; --- monotone-flag loop-exit conversion self-tests ----------------------------
 ;; One `(while (and (< i n) ok) ... (set! ok false))` loop in the shape
 ;; `it-slice-eq?` reaches the pass with, with the variant selector perturbing

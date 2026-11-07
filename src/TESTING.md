@@ -3415,6 +3415,16 @@ resolved pure-call arguments, seeded arguments/results, cache result admission,
 and direct writes to address-taken storage as availability barriers. Private
 fact/rewrite tests install their own closure; do not rely on another test's set.
 
+#9510 pins gep_offset's base availability. The
+`gep-offset-exit-gep-base-must-reach-preheader` test in
+`src/compiler_optimize_tests.tl` runs the issue's two-mode fixture: an
+after-loop Gep whose base is defined in the exit block stays unsplit and
+verifies, and the same Gep with its base defined before the loop still splits.
+The `gep_offset_exit_base` native row is the source-level witness. Its
+do-while `ptr-offset` read through an after-loop array panicked at opt2 before
+the fix. Its before-loop data pointer is the splitting control. It runs at
+opt0/1/2 on Linux and Windows.
+
 The outside-loop Gep fixture keeps the loop region clean while its pointer store
 changes an address-taken base read by an exit Gep. Candidate base validation must
 refuse that hoist. Clean and unrelated-storage controls still split, and removing

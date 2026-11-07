@@ -27443,7 +27443,8 @@
                 (set! child-mode previous-mode)]
               [else
                 (set! precheck.budget (- precheck.budget 1))
-                (when (= child-mode -2)
+                (when
+                  (= child-mode -2)
                   (set! precheck.found true)
                   (set! child-mode previous-mode))])
             (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
@@ -27456,7 +27457,8 @@
                   roots
                   set-values
                   precheck)]
-              (when (!= child-mode previous-mode)
+              (when
+                (!= child-mode previous-mode)
                 (set! precheck.mode previous-mode))
               complete)))))))
 
@@ -27523,7 +27525,8 @@
             (set! child-mode previous-mode)]
           [else
             (set! precheck.budget (- precheck.budget 1))
-            (when (= child-mode -2)
+            (when
+              (= child-mode -2)
               (set! precheck.found true)
               (set! child-mode previous-mode))])
         (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
@@ -27535,7 +27538,9 @@
               0
               set-values
               precheck)]
-          (when (!= child-mode previous-mode) (set! precheck.mode previous-mode))
+          (when
+            (!= child-mode previous-mode)
+            (set! precheck.mode previous-mode))
           complete)))))
 
 (define (lower-loop-set-values-children?

@@ -804,6 +804,13 @@ end-file
 file root/valid_lib.tl
 (define (other) : i64 1)
 end-file
+file cfunc-signature.tl
+(import stdlib.iterator)
+(define (accept
+  [f : (CFunc non-null (-> (Ptr stdlib.iterator.I64Range) i64))]) : i64
+  0)
+(define (main) : i64 0)
+end-file
 file shadow-global.tl
 (import valid_lib as unused)
 (import pairs)
@@ -943,6 +950,14 @@ stderr empty
 stdout contains Type checking passed!
 step compile-global-projection
 run compile "{{dir}}/shadow-global.tl" -o "{{dir}}/shadow-global.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-cfunc-signature-type
+run check "{{dir}}/cfunc-signature.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-cfunc-signature-type
+run compile "{{dir}}/cfunc-signature.tl" -o "{{dir}}/cfunc-signature.s" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout match Wrote[ ]
 step check-reexported-item

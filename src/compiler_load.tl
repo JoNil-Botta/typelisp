@@ -7335,8 +7335,6 @@
         summary
         locals
         false)]
-    ;; A C-function type's signature is not an alias use.
-    [(CFunc _ _) (compiler-load-lazy-alias-demand-none)]
     [_
       (ast.ast-type-fold-children
         ty

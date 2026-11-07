@@ -114601,26 +114601,38 @@
 ;; `all?` do. Its bodies run under the clause binders, so they are expanded
 ;; only after the transformer has introduced those binders. The check uses
 ;; the signature alone, so a user macro of the same shape is treated alike.
+;; Whether parameter INDEX of PARAMS is variadic, read in place: no checked
+;; get, so no fallback parameter is built. INDEX must be in range.
+(define (macro-param-variadic-at?
+  [params : (& params ast.AstMacroParamList)]
+  [index : i64]) : bool
+  (match (& (array-ref params.slots index))
+    [(Param _ _ variadic _) variadic]))
+
 (define (macro-binding-prefix-transformer?
   [ctx : TcContext]
   [fallback-module : String]
   [fallback-module-id : i64]
   [params : ast.AstMacroParamList]) : bool
-  (if (not (= (ast.ast-macro-param-list-len (& params)) 2))
+  ;; Most macros fail the in-place shape test; only a two-parameter,
+  ;; all-variadic signature reaches the typed parameter checks.
+  (if (not
+    (and
+      (= (ast.ast-macro-param-list-len (& params)) 2)
+      (macro-param-variadic-at? (& params) 0)
+      (macro-param-variadic-at? (& params) 1)))
     false
     (match (ast.ast-macro-param-list-get
       (& params)
       0
       (ast.ast-macro-param-fallback))
-      [(Param _ binding-ty binding-variadic _)
+      [(Param _ binding-ty _ _)
         (match (ast.ast-macro-param-list-get
           (& params)
           1
           (ast.ast-macro-param-fallback))
-          [(Param _ body-ty body-variadic _)
+          [(Param _ body-ty _ _)
             (and
-              binding-variadic
-              body-variadic
               (macro-param-expr-binding-clause?
                 ctx
                 (tc-global-shared-view fallback-module)

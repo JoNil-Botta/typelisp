@@ -18492,7 +18492,7 @@
         (lower.compiler-lower-state-active-global-name-cache owner)
         (No)
         function-state
-        (lower.CompilerLowerMode.LinuxScalar)
+        (lower.CompilerLowerMode.Scalar)
         (lower_i64_i64_map.with-capacity 0)
         0
         0)]

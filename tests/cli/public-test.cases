@@ -709,7 +709,7 @@ stdout contains TypeLisp package test typecheck passed: 1 test(s) in 1 file(s)
 case prelude-module-inline-test-rootless
 file -x prelude.list
 stdlib/core_macros.tl
-{{dir}}/after.tl
+{{native-dir}}/after.tl
 end-file
 file after.tl
 (test after-prelude unit)

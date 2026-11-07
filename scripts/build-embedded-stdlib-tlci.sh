@@ -80,8 +80,7 @@ esac
 MANIFEST="$WORKDIR/modules.txt"
 SURFACE="$WORKDIR/prelude-surface-$HOST_TARGET.rodata"
 SOURCE_HASH_FILE="$WORKDIR/source-hash.txt"
-BUILD_CWD="$WORKDIR/cwd"
-mkdir -p "$WORKDIR" "$BUILD_CWD" "$(dirname -- "$OUTPUT")"
+mkdir -p "$WORKDIR" "$(dirname -- "$OUTPUT")"
 
 awk '
 function emit_input() {
@@ -133,16 +132,22 @@ SOURCE_HASH=$(
     done < "$MANIFEST" | git hash-object --stdin
 )
 printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
+# The frontend surface records each prelude declaration's source path and the
+# names interned while loading it. Run from the selected source root with
+# root-relative stdlib/src roots, so those names are the same `stdlib/...`
+# paths the compiler's own embedded-source route uses, and the image bytes do
+# not depend on the absolute checkout location (#9667). The selected root is
+# also the cwd, so cwd-relative stdlib lookups read that tree, never another one.
 (
-    cd "$BUILD_CWD"
+    cd "$SOURCE_ROOT"
     "$COMPILER" run "$ROOT/tools/embedded-stdlib-tlci/build-surface.tl" \
-        --stdlib-root "$SOURCE_ROOT/stdlib" --stdlib-root "$SOURCE_ROOT/src" \
+        --stdlib-root stdlib --stdlib-root src \
         --cfg compiler-surface-producer -- \
-        "$SOURCE_ROOT/stdlib" "$SURFACE" "$HOST_TARGET" \
+        stdlib "$SURFACE" "$HOST_TARGET" \
         "$PRODUCER_IDENTITY" "$SOURCE_HASH"
     "$COMPILER" run "$ROOT/tools/embedded-stdlib-tlci/build.tl" \
-        --stdlib-root "$SOURCE_ROOT/stdlib" --stdlib-root "$SOURCE_ROOT/src" -- \
-        "$MANIFEST" "$SOURCE_ROOT/stdlib" "$OUTPUT" "$HOST_TARGET" \
+        --stdlib-root stdlib --stdlib-root src -- \
+        "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" \
         "$PRODUCER_IDENTITY" "$SURFACE"
 )
 

@@ -903,6 +903,14 @@
     (compiler-comptime-host-session-source-names-value)
     (& value)))
 
+;; A computed struct member name: a macro template's hygiene key selects the
+;; field by its source spelling, as in interpreted CTFE (#8749).
+(define (compiler-comptime-host-value-field-name-id
+  [value : ctfe_support.CompilerCtfeValue]) : ctfe_support.CtfeMaybeNameId
+  (ctfe_support.ctfe-value-field-name-id
+    (compiler-comptime-host-session-source-names-value)
+    (& value)))
+
 ;; The pools that own an operand's expression nodes: a captured operand keeps
 ;; its caller pools, every other value reads the session pools. Refs #5602.
 (define (compiler-comptime-host-value-pools
@@ -3376,7 +3384,7 @@
         [target-node : i64 (compiler-comptime-host-stack-node 2)]
         (if (< target-node 0)
           tlci.tlci-host-callback-status-bad-request
-          (match (compiler-comptime-host-value-name-id name-value)
+          (match (compiler-comptime-host-value-field-name-id name-value)
             [(Some name-id)
               (compiler-comptime-host-replace-expr!
                 2
@@ -3387,8 +3395,8 @@
             [(None) tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; Dynamic struct-set: pop the value expression after the computed field name
-;; and target expression. Name values preserve their structural source id;
-;; String values receive the same syntax identity as interpreted CTFE.
+;; and target expression. The field name gets the same member identity as
+;; interpreted CTFE (`ctfe-value-field-name-id`).
 (define (compiler-comptime-host-callback-expr-struct-set-from-value
   [session : i64]
   [_arg-a : i64]
@@ -3405,7 +3413,7 @@
         [target-node : i64 (compiler-comptime-host-stack-node 3)]
         (if (or (< value-node 0) (< target-node 0))
           tlci.tlci-host-callback-status-bad-request
-          (match (compiler-comptime-host-value-name-id name-value)
+          (match (compiler-comptime-host-value-field-name-id name-value)
             [(Some name-id)
               (compiler-comptime-host-replace!
                 3

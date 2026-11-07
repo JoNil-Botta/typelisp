@@ -7137,6 +7137,21 @@
       (return true)))
   false)
 
+(define (compiler-load-session-state-lazy-name-canonical-qualified?
+  [state : (& CompilerLoadSessionState)]
+  [name : i64]
+  [alias : i64]
+  [summary : (& summary CompilerLoadSurfaceSummary)]) : bool
+  (let
+    [module-id : i64 summary.declaration-module-id]
+    (and
+      (not (= module-id cbi.compiler-builtin-id-fix-empty))
+      (not (= module-id alias))
+      (compiler-load-session-state-lazy-name-qualified-by-id?
+        state
+        name
+        module-id))))
+
 (define (compiler-load-session-state-lazy-name-demand
   [state : (& CompilerLoadSessionState)]
   [name : i64]
@@ -7167,6 +7182,23 @@
                 name)
               unit)
             (compiler-load-lazy-alias-demand-qualified member-id))))]
+    ;; SPEC 4.4.3 also accepts the imported module's full canonical path. The
+    ;; typechecker resolves it against the declaration module this import
+    ;; records once loaded, so that prefix is a use like the alias.
+    [(compiler-load-session-state-lazy-name-canonical-qualified?
+        state
+        name
+        alias
+        summary)
+      (let
+        [member-id : i64
+          (compiler-load-session-state-lazy-qualified-member-id
+            state
+            name
+            summary.declaration-module-id)]
+        (if (< member-id 0)
+          (compiler-load-lazy-alias-demand-unknown)
+          (compiler-load-lazy-alias-demand-qualified member-id)))]
     [(sym_i64_env.sym-i64-contains-id locals name)
       (compiler-load-lazy-alias-demand-none)]
     [(or

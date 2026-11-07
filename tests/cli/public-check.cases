@@ -713,6 +713,74 @@ run check "{{dir}}/main.tl" --target windows-x86_64 --cfg tooling-feature
 stderr empty
 stdout contains Type checking passed!
 
+# SPEC 4.4.3: an imported module's full canonical path resolves without any
+# alias use (#8812). The loader must not lazily skip such an import; a module
+# that is not imported still rejects the canonical path.
+case check-canonical-module-path
+file value.tl
+(import stdlib.iterator)
+(define (main) : i64
+  (let [r (stdlib.iterator.range 0 3)]
+    0))
+end-file
+file type.tl
+(import stdlib.iterator)
+(define (main) : i64
+  (let [r : stdlib.iterator.I64Range (stdlib.iterator.range 0 3)]
+    0))
+end-file
+file other-module.tl
+(import stdlib.math)
+(define (main) : i64
+  (let [b (stdlib.math.f64-to-bits 1.0)]
+    0))
+end-file
+file alias-and-path.tl
+(import stdlib.iterator)
+(define (g) : i64
+  (let [r (iterator.range 0 1)] 0))
+(define (main) : i64
+  (let [r : iterator.I64Range (stdlib.iterator.range 0 3)]
+    (g)))
+end-file
+file not-imported.tl
+(define (main) : i64
+  (let [r (stdlib.iterator.range 0 3)]
+    0))
+end-file
+step check-value
+run check "{{dir}}/value.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-type
+run check "{{dir}}/type.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-other-module
+run check "{{dir}}/other-module.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-alias-and-path
+run check "{{dir}}/alias-and-path.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-type
+run compile "{{dir}}/type.tl" -o "{{dir}}/type.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/type.s
+contains main:
+step check-not-imported
+run check "{{dir}}/not-imported.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0200]: typecheck: unknown qualified name stdlib.iterator.range; import the module or use a visible dotted module alias
+step compile-not-imported
+run compile "{{dir}}/not-imported.tl" -o "{{dir}}/not-imported.s" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0200]: typecheck: unknown qualified name stdlib.iterator.range; import the module or use a visible dotted module alias
+
 case compile-hello
 run compile examples/hello.tl -o "{{dir}}/hello.s"
 stderr empty

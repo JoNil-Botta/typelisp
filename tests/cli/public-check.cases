@@ -775,6 +775,15 @@ file root/nested/broken.tl
 ;; Loading this unused import would report its type error.
 (define (oops) : i64 true)
 end-file
+file root/gen/answers.tl
+(defmacro (gen-answer) : Decls
+  `(define (answer) : i64 42))
+(gen-answer)
+end-file
+file generated-member.tl
+(import gen.answers)
+(define (main) : i64 (gen.answers.answer))
+end-file
 file shadow-global.tl
 (import shadow_lib as unused)
 (import pairs)
@@ -860,6 +869,14 @@ step check-local-projection-let
 run check "{{dir}}/shadow-let.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout contains Type checking passed!
+step check-generated-member
+run check "{{dir}}/generated-member.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-generated-member
+run compile "{{dir}}/generated-member.tl" -o "{{dir}}/generated-member.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
 step check-global-projection
 run check "{{dir}}/shadow-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty

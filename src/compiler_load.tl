@@ -7167,8 +7167,10 @@
 ;; a projection when its leading segment is a local binding. Otherwise an
 ;; existing fully qualified value wins, and a visible global root also selects
 ;; projection. So it is a use of the import only when no local binds the root
-;; and the module's surface declares the member. A member the surface lacks is
-;; a projection or an unknown name either way, whether or not the import loads.
+;; and the module declares the member. A member a complete surface lacks is a
+;; projection or an unknown name either way, whether or not the import loads.
+;; Declaration-emitting macros add members the surface cannot list, so such a
+;; module counts every unshadowed canonical match as a use.
 (define (compiler-load-session-state-lazy-canonical-value-use?
   [state : (& CompilerLoadSessionState)]
   [name : i64]
@@ -7180,12 +7182,14 @@
       (sym_i64_env.sym-i64-contains-id
         locals
         (compiler-load-session-state-lazy-name-root-id state name)))
-    (compiler-load-lazy-surface-decls-direct-name?
-      summary.decls
-      (compiler-load-session-state-lazy-qualified-member-id
-        state
-        name
-        canonical))))
+    (or
+      summary.has-decl-emitting-macro
+      (compiler-load-lazy-surface-decls-direct-name?
+        summary.decls
+        (compiler-load-session-state-lazy-qualified-member-id
+          state
+          name
+          canonical)))))
 
 ;; `value-context` marks expression and place names, where a canonical prefix
 ;; can also be a projection; type and pattern names are never projections.

@@ -2151,10 +2151,11 @@
       env.macro-state)))
 
 ;; Binding-clause syntax values predate the pool-bearing CapturedExpr variants.
-;; For the stdlib binding-prefix transformer, their child IDs come from a newer
-;; snapshot of the definition/caller pool. Keep that pool both as the evaluator's
-;; read view and as syntax-construction provenance so the produced root carries
-;; it back through macro expansion. Callers must not pass an unrelated pool.
+;; For a binding-prefix transformer such as `for`, their child IDs come from a
+;; newer snapshot of the definition/caller pool. Keep that pool both as the
+;; evaluator's read view and as syntax-construction provenance so the produced
+;; root carries it back through macro expansion. Callers must not pass an
+;; unrelated pool.
 (define (ctfe-env-rebase-syntax-pools
   [env : CtfeEnv]
   [pools : ast.AstNodePoolContext]) : CtfeEnv

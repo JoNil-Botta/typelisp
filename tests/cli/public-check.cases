@@ -811,6 +811,23 @@ file cfunc-signature.tl
   0)
 (define (main) : i64 0)
 end-file
+file cfunc-alias-signature.tl
+(import stdlib.iterator as it)
+(define (accept
+  [f : (CFunc non-null (-> (Ptr it.I64Range) i64))]) : i64
+  0)
+(define (main) : i64 0)
+end-file
+file spmd-scan-prefix-type.tl
+(import stdlib.iterator)
+(define (main) : i64
+  (begin
+    (spmd-scan sum
+      ([i : i64 0 3]
+       [prefix : stdlib.iterator.I64Range (init)])
+      i unit)
+    0))
+end-file
 file shadow-global.tl
 (import valid_lib as unused)
 (import pairs)
@@ -960,6 +977,18 @@ step compile-cfunc-signature-type
 run compile "{{dir}}/cfunc-signature.tl" -o "{{dir}}/cfunc-signature.s" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout match Wrote[ ]
+step check-cfunc-alias-signature-type
+run check "{{dir}}/cfunc-alias-signature.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+# The prefix binding's type resolves through the import, so the scan reports
+# its real type rule instead of an unknown type.
+step check-spmd-scan-prefix-type
+run check "{{dir}}/spmd-scan-prefix-type.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0214]: typecheck: spmd-scan sum requires an i32 or i64 type
+stderr not-contains unknown type
 step check-reexported-item
 run check "{{dir}}/reexport-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty

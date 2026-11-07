@@ -8251,8 +8251,10 @@
                       (sym_i64_env.sym-i64-bind-id locals index 1)))))))])]
     [(SpmdScan scan-box)
       (match (__tl-box-place scan-box)
-        [(Scan _ index ty start end prefix _ init value body)
+        [(Scan _ index ty start end prefix prefix-ty init value body)
           (let
+            ;; The prefix binding's declared type is a type position too.
+            [prefix-type : ast.AstMaybeType (ast.AstMaybeType.Some prefix-ty)]
             [value-locals : sym_i64_env.SymI64Env
               (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
                 state)
@@ -8270,13 +8272,21 @@
                   prefix)
                 (sym_i64_env.sym-i64-bind-id value-locals prefix 1))]
             (compiler-load-lazy-alias-demand-merge
-              (compiler-load-session-state-lazy-type-demand
-                (owned_view.compiler-owned-shared-view state)
-                ty
-                alias
-                canonical
-                summary
-                locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-session-state-lazy-type-demand
+                  (owned_view.compiler-owned-shared-view state)
+                  ty
+                  alias
+                  canonical
+                  summary
+                  locals)
+                (compiler-load-session-state-lazy-maybe-type-demand
+                  (& state)
+                  (& prefix-type)
+                  alias
+                  canonical
+                  summary
+                  locals))
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   (owned_view.compiler-owned-shared-view state)

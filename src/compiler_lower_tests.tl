@@ -8267,39 +8267,48 @@
 (define (main) : i64
   (+ (c-fn-null) (ptr-null-const)))")
 
-(define (lower-test-functions-binop-op-count
+;; Eq instructions in one null-check function; an absent (inlined) function
+;; contributes none.
+(define (lower-test-ptr-null-check-function-eq-count
   [funcs : (& funcs ir.CompilerIrFunctionSeq)]
-  [op : ir.CompilerIrBinOp]
+  [name : String]
   [i64-only : bool]) : i64
   (let
-    [count : i64 0]
-    (for [index (iterator.range 0 funcs.len)]
-      (match (ir.compiler-ir-array-shared-view funcs.slots index)
-        [(Function _ _ _ _ blocks _)
-          (+=
-            count
-            (if i64-only
-              (lower-test-blocks-i64-binop-op-count
-                (ir.compiler-ir-block-list-view blocks)
-                (ir.compiler-ir-global-shared-view op))
-              (lower-test-blocks-binop-op-count
-                (ir.compiler-ir-block-list-view blocks)
-                (ir.compiler-ir-global-shared-view op))))]))
-    count))
+    [count : i64
+      (if i64-only
+        (lower-test-function-i64-binop-op-count funcs name (Eq))
+        (lower-test-function-binop-op-count funcs name (Eq)))]
+    (if (< count 0)
+      0
+      count)))
 
-;; Eq instructions in the whole null-check program after optimization at
-;; `level` (0 inspects the lowered program unchanged); -1 if lowering fails.
+;; Eq instructions across the null-check program's functions; -1 without `main`.
+(define (lower-test-ptr-null-check-functions-eq-count
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [i64-only : bool]) : i64
+  (if (< (lower-test-function-binop-op-count funcs "main" (Eq)) 0)
+    -1
+    (+
+      (lower-test-ptr-null-check-function-eq-count funcs "c-fn-null" i64-only)
+      (+
+        (lower-test-ptr-null-check-function-eq-count
+          funcs
+          "ptr-null-const"
+          i64-only)
+        (lower-test-ptr-null-check-function-eq-count funcs "main" i64-only)))))
+
+;; Eq instructions in the null-check program after optimization at `level`
+;; (0 inspects the lowered program unchanged); -1 if lowering fails.
 (define (lower-test-ptr-null-check-eq-count [level : i64] [i64-only : bool]) : i64
   (match (lower.lower-compiler-source (compiler-lower-ptr-null-check-source))
     [(Ok program spans lower-owner)
       (let
         [count : i64
           (if (= level 0)
-            (match (ir.compiler-ir-global-shared-view program)
+            (match program
               [(Program _ functions _ _authority)
-                (lower-test-functions-binop-op-count
+                (lower-test-ptr-null-check-functions-eq-count
                   (& functions)
-                  (Eq)
                   i64-only)])
             (match (match (optimize.optimize-program-with-spans-and-level
               (& program)
@@ -8307,9 +8316,8 @@
               level)
               [(Program optimized _) optimized])
               [(Program _ functions _ _authority)
-                (lower-test-functions-binop-op-count
+                (lower-test-ptr-null-check-functions-eq-count
                   (& functions)
-                  (Eq)
                   i64-only)]))]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas lower-owner))

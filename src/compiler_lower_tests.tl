@@ -20,6 +20,8 @@
 (import compiler_ctfe as ctfe)
 (import compiler_clone as clone_support)
 (import stdlib.hashmap)
+(import (hashmap.hashmap (Tuple i64 i64 i64) i64) as exposure_reference)
+(import sym_i64_env)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -18456,3 +18458,207 @@
         (> (lower-test-count functions "slot" (AddrOf)) 0)
         "a raw address of the view variable still exposes its descriptor slot")]
     [_ (test.assert-true false "borrowed view exposure fixture lowers")]))
+
+(test
+  compiler-lower-scalar-exposure-map-parity
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 4)]
+    [scope : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools)]
+    [interns : ci.InternCompatState (ci.intern-compat-state-new)]
+    [owner : lower.CompilerLowerState
+      (lower.compiler-lower-state-new-with-intern-state interns)]
+    [function-state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    [state : lower.LowerState
+      (lower.lower-state-new
+        0
+        0
+        0
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-builder-new)
+        (ir.compiler-ir-block-builder-new)
+        (ir.compiler-ir-function-builder-new)
+        0
+        (box (ir.compiler-source-spans-empty))
+        (lower.compiler-lower-state-active-global-name-cache owner)
+        (No)
+        function-state
+        (lower.CompilerLowerMode.Scalar)
+        (lower_i64_i64_map.with-capacity 0)
+        0
+        0)]
+    [scan : lower.LowerExposureScan
+      (lower.LowerExposureScan
+        ctx
+        state
+        (lower.LowerAddressExposure
+          true
+          true
+          (lower_i64_i64_map.with-capacity 0)
+          (lower_i64_i64_map.with-capacity 0)
+          (__tl_make-array i64 0))
+        false)]
+    [reference : exposure_reference.Map (exposure_reference.with-capacity 0)]
+    [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    [session : cis.InternStructuralSessionHandle
+      (lower.compiler-lower-state-structural-session owner)]
+    [records-before : i64
+      (cis.intern-structural-session-kind-count
+        session
+        (ci.intern-structural-kind-triple))]
+    [kinds : (Array i64 5) (array 0 0 0 -9223372036854775807 1)]
+    [scopes : (Array i64 5) (array scope scope -1 -1 9223372036854775807)]
+    [names : (Array i64 5)
+      (array
+        9223372036854775807
+        9223372036854775807
+        -1
+        -9223372036854775807
+        9223372036854775807)]
+    (for [i (iterator.range 0 5)]
+      (let
+        [kind : i64 (array-ref kinds i)]
+        [scope-id : i64 (array-ref scopes i)]
+        [name : i64 (array-ref names i)]
+        [tuple-key : (Tuple i64 i64 i64) (tuple kind scope-id name)]
+        [expected : i64
+          (exposure_reference.get-value-or (& reference) tuple-key -1)]
+        (when
+          (< expected 0)
+          (set! expected (exposure_reference.len (& reference)))
+          (exposure_reference.insert-ref! (&mut reference) tuple-key expected))
+        (set!
+          env
+          (lower.lower-exposure-bind! (&mut scan) env kind scope-id name))
+        (let
+          [key : i64
+            (cis.intern-structural-session-find-composite-triple-raw
+              session
+              kind
+              scope-id
+              name)]
+          (test.assert-false
+            (= key -1)
+            "a bound structural key never equals the miss sentinel")
+          (test.assert-i64-eq
+            (lower_i64_i64_map.get-value-or (& scan.facts.bindings) key -1)
+            expected
+            "scalar and tuple binding ordinals agree"))))
+    (test.assert-i64-eq
+      (cis.intern-structural-session-kind-count
+        session
+        (ci.intern-structural-kind-triple))
+      (+ records-before 4)
+      "only distinct bound triples allocate session records")
+    (test.assert-i64-eq
+      (array-length scan.facts.exposed)
+      4
+      "duplicate bind reuses exposure ordinal")
+    (test.assert-i64-eq
+      (lower_i64_i64_map.len (& scan.facts.bindings))
+      (exposure_reference.len (& reference))
+      "duplicate bind does not allocate another local key")
+    (set! (array-ref scan.facts.exposed 0) 1)
+    (lower_i64_i64_map.insert-ref! (&mut scan.facts.scopes) scope scope)
+    (unsafe
+      (set!
+        (deref (lower.compiler-lower-function-state-ptr function-state)).address-exposure
+        (clone scan.facts))
+      (set!
+        (deref (lower.compiler-lower-function-state-ptr function-state)).address-exposure-mode
+        1))
+    (for [i (iterator.range 0 5)]
+      (let
+        [kind : i64 (array-ref kinds i)]
+        [scope-id : i64 (array-ref scopes i)]
+        [name : i64 (array-ref names i)]
+        [index : i64
+          (exposure_reference.get-value-or
+            (& reference)
+            (tuple kind scope-id name)
+            -1)]
+        [expected : bool
+          (or (< index 0) (!= (array-ref scan.facts.exposed index) 0))]
+        (set!
+          state
+          (lower.lower-exposure-seed state kind scope-id name (+ i 100)))
+        (test.assert-true
+          (= (lower.lower-state-address-taken-var? state (+ i 100)) expected)
+          "seeding equals original tuple-map lookup")))
+    (set!
+      state
+      (lower.lower-exposure-seed state 0 scope 9223372036854775807 10))
+    (set! state (lower.lower-exposure-seed state 0 -1 -1 11))
+    (set! state (lower.lower-exposure-seed state 0 scope 17 12))
+    (test.assert-true
+      (lower.lower-state-address-taken-var? state 10)
+      "exposed tuple fact seeds exposed")
+    (test.assert-false
+      (lower.lower-state-address-taken-var? state 11)
+      "unexposed tuple fact seeds private")
+    (test.assert-true
+      (lower.lower-state-address-taken-var? state 12)
+      "missing key stays conservative")
+    (set! state (lower.lower-state-address-taken-mark state 11))
+    (set! state (lower.lower-exposure-seed state 0 -1 -1 11))
+    (test.assert-true
+      (lower.lower-state-address-taken-var? state 11)
+      "seeding OR preserves prior exposure")
+    (let
+      [foreign : i64
+        (cis.intern-structural-key-raw
+          (cis.intern-structural-session-composite-triple-key
+            session
+            0
+            scope
+            18))]
+      (test.assert-false (= foreign -1) "globally existing key is not sentinel")
+      (test.assert-false
+        (lower_i64_i64_map.contains? (& scan.facts.bindings) foreign)
+        "global hit is not local membership")
+      (set! state (lower.lower-exposure-seed state 0 scope 18 13))
+      (test.assert-true
+        (lower.lower-state-address-taken-var? state 13)
+        "global hit with missing local binding stays conservative"))
+    (let
+      [visible : sym_i64_env.SymI64Env
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-bind-id
+            (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) 18 22)
+            9223372036854775807
+            20)
+          9223372036854775807
+          21)]
+      (lower.lower-exposure-enter-scope! state visible scope)
+      (let
+        [data : (Box lower.LowerStateData) (lower.lower-state-box state)]
+        (test.assert-i64-eq
+          (lower_i64_i64_map.get-value-or
+            (& (__tl-project-field (__tl-box-place data) address-taken))
+            20
+            -1)
+          -1
+          "scope does not seed shadowed variable")
+        (test.assert-i64-eq
+          (lower_i64_i64_map.get-value-or
+            (& (__tl-project-field (__tl-box-place data) address-taken))
+            21
+            -1)
+          1
+          "scope seeds nearest registered binding")
+        (test.assert-i64-eq
+          (lower_i64_i64_map.get-value-or
+            (& (__tl-project-field (__tl-box-place data) address-taken))
+            22
+            -1)
+          -1
+          "global hit alone does not seed scope variable")))))

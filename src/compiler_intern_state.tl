@@ -373,6 +373,35 @@
           middle-id
           right-id)))))
 
+(define (intern-structural-session-find-composite-triple-raw
+  [handle : InternStructuralSessionHandle]
+  [left-id : i64]
+  [middle-id : i64]
+  [right-id : i64]) : i64
+  (unless
+    (intern-structural-session-valid? handle)
+    (abort.compiler-abort
+      "tl: compiler_intern_state.intern-structural-session-find-composite-triple-raw: invalid or stale structural session\n"))
+  (let
+    [session-ptr : (Ptr ci.InternSourceNameSession)
+      (unsafe
+        (int->ptr
+          (cast handle.address : u64)
+          : (Ptr ci.InternSourceNameSession)))]
+    [structural-table-cell : (__tl_dyn-array ci.InternStructuralTable)
+      (unsafe
+        (__tl-project-field (ptr-read session-ptr) structural-table-cell))]
+    [probe : ci.InternStructuralProbe
+      (ci.intern-structural-table-probe
+        (& structural-table-cell)
+        (ci.intern-structural-kind-triple)
+        left-id
+        middle-id
+        right-id)]
+    (if (>= probe.found 0)
+      (ci.intern-structural-raw-for-index probe.owner probe.found)
+      -1)))
+
 (define (intern-structural-session-key-owned?
   [handle : InternStructuralSessionHandle]
   [key : InternStructuralKey]) : bool

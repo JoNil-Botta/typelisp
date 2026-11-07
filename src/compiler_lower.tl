@@ -38,7 +38,6 @@
 (import stdlib.hashmap)
 (import stdlib.hash)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
-(import (hashmap.hashmap (Tuple i64 i64 i64) i64) as lower_exposure_map)
 (import (hashmap.hashmap String i64) as lower_spmd_key_map)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -510,7 +509,7 @@
 (defstruct LowerAddressExposure
   (ready bool)
   (complete bool)
-  (bindings lower_exposure_map.Map)
+  (bindings lower_i64_i64_map.Map)
   (scopes lower_i64_i64_map.Map)
   (exposed (__tl_dyn-array i64)))
 
@@ -8641,7 +8640,7 @@
         (LowerAddressExposure
           false
           false
-          (lower_exposure_map.with-capacity 0)
+          (lower_i64_i64_map.with-capacity 0)
           (lower_i64_i64_map.with-capacity 0)
           (__tl_make-array i64 0))))
     (CompilerLowerFunctionState address)))
@@ -15422,13 +15421,20 @@
                 -1)))]
         [_ unit]))
     (let
-      [key : (Tuple i64 i64 i64) (tuple kind scope name)]
+      [key : i64
+        (cis.intern-structural-key-raw
+          (cis.intern-structural-session-composite-triple-key
+            (compiler-lower-state-structural-session
+              (lower-state-owner (clone scan.state)))
+            kind
+            scope
+            name))]
       [index : i64
-        (lower_exposure_map.get-value-or (& scan.facts.bindings) key -1)]
+        (lower_i64_i64_map.get-value-or (& scan.facts.bindings) key -1)]
       (when
         (< index 0)
         (set! index (array-length scan.facts.exposed))
-        (lower_exposure_map.insert-ref! (&mut scan.facts.bindings) key index)
+        (lower_i64_i64_map.insert-ref! (&mut scan.facts.bindings) key index)
         (__tl_array-push! scan.facts.exposed 0))
       (sym_i64_env.sym-i64-bind-id env name index))))
 
@@ -15452,9 +15458,13 @@
       (unsafe
         (deref (compiler-lower-function-state-view function-state)).address-exposure)]
     [index : i64
-      (lower_exposure_map.get-value-or
+      (lower_i64_i64_map.get-value-or
         (& facts.bindings)
-        (tuple kind scope name)
+        (cis.intern-structural-session-find-composite-triple-raw
+          (compiler-lower-state-structural-session (lower-state-owner state))
+          kind
+          scope
+          name)
         -1)]
     [exposed : bool
       (or
@@ -15999,7 +16009,7 @@
         (LowerAddressExposure
           true
           true
-          (lower_exposure_map.with-capacity 8)
+          (lower_i64_i64_map.with-capacity 8)
           (lower_i64_i64_map.with-capacity 0)
           (__tl_make-array i64 0))
         false)]
@@ -16074,9 +16084,14 @@
             [(SymI64ViewBind name var-id rest)
               (when
                 (and
-                  (lower_exposure_map.contains?
+                  (lower_i64_i64_map.contains?
                     (& facts.bindings)
-                    (tuple 0 scope name))
+                    (cis.intern-structural-session-find-composite-triple-raw
+                      (compiler-lower-state-structural-session
+                        (lower-state-owner state))
+                      0
+                      scope
+                      name))
                   (= var-id (sym_i64_env.sym-i64-lookup-id-or env name -1)))
                 (begin
                   (lower-exposure-seed state 0 scope name var-id)

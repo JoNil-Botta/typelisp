@@ -1699,11 +1699,7 @@
                   operand-ty
                   (& rhs-ty))]
               [(opt-float-type? operand-ty)
-                (opt-fold-float-binop
-                  op
-                  (& lhs-value)
-                  (& rhs-value)
-                  operand-ty)]
+                (opt-fold-float-binop op (& lhs-value) (& rhs-value) operand-ty)]
               [else (No)]))]
         [(NoConst) (No)])]
     [(NoConst) (No)]))

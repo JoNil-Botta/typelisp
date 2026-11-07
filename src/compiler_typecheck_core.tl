@@ -95803,7 +95803,8 @@
   ;; transformer does, and a nested `(comptime ...)` naming one of these
   ;; operands is evaluated with the transformer's operand values (#9628).
   (defmacro-transformer-active bool)
-  (defmacro-transformer-operands TcStringList))
+  (defmacro-transformer-operands TcStringList)
+  (macro-hygiene-callee MacroHygieneCallee))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -95930,7 +95931,8 @@
     0
     0
     false
-    (Nil)))
+    (Nil)
+    (MacroHygieneCallee.No)))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -96161,6 +96163,12 @@
 
 (defenum MacroHygieneName
   (Name i64 MacroHygieneEnv))
+
+;; The expansion whose output hygiene is renaming, so a nested binding-clause
+;; call resolves its callee exactly as the rewalk that follows will.
+(defenum MacroHygieneCallee
+  (No)
+  (Some TcContext ast.AstDeclList))
 
 (defenum MacroHygieneParams
   (Params ast.AstParamList MacroHygieneEnv))
@@ -106986,10 +106994,10 @@
 
 (define (macro-hygiene-output-call-env
   [expr-bases : i64]
-  [func : ast.AstExpr]
+  [func : (& func ast.AstExpr)]
   [args : (& args ast.AstExprList)]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
     [(Var head-id)
       (let
         [source-head-id : i64
@@ -107538,73 +107546,82 @@
 ;; ExprBindingClause introduces a binder, even though hygiene sees only a call.
 ;; Rename a template head as a binder (SPEC section 3.7.2) and scope it over the
 ;; operands after it, so caller syntax spliced there keeps its own binding. A
-;; caller-supplied head is not template syntax and still binds as written. The
-;; callee is resolved from the symbol table through its renamed head: a macro
-;; visible at the definition site, otherwise the core macro prelude.
-(define (macro-hygiene-module-macro-decl
-  [expr-bases : i64]
-  [macro-name : MacroHygieneContext]
-  [module-id : i64]
-  [name-id : i64]) : MacroMaybeDecl
-  (let
-    [lookup-module-id : i64
-      (if (csym.compiler-symbol-root-module-id? module-id)
-        cbi.compiler-builtin-id-fix-empty
-        module-id)]
-    [handle : i64
-      (if (< name-id 0)
-        (csym.compiler-symbols-missing-handle)
-        (csym.compiler-symbols-lookup-macro-in-module-id-or
-          (macro-hygiene-symbols macro-name)
-          lookup-module-id
-          name-id
-          (csym.compiler-symbols-missing-handle)))]
-    (if (csym.compiler-symbols-handle-found? handle)
-      (let
-        [index : i64 (csym.compiler-symbol-handle-index handle)]
-        (match (csym.compiler-symbols-decl-at-index
-          (macro-hygiene-symbols macro-name)
-          index)
-          [(Ok decl) (macro-decl-from-decl expr-bases decl module-id index)]
-          [(Err _) (No)]))
-      (No))))
-
+;; caller-supplied head is not template syntax and still binds as written.
+;; Resolve exactly as macro-expand-expr-fire will for the renamed head; with
+;; no expansion context, or no macro, the call keeps ordinary hygiene.
 (define (macro-hygiene-callee-macro-decl
   [expr-bases : i64]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
   [head-id : i64]) : MacroMaybeDecl
   (let
-    [session : cis.InternStructuralSessionHandle
-      (macro-hygiene-env-structural-session env)]
     [callee-id : i64 (macro-hygiene-rename-var-id env macro-name head-id)]
-    (cond
-      [(macro-hygiene-global-id? session callee-id)
-        (macro-hygiene-module-macro-decl
-          expr-bases
-          macro-name
-          (macro-hygiene-global-module-id session callee-id)
-          (macro-hygiene-global-source-name-id-or session callee-id -1))]
-      [(and
-          (>= callee-id 0)
-          (< callee-id (ci.intern-capacity))
-          (< (tc-name-first-dot-id session callee-id) 0))
-        (let
-          [prelude : MacroMaybeDecl
-            (macro-hygiene-module-macro-decl
-              expr-bases
-              macro-name
-              cbi.compiler-builtin-id-core-macros-module
-              callee-id)]
-          (match (& prelude)
-            [(No)
-              (macro-hygiene-module-macro-decl
-                expr-bases
-                macro-name
-                cbi.compiler-builtin-id-core-macros-legacy-module
-                callee-id)]
-            [_ prelude]))]
-      [else (No)])))
+    (if (macro-call-callee-maybe-macro?
+      expr-bases
+      env.state
+      (ast.AstExpr.Var callee-id))
+      (match (tc-macro-walk-field env.state macro-hygiene-callee)
+        [(Some ctx decls)
+          (match (macro-call-decl
+            ctx
+            (ast.AstExpr.Var callee-id)
+            decls
+            (ast.AstExpr.Var callee-id))
+            [(Ok maybe-decl) maybe-decl]
+            [(Err _) (MacroMaybeDecl.No)])]
+        [(No) (MacroMaybeDecl.No)])
+      (MacroMaybeDecl.No))))
+
+(define (macro-hygiene-callee-install!
+  [state : TcMacroState]
+  [callee : MacroHygieneCallee]) : MacroHygieneCallee
+  (let
+    [previous : MacroHygieneCallee
+      (tc-macro-walk-field state macro-hygiene-callee)]
+    (tc-macro-walk-set! state macro-hygiene-callee callee)
+    previous))
+
+;; Rename an expression expansion's output, then rewalk it. The expansion is
+;; the callee resolver while hygiene runs and the enclosing one is restored;
+;; the declarations reach the rewalk back through that resolver slot.
+(define (macro-hygiene-rewalk-expansion
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [expanded : i64]
+  [hygiene : MacroHygieneContext]
+  [depth : i64]
+  [path-id : i64]) : ResultMacroExpr
+  (if (=
+    expanded
+    (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
+      (tc-context-ctfe-macro-state ctx)))
+    (macro-expand-produced-node-in ctx type-env decls depth expanded path-id)
+    (let
+      [state : TcMacroState (tc-context-macro-state ctx)]
+      [_root : unit (macro-hygiene-env-root-begin! state)]
+      [previous : MacroHygieneCallee
+        (macro-hygiene-callee-install!
+          state
+          (MacroHygieneCallee.Some ctx decls))]
+      [renamed : i64
+        (macro-hygiene-produced-expr
+          expanded
+          (macro-hygiene-env-empty state pools)
+          hygiene
+          depth)]
+      [_finish : unit (macro-hygiene-env-root-finish! state)]
+      (match (macro-hygiene-callee-install! state previous)
+        [(Some _ own-decls)
+          (macro-expand-produced-node-in
+            ctx
+            type-env
+            own-decls
+            depth
+            renamed
+            path-id)]
+        [(No) (io.panic "typecheck: macro hygiene callee resolver was lost")]))))
 
 (define (macro-hygiene-binding-clause-param-type? [ty : ast.AstType]) : bool
   (match ty
@@ -107932,11 +107949,7 @@
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         [call-env : MacroHygieneEnv
-          (macro-hygiene-output-call-env
-            expr-bases
-            (tc-global-shared-view func)
-            (& args)
-            env)]
+          (macro-hygiene-output-call-env expr-bases (& func) (& args) env)]
         (ast.ast-expr-call-with-pools
           env.pools
           (macro-hygiene-expr expr-bases func-box env macro-name depth)
@@ -115600,35 +115613,18 @@
                 (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                 (let
                   [rewalk-result : ResultMacroExpr
-                    (macro-expand-produced-node-in
+                    (macro-hygiene-rewalk-expansion
                       ctx
                       type-env
                       decls
+                      (tc-context-type-pools ctx)
+                      expanded
+                      (MacroHygieneContext
+                        macro-name-id
+                        definition-module-id
+                        declaration-id
+                        ctx.shared)
                       (+ depth 1)
-                      (if (=
-                        expanded
-                        (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
-                          (tc-context-ctfe-macro-state ctx)))
-                        expanded
-                        (begin
-                          (macro-hygiene-env-root-begin!
-                            (tc-context-macro-state ctx))
-                          (let
-                            [out : i64
-                              (macro-hygiene-produced-expr
-                                expanded
-                                (macro-hygiene-env-empty
-                                  (tc-context-macro-state ctx)
-                                  (tc-context-type-pools ctx))
-                                (MacroHygieneContext
-                                  macro-name-id
-                                  definition-module-id
-                                  declaration-id
-                                  ctx.shared)
-                                (+ depth 1))]
-                            (macro-hygiene-env-root-finish!
-                              (tc-context-macro-state ctx))
-                            out)))
                       definition-path-id)]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
@@ -115653,35 +115649,18 @@
                 (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                 (let
                   [rewalk-result : ResultMacroExpr
-                    (macro-expand-produced-node-in
+                    (macro-hygiene-rewalk-expansion
                       ctx
                       type-env
                       decls
+                      pools
+                      expanded
+                      (MacroHygieneContext
+                        macro-name-id
+                        definition-module-id
+                        declaration-id
+                        ctx.shared)
                       (+ depth 1)
-                      (if (=
-                        expanded
-                        (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
-                          (tc-context-ctfe-macro-state ctx)))
-                        expanded
-                        (begin
-                          (macro-hygiene-env-root-begin!
-                            (tc-context-macro-state ctx))
-                          (let
-                            [out : i64
-                              (macro-hygiene-produced-expr
-                                expanded
-                                (macro-hygiene-env-empty
-                                  (tc-context-macro-state ctx)
-                                  pools)
-                                (MacroHygieneContext
-                                  macro-name-id
-                                  definition-module-id
-                                  declaration-id
-                                  ctx.shared)
-                                (+ depth 1))]
-                            (macro-hygiene-env-root-finish!
-                              (tc-context-macro-state ctx))
-                            out)))
                       definition-path-id)]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))

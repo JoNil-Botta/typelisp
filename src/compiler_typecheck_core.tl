@@ -107623,16 +107623,20 @@
             path-id)]
         [(No) (io.panic "typecheck: macro hygiene callee resolver was lost")]))))
 
-(define (macro-hygiene-binding-clause-param-type? [ty : ast.AstType]) : bool
-  (match ty
-    [(Var name)
-      (and
-        (>= name 0)
-        (< name (ci.intern-pool-len))
-        (=
-          (ci.intern-dotted-final-id name)
-          cbi.compiler-builtin-id-fix-ExprBindingClause))]
-    [_ false]))
+;; Classify a parameter as macro-bind-params does, resolving its type in the
+;; callee's definition module.
+(define (macro-hygiene-binding-clause-param?
+  [env : MacroHygieneEnv]
+  [definition-module-id : i64]
+  [ty : ast.AstType]) : bool
+  (match (tc-macro-walk-field env.state macro-hygiene-callee)
+    [(Some ctx _)
+      (macro-param-expr-binding-clause?
+        ctx
+        (macro-decl-module-display definition-module-id)
+        definition-module-id
+        ty)]
+    [(No) false]))
 
 (define (macro-hygiene-bracket-clause? [expr-bases : i64] [expr-id : i64]) : bool
   (let
@@ -107740,6 +107744,7 @@
   [args : (& args ast.AstExprList)]
   [index : i64]
   [params : (& params ast.AstMacroParamList)]
+  [definition-module-id : i64]
   [param-index : i64]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -107767,6 +107772,7 @@
               args
               index
               params
+              definition-module-id
               (+ param-index 1)
               env
               macro-name
@@ -107780,7 +107786,10 @@
               (match (if (and
                 in-range?
                 clause?
-                (macro-hygiene-binding-clause-param-type? ty))
+                (macro-hygiene-binding-clause-param?
+                  env
+                  definition-module-id
+                  ty))
                 (macro-hygiene-binding-clause
                   expr-bases
                   arg-id
@@ -107797,6 +107806,7 @@
                     args
                     (+ index 1)
                     params
+                    definition-module-id
                     next-param-index
                     next-env
                     macro-name
@@ -107813,7 +107823,7 @@
   (match (if (macro-hygiene-has-bracket-clause? expr-bases (& args) 0)
     (macro-hygiene-callee-macro-decl expr-bases env macro-name head-id)
     (MacroMaybeDecl.No))
-    [(Some _ _ _ params _ _)
+    [(Some _ definition-module-id _ params _ _)
       (let
         [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
         (macro-hygiene-binding-call-args-into
@@ -107821,6 +107831,7 @@
           (& args)
           0
           (& params)
+          definition-module-id
           0
           env
           macro-name

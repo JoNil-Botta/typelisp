@@ -784,6 +784,47 @@ file generated-member.tl
 (import gen.answers)
 (define (main) : i64 (gen.answers.answer))
 end-file
+file root/gen/values.tl
+(module gen.values)
+(defmacro (emit) : Decls
+  `(define answer : i64 42))
+(emit)
+end-file
+file generated-value.tl
+(import gen.values as api)
+(define (main) : i64 gen.values.answer)
+end-file
+file root/mac/kit.tl
+(defmacro (twice [x : Expr]) : Expr `(+ ,x ,x))
+end-file
+file macro-call.tl
+(import mac.kit)
+(define (main) : i64 (mac.kit.twice 21))
+end-file
+file root/nested_lib.tl
+;; Loading this unused import would report its type error.
+(module nested_lib)
+(module other
+  (define value : i64 7))
+(define (broken) : i64 true)
+end-file
+file nested-member-global.tl
+(import nested_lib as unused)
+(import pairs)
+(define nested_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64 nested_lib.value)
+end-file
+file root/macro_lib.tl
+;; Loading this unused import would report its transformer's type error.
+(module macro_lib)
+(defmacro (value) : Module true)
+end-file
+file macro-name-global.tl
+(import macro_lib as unused)
+(import pairs)
+(define macro_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64 macro_lib.value)
+end-file
 file shadow-global.tl
 (import shadow_lib as unused)
 (import pairs)
@@ -875,6 +916,30 @@ stderr empty
 stdout contains Type checking passed!
 step compile-generated-member
 run compile "{{dir}}/generated-member.tl" -o "{{dir}}/generated-member.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-generated-value
+run check "{{dir}}/generated-value.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-generated-value
+run compile "{{dir}}/generated-value.tl" -o "{{dir}}/generated-value.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-canonical-macro-call
+run check "{{dir}}/macro-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-nested-member-global-projection
+run check "{{dir}}/nested-member-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-macro-name-global-projection
+run check "{{dir}}/macro-name-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-macro-name-global-projection
+run compile "{{dir}}/macro-name-global.tl" -o "{{dir}}/macro-name-global.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
 stderr empty
 stdout match Wrote[ ]
 step check-global-projection

@@ -7163,36 +7163,94 @@
       (ci.intern-compat-state-leading-dot-id (& interns) head)
       head)))
 
+;; Name contexts for canonical-path demand. Type and pattern names are never
+;; projections. Expression and place names may be. A call head may also name a
+;; macro, which lives in its own namespace.
+(define compiler-load-lazy-name-context-type : i64
+  0)
+(define compiler-load-lazy-name-context-value : i64
+  1)
+(define compiler-load-lazy-name-context-call-head : i64
+  2)
+
+;; Whether the imported module itself (not a nested module body) declares
+;; `member` in the namespace this name context reaches. Macros count only for
+;; a call head; tests are never values.
+(define (compiler-load-lazy-surface-decls-module-member?
+  [decls : (& decls CompilerLoadSurfaceDeclList)]
+  [module-id : i64]
+  [member : i64]
+  [name-context : i64]) : bool
+  (for [index (iterator.range 0 (compiler-load-surface-decl-list-count decls))]
+    (let
+      [decl : CompilerLoadSurfaceDecl
+        (compiler-load-surface-decl-list-at decls index)]
+      (when
+        (and
+          (= decl.module module-id)
+          (match decl.kind
+            [(CompilerLoadSurfaceTest) false]
+            [(CompilerLoadSurfaceMacro)
+              (= name-context compiler-load-lazy-name-context-call-head)]
+            [_ true])
+          (compiler-load-lazy-surface-decl-direct-name? (& decl) member))
+        (return true))))
+  false)
+
+;; A module-scope `Decls` macro invocation is a MacroDecls import edge. It adds
+;; members to that module which its parsed surface cannot list. A `Module`
+;; macro instance is a separate module and adds none here.
+(define (compiler-load-lazy-surface-imports-generate-members?
+  [imports : (& imports CompilerLoadSurfaceImportList)]
+  [module-id : i64]) : bool
+  (for [index
+    (iterator.range 0 (compiler-load-surface-import-list-count imports))]
+    (let
+      [edge : CompilerLoadSurfaceImport
+        (compiler-load-surface-import-list-at imports index)]
+      (when
+        (and
+          (= edge.module module-id)
+          (match edge.kind
+            [(CompilerLoadSurfaceImportMacroDecls) true]
+            [_ false]))
+        (return true))))
+  false)
+
 ;; In an expression or place, SPEC 4.4.3 resolves a canonical-prefixed name as
 ;; a projection when its leading segment is a local binding. Otherwise an
 ;; existing fully qualified value wins, and a visible global root also selects
-;; projection. So it is a use of the import only when no local binds the root
-;; and the module declares the member. A member a complete surface lacks is a
-;; projection or an unknown name either way, whether or not the import loads.
-;; Declaration-emitting macros add members the surface cannot list, so such a
-;; module counts every unshadowed canonical match as a use.
+;; projection. So the name is a use of the import only when no local binds the
+;; root and the imported module declares the member in that namespace. A
+;; member such a complete surface lacks is a projection or an unknown name
+;; either way, whether or not the import loads. A `Decls` macro invoked at the
+;; module's own scope adds members the surface cannot list, so such a module
+;; counts every unshadowed canonical match as a use.
 (define (compiler-load-session-state-lazy-canonical-value-use?
   [state : (& CompilerLoadSessionState)]
   [name : i64]
   [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
-  [locals : sym_i64_env.SymI64Env]) : bool
+  [locals : sym_i64_env.SymI64Env]
+  [name-context : i64]) : bool
   (and
     (not
       (sym_i64_env.sym-i64-contains-id
         locals
         (compiler-load-session-state-lazy-name-root-id state name)))
     (or
-      summary.has-decl-emitting-macro
-      (compiler-load-lazy-surface-decls-direct-name?
+      (compiler-load-lazy-surface-imports-generate-members?
+        (& summary.imports)
+        summary.declaration-module-id)
+      (compiler-load-lazy-surface-decls-module-member?
         summary.decls
+        summary.declaration-module-id
         (compiler-load-session-state-lazy-qualified-member-id
           state
           name
-          canonical)))))
+          canonical)
+        name-context))))
 
-;; `value-context` marks expression and place names, where a canonical prefix
-;; can also be a projection; type and pattern names are never projections.
 (define (compiler-load-session-state-lazy-name-demand
   [state : (& CompilerLoadSessionState)]
   [name : i64]
@@ -7200,7 +7258,7 @@
   [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
-  [value-context : bool]) : CompilerLoadLazyAliasDemand
+  [name-context : i64]) : CompilerLoadLazyAliasDemand
   (if (compiler-load-session-state-lazy-qualified-observer-active? state)
     (compiler-load-session-state-lazy-qualified-observer-note-secondary!
       (&mut (compiler-load-session-state-shared-view state))
@@ -7234,13 +7292,14 @@
           alias
           canonical)
         (or
-          (not value-context)
+          (= name-context compiler-load-lazy-name-context-type)
           (compiler-load-session-state-lazy-canonical-value-use?
             state
             name
             canonical
             summary
-            locals)))
+            locals
+            name-context)))
       (let
         [member-id : i64
           (compiler-load-session-state-lazy-qualified-member-id
@@ -7360,7 +7419,7 @@
         canonical
         summary
         locals
-        false)]
+        compiler-load-lazy-name-context-type)]
     ;; A C-function type's signature is not an alias use.
     [(CFunc _ _) (compiler-load-lazy-alias-demand-none)]
     [_
@@ -7681,7 +7740,7 @@
           canonical
           summary
           locals
-          false)
+          compiler-load-lazy-name-context-type)
         (compiler-load-session-state-lazy-pattern-list-demand
           (& state)
           (& (deref patterns))
@@ -7987,6 +8046,43 @@
     ,summary
     ,locals))
 
+;; A call head is the one value position that may also name a macro.
+(define (compiler-load-session-state-lazy-call-head-demand
+  [state : CompilerLoadSessionState]
+  [func : i64]
+  [alias : i64]
+  [canonical : i64]
+  [summary : (& summary CompilerLoadSurfaceSummary)]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (let
+    [spanned : i64 (ast.ast-expr-span-wrapper-inner func)]
+    (if (>= spanned 0)
+      (compiler-load-session-state-lazy-call-head-demand
+        (owned_view.compiler-owned-shared-view state)
+        spanned
+        alias
+        canonical
+        summary
+        locals)
+      (match (ast.ast-node-get func)
+        [(Var name)
+          (compiler-load-session-state-lazy-name-demand
+            (& state)
+            name
+            alias
+            canonical
+            summary
+            locals
+            compiler-load-lazy-name-context-call-head)]
+        [_
+          (compiler-load-session-state-lazy-expr-demand
+            (owned_view.compiler-owned-shared-view state)
+            func
+            alias
+            canonical
+            summary
+            locals)]))))
+
 (define (compiler-load-session-state-lazy-expr-demand
   [state : CompilerLoadSessionState]
   [node-id : i64]
@@ -8005,7 +8101,23 @@
         canonical
         summary
         locals
-        true)]
+        compiler-load-lazy-name-context-value)]
+    [(Call func args)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-session-state-lazy-call-head-demand
+          (owned_view.compiler-owned-shared-view state)
+          func
+          alias
+          canonical
+          summary
+          locals)
+        (compiler-load-session-state-lazy-expr-list-demand
+          (& state)
+          (& args)
+          alias
+          canonical
+          summary
+          locals))]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body)
@@ -8067,7 +8179,7 @@
           canonical
           summary
           locals
-          true)
+          compiler-load-lazy-name-context-value)
         (compiler-load-session-state-lazy-expr-demand
           state
           value
@@ -8510,7 +8622,7 @@
                 canonical
                 summary
                 locals
-                true)]
+                compiler-load-lazy-name-context-call-head)]
             (if (or
               name-demand.direct
               (compiler-load-session-state-lazy-name-qualified-by-id?

@@ -748,6 +748,21 @@ file not-imported.tl
   (let [r (stdlib.iterator.range 0 3)]
     0))
 end-file
+file outside.tl
+(module app.main)
+(import stdlib.iterator as iter)
+(import stdlib.compress.adler32)
+(define (main) : i64
+  (let [r : stdlib.iterator.I64Range (stdlib.iterator.range 0 3)]
+    (stdlib.compress.adler32.initial)))
+end-file
+file root/nested/moduleless_dep.tl
+(define (get) : i64 7)
+end-file
+file root-user.tl
+(import nested.moduleless_dep)
+(define (main) : i64 (nested.moduleless_dep.get))
+end-file
 step check-value
 run check "{{dir}}/value.tl" --stdlib-root "{{root}}/stdlib"
 stderr empty
@@ -770,6 +785,28 @@ stderr empty
 stdout match Wrote[ ]
 in file {{dir}}/type.s
 contains main:
+step check-moduleless-under-root
+run check "{{dir}}/root-user.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-moduleless-under-root
+run compile "{{dir}}/root-user.tl" -o "{{dir}}/root-user.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-outside-checkout
+cwd {{dir}}
+run check "{{dir}}/outside.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-outside-checkout
+run compile "{{dir}}/outside.tl" -o "{{dir}}/outside.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-value-outside-checkout
+run check "{{dir}}/value.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+cwd -
 step check-not-imported
 run check "{{dir}}/not-imported.tl" --stdlib-root "{{root}}/stdlib"
 exit 1

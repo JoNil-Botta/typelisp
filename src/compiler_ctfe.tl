@@ -3950,15 +3950,16 @@
 ;; `Var` reaches `expr-struct-get`/`expr-struct-set` with its hygiene identity
 ;; (a macro global, template, fresh or macro-local key), but fields are found by
 ;; their source spelling (#8749). An id with no source name stays as it is.
+;; Interpreted CTFE and the native TLCI host callbacks share this mapping.
 (define (ctfe-value-field-name-id
-  [env : (& env CtfeEnv)]
+  [source-names : ci.InternSourceNameSessionHandle]
   [value : (& CompilerCtfeValue)]) : CtfeMaybeNameId
-  (match (ctfe-value-syntax-name-id (ctfe-env-source-names env) value)
+  (match (ctfe-value-syntax-name-id source-names value)
     [(Some name-id)
       (let
         [source-id : i64
           (ctfe-name-source-id-for-session
-            (ctfe-env-structural-session env)
+            (cis.intern-structural-session-handle-from-source-names source-names)
             name-id)]
         (Some (if (>= source-id 0) source-id name-id)))]
     [(None) (None)]))
@@ -7106,7 +7107,9 @@
             [(Expr target-node _)
               (match (compiler-ctfe-eval (& field-arg) env target-fuel)
                 [(Ok field-val field-fuel)
-                  (match (ctfe-value-field-name-id (& env) (& field-val))
+                  (match (ctfe-value-field-name-id
+                    (ctfe-env-source-names env)
+                    (& field-val))
                     [(Some field-id)
                       (Ok
                         (Expr
@@ -7279,7 +7282,9 @@
             [(Expr target-node _)
               (match (compiler-ctfe-eval (& field-arg) env target-fuel)
                 [(Ok field-val field-fuel)
-                  (match (ctfe-value-field-name-id (& env) (& field-val))
+                  (match (ctfe-value-field-name-id
+                    (ctfe-env-source-names env)
+                    (& field-val))
                     [(Some field-id)
                       (match (compiler-ctfe-eval (& value-arg) env field-fuel)
                         [(Ok value-val value-fuel)

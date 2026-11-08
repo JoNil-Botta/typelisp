@@ -1082,6 +1082,10 @@ macro_struct_pattern_arity_reject|check-fail|tests/safety/macro_struct_pattern_a
 macro_struct_pattern_wrong_head_reject|check-fail|tests/safety/macro_struct_pattern_wrong_head_reject.tl|-|struct pattern head Other does not match struct Pair
 macro_struct_pattern_nested_reject|check-fail|tests/safety/macro_struct_pattern_nested_reject.tl|-|typecheck: pattern arity mismatch
 macro_struct_pattern_unknown_field_reject|check-fail|tests/safety/macro_struct_pattern_unknown_field_reject.tl|-|unknown struct field Pair.missing
+# A macro template's field operand is a member name, even when hygiene renames
+# the symbol for a visible global or a template local (#8749).
+macro_template_field_hygiene_ok|run-exit|tests/safety/macro_template_field_hygiene_ok.tl|42|-
+macro_template_field_hygiene_unknown_reject|check-fail|tests/safety/macro_template_field_hygiene_unknown_reject.tl|tests/safety/macro_template_field_hygiene_unknown_reject.tl:10:4|unknown struct field Span.len; available fields: owner, size
 macro_struct_pattern_duplicate_field_reject|check-fail|tests/safety/macro_struct_pattern_duplicate_field_reject.tl|-|(fields ...) pattern names field `left` twice
 macro_struct_pattern_unreachable_reject|check-fail|tests/safety/macro_struct_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
 macro_struct_pattern_owner_reject|check-fail|tests/safety/macro_struct_pattern_owner_reject.tl|@loc{tests/integration/macro_struct_pattern_defs.tl;6;    [(Pair _ a b) (+ a b)]))}|does not match struct macro_struct_pattern_owner_reject/Pair

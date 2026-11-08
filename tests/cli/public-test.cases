@@ -701,3 +701,73 @@ step production-dependency-test
 run test --check --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 stderr empty
 stdout contains TypeLisp package test typecheck passed: 1 test(s) in 1 file(s)
+
+# #8813: a rootless prelude reads its modules from the embedded stdlib, whose
+# inline tests are blanked. Testing a prelude module itself must read the named
+# file, so core-macros-api is discovered and runs in list, check, run and batch
+# modes. A configured root that already resolves the module is used as given.
+case prelude-module-inline-test-rootless
+file -x prelude.list
+stdlib/core_macros.tl
+{{native-dir}}/after.tl
+end-file
+file after.tl
+(test after-prelude unit)
+end-file
+cwd {{root}}
+step prelude-list
+run test --list stdlib/core_macros.tl
+stderr empty
+stdout contains core-macros-api stdlib/core_macros.tl:
+stdout contains TypeLisp tests listed: 1 test(s)
+step prelude-check
+run test --check stdlib/core_macros.tl --target {{host-target}}
+stderr empty
+stdout contains TypeLisp test typecheck passed: 1 test(s)
+step prelude-run
+run test stdlib/core_macros.tl --target {{host-target}}
+stdout empty
+stderr contains ok core-macros-api
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+step prelude-batch
+run test --batch "{{dir}}/prelude.list" --target {{host-target}}
+stderr contains ok core-macros-api
+stderr contains ok after-prelude
+stdout contains TypeLisp test batch passed: 2 test(s) in 2 file(s)
+step prelude-batch-check
+run test --check --batch "{{dir}}/prelude.list" --target {{host-target}}
+stdout contains TypeLisp test file: stdlib/core_macros.tl (1 test(s))
+stdout contains TypeLisp test batch typecheck passed: 2 test(s) in 2 file(s)
+step prelude-configured-root
+run test --list stdlib/core_macros.tl --stdlib-root stdlib
+stderr empty
+stdout contains core-macros-api stdlib/core_macros.tl:
+stdout contains TypeLisp tests listed: 1 test(s)
+
+# The prelude fix keeps the package contradiction: a source whose text has an
+# inline test marker but whose loaded program has no inline tests still fails.
+case package-test-marker-without-tests
+file typelisp.pkg
+(package
+  (name "package_test_marker_without_tests")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file src/lib.tl
+(define lib-value : i64 42)
+
+(cfg never-enabled
+  (test hidden unit))
+end-file
+step marker-check
+run test --check --target {{host-target}} --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains test: discovered inline test marker but no inline tests in
+stderr contains lib.tl
+stdout not-contains passed:
+step marker-run
+run test --target {{host-target}} --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains test: discovered inline test marker but no inline tests in
+stdout not-contains passed:

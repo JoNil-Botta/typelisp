@@ -2151,10 +2151,11 @@
       env.macro-state)))
 
 ;; Binding-clause syntax values predate the pool-bearing CapturedExpr variants.
-;; For the stdlib binding-prefix transformer, their child IDs come from a newer
-;; snapshot of the definition/caller pool. Keep that pool both as the evaluator's
-;; read view and as syntax-construction provenance so the produced root carries
-;; it back through macro expansion. Callers must not pass an unrelated pool.
+;; For a binding-prefix transformer such as `for`, their child IDs come from a
+;; newer snapshot of the definition/caller pool. Keep that pool both as the
+;; evaluator's read view and as syntax-construction provenance so the produced
+;; root carries it back through macro expansion. Callers must not pass an
+;; unrelated pool.
 (define (ctfe-env-rebase-syntax-pools
   [env : CtfeEnv]
   [pools : ast.AstNodePoolContext]) : CtfeEnv
@@ -3945,6 +3946,28 @@
       (Some (ctfe-string-syntax-name-id source-names (& text) string-id))]
     [(Name _ name-id) (Some name-id)]
     [_ (None)]))
+
+;; A struct member operand names a field, not a binding. A macro template's
+;; `Var` reaches `expr-struct-get`/`expr-struct-set` with its hygiene identity
+;; (a macro global, template, fresh or macro-local key), but fields are found by
+;; their source spelling (#8749). An id with no source name stays as it is.
+;; Interpreted CTFE and the native TLCI host callbacks share this mapping.
+(define (ctfe-value-field-name-id
+  [source-names : ci.InternSourceNameSessionHandle]
+  [value : (& CompilerCtfeValue)]) : CtfeMaybeNameId
+  (match (ctfe-value-syntax-name-id source-names value)
+    [(Some name-id)
+      (let
+        [source-id : i64
+          (ctfe-name-source-id-for-session
+            (cis.intern-structural-session-handle-from-source-names
+              source-names)
+            name-id)]
+        (Some
+          (if (>= source-id 0)
+            source-id
+            name-id)))]
+    [(None) (None)]))
 
 ;; Module indexes use the same source/generated Name identity that a String-to-
 ;; syntax constructor would assign. Re-interning only the evaluated text loses
@@ -7089,7 +7112,7 @@
             [(Expr target-node _)
               (match (compiler-ctfe-eval (& field-arg) env target-fuel)
                 [(Ok field-val field-fuel)
-                  (match (ctfe-value-syntax-name-id
+                  (match (ctfe-value-field-name-id
                     (ctfe-env-source-names env)
                     (& field-val))
                     [(Some field-id)
@@ -7264,7 +7287,7 @@
             [(Expr target-node _)
               (match (compiler-ctfe-eval (& field-arg) env target-fuel)
                 [(Ok field-val field-fuel)
-                  (match (ctfe-value-syntax-name-id
+                  (match (ctfe-value-field-name-id
                     (ctfe-env-source-names env)
                     (& field-val))
                     [(Some field-id)

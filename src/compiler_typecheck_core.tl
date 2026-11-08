@@ -78958,7 +78958,9 @@
         "typecheck: unknown struct field "
         (csym.compiler-struct-field-key
           (tc-nominal-name-id-display struct-name-id)
-          (ci.intern-str field-id)))]
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            field-id)))]
     [decl-result : ResultTcStructDecl (tc-struct-decl-id ctx struct-name-id)]
     (match decl-result
       [(Ok decl)
@@ -114110,7 +114112,6 @@
                     ctx
                     fallback-module
                     fallback-module-id
-                    macro-name-id
                     (tc-global-shared-view params)))
                 (macro-hygiene-produced-eval-start-with-pools!
                   (tc-context-macro-state ctx)
@@ -114459,7 +114460,6 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          macro-name-id
           (tc-global-shared-view params)))
       (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
       (cfg compile-profile (compiler-tc-macro-profile-start))
@@ -114513,7 +114513,6 @@
               ctx
               fallback-module
               fallback-module-id
-              macro-name-id
               params)
             expanded-args
             env)]))))
@@ -114610,7 +114609,6 @@
           ctx
           fallback-module
           fallback-module-id
-          macro-name-id
           params)
         expanded-args
         env)
@@ -114642,7 +114640,6 @@
             ctx
             fallback-module
             fallback-module-id
-            macro-name-id
             params)
           expanded-args
           env)
@@ -114798,29 +114795,43 @@
           (&mut out)))]
     (Ok out)))
 
+;; A binding-prefix transformer has the signature
+;; `[bindings : ExprBindingClause ...] [body : Expr ...]`, as `for`, `any?` and
+;; `all?` do. Its bodies run under the clause binders, so they are expanded
+;; only after the transformer has introduced those binders. The check uses
+;; the signature alone, so a user macro of the same shape is treated alike.
+;; Whether parameter INDEX of PARAMS is variadic, read in place: no checked
+;; get, so no fallback parameter is built. INDEX must be in range.
+(define (macro-param-variadic-at?
+  [params : (& params ast.AstMacroParamList)]
+  [index : i64]) : bool
+  (match (& (array-ref params.slots index))
+    [(Param _ _ variadic _) variadic]))
+
 (define (macro-binding-prefix-transformer?
   [ctx : TcContext]
   [fallback-module : String]
   [fallback-module-id : i64]
-  [macro-name-id : i64]
   [params : ast.AstMacroParamList]) : bool
-  (if (or
-    (not (string.eq (ci.intern-str macro-name-id) "for"))
-    (not (= (ast.ast-macro-param-list-len (& params)) 2)))
+  ;; Most macros fail the in-place shape test; only a two-parameter,
+  ;; all-variadic signature reaches the typed parameter checks.
+  (if (not
+    (and
+      (= (ast.ast-macro-param-list-len (& params)) 2)
+      (macro-param-variadic-at? (& params) 0)
+      (macro-param-variadic-at? (& params) 1)))
     false
     (match (ast.ast-macro-param-list-get
       (& params)
       0
       (ast.ast-macro-param-fallback))
-      [(Param _ binding-ty binding-variadic _)
+      [(Param _ binding-ty _ _)
         (match (ast.ast-macro-param-list-get
           (& params)
           1
           (ast.ast-macro-param-fallback))
-          [(Param _ body-ty body-variadic _)
+          [(Param _ body-ty _ _)
             (and
-              binding-variadic
-              body-variadic
               (macro-param-expr-binding-clause?
                 ctx
                 (tc-global-shared-view fallback-module)
@@ -114861,7 +114872,6 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          macro-name-id
           (tc-global-shared-view params))
           (macro-expand-binding-prefix-args
             ctx

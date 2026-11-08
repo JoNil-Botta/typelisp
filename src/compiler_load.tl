@@ -13478,6 +13478,72 @@
       (let
         [rest : ast.AstDeclList rest]
         (match (clone decl)
+          [(ModuleBody target-module-id body-box)
+            (let
+              [target-module : String (ci.intern-str target-module-id)]
+              [body : ast.AstDeclList (deref body-box)]
+              (match (compiler-load-package-decls-with-module-and-roots
+                (& body)
+                importer-scan-decls
+                (string.copy importer-path)
+                importer-path-id
+                (& target-module)
+                target-module-id
+                (string.copy target-module)
+                target-module-id
+                seen
+                stdlib-roots
+                (string.copy manifest-dir)
+                deps
+                cfgs)
+                [(Ok body-decls body-paths body-modules body-seen)
+                  (match (compiler-load-package-decls-with-module-and-roots
+                    (& rest)
+                    importer-scan-decls
+                    (string.copy importer-path)
+                    importer-path-id
+                    importer-module
+                    importer-module-id
+                    importer-source-module
+                    importer-source-module-id
+                    body-seen
+                    stdlib-roots
+                    manifest-dir
+                    deps
+                    cfgs)
+                    [(Ok rest-decls rest-paths rest-modules rest-seen)
+                      (Ok
+                        (compiler-load-decl-list-prepend
+                          (& (ast.ast-decl-module-id target-module-id))
+                          (compiler-load-decl-list-append-onto
+                            (& body-decls)
+                            (&
+                              (compiler-load-decl-list-prepend
+                                (&
+                                  (ast.ast-decl-module-id
+                                    importer-source-module-id))
+                                rest-decls))))
+                        (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+                          (string.copy importer-path)
+                          target-module-id
+                          importer-path-id
+                          (compiler-load-decl-path-list-append-onto
+                            (& body-paths)
+                            (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                              importer-path
+                              importer-path-id
+                              rest-paths)))
+                        (ast.ast-decl-module-list-prepend-builder-id
+                          target-module-id
+                          (compiler-load-decl-module-list-append-onto
+                            (& body-modules)
+                            (&
+                              (ast.ast-decl-module-list-prepend-builder-id
+                                importer-module-id
+                                rest-modules))))
+                        rest-seen)]
+                    [(Err diag) (Err diag)])]
+                [(Err diag) (Err diag)]))]
           [(Import decl-meta (Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-package-decls-with-module-and-roots

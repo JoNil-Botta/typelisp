@@ -1179,6 +1179,65 @@
         [_ false])]
     [(Err _) false]))
 
+(define (compiler-load-package-nested-module-body-ok?) : bool
+  (let
+    [root : String "target/exp/compiler-load-package-nested"]
+    [entry : String (str_cat.str-cat (string.copy root) "/entry.tl")]
+    (load.compiler-load-test-mkdir "target/exp")
+    (load.compiler-load-test-mkdir (& root))
+    (compiler-load-write-file-text
+      (string.copy entry)
+      "(module package.nested)
+(defmacro (m) : i64 (expr-int 42))
+(module inner
+  (defmacro (m) : i64 (expr-int 7))
+  (module deeper (define value : i64 9))
+  (define value : i64 7))
+(define value : i64 42)")
+    (match (load.compiler-load-file-with-paths-and-roots
+      (& entry)
+      (sym_i64_env.sym-i64-empty)
+      (& (svec.new)))
+      [(Ok ordinary-decls ordinary-paths ordinary-modules _)
+        (match (compiler-load-package-file-with-paths-and-roots
+          entry
+          (sym_i64_env.sym-i64-empty)
+          (svec.new)
+          root
+          (load.compiler-pkg-deps-empty))
+          [(Ok decls paths modules _)
+            (let
+              [count : i64 (ast.ast-decl-list-len (& decls))]
+              (unless
+                (and
+                  (= count 10)
+                  (= count (ast.ast-decl-list-len (& ordinary-decls)))
+                  (= count (ast.ast-decl-path-list-len (& paths)))
+                  (= count (ast.ast-decl-module-list-len (& modules)))
+                  (compiler-load-decl-path-lists-eq? ordinary-paths paths)
+                  (compiler-load-decl-module-lists-eq? ordinary-modules modules))
+                (return false))
+              (for [index (iterator.range 0 count)]
+                (let
+                  [decl : ast.AstDecl
+                    (ast.ast-decl-list-get
+                      (& decls)
+                      index
+                      (ast.ast-decl-fallback))]
+                  [ordinary : ast.AstDecl
+                    (ast.ast-decl-list-get
+                      (& ordinary-decls)
+                      index
+                      (ast.ast-decl-fallback))]
+                  (unless
+                    (=
+                      (ast_tests.ast-decl-tag decl)
+                      (ast_tests.ast-decl-tag ordinary))
+                    (return false))))
+              true)]
+          [(Err _) false])]
+      [(Err _) false])))
+
 (define (compiler-load-package-diagnostic-parity-ok?) : bool
   (let
     [root : String "target/exp/compiler-load-module-parity"]
@@ -6039,6 +6098,9 @@
   (unless
     (compiler-load-nested-module-body-ok?)
     (return (io.panic "compiler-load: nested module body smoke mismatch")))
+  (unless
+    (compiler-load-package-nested-module-body-ok?)
+    (return (io.panic "compiler-load: package nested module body mismatch")))
   (unless
     (compiler-load-package-diagnostic-parity-ok?)
     (return (io.panic "compiler-load: package diagnostic parity mismatch")))

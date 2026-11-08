@@ -457,17 +457,17 @@ stderr contains 1 | (define (f) : i64 (+ 1 true))
 step ordinary-package-check
 run check --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
-stderr contains --> {{dir}}/pkg/src/lib.tl:1:24
+stderr contains --> {{native-dir}}/pkg/src/lib.tl:1:24
 stderr contains 1 | (define (g) : i64 (+ 1 true))
 step ordinary-package-test
 run test --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
-stderr contains --> {{dir}}/pkg/src/lib.tl:1:24
+stderr contains --> {{native-dir}}/pkg/src/lib.tl:1:24
 stderr contains 1 | (define (g) : i64 (+ 1 true))
 step ordinary-package-test-check
 run test --check --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
-stderr contains --> {{dir}}/pkg/src/lib.tl:1:24
+stderr contains --> {{native-dir}}/pkg/src/lib.tl:1:24
 stderr contains 1 | (define (g) : i64 (+ 1 true))
 
 # #6190: opt0 once suppressed AddrOf, then read its uninitialized home while

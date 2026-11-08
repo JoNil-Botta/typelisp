@@ -8709,39 +8709,43 @@
                 (& params)
                 locals))))
         (compiler-load-lazy-alias-demand-unknown))]
-    [(Extern decl-meta _ _ _ ty)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-type-demand
-          (owned_view.compiler-owned-reference-shared-view state)
-          ty
-          alias
-          canonical
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
+    ;; These name other modules through their types; only a cleanup owner's
+    ;; hooks and a typed varargs tail are not walked, so those stay eager.
+    ;; Outside a cleanup owner the checker rejects hooks unresolved (#9682).
+    [(Extern decl-meta _ _ metadata ty)
+      (match (__tl-box-place metadata)
+        [(Metadata (CVarargsTyped _) _ _ _ _)
+          (compiler-load-lazy-alias-demand-unknown)]
+        [_
+          (compiler-load-session-state-lazy-type-demand
+            (owned_view.compiler-owned-reference-shared-view state)
+            ty
+            alias
+            canonical
+            summary
+            locals)])]
+    [(or (DefEnum _ _ cleanup variants)
+         (DefEnumLifetimes _ _ _ cleanup variants))
+      (if (ast.ast-enum-cleanup? cleanup)
+        (compiler-load-lazy-alias-demand-unknown)
         (compiler-load-session-state-lazy-variant-list-demand
           state
           (& variants)
           alias
           canonical
           summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
+          locals))]
+    [(or (DefStruct _ _ _ cleanup fields)
+         (DefStructLifetimes _ _ _ _ cleanup fields))
+      (if (ast.ast-struct-cleanup? cleanup)
+        (compiler-load-lazy-alias-demand-unknown)
         (compiler-load-session-state-lazy-field-list-demand
           state
           (& fields)
           alias
           canonical
           summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
+          locals))]
     [(Import decl-meta (Spec (Macro call-expr _) _ _ _ _))
       (compiler-load-session-state-lazy-module-macro-demand
         state
@@ -8826,7 +8830,14 @@
             canonical
             summary
             locals)]
-        (if head.unknown
+        ;; Every policy loads on a qualified use too; only an observer reads on.
+        (if (or
+          head.unknown
+          (and
+            head.qualified
+            (not
+              (compiler-load-session-state-lazy-qualified-observer-active?
+                state))))
           head
           (compiler-load-lazy-alias-demand-merge
             head
@@ -10169,12 +10180,18 @@
                       import.expected-module]
                     [alias : ast.AstMaybeImportAlias import.alias]
                     [resolved-id : i64 (compiler-load-source-path-id resolved)]
+                    ;; Skipping an already loaded module saves nothing.
                     [preload-candidate : bool
-                      (compiler-load-session-state-lazy-import-preload-candidate?
-                        (& traversal.load-state)
-                        (& (string.copy importer-path))
-                        (clone kind)
-                        (clone alias))]
+                      (and
+                        (not
+                          (compiler-load-expected-module-seen?
+                            seen
+                            (clone expected-module)))
+                        (compiler-load-session-state-lazy-import-preload-candidate?
+                          (& traversal.load-state)
+                          (& (string.copy importer-path))
+                          (clone kind)
+                          (clone alias)))]
                     [preload-demand : CompilerLoadLazyAliasDemand
                       (compiler-load-session-state-lazy-import-preload-demand
                         (& traversal.load-state)

@@ -221,6 +221,136 @@
             "generic.macro.dep")))]
     [(Err _) false]))
 
+(define (lazy-local-decl-entry-ok?
+  [dir : String]
+  [source : String]
+  [skipped : bool]) : bool
+  ;; A local type, enum or extern declaration demands an aliased import only
+  ;; through the types it names. A cleanup owner, a typed varargs extern and
+  ;; a local macro stay eager (#9682).
+  (let
+    [nested : String (str_cat.str-cat (clone dir) "/nested")]
+    [entry : String (str_cat.str-cat (clone dir) "/entry.tl")]
+    (load.compiler-load-test-mkdir (& dir))
+    (load.compiler-load-test-mkdir (& nested))
+    (lazy-write-text
+      (str_cat.str-cat nested "/dep.tl")
+      "(module nested.dep)
+(defstruct Box (value i64))
+(define (close [x : i64]) : unit unit)
+(define (get) : i64 7)")
+    (lazy-write-text (string.copy entry) source)
+    (match (load_tests.compiler-load-file-with-paths
+      entry
+      (sym_i64_env.sym-i64-empty))
+      [(Ok _ _ _ seen)
+        (if skipped
+          (and
+            (= (load_tests.compiler-load-lazy-import-skip-count) 1)
+            (not
+              (load_tests.compiler-load-test-seen-contains? seen "nested.dep")))
+          (and
+            (= (load_tests.compiler-load-lazy-import-skip-count) 0)
+            (load_tests.compiler-load-test-seen-contains? seen "nested.dep")))]
+      [(Err _) false])))
+
+(define (lazy-local-decl-demand-ok?) : bool
+  (and
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_struct"
+      "(module lazy.local.struct.entry)
+(import nested.dep as dep)
+(defstruct Pair (value i64))
+(defstruct RefBox (:lifetimes text) (borrowed (& text str)))
+(define (main) : i64 42)"
+      true)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_enum"
+      "(module lazy.local.enum.entry)
+(import nested.dep as dep)
+(defenum Choice (One i64) (None))
+(defenum RefChoice (:lifetimes text) (Borrowed (& text str)))
+(define (main) : i64 42)"
+      true)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_extern"
+      "(module lazy.local.extern.entry)
+(import nested.dep as dep)
+(extern (read-byte [arg0 : (Ptr u8)]) : u8)
+(define (main) : i64 42)"
+      true)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_field_type"
+      "(module lazy.local.field.type.entry)
+(import nested.dep as dep)
+(defstruct Pair (box dep.Box))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_field_lifetime_type"
+      "(module lazy.local.field.lifetime.type.entry)
+(import nested.dep as dep)
+(defstruct RefBox (:lifetimes text) (borrowed (& text dep.Box)))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_field_canonical"
+      "(module lazy.local.field.canonical.entry)
+(import nested.dep as dep)
+(defstruct Pair (box nested.dep.Box))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_field_cleanup"
+      "(module lazy.local.field.cleanup.entry)
+(import nested.dep as dep)
+(defstruct Handle (:cleanup close-handle) (fd i64 (:cleanup dep.close)))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_payload_type"
+      "(module lazy.local.payload.type.entry)
+(import nested.dep as dep)
+(defenum Choice (One dep.Box) (None))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_payload_cleanup"
+      "(module lazy.local.payload.cleanup.entry)
+(import nested.dep as dep)
+(defenum Slot (:cleanup close-slot) (Full i64 (:cleanup dep.close)) (Empty))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_extern_type"
+      "(module lazy.local.extern.type.entry)
+(import nested.dep as dep)
+(extern (read-box [arg0 : (Ptr dep.Box)]) : u8)
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_extern_varargs"
+      "(module lazy.local.extern.varargs.entry)
+(import nested.dep as dep)
+(extern (sum-boxes [count : i64] [value : ...dep.Box]) : i32 (:symbol \"sum_boxes\"))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_cleanup_owner"
+      "(module lazy.local.cleanup.owner.entry)
+(import nested.dep as dep)
+(define (local-close [x : i64]) : unit unit)
+(defstruct Handle (:cleanup close-handle) (fd i64 (:cleanup local-close)))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_local_macro"
+      "(module lazy.local.macro.entry)
+(import nested.dep as dep)
+(defmacro (one) : Expr (expr-int 1))
+(define (main) : i64 42)"
+      false)))
+
 (define (lazy-direct-module-macro-demand-ok?) : bool
   (load.compiler-load-test-mkdir "target/cl_lazy_module_macro")
   (lazy-write-text
@@ -608,11 +738,63 @@
         demand
         cbi.compiler-builtin-id-fix-same))))
 
+(define (structural-member-demand-aggregate-ok?) : bool
+  ;; Local type declarations demand only the members their types name (#9682).
+  (and
+    (match (structural-member-demand-source
+      "(module demand.aggregate.none)
+(defstruct Aggregate (value i64))
+(defenum Choice (One i64) (None))"
+      cbi.compiler-builtin-id-fix-subject)
+      [(CompilerLoadStructuralNoDemand) true]
+      [_ false])
+    (let
+      [demand : load_tests.CompilerLoadStructuralMemberDemand
+        (structural-member-demand-source
+          "(module demand.aggregate.members)
+(defenum Choice (One subject.value) (Two subject.left))"
+          cbi.compiler-builtin-id-fix-subject)]
+      (and
+        (= (load_tests.compiler-load-structural-member-demand-count demand) 2)
+        (load_tests.compiler-load-structural-member-demand-contains?
+          demand
+          cbi.compiler-builtin-id-fix-value)
+        (load_tests.compiler-load-structural-member-demand-contains?
+          demand
+          cbi.compiler-builtin-id-fix-left)))))
+
+(define (structural-member-demand-cross-decl-ok?) : bool
+  ;; Exact members span declarations, and a later unknown still wins (#9682).
+  (and
+    (let
+      [demand : load_tests.CompilerLoadStructuralMemberDemand
+        (structural-member-demand-source
+          "(module demand.cross)
+(define (one) : i64 (subject.left))
+(define (two) : i64 (subject.right))"
+          cbi.compiler-builtin-id-fix-subject)]
+      (and
+        (= (load_tests.compiler-load-structural-member-demand-count demand) 2)
+        (load_tests.compiler-load-structural-member-demand-contains?
+          demand
+          cbi.compiler-builtin-id-fix-left)
+        (load_tests.compiler-load-structural-member-demand-contains?
+          demand
+          cbi.compiler-builtin-id-fix-right)))
+    (match (structural-member-demand-source
+      "(module demand.cross.unknown)
+(define (one) : i64 (subject.left))
+(defmacro (two) : Expr (expr-int 2))"
+      cbi.compiler-builtin-id-fix-subject)
+      [(CompilerLoadStructuralFullDemand) true]
+      [_ false])))
+
 (define (structural-member-demand-unknown-ok?) : bool
+  ;; A local macro stays an eager fence (#9682).
   (match (load.compiler-load-parse-source-diagnostic-escaping
     "src/structural_member_demand_unknown.tl"
     "(module demand.unknown)
-(defstruct Aggregate (value i64))"
+(defmacro (one) : Expr (expr-int 1))"
     (cfg.compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (Program decls))
       (match (load_tests.compiler-load-structural-member-demand
@@ -752,7 +934,8 @@
       "target/cl_semantic_origin_entry.tl"
       "(module cl_semantic_origin_entry)
 (import cl_semantic_origin_dep as dep)
-(defstruct Same (same-field Shared.Type))")
+(defstruct Same (same-field Shared.Type))
+(define dep-use : i64 dep.dep-padding)")
     (match (load_tests.compiler-load-file-with-paths
       "target/cl_semantic_origin_entry.tl"
       (sym_i64_env.sym-i64-empty))
@@ -785,6 +968,9 @@
   (unless
     (lazy-canonical-path-demand-ok?)
     (return (io.panic "lazy canonical module path demand smoke mismatch")))
+  (unless
+    (lazy-local-decl-demand-ok?)
+    (return (io.panic "lazy local declaration demand smoke mismatch")))
   (unless
     (lazy-unused-macro-only-import-ok?)
     (return (io.panic "lazy unused macro-only import smoke mismatch")))
@@ -835,6 +1021,12 @@
   (unless
     (structural-member-demand-nested-scope-ok?)
     (return (io.panic "structural member nested-scope demand mismatch")))
+  (unless
+    (structural-member-demand-aggregate-ok?)
+    (return (io.panic "structural member aggregate demand mismatch")))
+  (unless
+    (structural-member-demand-cross-decl-ok?)
+    (return (io.panic "structural member cross-declaration demand mismatch")))
   (unless
     (structural-member-demand-unknown-ok?)
     (return (io.panic "structural member unknown demand mismatch")))

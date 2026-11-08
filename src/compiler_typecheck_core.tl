@@ -15222,11 +15222,7 @@
   [name : i64]) : i64
   (if (and
     (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
-    (or
-      (and
-        (tc-type-env-scoped-runtime-active? env)
-        (>= (tc-type-env-scoped-runtime-lookup-index env name) 0))
-      (tc-name-local-bound-before-module-scan-id? env name)))
+    (tc-name-lexically-bound-id? env name))
     -1
     (match (tc-unqualified-import-ambiguity-message ctx env name)
       [(TcMaybeString.Some _) -1]
@@ -56848,19 +56844,43 @@
           true
           (tc-default-builtin-unshadowed-scan-id? rest name-id)))]))
 
+;; Walk the binding chain by key and parent only (the raw accessors above), and
+;; pass through scan-through cache layers to their `rest`, as
+;; `tc-type-env-view` would, without materializing each binding's type.
 (define (tc-name-local-bound-before-module-scan-id?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (match (tc-type-env-view env)
-    [(Nil) false]
-    [(Cache _ scan-through _ rest _)
-      (if scan-through
-        (tc-name-local-bound-before-module-scan-id? rest name-id)
-        false)]
-    [(Bind key _ rest)
-      (if (= key name-id)
-        true
-        (tc-name-local-bound-before-module-scan-id? rest name-id))]))
+  (let
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
+    [found : bool false]
+    (while (not (= head -1))
+      (if (>= head 0)
+        (let
+          [binding-ptr : (Ptr TcTypeEnvBinding)
+            (tc-type-env-binding-ptr store-handle head)]
+          (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
+            (begin
+              (set! found true)
+              (set! head -1))
+            (set! head (tc-type-env-binding-parent-at binding-ptr))))
+        (let
+          [cache-ptr : (Ptr TcTypeEnvCache)
+            (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
+          (if (tc-type-env-cache-field-at cache-ptr 80 bool)
+            (set! head (tc-type-env-cache-field-at cache-ptr 88 i64))
+            (set! head -1)))))
+    found))
+
+;; A function parameter or lexical binding named `name-id` is in scope: the
+;; scoped runtime's hot local stack, or the persistent chain above the module
+;; scan.
+(define (tc-name-lexically-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (or
+    (and
+      (tc-type-env-scoped-runtime-active? env)
+      (>= (tc-type-env-scoped-runtime-lookup-index env name-id) 0))
+    (tc-name-local-bound-before-module-scan-id? env name-id)))
 
 (define (tc-top-level-value-owned-by-module-id?
   [ctx : TcContext]
@@ -56895,12 +56915,7 @@
     ;; Function parameters and lexical bindings always shadow, including in an
     ;; imported body.  The scoped runtime holds the hot local stack separately;
     ;; the persistent scan covers callers that materialized that stack.
-    (not
-      (or
-        (and
-          (tc-type-env-scoped-runtime-active? env)
-          (>= (tc-type-env-scoped-runtime-lookup-index env name-id) 0))
-        (tc-name-local-bound-before-module-scan-id? env name-id)))
+    (not (tc-name-lexically-bound-id? env name-id))
     ;; A top-level definition shadows only in the module that owns this body.
     ;; In an imported aggregate, the ordinary value env belongs to the caller,
     ;; while type-module-id retains the declaration's defining module.
@@ -83200,11 +83215,7 @@
 ;; Lexical storage (a let, parameter or lambda binding, hygiene-scoped by its
 ;; id) shadows every declaration, variants included.
 (define (tc-bare-variant-local-binding? [env : TcTypeEnv] [name-id : i64]) : bool
-  (or
-    (and
-      (tc-type-env-scoped-runtime-active? env)
-      (>= (tc-type-env-scoped-runtime-lookup-index env name-id) 0))
-    (tc-name-local-bound-before-module-scan-id? env name-id)))
+  (tc-name-lexically-bound-id? env name-id))
 
 ;; Whether `ty` can be an enum (an unresolved nominal may be one). Checked
 ;; before any name query, so the common non-enum expected type costs one match.
@@ -88442,11 +88453,7 @@
   ;; name keeps its declaration identity even when the caller shadows it.
   (if (and
     (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
-    (or
-      (and
-        (tc-type-env-scoped-runtime-active? env)
-        (>= (tc-type-env-scoped-runtime-lookup-index env name) 0))
-      (tc-name-local-bound-before-module-scan-id? env name)))
+    (tc-name-lexically-bound-id? env name))
     false
     (match (tc-unqualified-import-ambiguity-message ctx env name)
       [(Some _) false]
@@ -96364,10 +96371,12 @@
   (Name i64 MacroHygieneEnv))
 
 ;; The expansion whose output hygiene is renaming, so a nested binding-clause
-;; call resolves its callee exactly as the rewalk that follows will.
+;; call resolves its callee exactly as the rewalk that follows will. The type
+;; environment is the call site's, whose lexical locals a free template name
+;; must not bind (`macro-hygiene-use-site-local?`).
 (defenum MacroHygieneCallee
   (No)
-  (Some TcContext ast.AstDeclList))
+  (Some TcContext ast.AstDeclList TcTypeEnv))
 
 (defenum MacroHygieneParams
   (Params ast.AstParamList MacroHygieneEnv))
@@ -106487,9 +106496,18 @@
                       false)
                     source-name-id))])))))))
 
+;; A free template identifier that names nothing at the definition site keeps
+;; its plain id, so builtins, the prelude, enum variants, flat imports and
+;; spellings that a receiving macro reads (`else`, field names) resolve as
+;; before. A reference (`reference-depth` >= 0) whose spelling a call-site
+;; local would bind instead takes the template-binder identity at that depth
+;; (SPEC section 3.7.2): the caller's binding cannot capture it, and a binder
+;; the template hands to a nested binding macro is renamed the same way. A
+;; dotted reference renames its leading segment. Other callers pass -1.
 (define (macro-hygiene-rename-var-id
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
+  [reference-depth : i64]
   [name-id : i64]) : i64
   (let
     [session : cis.InternStructuralSessionHandle
@@ -106542,20 +106560,60 @@
                           (str_cat.str-cat
                             "typecheck: missing macro template source id: "
                             base)))
-                      (if (and
-                        (<
-                          (tc-name-first-dot-id
-                            (tc-macro-state-structural-session env.state)
-                            source-name-id)
-                          0)
-                        (macro-hygiene-env-has-output-flat-import? env))
-                        source-name-id
-                        (macro-hygiene-global-name-id
-                          env.state
+                      (let
+                        [bare? : bool
+                          (<
+                            (tc-name-first-dot-id
+                              (tc-macro-state-structural-session env.state)
+                              source-name-id)
+                            0)]
+                        (if (and
+                          bare?
+                          (macro-hygiene-env-has-output-flat-import? env))
                           source-name-id
-                          macro-name))))))]))
+                          (let
+                            [global-id : i64
+                              (macro-hygiene-global-name-id
+                                env.state
+                                source-name-id
+                                macro-name)]
+                            (cond
+                              [(or
+                                  (< reference-depth 0)
+                                  (not (= global-id source-name-id)))
+                                global-id]
+                              [bare?
+                                (if (macro-hygiene-use-site-local?
+                                  env
+                                  source-name-id)
+                                  (macro-hygiene-local-id
+                                    (tc-macro-state-structural-session
+                                      env.state)
+                                    macro-name
+                                    reference-depth
+                                    source-name-id)
+                                  global-id)]
+                              [(and
+                                  (>= leading-id 0)
+                                  (macro-hygiene-use-site-local? env leading-id))
+                                (tc-dotted-name-with-source-id
+                                  (tc-macro-state-structural-session env.state)
+                                  (macro-hygiene-local-id
+                                    (tc-macro-state-structural-session
+                                      env.state)
+                                    macro-name
+                                    reference-depth
+                                    leading-id)
+                                  source-name-id)]
+                              [else global-id]))))))))]))
         name-id)]
     result))
+
+;; A lexical local of the expansion's call site spells `name-id`.
+(define (macro-hygiene-use-site-local? [env : MacroHygieneEnv] [name-id : i64]) : bool
+  (match (tc-macro-walk-field env.state macro-hygiene-callee)
+    [(Some _ _ type-env) (tc-name-lexically-bound-id? type-env name-id)]
+    [(No) false]))
 
 (define (macro-hygiene-bind-name-id
   [env : MacroHygieneEnv]
@@ -107275,8 +107333,8 @@
               (macro-hygiene-env-structural-session env)
               name-id)))
           [(Some renamed-id) renamed-id]
-          [(No) (macro-hygiene-rename-var-id env macro-name name-id)])
-        (macro-hygiene-rename-var-id env macro-name name-id))]))
+          [(No) (macro-hygiene-rename-var-id env macro-name -1 name-id)])
+        (macro-hygiene-rename-var-id env macro-name -1 name-id))]))
 
 (define (macro-hygiene-type-list
   [types : ast.AstTypeList]
@@ -107525,7 +107583,7 @@
           0)
           (Pattern
             (ast.ast-pat-binding-id
-              (macro-hygiene-rename-var-id env macro-name name))
+              (macro-hygiene-rename-var-id env macro-name -1 name))
             env)
           (match (macro-hygiene-env-lookup-pattern-name env name)
             [(Some pattern-name-id)
@@ -107542,7 +107600,7 @@
           [(PatternList nargs next-env)
             (Pattern
               (ast.ast-pat-variant-id
-                (macro-hygiene-rename-var-id env macro-name name)
+                (macro-hygiene-rename-var-id env macro-name -1 name)
                 nargs)
               next-env)]))]
     [(ast.AstPattern.Literal lit)
@@ -107752,15 +107810,16 @@
   [expr-bases : i64]
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
+  [depth : i64]
   [head-id : i64]) : MacroMaybeDecl
   (let
-    [callee-id : i64 (macro-hygiene-rename-var-id env macro-name head-id)]
+    [callee-id : i64 (macro-hygiene-rename-var-id env macro-name depth head-id)]
     (if (macro-call-callee-maybe-macro?
       expr-bases
       env.state
       (ast.AstExpr.Var callee-id))
       (match (tc-macro-walk-field env.state macro-hygiene-callee)
-        [(Some ctx decls)
+        [(Some ctx decls _)
           (match (macro-call-decl
             ctx
             (ast.AstExpr.Var callee-id)
@@ -107803,7 +107862,7 @@
       [previous : MacroHygieneCallee
         (macro-hygiene-callee-install!
           state
-          (MacroHygieneCallee.Some ctx decls))]
+          (MacroHygieneCallee.Some ctx decls type-env))]
       [renamed : i64
         (macro-hygiene-produced-expr
           expanded
@@ -107812,7 +107871,7 @@
           depth)]
       [_finish : unit (macro-hygiene-env-root-finish! state)]
       (match (macro-hygiene-callee-install! state previous)
-        [(Some _ own-decls)
+        [(Some _ own-decls _)
           (macro-expand-produced-node-in
             ctx
             type-env
@@ -107829,7 +107888,7 @@
   [definition-module-id : i64]
   [ty : ast.AstType]) : bool
   (match (tc-macro-walk-field env.state macro-hygiene-callee)
-    [(Some ctx _)
+    [(Some ctx _ _)
       (macro-param-expr-binding-clause?
         ctx
         (macro-decl-module-display definition-module-id)
@@ -108020,7 +108079,7 @@
   [macro-name : MacroHygieneContext]
   [depth : i64]) : ast.AstExprList
   (match (if (macro-hygiene-has-bracket-clause? expr-bases (& args) 0)
-    (macro-hygiene-callee-macro-decl expr-bases env macro-name head-id)
+    (macro-hygiene-callee-macro-decl expr-bases env macro-name depth head-id)
     (MacroMaybeDecl.No))
     [(Some _ definition-module-id _ params _ _)
       (let
@@ -108137,7 +108196,8 @@
     [(Var name)
       (macro-hygiene-expr-push
         env
-        (ast.AstExpr.Var (macro-hygiene-rename-var-id env macro-name name)))]
+        (ast.AstExpr.Var
+          (macro-hygiene-rename-var-id env macro-name depth name)))]
     [(Binary op left-box right-box)
       (let
         [left : i64 left-box]
@@ -108422,7 +108482,7 @@
         [rhs : i64 rhs-box]
         (ast.ast-expr-set-id-with-pools
           env.pools
-          (macro-hygiene-rename-var-id env macro-name name)
+          (macro-hygiene-rename-var-id env macro-name depth name)
           (macro-hygiene-expr expr-bases rhs env macro-name depth)))]
     [(Ann inner-box ty-id)
       (let
@@ -126551,13 +126611,7 @@
       (and (>= leading 0) (tc-selected-env-local-bound? env leading)))))
 
 (define (tc-selected-env-local-bound? [env : TcTypeEnv] [name : i64]) : bool
-  (and
-    (>= name 0)
-    (or
-      (and
-        (tc-type-env-scoped-runtime-active? env)
-        (>= (tc-type-env-scoped-runtime-lookup-index env name) 0))
-      (tc-name-local-bound-before-module-scan-id? env name))))
+  (and (>= name 0) (tc-name-lexically-bound-id? env name)))
 
 ;; The callee expression of a call through a value, when its name resolves at
 ;; module level (`TypedCallKind.Indirect`), or -1: a locally bound callable

@@ -862,7 +862,8 @@
                       (embedded-native-name-arg
                         (owned_view.compiler-owned-shared-view var-name))
                       (string.int->string (string.string-length var-name))
-                      "0")
+                      ;; A String-built name, not a template `Var` (#9681).
+                      "1")
                     1)))))]
         [_ -1])]
     [_ -1]))
@@ -3361,7 +3362,8 @@
                         (embedded-native-name-arg
                           (owned_view.compiler-owned-shared-view lit-name))
                         (string.int->string (string.string-length lit-name))
-                        "0")
+                        ;; A String-built name, not a template `Var` (#9681).
+                        "1")
                       1)
                     (let
                       [inner-opened : i64

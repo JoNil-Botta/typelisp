@@ -1402,7 +1402,7 @@
   [session : i64]
   [arg-a : i64]
   [arg-b : i64]
-  [_arg-c : i64]) : i64
+  [arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
     (if (or (<= arg-a 0) (< arg-b 0))
@@ -1411,16 +1411,20 @@
         [name : String
           (unsafe
             (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))]
-        ;; Reproduce the interpreted quote's variable exactly: the lexer's
-        ;; source-name id for the spelling, marked as template source so
-        ;; dotted spellings resolve through the same hygiene path as an
-        ;; interpreted expansion.
+        ;; The lexer's source-name id for the spelling. A quasiquote template
+        ;; `Var` (`arg-c` 0) reproduces the interpreted quote's variable: it
+        ;; is marked as template source, so hygiene renames it as an
+        ;; interpreted expansion does. A literal `(comptime.expr-var "...")`
+        ;; (`arg-c` 1) builds a name from a String, which interpreted CTFE
+        ;; resolves at the use site with no template mark (#9681).
         [node : i64
           (ast.ast-node-pool-context-expr-push
             (compiler-comptime-host-session-pools)
             (Var
-              (compiler-comptime-host-template-source-id
-                (ci.intern-source-slice name 0 (string.string-length name)))))]
+              (if (= arg-c 1)
+                (ci.intern-source-slice name 0 (string.string-length name))
+                (compiler-comptime-host-template-source-id
+                  (ci.intern-source-slice name 0 (string.string-length name))))))]
         (compiler-comptime-host-push-expr! node)))))
 
 ;; Module values cross the callback boundary as their canonical identity
@@ -5255,6 +5259,7 @@
                   [out-node : i64
                     (__tl-project-field
                       (ctfe_support.ctfe-expr-clause-list-fold-if-node
+                        (compiler-comptime-host-structural-session)
                         pools
                         items
                         missing-node

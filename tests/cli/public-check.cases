@@ -1491,6 +1491,196 @@ stderr contains error[E0201]: typecheck: unbound name i
 stderr contains main.tl:10:13
 stderr contains in expansion of macro `m` invoked here
 
+# #9681: a free macro-template identifier with no definition-site binding
+# does not bind a same-name caller local, whatever binds it (SPEC 3.7.2).
+# The diagnostic names the source spelling at the template, never a generated
+# hygiene name.
+
+# Caller binding: repro: a `let` local of the caller.
+case check-macro-free-template-name-let
+file main.tl
+(defmacro (n) : i64
+  `(+ x 1))
+
+(define (main) : i64
+  (let [x : i64 5]
+    (n)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:2:7
+stderr contains in expansion of macro `n` invoked here
+stderr not-contains <structural
+
+# Caller binding: a function parameter.
+case check-macro-free-template-name-param
+file main.tl
+(defmacro (n) : i64
+  `(+ x 1))
+
+(define (f [x : i64]) : i64
+  (n))
+
+(define (main) : i64
+  (f 5))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:2:7
+stderr contains in expansion of macro `n` invoked here
+stderr not-contains <structural
+
+# Caller binding: a `match` arm binder.
+case check-macro-free-template-name-match
+file main.tl
+(defenum Box (Full i64) (Empty))
+
+(defmacro (n) : i64
+  `(+ x 1))
+
+(define (main) : i64
+  (match (Full 5)
+    [(Full x) (n)]
+    [(Empty) 0]))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:4:7
+stderr contains in expansion of macro `n` invoked here
+stderr not-contains <structural
+
+# Caller binding: a `for` clause binder.
+case check-macro-free-template-name-for
+file main.tl
+(import stdlib.iterator)
+
+(defmacro (n) : i64
+  `(+ x 1))
+
+(define (main) : i64
+  (let [total : i64 0]
+    (for [x (iterator.range 0 3)]
+      (+= total (n)))
+    total))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:4:7
+stderr contains in expansion of macro `n` invoked here
+stderr not-contains <structural
+
+# Caller binding: a lambda parameter.
+case check-macro-free-template-name-lambda
+file main.tl
+(defmacro (n) : i64
+  `(+ x 1))
+
+(define (main) : i64
+  (let [f : (-> i64 i64) (lambda ([x : i64]) : i64 (n))]
+    (f 5)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:2:7
+stderr contains in expansion of macro `n` invoked here
+stderr not-contains <structural
+
+# Caller binding: a `set!` target.
+case check-macro-free-template-name-set
+file main.tl
+(defmacro (reset!) : unit
+  `(set! x 0))
+
+(define (main) : i64
+  (let [x : i64 5]
+    (reset!)
+    x))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:2:4
+stderr contains in expansion of macro `reset!` invoked here
+stderr not-contains <structural
+
+# Caller binding: the leading segment of a dotted reference.
+case check-macro-free-template-name-dotted
+file main.tl
+(defstruct Pair (left i64) (right i64))
+
+(defmacro (left-plus-one) : i64
+  `(+ p.left 1))
+
+(define (main) : i64
+  (let [p : Pair (Pair 5 6)]
+    (left-plus-one)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name p.left
+stderr contains main.tl:4:7
+stderr contains in expansion of macro `left-plus-one` invoked here
+stderr not-contains <structural
+
+# Caller binding: an `any?` clause binder (signature-deferred body).
+case check-macro-free-template-name-any
+file main.tl
+(import stdlib.iterator)
+
+(defmacro (big?) : bool
+  `(> x 1))
+
+(define (main) : i64
+  (if (any? [x (iterator.range 0 3)] (big?)) 1 0))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:4:7
+stderr contains in expansion of macro `big?` invoked here
+stderr not-contains <structural
+
+# Caller binding: a user binding-prefix macro's clause binder.
+case check-macro-free-template-name-prefix
+file main.tl
+(import stdlib.comptime)
+
+(defmacro (bind-first [bindings : ExprBindingClause ...] [body : Expr ...]) : i64
+  (let
+    [clause : comptime.ExprBindingClause
+      (comptime.expr-binding-clause-list-nth bindings 0)]
+    (comptime.expr-let-scope
+      (comptime.expr-binding-clause-name clause)
+      (comptime.expr-binding-clause-init clause)
+      (comptime.expr-list-nth body 0))))
+
+(defmacro (n) : i64
+  `(+ x 1))
+
+(define (main) : i64
+  (bind-first [x (cast 5 : i64)] (n)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:13:7
+stderr contains in expansion of macro `n` invoked here
+stderr not-contains <structural
+
 # #5448: a batch entry that fails during macro expansion fails the entry and
 # exits nonzero cleanly; the driver must not segfault (exit 139).
 case normal-macro-error-compile-batch

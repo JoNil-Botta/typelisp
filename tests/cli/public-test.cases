@@ -113,6 +113,7 @@ run test --check --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-targ
 exit 1
 stderr contains error[E0201]
 stderr contains --> start_diag_pkg/src/inline.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
 step package-integration
 run test --check --manifest-path "{{dir}}/integration/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
@@ -120,6 +121,156 @@ stderr contains error[E0201]
 stderr not-contains --> :1:1
 stderr contains unknown.tl:1:1
 stderr contains 1 | (define (h) : Nope 0)
+
+# #9697: retain the package display path, but read snippets from the physical
+# source for both preflight and harness diagnostics. An imported diagnostic
+# must still quote the imported file, even when its line number matches.
+case package-inline-diagnostic-source
+file pkg/typelisp.pkg
+(package (name "snippet_pkg") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file pkg/src/lib.tl
+(define (g) : i64 1)
+end-file
+file pkg/src/inline.tl
+;; An expression-located diagnostic after a comment.
+(define (f) : i64 (+ 1 true))
+(test uses-f (f) unit)
+end-file
+cwd {{dir}}
+step package-expression-check
+run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/inline.tl:2:24
+stderr contains 2 | (define (f) : i64 (+ 1 true))
+stderr contains test: package inline preflight failed:
+sh test "$(tail -c 1 "{{stderr}}" | od -An -tu1 | tr -d '[:space:]')" = 10
+step package-expression-test
+run test --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/inline.tl:2:24
+stderr contains 2 | (define (f) : i64 (+ 1 true))
+step package-expression-test-check
+run test --check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/inline.tl:2:24
+stderr contains 2 | (define (f) : i64 (+ 1 true))
+file pkg/src/inline.tl
+(define (f) : Nope 0)
+(test uses-f (f) unit)
+end-file
+step package-start-check
+run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0201]
+stderr contains --> snippet_pkg/src/inline.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
+step package-start-test
+run test --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0201]
+stderr contains --> snippet_pkg/src/inline.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
+step package-start-test-check
+run test --check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0201]
+stderr contains --> snippet_pkg/src/inline.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
+file pkg/src/inline.tl
+(define (f) : i64 1)
+(test bad-body (+ 1 true) unit)
+end-file
+step package-body-check
+run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/inline.tl:2:21
+stderr contains 2 | (test bad-body (+ 1 true) unit)
+step package-body-test
+run test --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/inline.tl:2:21
+stderr contains 2 | (test bad-body (+ 1 true) unit)
+step package-body-test-check
+run test --check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/inline.tl:2:21
+stderr contains 2 | (test bad-body (+ 1 true) unit)
+file pkg/src/imported.tl
+(define (bad) : i64 (+ 2 false))
+end-file
+file pkg/src/inline.tl
+(import imported)
+(test imported-body (imported.bad) unit)
+end-file
+step package-imported-check
+run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/imported.tl:1:26
+stderr contains 1 | (define (bad) : i64 (+ 2 false))
+stderr not-contains 1 | (import imported)
+step package-imported-test
+run test --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/imported.tl:1:26
+stderr contains 1 | (define (bad) : i64 (+ 2 false))
+step package-imported-test-check
+run test --check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> snippet_pkg/src/imported.tl:1:26
+stderr contains 1 | (define (bad) : i64 (+ 2 false))
+
+case package-inline-diagnostic-controls
+file bad.tl
+(define (f) : i64 (+ 1 true))
+(test uses-f (f) unit)
+end-file
+file pkg/typelisp.pkg
+(package (name "ordinary_pkg") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file pkg/src/lib.tl
+(define (g) : i64 (+ 1 true))
+end-file
+cwd {{dir}}
+step single-file-check
+run check bad.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains --> bad.tl:1:24
+stderr contains 1 | (define (f) : i64 (+ 1 true))
+step single-file-test
+run test bad.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains --> bad.tl:1:24
+stderr contains 1 | (define (f) : i64 (+ 1 true))
+step single-file-test-check
+run test --check bad.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains --> bad.tl:1:24
+stderr contains 1 | (define (f) : i64 (+ 1 true))
+step ordinary-package-check
+run check --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains --> {{dir}}/pkg/src/lib.tl:1:24
+stderr contains 1 | (define (g) : i64 (+ 1 true))
+step ordinary-package-test
+run test --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains --> {{dir}}/pkg/src/lib.tl:1:24
+stderr contains 1 | (define (g) : i64 (+ 1 true))
+step ordinary-package-test-check
+run test --check --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains --> {{dir}}/pkg/src/lib.tl:1:24
+stderr contains 1 | (define (g) : i64 (+ 1 true))
 
 # #6190: opt0 once suppressed AddrOf, then read its uninitialized home while
 # preparing the Windows WriteFile byte-count pointer used by the final summary.

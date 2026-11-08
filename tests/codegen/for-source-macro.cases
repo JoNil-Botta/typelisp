@@ -1,6 +1,8 @@
 # Scalar `for` is an ordinary source transformer (run by scripts/verify-stdlib.sh):
 # no native identity hooks remain, an exact copy of its body still works
-# after changing only its name, and an owned range counts in place.
+# after changing only its name, and an owned range counts in place. Any macro
+# with its `[ExprBindingClause ...] [Expr ...]` signature expands its bodies
+# only under the clause binders (#8748).
 
 file copied-for.tl
 (import stdlib.iterator)
@@ -13,6 +15,50 @@ file copied-for.tl
       (copied.for-copy [item (iterator.range 0 3)]
         (set! total (+ total item)))
       (+ total 39))))
+end-file
+
+file copied-for-when.tl
+(import stdlib.iterator)
+(import for_copy_macros as copied)
+
+(define (main) : i64
+  (let
+    [total : i64 0]
+    (begin
+      (copied.for-copy [item (iterator.range 0 4)]
+        (when (> item 1) (+= total item)))
+      (+ total 37))))
+end-file
+
+file any-or-unbound.tl
+(import stdlib.iterator)
+
+(define (main) : i64
+  (if (any? [i (iterator.range 0 4)] (or (> j 2) false))
+    42
+    1))
+end-file
+
+file any-source-unbound.tl
+(import stdlib.iterator)
+
+(define (main) : i64
+  (if (all? [i (iterator.range 0 j)] (and (> i 2) true))
+    42
+    1))
+end-file
+
+file eager-name-operand.tl
+(import stdlib.iterator)
+
+(defmacro (m [x : Expr] [p : Expr]) : bool
+  `(let [found false]
+    (for [,x (iterator.range 0 4)]
+      (if ,p (set! found true) unit))
+    found))
+
+(define (main) : i64
+  (if (m i (or (> i 2) false)) 42 1))
 end-file
 
 file range-for.tl
@@ -109,3 +155,52 @@ do tl-run
 target -
 opt 0 2
 exit 42
+
+# A renamed copy of `for` defers its body like `for` itself, so a typed-operand
+# macro in the body sees the clause binder (SPEC: no macro-name exception).
+case renamed-copy-macro-body-runs
+setup for-copy-mutation {{work}}/stdlib-root
+source {{work}}/copied-for-when.tl
+do tl-run
+target -
+opt -
+args --stdlib-root {{work}}/stdlib-root --stdlib-root {{root}}/stdlib
+exit 42
+
+# A genuinely unbound name in a macro-bearing `any?` predicate is still
+# reported at its own span, through the real any? -> for -> or expansion.
+case any-macro-predicate-unbound
+do none
+run check "{{work}}/any-or-unbound.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name j
+stderr after ^error\[E0201\]:
+next-line .*any-or-unbound.tl:4:45$
+stderr order in expansion of macro `stdlib.core_macros/any?` || in expansion of macro `stdlib.core_macros/for` || in expansion of macro `stdlib.core_macros/or`
+stderr not-contains unbound name i
+
+# The clause source stays in the caller's scope: its unbound name is the one
+# reported, not the binder the deferred predicate uses.
+case all-source-unbound
+do none
+run check "{{work}}/any-source-unbound.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name j
+stderr after ^error\[E0201\]:
+next-line .*any-source-unbound.tl:4:34$
+stderr not-contains unbound name i
+
+# Control: a macro without the binding-prefix signature still expands its
+# operands eagerly at the call site (#9672).
+case eager-name-operand-control
+do none
+run check "{{work}}/eager-name-operand.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name i
+stderr after ^error\[E0201\]:
+next-line .*eager-name-operand.tl:10:19$
+stderr contains in expansion of macro `stdlib.core_macros/or` invoked here
+stderr not-contains in expansion of macro `stdlib.core_macros/for`

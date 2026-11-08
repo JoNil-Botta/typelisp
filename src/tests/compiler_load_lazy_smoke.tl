@@ -763,6 +763,32 @@
           demand
           cbi.compiler-builtin-id-fix-left)))))
 
+(define (structural-member-demand-cross-decl-ok?) : bool
+  ;; Exact members span declarations, and a later unknown still wins (#9682).
+  (and
+    (let
+      [demand : load_tests.CompilerLoadStructuralMemberDemand
+        (structural-member-demand-source
+          "(module demand.cross)
+(define (one) : i64 (subject.left))
+(define (two) : i64 (subject.right))"
+          cbi.compiler-builtin-id-fix-subject)]
+      (and
+        (= (load_tests.compiler-load-structural-member-demand-count demand) 2)
+        (load_tests.compiler-load-structural-member-demand-contains?
+          demand
+          cbi.compiler-builtin-id-fix-left)
+        (load_tests.compiler-load-structural-member-demand-contains?
+          demand
+          cbi.compiler-builtin-id-fix-right)))
+    (match (structural-member-demand-source
+      "(module demand.cross.unknown)
+(define (one) : i64 (subject.left))
+(defmacro (two) : Expr (expr-int 2))"
+      cbi.compiler-builtin-id-fix-subject)
+      [(CompilerLoadStructuralFullDemand) true]
+      [_ false])))
+
 (define (structural-member-demand-unknown-ok?) : bool
   ;; A local macro stays an eager fence (#9682).
   (match (load.compiler-load-parse-source-diagnostic-escaping
@@ -998,6 +1024,9 @@
   (unless
     (structural-member-demand-aggregate-ok?)
     (return (io.panic "structural member aggregate demand mismatch")))
+  (unless
+    (structural-member-demand-cross-decl-ok?)
+    (return (io.panic "structural member cross-declaration demand mismatch")))
   (unless
     (structural-member-demand-unknown-ok?)
     (return (io.panic "structural member unknown demand mismatch")))

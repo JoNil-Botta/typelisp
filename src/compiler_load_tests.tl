@@ -289,6 +289,44 @@
       (CompilerLoadStructuralExactMembers demand.members)
       (CompilerLoadStructuralNoDemand))))
 
+;; Exact member sets need every declaration. The production list walk stops at
+;; the first qualified use outside an observer (#9682), so this helper folds the
+;; declarations itself and stops only at unknown demand.
+(define (compiler-load-session-state-structural-decl-list-demand
+  [state : (& state load.CompilerLoadSessionState)]
+  [decls : (& decls ast.AstDeclList)]
+  [alias : i64]
+  [summary : (& summary load.CompilerLoadSurfaceSummary)]) : load.CompilerLoadLazyAliasDemand
+  (match (ast.ast-decl-list-step decls)
+    [(Nil) (load.compiler-load-lazy-alias-demand-none)]
+    [(Cons decl rest)
+      (let
+        [head : load.CompilerLoadLazyAliasDemand
+          (match decl
+            [(ModuleBody _ body)
+              (compiler-load-session-state-structural-decl-list-demand
+                state
+                (& (deref body))
+                alias
+                summary)]
+            [_
+              (load.compiler-load-session-state-lazy-decl-demand
+                state
+                (& decl)
+                alias
+                cbi.compiler-builtin-id-fix-empty
+                summary
+                (sym_i64_env.sym-i64-empty))])]
+        (if head.unknown
+          head
+          (load.compiler-load-lazy-alias-demand-merge
+            head
+            (compiler-load-session-state-structural-decl-list-demand
+              state
+              (& rest)
+              alias
+              summary))))]))
+
 (define (compiler-load-session-state-structural-member-demand-with-pools
   [state : load.CompilerLoadSessionState]
   [decls : ast.AstDeclList]
@@ -299,13 +337,11 @@
     (compiler-load-structural-member-demand-from-lazy
       (let
         [bound-5 (load.compiler-load-lazy-empty-surface-summary)]
-        (load.compiler-load-session-state-lazy-decl-list-demand
+        (compiler-load-session-state-structural-decl-list-demand
           (& state)
           (& decls)
           alias
-          cbi.compiler-builtin-id-fix-empty
-          bound-5
-          (sym_i64_env.sym-i64-empty))))))
+          (& bound-5))))))
 
 ;; Serial/test compatibility adapter. Production load jobs pass their owned
 ;; session state to the stateful entry point above.

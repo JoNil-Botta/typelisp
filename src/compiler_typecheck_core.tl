@@ -31164,7 +31164,8 @@
 ;; Bare value keys of the entry module: its own value declarations and its
 ;; unqualified imports (`m.*`, `m.item`). The entry module's identity is empty,
 ;; so they share the bare top-env namespace; only the entry module may see them.
-;; The map is the exact set. It lives in an arena replaced with each full build.
+;; The map is the exact set. It lives in an arena replaced with each full build
+;; and released with the compile's file state.
 (define tc-entry-hidden-names : tc_i64_i64_map.Map
   (tc_i64_i64_map.with-capacity 16))
 (define tc-entry-hidden-arena : i64
@@ -31227,6 +31228,16 @@
     (in-arena
       (arena.Arena tc-entry-hidden-arena)
       (set! tc-entry-hidden-names (tc_i64_i64_map.with-capacity 64))))
+  (tc-entry-hidden-filter-reset!))
+
+;; Drop one compile's set so a batch entry's teardown retains no storage. The
+;; emptied filter keeps the map unread until the next full build replaces it.
+(define (tc-entry-hidden-names-release!) : unit
+  (unsafe
+    (when
+      (not (= tc-entry-hidden-arena 0))
+      (arena.tl_arena_destroy tc-entry-hidden-arena)
+      (set! tc-entry-hidden-arena 0)))
   (tc-entry-hidden-filter-reset!))
 
 (define (tc-entry-hidden-note! [key-id : i64]) : unit

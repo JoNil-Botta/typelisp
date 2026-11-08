@@ -1274,6 +1274,7 @@
         (owned_view.compiler-owned-shared-view state))
       (compiler_typecheck_core.compiler-typecheck-reset-file-state-for-job!
         (compiler-driver-state-typecheck state))
+      (compiler_typecheck_core.tc-entry-hidden-names-release!)
       (compiler-driver-batch-profile-mark!
         (compiler-driver-state-profile state)
         ordinal

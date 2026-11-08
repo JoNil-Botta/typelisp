@@ -2550,8 +2550,6 @@
       (+= index 1))
     ok))
 
-;; Flags are scoped to one adjacent integer producer, including when the same
-;; scratch state is reused at the start of another block.
 ;; Each compare form at each operand width, with the condition for its
 ;; signedness: `<cmp/test> ; set<cc> %al ; movzbq %al, %rax` (#9713).
 (define (compiler-backend-object-compare-binop-hex?
@@ -2741,6 +2739,8 @@
       (compiler-backend-object-compare-target-bytes-ok? Windows))
     (io.panic "a direct-object compare ignored its operand type")))
 
+;; Flags are scoped to one adjacent integer producer, including when the same
+;; scratch state is reused at the start of another block.
 (define (compiler-backend-object-flags-isolation-ok?) : bool
   (let
     [program-index : backend.CompilerBackendProgramIndex

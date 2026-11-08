@@ -59,6 +59,10 @@ fi
 corpus() {
     cat <<'EOF'
 arithmetic tests/integration/arithmetic.tl
+cpu_intrinsic_shadow tests/integration/cpu_intrinsic_shadow.tl
+cpu_intrinsic_local_shadow tests/integration/cpu_intrinsic_local_shadow.tl
+cpu_intrinsic_unshadowed tests/integration/cpu_intrinsic_unshadowed.tl
+cpu_intrinsic_import_shadow tests/integration/cpu_intrinsic_import_shadow.tl
 arena_caller_reference_store tests/integration/arena_caller_reference_store.tl
 arena_caller_reference_store_contexts tests/integration/arena_caller_reference_store_contexts.tl
 stdlib_net_parity tests/integration/stdlib_net_parity.tl

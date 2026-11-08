@@ -545,6 +545,29 @@
   [bindings : ast.AstResourceBindingList]) : i64
   (ast.ast-resource-binding-list-len (& bindings)))
 
+(define (compiler-parse-cpu-call?
+  [source : String]
+  [name : String]
+  [arity : i64]) : bool
+  (match (parser.parse-ast-source source)
+    [(Ok (Program decls))
+      (match (ast.ast-decl-list-step (deref decls))
+        [(Cons (DefFn _ _ _ _ body _) _)
+          (compiler-parse-macro-call-node-ok? body name arity)]
+        [_ false])]
+    [(Err _) false]))
+
+(test
+  compiler-parse-prebound-cpu-calls
+  (test.assert-true
+    (and
+      (compiler-parse-cpu-call? "(define (main) : i64 (xgetbv 0))" "xgetbv" 1)
+      (compiler-parse-cpu-call? "(define (main) : i64 (cpuid 0 0))" "cpuid" 2)
+      ;; Arity belongs to the selected callable, which may be a user definition.
+      (compiler-parse-cpu-call? "(define (main) : i64 (xgetbv))" "xgetbv" 0)
+      (compiler-parse-cpu-call? "(define (main) : i64 (xgetbv 0 1))" "xgetbv" 2))
+    "prebound CPU names parse as calls before binding selection"))
+
 (define (ast-first-import-ok? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
     [(Cons (Import _ (Spec (Module) path (Some module-name) (Some alias) _)) _)

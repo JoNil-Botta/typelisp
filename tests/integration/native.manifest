@@ -416,6 +416,10 @@ crossblock_reload_elide|all|-|tests/integration/crossblock_reload_elide.tl|42|-|
 licm_desc_hoist|all|-|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl|-
 licm_memclean_global_promote|all|-|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl|-
 cpuid_operand_homes|all|-|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl|-
+cpu_intrinsic_shadow|all|0,1,2|tests/integration/cpu_intrinsic_shadow.tl|42|-|-|-|-
+cpu_intrinsic_local_shadow|all|0,1,2|tests/integration/cpu_intrinsic_local_shadow.tl|42|-|-|-|-
+cpu_intrinsic_unshadowed|all|0,1,2|tests/integration/cpu_intrinsic_unshadowed.tl|42|-|-|-|-
+cpu_intrinsic_import_shadow|all|0,1,2|tests/integration/cpu_intrinsic_import_shadow.tl|42|-|-|cpu_intrinsic_shadow_provider.tl|-
 global_cell_writer_loop_reads|all|-|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl|-
 lftr_counter_retire|all|-|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl|-
 licm_alias_stress|all|-|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl|-

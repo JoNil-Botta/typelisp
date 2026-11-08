@@ -115,6 +115,7 @@ tests/*.ps1	*	-	Executable corpus harness changes can alter every gate contract.
 tests/*.awk	*	-	Corpus validation harness changes require the full table.
 tests/fixtures/ci-affected/*	*	-	Selector regression data changes the preflight contract itself.
 scripts/codegen-target-dispatch-inventory.tsv	stage2-codegen-target-parity	-	Only target parity consumes the target-dispatch inventory.
+scripts/check-codegen-target-parity.sh	stage2-codegen-target-parity	@compiler	The target-parity harness owns its source corpus and target comparisons.
 docs/*	stage2-docs-pages-build-path	@docs	Rendered documentation and its links.
 docs/*.tl	stage2-repository-doctests,stage2-codegen-target-parity	@corpus	Runnable documentation and target-bearing source examples.
 README.md	stage2-docs-pages-build-path	@docs	Published landing page and documentation links.

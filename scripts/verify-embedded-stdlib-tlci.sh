@@ -41,7 +41,7 @@ run_checkout_root_self_test() (
     }
 
     for selftest_spelling in "$selftest_root" "$selftest_mixed" "$selftest_windows"; do
-        for selftest_suffix in '' '/src/main.tl' '/stdlib/core_macros.tl'; do
+        for selftest_suffix in '' '/src/checkout-root-probe.tl' '/stdlib/checkout-root-probe.tl'; do
             printf 'TLCI\000%s%s\000' "$selftest_spelling" "$selftest_suffix" > "$selftest_image"
             if verify_no_checkout_root "$selftest_image" "$selftest_root" \
                 2> "$selftest_dir/stderr.txt"; then

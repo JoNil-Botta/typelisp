@@ -847,7 +847,8 @@
 (defstruct CompilerLoadTraversalContext
   (load-state CompilerLoadSessionState)
   (importer-path-id i64)
-  (importer-decl-owner-id i64))
+  (importer-decl-owner-id i64)
+  (importer-scan-decls ast.AstDeclList))
 
 (define (compiler-load-session-state-bool-cell [value : bool]) : (__tl_dyn-array
     bool)
@@ -7277,8 +7278,7 @@
     (match decl.kind
       [(CompilerLoadSurfaceMacro) true]
       [_ false])
-    (match (owned_view.compiler-owned-reference-shared-view
-      (& decl.macro-result))
+    (match (& decl.macro-result)
       [(or (CompilerLoadSurfaceMacroModule) (CompilerLoadSurfaceMacroDecls))
         true]
       [_ false])))
@@ -8869,6 +8869,25 @@
     false
     (CompilerLoadLazyImportDirect)))
 
+(define (compiler-load-leading-plain-import? [decl : (& ast.AstDecl)]) : bool
+  (match decl
+    [(Module _) true]
+    [(Import _ (Spec kind _ _ _ _))
+      (not (compiler-load-macro-import-kind? kind))]
+    [_ false]))
+
+;; What lazy-import demand scans for every import of a file. Imports are
+;; collected before a module's other forms (SPEC 4.4.4), so a use or macro
+;; anywhere in the file can need an import, wherever the import is written.
+;; Leading plain imports cannot demand an alias, so each file drops them once.
+(define (compiler-load-importer-scan-decls [decls : (& ast.AstDeclList)]) : ast.AstDeclList
+  (match (ast.ast-decl-list-step decls)
+    [(Nil) (ast.ast-decl-list-new)]
+    [(Cons decl rest)
+      (if (compiler-load-leading-plain-import? (& decl))
+        (compiler-load-importer-scan-decls (& rest))
+        (owned_view.compiler-owned-reference-shared-view decls))]))
+
 (define (compiler-load-session-state-lazy-import-preload-demand
   [state : (& CompilerLoadSessionState)]
   [candidate : bool]
@@ -10071,7 +10090,8 @@
                   (CompilerLoadTraversalContext
                     traversal.load-state
                     traversal.importer-path-id
-                    target-module-id)
+                    target-module-id
+                    traversal.importer-scan-decls)
                   body
                   (string.copy importer-path)
                   (string.copy target-module)
@@ -10197,7 +10217,7 @@
                         (& traversal.load-state)
                         preload-candidate
                         (clone alias)
-                        (& rest)
+                        (& traversal.importer-scan-decls)
                         pools)]
                     [preload-summary-needed : bool
                       (and
@@ -10227,7 +10247,7 @@
                           resolved-id
                           (clone expected-module)
                           (clone alias)
-                          (& rest)
+                          (& traversal.importer-scan-decls)
                           pools
                           (clone preload-demand)
                           stdlib-roots)
@@ -10855,7 +10875,8 @@
                             (CompilerLoadTraversalContext
                               (owned_view.compiler-owned-shared-view load-state)
                               source-path-id
-                              parse-identity.decl-owner-id)
+                              parse-identity.decl-owner-id
+                              (compiler-load-importer-scan-decls (& load-decls)))
                             load-decls
                             (string.copy source-path)
                             (string.copy module-id)
@@ -13434,6 +13455,7 @@
 
 (define (compiler-load-package-decls-with-module-and-roots
   [decls : (& ast.AstDeclList)]
+  [importer-scan-decls : (& ast.AstDeclList)]
   [importer-path : String]
   [importer-path-id : i64]
   [importer-module : (& str)]
@@ -13460,6 +13482,7 @@
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-package-decls-with-module-and-roots
                 (& rest)
+                importer-scan-decls
                 (string.copy importer-path)
                 importer-path-id
                 importer-module
@@ -13540,7 +13563,7 @@
                       (compiler-load-lazy-import-preload-demand
                         preload-candidate
                         (clone alias)
-                        (& rest)
+                        importer-scan-decls
                         preload-pools)]
                     [preload-summary-needed : bool
                       (and
@@ -13567,7 +13590,7 @@
                           resolved-id
                           (clone expected-module)
                           (clone alias)
-                          (& rest)
+                          importer-scan-decls
                           preload-pools
                           (clone preload-demand)
                           stdlib-roots)
@@ -13645,6 +13668,7 @@
                                         kind)))))))
                           (match (compiler-load-package-decls-with-module-and-roots
                             (& rest)
+                            importer-scan-decls
                             (owned_view.compiler-owned-shared-view
                               importer-path)
                             importer-path-id
@@ -13772,6 +13796,7 @@
                 importer-module-id
                 (compiler-load-package-decls-with-module-and-roots
                   (& rest)
+                  importer-scan-decls
                   (string.copy importer-path)
                   importer-path-id
                   importer-module
@@ -13805,6 +13830,7 @@
                 importer-module-id
                 (compiler-load-package-decls-with-module-and-roots
                   (& rest)
+                  importer-scan-decls
                   (string.copy importer-path)
                   importer-path-id
                   importer-module
@@ -13838,6 +13864,7 @@
                 importer-module-id
                 (compiler-load-package-decls-with-module-and-roots
                   (& rest)
+                  importer-scan-decls
                   (string.copy importer-path)
                   importer-path-id
                   importer-module
@@ -13871,6 +13898,7 @@
                 importer-module-id
                 (compiler-load-package-decls-with-module-and-roots
                   (& rest)
+                  importer-scan-decls
                   (string.copy importer-path)
                   importer-path-id
                   importer-module
@@ -13885,6 +13913,7 @@
           [_
             (match (compiler-load-package-decls-with-module-and-roots
               (& rest)
+              importer-scan-decls
               (string.copy importer-path)
               importer-path-id
               importer-module
@@ -14011,6 +14040,8 @@
                                 (& load-decls))))
                           (compiler-load-package-decls-with-module-and-roots
                             (& load-decls)
+                            (&
+                              (compiler-load-importer-scan-decls (& load-decls)))
                             (string.copy source-path)
                             source-path-id
                             (& (string.copy module-id))

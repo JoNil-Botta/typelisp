@@ -72979,9 +72979,7 @@
             ret-ty
             (csym.compiler-symbols-missing-handle))]
         (if (and
-          (or
-            (tc_core.tc-constructor-name-id? ctx raw-name-id)
-            (tc_core.tc-constructor-name-id? ctx lookup-name-id))
+          (lower-constructor-callee-id? ctx raw-name-id lookup-name-id)
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)
@@ -73056,7 +73054,7 @@
                       ctx
                       type-env
                       raw-name)
-                    resolved-id)]
+                    (lower-hygiene-root-lookup-id ctx raw-name resolved-id))]
                 [(tc_core.TcNameLookup.Err _)
                   (tc_core.TcNameLookup.Ok
                     (lower-hygiene-source-name-in-context-id

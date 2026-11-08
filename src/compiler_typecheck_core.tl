@@ -15398,6 +15398,36 @@
           (tc-type-collect-reference-lifetimes-into resolved out)
           out)])))
 
+;; Whether a macro-global identity rooted at the entry module names an entry
+;; function, value, extern or dispatch. Such an identity is never a constructor,
+;; whichever struct elsewhere shares its spelling.
+(define (tc-root-identity-names-entry-value? [ctx : TcContext] [name-id : i64]) : bool
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    (and
+      (macro-hygiene-global-id? session name-id)
+      (csym.compiler-symbol-root-module-id?
+        (macro-hygiene-global-module-id session name-id))
+      (let
+        [symbols (tc-context-symbols ctx)]
+        [handle : i64
+          (csym.compiler-symbols-lookup-value-in-module-id-or
+            symbols
+            cbi.compiler-builtin-id-fix-empty
+            (macro-hygiene-global-source-name-id-or session name-id name-id)
+            (csym.compiler-symbols-missing-handle))]
+        (and
+          (csym.compiler-symbols-handle-found? handle)
+          (not
+            (or
+              (=
+                (csym.compiler-symbol-handle-kind handle)
+                (csym.compiler-symbol-kind-defstruct))
+              (=
+                (csym.compiler-symbol-handle-kind handle)
+                (csym.compiler-symbol-kind-enum-variant)))))))))
+
 (define (tc-selected-call-signature-ok?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15433,14 +15463,14 @@
           (tc-global-shared-view ret))
           [(ast.AstMaybeType.No) true]
           [(ast.AstMaybeType.Some _)
-            (>=
-              (tc-selected-call-declared-function
-                ctx
-                env
+            (let
+              [callee-id : i64
                 (tc-expr-var-name-id
                   (tc-context-expr-segment-bases ctx)
-                  (tc-global-shared-view func)))
-              0)])
+                  (tc-global-shared-view func))]
+              (or
+                (>= (tc-selected-call-declared-function ctx env callee-id) 0)
+                (tc-root-identity-names-entry-value? ctx callee-id)))])
         (or
           (ast.ast-lifetime-list-empty? (& lifetimes))
           (tc-selected-call-lifetimes-separate? ctx (& params)))

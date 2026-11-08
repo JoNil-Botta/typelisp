@@ -30466,7 +30466,7 @@
               type-env
               lookup-name
               name-id
-              (lower-hygiene-root-lookup-id ctx name-id lookup-name-id)
+              (lower-hygiene-root-lookup-id ctx env name-id lookup-name-id)
               expr-ty)]
           [(Err message) (Err (box (lower-diagnostic message)))])))))
 
@@ -38400,36 +38400,29 @@
   [ctx : tc_core.TcContext]
   [raw-name-id : i64]
   [lookup-id : i64]) : bool
-  (let
-    [source-id : i64 (lower-hygiene-root-source-id ctx raw-name-id)]
-    (if (and
-      (not (= source-id raw-name-id))
-      (lower-top-level-callable-or-value-define-id? ctx source-id))
-      false
-      (or
-        (tc_core.tc-constructor-name-id? ctx raw-name-id)
-        (tc_core.tc-constructor-name-id? ctx lookup-id)))))
-
-(define (lower-top-level-callable-or-value-define-id?
-  [ctx : tc_core.TcContext]
-  [lookup-id : i64]) : bool
-  (or
-    (lower-top-level-callable-lookup-id? ctx lookup-id)
-    (lower-top-level-value-define-lookup-id? ctx lookup-id)))
+  (if (tc_core.tc-root-identity-names-entry-value? ctx raw-name-id)
+    false
+    (or
+      (tc_core.tc-constructor-name-id? ctx raw-name-id)
+      (tc_core.tc-constructor-name-id? ctx lookup-id))))
 
 ;; A global whose definition module is the entry module keeps its structural
-;; identity: the bare spelling resolves in the module being lowered.
+;; identity where its bare spelling would resolve to something else: in a named
+;; module, or under a same-named local.
 (define (lower-hygiene-root-lookup-id
   [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
   [raw-name : i64]
   [resolved-id : i64]) : i64
   (let
     [session : cis.InternStructuralSessionHandle
       (tc_core.tc-context-structural-session ctx)]
     (if (and
-      (not
-        (csym.compiler-symbol-root-module-id?
-          (tc_core.tc-context-module-id ctx)))
+      (or
+        (not
+          (csym.compiler-symbol-root-module-id?
+            (tc_core.tc-context-module-id ctx)))
+        (sym_i64_env.sym-i64-contains-id env resolved-id))
       (tc_core.macro-hygiene-global-id? session raw-name)
       (csym.compiler-symbol-root-module-id?
         (tc_core.macro-hygiene-global-module-id session raw-name)))
@@ -40867,7 +40860,11 @@
                     [(Ok _ resolved-id)
                       (tc_core.TcNameLookup.Ok
                         (tc_core.tc-hygiene-global-call-name raw-text)
-                        (lower-hygiene-root-lookup-id ctx raw-name resolved-id))]
+                        (lower-hygiene-root-lookup-id
+                          ctx
+                          env
+                          raw-name
+                          resolved-id))]
                     [(Err _)
                       (tc_core.TcNameLookup.Ok
                         (tc_core.tc-hygiene-global-call-name raw-text)
@@ -73054,7 +73051,7 @@
                       ctx
                       type-env
                       raw-name)
-                    (lower-hygiene-root-lookup-id ctx raw-name resolved-id))]
+                    (lower-hygiene-root-lookup-id ctx env raw-name resolved-id))]
                 [(tc_core.TcNameLookup.Err _)
                   (tc_core.TcNameLookup.Ok
                     (lower-hygiene-source-name-in-context-id

@@ -3929,10 +3929,28 @@
 
 ;; Public String arguments also accept inspected Name values, which is how
 ;; reflected names flow through ordinary string helpers.
+;; A root identity is meaningful only as a reference; everywhere a value is read
+;; as a name it stands for its source spelling.
+(define (ctfe-public-name-id [name-id : i64]) : i64
+  (if (>= name-id (ci.intern-structural-key-base))
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-capture-active-handle))]
+      (match (cis.intern-structural-session-macro-global-record-for-raw
+        session
+        name-id)
+        [(Some record)
+          (if (= record.definition-module-id cbi.compiler-builtin-id-fix-empty)
+            record.source-name-id
+            name-id)]
+        [(No) name-id]))
+    name-id))
+
 (define (ctfe-value-named [value : CompilerCtfeValue]) : CtfeMaybeNamed
   (match value
     [(String text string-id) (Some text string-id)]
-    [(Name text name-id) (Some text name-id)]
+    [(Name text name-id) (Some text (ctfe-public-name-id name-id))]
     [_ (None)]))
 
 ;; Binding-oriented syntax constructors preserve an inspected or explicitly
@@ -3987,16 +4005,7 @@
         [text-id : i64
           (ctfe-string-syntax-name-id source-names (& text) string-id)]
         (Some text text-id))]
-    [(Name text name-id)
-      (Some
-        text
-        (if (=
-          name-id
-          (ctfe-root-owner-authority-id
-            (cis.intern-structural-session-handle-from-source-names
-              source-names)))
-          cbi.compiler-builtin-id-fix-empty
-          name-id))]
+    [(Name text name-id) (Some text (ctfe-public-name-id name-id))]
     [_ (None)]))
 
 (define (ctfe-reflect-info-canonical-id [info : (& CtfeReflectInfo)]) : i64
@@ -10663,7 +10672,10 @@
             expr
             (str_cat.str-cat
               "compile-time evaluation cannot reference runtime variable '"
-              (ci.intern-str name-id)
+              (ctfe-name-text-for-session
+                (compiler-ctfe-macro-state-structural-session
+                  (ctfe-env-macro-state env))
+                name-id)
               "'"))))]))
 
 ;; Dotted public places remain parser-owned Var nodes until semantic context can

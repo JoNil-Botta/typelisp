@@ -144,6 +144,83 @@
         (load_tests.compiler-load-test-seen-contains? seen "stdlib.result"))]
     [(Err _) false]))
 
+(define (lazy-canonical-path-entry-ok?
+  [dir : String]
+  [entry-module : String]
+  [source : String]) : bool
+  ;; SPEC 4.4.3: a use spelled with the imported module's full canonical path
+  ;; keeps the import loaded without any alias use (#8812).
+  (let
+    [nested : String (str_cat.str-cat (clone dir) "/nested")]
+    [entry : String (str_cat.str-cat (clone dir) "/entry.tl")]
+    (load.compiler-load-test-mkdir (& dir))
+    (load.compiler-load-test-mkdir (& nested))
+    (lazy-write-text
+      (str_cat.str-cat nested "/dep.tl")
+      "(module nested.dep)
+(defstruct Box (value i64))
+(define (get) : i64 7)")
+    (lazy-write-text (string.copy entry) source)
+    (match (load_tests.compiler-load-file-with-paths
+      entry
+      (sym_i64_env.sym-i64-empty))
+      [(Ok _ _ _ seen)
+        (and
+          (= (load_tests.compiler-load-lazy-import-skip-count) 0)
+          (load_tests.compiler-load-test-seen-contains? seen (& entry-module))
+          (load_tests.compiler-load-test-seen-contains? seen "nested.dep"))]
+      [(Err _) false])))
+
+(define (lazy-canonical-path-demand-ok?) : bool
+  (and
+    (lazy-canonical-path-entry-ok?
+      "target/cl_lazy_canonical_value"
+      "lazy.canonical.value.entry"
+      "(module lazy.canonical.value.entry)
+(import nested.dep)
+(define (main) : i64 (nested.dep.get))")
+    (lazy-canonical-path-entry-ok?
+      "target/cl_lazy_canonical_type"
+      "lazy.canonical.type.entry"
+      "(module lazy.canonical.type.entry)
+(import nested.dep)
+(define (read [b : nested.dep.Box]) : i64 0)
+(define (main) : i64 42)")
+    (lazy-canonical-path-entry-ok?
+      "target/cl_lazy_canonical_both"
+      "lazy.canonical.both.entry"
+      "(module lazy.canonical.both.entry)
+(import nested.dep)
+(define (g) : i64 (dep.get))
+(define (main) : i64 (+ (g) (nested.dep.get)))")))
+
+(define (lazy-unused-macro-only-import-ok?) : bool
+  ;; A declaration-macro-only module stays skipped without a qualified use.
+  (load.compiler-load-test-mkdir "target/cl_lazy_unused_macro_only")
+  (load.compiler-load-test-mkdir "target/cl_lazy_unused_macro_only/generic")
+  (load.compiler-load-test-mkdir
+    "target/cl_lazy_unused_macro_only/generic/macro")
+  (lazy-write-text
+    "target/cl_lazy_unused_macro_only/generic/macro/dep.tl"
+    "(module generic.macro.dep)
+(defmacro (make [T : type]) : Module (expr-unit))")
+  (lazy-write-text
+    "target/cl_lazy_unused_macro_only/entry.tl"
+    "(module lazy.unused.macro.only.entry)
+(import generic.macro.dep as api)
+(define (main) : i64 42)")
+  (match (load_tests.compiler-load-file-with-paths
+    "target/cl_lazy_unused_macro_only/entry.tl"
+    (sym_i64_env.sym-i64-empty))
+    [(Ok _ _ _ seen)
+      (and
+        (= (load_tests.compiler-load-lazy-import-skip-count) 1)
+        (not
+          (load_tests.compiler-load-test-seen-contains?
+            seen
+            "generic.macro.dep")))]
+    [(Err _) false]))
+
 (define (lazy-direct-module-macro-demand-ok?) : bool
   (load.compiler-load-test-mkdir "target/cl_lazy_module_macro")
   (lazy-write-text
@@ -705,6 +782,12 @@
   (unless
     (lazy-direct-module-macro-demand-ok?)
     (return (io.panic "lazy direct module macro demand smoke mismatch")))
+  (unless
+    (lazy-canonical-path-demand-ok?)
+    (return (io.panic "lazy canonical module path demand smoke mismatch")))
+  (unless
+    (lazy-unused-macro-only-import-ok?)
+    (return (io.panic "lazy unused macro-only import smoke mismatch")))
   (unless
     (lazy-unused-module-macro-import-ok?)
     (return (io.panic "lazy unused module macro import smoke mismatch")))

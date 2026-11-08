@@ -1110,9 +1110,10 @@ source_selected_generated_export|all|0,1,2|tests/integration/source_selected_gen
 test_cli_entry_memory|all|-|src/tests/test_cli_entry_memory_smoke.tl|42|@tests/integration/test_cli_entry_memory.stdout.expected|-|test_cli_core_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|expected-stderr:@tests/integration/test_cli_entry_memory.stderr.expected
 test_cli_entry_state|all|-|src/tests/test_cli_entry_state_smoke.tl|42|-|-|-|-
 c_function_pointer_flow|all|-|tests/integration/c_function_pointer_flow.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c|-
-c_function_pointer_null|all|-|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n
+c_function_pointer_null|all|-,0,1,2|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n
 c_function_pointer_publication|all|-|tests/integration/c_function_pointer_publication.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c stdlib/thread.tl|-
 c_function_pointer_kind|all|-|tests/integration/c_function_pointer_kind.tl|42|-|-|-|-
+ptr_null_check_word|all|0,1,2|tests/integration/ptr_null_check_word.tl|42|-|-|-|-
 wide_struct_members|all|-|tests/integration/wide_struct_members.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|-
 wide_struct_members|all|0,2|tests/integration/wide_struct_members.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|stage-stdlib
 wide_enum_variants|all|-|tests/integration/wide_enum_variants.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|-

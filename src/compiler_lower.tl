@@ -32090,12 +32090,14 @@
             (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))]
       (match lowered
         [(Expr value-state value _)
+          ;; A comparison carries its operand type: the nullable CFunc word is
+          ;; compared as I64 against the I64 zero literal (Refs #9670).
           (match (lower-emit-binop
             value-state
             Eq
             (lower-global-shared-view value)
             (I64 0)
-            (Bool))
+            (I64))
             [(Expr condition-state condition _)
               (match (lower-state-fresh-label condition-state "c_fn_null")
                 [(Label fail-state fail-label)
@@ -33330,7 +33332,9 @@
         [lowered : LowerExpr (try (lower-expr ctx state env type-env inner))]
         (match lowered
           [(Expr inner-state inner-value _)
-            (Ok (lower-emit-binop inner-state Eq inner-value (I64 0) (Bool)))]))]
+            ;; The pointer word is compared as I64 against the I64 zero
+            ;; literal; the BinOp field is the operand type (Refs #9670).
+            (Ok (lower-emit-binop inner-state Eq inner-value (I64 0) (I64)))]))]
     [(PtrAddrOf place-box)
       (let
         [place : ast.AstExpr (lower-context-expr-get ctx place-box)]

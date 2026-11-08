@@ -8252,6 +8252,99 @@
         (= (lower-test-function-call-count functions "main" "tl_array_zero") 1))]
     [_ false]))
 
+;; Refs #9670: a null check is a comparison, so its BinOp field carries the
+;; operand type -- the pointer or CFunc word against the I64 zero literal --
+;; never the Bool result type. Constant folding evaluates a comparison at that
+;; type, so a check of a constant null folds away at opt1 and opt2.
+(define (compiler-lower-ptr-null-check-source) : String
+  "(define (c-fn-null) : i64
+  (let
+    [_checked : (CFunc non-null (-> i64 i64))
+      (c-fn-check (ptr-null : (CFunc nullable (-> i64 i64))))]
+    0))
+(define (ptr-null-const) : i64
+  (if (ptr-null? (ptr-null : (Ptr u8))) 7 9))
+(define (main) : i64
+  (+ (c-fn-null) (ptr-null-const)))")
+
+;; Eq instructions in one null-check function; an absent (inlined) function
+;; contributes none.
+(define (lower-test-ptr-null-check-function-eq-count
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [name : String]
+  [i64-only : bool]) : i64
+  (let
+    [count : i64
+      (if i64-only
+        (lower-test-function-i64-binop-op-count funcs name (Eq))
+        (lower-test-function-binop-op-count funcs name (Eq)))]
+    (if (< count 0)
+      0
+      count)))
+
+;; Eq instructions across the null-check program's functions; -1 without `main`.
+(define (lower-test-ptr-null-check-functions-eq-count
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [i64-only : bool]) : i64
+  (if (< (lower-test-function-binop-op-count funcs "main" (Eq)) 0)
+    -1
+    (+
+      (lower-test-ptr-null-check-function-eq-count funcs "c-fn-null" i64-only)
+      (+
+        (lower-test-ptr-null-check-function-eq-count
+          funcs
+          "ptr-null-const"
+          i64-only)
+        (lower-test-ptr-null-check-function-eq-count funcs "main" i64-only)))))
+
+;; Eq instructions in the null-check program after optimization at `level`
+;; (0 inspects the lowered program unchanged); -1 if lowering fails.
+(define (lower-test-ptr-null-check-eq-count [level : i64] [i64-only : bool]) : i64
+  (match (lower.lower-compiler-source (compiler-lower-ptr-null-check-source))
+    [(Ok program spans lower-owner)
+      (let
+        [count : i64
+          (if (= level 0)
+            (match program
+              [(Program _ functions _ _authority)
+                (lower-test-ptr-null-check-functions-eq-count
+                  (& functions)
+                  i64-only)])
+            (match (match (optimize.optimize-program-with-spans-and-level
+              (& program)
+              spans
+              level)
+              [(Program optimized _) optimized])
+              [(Program _ functions _ _authority)
+                (lower-test-ptr-null-check-functions-eq-count
+                  (& functions)
+                  i64-only)]))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        count)]
+    [(Err _) -1]))
+
+(test
+  compiler-lower-ptr-null-check-compares-i64-words
+  (let
+    [lowered : i64 (lower-test-ptr-null-check-eq-count 0 false)]
+    (test.assert-i64-eq
+      lowered
+      2
+      "c-fn-check and ptr-null? each lower to one Eq")
+    (test.assert-i64-eq
+      (lower-test-ptr-null-check-eq-count 0 true)
+      lowered
+      "every null-check Eq carries the I64 operand type, not Bool")
+    (test.assert-i64-eq
+      (lower-test-ptr-null-check-eq-count 1 false)
+      0
+      "opt1 folds both constant-null checks")
+    (test.assert-i64-eq
+      (lower-test-ptr-null-check-eq-count 2 false)
+      0
+      "opt2 folds both constant-null checks")))
+
 (define (compiler-lower-make-array-init-shape-ok? [src : String]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)

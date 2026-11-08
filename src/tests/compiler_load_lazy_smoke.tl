@@ -349,7 +349,33 @@
 (import nested.dep as dep)
 (defmacro (one) : Expr (expr-int 1))
 (define (main) : i64 42)"
-      false)))
+      false)
+    ;; Imports come before a module's other forms (SPEC 4.4.4), so demand does
+    ;; not depend on where the import is written (#9708).
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_macro_before"
+      "(module lazy.macro.before.entry)
+(defmacro (one) : Expr (expr-int 1))
+(import nested.dep as dep)
+(defstruct Pair (value i64))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_use_before"
+      "(module lazy.use.before.entry)
+(define (f) : i64 (dep.get))
+(import nested.dep as dep)
+(defstruct Pair (value i64))
+(define (main) : i64 42)"
+      false)
+    (lazy-local-decl-entry-ok?
+      "target/cl_lazy_unrelated_before"
+      "(module lazy.unrelated.before.entry)
+(define (f) : i64 1)
+(import nested.dep as dep)
+(defstruct Pair (value i64))
+(define (main) : i64 42)"
+      true)))
 
 (define (lazy-direct-module-macro-demand-ok?) : bool
   (load.compiler-load-test-mkdir "target/cl_lazy_module_macro")

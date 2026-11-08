@@ -405,7 +405,8 @@
         (load.CompilerLoadTraversalContext
           (load.compiler-load-active-session-state-shared-view)
           importer-path-id
-          importer-decl-owner-id)
+          importer-decl-owner-id
+          (load.compiler-load-importer-scan-decls (& decls)))
         decls
         importer-path
         importer-module

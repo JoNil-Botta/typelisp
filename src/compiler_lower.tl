@@ -25791,9 +25791,27 @@
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [name-id : i64]) : bool
-  (if (cbi.compiler-builtin-private-intrinsic-id? name-id)
-    (tc_core.tc-private-intrinsic-unshadowed-id? ctx type-env name-id)
-    (not (lower-top-level-value-defined-id? ctx name-id))))
+  (cond
+    [(cbi.compiler-builtin-private-intrinsic-id? name-id)
+      (tc_core.tc-private-intrinsic-unshadowed-id? ctx type-env name-id)]
+    [(and
+        (or
+          (cbi.compiler-builtin-lower-cpuid-id? name-id)
+          (cbi.compiler-builtin-lower-xgetbv-id? name-id))
+        (csym.compiler-symbol-root-module-id?
+          (tc_core.tc-context-module-id ctx)))
+      ;; A foreign module's bare symbol alias does not shadow the root's
+      ;; prebound CPU value. Visible definitions and unqualified imports bind
+      ;; above the default boundary; lexical bindings may live in the hot stack.
+      (and
+        (not
+          (and
+            (tc_core.tc-type-env-scoped-runtime-active? type-env)
+            (>=
+              (tc_core.tc-type-env-scoped-runtime-lookup-index type-env name-id)
+              0)))
+        (tc_core.tc-default-builtin-unshadowed-scan-id? type-env name-id))]
+    [else (not (lower-top-level-value-defined-id? ctx name-id))]))
 
 (define (lower-string-runtime-builtin? [name : String]) : bool
   (let
@@ -73548,9 +73566,12 @@
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
           [(and
               unshadowed
-              (cbi.compiler-builtin-private-intrinsic-id? name)
+              (or
+                (cbi.compiler-builtin-private-intrinsic-id? name)
+                (cbi.compiler-builtin-lower-cpuid-id? name)
+                (cbi.compiler-builtin-lower-xgetbv-id? name))
               (lower-top-level-builtin-available-id? ctx type-env name))
-            ;; Private intrinsic calls in imported bodies must pass through the
+            ;; Unshadowed intrinsic calls in imported bodies pass through the
             ;; ordinary expression lowerer before direct-tail-call selection.
             ;; Otherwise a compatible caller-owned shadow can capture the call.
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]

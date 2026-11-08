@@ -40854,21 +40854,34 @@
                           (owned_view.compiler-owned-shared-view name))]
                       [name-id : i64 source-key-id]
                       [builtin-available : bool
-                        (lower-top-level-builtin-available-id?
-                          ctx
-                          type-env
-                          name-id)]
+                        (or
+                          (and
+                            cis.intern-macro-global-runtime-owned?
+                            (tc_core.macro-hygiene-global-runtime-binding-id?
+                              (tc_core.tc-context-structural-session ctx)
+                              raw-name))
+                          (lower-top-level-builtin-available-id?
+                            ctx
+                            type-env
+                            name-id))]
                       ;; Macro hygiene retains the defining-module spelling in
                       ;; `name`, while the typechecker classifies public Slice
                       ;; intrinsics from their source name. Reuse that exact
                       ;; shadow-aware classifier so generated declarations do
                       ;; not lower slice-view as an ordinary external call.
                       [slice-call-kind : tc_core.TcSliceViewCallKind
-                        (tc_core.tc-slice-view-call-kind-name
-                          ctx
-                          type-env
-                          source-id
-                          (lower-context-intern-str ctx source-id))]
+                        (if cis.intern-macro-global-runtime-owned?
+                          (tc_core.tc-slice-view-call-kind-for-head
+                            ctx
+                            type-env
+                            raw-name
+                            source-id
+                            (lower-context-intern-str ctx source-id))
+                          (tc_core.tc-slice-view-call-kind-name
+                            ctx
+                            type-env
+                            source-id
+                            (lower-context-intern-str ctx source-id)))]
                       [atomic-symbol : String
                         (lower-atomic-extern-symbol-for-name-id
                           ctx
@@ -42100,7 +42113,13 @@
         [name : String (tc_core.tc-env-key-name-text name-id)]
         (and
           (lower-atomic-pointer-name? name)
-          (not (tc_core.tc-name-bound-id? type-env name-id))
+          (or
+            (and
+              cis.intern-macro-global-runtime-owned?
+              (tc_core.macro-hygiene-global-runtime-binding-id?
+                (tc_core.tc-type-env-structural-session type-env)
+                raw-name))
+            (not (tc_core.tc-name-bound-id? type-env name-id)))
           (not
             (tc_core.macro-hygiene-global-user-binding-id?
               (tc_core.tc-type-env-structural-session type-env)

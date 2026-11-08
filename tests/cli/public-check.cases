@@ -1797,6 +1797,451 @@ stderr contains main.tl:13:7
 stderr contains in expansion of macro `n` invoked here
 stderr not-contains <structural
 
+# #9699: free macro-template names resolve in the definition environment
+# (SPEC 3.7.2). A same-spelling name at the use site neither captures one nor
+# supplies one, and a name with a definition-site meaning keeps it.
+
+# Unbound at the definition site: a flat import at the use site supplies nothing.
+case check-macro-free-template-name-use-site-flat-import
+file dep.tl
+(define limit : i64 7)
+end-file
+file mac.tl
+(defmacro (read-limit) : i64
+  `limit)
+end-file
+file main.tl
+(import mac)
+(import dep.*)
+
+(define (main) : i64
+  (mac.read-limit))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name limit
+stderr contains mac.tl:2:4
+stderr contains in expansion of macro `mac/read-limit` invoked here
+stderr not-contains <structural
+
+# Unbound at the definition site: the entry module's own top-level name.
+case check-macro-free-template-name-use-site-global
+file mac.tl
+(defmacro (read-limit) : i64
+  `limit)
+end-file
+file main.tl
+(import mac)
+
+(define limit : i64 9)
+
+(define (main) : i64
+  (mac.read-limit))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name limit
+stderr contains mac.tl:2:4
+
+# Unbound at the definition site: expanded inside a named module.
+case check-macro-free-template-name-use-site-named-module
+file dep.tl
+(define limit : i64 7)
+end-file
+file mac.tl
+(defmacro (read-limit) : i64
+  `limit)
+end-file
+file kmod.tl
+(import mac)
+(import dep.*)
+
+(define (k-val) : i64
+  (mac.read-limit))
+end-file
+file main.tl
+(import kmod)
+
+(define (main) : i64
+  (kmod.k-val))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name limit
+stderr contains mac.tl:2:4
+
+# A qualifier only the use site's import alias binds does not reach that module
+# from a template; the definition module's own alias still does.
+case check-macro-qualified-template-name-use-site-alias
+file dep2.tl
+(define (answer) : i64 9)
+end-file
+file mac.tl
+(defmacro (via-alias) : i64
+  `(d.answer))
+end-file
+file main.tl
+(import mac)
+(import dep2 as d)
+
+(define (main) : i64
+  (mac.via-alias))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0200]: typecheck: unknown qualified name d.answer
+stderr contains mac.tl:2:4
+stderr not-contains <structural
+
+case run-macro-qualified-template-name-definition-alias
+file dep.tl
+(define (answer) : i64 42)
+end-file
+file dep2.tl
+(define (answer) : i64 9)
+end-file
+file mac.tl
+(import dep as d)
+
+(defmacro (via-alias) : i64
+  `(d.answer))
+end-file
+file main.tl
+(import mac)
+(import dep2 as d)
+
+(define (main) : i64
+  (mac.via-alias))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A projection of a binder the template hands to a nested binding macro stays a
+# projection of that binder, with or without a same-name caller local.
+case run-macro-template-projection-of-handed-binder
+file mac.tl
+(import stdlib.comptime)
+
+(defstruct Point (field i64))
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "let-one expects a binder name")]))
+
+(defmacro (use-x) : i64
+  `(let-one x (Point 21) x.field))
+end-file
+file main.tl
+(import mac)
+
+(define (no-local) : i64
+  (mac.use-x))
+
+(define (with-local) : i64
+  (let [x : i64 1]
+    (- (+ x (mac.use-x)) x)))
+
+(define (main) : i64
+  (+ (no-local) (with-local)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A binder handed to a nested macro also keeps binding when a use-site import
+# alias has its spelling.
+case run-macro-template-handed-binder-under-use-site-alias
+file dep2.tl
+(define (answer) : i64 9)
+end-file
+file mac.tl
+(import stdlib.comptime)
+
+(defstruct Point (field i64))
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "let-one expects a binder name")]))
+
+(defmacro (use-x) : i64
+  `(let-one x (Point 42) x.field))
+end-file
+file main.tl
+(import mac)
+(import dep2 as x)
+
+(define (main) : i64
+  (mac.use-x))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A handed binder spelled like a builtin or prelude macro binds its references;
+# only a call head can mean the builtin.
+case run-macro-template-handed-binder-builtin-spelling
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "let-one expects a binder name")]))
+
+(defmacro (use-length) : i64
+  `(let-one length (cast 14 : i64) length))
+
+(defmacro (use-when) : i64
+  `(let-one when (cast 14 : i64) when))
+end-file
+file main.tl
+(import mac)
+
+(define (with-local) : i64
+  (let [length : i64 1]
+    (- (+ length (mac.use-length)) length)))
+
+(define (with-when) : i64
+  (let [when : i64 1]
+    (- (+ when (mac.use-when)) when)))
+
+(define (main) : i64
+  (+ (mac.use-length) (+ (with-local) (with-when))))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+case run-macro-template-handed-binder-builtin-spelling-use-site-global
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "let-one expects a binder name")]))
+
+(defmacro (use-length) : i64
+  `(let-one length (cast 42 : i64) length))
+end-file
+file main.tl
+(import mac)
+
+(define length : i64 9)
+
+(define (main) : i64
+  (mac.use-length))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A shadow-guarded builtin in a template keeps its meaning under a caller local.
+case run-macro-template-slice-view-under-caller-local
+file mac.tl
+(defmacro (my-len [v : Expr]) : i64
+  `(array-length (slice-view ,v 0 1)))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [items (make-array i64 2)]
+    [slice-view : i64 9]
+    (+ 41 (mac.my-len (& items)))))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# Once a runtime identity exists, ordinary code is classified as before: a later
+# caller local spelled like a builtin still shadows it in the caller's own code.
+case run-macro-template-runtime-identity-leaves-later-locals-alone
+file mac.tl
+(defmacro (len [v : Expr]) : i64
+  `(array-length ,v))
+end-file
+file main.tl
+(import mac)
+
+(define (first) : i64
+  (let [array-length : i64 9]
+    (mac.len (make-array i64 20))))
+
+(define (second) : i64
+  (let [array-length : i64 22]
+    array-length))
+
+(define (main) : i64
+  (+ (first) (second)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A use-site macro with a prelude spelling does not capture the template's call.
+case run-macro-template-prelude-under-use-site-macro
+file mac.tl
+(defmacro (el) : i64
+  `(cond [false 1] [else 42]))
+end-file
+file main.tl
+(import mac)
+
+(defmacro (cond [arms : ExprClause ...]) : i64
+  `7)
+
+(define (main) : i64
+  (mac.el))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A struct owned by the root module is not a definition-site name of an imported
+# macro.
+case check-macro-free-template-name-root-struct
+file mac.tl
+(defmacro (make) : Expr
+  `(Foo 7))
+end-file
+file main.tl
+(import mac)
+
+(defstruct Foo (x i64))
+
+(define (main) : i64
+  (let [v : Foo (mac.make)]
+    v.x))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name Foo
+stderr contains mac.tl:2:5
+stderr not-contains <structural
+
+# One macro nested in its own operand: the free name is neither the caller's
+# local nor the outer expansion's template binder.
+case check-macro-free-template-name-nested-self-expansion
+file main.tl
+(import stdlib.comptime)
+
+(defmacro (m [a : Expr] [body : Expr]) : i64
+  (if (comptime.expr-string? a)
+    `(+ x 1)
+    `(let [x : i64 ,a] ,body)))
+
+(define (main) : i64
+  (let [x : i64 5]
+    (m 1 (m "a" 0))))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name x
+stderr contains main.tl:5:9
+stderr not-contains <structural
+
+# A builtin in a template stays the builtin under a use-site alias, while the
+# alias keeps its meaning in the caller's own code.
+case run-macro-template-builtin-under-use-site-alias
+file dep.tl
+(define (answer) : i64 42)
+end-file
+file mac.tl
+(defmacro (leaf) : i64
+  `(cast (tuple-ref (cpuid 0 0) 0) : i64))
+end-file
+file main.tl
+(import mac)
+(import dep.answer as cpuid)
+
+(define (main) : i64
+  (- (+ (cpuid) (mac.leaf)) (mac.leaf)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A builtin, intrinsic or prelude macro in a template under a caller local that
+# shares its spelling.
+case run-macro-template-builtin-under-caller-local
+file mac.tl
+(defmacro (len [v : Expr]) : i64
+  `(array-length ,v))
+
+(defmacro (leaf) : i64
+  `(cast (tuple-ref (cpuid 0 0) 0) : i64))
+
+(defmacro (guarded) : i64
+  `(begin
+    (when true unit)
+    20))
+end-file
+file main.tl
+(import mac)
+
+(define (with-array-length) : i64
+  (let [array-length : i64 9]
+    (mac.len (make-array i64 20))))
+
+(define (with-cpuid) : i64
+  (let [cpuid : i64 9]
+    (- (mac.leaf) (mac.leaf))))
+
+(define (with-when) : i64
+  (let [when : i64 9]
+    (mac.guarded)))
+
+(define (main) : i64
+  (+ 2 (+ (with-cpuid) (+ (with-array-length) (with-when)))))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A template's bare variant is its definition module's, in another module too.
+case run-macro-template-bare-variant-across-modules
+file mac.tl
+(defenum Choice (Empty) (Holds i64))
+
+(defmacro (make) : Choice
+  `(Holds 40))
+
+(defmacro (read [v : Expr]) : i64
+  `(match ,v
+    [(Holds n) n]
+    [(Empty) 0]))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (+ 2 (mac.read (mac.make))))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# Variant patterns are resolved against the scrutinee's enum, in a template as
+# in ordinary source, so an enum at the use site is not a captured name.
+case run-macro-template-pattern-variant-follows-scrutinee
+file mac.tl
+(defmacro (is-red [v : Expr]) : bool
+  `(match ,v
+    [(Red) true]
+    [_ false]))
+end-file
+file main.tl
+(import mac)
+
+(defenum Color (Red) (Blue))
+
+(define (main) : i64
+  (if (mac.is-red (Red))
+    42
+    1))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
 # #5448: a batch entry that fails during macro expansion fails the entry and
 # exits nonzero cleanly; the driver must not segfault (exit 139).
 case normal-macro-error-compile-batch

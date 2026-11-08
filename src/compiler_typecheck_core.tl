@@ -15555,6 +15555,31 @@
         [(option_i64.Some _) true]
         [(option_i64.None) false]))))
 
+;; A call head carrying the runtime identity. The flag test keeps the common case
+;; to one load, and the flag covers every creator of such a record.
+(defmacro (tc-runtime-identity-head? [session : Expr] [raw-name : Expr]) : bool
+  `(and
+    cis.intern-macro-global-runtime-owned?
+    (macro-hygiene-global-runtime-binding-id? ,session ,raw-name)))
+
+;; Slice-view classification of a call head. A runtime identity means the builtin
+;; whatever the caller binds, so its shadow checks are off while it is classified.
+(define (tc-slice-view-call-kind-for-head
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [raw-name : i64]
+  [name-id : i64]
+  [name : String]) : TcSliceViewCallKind
+  (if (tc-runtime-identity-head? (tc-context-structural-session ctx) raw-name)
+    (begin
+      (set! tc-builtin-classify-unshadowed? true)
+      (let
+        [kind : TcSliceViewCallKind
+          (tc-slice-view-call-kind-name ctx env name-id (ci.intern-str name-id))]
+        (set! tc-builtin-classify-unshadowed? false)
+        kind))
+    (tc-slice-view-call-kind-name ctx env name-id name)))
+
 ;; A struct or enum variant constructor named directly (not shadowed). A
 ;; macro's hygienic global name denotes its definition module's declaration,
 ;; which no local shadows. `info` is the name's builtin dispatch
@@ -33920,12 +33945,33 @@
       text
       (tc-kind-message (TypeMismatch) text))))
 
+;; The default intrinsics are also bound under the runtime module's key: the
+;; identity a macro template's builtin carries when a use-site binding would
+;; otherwise capture its spelling (SPEC section 3.7.2).
+(define (tc-default-env-bind-runtime-key [env : TcTypeEnv] [name-id : i64]) : TcTypeEnv
+  (match (tc-lookup-id env name-id)
+    [(Ok ty)
+      (tc-bind-id
+        env
+        (tc-module-name-id-by-id cbi.compiler-builtin-id-runtime-module name-id)
+        ty)]
+    [(Err _) env]))
+
+(define (tc-default-env-bind-runtime-keys [env : TcTypeEnv]) : TcTypeEnv
+  (tc-default-env-bind-runtime-key
+    (tc-default-env-bind-runtime-key env cbi.compiler-builtin-id-cpuid)
+    cbi.compiler-builtin-id-xgetbv))
+
 (define (tc-default-env) : TcTypeEnv
-  (tc-bind-id (tc-default-env-base) (tc-default-boundary-id) (Unit)))
+  (tc-bind-id
+    (tc-default-env-bind-runtime-keys (tc-default-env-base))
+    (tc-default-boundary-id)
+    (Unit)))
 
 (define (tc-default-env-with-job-state [state : TcJobState]) : TcTypeEnv
   (tc-bind-id
-    (tc-default-env-base-with-job-state state)
+    (tc-default-env-bind-runtime-keys
+      (tc-default-env-base-with-job-state state))
     (tc-default-boundary-id)
     (Unit)))
 
@@ -56912,22 +56958,25 @@
   [name-id : i64]) : bool
   (and
     (cbi.compiler-builtin-private-intrinsic-id? name-id)
-    ;; Function parameters and lexical bindings always shadow, including in an
-    ;; imported body.  The scoped runtime holds the hot local stack separately;
-    ;; the persistent scan covers callers that materialized that stack.
-    (not (tc-name-lexically-bound-id? env name-id))
-    ;; A top-level definition shadows only in the module that owns this body.
-    ;; In an imported aggregate, the ordinary value env belongs to the caller,
-    ;; while type-module-id retains the declaration's defining module.
-    (not
-      (let
-        [module-id : i64 (tc-context-type-module-id ctx)]
-        (if (csym.compiler-symbol-root-module-id? module-id)
-          ;; Root-module probes used by the compiler's in-process source tests
-          ;; rebuild the type env repeatedly while sharing symbol storage.  The
-          ;; env is authoritative for an unqualified root definition.
-          (tc-name-bound-id? env name-id)
-          (tc-top-level-value-owned-by-module-id? ctx module-id name-id))))))
+    (or
+      tc-builtin-classify-unshadowed?
+      (and
+        ;; Function parameters and lexical bindings always shadow, including in an
+        ;; imported body.  The scoped runtime holds the hot local stack separately;
+        ;; the persistent scan covers callers that materialized that stack.
+        (not (tc-name-lexically-bound-id? env name-id))
+        ;; A top-level definition shadows only in the module that owns this body.
+        ;; In an imported aggregate, the ordinary value env belongs to the caller,
+        ;; while type-module-id retains the declaration's defining module.
+        (not
+          (let
+            [module-id : i64 (tc-context-type-module-id ctx)]
+            (if (csym.compiler-symbol-root-module-id? module-id)
+              ;; Root-module probes used by the compiler's in-process source tests
+              ;; rebuild the type env repeatedly while sharing symbol storage.  The
+              ;; env is authoritative for an unqualified root definition.
+              (tc-name-bound-id? env name-id)
+              (tc-top-level-value-owned-by-module-id? ctx module-id name-id))))))))
 
 ;; Compiler-private text inspectors expose ordinary callable signatures to
 ;; move/borrow analysis even though their direct calls still use intrinsic
@@ -56998,51 +57047,62 @@
 ;; declaration under its qualified top-env key instead, so consult symbol
 ;; ownership when the exact environment lookup misses. Lexical and imported
 ;; bindings remain the first, cheap test.
+;; True while a call head carrying the runtime identity is classified: it already
+;; means the builtin, so no binding of the caller can shadow its spelling. The
+;; job's scoped local stack is visible from any environment, hence a flag and not
+;; a substitute environment.
+(define tc-builtin-classify-unshadowed? : bool
+  false)
+
 (define (tc-source-value-bound-id?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : bool
-  (or
-    (tc-name-bound-id?
-      env
-      (if tc-entry-unqualified-import-any
-        (tc-entry-unqualified-import-source-key-id ctx env name-id)
-        name-id))
-    (let
-      [module-id : i64 (tc-context-type-module-id ctx)]
-      (and
-        (not (csym.compiler-symbol-root-module-id? module-id))
-        (tc-top-level-value-owned-by-module-id? ctx module-id name-id)))))
+  (and
+    (not tc-builtin-classify-unshadowed?)
+    (or
+      (tc-name-bound-id?
+        env
+        (if tc-entry-unqualified-import-any
+          (tc-entry-unqualified-import-source-key-id ctx env name-id)
+          name-id))
+      (let
+        [module-id : i64 (tc-context-type-module-id ctx)]
+        (and
+          (not (csym.compiler-symbol-root-module-id? module-id))
+          (tc-top-level-value-owned-by-module-id? ctx module-id name-id))))))
 
 (define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
-    (if (tc-type-env-scoped-runtime-active? env)
-      (let
-        [carrier : TcTypeEnvScopedCarrier
-          (tc-type-env-scoped-runtime-current env)]
-        [name-index : i64
-          (tc-type-env-scoped-carrier-lookup-index carrier name-id)]
-        [boundary-index : i64
-          (tc-type-env-scoped-carrier-lookup-index
-            carrier
-            (tc-default-boundary-id))]
-        [scoped : bool
-          (cond
-            [(>= name-index 0)
-              (and (>= boundary-index 0) (> boundary-index name-index))]
-            [(>= boundary-index 0) true]
-            [else
-              (begin
-                (cfg
-                  compile-profile
-                  (counters.bump! tc-profile-env-scoped-tail-fallbacks))
-                (tc-default-builtin-unshadowed-scan-id?
-                  (__tl-project-field
-                    (__tl-project-field carrier sidecar)
-                    persistent)
-                  name-id))])]
-        scoped)
-      (tc-default-builtin-unshadowed-scan-id? env name-id))
+    (or
+      tc-builtin-classify-unshadowed?
+      (if (tc-type-env-scoped-runtime-active? env)
+        (let
+          [carrier : TcTypeEnvScopedCarrier
+            (tc-type-env-scoped-runtime-current env)]
+          [name-index : i64
+            (tc-type-env-scoped-carrier-lookup-index carrier name-id)]
+          [boundary-index : i64
+            (tc-type-env-scoped-carrier-lookup-index
+              carrier
+              (tc-default-boundary-id))]
+          [scoped : bool
+            (cond
+              [(>= name-index 0)
+                (and (>= boundary-index 0) (> boundary-index name-index))]
+              [(>= boundary-index 0) true]
+              [else
+                (begin
+                  (cfg
+                    compile-profile
+                    (counters.bump! tc-profile-env-scoped-tail-fallbacks))
+                  (tc-default-builtin-unshadowed-scan-id?
+                    (__tl-project-field
+                      (__tl-project-field carrier sidecar)
+                      persistent)
+                    name-id))])]
+          scoped)
+        (tc-default-builtin-unshadowed-scan-id? env name-id)))
     false))
 
 ;; The type-handle flat lookup keys by the real intern id (so it misses non-root
@@ -65193,7 +65253,9 @@
             (tc-context-structural-session ctx)
             raw-name
             hygiene-global)]
-        (tc-slice-view-call-kind-name ctx env name-id name))]
+        (if cis.intern-macro-global-runtime-owned?
+          (tc-slice-view-call-kind-for-head ctx env raw-name name-id name)
+          (tc-slice-view-call-kind-name ctx env name-id name)))]
     [_ (None)]))
 
 (define (tc-slice-view-call-spelling?
@@ -65550,45 +65612,54 @@
 ;; `tc-call-or-array-length-id` and the selected call producer share this one
 ;; classification, so neither route can type a builtin as an ordinary call.
 ;; Arms are tested in order; the first matching predicate wins.
+;; Classify `raw-name`. A runtime identity is classified with shadowing off.
 (define (tc-call-builtin-name
   [ctx : TcContext]
   [env : TcTypeEnv]
   [raw-name : i64]
   [arg-count : i64]) : TcCallBuiltinName
   (let
+    [runtime-head? : bool
+      (tc-runtime-identity-head? (tc-context-structural-session ctx) raw-name)]
+    [_ : unit (when runtime-head? (set! tc-builtin-classify-unshadowed? true))]
     [raw-text : String
       (tc-hygiene-name-text-id-for-session
         (tc-context-structural-session ctx)
         raw-name)]
     [hygiene-global : bool
       (tc-hygiene-global-name-id? (tc-context-structural-session ctx) raw-name)]
-    [name : String
-      (if (and
-        hygiene-global
-        (not
-          (macro-hygiene-global-id?
-            (tc-context-structural-session ctx)
-            raw-name)))
-        (tc-hygiene-global-call-name raw-text)
-        raw-text)]
     [name-id : i64
       (tc-builtin-call-name-id
         (tc-context-structural-session ctx)
         raw-name
         hygiene-global)]
+    ;; A runtime identity's raw text is its hygiene name, so read its spelling.
+    [name : String
+      (cond
+        [runtime-head? (ci.intern-str name-id)]
+        [(and
+            hygiene-global
+            (not
+              (macro-hygiene-global-id?
+                (tc-context-structural-session ctx)
+                raw-name)))
+          (tc-hygiene-global-call-name raw-text)]
+        [else raw-text])]
     [lookup-id : i64
       (tc-call-builtin-lookup-id ctx env (tc-global-shared-view name) name-id)]
     (if (or
       (< name-id 0)
       (csym.compiler-composite-triple-key-id? lookup-id)
       (tc-call-variant-name-id? ctx name-id))
-      (TcCallBuiltinName
-        name
-        name-id
-        lookup-id
-        0
-        (tc-arena-owner-kind-none)
-        TcSliceViewCallKind.None)
+      (begin
+        (when runtime-head? (set! tc-builtin-classify-unshadowed? false))
+        (TcCallBuiltinName
+          name
+          name-id
+          lookup-id
+          0
+          (tc-arena-owner-kind-none)
+          TcSliceViewCallKind.None))
       (let
         [arena-call-kind : i64
           (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
@@ -65661,6 +65732,7 @@
                 (not (tc-source-value-bound-id? ctx env name-id)))
               23]
             [else 0])]
+        (when runtime-head? (set! tc-builtin-classify-unshadowed? false))
         (TcCallBuiltinName
           name
           name-id
@@ -105659,6 +105731,20 @@
                   record.definition-module-id
                   cbi.compiler-builtin-id-fix-stdlib_dot_string)))])])))
 
+;; Does the macro-hygiene global `name-id` carry the runtime module's identity:
+;; a builtin spelling that a use-site binding would otherwise have captured?
+(define (macro-hygiene-global-runtime-binding-id?
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : bool
+  (if (< name-id (ci.intern-structural-key-base))
+    false
+    (match (cis.intern-structural-session-macro-global-record-for-raw
+      session
+      name-id)
+      [(No) false]
+      [(Some record)
+        (= record.definition-module-id cbi.compiler-builtin-id-runtime-module)])))
+
 (define (macro-hygiene-global-module-id
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
@@ -106497,13 +106583,19 @@
                     source-name-id))])))))))
 
 ;; A free template identifier that names nothing at the definition site keeps
-;; its plain id, so builtins, the prelude, enum variants, flat imports and
-;; spellings that a receiving macro reads (`else`, field names) resolve as
-;; before. A reference (`reference-depth` >= 0) whose spelling a call-site
-;; local would bind instead takes the template-binder identity at that depth
-;; (SPEC section 3.7.2): the caller's binding cannot capture it, and a binder
-;; the template hands to a nested binding macro is renamed the same way. A
-;; dotted reference renames its leading segment. Other callers pass -1.
+;; its plain id unless a use-site binding could capture it, so builtins, the
+;; prelude, flat imports and spellings that a receiving macro reads (`else`,
+;; field names) resolve as before. A reference (`reference-depth` >= 0) is
+;; decided by `macro-hygiene-free-reference-id` and its dotted counterpart
+;; (SPEC section 3.7.2). Other callers pass -1.
+;;
+;; Known gaps, each needing information hygiene does not have here: output-scope
+;; flat imports and declaration-macro output name exports that do not exist until
+;; later, a template lifetime is indistinguishable from a caller lifetime in a
+;; `type` operand, and an eagerly expanded operand cannot see a binder its
+;; enclosing macro introduces later. A macro that reads a template operand's
+;; spelling through a raw `Expr.Var` sees the free-name identity when a use-site
+;; binding has that spelling.
 (define (macro-hygiene-rename-var-id
   [env : MacroHygieneEnv]
   [macro-name : MacroHygieneContext]
@@ -106583,37 +106675,312 @@
                                   (not (= global-id source-name-id)))
                                 global-id]
                               [bare?
-                                (if (macro-hygiene-use-site-local?
+                                (macro-hygiene-free-reference-id
                                   env
-                                  source-name-id)
-                                  (macro-hygiene-local-id
-                                    (tc-macro-state-structural-session
-                                      env.state)
-                                    macro-name
-                                    reference-depth
-                                    source-name-id)
-                                  global-id)]
-                              [(and
-                                  (>= leading-id 0)
-                                  (macro-hygiene-use-site-local? env leading-id))
-                                (tc-dotted-name-with-source-id
-                                  (tc-macro-state-structural-session env.state)
-                                  (macro-hygiene-local-id
-                                    (tc-macro-state-structural-session
-                                      env.state)
-                                    macro-name
-                                    reference-depth
-                                    leading-id)
+                                  macro-name
+                                  reference-depth
+                                  source-name-id)]
+                              [(>= leading-id 0)
+                                (macro-hygiene-free-dotted-reference-id
+                                  env
+                                  macro-name
+                                  reference-depth
+                                  leading-id
                                   source-name-id)]
                               [else global-id]))))))))]))
         name-id)]
     result))
 
-;; A lexical local of the expansion's call site spells `name-id`.
-(define (macro-hygiene-use-site-local? [env : MacroHygieneEnv] [name-id : i64]) : bool
+;; True while hygiene renames the head of a call in a macro's output.
+(define tc-macro-hygiene-call-head? : bool
+  false)
+
+;; The identity of a free template name that names nothing at the definition
+;; site. Template binders use the expansion depth itself, so this lane cannot
+;; collide with one, even for the same macro at the same depth (expansion depth
+;; stops at `macro-expand-depth-limit`, below this offset); a name the template
+;; hands to a nested binding macro still binds its own references.
+(define (macro-hygiene-free-local-id
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]
+  [source-name-id : i64]) : i64
+  (macro-hygiene-local-id
+    (tc-macro-state-structural-session env.state)
+    macro-name
+    (+ depth 1024)
+    source-name-id))
+
+(define (macro-hygiene-definition-context [ctx : TcContext] [module-id : i64]) : TcContext
+  (if (csym.compiler-symbol-root-module-id? module-id)
+    (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
+    (tc-context-with-module-id ctx (tc-env-key-name-text module-id) module-id)))
+
+;; The expansion happens outside the macro's definition module.
+(define (macro-hygiene-cross-module?
+  [ctx : TcContext]
+  [macro-name : MacroHygieneContext]) : bool
+  (let
+    [use-module-id : i64 (tc-context-module-id ctx)]
+    (not
+      (or
+        (= use-module-id macro-name.definition-module-id)
+        (and
+          (csym.compiler-symbol-root-module-id? use-module-id)
+          (csym.compiler-symbol-root-module-id? macro-name.definition-module-id))))))
+
+;; A call head the use site resolves to a macro of its own, not the prelude
+;; macro the definition site would see. A prelude spelling needs no full
+;; resolution unless the use site declares or flat-imports a macro of that name.
+(define (macro-hygiene-use-site-macro?
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [state : TcMacroState]
+  [source-id : i64]) : bool
+  (and
+    tc-macro-hygiene-call-head?
+    (macro-call-callee-maybe-macro?
+      (tc-context-expr-bases ctx)
+      state
+      (ast.AstExpr.Var source-id))
+    (if (csym.compiler-symbols-handle-found?
+      (csym.compiler-symbols-lookup-macro-in-module-id-or
+        (tc-context-symbols ctx)
+        cbi.compiler-builtin-id-core-macros-module
+        source-id
+        (csym.compiler-symbols-missing-handle)))
+      (or
+        (csym.compiler-symbols-handle-found?
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (tc-context-symbols ctx)
+            (tc-context-module-id ctx)
+            source-id
+            (csym.compiler-symbols-missing-handle)))
+        (let
+          [call-expr : ast.AstExpr (ast.AstExpr.Var source-id)]
+          (match (macro-unqualified-imported-call-decl
+            ctx
+            decls
+            (tc-context-module-id ctx)
+            source-id
+            call-expr)
+            [(Ok (MacroMaybeDecl.Some _ _ _ _ _ _)) true]
+            [_ false])))
+      (match (macro-call-decl
+        ctx
+        (ast.AstExpr.Var source-id)
+        decls
+        (ast.AstExpr.Var source-id))
+        [(Ok (MacroMaybeDecl.Some _ definition-module _ _ _ _))
+          (not (macro-hygiene-prelude-macro-module? definition-module))]
+        [_ false]))))
+
+(define (macro-hygiene-prelude-macro-module? [module-id : i64]) : bool
+  (or
+    (= module-id cbi.compiler-builtin-id-core-macros-module)
+    (= module-id cbi.compiler-builtin-id-core-macros-legacy-module)))
+
+;; A binding at the expansion's use site would capture a plain `source-id`: a
+;; lexical local anywhere, or, outside the definition module, one of the use
+;; site's own module-level names.
+(define (macro-hygiene-use-site-binds?
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [type-env : TcTypeEnv]
+  [macro-name : MacroHygieneContext]
+  [state : TcMacroState]
+  [source-id : i64]) : bool
+  (or
+    (tc-name-lexically-bound-id? type-env source-id)
+    (and
+      (macro-hygiene-cross-module? ctx macro-name)
+      (or
+        (and
+          (tc-source-name-bound-exact-id? type-env source-id)
+          (not (tc-default-builtin-unshadowed-id? type-env source-id)))
+        (match (tc-current-module-source-lookup-key-id ctx type-env source-id)
+          [(Some _) true]
+          [(No) false])
+        (tc-constructor-source-name-id? ctx source-id)
+        (macro-hygiene-use-site-import-alias? ctx state macro-name source-id)
+        (macro-hygiene-use-site-macro? ctx decls state source-id)))))
+
+(define (macro-hygiene-definition-variant?
+  [ctx : TcContext]
+  [macro-name : MacroHygieneContext]
+  [source-id : i64]) : bool
+  (let
+    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
+    (match (csym.compiler-registries-lookup-variant-key-id
+      registries
+      (csym.compiler-symbol-name-id-key
+        (if (csym.compiler-symbol-root-module-id?
+          macro-name.definition-module-id)
+          source-id
+          (csym.compiler-composite-pair-key-id
+            macro-name.definition-module-id
+            source-id))))
+      [(Some _) true]
+      [(None) false])))
+
+;; The meaning a name has with no user binding in scope: the compiler's builtin
+;; dispatch, the two default-environment intrinsics, or the runtime module.
+(define (macro-hygiene-definition-builtin?
+  [definition-ctx : TcContext]
+  [source-id : i64]) : bool
+  (or
+    (cbi.compiler-builtin-lower-cpuid-id? source-id)
+    (cbi.compiler-builtin-lower-xgetbv-id? source-id)
+    (csym.compiler-symbols-handle-found?
+      (csym.compiler-symbols-lookup-value-in-module-id-or
+        (tc-context-symbols definition-ctx)
+        cbi.compiler-builtin-id-runtime-module
+        source-id
+        (csym.compiler-symbols-missing-handle)))
+    (let
+      [info : TcCallBuiltinName
+        (tc-call-builtin-name definition-ctx (tc-default-env) source-id 0)]
+      (not (= info.arm 0)))))
+
+(define (macro-hygiene-definition-prelude-macro?
+  [definition-ctx : TcContext]
+  [source-id : i64]) : bool
+  (match (macro-prelude-resolve
+    definition-ctx
+    (tc-context-symbols definition-ctx)
+    source-id)
+    [(Ok (MacroMaybeDecl.Some _ _ _ _ _ _)) true]
+    [_ false]))
+
+;; A free template reference resolves in the macro's definition environment
+;; (SPEC section 3.7.2). The plain id stays while nothing could capture it, so
+;; builtins, the prelude, spelling readers and binders a nested macro receives
+;; behave as before. When a use-site binding has the spelling, or the expansion
+;; is an eager operand whose enclosing macro may yet bind it, the definition
+;; site decides: its variant, its builtin or prelude meaning, or no binding,
+;; which the free lane reports as unbound.
+(define (macro-hygiene-free-reference-id
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]
+  [source-id : i64]) : i64
   (match (tc-macro-walk-field env.state macro-hygiene-callee)
-    [(Some _ _ type-env) (tc-name-lexically-bound-id? type-env name-id)]
-    [(No) false]))
+    [(No) source-id]
+    [(Some ctx decls type-env)
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (macro-hygiene-env-structural-session env)]
+        [captured? : bool
+          (macro-hygiene-use-site-binds?
+            ctx
+            decls
+            type-env
+            macro-name
+            env.state
+            source-id)]
+        (cond
+          [(and
+              (or captured? (macro-hygiene-cross-module? ctx macro-name))
+              (macro-hygiene-definition-variant? ctx macro-name source-id))
+            (macro-hygiene-global-id
+              session
+              macro-name.definition-module-id
+              source-id
+              false)]
+          [captured?
+            (cond
+              ;; Only a call head can mean a builtin or prelude macro. In operand
+              ;; position the name may be a binder a nested macro introduces.
+              [(not tc-macro-hygiene-call-head?)
+                (macro-hygiene-free-local-id env macro-name depth source-id)]
+              [else
+                (let
+                  [definition-ctx : TcContext
+                    (macro-hygiene-definition-context
+                      ctx
+                      macro-name.definition-module-id)]
+                  (cond
+                    [(macro-hygiene-definition-prelude-macro?
+                        definition-ctx
+                        source-id)
+                      (macro-hygiene-global-id
+                        session
+                        cbi.compiler-builtin-id-core-macros-module
+                        source-id
+                        false)]
+                    [(macro-hygiene-definition-builtin?
+                        definition-ctx
+                        source-id)
+                      (macro-hygiene-global-id
+                        session
+                        cbi.compiler-builtin-id-runtime-module
+                        source-id
+                        false)]
+                    [else
+                      (macro-hygiene-free-local-id
+                        env
+                        macro-name
+                        depth
+                        source-id)]))])]
+          [else source-id]))]))
+
+;; A dotted free reference. A leading segment that only a binding at the use
+;; site supplies, a lexical local or an import alias, takes the free-name
+;; identity: a binder handed to a nested macro still binds it, and otherwise it
+;; reports as unbound at the template.
+(define (macro-hygiene-free-dotted-reference-id
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]
+  [leading-id : i64]
+  [source-id : i64]) : i64
+  (match (tc-macro-walk-field env.state macro-hygiene-callee)
+    [(No) source-id]
+    [(Some ctx _ type-env)
+      (let
+        [lexical? : bool (tc-name-lexically-bound-id? type-env leading-id)]
+        [use-site-alias? : bool
+          (macro-hygiene-use-site-import-alias?
+            ctx
+            env.state
+            macro-name
+            leading-id)]
+        (cond
+          ;; A call through a qualifier only the use site supplies is looked up
+          ;; in the definition context: the ordinary unknown qualified name.
+          [(and use-site-alias? (not lexical?) tc-macro-hygiene-call-head?)
+            (macro-hygiene-global-id
+              (macro-hygiene-env-structural-session env)
+              macro-name.definition-module-id
+              source-id
+              false)]
+          [(or lexical? use-site-alias?)
+            (tc-dotted-name-with-source-id
+              (tc-macro-state-structural-session env.state)
+              (macro-hygiene-free-local-id env macro-name depth leading-id)
+              source-id)]
+          [else source-id]))]))
+
+;; `alias-id` is an import alias of the expansion's use site, in another module,
+;; for some module other than the macro's own (which a template may name).
+(define (macro-hygiene-use-site-import-alias?
+  [ctx : TcContext]
+  [state : TcMacroState]
+  [macro-name : MacroHygieneContext]
+  [alias-id : i64]) : bool
+  (and
+    (macro-hygiene-cross-module? ctx macro-name)
+    (let
+      [use-module-id : i64 (tc-context-module-id ctx)]
+      (match (tc-lazy-import-stub-target-id-for-state
+        state
+        (if (csym.compiler-symbol-root-module-id? use-module-id)
+          cbi.compiler-builtin-id-fix-empty
+          use-module-id)
+        alias-id)
+        [(Some target-module-id)
+          (not (= target-module-id macro-name.definition-module-id))]
+        [(No) false]))))
 
 (define (macro-hygiene-bind-name-id
   [env : MacroHygieneEnv]
@@ -107813,7 +108180,14 @@
   [depth : i64]
   [head-id : i64]) : MacroMaybeDecl
   (let
-    [callee-id : i64 (macro-hygiene-rename-var-id env macro-name depth head-id)]
+    [callee-id : i64
+      (begin
+        (set! tc-macro-hygiene-call-head? true)
+        (let
+          [renamed : i64
+            (macro-hygiene-rename-var-id env macro-name depth head-id)]
+          (set! tc-macro-hygiene-call-head? false)
+          renamed))]
     (if (macro-call-callee-maybe-macro?
       expr-bases
       env.state
@@ -108220,10 +108594,21 @@
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         [call-env : MacroHygieneEnv
           (macro-hygiene-output-call-env expr-bases (& func) (& args) env)]
+        [plain-func : ast.AstExpr
+          (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))]
+        [_head : unit
+          (set!
+            tc-macro-hygiene-call-head?
+            (match (& plain-func)
+              [(Var _) true]
+              [_ false]))]
+        [renamed-head : i64
+          (macro-hygiene-expr expr-bases func-box env macro-name depth)]
+        [_done : unit (set! tc-macro-hygiene-call-head? false)]
         (ast.ast-expr-call-with-pools
           env.pools
-          (macro-hygiene-expr expr-bases func-box env macro-name depth)
-          (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
+          renamed-head
+          (match plain-func
             [(Var name-id)
               (if (=
                 (tc-hygiene-template-source-id-or

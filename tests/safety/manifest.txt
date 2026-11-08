@@ -1888,6 +1888,20 @@ module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/modul
 # labelled at its generator.
 import_local_collision_generated_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|collides with the declaration of 'answer' in the entry module
 import_local_collision_generated_label_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|import_local_collision_generated_reject.tl:10:1
+# The entry module's unqualified imports (`m.*`, `m.item`, `m.item as a`)
+# bind names only in the entry module; another module that does not import
+# them sees its own names and the builtins (#9678).
+entry_import_scope_wildcard_reject|check-fail|tests/safety/entry_import_scope_wildcard_reject.tl|tests/safety/entry_import_scope_user.tl:5:4|typecheck: unbound name helper
+entry_import_scope_item_reject|check-fail|tests/safety/entry_import_scope_item_reject.tl|tests/safety/entry_import_scope_user.tl:5:4|typecheck: unbound name helper
+entry_import_scope_item_alias_reject|check-fail|tests/safety/entry_import_scope_item_alias_reject.tl|tests/safety/entry_import_scope_alias_user.tl:4:4|typecheck: unbound name h
+entry_import_scope_set_reject|check-fail|tests/safety/entry_import_scope_set_reject.tl|tests/safety/entry_import_scope_set_user.tl|typecheck: unbound name limit
+entry_import_scope_builtin_ok|run-exit|tests/safety/entry_import_scope_builtin_ok.tl|42|-
+entry_import_scope_stdlib_string_ok|run-exit|tests/safety/entry_import_scope_stdlib_string_ok.tl|42|-
+# The same holds for an import that rebinds a default-environment builtin such
+# as `cpuid`: other modules keep the builtin.
+entry_import_scope_cpuid_wildcard_ok|run-exit|tests/safety/entry_import_scope_cpuid_wildcard_ok.tl|42|-
+entry_import_scope_cpuid_item_ok|run-exit|tests/safety/entry_import_scope_cpuid_item_ok.tl|42|-
+entry_import_scope_cpuid_alias_ok|run-exit|tests/safety/entry_import_scope_cpuid_alias_ok.tl|42|-
 generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|tests/safety/nonexistent_cfg_active_dependency.tl:1:1|cannot read import
 
 # Struct fields and enum variants past the former 1000-member registry stride

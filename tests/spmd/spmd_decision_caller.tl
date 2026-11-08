@@ -1,4 +1,4 @@
-(import tests.fixtures.spmd_decision_macros as macros)
+(import tests.spmd.spmd_decision_macros as macros)
 
 (define (from-template) : unit
   (macros.spmd-outer))

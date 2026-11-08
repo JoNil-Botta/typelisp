@@ -20824,9 +20824,6 @@
   [fallback : i64]) : i64
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
-    ;; Root rows are bare, so a reflected root identity resolves by its source.
-    [lookup-name-id : i64 (lower-hygiene-root-source-id ctx lookup-name-id)]
-    [raw-name-id : i64 (lower-hygiene-root-source-id ctx raw-name-id)]
     [result-handle : i64 (lower-struct-type-handle-or ctx ty fallback)]
     [lookup-handle : i64
       (if (>= lookup-name-id 0)
@@ -38397,6 +38394,29 @@
       (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)
       name-id)))
 
+;; Whether a call names a constructor. A root identity naming an entry value is
+;; never one, whichever struct elsewhere shares its spelling.
+(define (lower-constructor-callee-id?
+  [ctx : tc_core.TcContext]
+  [raw-name-id : i64]
+  [lookup-id : i64]) : bool
+  (let
+    [source-id : i64 (lower-hygiene-root-source-id ctx raw-name-id)]
+    (if (and
+      (not (= source-id raw-name-id))
+      (lower-top-level-callable-or-value-define-id? ctx source-id))
+      false
+      (or
+        (tc_core.tc-constructor-name-id? ctx raw-name-id)
+        (tc_core.tc-constructor-name-id? ctx lookup-id)))))
+
+(define (lower-top-level-callable-or-value-define-id?
+  [ctx : tc_core.TcContext]
+  [lookup-id : i64]) : bool
+  (or
+    (lower-top-level-callable-lookup-id? ctx lookup-id)
+    (lower-top-level-value-define-lookup-id? ctx lookup-id)))
+
 ;; A global whose definition module is the entry module keeps its structural
 ;; identity: the bare spelling resolves in the module being lowered.
 (define (lower-hygiene-root-lookup-id
@@ -39914,11 +39934,7 @@
             args
             result-ty)
           (if (and
-            (or
-              (tc_core.tc-constructor-source-name-id?
-                ctx
-                (lower-hygiene-root-source-id ctx raw-name-id))
-              (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
+            (lower-constructor-callee-id? ctx raw-name-id callable-lookup-id)
             (csym.compiler-symbols-handle-found? struct-handle)
             (=
               (csym.compiler-symbol-handle-kind struct-handle)
@@ -40064,11 +40080,7 @@
             args
             result-ty))
         (if (and
-          (or
-            (tc_core.tc-constructor-source-name-id?
-              ctx
-              (lower-hygiene-root-source-id ctx raw-name-id))
-            (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
+          (lower-constructor-callee-id? ctx raw-name-id callable-lookup-id)
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)

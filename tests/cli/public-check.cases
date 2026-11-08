@@ -2187,6 +2187,121 @@ end-file
 run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
 exit 42
 
+# A nested macro can take its body before its binder: the call head in the body
+# still refers to the handed binder, whichever operand comes first.
+case run-macro-template-reversed-handed-binder-under-caller-local
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (rev-let [body : Expr] [name : Expr] [value : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (use-view) : i64
+  `(rev-let (slice-view 42) slice-view
+    (lambda ([v : i64]) : i64 v)))
+
+(defmacro (use-length) : i64
+  `(rev-let (array-length (make-array i64 3)) array-length
+    (lambda ([v : (Array i64 3)]) : i64 21)))
+end-file
+file main.tl
+(import mac)
+
+(define (view) : i64
+  (let [slice-view : i64 9]
+    (- (mac.use-view) 21)))
+
+(define (arr) : i64
+  (let [array-length : i64 9]
+    (mac.use-length)))
+
+(define (main) : i64
+  (+ (view) (arr)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+case run-macro-template-reversed-handed-binder-under-use-site-global
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (rev-let [body : Expr] [name : Expr] [value : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (use-length) : i64
+  `(rev-let (array-length (make-array i64 3)) array-length
+    (lambda ([v : (Array i64 3)]) : i64 42)))
+end-file
+file main.tl
+(import mac)
+
+(define array-length : i64 9)
+
+(define (main) : i64
+  (mac.use-length))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+case run-macro-template-reversed-binder-projection-under-alias
+file dep2.tl
+(define (answer) : i64 9)
+end-file
+file mac.tl
+(import stdlib.comptime)
+
+(defstruct Fns (f (-> i64 i64)))
+
+(define (forty-two [v : i64]) : i64
+  (+ v 42))
+
+(defmacro (rev-let [body : Expr] [name : Expr] [value : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (use-x) : i64
+  `(rev-let (x.f 0) x (Fns forty-two)))
+end-file
+file main.tl
+(import mac)
+(import dep2 as x)
+
+(define (main) : i64
+  (mac.use-x))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# Many operand occurrences of one name do not change the meaning of an unrelated
+# builtin call under a caller local.
+case run-macro-template-many-operands-leave-builtin-alone
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (discard [ignored : Expr ...]) : Expr
+  (comptime.expr-int 0))
+
+(defmacro (use-view) : i64
+  `(begin
+    (discard x x x x x x x x x x x x x x x x x x x x)
+    (array-length (make-array i64 42))))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [x : i64 1]
+    (let [array-length : i64 9]
+      (mac.use-view))))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
 # KNOWN LIMIT, not a statement of correct behaviour: a template that hands a
 # builtin spelling to a macro as a binder and then, outside that binder's scope,
 # calls the real builtin under a same-spelled caller local reports E0201. Hygiene
@@ -2204,6 +2319,35 @@ file mac.tl
   `(+
     (let-one array-length (cast 1 : i64) array-length)
     (array-length (make-array i64 3))))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [array-length : i64 9]
+    (mac.both)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name array-length
+stderr not-contains <structural
+
+# KNOWN LIMIT, not a statement of correct behaviour (#9738): the real builtin
+# written before the handed binder reports E0201 the same way, under a caller local.
+case check-macro-template-real-builtin-then-handed-binder-known-limit
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (both) : i64
+  `(+
+    (array-length (make-array i64 3))
+    (let-one array-length (cast 1 : i64) array-length)))
 end-file
 file main.tl
 (import mac)

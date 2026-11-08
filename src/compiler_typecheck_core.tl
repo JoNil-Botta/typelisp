@@ -96086,10 +96086,9 @@
   (defmacro-transformer-active bool)
   (defmacro-transformer-operands TcStringList)
   (macro-hygiene-callee MacroHygieneCallee)
-  ;; Spellings that took the free-name identity in operand position during this
-  ;; expansion's hygiene walk (`macro-hygiene-note-operand-free!`).
-  (macro-hygiene-operand-free-names (__tl_dyn-array i64))
-  (macro-hygiene-operand-free-count i64))
+  ;; The expansion whose output hygiene is renaming, or -1
+  ;; (`macro-hygiene-output-has-operand?`).
+  (macro-hygiene-output-root i64))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -96218,8 +96217,7 @@
     false
     (Nil)
     (MacroHygieneCallee.No)
-    (__tl_make-array i64 16)
-    0))
+    -1))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -106705,37 +106703,90 @@
   false)
 
 ;; A spelling a template hands to a nested macro as an operand may be a binder
-;; that macro introduces. Remember it, so a later call head with that spelling
-;; refers to the binder and not to a builtin. A binder precedes its references in
-;; this handoff. Past the small capacity every spelling counts as remembered.
-(define (macro-hygiene-note-operand-free!
-  [state : TcMacroState]
-  [source-id : i64]) : unit
-  (let
-    [count : i64 (tc-macro-walk-field state macro-hygiene-operand-free-count)]
-    (when
-      (< count 16)
-      (set!
-        (array-ref
-          (tc-macro-walk-field state macro-hygiene-operand-free-names)
-          count)
-        source-id))
-    (when
-      (<= count 16)
-      (tc-macro-walk-set! state macro-hygiene-operand-free-count (+ count 1)))))
+;; that macro introduces, wherever the operand sits, so a call head with that
+;; spelling cannot be assumed to mean a builtin. Hygiene cannot see the binder's
+;; scope, so a real builtin call beside such an operand reports as unbound. This
+;; scans the expansion's output, only when a captured head would become a builtin.
+(defmacro (macro-hygiene-operand-scan-skip
+  [_expr-bases : Expr]
+  [_session : Expr]
+  [_source-id : Expr]
+  [_child : Expr]) : bool
+  `false)
 
-(define (macro-hygiene-operand-free? [state : TcMacroState] [source-id : i64]) : bool
+(define (macro-hygiene-operand-scan-list?
+  [items : ast.AstExprList]
+  [index : i64]
+  [expr-bases : i64]
+  [session : cis.InternStructuralSessionHandle]
+  [source-id : i64]) : bool
+  (and
+    (< index items.len)
+    (or
+      (macro-hygiene-operand-scan?
+        expr-bases
+        session
+        source-id
+        (ast.ast-expr-list-get (& items) index 0))
+      (macro-hygiene-operand-scan-list?
+        items
+        (+ index 1)
+        expr-bases
+        session
+        source-id))))
+
+(define (macro-hygiene-operand-scan?
+  [expr-bases : i64]
+  [session : cis.InternStructuralSessionHandle]
+  [source-id : i64]
+  [node-id : i64]) : bool
   (let
-    [count : i64 (tc-macro-walk-field state macro-hygiene-operand-free-count)]
-    [names : (__tl_dyn-array i64)
-      (tc-macro-walk-field state macro-hygiene-operand-free-names)]
-    [index : i64 0]
-    [found : bool (> count 16)]
-    (while (and (not found) (< index count) (< index 16))
-      (if (= (array-ref names index) source-id)
-        (set! found true)
-        (set! index (+ index 1))))
-    found))
+    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases node-id)]
+    (match expr
+      ;; Another expansion's output, or caller syntax, is not this template's.
+      [(MacroExpansion _ _ _) false]
+      [(Var name)
+        (and
+          (= (macro-hygiene-source-name-id-or session name -1) source-id)
+          (not (macro-hygiene-global-id? session name)))]
+      [(Call func-box args)
+        (or
+          (match (ast.ast-expr-unspan-with-segment-bases
+            expr-bases
+            (& (ast.ast-expr-segment-bases-get expr-bases func-box)))
+            [(Var _) false]
+            [_
+              (macro-hygiene-operand-scan?
+                expr-bases
+                session
+                source-id
+                func-box)])
+          (macro-hygiene-operand-scan-list? args 0 expr-bases session source-id))]
+      [_
+        (ast.ast-expr-fold-children
+          expr
+          ast.ast-fold-or
+          false
+          macro-hygiene-operand-scan?
+          macro-hygiene-operand-scan-skip
+          macro-hygiene-operand-scan-skip
+          macro-hygiene-operand-scan-skip
+          expr-bases
+          session
+          source-id)])))
+
+(define (macro-hygiene-output-has-operand?
+  [env : MacroHygieneEnv]
+  [source-id : i64]) : bool
+  (let
+    [root : i64 (tc-macro-walk-field env.state macro-hygiene-output-root)]
+    (and
+      (>= root 0)
+      (macro-hygiene-operand-scan?
+        (macro-hygiene-expr-segment-bases env)
+        (macro-hygiene-env-structural-session env)
+        source-id
+        root))))
 
 ;; The identity of a free template name that names nothing at the definition
 ;; site. Template binders use the expansion depth itself, so this lane cannot
@@ -106934,7 +106985,6 @@
               ;; Only a call head can mean a builtin or prelude macro. In operand
               ;; position the name may be a binder a nested macro introduces.
               [(not tc-macro-hygiene-call-head?)
-                (macro-hygiene-note-operand-free! env.state source-id)
                 (macro-hygiene-free-local-id env macro-name depth source-id)]
               [else
                 (let
@@ -106953,15 +107003,11 @@
                         false)]
                     ;; A prelude macro wins over a binder, as in plain source. A
                     ;; builtin does not: a handed binder of that spelling binds.
-                    [(macro-hygiene-operand-free? env.state source-id)
-                      (macro-hygiene-free-local-id
-                        env
-                        macro-name
-                        depth
-                        source-id)]
-                    [(macro-hygiene-definition-builtin?
-                        definition-ctx
-                        source-id)
+                    [(and
+                        (macro-hygiene-definition-builtin?
+                          definition-ctx
+                          source-id)
+                        (not (macro-hygiene-output-has-operand? env source-id)))
                       (macro-hygiene-global-id
                         session
                         cbi.compiler-builtin-id-runtime-module
@@ -107003,7 +107049,7 @@
               use-site-alias?
               (not lexical?)
               tc-macro-hygiene-call-head?
-              (not (macro-hygiene-operand-free? env.state leading-id)))
+              (not (macro-hygiene-output-has-operand? env leading-id)))
             (macro-hygiene-global-id
               (macro-hygiene-env-structural-session env)
               macro-name.definition-module-id
@@ -108289,7 +108335,7 @@
       [state : TcMacroState (tc-context-macro-state ctx)]
       [_root : unit (macro-hygiene-env-root-begin! state)]
       [_operands : unit
-        (tc-macro-walk-set! state macro-hygiene-operand-free-count 0)]
+        (tc-macro-walk-set! state macro-hygiene-output-root expanded)]
       [previous : MacroHygieneCallee
         (macro-hygiene-callee-install!
           state

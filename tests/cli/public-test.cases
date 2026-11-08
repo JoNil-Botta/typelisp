@@ -229,6 +229,124 @@ stderr contains error[E0206]
 stderr contains --> snippet_pkg/src/imported.tl:1:26
 stderr contains 1 | (define (bad) : i64 (+ 2 false))
 
+# These imported paths stay physical in the loader. A package-name prefix
+# alone must not redirect them, including when a wrong destination exists.
+case package-inline-diagnostic-physical-root
+file typelisp.pkg
+(package (name "mylib") (version "0.1.0") (kind "lib") (entry "mylib/lib.tl"))
+end-file
+file mylib/lib.tl
+(define (g) : i64 1)
+end-file
+file mylib/imported.tl
+;; The real imported source.
+(define (bad) : i64 (+ 2 false))
+end-file
+file mylib/inl.tl
+(import imported)
+(test imported-body (imported.bad) unit)
+end-file
+cwd {{dir}}
+step physical-root-check
+run check --manifest-path typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> mylib/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+step physical-root-test
+run test --manifest-path typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> mylib/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+step physical-root-test-check
+run test --check --manifest-path typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> mylib/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+file imported.tl
+;; A readable decoy must not supply the snippet.
+(define (decoy) : i64 0)
+end-file
+step physical-root-decoy
+run test --check --manifest-path typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> mylib/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+stderr not-contains (define (decoy)
+
+case package-inline-diagnostic-physical-dot-prefix
+file a/b/typelisp.pkg
+(package (name "a") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file a/b/src/lib.tl
+(define (g) : i64 1)
+end-file
+file a/b/src/imported.tl
+;; The real nested imported source.
+(define (bad) : i64 (+ 2 false))
+end-file
+file a/b/src/inl.tl
+(import imported)
+(test imported-body (imported.bad) unit)
+end-file
+cwd {{dir}}
+step physical-dot-prefix-check
+run check --manifest-path ./a/b/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> a/b/src/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+step physical-dot-prefix-test
+run test --manifest-path ./a/b/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> a/b/src/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+step physical-dot-prefix-test-check
+run test --check --manifest-path ./a/b/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> a/b/src/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+
+case package-inline-diagnostic-foreign-root
+file pkg/typelisp.pkg
+(package (name "a") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file pkg/src/lib.tl
+(define (g) : i64 1)
+end-file
+file pkg/src/inl.tl
+(import imported)
+(test imported-body (imported.bad) unit)
+end-file
+file a/imported.tl
+;; This physical import shares the package-name prefix.
+(define (bad) : i64 (+ 2 false))
+end-file
+cwd {{dir}}
+step foreign-root-check
+run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root a --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> a/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+step foreign-root-test
+run test --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root a --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> a/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+step foreign-root-test-check
+run test --check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root a --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0206]
+stderr contains --> a/imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+
 case package-inline-diagnostic-controls
 file bad.tl
 (define (f) : i64 (+ 1 true))

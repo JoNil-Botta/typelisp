@@ -2143,7 +2143,7 @@
         [(Ok decls paths _ _)
           (tltest-inline-typecheck-loaded
             (string.copy (& source))
-            (TlTestDiagnosticSource source "" "")
+            (tltest-diagnostic-source source (& paths))
             decls
             paths
             roots
@@ -2183,7 +2183,7 @@
               (& manifest-dir)
               (& legacy-roots)
               (string.copy (& source)))
-            (TlTestDiagnosticSource source manifest-dir package-owner)
+            (tltest-diagnostic-source source (& paths))
             decls
             paths
             roots
@@ -2370,12 +2370,37 @@
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-fallback-path diag source))
 
-;; Package harnesses select declarations by their display path. Keep the
-;; physical entry and package root alongside it for diagnostic source reads.
+;; Package harnesses select declarations by display path. Snapshot the loaded
+;; physical provenance before collection rebuilds the harness's path lanes.
 (defstruct TlTestDiagnosticSource
   (physical-path String)
-  (package-dir String)
-  (package-name String))
+  (paths sym_i64_env.SymI64Env))
+
+(define (tltest-diagnostic-source
+  [source : String]
+  [paths : (& paths ast.AstDeclPathList)]) : TlTestDiagnosticSource
+  (let
+    [physical-paths : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    (for [index (iterator.range 0 (ast.ast-decl-path-list-len paths))]
+      (let
+        [provenance : i64 (ast.ast-decl-path-list-provenance-id paths index -1)]
+        (when
+          (>= provenance 0)
+          (let
+            [path : i64 (ci.intern (ast.ast-decl-path-list-get paths index ""))]
+            [previous : i64
+              (sym_i64_env.sym-i64-lookup-id-or (& physical-paths) path -1)]
+            (when
+              (and (not (= previous provenance)) (not (= previous -2)))
+              (set!
+                physical-paths
+                (sym_i64_env.sym-i64-bind-id
+                  physical-paths
+                  path
+                  (if (= previous -1)
+                    provenance
+                    -2))))))))
+    (TlTestDiagnosticSource source physical-paths)))
 
 (define (tltest-render-source-diagnostic
   [source : String]
@@ -2385,19 +2410,15 @@
     [located : cdiag.CompilerDiagnostic
       (tltest-diagnostic-with-source-fallback (string.copy (& source)) diag)]
     [path : String (cdiag.compiler-diagnostic-path (& located))]
-    [prefix : String (str_cat.str-cat diagnostic-source.package-name "/")]
+    [provenance : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        (& diagnostic-source.paths)
+        (ci.intern (string.copy (& path)))
+        -1)]
     [physical-path : String
       (cond
         [(string.eq path source) diagnostic-source.physical-path]
-        [(and
-            (> (string.string-length prefix) 1)
-            (compiler_load.compiler-load-string-prefix-at? path prefix 0))
-          (compiler_load.compiler-load-join-root-path
-            diagnostic-source.package-dir
-            (string.substring
-              path
-              (string.string-length prefix)
-              (- (string.string-length path) (string.string-length prefix))))]
+        [(>= provenance 0) (ci.intern-str provenance)]
         [else path])]
     [text : cdiag.CompilerDiagnosticSource
       (driver.compiler-driver-diagnostic-source-read (& physical-path))]
@@ -2630,7 +2651,7 @@
   (tltest-run-direct-with-entry
     (owned_view.compiler-owned-shared-view source)
     (string.copy (& source))
-    (TlTestDiagnosticSource source "" "")
+    (tltest-diagnostic-source source (& paths))
     program
     paths
     roots
@@ -3044,7 +3065,7 @@
         (tltest-run-direct-with-entry
           (string.copy (& source))
           ""
-          (TlTestDiagnosticSource source "" "")
+          (tltest-diagnostic-source source (& paths))
           (ast.ast-program decls)
           paths
           roots
@@ -3239,7 +3260,7 @@
                 (string.copy (& source)))]
             (tltest-package-run-one
               owned-source
-              (TlTestDiagnosticSource source manifest-dir package-owner)
+              (tltest-diagnostic-source source (& paths))
               target
               source-roots
               opt-level
@@ -3711,7 +3732,7 @@
               (tltest-no-tests-check source decls paths roots backend-target)
               (tltest-check-only
                 (string.copy (& source))
-                (TlTestDiagnosticSource source "" "")
+                (tltest-diagnostic-source source (& paths))
                 program
                 harness-paths
                 count
@@ -4124,7 +4145,7 @@
                         [(Check)
                           (tltest-check-only
                             (string.copy (& source))
-                            (TlTestDiagnosticSource source "" "")
+                            (tltest-diagnostic-source source (& paths))
                             program
                             harness-paths
                             count

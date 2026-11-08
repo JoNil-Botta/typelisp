@@ -347,6 +347,86 @@ stderr contains error[E0206]
 stderr contains --> a/imported.tl:2:26
 stderr contains 2 | (define (bad) : i64 (+ 2 false))
 
+# Single-file runtime paths are already physical. Harness rows have linkage
+# owners in their legacy provenance lane and must not become source mappings.
+case package-inline-diagnostic-single-file-imports
+file imported.tl
+(define (bad) : i64 (+ 2 false))
+end-file
+file inline.tl
+(import imported)
+(test imported-body (imported.bad) unit)
+end-file
+file no_tests.tl
+(import imported)
+(define (main) : i64 (imported.bad))
+end-file
+file sub/imported.tl
+(define (bad) : i64 (+ 2 false))
+end-file
+file nested.tl
+(import sub.imported)
+(test imported-body (sub.imported.bad) unit)
+end-file
+cwd {{dir}}
+step single-file-imported-test
+run test inline.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> imported.tl:1:26
+stderr contains 1 | (define (bad) : i64 (+ 2 false))
+step single-file-imported-check
+run test --check inline.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains --> imported.tl:1:26
+stderr contains 1 | (define (bad) : i64 (+ 2 false))
+file imported.tl
+(module imported)
+(define (bad) : i64 (+ 2 false))
+end-file
+step single-file-module-imported-test
+run test inline.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+step single-file-module-imported-check
+run test --check inline.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains --> imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+file imported
+DECOY line one
+DECOY line two
+end-file
+step single-file-module-decoy
+run test inline.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains --> imported.tl:2:26
+stderr contains 2 | (define (bad) : i64 (+ 2 false))
+stderr not-contains DECOY
+file imported.tl
+(define (bad) : i64 (+ 2 false))
+end-file
+step single-file-imported-decoy
+run test inline.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains --> imported.tl:1:26
+stderr contains 1 | (define (bad) : i64 (+ 2 false))
+stderr not-contains DECOY
+step single-file-imported-no-tests
+run test no_tests.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stderr contains TypeLisp tests: 0 passed; 0 failed;
+stderr not-contains error[E0206]
+stderr not-contains DECOY
+step single-file-nested-imported-test
+run test nested.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 2
+stderr contains error[E0206]
+stderr contains --> sub/imported.tl:1:26
+stderr contains 1 | (define (bad) : i64 (+ 2 false))
+
 case package-inline-diagnostic-controls
 file bad.tl
 (define (f) : i64 (+ 1 true))

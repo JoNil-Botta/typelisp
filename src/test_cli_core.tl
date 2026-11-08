@@ -2143,7 +2143,7 @@
         [(Ok decls paths _ _)
           (tltest-inline-typecheck-loaded
             (string.copy (& source))
-            (tltest-diagnostic-source source (& paths))
+            (tltest-diagnostic-source source (& decls) (& paths))
             decls
             paths
             roots
@@ -2183,7 +2183,7 @@
               (& manifest-dir)
               (& legacy-roots)
               (string.copy (& source)))
-            (tltest-diagnostic-source source (& paths))
+            (tltest-diagnostic-source source (& decls) (& paths))
             decls
             paths
             roots
@@ -2378,6 +2378,7 @@
 
 (define (tltest-diagnostic-source
   [source : String]
+  [decls : (& decls ast.AstDeclList)]
   [paths : (& paths ast.AstDeclPathList)]) : TlTestDiagnosticSource
   (let
     [physical-paths : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
@@ -2651,7 +2652,7 @@
   (tltest-run-direct-with-entry
     (owned_view.compiler-owned-shared-view source)
     (string.copy (& source))
-    (tltest-diagnostic-source source (& paths))
+    (TlTestDiagnosticSource source (sym_i64_env.sym-i64-empty))
     program
     paths
     roots
@@ -3065,7 +3066,7 @@
         (tltest-run-direct-with-entry
           (string.copy (& source))
           ""
-          (tltest-diagnostic-source source (& paths))
+          (tltest-diagnostic-source source (& decls) (& paths))
           (ast.ast-program decls)
           paths
           roots
@@ -3260,7 +3261,7 @@
                 (string.copy (& source)))]
             (tltest-package-run-one
               owned-source
-              (tltest-diagnostic-source source (& paths))
+              (tltest-diagnostic-source source (& decls) (& paths))
               target
               source-roots
               opt-level
@@ -3732,7 +3733,7 @@
               (tltest-no-tests-check source decls paths roots backend-target)
               (tltest-check-only
                 (string.copy (& source))
-                (tltest-diagnostic-source source (& paths))
+                (tltest-diagnostic-source source (& decls) (& paths))
                 program
                 harness-paths
                 count
@@ -4145,7 +4146,10 @@
                         [(Check)
                           (tltest-check-only
                             (string.copy (& source))
-                            (tltest-diagnostic-source source (& paths))
+                            (tltest-diagnostic-source
+                              source
+                              (& decls)
+                              (& paths))
                             program
                             harness-paths
                             count

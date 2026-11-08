@@ -3947,26 +3947,31 @@
     [(Name _ name-id) (Some name-id)]
     [_ (None)]))
 
-;; A struct member operand names a field, not a binding. A macro template's
-;; `Var` reaches `expr-struct-get`/`expr-struct-set` with its hygiene identity
-;; (a macro global, template, fresh or macro-local key), but fields are found by
-;; their source spelling (#8749). An id with no source name stays as it is.
-;; Interpreted CTFE and the native TLCI host callbacks share this mapping.
+;; A syntax operand read by its spelling -- a struct member, an `offset-of`
+;; field, a `cond` `else` head -- names no binding. A macro template's `Var`
+;; arrives with its hygiene identity (a macro global, template, fresh or
+;; macro-local key), but the reader wants its source spelling (#8749, #9681).
+;; An id with no source name stays as it is.
+(define (ctfe-name-spelling-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (let
+    [source-id : i64 (ctfe-name-source-id-for-session session name-id)]
+    (if (>= source-id 0)
+      source-id
+      name-id)))
+
+;; Interpreted CTFE and the native TLCI host callbacks share this mapping for
+;; `expr-struct-get`/`expr-struct-set` members.
 (define (ctfe-value-field-name-id
   [source-names : ci.InternSourceNameSessionHandle]
   [value : (& CompilerCtfeValue)]) : CtfeMaybeNameId
   (match (ctfe-value-syntax-name-id source-names value)
     [(Some name-id)
-      (let
-        [source-id : i64
-          (ctfe-name-source-id-for-session
-            (cis.intern-structural-session-handle-from-source-names
-              source-names)
-            name-id)]
-        (Some
-          (if (>= source-id 0)
-            source-id
-            name-id)))]
+      (Some
+        (ctfe-name-spelling-id
+          (cis.intern-structural-session-handle-from-source-names source-names)
+          name-id))]
     [(None) (None)]))
 
 ;; Module indexes use the same source/generated Name identity that a String-to-
@@ -5192,7 +5197,8 @@
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-offset-field-name (& inner) env))]
-    [(Var name) (Some name)]
+    [(Var name)
+      (Some (ctfe-name-spelling-id (ctfe-env-structural-session env) name))]
     [_ (None)]))
 
 (define (ctfe-layout-info-for-type-with-pools
@@ -8812,12 +8818,14 @@
           "expr-list-fold-if expects four args")))))
 
 (define (ctfe-expr-else-with-pools?
+  [session : cis.InternStructuralSessionHandle]
   [pools : (& pools ast.AstNodePoolContext)]
   [node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
     (& (ast.ast-node-pool-context-expr-get pools node)))
-    [(Var name) (= name cbi.compiler-builtin-id-fix-else)]
+    [(Var name)
+      (= (ctfe-name-spelling-id session name) cbi.compiler-builtin-id-fix-else)]
     [_ false]))
 
 ;; `(expr-clause-list-fold-if clauses missing else-not-final)`: the final clause
@@ -8825,6 +8833,7 @@
 ;; otherwise), then right to left each clause wraps an `if`, and a non-final
 ;; `else` collapses to `else-not-final`.
 (define (ctfe-expr-clause-list-fold-if-node
+  [session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]
   [items : (& items ast.AstExprClauseList)]
   [missing-node : i64]
@@ -8839,7 +8848,7 @@
       (let
         [clause : ast.AstExprClause (ctfe-expr-clause-list-nth items index)]
         [test-node : i64 (ctfe-expr-clause-first clause)]
-        [else? : bool (ctfe-expr-else-with-pools? (& pools) test-node)]
+        [else? : bool (ctfe-expr-else-with-pools? session (& pools) test-node)]
         (set!
           out-node
           (cond
@@ -8888,6 +8897,7 @@
                 (let
                   [fold : CtfeFold
                     (ctfe-expr-clause-list-fold-if-node
+                      (ctfe-env-structural-session env)
                       (ctfe-env-pools env)
                       items
                       missing-node
@@ -8909,6 +8919,7 @@
                 (let
                   [fold : CtfeFold
                     (ctfe-expr-clause-list-fold-if-node
+                      (ctfe-env-structural-session env)
                       pools
                       items
                       missing-node

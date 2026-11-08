@@ -425,6 +425,25 @@
         [_ false])]
     [_ false]))
 
+;; A String-built name, `(comptime.expr-var "...")`, keeps the plain source
+;; id interpreted CTFE gives it; only template `Var`s are template source
+;; (#9681).
+(define (producer-test-plain-var-result-ok?
+  [pools : ast.AstNodePoolContext]
+  [expected-name : String]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(Expr node _)
+      (match (producer-test-expr-get (& pools) node)
+        [(Var name)
+          (=
+            name
+            (ci.intern-source-slice
+              expected-name
+              0
+              (string.string-length expected-name)))]
+        [_ false])]
+    [_ false]))
+
 (define (producer-test-operand-result-ok? [operand : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(Expr node _) (= node operand)]
@@ -3300,7 +3319,9 @@
               (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
               (if (= body-count 2)
                 (producer-test-whenlike-result-ok? pools condition first second)
-                (producer-test-var-result-ok? pools "core-when-missing-body")))])]
+                (producer-test-plain-var-result-ok?
+                  pools
+                  "core-when-missing-body")))])]
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
       ok)))
 

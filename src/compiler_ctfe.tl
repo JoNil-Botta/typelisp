@@ -3987,7 +3987,16 @@
         [text-id : i64
           (ctfe-string-syntax-name-id source-names (& text) string-id)]
         (Some text text-id))]
-    [(Name text name-id) (Some text name-id)]
+    [(Name text name-id)
+      (Some
+        text
+        (if (=
+          name-id
+          (ctfe-root-owner-authority-id
+            (cis.intern-structural-session-handle-from-source-names
+              source-names)))
+          cbi.compiler-builtin-id-fix-empty
+          name-id))]
     [_ (None)]))
 
 (define (ctfe-reflect-info-canonical-id [info : (& CtfeReflectInfo)]) : i64
@@ -5395,12 +5404,8 @@
           (match (ctfe-reflect-info-cleanup (clone info))
             [(Fn cleanup-name cleanup-name-id)
               (Ok
-                (if (let
-                  [owner-id : i64
-                    (ctfe-reflect-info-nominal-module-id (& info))]
-                  (or
-                    (< owner-id 0)
-                    (= owner-id cbi.compiler-builtin-id-fix-empty)))
+                (if (ctfe-root-module-id?
+                  (ctfe-reflect-info-nominal-module-id (& info)))
                   (Name
                     cleanup-name
                     (ctfe-root-value-identity-id session cleanup-name-id))
@@ -5408,9 +5413,12 @@
             [(No) (ctfe-reflection-requires name "cleanup-owning type")])]
         [(string.eq name "type-nominal-module")
           (Ok
-            (ctfe-name-value-for-session
-              session
-              (ctfe-reflect-info-nominal-module-id (& info))))]
+            (if (ctfe-root-module-id?
+              (ctfe-reflect-info-nominal-module-id (& info)))
+              (Name "" (ctfe-root-owner-authority-id session))
+              (ctfe-name-value-for-session
+                session
+                (ctfe-reflect-info-nominal-module-id (& info)))))]
         [(string.eq name "type-nominal-name")
           (Ok
             (ctfe-name-value-for-session
@@ -6901,11 +6909,21 @@
       name-id)
     name-id))
 
-;; Root authority comes only from type reflection: `type-nominal-module` yields
-;; a `Name`, while a literal or computed "" is a `String`.
-(define (ctfe-value-root-authority? [value : (& value CompilerCtfeValue)]) : bool
+;; `type-nominal-module`'s owner value for an entry-module type. The private
+;; identity is what grants root authority; syntax inspection and computed text
+;; can produce an empty name, but not this one.
+(define (ctfe-root-owner-authority-id
+  [session : cis.InternStructuralSessionHandle]) : i64
+  (ctfe-root-value-identity-id session cbi.compiler-builtin-id-fix-empty))
+
+(define (ctfe-root-module-id? [module-id : i64]) : bool
+  (= module-id cbi.compiler-builtin-id-fix-empty))
+
+(define (ctfe-value-root-authority?
+  [session : cis.InternStructuralSessionHandle]
+  [value : (& value CompilerCtfeValue)]) : bool
   (match value
-    [(Name text _) (string.eq text "")]
+    [(Name _ name-id) (= name-id (ctfe-root-owner-authority-id session))]
     [_ false]))
 
 ;; Look up a module value by its resolved identities. `query-kind` 0 answers
@@ -6969,7 +6987,10 @@
         [(Ok module-value module-fuel)
           (let
             [root-authority : bool
-              (ctfe-value-root-authority? (& module-value))]
+              (ctfe-value-root-authority?
+                (compiler-ctfe-macro-state-structural-session
+                  (ctfe-env-macro-state env))
+                (& module-value))]
             (match (ctfe-value-module-index
               (ctfe-env-source-names env)
               module-value)
@@ -7127,7 +7148,10 @@
         [(Ok module-value module-fuel)
           (let
             [root-authority : bool
-              (ctfe-value-root-authority? (& module-value))]
+              (ctfe-value-root-authority?
+                (compiler-ctfe-macro-state-structural-session
+                  (ctfe-env-macro-state env))
+                (& module-value))]
             (match (ctfe-value-named module-value)
               [(None) (Err (ctfe-string-arg-error expr "module-hook"))]
               [(Some module module-id)

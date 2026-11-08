@@ -1474,6 +1474,7 @@
                   name
                   name-id
                   (ctfe_support.ctfe-value-root-authority?
+                    (compiler-comptime-host-structural-session)
                     (& (compiler-comptime-host-stack-value 2)))))]
             [(None) tlci.tlci-host-callback-status-bad-request])]
         [(None) tlci.tlci-host-callback-status-bad-request]))))
@@ -1506,6 +1507,7 @@
                     name
                     name-id
                     (ctfe_support.ctfe-value-root-authority?
+                      (compiler-comptime-host-structural-session)
                       (& (compiler-comptime-host-stack-value 2))))]
                 (if (= query-kind 0)
                   (begin

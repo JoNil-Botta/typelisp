@@ -23216,7 +23216,9 @@
   (cond
     [(sym_i64_env.sym-i64-contains-id env name-id)
       (lower-var-id state env name-id ty)]
-    [(lower-extern-value-decl-id? ctx name-id)
+    [(lower-extern-value-decl-id?
+        ctx
+        (lower-hygiene-root-source-id ctx name-id))
       (let
         [lowered
           (try (lower-var-id state env name-id (lower-global-shared-view ty)))]
@@ -23233,7 +23235,9 @@
                     ty))])]))]
     [(and
         (lower-function-type? (lower-global-shared-view ty))
-        (lower-symbol-function-value-id? ctx name-id))
+        (lower-symbol-function-value-id?
+          ctx
+          (lower-hygiene-root-source-id ctx name-id)))
       (Ok
         (Expr state (Function (lower-resolve-name-symbol-id state name-id)) ty))]
     [else (lower-var-id state env name-id ty)]))
@@ -30462,7 +30466,7 @@
               type-env
               lookup-name
               name-id
-              lookup-name-id
+              (lower-hygiene-root-lookup-id ctx name-id lookup-name-id)
               expr-ty)]
           [(Err message) (Err (box (lower-diagnostic message)))])))))
 
@@ -38377,6 +38381,18 @@
     (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx declared)))
     [(ast.AstType.Never) (ast.AstType.Never)]
     [_ contextual]))
+
+;; The symbol-table spelling of a root-defined global. Root rows are bare.
+(define (lower-hygiene-root-source-id [ctx : tc_core.TcContext] [name-id : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc_core.tc-context-structural-session ctx)]
+    (if (and
+      (tc_core.macro-hygiene-global-id? session name-id)
+      (csym.compiler-symbol-root-module-id?
+        (tc_core.macro-hygiene-global-module-id session name-id)))
+      (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)
+      name-id)))
 
 ;; A global whose definition module is the entry module keeps its structural
 ;; identity: the bare spelling resolves in the module being lowered.

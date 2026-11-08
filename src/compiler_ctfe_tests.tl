@@ -9,6 +9,7 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_diagnostic as cdiag)
 (import compiler_lzss as lzss)
 (import stdlib.byte_buf_core)
@@ -145,6 +146,21 @@
 
 (define (ctfe-expr-list-tail [lst : ast.AstExprList]) : ast.AstExprList
   (ast.ast-expr-list-tail (& lst)))
+
+;; Only `type-nominal-module`'s owner value grants root authority (#9687).
+(define (compiler-ctfe-root-authority-provenance-ok?) : bool
+  (let
+    [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+    [session : cis.InternStructuralSessionHandle
+      (ctfe.compiler-ctfe-macro-state-structural-session
+        (ctfe.ctfe-env-macro-state env))]
+    [token : i64 (ctfe.ctfe-root-owner-authority-id session)]
+    [empty-id : i64 (ci.intern "")]
+    (and
+      (ctfe.ctfe-value-root-authority? session (& (Name "" token)))
+      (not (ctfe.ctfe-value-root-authority? session (& (Name "" empty-id))))
+      (not (ctfe.ctfe-value-root-authority? session (& (Name "" (+ token 1)))))
+      (not (ctfe.ctfe-value-root-authority? session (& (String "" empty-id)))))))
 
 (define (compiler-ctfe-type-literal-ok?) : bool
   (let
@@ -4620,6 +4636,7 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (unless (compiler-ctfe-type-literal-ok?) (return 1))
+    (unless (compiler-ctfe-root-authority-provenance-ok?) (return 1))
     (unless (compiler-ctfe-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-raw-pointer-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-fixed-type-head-name-provenance-ok?) (return 1))

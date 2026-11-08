@@ -78761,7 +78761,9 @@
         "typecheck: unknown struct field "
         (csym.compiler-struct-field-key
           (tc-nominal-name-id-display struct-name-id)
-          (ci.intern-str field-id)))]
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            field-id)))]
     [decl-result : ResultTcStructDecl (tc-struct-decl-id ctx struct-name-id)]
     (match decl-result
       [(Ok decl)
@@ -95803,7 +95805,8 @@
   ;; transformer does, and a nested `(comptime ...)` naming one of these
   ;; operands is evaluated with the transformer's operand values (#9628).
   (defmacro-transformer-active bool)
-  (defmacro-transformer-operands TcStringList))
+  (defmacro-transformer-operands TcStringList)
+  (macro-hygiene-callee MacroHygieneCallee))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -95930,7 +95933,8 @@
     0
     0
     false
-    (Nil)))
+    (Nil)
+    (MacroHygieneCallee.No)))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -96161,6 +96165,12 @@
 
 (defenum MacroHygieneName
   (Name i64 MacroHygieneEnv))
+
+;; The expansion whose output hygiene is renaming, so a nested binding-clause
+;; call resolves its callee exactly as the rewalk that follows will.
+(defenum MacroHygieneCallee
+  (No)
+  (Some TcContext ast.AstDeclList))
 
 (defenum MacroHygieneParams
   (Params ast.AstParamList MacroHygieneEnv))
@@ -106986,10 +106996,10 @@
 
 (define (macro-hygiene-output-call-env
   [expr-bases : i64]
-  [func : ast.AstExpr]
+  [func : (& func ast.AstExpr)]
   [args : (& args ast.AstExprList)]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
     [(Var head-id)
       (let
         [source-head-id : i64
@@ -107534,6 +107544,304 @@
               depth
               out)])])))
 
+;; A nested macro call's bracket-clause operand that the callee declares as an
+;; ExprBindingClause introduces a binder, even though hygiene sees only a call.
+;; Rename a template head as a binder (SPEC section 3.7.2) and scope it over the
+;; operands after it, so caller syntax spliced there keeps its own binding. A
+;; caller-supplied head is not template syntax and still binds as written.
+;; Resolve exactly as macro-expand-expr-fire will for the renamed head; with
+;; no expansion context, or no macro, the call keeps ordinary hygiene.
+(define (macro-hygiene-callee-macro-decl
+  [expr-bases : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [head-id : i64]) : MacroMaybeDecl
+  (let
+    [callee-id : i64 (macro-hygiene-rename-var-id env macro-name head-id)]
+    (if (macro-call-callee-maybe-macro?
+      expr-bases
+      env.state
+      (ast.AstExpr.Var callee-id))
+      (match (tc-macro-walk-field env.state macro-hygiene-callee)
+        [(Some ctx decls)
+          (match (macro-call-decl
+            ctx
+            (ast.AstExpr.Var callee-id)
+            decls
+            (ast.AstExpr.Var callee-id))
+            [(Ok maybe-decl) maybe-decl]
+            [(Err _) (MacroMaybeDecl.No)])]
+        [(No) (MacroMaybeDecl.No)])
+      (MacroMaybeDecl.No))))
+
+(define (macro-hygiene-callee-install!
+  [state : TcMacroState]
+  [callee : MacroHygieneCallee]) : MacroHygieneCallee
+  (let
+    [previous : MacroHygieneCallee
+      (tc-macro-walk-field state macro-hygiene-callee)]
+    (tc-macro-walk-set! state macro-hygiene-callee callee)
+    previous))
+
+;; Rename an expression expansion's output, then rewalk it. The expansion is
+;; the callee resolver while hygiene runs and the enclosing one is restored;
+;; the declarations reach the rewalk back through that resolver slot.
+(define (macro-hygiene-rewalk-expansion
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [pools : ast.AstNodePoolContext]
+  [expanded : i64]
+  [hygiene : MacroHygieneContext]
+  [depth : i64]
+  [path-id : i64]) : ResultMacroExpr
+  (if (=
+    expanded
+    (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
+      (tc-context-ctfe-macro-state ctx)))
+    (macro-expand-produced-node-in ctx type-env decls depth expanded path-id)
+    (let
+      [state : TcMacroState (tc-context-macro-state ctx)]
+      [_root : unit (macro-hygiene-env-root-begin! state)]
+      [previous : MacroHygieneCallee
+        (macro-hygiene-callee-install!
+          state
+          (MacroHygieneCallee.Some ctx decls))]
+      [renamed : i64
+        (macro-hygiene-produced-expr
+          expanded
+          (macro-hygiene-env-empty state pools)
+          hygiene
+          depth)]
+      [_finish : unit (macro-hygiene-env-root-finish! state)]
+      (match (macro-hygiene-callee-install! state previous)
+        [(Some _ own-decls)
+          (macro-expand-produced-node-in
+            ctx
+            type-env
+            own-decls
+            depth
+            renamed
+            path-id)]
+        [(No) (io.panic "typecheck: macro hygiene callee resolver was lost")]))))
+
+;; Classify a parameter as macro-bind-params does, resolving its type in the
+;; callee's definition module.
+(define (macro-hygiene-binding-clause-param?
+  [env : MacroHygieneEnv]
+  [definition-module-id : i64]
+  [ty : ast.AstType]) : bool
+  (match (tc-macro-walk-field env.state macro-hygiene-callee)
+    [(Some ctx _)
+      (macro-param-expr-binding-clause?
+        ctx
+        (macro-decl-module-display definition-module-id)
+        definition-module-id
+        ty)]
+    [(No) false]))
+
+(define (macro-hygiene-bracket-clause? [expr-bases : i64] [expr-id : i64]) : bool
+  (let
+    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
+    (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+      [(BracketClause _) true]
+      [_ false])))
+
+(define (macro-hygiene-has-bracket-clause?
+  [expr-bases : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]) : bool
+  (and
+    (< index exprs.len)
+    (or
+      (macro-hygiene-bracket-clause?
+        expr-bases
+        (ast.ast-expr-list-get exprs index 0))
+      (macro-hygiene-has-bracket-clause? expr-bases exprs (+ index 1)))))
+
+(define (macro-hygiene-binding-clause-head
+  [expr-bases : i64]
+  [head-id : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]) : MacroHygieneName
+  (match (ast.ast-expr-segment-bases-get expr-bases head-id)
+    [(Spanned inner-box span)
+      (match (macro-hygiene-binding-clause-head
+        expr-bases
+        inner-box
+        env
+        macro-name
+        depth)
+        [(Name inner next-env)
+          (let
+            [replacement : ast.AstExpr (Spanned inner span)]
+            (Name
+              (ast.ast-node-pool-context-expr-push-borrowed
+                (& env.pools)
+                (& replacement))
+              next-env))])]
+    [(Var name)
+      (match (macro-hygiene-bind-name-id env macro-name depth name)
+        [(Name renamed-id next-env)
+          (Name
+            (macro-hygiene-expr-push env (ast.AstExpr.Var renamed-id))
+            next-env)])]
+    [_ (Name (macro-hygiene-expr expr-bases head-id env macro-name depth) env)]))
+
+;; The clause's type and initializer stay in the scope before its binder.
+(define (macro-hygiene-binding-clause
+  [expr-bases : i64]
+  [expr-id : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]) : MacroHygieneName
+  (match (ast.ast-expr-segment-bases-get expr-bases expr-id)
+    [(Spanned inner-box span)
+      (match (macro-hygiene-binding-clause
+        expr-bases
+        inner-box
+        env
+        macro-name
+        depth)
+        [(Name inner next-env)
+          (let
+            [replacement : ast.AstExpr (Spanned inner span)]
+            (Name
+              (ast.ast-node-pool-context-expr-push-borrowed
+                (& env.pools)
+                (& replacement))
+              next-env))])]
+    [(BracketClause items)
+      (if (< items.len 1)
+        (Name (macro-hygiene-expr expr-bases expr-id env macro-name depth) env)
+        (match (macro-hygiene-binding-clause-head
+          expr-bases
+          (ast.ast-expr-list-get (& items) 0 0)
+          env
+          macro-name
+          depth)
+          [(Name head-out next-env)
+            (let
+              [out : ast.AstExprList
+                (ast.ast-expr-list-with-capacity items.len)]
+              (ast.ast-expr-list-push (&mut out) head-out)
+              (macro-hygiene-expr-list-into
+                expr-bases
+                (& items)
+                1
+                env
+                macro-name
+                depth
+                (&mut out))
+              (Name
+                (ast.ast-expr-bracket-clause-with-pools env.pools out)
+                next-env))]))]
+    [_ (Name (macro-hygiene-expr expr-bases expr-id env macro-name depth) env)]))
+
+;; Map operands to parameters as macro-bind-params does: a non-final
+;; variadic collects the maximal bracket-clause run, a final one the rest.
+(define (macro-hygiene-binding-call-args-into
+  [expr-bases : i64]
+  [args : (& args ast.AstExprList)]
+  [index : i64]
+  [params : (& params ast.AstMacroParamList)]
+  [definition-module-id : i64]
+  [param-index : i64]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]
+  [out : (&mut out ast.AstExprList)]) : unit
+  (unless
+    (>= index args.len)
+    (let
+      [arg-id : i64 (ast.ast-expr-list-get args index 0)]
+      [param-count : i64 (ast.ast-macro-param-list-len params)]
+      [in-range? : bool (< param-index param-count)]
+      [clause? : bool (macro-hygiene-bracket-clause? expr-bases arg-id)]
+      (match (ast.ast-macro-param-list-get
+        params
+        param-index
+        (ast.ast-macro-param-fallback))
+        [(Param _ ty variadic _)
+          (if (and
+            in-range?
+            variadic
+            (< param-index (- param-count 1))
+            (not clause?))
+            (macro-hygiene-binding-call-args-into
+              expr-bases
+              args
+              index
+              params
+              definition-module-id
+              (+ param-index 1)
+              env
+              macro-name
+              depth
+              out)
+            (let
+              [next-param-index : i64
+                (if (and in-range? (not variadic))
+                  (+ param-index 1)
+                  param-index)]
+              (match (if (and
+                in-range?
+                clause?
+                (macro-hygiene-binding-clause-param?
+                  env
+                  definition-module-id
+                  ty))
+                (macro-hygiene-binding-clause
+                  expr-bases
+                  arg-id
+                  env
+                  macro-name
+                  depth)
+                (MacroHygieneName.Name
+                  (macro-hygiene-expr expr-bases arg-id env macro-name depth)
+                  env))
+                [(Name arg-out next-env)
+                  (ast.ast-expr-list-push out arg-out)
+                  (macro-hygiene-binding-call-args-into
+                    expr-bases
+                    args
+                    (+ index 1)
+                    params
+                    definition-module-id
+                    next-param-index
+                    next-env
+                    macro-name
+                    depth
+                    out)])))]))))
+
+(define (macro-hygiene-call-args
+  [expr-bases : i64]
+  [head-id : i64]
+  [args : ast.AstExprList]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [depth : i64]) : ast.AstExprList
+  (match (if (macro-hygiene-has-bracket-clause? expr-bases (& args) 0)
+    (macro-hygiene-callee-macro-decl expr-bases env macro-name head-id)
+    (MacroMaybeDecl.No))
+    [(Some _ definition-module-id _ params _ _)
+      (let
+        [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
+        (macro-hygiene-binding-call-args-into
+          expr-bases
+          (& args)
+          0
+          (& params)
+          definition-module-id
+          0
+          env
+          macro-name
+          depth
+          (&mut out))
+        out)]
+    [(No) (macro-hygiene-expr-list expr-bases args env macro-name depth)]))
+
 ;; Captured/shared nodes keep the copy path. Uniquely owned span wrappers
 ;; commit directly: a temporary wrapper's provenance must not survive the
 ;; temporary's rollback. Other owned replacements still commit the final append.
@@ -107654,11 +107962,7 @@
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         [call-env : MacroHygieneEnv
-          (macro-hygiene-output-call-env
-            expr-bases
-            (tc-global-shared-view func)
-            (& args)
-            env)]
+          (macro-hygiene-output-call-env expr-bases (& func) (& args) env)]
         (ast.ast-expr-call-with-pools
           env.pools
           (macro-hygiene-expr expr-bases func-box env macro-name depth)
@@ -107676,8 +107980,9 @@
                   env
                   macro-name
                   depth)
-                (macro-hygiene-expr-list
+                (macro-hygiene-call-args
                   expr-bases
+                  name-id
                   args
                   call-env
                   macro-name
@@ -113913,7 +114218,6 @@
                     ctx
                     fallback-module
                     fallback-module-id
-                    macro-name-id
                     (tc-global-shared-view params)))
                 (macro-hygiene-produced-eval-start-with-pools!
                   (tc-context-macro-state ctx)
@@ -114262,7 +114566,6 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          macro-name-id
           (tc-global-shared-view params)))
       (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
       (cfg compile-profile (compiler-tc-macro-profile-start))
@@ -114316,7 +114619,6 @@
               ctx
               fallback-module
               fallback-module-id
-              macro-name-id
               params)
             expanded-args
             env)]))))
@@ -114413,7 +114715,6 @@
           ctx
           fallback-module
           fallback-module-id
-          macro-name-id
           params)
         expanded-args
         env)
@@ -114445,7 +114746,6 @@
             ctx
             fallback-module
             fallback-module-id
-            macro-name-id
             params)
           expanded-args
           env)
@@ -114601,29 +114901,43 @@
           (&mut out)))]
     (Ok out)))
 
+;; A binding-prefix transformer has the signature
+;; `[bindings : ExprBindingClause ...] [body : Expr ...]`, as `for`, `any?` and
+;; `all?` do. Its bodies run under the clause binders, so they are expanded
+;; only after the transformer has introduced those binders. The check uses
+;; the signature alone, so a user macro of the same shape is treated alike.
+;; Whether parameter INDEX of PARAMS is variadic, read in place: no checked
+;; get, so no fallback parameter is built. INDEX must be in range.
+(define (macro-param-variadic-at?
+  [params : (& params ast.AstMacroParamList)]
+  [index : i64]) : bool
+  (match (& (array-ref params.slots index))
+    [(Param _ _ variadic _) variadic]))
+
 (define (macro-binding-prefix-transformer?
   [ctx : TcContext]
   [fallback-module : String]
   [fallback-module-id : i64]
-  [macro-name-id : i64]
   [params : ast.AstMacroParamList]) : bool
-  (if (or
-    (not (string.eq (ci.intern-str macro-name-id) "for"))
-    (not (= (ast.ast-macro-param-list-len (& params)) 2)))
+  ;; Most macros fail the in-place shape test; only a two-parameter,
+  ;; all-variadic signature reaches the typed parameter checks.
+  (if (not
+    (and
+      (= (ast.ast-macro-param-list-len (& params)) 2)
+      (macro-param-variadic-at? (& params) 0)
+      (macro-param-variadic-at? (& params) 1)))
     false
     (match (ast.ast-macro-param-list-get
       (& params)
       0
       (ast.ast-macro-param-fallback))
-      [(Param _ binding-ty binding-variadic _)
+      [(Param _ binding-ty _ _)
         (match (ast.ast-macro-param-list-get
           (& params)
           1
           (ast.ast-macro-param-fallback))
-          [(Param _ body-ty body-variadic _)
+          [(Param _ body-ty _ _)
             (and
-              binding-variadic
-              body-variadic
               (macro-param-expr-binding-clause?
                 ctx
                 (tc-global-shared-view fallback-module)
@@ -114664,7 +114978,6 @@
           ctx
           (tc-global-shared-view fallback-module)
           fallback-module-id
-          macro-name-id
           (tc-global-shared-view params))
           (macro-expand-binding-prefix-args
             ctx
@@ -115321,35 +115634,18 @@
                 (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                 (let
                   [rewalk-result : ResultMacroExpr
-                    (macro-expand-produced-node-in
+                    (macro-hygiene-rewalk-expansion
                       ctx
                       type-env
                       decls
+                      (tc-context-type-pools ctx)
+                      expanded
+                      (MacroHygieneContext
+                        macro-name-id
+                        definition-module-id
+                        declaration-id
+                        ctx.shared)
                       (+ depth 1)
-                      (if (=
-                        expanded
-                        (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
-                          (tc-context-ctfe-macro-state ctx)))
-                        expanded
-                        (begin
-                          (macro-hygiene-env-root-begin!
-                            (tc-context-macro-state ctx))
-                          (let
-                            [out : i64
-                              (macro-hygiene-produced-expr
-                                expanded
-                                (macro-hygiene-env-empty
-                                  (tc-context-macro-state ctx)
-                                  (tc-context-type-pools ctx))
-                                (MacroHygieneContext
-                                  macro-name-id
-                                  definition-module-id
-                                  declaration-id
-                                  ctx.shared)
-                                (+ depth 1))]
-                            (macro-hygiene-env-root-finish!
-                              (tc-context-macro-state ctx))
-                            out)))
                       definition-path-id)]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
@@ -115374,35 +115670,18 @@
                 (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                 (let
                   [rewalk-result : ResultMacroExpr
-                    (macro-expand-produced-node-in
+                    (macro-hygiene-rewalk-expansion
                       ctx
                       type-env
                       decls
+                      pools
+                      expanded
+                      (MacroHygieneContext
+                        macro-name-id
+                        definition-module-id
+                        declaration-id
+                        ctx.shared)
                       (+ depth 1)
-                      (if (=
-                        expanded
-                        (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
-                          (tc-context-ctfe-macro-state ctx)))
-                        expanded
-                        (begin
-                          (macro-hygiene-env-root-begin!
-                            (tc-context-macro-state ctx))
-                          (let
-                            [out : i64
-                              (macro-hygiene-produced-expr
-                                expanded
-                                (macro-hygiene-env-empty
-                                  (tc-context-macro-state ctx)
-                                  pools)
-                                (MacroHygieneContext
-                                  macro-name-id
-                                  definition-module-id
-                                  declaration-id
-                                  ctx.shared)
-                                (+ depth 1))]
-                            (macro-hygiene-env-root-finish!
-                              (tc-context-macro-state ctx))
-                            out)))
                       definition-path-id)]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))

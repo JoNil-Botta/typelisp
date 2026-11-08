@@ -304,7 +304,7 @@ src/linker_elf_object_reader.tl	stage2-selfhost-compile-manifest	@compiler	Direc
 src/read.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/sym_i64_env.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/token.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-stdlib/core_macros.tl	stage2-prelude-macro-mutation-guard,tlci-mutation-bootstrap-fixpoint	@stdlib	Direct tracked input named by its owning verifier or compile manifest.
+stdlib/core_macros.tl	stage2-prelude-macro-mutation-guard,tlci-mutation-bootstrap-fixpoint,stage2-public-tool-surface	@stdlib	Direct tracked input named by its owning verifier or compile manifest, and a primary source of the public test cases.
 stdlib/format.tl	stage2-stdlib-modules-and-fixtures	@stdlib	Direct tracked input named by its owning verifier or compile manifest.
 stdlib/generated/idna_unicode12_data.tl	stage2-idna-unicode12-data	@stdlib	Direct tracked input named by its owning verifier or compile manifest.
 stdlib/idna_unicode12.tl	stage2-idna-unicode12-data	@stdlib	Direct tracked input named by its owning verifier or compile manifest.

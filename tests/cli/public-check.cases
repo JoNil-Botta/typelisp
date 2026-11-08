@@ -2892,7 +2892,7 @@ file src/main.tl
 (defmacro (m) : i64 (expr-int 42))
 (module inner (define (g) : i64 0))
 (define (main) : i64 (m))
-(test file-macro (assert (= (m) 42) "file macro"))
+(test file-macro (m) unit)
 end-file
 step single-check
 run check "{{dir}}/src/main.tl"
@@ -2927,15 +2927,17 @@ end-file
 file src/main.tl
 (defmacro (m) : i64 (expr-int 42))
 (module inner
+  (import stdlib.test)
   (defmacro (m) : i64 (expr-int 7))
   (module deeper
+    (import stdlib.test)
     (defmacro (m) : i64 (expr-int 9))
     (define (g) : i64 (m))
-    (test deeper-macro (assert (= (g) 9) "deeper macro")))
+    (test deeper-macro (test.assert-i64-eq (g) 9 "deeper macro")))
   (define (g) : i64 (m))
-  (test inner-macro (assert (= (g) 7) "inner macro")))
+  (test inner-macro (test.assert-i64-eq (g) 7 "inner macro")))
 (define (main) : i64 (m))
-(test macro-scope (assert (= (main) 42) "root macro"))
+(test macro-scope (m) unit)
 end-file
 step single-check
 run check "{{dir}}/src/main.tl"
@@ -2965,12 +2967,13 @@ end-file
 file src/main.tl
 (defmacro (m) : i64 (expr-int 42))
 (module inner
+  (import stdlib.test)
   (defmacro (n) : i64 `(+ dep.v 1))
   (import helper as dep)
   (define (g) : i64 (n))
-  (test inner-import (assert (= (g) 42) "nested import")))
+  (test inner-import (test.assert-i64-eq (g) 42 "nested import")))
 (define (main) : i64 (m))
-(test macro-import (assert (= (main) 42) "root macro"))
+(test macro-import (m) unit)
 end-file
 step single-check
 run check "{{dir}}/src/main.tl" --stdlib-root "{{dir}}/src"

@@ -71824,7 +71824,7 @@ return 0" true)
 ;; Comparison folds reproduce the backend's comparison of the operand type
 ;; (compiler-backend-binop-operand-ty / compiler-backend-type-size): enum tags
 ;; and pointers are signed 64-bit words, Region/Invalidate wrappers compare at
-;; the inner width with signed ordering, and a legacy Bool-typed comparison
+;; the inner width and signedness, and a legacy Bool-typed comparison
 ;; reads the lhs value's type.
 (define (opt-test-compare-tag) : ast.AstType
   (Enum (opt-test-symbol "OptTestCompareTag")))
@@ -71845,7 +71845,9 @@ return 0" true)
     (irt.instr "%11 = lt %10, 0 : bool")
     (irt.instr "%12 = mov -1 : i64")
     (irt.instr "%13 = lt %12, 0 : bool")
-    (irt.instr "%14 = eq 0, 0 : bool")))
+    (irt.instr "%14 = eq 0, 0 : bool")
+    (irt.instr "%15 = lt -1, 0 : (Region numbers u64)")
+    (irt.instr "%16 = lt -1, 0 : (Invalidate owner u8)")))
 
 (define (opt-test-backend-compare-expected) : ir.CompilerIrInstrSeq
   (irt.instrs
@@ -71863,17 +71865,18 @@ return 0" true)
      %11 = mov false : bool
      %12 = mov -1 : i64
      %13 = mov true : bool
-     %14 = mov true : bool"))
+     %14 = mov true : bool
+     %15 = mov false : bool
+     %16 = mov false : bool"))
 
-;; Types the backend would compare differently, or not as one scalar word,
-;; stay unfolded.
+;; Non-scalar representations and unsupported wrapper inner types stay unfolded.
 (define (opt-test-backend-compare-refused) : ir.CompilerIrInstrSeq
   (irt.instrs
-    "%0 = lt -1, 0 : (Region numbers u64)
-     %1 = lt -1, 0 : (Invalidate owner u8)
-     %2 = eq 0, 0 : OptTestWordStruct
-     %3 = eq 0, 0 : (Tuple i64 i64)
-     %4 = eq 0, 0 : (& numbers i64)"))
+    "%0 = eq 0, 0 : OptTestWordStruct
+     %1 = eq 0, 0 : (Tuple i64 i64)
+     %2 = eq 0, 0 : (& numbers i64)
+     %3 = lt -1, 0 : (Region numbers f64)
+     %4 = eq true, false : (Invalidate owner bool)"))
 
 (test
   constant-compare-backend-operand-type
@@ -71890,7 +71893,122 @@ return 0" true)
         bases
         (opt-test-fold-instrs bases (Nil) (opt-test-backend-compare-refused))
         (opt-test-backend-compare-refused))
-      "unsigned ordering under a wrapper, structs, tuples and references stay unfolded")))
+      "structs, tuples, references and unsupported wrapper inner types stay unfolded")))
+
+(test
+  constant-compare-wrapped-scalar
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (test.assert-true
+      (opt-test-instr-seq-eq
+        bases
+        (opt-test-fold-instrs
+          bases
+          (Nil)
+          (irt.instrs
+            "%0 = eq -1, 255 : (Region numbers char)
+             %1 = ne 256, 0 : (Invalidate owner char)
+             %2 = lt -1, 0 : (Region numbers char)
+             %3 = le 256, 0 : (Invalidate owner char)
+             %4 = gt -1, 0 : (Region numbers char)
+             %5 = ge 0, -1 : (Invalidate owner char)
+             %6 = eq 257, 1 : (Region numbers u8)
+             %7 = ne -1, 255 : (Invalidate owner u8)
+             %8 = lt -1, 0 : (Region numbers u8)
+             %9 = le 256, 0 : (Invalidate owner u8)
+             %10 = gt -1, 0 : (Region numbers u8)
+             %11 = ge 0, -1 : (Invalidate owner u8)
+             %12 = eq 65537, 1 : (Region numbers u16)
+             %13 = ne -1, 65535 : (Invalidate owner u16)
+             %14 = lt -1, 0 : (Region numbers u16)
+             %15 = le 65536, 0 : (Invalidate owner u16)
+             %16 = gt -1, 0 : (Region numbers u16)
+             %17 = ge 0, -1 : (Invalidate owner u16)
+             %18 = eq 4294967297, 1 : (Region numbers u32)
+             %19 = ne -1, 4294967295 : (Invalidate owner u32)
+             %20 = lt -1, 0 : (Region numbers u32)
+             %21 = le 4294967296, 0 : (Invalidate owner u32)
+             %22 = gt -1, 0 : (Region numbers u32)
+             %23 = ge 0, -1 : (Invalidate owner u32)
+             %24 = eq -1, -1 : (Region numbers u64)
+             %25 = ne -1, 0 : (Invalidate owner u64)
+             %26 = lt -1, 0 : (Region numbers u64)
+             %27 = le 0, -1 : (Invalidate owner u64)
+             %28 = gt -1, 9223372036854775807 : (Region numbers u64)
+             %29 = ge 0, -1 : (Invalidate owner u64)
+             %30 = lt -1, 0 : (Region numbers (Invalidate owner u64))
+             %31 = le 256, 0 : (Invalidate owner (Region numbers char))
+             %32 = gt -1, 0 : (Region outer (Region inner u16))
+             %33 = ge 0, -1 : (Invalidate outer (Invalidate inner u32))
+             %34 = lt %100, 0 : (Region numbers u64)
+             %35 = gt -1, %101 : (Invalidate owner char)"))
+        (irt.instrs
+          "%0 = mov true : bool
+           %1 = mov false : bool
+           %2 = mov false : bool
+           %3 = mov true : bool
+           %4 = mov true : bool
+           %5 = mov false : bool
+           %6 = mov true : bool
+           %7 = mov false : bool
+           %8 = mov false : bool
+           %9 = mov true : bool
+           %10 = mov true : bool
+           %11 = mov false : bool
+           %12 = mov true : bool
+           %13 = mov false : bool
+           %14 = mov false : bool
+           %15 = mov true : bool
+           %16 = mov true : bool
+           %17 = mov false : bool
+           %18 = mov true : bool
+           %19 = mov false : bool
+           %20 = mov false : bool
+           %21 = mov true : bool
+           %22 = mov true : bool
+           %23 = mov false : bool
+           %24 = mov true : bool
+           %25 = mov true : bool
+           %26 = mov false : bool
+           %27 = mov true : bool
+           %28 = mov true : bool
+           %29 = mov false : bool
+           %30 = mov false : bool
+           %31 = mov true : bool
+           %32 = mov true : bool
+           %33 = mov false : bool
+           %34 = lt %100, 0 : (Region numbers u64)
+           %35 = gt -1, %101 : (Invalidate owner char)"))
+      "wrapped unsigned and Char comparisons normalize to the inner width, preserve nested signedness and require both operands to be known")))
+
+(test
+  sccp-compare-wrapped-unsigned
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [input : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           %0 = mov -1 : i64
+           %1 = lt %0, 0 : (Region numbers (Invalidate owner u64))
+           branch %1, wrong, correct
+         wrong:
+           return 1
+         correct:
+           return 42")]
+    [expected : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           %0 = mov -1 : i64
+           %1 = mov false : bool
+           jump correct
+         correct:
+           return 42")]
+    (test.assert-true
+      (opt.opt-block-list-eq
+        bases
+        (& (opt.opt-sccp-blocks bases (& (ir.compiler-ir-param-seq-empty)) (& input)))
+        (& expected))
+      "SCCP orders a propagated negative constant unsigned through nested wrappers")))
 
 (test
   sccp-compare-backend-operand-type

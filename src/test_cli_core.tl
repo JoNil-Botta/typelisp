@@ -2382,11 +2382,15 @@
   [paths : (& paths ast.AstDeclPathList)]) : TlTestDiagnosticSource
   (let
     [physical-paths : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
-    (for [index (iterator.range 0 (ast.ast-decl-path-list-len paths))]
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
       (let
         [provenance : i64 (ast.ast-decl-path-list-provenance-id paths index -1)]
         (when
-          (>= provenance 0)
+          (and
+            (>= provenance 0)
+            (match (ast.ast-decl-list-ref-borrowed decls index)
+              [(Module _) false]
+              [_ true]))
           (let
             [path : i64 (ci.intern (ast.ast-decl-path-list-get paths index ""))]
             [previous : i64

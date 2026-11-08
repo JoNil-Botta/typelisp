@@ -20824,6 +20824,9 @@
   [fallback : i64]) : i64
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
+    ;; Root rows are bare, so a reflected root identity resolves by its source.
+    [lookup-name-id : i64 (lower-hygiene-root-source-id ctx lookup-name-id)]
+    [raw-name-id : i64 (lower-hygiene-root-source-id ctx raw-name-id)]
     [result-handle : i64 (lower-struct-type-handle-or ctx ty fallback)]
     [lookup-handle : i64
       (if (>= lookup-name-id 0)
@@ -39912,7 +39915,9 @@
             result-ty)
           (if (and
             (or
-              (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+              (tc_core.tc-constructor-source-name-id?
+                ctx
+                (lower-hygiene-root-source-id ctx raw-name-id))
               (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
             (csym.compiler-symbols-handle-found? struct-handle)
             (=
@@ -40060,7 +40065,9 @@
             result-ty))
         (if (and
           (or
-            (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
+            (tc_core.tc-constructor-source-name-id?
+              ctx
+              (lower-hygiene-root-source-id ctx raw-name-id))
             (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
           (csym.compiler-symbols-handle-found? struct-handle)
           (=

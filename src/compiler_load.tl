@@ -7278,8 +7278,7 @@
     (match decl.kind
       [(CompilerLoadSurfaceMacro) true]
       [_ false])
-    (match (owned_view.compiler-owned-reference-shared-view
-      (& decl.macro-result))
+    (match (& decl.macro-result)
       [(or (CompilerLoadSurfaceMacroModule) (CompilerLoadSurfaceMacroDecls))
         true]
       [_ false])))

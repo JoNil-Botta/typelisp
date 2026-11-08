@@ -2550,6 +2550,195 @@
       (+= index 1))
     ok))
 
+;; Each compare form at each operand width, with the condition for its
+;; signedness: `<cmp/test> ; set<cc> %al ; movzbq %al, %rax` (#9713).
+(define (compiler-backend-object-compare-binop-hex?
+  [op : ir.CompilerIrBinOp]
+  [ty : ast.AstType]
+  [hex : String]) : bool
+  (string.eq
+    (backend.compiler-backend-object-binop-bytes
+      (ast.ast-node-pool-reader-type-segment-bases)
+      op
+      ty)
+    (object_target.compiler-backend-object-bytes-from-hex (& hex))))
+
+(define (compiler-backend-object-compare-zero-hex?
+  [op : ir.CompilerIrBinOp]
+  [ty : ast.AstType]
+  [hex : String]) : bool
+  (string.eq
+    (backend.compiler-backend-object-zero-compare-bytes
+      (ast.ast-node-pool-reader-type-segment-bases)
+      op
+      ty)
+    (object_target.compiler-backend-object-bytes-from-hex (& hex))))
+
+(define (compiler-backend-object-compare-encoding-ok?) : bool
+  (and
+    (compiler-backend-object-compare-binop-hex?
+      (Lt)
+      (U64)
+      "4c39c00f92c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Le)
+      (U64)
+      "4c39c00f96c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Gt)
+      (U64)
+      "4c39c00f97c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Ge)
+      (U64)
+      "4c39c00f93c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Lt)
+      (I64)
+      "4c39c00f9cc0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Le)
+      (I64)
+      "4c39c00f9ec0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Gt)
+      (I64)
+      "4c39c00f9fc0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Ge)
+      (I64)
+      "4c39c00f9dc0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Eq)
+      (I64)
+      "4c39c00f94c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Ne)
+      (U64)
+      "4c39c00f95c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Lt)
+      (U32)
+      "4439c00f92c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Lt)
+      (I32)
+      "4439c00f9cc0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Lt)
+      (U16)
+      "664439c00f92c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Gt)
+      (I16)
+      "664439c00f9fc0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Lt)
+      (U8)
+      "4438c00f92c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Ge)
+      (I8)
+      "4438c00f9dc0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Le)
+      (Char)
+      "4438c00f96c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (Eq)
+      (U8)
+      "4438c00f94c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (BitTestEq)
+      (I64)
+      "4c85c00f94c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (BitTestNe)
+      (U32)
+      "4485c00f95c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (BitTestNe)
+      (U16)
+      "664485c00f95c0480fb6c0")
+    (compiler-backend-object-compare-binop-hex?
+      (BitTestEq)
+      (U8)
+      "4484c00f94c0480fb6c0")
+    (compiler-backend-object-compare-zero-hex?
+      (Lt)
+      (U64)
+      "4885c00f92c0480fb6c0")
+    (compiler-backend-object-compare-zero-hex?
+      (Ge)
+      (U64)
+      "4885c00f93c0480fb6c0")
+    (compiler-backend-object-compare-zero-hex?
+      (Lt)
+      (I64)
+      "4885c00f9cc0480fb6c0")
+    (compiler-backend-object-compare-zero-hex? (Ne) (U32) "85c00f95c0480fb6c0")
+    (compiler-backend-object-compare-zero-hex?
+      (Ge)
+      (U16)
+      "6685c00f93c0480fb6c0")
+    (compiler-backend-object-compare-zero-hex? (Gt) (U8) "84c00f97c0480fb6c0")
+    (compiler-backend-object-compare-zero-hex? (Lt) (I32) "85c00f9cc0480fb6c0")))
+
+;; A branch fused to an unsigned compare jumps on that compare's condition.
+(define (compiler-backend-object-unsigned-flags-ok?) : bool
+  (let
+    [program-index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [instrs : ir.CompilerIrInstrSeq
+      (compiler-backend-test-instr-seq-prepend
+        (BinOp 7 (Lt) (Var 0) (Var 1) (U64))
+        (compiler-backend-test-instr-seq-prepend
+          (Mov 8 (I64 0) (I64))
+          (ir.compiler-ir-instr-seq-empty)))]
+    (backend.compiler-backend-object-note-flags! program-index (& instrs) 1)
+    (=
+      (backend.compiler-backend-object-branch-flags-cc (Var 7) program-index)
+      0x2)))
+
+(define (compiler-backend-object-compare-source) : String
+  "(define (ult [a : u64] [b : u64]) : bool (< a b))
+(define (nle [a : u32] [b : u32]) : bool (<= a b))
+(define (main) : i64 0)")
+
+;; Windows execution is not available in every lane; this pins the same object
+;; bytes on both targets.
+(define (compiler-backend-object-compare-target-bytes-ok?
+  [target : backend.CompilerBackendTarget]) : bool
+  (match (backend.compiler-backend-emit-source-object-image-for-target
+    (compiler-backend-object-compare-source)
+    target)
+    [(Ok image)
+      (and
+        (cobj.compiler-object-section-contains-bytes?
+          (& image.sections)
+          (&
+            (object_target.compiler-backend-object-bytes-from-hex
+              "4c39c00f92c0480fb6c0")))
+        (cobj.compiler-object-section-contains-bytes?
+          (& image.sections)
+          (&
+            (object_target.compiler-backend-object-bytes-from-hex
+              "4439c00f96c0480fb6c0"))))]
+    [(Err _) false]))
+
+(test
+  backend-object-compare-uses-operand-type
+  (unless
+    (and
+      (compiler-backend-object-compare-encoding-ok?)
+      (compiler-backend-object-unsigned-flags-ok?)
+      (compiler-backend-object-compare-target-bytes-ok? Linux)
+      (compiler-backend-object-compare-target-bytes-ok? Windows))
+    (io.panic "a direct-object compare ignored its operand type")))
+
 ;; Flags are scoped to one adjacent integer producer, including when the same
 ;; scratch state is reused at the start of another block.
 (define (compiler-backend-object-flags-isolation-ok?) : bool
@@ -8487,7 +8676,61 @@
           bases
           le-op-5
           (owned_view.compiler-owned-shared-view invalidate-u16))
-        "cmovbe"))))
+        "cmovbe")
+      ;; The direct-object compare classifies through the same wrappers, and
+      ;; compares at the wrapped width (#9713).
+      (=
+        (backend.compiler-backend-object-compare-cc
+          bases
+          (& (ir.CompilerIrBinOp.Lt))
+          invalidate-u8)
+        0x2)
+      (=
+        (backend.compiler-backend-object-compare-cc
+          bases
+          (& (ir.CompilerIrBinOp.Gt))
+          region-u64)
+        0x7)
+      (=
+        (backend.compiler-backend-object-compare-cc
+          bases
+          (& (ir.CompilerIrBinOp.Lt))
+          region-i64)
+        0xc)
+      (=
+        (backend.compiler-backend-object-compare-cc
+          bases
+          (& (ir.CompilerIrBinOp.Ge))
+          region-region-u32)
+        0x3)
+      (string.eq
+        (backend.compiler-backend-object-binop-bytes
+          bases
+          (& (ir.CompilerIrBinOp.Lt))
+          invalidate-u8)
+        (object_target.compiler-backend-object-bytes-from-hex
+          "4438c00f92c0480fb6c0"))
+      (string.eq
+        (backend.compiler-backend-object-zero-compare-bytes
+          bases
+          (& (ir.CompilerIrBinOp.Le))
+          invalidate-u16)
+        (object_target.compiler-backend-object-bytes-from-hex
+          "6685c00f96c0480fb6c0"))
+      (string.eq
+        (backend.compiler-backend-object-binop-bytes
+          bases
+          (& (ir.CompilerIrBinOp.Gt))
+          region-u64)
+        (object_target.compiler-backend-object-bytes-from-hex
+          "4c39c00f97c0480fb6c0"))
+      (string.eq
+        (backend.compiler-backend-object-binop-bytes
+          bases
+          (& (ir.CompilerIrBinOp.Ge))
+          region-region-u32)
+        (object_target.compiler-backend-object-bytes-from-hex
+          "4439c00f93c0480fb6c0")))))
 
 (test
   backend-wrapped-scalars-keep-inner-signedness
@@ -9292,10 +9535,10 @@
     (string.eq
       (backend.compiler-backend-object-lea-rbp-disp-bytes -64 "%rax")
       (object_target.compiler-backend-object-bytes-from-hex "488d45c0"))
-    (string.eq
-      (backend.compiler-backend-object-zero-compare-bytes (Eq))
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4885c00f94c0480fb6c0"))
+    (compiler-backend-object-compare-zero-hex?
+      (Eq)
+      (I64)
+      "4885c00f94c0480fb6c0")
     (string.eq
       (backend.compiler-backend-object-divmod-bytes false false)
       (object_target.compiler-backend-object-bytes-from-hex "31d249f7f0"))

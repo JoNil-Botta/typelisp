@@ -564,6 +564,90 @@ stderr empty
 exec "{{dir}}/i64-assembly"
 exit 35
 
+# A region-tagged float has no direct-object lowering: its compare or arithmetic
+# must take the assembly route and compute the float answer, never integer
+# instructions over the float bits. The failing `as` proves the route (#9690).
+case direct-object-region-float-fail-closed
+opt 0 1 2
+sh chmod +x "{{work}}/no-assembler-bin/as"
+step region-float-eq-leaves-direct-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-eq-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step region-float-eq-assembly
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-eq"
+stderr empty
+exec "{{dir}}/region-float-eq"
+exit 42
+step region-float-gt-leaves-direct-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-gt.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-gt-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step region-float-gt-assembly
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-gt.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-gt"
+stderr empty
+exec "{{dir}}/region-float-gt"
+exit 42
+step region-float-add-leaves-direct-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-add.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-add-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step region-float-add-assembly
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-add.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-add"
+stderr empty
+exec "{{dir}}/region-float-add"
+exit 42
+step region-float-mul-leaves-direct-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-mul.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-mul-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step region-float-mul-assembly
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-mul.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-mul"
+stderr empty
+exec "{{dir}}/region-float-mul"
+exit 42
+step region-float32-eq-leaves-direct-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float32-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float32-eq-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step region-float32-eq-assembly
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float32-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float32-eq"
+stderr empty
+exec "{{dir}}/region-float32-eq"
+exit 42
+
+# The route the float cases must leave is live: the same fixture shape over i64
+# still builds with the failing `as` (#9690).
+case direct-object-region-float-int-control
+opt 2
+sh chmod +x "{{work}}/no-assembler-bin/as"
+step i64-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i64.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i64-direct"
+stderr empty
+exec "{{dir}}/i64-direct"
+exit 35
+
+# The IR carries no region tag on a float: every float classifier downstream
+# reads the outer constructor (#9690). Lowering is target-neutral; check both.
+case region-float-ir-untagged
+opt 0 1 2
+step linux-ir
+exec "{{compiler}}" compile "{{root}}/tests/integration/region_float_arith.tl" --dump-ir -o "{{dir}}/linux.ir" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+step linux-ir-text
+exec cat "{{dir}}/linux.ir"
+stdout contains : f64
+stdout contains : f32
+stdout not-contains (Region
+stdout not-contains (Invalidate
+step windows-ir
+exec "{{compiler}}" compile "{{root}}/tests/integration/region_float_arith.tl" --dump-ir -o "{{dir}}/windows.ir" --target windows-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+step windows-ir-text
+exec cat "{{dir}}/windows.ir"
+stdout contains : f64
+stdout contains : f32
+stdout not-contains (Region
+stdout not-contains (Invalidate
+
 case direct-object-fallback
 file ordinary-call-abi.tl
 (define (seventh

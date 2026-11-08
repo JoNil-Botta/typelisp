@@ -4533,12 +4533,10 @@
 (define (compiler-backend-program-collections-mark-f64-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
   (set! collections.uses-f64-neg true)
-  (set! collections.uses-f32-neg false)
   collections)
 
 (define (compiler-backend-program-collections-mark-f32-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
-  (set! collections.uses-f64-neg false)
   (set! collections.uses-f32-neg true)
   collections)
 

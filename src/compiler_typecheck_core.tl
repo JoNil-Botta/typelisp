@@ -31317,6 +31317,22 @@
     (tc-entry-unqualified-import-hidden-key-id ctx env name-id)
     name-id))
 
+;; A visible bare binding, or the hidden key's binding when the hit is a hidden
+;; entry-module import. Kept out of the hot lookup so it keeps its frame.
+(define (tc-entry-unqualified-import-visible-binding
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [env-name-id : i64]
+  [found : ResultTcBinding]) : ResultTcBinding
+  (if (tc-entry-unqualified-import-hidden? ctx env name-id env-name-id)
+    (tc-binding-unrepresented
+      (tc-lookup-persistent-key-id
+        env
+        (tc-entry-unqualified-import-hidden-key-id ctx env name-id)
+        name-id))
+    found))
+
 ;; Display-key form of `tc-entry-unqualified-import-source-key-id`.
 (define (tc-entry-unqualified-import-source-key
   [ctx : TcContext]
@@ -36270,14 +36286,13 @@
           env-name-id
           false)
           [(ResultTcBinding.Ok ty unsafe? origin)
-            (if (and
-              tc-entry-unqualified-import-any
-              (tc-entry-unqualified-import-hidden? ctx env name-id env-name-id))
-              (tc-binding-unrepresented
-                (tc-lookup-persistent-key-id
-                  env
-                  (tc-entry-unqualified-import-hidden-key-id ctx env name-id)
-                  name-id))
+            (if tc-entry-unqualified-import-any
+              (tc-entry-unqualified-import-visible-binding
+                ctx
+                env
+                name-id
+                env-name-id
+                (ResultTcBinding.Ok ty unsafe? origin))
               (ResultTcBinding.Ok ty unsafe? origin))]
           [(ResultTcBinding.Fault error) (ResultTcBinding.Fault error)]
           [(ResultTcBinding.Err message)

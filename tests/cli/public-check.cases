@@ -2104,6 +2104,120 @@ end-file
 run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
 exit 42
 
+# A handed binder spelled like a builtin binds a call head as well: the call in
+# the body refers to the binder, under a caller local or a use-site global.
+case run-macro-template-handed-callable-binder-under-caller-local
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (use-view) : i64
+  `(let-one slice-view
+    (lambda ([v : i64]) : i64 v)
+    (slice-view 42)))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [slice-view : i64 9]
+    (mac.use-view)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+case run-macro-template-handed-callable-binder-under-use-site-global
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (use-length) : i64
+  `(let-one length
+    (lambda ([v : i64]) : i64 (+ v 41))
+    (length 1)))
+end-file
+file main.tl
+(import mac)
+
+(define length : i64 9)
+
+(define (main) : i64
+  (mac.use-length))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A projection of a handed binder stays a call on that binder when a use-site
+# import alias has the binder's spelling.
+case run-macro-template-handed-binder-projection-call-under-alias
+file dep2.tl
+(define (answer) : i64 9)
+end-file
+file mac.tl
+(import stdlib.comptime)
+
+(defstruct Fns (f (-> i64 i64)))
+
+(define (twenty-one [v : i64]) : i64
+  (+ v 20))
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (use-x) : i64
+  `(let-one x (Fns twenty-one) (+ 21 (x.f 0))))
+end-file
+file main.tl
+(import mac)
+(import dep2 as x)
+
+(define (main) : i64
+  (+ 1 (mac.use-x)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# KNOWN LIMIT, not a statement of correct behaviour: a template that hands a
+# builtin spelling to a macro as a binder and then, outside that binder's scope,
+# calls the real builtin under a same-spelled caller local reports E0201. Hygiene
+# cannot tell the two uses apart. See the PR body for the follow-up.
+case check-macro-template-handed-binder-then-real-builtin-known-limit
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (let-one [name : Expr] [value : Expr] [body : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (both) : i64
+  `(+
+    (let-one array-length (cast 1 : i64) array-length)
+    (array-length (make-array i64 3))))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [array-length : i64 9]
+    (mac.both)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name array-length
+stderr not-contains <structural
+
 # A use-site macro with a prelude spelling does not capture the template's call.
 case run-macro-template-prelude-under-use-site-macro
 file mac.tl

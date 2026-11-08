@@ -93071,27 +93071,30 @@
   [ctx : TcContext]
   [name-id : i64]
   [fallback : i64]) : i64
-  (let
-    [alias-id : i64 (ci.intern-leading-dot-id name-id)]
-    [base-id : i64 (ci.intern-dotted-final-id name-id)]
-    [qualified-module-id : i64 (tc-qualified-name-module-id name-id)]
-    [target-module-id : i64
-      (match (tc-context-program ctx)
-        [(Program decls-box)
-          (match (tc-source-dotted-alias-target-id-in-context
-            ctx
-            (ast.ast-decl-list-box-shared-view decls-box)
-            (tc-context-module-id ctx)
-            alias-id)
-            [(Some target-id) target-id]
-            [(No) qualified-module-id])])]
-    (if (or (< target-module-id 0) (< base-id 0))
-      fallback
-      (csym.compiler-symbols-lookup-value-in-module-id-or
-        (tc-context-symbols ctx)
-        target-module-id
-        base-id
-        fallback))))
+  ;; A hygiene-renamed local's projection is not a module-qualified symbol.
+  (if (>= name-id (ci.intern-structural-key-base))
+    fallback
+    (let
+      [alias-id : i64 (ci.intern-leading-dot-id name-id)]
+      [base-id : i64 (ci.intern-dotted-final-id name-id)]
+      [qualified-module-id : i64 (tc-qualified-name-module-id name-id)]
+      [target-module-id : i64
+        (match (tc-context-program ctx)
+          [(Program decls-box)
+            (match (tc-source-dotted-alias-target-id-in-context
+              ctx
+              (ast.ast-decl-list-box-shared-view decls-box)
+              (tc-context-module-id ctx)
+              alias-id)
+              [(Some target-id) target-id]
+              [(No) qualified-module-id])])]
+      (if (or (< target-module-id 0) (< base-id 0))
+        fallback
+        (csym.compiler-symbols-lookup-value-in-module-id-or
+          (tc-context-symbols ctx)
+          target-module-id
+          base-id
+          fallback)))))
 
 (define (tc-move-value-symbol-handle-id [ctx : TcContext] [name-id : i64]) : i64
   (let
@@ -96082,7 +96085,11 @@
   ;; operands is evaluated with the transformer's operand values (#9628).
   (defmacro-transformer-active bool)
   (defmacro-transformer-operands TcStringList)
-  (macro-hygiene-callee MacroHygieneCallee))
+  (macro-hygiene-callee MacroHygieneCallee)
+  ;; Spellings that took the free-name identity in operand position during this
+  ;; expansion's hygiene walk (`macro-hygiene-note-operand-free!`).
+  (macro-hygiene-operand-free-names (__tl_dyn-array i64))
+  (macro-hygiene-operand-free-count i64))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -96210,7 +96217,9 @@
     0
     false
     (Nil)
-    (MacroHygieneCallee.No)))
+    (MacroHygieneCallee.No)
+    (__tl_make-array i64 16)
+    0))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -106695,6 +106704,39 @@
 (define tc-macro-hygiene-call-head? : bool
   false)
 
+;; A spelling a template hands to a nested macro as an operand may be a binder
+;; that macro introduces. Remember it, so a later call head with that spelling
+;; refers to the binder and not to a builtin. A binder precedes its references in
+;; this handoff. Past the small capacity every spelling counts as remembered.
+(define (macro-hygiene-note-operand-free!
+  [state : TcMacroState]
+  [source-id : i64]) : unit
+  (let
+    [count : i64 (tc-macro-walk-field state macro-hygiene-operand-free-count)]
+    (when
+      (< count 16)
+      (set!
+        (array-ref
+          (tc-macro-walk-field state macro-hygiene-operand-free-names)
+          count)
+        source-id))
+    (when
+      (<= count 16)
+      (tc-macro-walk-set! state macro-hygiene-operand-free-count (+ count 1)))))
+
+(define (macro-hygiene-operand-free? [state : TcMacroState] [source-id : i64]) : bool
+  (let
+    [count : i64 (tc-macro-walk-field state macro-hygiene-operand-free-count)]
+    [names : (__tl_dyn-array i64)
+      (tc-macro-walk-field state macro-hygiene-operand-free-names)]
+    [index : i64 0]
+    [found : bool (> count 16)]
+    (while (and (not found) (< index count) (< index 16))
+      (if (= (array-ref names index) source-id)
+        (set! found true)
+        (set! index (+ index 1))))
+    found))
+
 ;; The identity of a free template name that names nothing at the definition
 ;; site. Template binders use the expansion depth itself, so this lane cannot
 ;; collide with one, even for the same macro at the same depth (expansion depth
@@ -106892,6 +106934,7 @@
               ;; Only a call head can mean a builtin or prelude macro. In operand
               ;; position the name may be a binder a nested macro introduces.
               [(not tc-macro-hygiene-call-head?)
+                (macro-hygiene-note-operand-free! env.state source-id)
                 (macro-hygiene-free-local-id env macro-name depth source-id)]
               [else
                 (let
@@ -106908,6 +106951,14 @@
                         cbi.compiler-builtin-id-core-macros-module
                         source-id
                         false)]
+                    ;; A prelude macro wins over a binder, as in plain source. A
+                    ;; builtin does not: a handed binder of that spelling binds.
+                    [(macro-hygiene-operand-free? env.state source-id)
+                      (macro-hygiene-free-local-id
+                        env
+                        macro-name
+                        depth
+                        source-id)]
                     [(macro-hygiene-definition-builtin?
                         definition-ctx
                         source-id)
@@ -106948,7 +106999,11 @@
         (cond
           ;; A call through a qualifier only the use site supplies is looked up
           ;; in the definition context: the ordinary unknown qualified name.
-          [(and use-site-alias? (not lexical?) tc-macro-hygiene-call-head?)
+          [(and
+              use-site-alias?
+              (not lexical?)
+              tc-macro-hygiene-call-head?
+              (not (macro-hygiene-operand-free? env.state leading-id)))
             (macro-hygiene-global-id
               (macro-hygiene-env-structural-session env)
               macro-name.definition-module-id
@@ -108233,6 +108288,8 @@
     (let
       [state : TcMacroState (tc-context-macro-state ctx)]
       [_root : unit (macro-hygiene-env-root-begin! state)]
+      [_operands : unit
+        (tc-macro-walk-set! state macro-hygiene-operand-free-count 0)]
       [previous : MacroHygieneCallee
         (macro-hygiene-callee-install!
           state

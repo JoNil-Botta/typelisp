@@ -2693,3 +2693,40 @@ cond_else_not_final_comptime_const_reject|check-fail|tests/safety/cond_else_not_
 cond_missing_else_comptime_nested_reject|check-fail|tests/safety/cond_missing_else_comptime_nested_reject.tl|tests/safety/cond_missing_else_comptime_nested_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
 cond_else_not_final_comptime_nested_reject|check-fail|tests/safety/cond_else_not_final_comptime_nested_reject.tl|tests/safety/cond_else_not_final_comptime_nested_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
 loop_address_stored_mut_borrow_reject|check-fail|tests/safety/loop_address_stored_mut_borrow_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
+entry_value_scope_p01_fn|check-fail|tests/safety/entry_value_scope_p01_fn.tl|tests/safety/entry_value_scope_p01_fn_nf.tl:3:4|typecheck: unbound name helper
+entry_value_scope_p02_global|check-fail|tests/safety/entry_value_scope_p02_global.tl|tests/safety/entry_value_scope_p02_global_ng.tl:3:3|typecheck: unbound name limit
+entry_value_scope_p03_enum|check-fail|tests/safety/entry_value_scope_p03_enum.tl|tests/safety/entry_value_scope_p03_enum_ne.tl:3:10|typecheck: unbound name Red
+entry_value_scope_p04_structctor|check-fail|tests/safety/entry_value_scope_p04_structctor.tl|tests/safety/entry_value_scope_p04_structctor_ns.tl:4:9|typecheck: unbound name Foo
+entry_value_scope_p05_set|check-fail|tests/safety/entry_value_scope_p05_set.tl|tests/safety/entry_value_scope_p05_set_nset.tl:1:1|typecheck: unbound name counter
+entry_value_scope_p06_fnvalue|check-fail|tests/safety/entry_value_scope_p06_fnvalue.tl|tests/safety/entry_value_scope_p06_fnvalue_nfv.tl:4:8|typecheck: unbound name helper
+entry_value_scope_p12_macro_named|check-fail|tests/safety/entry_value_scope_p12_macro_named.tl|tests/safety/entry_value_scope_p12_macro_named_nmac.tl:3:5|typecheck: unbound name helper
+entry_value_scope_p15_borrow|check-fail|tests/safety/entry_value_scope_p15_borrow.tl|tests/safety/entry_value_scope_p15_borrow_nbor.tl:3:3|typecheck: unbound name counter
+entry_value_scope_p16_dispatch|check-fail|tests/safety/entry_value_scope_p16_dispatch.tl|tests/safety/entry_value_scope_p16_dispatch_nds.tl:3:4|typecheck: unbound name show
+entry_value_scope_p17_transitive|check-fail|tests/safety/entry_value_scope_p17_transitive.tl|tests/safety/entry_value_scope_p17_transitive_nch.tl:3:4|typecheck: unbound name helper
+entry_value_scope_p18_later|check-fail|tests/safety/entry_value_scope_p18_later.tl|tests/safety/entry_value_scope_p18_later_nf.tl:3:4|typecheck: unbound name helper
+entry_value_scope_p19_extern|check-fail|tests/safety/entry_value_scope_p19_extern.tl|tests/safety/entry_value_scope_p19_extern_nx.tl:3:17|typecheck: unbound name getpid
+entry_value_scope_p20_prelude_type|check-fail|tests/safety/entry_value_scope_p20_prelude_type.tl|tests/safety/entry_value_scope_p20_prelude_type_n.tl:4:18|typecheck: unbound name int-to-string
+entry_value_scope_p21_prelude_same|check-fail|tests/safety/entry_value_scope_p21_prelude_same.tl|tests/safety/entry_value_scope_p21_prelude_same_n.tl:6:18|typecheck: unbound name int-to-string
+entry_value_scope_p07_own_ok|run-exit|tests/safety/entry_value_scope_p07_own_ok.tl|42|-
+entry_value_scope_p08_named_import_ok|run-exit|tests/safety/entry_value_scope_p08_named_import_ok.tl|42|-
+entry_value_scope_p09_entry_self_ok|run-exit|tests/safety/entry_value_scope_p09_entry_self_ok.tl|42|-
+entry_value_scope_p10_string_length_ok|run-exit|tests/safety/entry_value_scope_p10_string_length_ok.tl|3|-
+entry_value_scope_p13_entry_expands_named_macro_ok|run-exit|tests/safety/entry_value_scope_p13_entry_expands_named_macro_ok.tl|42|-
+entry_value_scope_p14_type_control|check-fail|tests/safety/entry_value_scope_p14_type_control.tl|tests/safety/entry_value_scope_p14_type_control.tl:1:1|typecheck: unknown type Foo
+entry_value_scope_p24_qualified_runtime_ok|run-exit|tests/safety/entry_value_scope_p24_qualified_runtime_ok.tl|24|-
+entry_value_scope_c2_cpuid_entry_i64_builtin_kept|run-exit|tests/safety/entry_value_scope_c2_cpuid_entry_i64_builtin_kept.tl|42|-
+entry_value_scope_c2b_cpuid_builtin_typed|check-fail|tests/safety/entry_value_scope_c2b_cpuid_builtin_typed.tl|tests/safety/entry_value_scope_c2b_cpuid_builtin_typed_n.tl:3:3|typecheck: return type mismatch: expected i64, found (Tuple i32 i32 i32 i32)
+entry_value_scope_c3_xgetbv_entry_builtin_kept|run-exit|tests/safety/entry_value_scope_c3_xgetbv_entry_builtin_kept.tl|42|-
+entry_value_scope_c8_cpuid_tuple_builtin_kept|run-exit|tests/safety/entry_value_scope_c8_cpuid_tuple_builtin_kept.tl|42|-
+entry_value_scope_own_cpuid_collision_ok|run-exit|tests/safety/entry_value_scope_own_cpuid_collision_ok.tl|42|-
+entry_value_scope_r1_literal_empty_named|check-fail|tests/safety/entry_value_scope_r1_literal_empty_named.tl|tests/safety/entry_value_scope_r1_literal_empty_named_nr.tl:10:3|typecheck: unbound name helper
+entry_value_scope_s2_text_built_named|check-fail|tests/safety/entry_value_scope_s2_text_built_named.tl|tests/safety/entry_value_scope_s2_text_built_named_ntext.tl:8:3|typecheck: unbound name helper
+entry_value_scope_s3_generated_literal_empty|check-fail|tests/safety/entry_value_scope_s3_generated_literal_empty.tl|tests/safety/entry_value_scope_s3_generated_literal_empty.tl:16:7|typecheck: unbound name helper
+entry_value_scope_s4_reflective_root_local_shadow_ok|run-exit|tests/safety/entry_value_scope_s4_reflective_root_local_shadow_ok.tl|36|-
+entry_value_scope_s1_cleanup_name_collision_ok|run-exit|tests/safety/entry_value_scope_s1_cleanup_name_collision_ok.tl|42|-
+entry_value_scope_s5_generated_bare_text_rejected|check-fail|tests/safety/entry_value_scope_s5_generated_bare_text_rejected.tl|tests/safety/entry_value_scope_s5_generated_bare_text_rejected.tl:16:9|typecheck: unbound name entry-fn
+entry_value_scope_s6_generated_entry_define|check-fail|tests/safety/entry_value_scope_s6_generated_entry_define.tl|tests/safety/entry_value_scope_s6_generated_entry_define_ngd.tl:3:4|typecheck: unbound name gen-helper
+entry_value_scope_s7_unsafe_entry_define|check-fail|tests/safety/entry_value_scope_s7_unsafe_entry_define.tl|tests/safety/entry_value_scope_s7_unsafe_entry_define_nud.tl:4:6|typecheck: unbound name raw-helper
+entry_value_scope_s8_generated_entry_enum_variant|check-fail|tests/safety/entry_value_scope_s8_generated_entry_enum_variant.tl|tests/safety/entry_value_scope_s8_generated_entry_enum_variant_ngv.tl:3:10|typecheck: unbound name GenRed
+entry_value_scope_s9_generated_entry_use_ok|run-exit|tests/safety/entry_value_scope_s9_generated_entry_use_ok.tl|42|-
+entry_value_scope_s10_entry_import_and_define_named_reject|check-fail|tests/safety/entry_value_scope_s10_entry_import_and_define_named_reject.tl|tests/safety/entry_value_scope_s10_entry_import_and_define_named_reject_nb.tl:3:7|typecheck: unbound name from-dep

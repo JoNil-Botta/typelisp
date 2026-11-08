@@ -1472,7 +1472,9 @@
                   module
                   module-id
                   name
-                  name-id))]
+                  name-id
+                  (ctfe_support.ctfe-value-root-authority?
+                    (& (compiler-comptime-host-stack-value 2)))))]
             [(None) tlci.tlci-host-callback-status-bad-request])]
         [(None) tlci.tlci-host-callback-status-bad-request]))))
 
@@ -1502,7 +1504,9 @@
                     module
                     module-id
                     name
-                    name-id)]
+                    name-id
+                    (ctfe_support.ctfe-value-root-authority?
+                      (& (compiler-comptime-host-stack-value 2))))]
                 (if (= query-kind 0)
                   (begin
                     (compiler-comptime-host-drop! 2)

@@ -5394,7 +5394,17 @@
         [(string.eq name "type-cleanup-function")
           (match (ctfe-reflect-info-cleanup (clone info))
             [(Fn cleanup-name cleanup-name-id)
-              (Ok (String cleanup-name cleanup-name-id))]
+              (Ok
+                (if (let
+                  [owner-id : i64
+                    (ctfe-reflect-info-nominal-module-id (& info))]
+                  (or
+                    (< owner-id 0)
+                    (= owner-id cbi.compiler-builtin-id-fix-empty)))
+                  (Name
+                    cleanup-name
+                    (ctfe-root-value-identity-id session cleanup-name-id))
+                  (String cleanup-name cleanup-name-id)))]
             [(No) (ctfe-reflection-requires name "cleanup-owning type")])]
         [(string.eq name "type-nominal-module")
           (Ok
@@ -6865,6 +6875,39 @@
           expr
           "module-export-macro? expects exactly two args")))))
 
+;; The canonical root-qualified identity of an entry-module value: the macro
+;; global record with the root as definition module. Reflection reaches an
+;; entry value through it; a bare spelling would resolve at the expansion site,
+;; where a named module cannot see the entry module.
+(define (ctfe-root-value-identity-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (cis.intern-macro-global-identity-raw
+    (cis.intern-structural-session-macro-global-identity
+      session
+      cis.InternMacroGlobalRole.Context
+      cbi.compiler-builtin-id-fix-empty
+      name-id)))
+
+;; The reference a `""` module owner denotes. Only an authorized owner names
+;; the entry module; any other `""` stays an ordinary bare name.
+(define (ctfe-root-reference-id
+  [state : CompilerCtfeMacroState]
+  [name-id : i64]
+  [root-authority : bool]) : i64
+  (if root-authority
+    (ctfe-root-value-identity-id
+      (compiler-ctfe-macro-state-structural-session state)
+      name-id)
+    name-id))
+
+;; Root authority comes only from type reflection: `type-nominal-module` yields
+;; a `Name`, while a literal or computed "" is a `String`.
+(define (ctfe-value-root-authority? [value : (& value CompilerCtfeValue)]) : bool
+  (match value
+    [(Name text _) (string.eq text "")]
+    [_ false]))
+
 ;; Look up a module value by its resolved identities. `query-kind` 0 answers
 ;; module-value?, 1 its public signature (module-value-type), and 2 a reference
 ;; to it (module-value-expr).
@@ -6875,7 +6918,8 @@
   [module : String]
   [module-id : i64]
   [name : String]
-  [name-id : i64]) : CtfeBuilt
+  [name-id : i64]
+  [root-authority : bool]) : CtfeBuilt
   (match (ctfe-module-value-type-id-for-state state module-id name-id)
     [(Some ty)
       (Ok
@@ -6888,7 +6932,7 @@
                 pools
                 (Var
                   (if (string.eq module "")
-                    name-id
+                    (ctfe-root-reference-id state name-id root-authority)
                     (if (or
                       (ci.intern-generated-canonical-id? module-id)
                       (ci.intern-generated-canonical-id? name-id))
@@ -6920,33 +6964,37 @@
     (let
       [module-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [name-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-module-index-arg
-        (& module-arg)
-        expr
-        env
-        fuel
-        (owned_view.compiler-owned-shared-view query-name))
-        [(Ok module module-id module-fuel)
-          (match (ctfe-eval-module-index-arg
-            (& name-arg)
-            expr
-            env
-            module-fuel
-            query-name)
-            [(Ok name name-id name-fuel)
-              (ctfe-built-result
-                (ctfe-module-value
-                  (ctfe-env-macro-state env)
-                  (ctfe-env-pools env)
-                  query-kind
-                  module
-                  module-id
-                  name
-                  name-id)
-                expr
-                name-fuel)]
-            [(Err d) (Err d)])]
-        [(Err d) (Err d)]))
+      (match (compiler-ctfe-eval (& module-arg) env fuel)
+        [(Err d) (Err d)]
+        [(Ok module-value module-fuel)
+          (let
+            [root-authority : bool
+              (ctfe-value-root-authority? (& module-value))]
+            (match (ctfe-value-module-index
+              (ctfe-env-source-names env)
+              module-value)
+              [(None) (Err (ctfe-string-arg-error expr query-name))]
+              [(Some module module-id)
+                (match (ctfe-eval-module-index-arg
+                  (& name-arg)
+                  expr
+                  env
+                  module-fuel
+                  query-name)
+                  [(Ok name name-id name-fuel)
+                    (ctfe-built-result
+                      (ctfe-module-value
+                        (ctfe-env-macro-state env)
+                        (ctfe-env-pools env)
+                        query-kind
+                        module
+                        module-id
+                        name
+                        name-id
+                        root-authority)
+                      expr
+                      name-fuel)]
+                  [(Err d) (Err d)])]))]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
@@ -7049,7 +7097,8 @@
   [module : String]
   [module-id : i64]
   [name : String]
-  [name-id : i64]) : CtfeBuilt
+  [name-id : i64]
+  [root-authority : bool]) : CtfeBuilt
   (if (or
     (string.eq module "")
     (ctfe-module-macro-export-id-for-state? state module-id name-id))
@@ -7059,7 +7108,7 @@
           pools
           (Var
             (if (string.eq module "")
-              name-id
+              (ctfe-root-reference-id state name-id root-authority)
               (ci.intern-composite-pair-id module-id name-id))))
         (ctfe-untyped-expr-type)))
     (Err (ctfe-module-hook-missing-message module name))))
@@ -7073,27 +7122,34 @@
     (let
       [module-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [name-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-string-arg (& module-arg) expr env fuel "module-hook")
-        [(Ok module module-id module-fuel)
-          (match (ctfe-eval-string-arg
-            (& name-arg)
-            expr
-            env
-            module-fuel
-            "module-hook")
-            [(Ok name name-id name-fuel)
-              (ctfe-built-result
-                (ctfe-module-hook
-                  (ctfe-env-macro-state env)
-                  (ctfe-env-pools env)
-                  module
-                  module-id
-                  name
-                  name-id)
-                expr
-                name-fuel)]
-            [(Err d) (Err d)])]
-        [(Err d) (Err d)]))
+      (match (compiler-ctfe-eval (& module-arg) env fuel)
+        [(Err d) (Err d)]
+        [(Ok module-value module-fuel)
+          (let
+            [root-authority : bool
+              (ctfe-value-root-authority? (& module-value))]
+            (match (ctfe-value-named module-value)
+              [(None) (Err (ctfe-string-arg-error expr "module-hook"))]
+              [(Some module module-id)
+                (match (ctfe-eval-string-arg
+                  (& name-arg)
+                  expr
+                  env
+                  module-fuel
+                  "module-hook")
+                  [(Ok name name-id name-fuel)
+                    (ctfe-built-result
+                      (ctfe-module-hook
+                        (ctfe-env-macro-state env)
+                        (ctfe-env-pools env)
+                        module
+                        module-id
+                        name
+                        name-id
+                        root-authority)
+                      expr
+                      name-fuel)]
+                  [(Err d) (Err d)])]))]))
     (Err
       (box
         (ctfe-diagnostic-at-expr

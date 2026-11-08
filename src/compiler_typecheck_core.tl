@@ -31161,17 +31161,87 @@
 (define tc-unqualified-import-has-ambiguity : bool
   false)
 
-;; Bare value keys bound by an entry-module unqualified import (`m.*`,
-;; `m.item`). The entry module's identity is empty, so these imports share
-;; the bare top-env namespace; only the entry module may see them.
-(define tc-entry-unqualified-import-names : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-empty))
-(define tc-entry-unqualified-import-any : bool
+;; Bare value keys of the entry module: its own value declarations and its
+;; unqualified imports (`m.*`, `m.item`). The entry module's identity is empty,
+;; so they share the bare top-env namespace; only the entry module may see them.
+;; The map is the exact set. It lives in an arena replaced with each full build.
+(define tc-entry-hidden-names : tc_i64_i64_map.Map
+  (tc_i64_i64_map.with-capacity 16))
+(define tc-entry-hidden-arena : i64
+  0)
+
+;; Prefilter for the exact set, one slot per low-bits bucket of a bare name id.
+;; A hit is only a candidate; a miss proves the name is not hidden.
+(define tc-entry-hidden-filter-slots : (__tl_dyn-array i64)
+  (__tl_make-array i64 4096))
+(define tc-entry-hidden-filter-touched : (__tl_dyn-array i64)
+  (__tl_make-array i64 4096))
+(define tc-entry-hidden-filter-touched-count : i64
+  0)
+(define tc-entry-hidden-filter-cleared : bool
   false)
 
+(defmacro (tc-entry-hidden-filter-hit? [name-id : Expr]) : Expr
+  `(unsafe
+    (not
+      (=
+        (ptr-read
+          (ptr-offset
+            (__tl_array-data tc-entry-hidden-filter-slots)
+            (bit-and ,name-id 4095)))
+        0))))
+
+(define (tc-entry-hidden-filter-note! [key-id : i64]) : unit
+  (let
+    [slot : i64 (bit-and key-id 4095)]
+    (when
+      (= (array-ref tc-entry-hidden-filter-slots slot) 0)
+      (set! (array-ref tc-entry-hidden-filter-slots slot) 1)
+      (set!
+        (array-ref
+          tc-entry-hidden-filter-touched
+          tc-entry-hidden-filter-touched-count)
+        slot)
+      (+= tc-entry-hidden-filter-touched-count 1))))
+
+(define (tc-entry-hidden-filter-reset!) : unit
+  (if tc-entry-hidden-filter-cleared
+    (for [index (iterator.range 0 tc-entry-hidden-filter-touched-count)]
+      (set!
+        (array-ref
+          tc-entry-hidden-filter-slots
+          (array-ref tc-entry-hidden-filter-touched index))
+        0))
+    (begin
+      (for [slot (iterator.range 0 4096)]
+        (set! (array-ref tc-entry-hidden-filter-slots slot) 0))
+      (set! tc-entry-hidden-filter-cleared true)))
+  (set! tc-entry-hidden-filter-touched-count 0))
+
+(define (tc-entry-hidden-names-reset!) : unit
+  (unsafe
+    (when
+      (not (= tc-entry-hidden-arena 0))
+      (arena.tl_arena_destroy tc-entry-hidden-arena))
+    (set! tc-entry-hidden-arena (arena.tl_arena_make))
+    (in-arena
+      (arena.Arena tc-entry-hidden-arena)
+      (set! tc-entry-hidden-names (tc_i64_i64_map.with-capacity 64))))
+  (tc-entry-hidden-filter-reset!))
+
+(define (tc-entry-hidden-note! [key-id : i64]) : unit
+  (when (= tc-entry-hidden-arena 0) (tc-entry-hidden-names-reset!))
+  (unsafe
+    (in-arena
+      (arena.Arena tc-entry-hidden-arena)
+      (tc_i64_i64_map.insert-ref! (&mut tc-entry-hidden-names) key-id 1)))
+  (tc-entry-hidden-filter-note! key-id))
+
+(define (tc-entry-hidden-contains? [key-id : i64]) : bool
+  (>= (tc_i64_i64_map.get-value-or (& tc-entry-hidden-names) key-id -1) 0))
+
 (define (tc-unqualified-import-ambiguity-reset!) : unit
-  (set! tc-entry-unqualified-import-names (sym_i64_env.sym-i64-empty))
-  (set! tc-entry-unqualified-import-any false)
+  (tc-entry-hidden-names-reset!)
   (set! tc-unqualified-import-owner-modules (sym_i64_env.sym-i64-empty))
   (set!
     tc-unqualified-import-ambiguous-first-modules
@@ -31205,6 +31275,10 @@
         tc-unqualified-import-ambiguous-first-modules]
       [ambiguous-second-modules : sym_i64_env.SymI64Env
         tc-unqualified-import-ambiguous-second-modules]
+      [_hidden : unit
+        (when
+          (csym.compiler-symbol-root-module-id? importer-module-id)
+          (tc-entry-hidden-note! binding-id))]
       [owner-id : i64
         (sym_i64_env.sym-i64-lookup-id-or
           owner-modules
@@ -31230,68 +31304,28 @@
                 source-id))))
         (if (tc-name-bound-id-with-top-env-membership? env binding-id)
           unit
-          (begin
-            (when
-              (csym.compiler-symbol-root-module-id? importer-module-id)
-              (set!
-                tc-entry-unqualified-import-names
-                (sym_i64_env.sym-i64-bind-id
-                  tc-entry-unqualified-import-names
-                  binding-id
-                  source-id))
-              (set! tc-entry-unqualified-import-any true))
-            (set!
-              tc-unqualified-import-owner-modules
-              (sym_i64_env.sym-i64-bind-id owner-modules key-id source-id))))))
+          (set!
+            tc-unqualified-import-owner-modules
+            (sym_i64_env.sym-i64-bind-id owner-modules key-id source-id)))))
     unit))
 
-;; The default environment prebinds a few builtin values (`cpuid`, `xgetbv`). An
-;; entry-module unqualified import that rebinds one keeps the default binding
-;; under its default-alias key, so other modules still see the builtin.
-(define (tc-entry-unqualified-import-default-alias-key [name-id : i64]) : i64
+;; The default environment keeps each prebound builtin (`cpuid`, `xgetbv`) under
+;; a default-alias key too, so a named module still sees the builtin when the
+;; entry module rebinds that name.
+(define (tc-entry-hidden-default-alias-key [name-id : i64]) : i64
   (tc-module-name-id-by-id (tc-default-boundary-id) name-id))
-
-(define (tc-entry-unqualified-import-default-alias-env
-  [env : TcTypeEnv]
-  [alias-id : i64]
-  [importer-module-id : i64]
-  [import-unqualified : bool]
-  [name-id : i64]) : TcTypeEnv
-  (let
-    [binding-id : i64 (tc-module-name-id-by-id alias-id name-id)]
-    (if (and
-      import-unqualified
-      (csym.compiler-symbol-root-module-id? importer-module-id)
-      (tc-name-bound-id-with-top-env-membership? env binding-id)
-      (tc-default-builtin-unshadowed-scan-id? env binding-id))
-      (match (tc-lookup-id env binding-id)
-        [(Ok default-ty)
-          (set!
-            tc-entry-unqualified-import-names
-            (sym_i64_env.sym-i64-bind-id
-              tc-entry-unqualified-import-names
-              binding-id
-              importer-module-id))
-          (set! tc-entry-unqualified-import-any true)
-          (tc-bind-id
-            env
-            (tc-entry-unqualified-import-default-alias-key binding-id)
-            default-ty)]
-        [(Err _) env])
-      env)))
 
 ;; The key a hidden entry-module import resolves to in a named module: that
 ;; module's own scoped key, else the default binding the import shadowed, else
 ;; the (unbound) module-scoped key.
-(define (tc-entry-unqualified-import-hidden-key-id
+(define (tc-entry-hidden-key-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : i64
   (let
     [module-key-id : i64
       (tc-module-name-id-by-id (tc-context-module-id ctx) name-id)]
-    [default-key-id : i64
-      (tc-entry-unqualified-import-default-alias-key name-id)]
+    [default-key-id : i64 (tc-entry-hidden-default-alias-key name-id)]
     (if (and
       (not (tc-source-name-bound-exact-id? env module-key-id))
       (tc-source-name-bound-exact-id? env default-key-id))
@@ -31300,61 +31334,59 @@
 
 ;; The source lookup key of a bound bare `name-id`: its hidden key when the
 ;; bare binding is a hidden entry-module import, else `name-id`. Callers test
-;; `tc-entry-unqualified-import-any` first, so lookups pay one flag test.
-(define (tc-entry-unqualified-import-source-key-id
+;; the filter first, so ordinary lookups pay one inline slot read.
+(define (tc-entry-hidden-source-key-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : i64
-  (if (tc-entry-unqualified-import-hidden?
+  (if (tc-entry-name-hidden?
     ctx
     env
     name-id
     (tc-env-name-key-id (tc-type-env-structural-session env) name-id))
-    (tc-entry-unqualified-import-hidden-key-id ctx env name-id)
+    (tc-entry-hidden-key-id ctx env name-id)
     name-id))
 
 ;; A visible bare binding, or the hidden key's binding when the hit is a hidden
 ;; entry-module import. Kept out of the hot lookup so it keeps its frame.
-(define (tc-entry-unqualified-import-visible-binding
+(define (tc-entry-hidden-visible-binding
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]
   [env-name-id : i64]
   [found : ResultTcBinding]) : ResultTcBinding
-  (if (tc-entry-unqualified-import-hidden? ctx env name-id env-name-id)
+  (if (tc-entry-name-hidden? ctx env name-id env-name-id)
     (tc-binding-unrepresented
       (tc-lookup-persistent-key-id
         env
-        (tc-entry-unqualified-import-hidden-key-id ctx env name-id)
+        (tc-entry-hidden-key-id ctx env name-id)
         name-id))
     found))
 
-;; Display-key form of `tc-entry-unqualified-import-source-key-id`.
-(define (tc-entry-unqualified-import-source-key
+;; Display-key form of `tc-entry-hidden-source-key-id`.
+(define (tc-entry-hidden-source-key
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
   [name-id : i64]) : String
   (let
-    [key-id : i64 (tc-entry-unqualified-import-source-key-id ctx env name-id)]
+    [key-id : i64 (tc-entry-hidden-source-key-id ctx env name-id)]
     (if (= key-id name-id)
       name
       (tc-env-key-display (tc-context-structural-session ctx) key-id))))
 
 ;; Whether a bare top-env hit for `env-name-id` in a named module is only an
-;; entry-module unqualified import, which that module cannot see (#9678). A
-;; named module reaches its own imports through its module-scoped key, and
-;; lexical bindings keep precedence.
-(define (tc-entry-unqualified-import-hidden?
+;; entry-module value or unqualified import, which that module cannot see
+;; (#9678, #9687). A named module reaches its own names through its view or its
+;; module-scoped key, and lexical bindings keep precedence.
+(define (tc-entry-name-hidden?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]
   [env-name-id : i64]) : bool
   (and
     (> (string.string-length (tc-context-module ctx)) 0)
-    (sym_i64_env.sym-i64-contains-id
-      tc-entry-unqualified-import-names
-      env-name-id)
+    (tc-entry-hidden-contains? env-name-id)
     (not (tc-name-qualified-id? (tc-context-structural-session ctx) name-id))
     (not
       (or
@@ -31380,15 +31412,7 @@
     source-module-id
     import-unqualified
     name-id)
-  (tc-bind-id
-    (tc-entry-unqualified-import-default-alias-env
-      env
-      alias-id
-      importer-module-id
-      import-unqualified
-      name-id)
-    (tc-module-name-id-by-id alias-id name-id)
-    ty))
+  (tc-bind-id env (tc-module-name-id-by-id alias-id name-id) ty))
 
 (define (tc-bind-import-alias-value-unsafe-id
   [ctx : TcContext]
@@ -31407,15 +31431,7 @@
     source-module-id
     import-unqualified
     name-id)
-  (tc-bind-unsafe-id
-    (tc-entry-unqualified-import-default-alias-env
-      env
-      alias-id
-      importer-module-id
-      import-unqualified
-      name-id)
-    (tc-module-name-id-by-id alias-id name-id)
-    ty))
+  (tc-bind-unsafe-id env (tc-module-name-id-by-id alias-id name-id) ty))
 
 ;; Raw arena authority is a constructor effect of the canonical declaration,
 ;; not a property inferred from the spelling of a call. All environment routes
@@ -33929,6 +33945,11 @@
     (tc-default-boundary-id)
     (Unit)))
 
+(define (tc-entry-hidden-default-alias-env [env : TcTypeEnv] [name-id : i64]) : TcTypeEnv
+  (match (tc-lookup-id env name-id)
+    [(Ok ty) (tc-bind-id env (tc-entry-hidden-default-alias-key name-id) ty)]
+    [(Err _) env]))
+
 (define (tc-default-env-base) : TcTypeEnv
   (let
     [e0 : TcTypeEnv (tc-empty-env)]
@@ -33954,7 +33975,11 @@
                           (& (ast.ast-type-list-new))))))))))))]
     [e2 : TcTypeEnv
       (tc-bind-id e1 cbi.compiler-builtin-id-xgetbv (tc-fn1 (I64) (I64)))]
-    (tc-bind-id e2 (tc-default-boundary-id) (Unit))))
+    [e3 : TcTypeEnv
+      (tc-entry-hidden-default-alias-env e2 cbi.compiler-builtin-id-cpuid)]
+    [e4 : TcTypeEnv
+      (tc-entry-hidden-default-alias-env e3 cbi.compiler-builtin-id-xgetbv)]
+    (tc-bind-id e4 (tc-default-boundary-id) (Unit))))
 
 (define (tc-default-env-base-with-job-state [state : TcJobState]) : TcTypeEnv
   (let
@@ -33981,7 +34006,11 @@
                           (& (ast.ast-type-list-new))))))))))))]
     [e2 : TcTypeEnv
       (tc-bind-id e1 cbi.compiler-builtin-id-xgetbv (tc-fn1 (I64) (I64)))]
-    (tc-bind-id e2 (tc-default-boundary-id) (Unit))))
+    [e3 : TcTypeEnv
+      (tc-entry-hidden-default-alias-env e2 cbi.compiler-builtin-id-cpuid)]
+    [e4 : TcTypeEnv
+      (tc-entry-hidden-default-alias-env e3 cbi.compiler-builtin-id-xgetbv)]
+    (tc-bind-id e4 (tc-default-boundary-id) (Unit))))
 
 (define (tc-macro-expr-clause-type) : ast.AstType
   (Var cbi.compiler-builtin-id-fix-ExprClause))
@@ -36282,8 +36311,8 @@
           env-name-id
           false)
           [(ResultTcBinding.Ok ty unsafe? origin)
-            (if tc-entry-unqualified-import-any
-              (tc-entry-unqualified-import-visible-binding
+            (if (tc-entry-hidden-filter-hit? name-id)
+              (tc-entry-hidden-visible-binding
                 ctx
                 env
                 name-id
@@ -42970,20 +42999,18 @@
           display-name)
         message)]
     [(No)
-      (if tc-entry-unqualified-import-any
-        (tc-entry-unqualified-import-unbound-message ctx source-name-id message)
+      (if (tc-entry-hidden-filter-hit? source-name-id)
+        (tc-entry-hidden-unbound-message ctx source-name-id message)
         message)]))
 
 ;; A name hidden from a module as an entry-module import resolves to its
 ;; unbound module-scoped key; report the source spelling.
-(define (tc-entry-unqualified-import-unbound-message
+(define (tc-entry-hidden-unbound-message
   [ctx : TcContext]
   [source-name-id : i64]
   [message : String]) : String
   (if (and
-    (sym_i64_env.sym-i64-contains-id
-      tc-entry-unqualified-import-names
-      source-name-id)
+    (tc-entry-hidden-contains? source-name-id)
     (string.eq
       message
       (str_cat.str-cat
@@ -43453,8 +43480,8 @@
       (if (< first-dot 0)
         (if (tc-source-name-bound-exact-id? env name-id)
           (Ok
-            (if tc-entry-unqualified-import-any
-              (tc-entry-unqualified-import-source-key ctx env name name-id)
+            (if (tc-entry-hidden-filter-hit? name-id)
+              (tc-entry-hidden-source-key ctx env name name-id)
               name))
           (match (tc-current-module-source-lookup-key ctx env name name-id)
             [(Some key) (Ok key)]
@@ -43527,8 +43554,8 @@
         (if (tc-source-name-bound-exact-id? env name-id)
           (Ok
             name
-            (if tc-entry-unqualified-import-any
-              (tc-entry-unqualified-import-source-key-id ctx env name-id)
+            (if (tc-entry-hidden-filter-hit? name-id)
+              (tc-entry-hidden-source-key-id ctx env name-id)
               name-id))
           (match (tc-current-module-source-lookup-key-id ctx env name-id)
             [(Some key-id)
@@ -52374,6 +52401,9 @@
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]) : ResultTcEnv
+  (when
+    (csym.compiler-symbol-root-module-id? module-id)
+    (tc-entry-hidden-note-decl! ctx (tc-global-shared-view decl)))
   (match (tc-global-shared-view decl)
     [(ModuleBody name body-box)
       (let
@@ -53421,7 +53451,10 @@
   [session : cis.InternStructuralSessionHandle]
   [seen : (&mut seen tc_i64_i64_map.Map)]
   [name-id : i64]) : unit
-  (tc_i64_i64_map.insert-ref! seen (tc-env-name-key-id session name-id) 1))
+  (let
+    [key-id : i64 (tc-env-name-key-id session name-id)]
+    (tc-entry-hidden-filter-note! key-id)
+    (tc_i64_i64_map.insert-ref! seen key-id 1)))
 
 (define (tc-module-local-root-shadow-variants-note-at!
   [session : cis.InternStructuralSessionHandle]
@@ -53492,6 +53525,16 @@
       (tc-module-local-root-shadow-name-note! session seen name)
       (tc-module-local-root-shadow-cleanup-note! session seen cleanup)]
     [_ unit]))
+
+(define (tc-entry-hidden-note-decl! [ctx : TcContext] [decl : ast.AstDecl]) : unit
+  (when (= tc-entry-hidden-arena 0) (tc-entry-hidden-names-reset!))
+  (unsafe
+    (in-arena
+      (arena.Arena tc-entry-hidden-arena)
+      (tc-module-local-root-shadow-decl-note!
+        (tc-context-structural-session ctx)
+        (&mut tc-entry-hidden-names)
+        decl))))
 
 (define (tc-module-local-root-shadow-names-note!
   [index : (Ptr TcModuleDeclIndexStateData)]
@@ -57005,8 +57048,8 @@
   (or
     (tc-name-bound-id?
       env
-      (if tc-entry-unqualified-import-any
-        (tc-entry-unqualified-import-source-key-id ctx env name-id)
+      (if (tc-entry-hidden-filter-hit? name-id)
+        (tc-entry-hidden-source-key-id ctx env name-id)
         name-id))
     (let
       [module-id : i64 (tc-context-type-module-id ctx)]

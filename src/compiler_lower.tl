@@ -5046,6 +5046,14 @@
         source-id
         true))))
 
+;; The global layer of a module's type cache, without its module overlay.
+(define (lower-type-cache-global-view [cache : LowerTypeCache]) : LowerTypeCache
+  (match (& cache)
+    [(Some _ _ _ (Global) owner-address)
+      (compiler-lower-state-decls-global-type-cache
+        (compiler-lower-state-from-address owner-address))]
+    [_ cache]))
+
 (define (lower-lookup-structural-hygiene-type-id
   [ctx : tc_core.TcContext]
   [type-cache : LowerTypeCache]
@@ -5097,7 +5105,10 @@
                     message)])]
             [(Err message) (Err message)])
           (lower-type-cache-lookup-id
-            type-cache
+            ;; A root-defined global is never the current module's own name.
+            (if (csym.compiler-symbol-root-module-id? module-id)
+              (lower-type-cache-global-view type-cache)
+              type-cache)
             (csym.compiler-symbol-module-key-id-by-id module-id source-id)
             source-name))))))
 
@@ -38367,6 +38378,25 @@
     [(ast.AstType.Never) (ast.AstType.Never)]
     [_ contextual]))
 
+;; A global whose definition module is the entry module keeps its structural
+;; identity: the bare spelling resolves in the module being lowered.
+(define (lower-hygiene-root-lookup-id
+  [ctx : tc_core.TcContext]
+  [raw-name : i64]
+  [resolved-id : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc_core.tc-context-structural-session ctx)]
+    (if (and
+      (not
+        (csym.compiler-symbol-root-module-id?
+          (tc_core.tc-context-module-id ctx)))
+      (tc_core.macro-hygiene-global-id? session raw-name)
+      (csym.compiler-symbol-root-module-id?
+        (tc_core.macro-hygiene-global-module-id session raw-name)))
+      raw-name
+      resolved-id)))
+
 (define (lower-direct-call-id-with-lookup-id
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -40802,7 +40832,7 @@
                     [(Ok _ resolved-id)
                       (tc_core.TcNameLookup.Ok
                         (tc_core.tc-hygiene-global-call-name raw-text)
-                        resolved-id)]
+                        (lower-hygiene-root-lookup-id ctx raw-name resolved-id))]
                     [(Err _)
                       (tc_core.TcNameLookup.Ok
                         (tc_core.tc-hygiene-global-call-name raw-text)
@@ -75894,6 +75924,23 @@
             "lower: owned cleanup field type is not a cleanup-owning aggregate "
             (tc_core.tc-type-render resolved)))])))
 
+;; The callee of a synthesized owned-field cleanup. A declared cleanup of an
+;; entry-module type is not visible from a named module (a generated module of
+;; `(vector.vector T)`, for one), so it is named by its canonical identity.
+(define (lower-owned-cleanup-callee-id
+  [ctx : tc_core.TcContext]
+  [cleanup-name-id : i64]) : i64
+  (if (and
+    (not
+      (csym.compiler-symbol-root-module-id? (tc_core.tc-context-module-id ctx)))
+    (tc_core.tc-entry-hidden-contains? cleanup-name-id))
+    (tc_core.macro-hygiene-global-id
+      (tc_core.tc-context-structural-session ctx)
+      cbi.compiler-builtin-id-fix-empty
+      cleanup-name-id
+      false)
+    cleanup-name-id))
+
 (define (lower-struct-cleanup-call-expr
   [pools : ast.AstNodePoolContext]
   [cleanup-name-id : i64]
@@ -75937,7 +75984,7 @@
               (ast.ast-expr-cons
                 (lower-struct-cleanup-call-expr
                   pools
-                  cleanup-name-id
+                  (lower-owned-cleanup-callee-id ctx cleanup-name-id)
                   value-name-id
                   (ci.intern-syntax-id-value field-name))
                 (& acc))))])]))
@@ -76198,7 +76245,7 @@
               (ast.ast-expr-cons
                 (lower-enum-cleanup-call-expr
                   pools
-                  cleanup-name-id
+                  (lower-owned-cleanup-callee-id ctx cleanup-name-id)
                   value-name-id)
                 (& acc))))]))))
 

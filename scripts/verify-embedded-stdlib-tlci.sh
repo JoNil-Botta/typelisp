@@ -18,7 +18,7 @@ verify_no_checkout_root() {
         # image contents (or every image), rather than identify a checkout.
         [ "${#checkout_spelling}" -ge 8 ] || continue
         if grep -aFq -e "$checkout_spelling" "$checkout_image"; then
-            echo "embedded stdlib tlci image records the checkout root: $checkout_spelling" >&2
+            printf '%s\n' "embedded stdlib tlci image records the checkout root: $checkout_spelling" >&2
             return 1
         fi
     done
@@ -45,7 +45,7 @@ run_checkout_root_self_test() (
             printf 'TLCI\000%s%s\000' "$selftest_spelling" "$selftest_suffix" > "$selftest_image"
             if verify_no_checkout_root "$selftest_image" "$selftest_root" \
                 2> "$selftest_dir/stderr.txt"; then
-                echo "checkout root self-test accepted a leaked root: $selftest_spelling$selftest_suffix" >&2
+                printf '%s\n' "checkout root self-test accepted a leaked root: $selftest_spelling$selftest_suffix" >&2
                 return 1
             fi
             grep -F -e "records the checkout root: $selftest_spelling" \

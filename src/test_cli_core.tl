@@ -396,7 +396,10 @@
           (if has-source
             (if has-manifest
               (Err "test: cannot combine source path with --manifest-path")
-              (Ok (File source target mode roots opt-level test-mode)))
+              (let
+                [source-roots : cli_svec.Vec
+                  (tltest-source-roots (& source) roots)]
+                (Ok (File source target mode source-roots opt-level test-mode))))
             (Ok
               (Package
                 manifest-path
@@ -406,6 +409,11 @@
                 roots
                 opt-level
                 test-mode))))])))
+
+;; Testing a module of the implicit prelude reads the prelude from that file
+;; rather than the test-blanked embedded copy (#8813).
+(define (tltest-source-roots [source : (& source str)] [roots : cli_svec.Vec]) : cli_svec.Vec
+  (compiler_load.compiler-load-roots-with-implicit-prelude-source source roots))
 
 (define (tltest-check-mode? [mode : TestMode]) : bool
   (match mode
@@ -3146,7 +3154,8 @@
   (if (tltest-source-has-inline-tests?
     (owned_view.compiler-owned-shared-view source))
     (let
-      [legacy-roots : cli_svec.Vec (clone roots)]
+      [source-roots : cli_svec.Vec (tltest-source-roots (& source) roots)]
+      [legacy-roots : cli_svec.Vec (clone source-roots)]
       (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
         (owned_view.compiler-owned-shared-view source)
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -3166,7 +3175,7 @@
             (tltest-package-run-one
               owned-source
               target
-              roots
+              source-roots
               opt-level
               backend-mode
               test-mode
@@ -3648,16 +3657,23 @@
   [source : String]
   [roots : cli_svec.Vec]
   [backend-target : compiler_backend.CompilerBackendTarget]) : ResultTestFileCheck
-  (match (driver.compiler-driver-load-file-with-runtime
-    (owned_view.compiler-owned-shared-view source)
-    (owned_view.compiler-owned-shared-view roots)
-    (tltest-cfgs backend-target))
-    [(Ok decls paths _ _)
-      (tltest-check-file-loaded source decls paths backend-target roots)]
-    [(Err diag)
-      (io.print-error
-        (driver.compiler-driver-render-source-diagnostic (deref diag)))
-      (Err 1)]))
+  (let
+    [source-roots : cli_svec.Vec (tltest-source-roots (& source) roots)]
+    (match (driver.compiler-driver-load-file-with-runtime
+      (owned_view.compiler-owned-shared-view source)
+      (owned_view.compiler-owned-shared-view source-roots)
+      (tltest-cfgs backend-target))
+      [(Ok decls paths _ _)
+        (tltest-check-file-loaded
+          source
+          decls
+          paths
+          backend-target
+          source-roots)]
+      [(Err diag)
+        (io.print-error
+          (driver.compiler-driver-render-source-diagnostic (deref diag)))
+        (Err 1)])))
 
 (define (tltest-run-file-loaded
   [source : String]
@@ -3709,23 +3725,25 @@
   [opt-level : i64]
   [backend-mode : compiler_backend.CompilerBackendMode]
   [backend-target : compiler_backend.CompilerBackendTarget]) : ResultTestFileCheck
-  (match (driver.compiler-driver-load-file-with-runtime
-    (owned_view.compiler-owned-shared-view source)
-    (owned_view.compiler-owned-shared-view roots)
-    (tltest-cfgs backend-target))
-    [(Ok decls paths _ _)
-      (tltest-run-file-loaded
-        source
-        target
-        roots
-        opt-level
-        backend-mode
-        decls
-        paths)]
-    [(Err diag)
-      (io.print-error
-        (driver.compiler-driver-render-source-diagnostic (deref diag)))
-      (Err 1)]))
+  (let
+    [source-roots : cli_svec.Vec (tltest-source-roots (& source) roots)]
+    (match (driver.compiler-driver-load-file-with-runtime
+      (owned_view.compiler-owned-shared-view source)
+      (owned_view.compiler-owned-shared-view source-roots)
+      (tltest-cfgs backend-target))
+      [(Ok decls paths _ _)
+        (tltest-run-file-loaded
+          source
+          target
+          source-roots
+          opt-level
+          backend-mode
+          decls
+          paths)]
+      [(Err diag)
+        (io.print-error
+          (driver.compiler-driver-render-source-diagnostic (deref diag)))
+        (Err 1)])))
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
   (if tltest-list-only

@@ -3473,9 +3473,10 @@
 
 ;; Drive the computed expr-struct-set entry with the two interpreted field
 ;; value kinds and with each malformed operand position. Modes 0/1 are a
-;; structural reflected Name and a generated String; modes 2/3/4 corrupt the
-;; field, target, and value respectively and must fail without committing.
-;; Refs #5999.
+;; structural reflected Name, which selects the field by its source spelling
+;; as interpreted CTFE does (#8749), and a generated String; modes 2/3/4
+;; corrupt the field, target, and value respectively and must fail without
+;; committing. Refs #5999.
 (define (producer-test-dispatch-struct-set?
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [identity : String]
@@ -3549,7 +3550,7 @@
                           (=
                             actual-field
                             (if (= mode 0)
-                              structural-name-id
+                              source-name-id
                               expected-string-id))
                           (= actual-value value))]
                       [_ false])]

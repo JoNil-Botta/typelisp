@@ -25754,7 +25754,7 @@
     [handle : i64
       (csym.compiler-symbols-lookup-value-id-or
         (tc_core.tc-context-symbols ctx)
-        lookup-id
+        (lower-hygiene-root-source-id ctx lookup-id)
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
       (let
@@ -25772,7 +25772,7 @@
     [handle : i64
       (csym.compiler-symbols-lookup-value-id-or
         (tc_core.tc-context-symbols ctx)
-        lookup-id
+        (lower-hygiene-root-source-id ctx lookup-id)
         (csym.compiler-symbols-missing-handle))]
     (and
       (csym.compiler-symbols-handle-found? handle)

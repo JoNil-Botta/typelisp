@@ -713,6 +713,340 @@ run check "{{dir}}/main.tl" --target windows-x86_64 --cfg tooling-feature
 stderr empty
 stdout contains Type checking passed!
 
+# SPEC 4.4.3: an imported module's full canonical path resolves without any
+# alias use (#8812). The loader must not lazily skip such an import; a module
+# that is not imported still rejects the canonical path.
+case check-canonical-module-path
+file value.tl
+(import stdlib.iterator)
+(define (main) : i64
+  (let [r (stdlib.iterator.range 0 3)]
+    0))
+end-file
+file type.tl
+(import stdlib.iterator)
+(define (main) : i64
+  (let [r : stdlib.iterator.I64Range (stdlib.iterator.range 0 3)]
+    0))
+end-file
+file other-module.tl
+(import stdlib.math)
+(define (main) : i64
+  (let [b (stdlib.math.f64-to-bits 1.0)]
+    0))
+end-file
+file alias-and-path.tl
+(import stdlib.iterator)
+(define (g) : i64
+  (let [r (iterator.range 0 1)] 0))
+(define (main) : i64
+  (let [r : iterator.I64Range (stdlib.iterator.range 0 3)]
+    (g)))
+end-file
+file not-imported.tl
+(define (main) : i64
+  (let [r (stdlib.iterator.range 0 3)]
+    0))
+end-file
+file outside.tl
+(module app.main)
+(import stdlib.iterator as iter)
+(import stdlib.compress.adler32)
+(define (main) : i64
+  (let [r : stdlib.iterator.I64Range (stdlib.iterator.range 0 3)]
+    (stdlib.compress.adler32.initial)))
+end-file
+file root/nested/moduleless_dep.tl
+(define (get) : i64 7)
+(defstruct Box
+  (value i64))
+end-file
+file root/shadow_lib.tl
+;; Loading this unused import would report its type error.
+(define (broken) : i64 true)
+end-file
+file root/pairs.tl
+(defstruct Pair
+  (value i64))
+(defstruct Outer
+  (broken Pair))
+end-file
+file root/nested/broken.tl
+;; Loading this unused import would report its type error.
+(define (oops) : i64 true)
+end-file
+file root/gen/answers.tl
+(defmacro (gen-answer) : Decls
+  `(define (answer) : i64 42))
+(gen-answer)
+end-file
+file generated-member.tl
+(import gen.answers)
+(define (main) : i64 (gen.answers.answer))
+end-file
+file root/gen/values.tl
+(module gen.values)
+(defmacro (emit) : Decls
+  `(define answer : i64 42))
+(emit)
+end-file
+file generated-value.tl
+(import gen.values as api)
+(define (main) : i64 gen.values.answer)
+end-file
+file root/mac/kit.tl
+(defmacro (twice [x : Expr]) : Expr `(+ ,x ,x))
+end-file
+file macro-call.tl
+(import mac.kit)
+(define (main) : i64 (mac.kit.twice 21))
+end-file
+file root/valid_lib.tl
+(define (other) : i64 1)
+end-file
+file cfunc-signature.tl
+(import stdlib.iterator)
+(define (accept
+  [f : (CFunc non-null (-> (Ptr stdlib.iterator.I64Range) i64))]) : i64
+  0)
+(define (main) : i64 0)
+end-file
+file cfunc-alias-signature.tl
+(import stdlib.iterator as it)
+(define (accept
+  [f : (CFunc non-null (-> (Ptr it.I64Range) i64))]) : i64
+  0)
+(define (main) : i64 0)
+end-file
+file spmd-scan-prefix-type.tl
+(import stdlib.iterator)
+(define (main) : i64
+  (begin
+    (spmd-scan sum
+      ([i : i64 0 3]
+       [prefix : stdlib.iterator.I64Range (init)])
+      i unit)
+    0))
+end-file
+file shadow-global.tl
+(import valid_lib as unused)
+(import pairs)
+(define valid_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64 valid_lib.value)
+end-file
+file shadow-global-set.tl
+(import valid_lib as unused)
+(import pairs)
+(define valid_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64
+  (begin
+    (set! valid_lib.value 41)
+    valid_lib.value))
+end-file
+file shadow-global-broken.tl
+(import shadow_lib as unused)
+(import pairs)
+(define shadow_lib : pairs.Pair (pairs.Pair 42))
+(define (main) : i64 shadow_lib.value)
+end-file
+file root/pkg/orig_fn.tl
+(module pkg.orig_fn)
+(define (get) : i64 42)
+end-file
+file root/pkg/reexport_fn.tl
+(module pkg.reexport_fn)
+(import pkg.orig_fn.get as answer)
+end-file
+file reexport-call.tl
+(import pkg.reexport_fn as api)
+(define (main) : i64 (pkg.reexport_fn.answer))
+end-file
+file root/pkg/braced_body.tl
+(module pkg.braced_body
+  (defmacro (emit) : Decls
+    `(define (answer) : i64 42))
+  (emit))
+end-file
+file braced-body-call.tl
+(import pkg.braced_body as api)
+(define (main) : i64 (pkg.braced_body.answer))
+end-file
+file shadow-dotted-param.tl
+(import nested.broken as unused)
+(import pairs)
+(define (read [nested : pairs.Outer]) : i64 nested.broken.value)
+(define (main) : i64 (read (pairs.Outer (pairs.Pair 42))))
+end-file
+file shadow-param.tl
+(import shadow_lib as unused)
+(import pairs)
+(define (read [shadow_lib : pairs.Pair]) : i64 shadow_lib.value)
+(define (main) : i64 (read (pairs.Pair 42)))
+end-file
+file shadow-let.tl
+(import shadow_lib as unused)
+(import pairs)
+(define (main) : i64
+  (let [shadow_lib (pairs.Pair 42)]
+    shadow_lib.value))
+end-file
+file shadowed-type.tl
+(import nested.moduleless_dep)
+(define (size [nested : i64] [b : nested.moduleless_dep.Box]) : i64 nested)
+(define (main) : i64 0)
+end-file
+file root-user.tl
+(import nested.moduleless_dep)
+(define (main) : i64 (nested.moduleless_dep.get))
+end-file
+step check-value
+run check "{{dir}}/value.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-type
+run check "{{dir}}/type.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-other-module
+run check "{{dir}}/other-module.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-alias-and-path
+run check "{{dir}}/alias-and-path.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-type
+run compile "{{dir}}/type.tl" -o "{{dir}}/type.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+in file {{dir}}/type.s
+contains main:
+step check-moduleless-under-root
+run check "{{dir}}/root-user.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-moduleless-under-root
+run compile "{{dir}}/root-user.tl" -o "{{dir}}/root-user.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-local-projection-param
+run check "{{dir}}/shadow-param.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-local-projection-param
+run compile "{{dir}}/shadow-param.tl" -o "{{dir}}/shadow-param.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-local-projection-let
+run check "{{dir}}/shadow-let.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-generated-member
+run check "{{dir}}/generated-member.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-generated-member
+run compile "{{dir}}/generated-member.tl" -o "{{dir}}/generated-member.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-generated-value
+run check "{{dir}}/generated-value.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-generated-value
+run compile "{{dir}}/generated-value.tl" -o "{{dir}}/generated-value.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-canonical-macro-call
+run check "{{dir}}/macro-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-global-projection
+run check "{{dir}}/shadow-global.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-global-projection
+run compile "{{dir}}/shadow-global.tl" -o "{{dir}}/shadow-global.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-cfunc-signature-type
+run check "{{dir}}/cfunc-signature.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-cfunc-signature-type
+run compile "{{dir}}/cfunc-signature.tl" -o "{{dir}}/cfunc-signature.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-cfunc-alias-signature-type
+run check "{{dir}}/cfunc-alias-signature.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+# The prefix binding's type resolves through the import, so the scan reports
+# its real type rule instead of an unknown type.
+step check-spmd-scan-prefix-type
+run check "{{dir}}/spmd-scan-prefix-type.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0214]: typecheck: spmd-scan sum requires an i32 or i64 type
+stderr not-contains unknown type
+step check-reexported-item
+run check "{{dir}}/reexport-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-reexported-item
+run compile "{{dir}}/reexport-call.tl" -o "{{dir}}/reexport-call.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-braced-body-generated-member
+run check "{{dir}}/braced-body-call.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+# Accepted conservative load: a module-scope binding that shadows an unused
+# import's canonical root still loads that import (SPEC 4.4 loads every
+# import; 4.4.3 lets an existing fully qualified value win over the global),
+# so that module's own errors are reported, as through its alias.
+step check-shadowed-global-loads-import
+run check "{{dir}}/shadow-global-broken.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-global-projection-set
+run check "{{dir}}/shadow-global-set.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-dotted-root-local-projection
+run check "{{dir}}/shadow-dotted-param.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-type-under-shadowing-local
+run check "{{dir}}/shadowed-type.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-outside-checkout
+cwd {{dir}}
+run check "{{dir}}/outside.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step compile-outside-checkout
+run compile "{{dir}}/outside.tl" -o "{{dir}}/outside.s" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+step check-value-outside-checkout
+run check "{{dir}}/value.tl" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+cwd -
+step check-not-imported
+run check "{{dir}}/not-imported.tl" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0200]: typecheck: unknown qualified name stdlib.iterator.range; import the module or use a visible dotted module alias
+step compile-not-imported
+run compile "{{dir}}/not-imported.tl" -o "{{dir}}/not-imported.s" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0200]: typecheck: unknown qualified name stdlib.iterator.range; import the module or use a visible dotted module alias
+
 case compile-hello
 run compile examples/hello.tl -o "{{dir}}/hello.s"
 stderr empty
@@ -992,6 +1326,28 @@ stderr contains typecheck: array elements must have same type: expected i32, fou
 stderr contains main.tl:7:17
 stderr contains in expansion of macro `stdlib.core_macros/for` invoked here
 stderr not-contains expr-type requires a typechecked Expr
+
+# #9671: a `for` binder written in a macro template is hygienic, so a caller
+# reference spliced under it with no caller binding is unbound, not captured.
+case check-macro-template-binding-clause-unbound
+file main.tl
+(import stdlib.iterator)
+
+(defmacro (m [p : Expr]) : bool
+  `(let [found false]
+    (for [i (iterator.range 0 4)]
+      (if ,p (set! found true) unit))
+    found))
+
+(define (main) : i64
+  (if (m (> i 2)) 42 1))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name i
+stderr contains main.tl:10:13
+stderr contains in expansion of macro `m` invoked here
 
 # #5448: a batch entry that fails during macro expansion fails the entry and
 # exits nonzero cleanly; the driver must not segfault (exit 139).

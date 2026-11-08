@@ -5097,6 +5097,45 @@
 (define (compiler-load-runtime-prelude-path-shared-view) : String
   (compiler-load-global-shared-view compiler-load-runtime-prelude-path))
 
+;; The stdlib modules every implicit prelude load reads: the runtime and core
+;; macro roots, plus what core_macros imports (clone, comptime).
+(define compiler-load-comptime-prelude-path : String
+  "stdlib/comptime.tl")
+
+(define (compiler-load-implicit-prelude-module-path? [path : (& path str)]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (or
+      (string.eq normalized compiler-load-runtime-prelude-path)
+      (string.eq normalized compiler-load-core-macro-prelude-path)
+      (string.eq normalized compiler-load-clone-prelude-path)
+      (string.eq normalized compiler-load-comptime-prelude-path))))
+
+;; A rootless prelude reads its modules from the embedded stdlib, whose inline
+;; tests are blanked (#8713), and a named source with the same canonical path
+;; is then deduplicated against that copy (#8813). For such a source that no
+;; configured root resolves, add the source's own stdlib root so the prelude
+;; reads the named file. Other paths keep `roots` unchanged.
+(define (compiler-load-roots-with-implicit-prelude-source
+  [path : (& path str)]
+  [roots : svec.Vec]) : svec.Vec
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (if (and
+      (compiler-load-implicit-prelude-module-path? (& normalized))
+      (io.file-exists? (string.copy path))
+      (match (compiler-load-resolve-stdlib-root
+        (& (compiler-load-stdlib-suffix (& normalized)))
+        (& roots))
+        [(CompilerLoadSomePath _) false]
+        [(CompilerLoadNoPath) true]))
+      ;; Copy first: callers share one `roots` across sources, and pushing
+      ;; would publish this source's root (and its arena) to the next one.
+      (compiler-load-string-vec-push-copy
+        (clone roots)
+        (string.substring (& normalized) 0 7))
+      roots)))
+
 ;; Prelude source selection is physical, but its loader path is deliberately
 ;; canonical. That keeps module identity, import restoration, diagnostics, and
 ;; deduplication independent of the absolute/relative spelling of a stdlib root.
@@ -7137,12 +7176,46 @@
       (return true)))
   false)
 
+(define (compiler-load-session-state-lazy-name-canonical-qualified?
+  [state : (& CompilerLoadSessionState)]
+  [name : i64]
+  [alias : i64]
+  [canonical : i64]) : bool
+  (and
+    (not (= canonical cbi.compiler-builtin-id-fix-empty))
+    (not (= canonical alias))
+    (compiler-load-session-state-lazy-name-qualified-by-id?
+      state
+      name
+      canonical)))
+
+(define (compiler-load-session-state-lazy-name-root-id
+  [state : (& CompilerLoadSessionState)]
+  [name : i64]) : i64
+  (let
+    [interns : ci.InternCompatState (compiler-load-session-state-interns state)]
+    [head : i64
+      (if (ci.intern-compat-state-qualified? (& interns) name)
+        (ci.intern-compat-state-qualified-module-id (& interns) name)
+        name)]
+    (if (ci.intern-compat-state-dotted? (& interns) head)
+      (ci.intern-compat-state-leading-dot-id (& interns) head)
+      head)))
+
+;; `value-context` marks expression and place names. There a dotted name whose
+;; leading segment is a local binding is a projection (SPEC 4.4.3), not a
+;; canonical module path; type and pattern names are never projections. Any
+;; other canonical match is a use. A module-scope binding that shadows the root
+;; still loads the otherwise-unused import: SPEC 4.4 loads every import, and
+;; 4.4.3 lets an existing fully qualified value win over such a global.
 (define (compiler-load-session-state-lazy-name-demand
   [state : (& CompilerLoadSessionState)]
   [name : i64]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
-  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  [locals : sym_i64_env.SymI64Env]
+  [value-context : bool]) : CompilerLoadLazyAliasDemand
   (if (compiler-load-session-state-lazy-qualified-observer-active? state)
     (compiler-load-session-state-lazy-qualified-observer-note-secondary!
       (&mut (compiler-load-session-state-shared-view state))
@@ -7167,6 +7240,29 @@
                 name)
               unit)
             (compiler-load-lazy-alias-demand-qualified member-id))))]
+    ;; SPEC 4.4.3 also accepts the imported module's full canonical path, so
+    ;; a name under that identity is a use like the alias.
+    [(and
+        (compiler-load-session-state-lazy-name-canonical-qualified?
+          state
+          name
+          alias
+          canonical)
+        (not
+          (and
+            value-context
+            (sym_i64_env.sym-i64-contains-id
+              locals
+              (compiler-load-session-state-lazy-name-root-id state name)))))
+      (let
+        [member-id : i64
+          (compiler-load-session-state-lazy-qualified-member-id
+            state
+            name
+            canonical)]
+        (if (< member-id 0)
+          (compiler-load-lazy-alias-demand-unknown)
+          (compiler-load-lazy-alias-demand-qualified member-id)))]
     [(sym_i64_env.sym-i64-contains-id locals name)
       (compiler-load-lazy-alias-demand-none)]
     [(or
@@ -7231,12 +7327,14 @@
   [state : CompilerLoadSessionState]
   [type-id : i64]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-type-demand
     state
     (ast.ty-node-get type-id)
     alias
+    canonical
     summary
     locals))
 
@@ -7244,6 +7342,7 @@
   [state : (& CompilerLoadSessionState)]
   [types : (& ast.AstTypeList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (ast.ast-type-id-list-fold
@@ -7253,6 +7352,7 @@
     compiler-load-lazy-type-id-demand-hook
     (owned_view.compiler-owned-reference-shared-view state)
     alias
+    canonical
     summary
     locals))
 
@@ -7260,6 +7360,7 @@
   [state : CompilerLoadSessionState]
   [ty : ast.AstType]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match (owned_view.compiler-owned-shared-view ty)
@@ -7269,10 +7370,10 @@
         (& state)
         name
         alias
+        canonical
         summary
-        locals)]
-    ;; A C-function type's signature is not an alias use.
-    [(CFunc _ _) (compiler-load-lazy-alias-demand-none)]
+        locals
+        false)]
     [_
       (ast.ast-type-fold-children
         ty
@@ -7281,6 +7382,7 @@
         compiler-load-lazy-type-id-demand-hook
         (owned_view.compiler-owned-shared-view state)
         alias
+        canonical
         summary
         locals)]))
 
@@ -7288,6 +7390,7 @@
   [state : (& CompilerLoadSessionState)]
   [maybe-ty : (& ast.AstMaybeType)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match (owned_view.compiler-owned-reference-shared-view maybe-ty)
@@ -7297,6 +7400,7 @@
         (owned_view.compiler-owned-reference-shared-view state)
         ty
         alias
+        canonical
         summary
         locals)]))
 
@@ -7304,6 +7408,7 @@
   [state : (& CompilerLoadSessionState)]
   [params : (& params ast.AstParamList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -7316,12 +7421,14 @@
             (owned_view.compiler-owned-reference-shared-view state)
             ty
             alias
+            canonical
             summary
             locals)
           (compiler-load-session-state-lazy-param-list-demand-at?
             state
             params
             alias
+            canonical
             summary
             locals
             (+ index 1)))])))
@@ -7330,12 +7437,14 @@
   [state : (& CompilerLoadSessionState)]
   [params : (& params ast.AstParamList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-param-list-demand-at?
     state
     (& params)
     alias
+    canonical
     summary
     locals
     0))
@@ -7375,6 +7484,7 @@
   [state : (& CompilerLoadSessionState)]
   [params : (& params ast.AstMacroParamList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -7390,12 +7500,14 @@
             (owned_view.compiler-owned-reference-shared-view state)
             ty
             alias
+            canonical
             summary
             locals)
           (compiler-load-session-state-lazy-macro-param-list-demand-at?
             state
             params
             alias
+            canonical
             summary
             locals
             (+ index 1)))])))
@@ -7404,12 +7516,14 @@
   [state : (& CompilerLoadSessionState)]
   [params : (& params ast.AstMacroParamList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-macro-param-list-demand-at?
     state
     (& params)
     alias
+    canonical
     summary
     locals
     0))
@@ -7452,6 +7566,7 @@
   [state : (& CompilerLoadSessionState)]
   [fields : (& fields ast.AstFieldDefList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -7467,12 +7582,14 @@
             (owned_view.compiler-owned-reference-shared-view state)
             ty
             alias
+            canonical
             summary
             locals)
           (compiler-load-session-state-lazy-field-list-demand-at?
             state
             fields
             alias
+            canonical
             summary
             locals
             (+ index 1)))])))
@@ -7481,12 +7598,14 @@
   [state : (& CompilerLoadSessionState)]
   [fields : (& ast.AstFieldDefList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-field-list-demand-at?
     state
     fields
     alias
+    canonical
     summary
     locals
     0))
@@ -7495,6 +7614,7 @@
   [state : (& CompilerLoadSessionState)]
   [variants : (& variants ast.AstVariantDefList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -7510,12 +7630,14 @@
             state
             (& types)
             alias
+            canonical
             summary
             locals)
           (compiler-load-session-state-lazy-variant-list-demand-at?
             state
             variants
             alias
+            canonical
             summary
             locals
             (+ index 1)))])))
@@ -7524,12 +7646,14 @@
   [state : (& CompilerLoadSessionState)]
   [variants : (& ast.AstVariantDefList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-variant-list-demand-at?
     state
     variants
     alias
+    canonical
     summary
     locals
     0))
@@ -7538,6 +7662,7 @@
   [state : CompilerLoadSessionState]
   [pattern : ast.AstPattern]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match pattern
@@ -7546,6 +7671,7 @@
         (& state)
         (& maybe-ty)
         alias
+        canonical
         summary
         locals)]
     [(or (Tuple patterns) (Array patterns) (Slice patterns _) (Or patterns)
@@ -7554,6 +7680,7 @@
         (& state)
         (& (deref patterns))
         alias
+        canonical
         summary
         locals)]
     [(Variant name patterns)
@@ -7562,12 +7689,15 @@
           (& state)
           name
           alias
+          canonical
           summary
-          locals)
+          locals
+          false)
         (compiler-load-session-state-lazy-pattern-list-demand
           (& state)
           (& (deref patterns))
           alias
+          canonical
           summary
           locals))]
     [(or (Wildcard) (Binding _) (Literal _))
@@ -7577,6 +7707,7 @@
   [state : (& CompilerLoadSessionState)]
   [patterns : (& patterns ast.AstPatternList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -7587,12 +7718,14 @@
         (owned_view.compiler-owned-reference-shared-view state)
         (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
         alias
+        canonical
         summary
         locals)
       (compiler-load-session-state-lazy-pattern-list-demand-at?
         state
         patterns
         alias
+        canonical
         summary
         locals
         (+ index 1)))))
@@ -7601,12 +7734,14 @@
   [state : (& CompilerLoadSessionState)]
   [patterns : (& ast.AstPatternList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-pattern-list-demand-at?
     state
     patterns
     alias
+    canonical
     summary
     locals
     0))
@@ -7662,6 +7797,7 @@
   [state : (& CompilerLoadSessionState)]
   [exprs : (& ast.AstExprList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (ast.ast-expr-list-fold
@@ -7671,6 +7807,7 @@
     compiler-load-lazy-expr-demand-hook
     (owned_view.compiler-owned-reference-shared-view state)
     alias
+    canonical
     summary
     locals))
 
@@ -7678,6 +7815,7 @@
   [state : (& CompilerLoadSessionState)]
   [bindings : (& bindings ast.AstLetBindingList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -7693,6 +7831,7 @@
             state
             (& maybe-ty)
             alias
+            canonical
             summary
             locals)
           (compiler-load-lazy-alias-demand-merge
@@ -7700,12 +7839,14 @@
               (owned_view.compiler-owned-reference-shared-view state)
               init
               alias
+              canonical
               summary
               locals)
             (compiler-load-session-state-lazy-let-bindings-demand-at?
               state
               bindings
               alias
+              canonical
               summary
               (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
                 state)
@@ -7744,6 +7885,7 @@
   [state : (& CompilerLoadSessionState)]
   [arms : (& arms ast.AstMatchArmList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -7756,6 +7898,7 @@
             (owned_view.compiler-owned-reference-shared-view state)
             (clone pattern)
             alias
+            canonical
             summary
             locals)
           (compiler-load-lazy-alias-demand-merge
@@ -7763,6 +7906,7 @@
               (owned_view.compiler-owned-reference-shared-view state)
               body
               alias
+              canonical
               summary
               (compiler-load-session-state-lazy-pattern-locals
                 state
@@ -7772,6 +7916,7 @@
               state
               arms
               alias
+              canonical
               summary
               locals
               (+ index 1))))])))
@@ -7780,12 +7925,14 @@
   [state : (& CompilerLoadSessionState)]
   [arms : (& ast.AstMatchArmList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-session-state-lazy-match-arms-demand-at?
     state
     arms
     alias
+    canonical
     summary
     locals
     0))
@@ -7794,6 +7941,7 @@
 (defmacro (compiler-load-lazy-expr-demand-hook
   [state : Expr]
   [alias : Expr]
+  [canonical : Expr]
   [summary : Expr]
   [locals : Expr]
   [node-id : Expr]) : Expr
@@ -7801,12 +7949,14 @@
     ,state
     ,node-id
     ,alias
+    ,canonical
     ,summary
     ,locals))
 
 (defmacro (compiler-load-lazy-type-id-demand-hook
   [state : Expr]
   [alias : Expr]
+  [canonical : Expr]
   [summary : Expr]
   [locals : Expr]
   [type-id : Expr]) : Expr
@@ -7814,12 +7964,14 @@
     ,state
     ,type-id
     ,alias
+    ,canonical
     ,summary
     ,locals))
 
 (defmacro (compiler-load-lazy-type-demand-hook
   [state : Expr]
   [alias : Expr]
+  [canonical : Expr]
   [summary : Expr]
   [locals : Expr]
   [ty : Expr]) : Expr
@@ -7827,12 +7979,14 @@
     ,state
     ,ty
     ,alias
+    ,canonical
     ,summary
     ,locals))
 
 (defmacro (compiler-load-lazy-pattern-demand-hook
   [state : Expr]
   [alias : Expr]
+  [canonical : Expr]
   [summary : Expr]
   [locals : Expr]
   [pattern : Expr]) : Expr
@@ -7840,6 +7994,7 @@
     ,state
     ,pattern
     ,alias
+    ,canonical
     ,summary
     ,locals))
 
@@ -7847,6 +8002,7 @@
   [state : CompilerLoadSessionState]
   [node-id : i64]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   ;; Names, binders and quoted syntax are resolved here; the other ordinary
@@ -7857,8 +8013,10 @@
         (& state)
         name
         alias
+        canonical
         summary
-        locals)]
+        locals
+        true)]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body)
@@ -7867,6 +8025,7 @@
               (& state)
               (& bindings)
               alias
+              canonical
               summary
               locals
               0)
@@ -7874,6 +8033,7 @@
               (owned_view.compiler-owned-shared-view state)
               body
               alias
+              canonical
               summary
               (compiler-load-session-state-lazy-let-bindings-locals-at
                 state
@@ -7888,6 +8048,7 @@
               (& state)
               params
               alias
+              canonical
               summary
               locals)
             (compiler-load-lazy-alias-demand-merge
@@ -7895,12 +8056,14 @@
                 (& state)
                 (& ret)
                 alias
+                canonical
                 summary
                 locals)
               (compiler-load-session-state-lazy-expr-demand
                 (owned_view.compiler-owned-shared-view state)
                 body
                 alias
+                canonical
                 summary
                 (compiler-load-session-state-lazy-param-list-locals
                   (& state)
@@ -7912,12 +8075,15 @@
           (& state)
           target
           alias
+          canonical
           summary
-          locals)
+          locals
+          true)
         (compiler-load-session-state-lazy-expr-demand
           state
           value
           alias
+          canonical
           summary
           locals))]
     [(Match match-box)
@@ -7928,12 +8094,14 @@
               (owned_view.compiler-owned-shared-view state)
               scrutinee
               alias
+              canonical
               summary
               locals)
             (compiler-load-session-state-lazy-match-arms-demand
               (& state)
               (& arms)
               alias
+              canonical
               summary
               locals))])]
     [(Foreach foreach-box)
@@ -7944,6 +8112,7 @@
               (owned_view.compiler-owned-shared-view state)
               ty
               alias
+              canonical
               summary
               locals)
             (compiler-load-lazy-alias-demand-merge
@@ -7951,6 +8120,7 @@
                 (owned_view.compiler-owned-shared-view state)
                 start
                 alias
+                canonical
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
@@ -7958,12 +8128,14 @@
                   (owned_view.compiler-owned-shared-view state)
                   end
                   alias
+                  canonical
                   summary
                   locals)
                 (compiler-load-session-state-lazy-expr-demand
                   (owned_view.compiler-owned-shared-view state)
                   body
                   alias
+                  canonical
                   summary
                   (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
                     state)
@@ -8004,6 +8176,7 @@
                 (owned_view.compiler-owned-shared-view state)
                 outer-ty
                 alias
+                canonical
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
@@ -8011,6 +8184,7 @@
                   (owned_view.compiler-owned-shared-view state)
                   inner-ty
                   alias
+                  canonical
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
@@ -8018,6 +8192,7 @@
                     (owned_view.compiler-owned-shared-view state)
                     outer-start
                     alias
+                    canonical
                     summary
                     locals)
                   (compiler-load-lazy-alias-demand-merge
@@ -8025,6 +8200,7 @@
                       (owned_view.compiler-owned-shared-view state)
                       outer-end
                       alias
+                      canonical
                       summary
                       locals)
                     (compiler-load-lazy-alias-demand-merge
@@ -8032,6 +8208,7 @@
                         (owned_view.compiler-owned-shared-view state)
                         inner-start
                         alias
+                        canonical
                         summary
                         locals)
                       (compiler-load-lazy-alias-demand-merge
@@ -8039,12 +8216,14 @@
                           (owned_view.compiler-owned-shared-view state)
                           inner-end
                           alias
+                          canonical
                           summary
                           locals)
                         (compiler-load-session-state-lazy-expr-demand
                           state
                           body
                           alias
+                          canonical
                           summary
                           body-locals))))))))])]
     [(ForeachActive lane body)
@@ -8052,6 +8231,7 @@
         (owned_view.compiler-owned-shared-view state)
         body
         alias
+        canonical
         summary
         (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
           state)
@@ -8068,6 +8248,7 @@
               (owned_view.compiler-owned-shared-view state)
               ty
               alias
+              canonical
               summary
               locals)
             (compiler-load-lazy-alias-demand-merge
@@ -8075,6 +8256,7 @@
                 (owned_view.compiler-owned-shared-view state)
                 start
                 alias
+                canonical
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
@@ -8082,6 +8264,7 @@
                   (owned_view.compiler-owned-shared-view state)
                   end
                   alias
+                  canonical
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
@@ -8089,12 +8272,14 @@
                     (owned_view.compiler-owned-shared-view state)
                     init
                     alias
+                    canonical
                     summary
                     locals)
                   (compiler-load-session-state-lazy-expr-demand
                     (owned_view.compiler-owned-shared-view state)
                     value
                     alias
+                    canonical
                     summary
                     (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
                       state)
@@ -8105,8 +8290,10 @@
                       (sym_i64_env.sym-i64-bind-id locals index 1)))))))])]
     [(SpmdScan scan-box)
       (match (__tl-box-place scan-box)
-        [(Scan _ index ty start end prefix _ init value body)
+        [(Scan _ index ty start end prefix prefix-ty init value body)
           (let
+            ;; The prefix binding's declared type is a type position too.
+            [prefix-type : ast.AstMaybeType (ast.AstMaybeType.Some prefix-ty)]
             [value-locals : sym_i64_env.SymI64Env
               (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
                 state)
@@ -8124,17 +8311,27 @@
                   prefix)
                 (sym_i64_env.sym-i64-bind-id value-locals prefix 1))]
             (compiler-load-lazy-alias-demand-merge
-              (compiler-load-session-state-lazy-type-demand
-                (owned_view.compiler-owned-shared-view state)
-                ty
-                alias
-                summary
-                locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-session-state-lazy-type-demand
+                  (owned_view.compiler-owned-shared-view state)
+                  ty
+                  alias
+                  canonical
+                  summary
+                  locals)
+                (compiler-load-session-state-lazy-maybe-type-demand
+                  (& state)
+                  (& prefix-type)
+                  alias
+                  canonical
+                  summary
+                  locals))
               (compiler-load-lazy-alias-demand-merge
                 (compiler-load-session-state-lazy-expr-demand
                   (owned_view.compiler-owned-shared-view state)
                   start
                   alias
+                  canonical
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
@@ -8142,6 +8339,7 @@
                     (owned_view.compiler-owned-shared-view state)
                     end
                     alias
+                    canonical
                     summary
                     locals)
                   (compiler-load-lazy-alias-demand-merge
@@ -8149,6 +8347,7 @@
                       (owned_view.compiler-owned-shared-view state)
                       init
                       alias
+                      canonical
                       summary
                       locals)
                     (compiler-load-lazy-alias-demand-merge
@@ -8156,12 +8355,14 @@
                         (owned_view.compiler-owned-shared-view state)
                         value
                         alias
+                        canonical
                         summary
                         value-locals)
                       (compiler-load-session-state-lazy-expr-demand
                         state
                         body
                         alias
+                        canonical
                         summary
                         body-locals)))))))])]
     [(SpmdCompact compact-box)
@@ -8189,6 +8390,7 @@
                 (owned_view.compiler-owned-shared-view state)
                 index-ty
                 alias
+                canonical
                 summary
                 locals)
               (compiler-load-lazy-alias-demand-merge
@@ -8196,6 +8398,7 @@
                   (owned_view.compiler-owned-shared-view state)
                   slot-ty
                   alias
+                  canonical
                   summary
                   locals)
                 (compiler-load-lazy-alias-demand-merge
@@ -8203,6 +8406,7 @@
                     (owned_view.compiler-owned-shared-view state)
                     start
                     alias
+                    canonical
                     summary
                     locals)
                   (compiler-load-lazy-alias-demand-merge
@@ -8210,6 +8414,7 @@
                       (owned_view.compiler-owned-shared-view state)
                       end
                       alias
+                      canonical
                       summary
                       locals)
                     (compiler-load-lazy-alias-demand-merge
@@ -8217,6 +8422,7 @@
                         (owned_view.compiler-owned-shared-view state)
                         init
                         alias
+                        canonical
                         summary
                         locals)
                       (compiler-load-lazy-alias-demand-merge
@@ -8224,12 +8430,14 @@
                           (owned_view.compiler-owned-shared-view state)
                           keep
                           alias
+                          canonical
                           summary
                           keep-locals)
                         (compiler-load-session-state-lazy-expr-demand
                           state
                           body
                           alias
+                          canonical
                           summary
                           body-locals))))))))])]
     [(or (Comptime inner) (Quote inner) (Quasiquote inner) (Unquote inner)
@@ -8240,6 +8448,7 @@
           state
           inner
           alias
+          canonical
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
@@ -8262,6 +8471,7 @@
         compiler-load-lazy-pattern-demand-hook
         (owned_view.compiler-owned-shared-view state)
         alias
+        canonical
         summary
         locals)]))
 
@@ -8269,6 +8479,7 @@
   [state : (& CompilerLoadSessionState)]
   [call-id : i64]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   ;; A module macro can introduce declarations that are not visible in the
@@ -8283,6 +8494,7 @@
         state
         spanned
         alias
+        canonical
         summary
         locals)
       (match (ast.ast-node-get call-id)
@@ -8293,6 +8505,7 @@
                 state
                 func
                 alias
+                canonical
                 summary
                 locals)]
             [macro-demand : CompilerLoadLazyAliasDemand
@@ -8305,6 +8518,7 @@
                 state
                 (& args)
                 alias
+                canonical
                 summary
                 locals)))]
         [(Var name)
@@ -8314,8 +8528,10 @@
                 state
                 name
                 alias
+                canonical
                 summary
-                locals)]
+                locals
+                true)]
             (if (or
               name-demand.direct
               (compiler-load-session-state-lazy-name-qualified-by-id?
@@ -8387,6 +8603,7 @@
   [state : (& CompilerLoadSessionState)]
   [meta : (& ast.AstGeneratedDeclMeta)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match meta
@@ -8396,6 +8613,7 @@
         state
         (& args)
         alias
+        canonical
         summary
         locals)]))
 
@@ -8403,6 +8621,7 @@
   [state : (& CompilerLoadSessionState)]
   [decl : (& ast.AstDecl)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match (owned_view.compiler-owned-reference-shared-view decl)
@@ -8414,6 +8633,7 @@
         state
         (& (deref body))
         alias
+        canonical
         summary
         locals)]
     [(Def decl-meta _ maybe-ty body)
@@ -8422,12 +8642,14 @@
           state
           (& maybe-ty)
           alias
+          canonical
           summary
           locals)
         (compiler-load-session-state-lazy-expr-demand
           (owned_view.compiler-owned-reference-shared-view state)
           body
           alias
+          canonical
           summary
           locals))]
     [(DefFn decl-meta _ params ret body _)
@@ -8436,6 +8658,7 @@
           state
           params
           alias
+          canonical
           summary
           locals)
         (compiler-load-lazy-alias-demand-merge
@@ -8443,12 +8666,14 @@
             (owned_view.compiler-owned-reference-shared-view state)
             ret
             alias
+            canonical
             summary
             locals)
           (compiler-load-session-state-lazy-expr-demand
             (owned_view.compiler-owned-reference-shared-view state)
             body
             alias
+            canonical
             summary
             (compiler-load-session-state-lazy-param-list-locals
               state
@@ -8462,6 +8687,7 @@
             state
             params
             alias
+            canonical
             summary
             locals)
           (compiler-load-lazy-alias-demand-merge
@@ -8469,12 +8695,14 @@
               (owned_view.compiler-owned-reference-shared-view state)
               ret
               alias
+              canonical
               summary
               locals)
             (compiler-load-session-state-lazy-expr-demand
               (owned_view.compiler-owned-reference-shared-view state)
               body
               alias
+              canonical
               summary
               (compiler-load-session-state-lazy-macro-param-list-locals
                 state
@@ -8488,6 +8716,7 @@
           (owned_view.compiler-owned-reference-shared-view state)
           ty
           alias
+          canonical
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
@@ -8498,6 +8727,7 @@
           state
           (& variants)
           alias
+          canonical
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
@@ -8508,6 +8738,7 @@
           state
           (& fields)
           alias
+          canonical
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
@@ -8516,6 +8747,7 @@
         state
         call-expr
         alias
+        canonical
         summary
         locals)]
     [(Import decl-meta (Spec (MacroDecls _ _) _ _ _ _))
@@ -8526,6 +8758,7 @@
         (owned_view.compiler-owned-reference-shared-view state)
         body
         alias
+        canonical
         summary
         locals)]
     [(Unsafe inner)
@@ -8535,6 +8768,7 @@
         state
         (& (deref inner))
         alias
+        canonical
         summary
         locals)]
     ;; A future declaration shape might hide references. Keep it conservative.
@@ -8544,6 +8778,7 @@
   [state : (& CompilerLoadSessionState)]
   [decl : (& ast.AstDecl)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (if (ast.ast-decl-comptime-only? decl)
@@ -8553,12 +8788,14 @@
           state
           (& (ast.ast-decl-generated-meta decl))
           alias
+          canonical
           summary
           locals)
         (compiler-load-session-state-lazy-decl-demand-inner
           state
           decl
           alias
+          canonical
           summary
           locals))
       (compiler-load-lazy-alias-demand-unknown))
@@ -8566,6 +8803,7 @@
       state
       decl
       alias
+      canonical
       summary
       locals)))
 
@@ -8573,6 +8811,7 @@
   [state : (& CompilerLoadSessionState)]
   [decls : (& ast.AstDeclList)]
   [alias : i64]
+  [canonical : i64]
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match (ast.ast-decl-list-step decls)
@@ -8584,6 +8823,7 @@
             state
             (& decl)
             alias
+            canonical
             summary
             locals)]
         (if head.unknown
@@ -8594,6 +8834,7 @@
               state
               (& rest)
               alias
+              canonical
               summary
               locals))))]))
 
@@ -8639,6 +8880,7 @@
               state
               rest
               alias-name
+              cbi.compiler-builtin-id-fix-empty
               bound-6
               (sym_i64_env.sym-i64-empty)))]
         [(No) (compiler-load-lazy-alias-demand-none)])
@@ -8775,30 +9017,29 @@
               [policy : CompilerLoadLazyImportPolicy summary.lazy-policy]
               (match kind
                 [(Module)
-                  (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
-                    load-state
-                    rest
-                    (match expected-module
-                      [(Some module-id) module-id]
-                      [(No) summary.module-id]))
-                    false
-                    (match alias
-                      [(Some alias-name)
-                        (match policy
-                          [(CompilerLoadLazyImportEager) false]
-                          [(CompilerLoadLazyImportQualified)
-                            (not
-                              (compiler-load-lazy-alias-demand-requires-load?
-                                policy
-                                (compiler-load-session-state-lazy-decl-list-demand
-                                  load-state
-                                  rest
-                                  alias-name
-                                  summary
-                                  (sym_i64_env.sym-i64-empty))))]
-                          [(CompilerLoadLazyImportDirect)
-                            (if preload-demand.direct
-                              false
+                  (let
+                    [import-module-id : i64
+                      (match expected-module
+                        [(Some module-id) module-id]
+                        [(No) summary.module-id])]
+                    ;; The full canonical path a use may spell (SPEC 4.4.3): a
+                    ;; declared module keeps its declaration identity, while a
+                    ;; moduleless source takes the identity this import gives
+                    ;; it. Its speculative summary ID is only path-derived.
+                    [canonical-id : i64
+                      (if summary.explicit-module
+                        summary.declaration-module-id
+                        import-module-id)]
+                    (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
+                      load-state
+                      rest
+                      import-module-id)
+                      false
+                      (match alias
+                        [(Some alias-name)
+                          (match policy
+                            [(CompilerLoadLazyImportEager) false]
+                            [(CompilerLoadLazyImportQualified)
                               (not
                                 (compiler-load-lazy-alias-demand-requires-load?
                                   policy
@@ -8806,9 +9047,23 @@
                                     load-state
                                     rest
                                     alias-name
+                                    canonical-id
                                     summary
-                                    (sym_i64_env.sym-i64-empty)))))])]
-                      [(No) false]))]
+                                    (sym_i64_env.sym-i64-empty))))]
+                            [(CompilerLoadLazyImportDirect)
+                              (if preload-demand.direct
+                                false
+                                (not
+                                  (compiler-load-lazy-alias-demand-requires-load?
+                                    policy
+                                    (compiler-load-session-state-lazy-decl-list-demand
+                                      load-state
+                                      rest
+                                      alias-name
+                                      canonical-id
+                                      summary
+                                      (sym_i64_env.sym-i64-empty)))))])]
+                        [(No) false])))]
                 [_ false])))]))))
 
 (define (compiler-load-lazy-import-skip?

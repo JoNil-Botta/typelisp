@@ -6874,8 +6874,8 @@
     (opt-typed-fold-cast-instrs)
     (ir.CompilerIrInstr.Mov 3 (I64 (- 0 1)) (I8))
     (ir.CompilerIrInstr.Mov 4 (I64 1) (I8))
-    (irt.instr "%5 = lt %3, %4 : bool")
-    (irt.instr "%6 = lt %0, %1 : bool")))
+    (irt.instr "%5 = lt %3, %4 : i8")
+    (irt.instr "%6 = lt %0, %1 : u8")))
 
 (define (opt-typed-fold-instrs) : ir.CompilerIrInstrSeq
   (opt-test-instrs-with-tail
@@ -6905,7 +6905,7 @@
       (Lt)
       (Var 41)
       (F64 (opt-test-f64-bits "4.0"))
-      (Bool))
+      (F64))
     (irt.instr "%43 = neg %41 : f64")
     (ir.CompilerIrInstr.Cast
       44
@@ -71617,6 +71617,248 @@ return 0" true)
     (compiler-optimize-commute-constant-lhs-self-test)
     42
     "a commutative integer op with a literal or global-cell LHS canonicalises to a literal or cell RHS (two cells stay), `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
+
+(test
+  constant-consumer-operand-type
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [input : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%0 = mov -1 : i64
+         %1 = bit_or 0, %0 : u64
+         %2 = le %1, 0 : i64
+         %3 = le %0, 0 : u64
+         %4 = shr %1, 1 : i64
+         %5 = shr %0, 1 : u64
+         %6 = mov 257 : u64
+         %7 = shl 1, %6 : u8
+         %8 = div %1, 2 : i64
+         %9 = mod %1, 2 : i64
+         %10 = div %0, 2 : u64
+         %11 = mod %0, 2 : u64
+         %12 = cast %1 : i8 to i64
+         %13 = cast %0 : u8 to i64
+         %14 = cast %6 : u64 to u8")]
+    [expected : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%0 = mov -1 : i64
+         %1 = mov -1 : u64
+         %2 = mov true : bool
+         %3 = mov false : bool
+         %4 = mov -1 : i64
+         %5 = mov 9223372036854775807 : u64
+         %6 = mov 257 : u64
+         %7 = mov 2 : u8
+         %8 = mov 0 : i64
+         %9 = mov -1 : i64
+         %10 = mov 9223372036854775807 : u64
+         %11 = mov 1 : u64
+         %12 = mov -1 : i64
+         %13 = mov 255 : i64
+         %14 = mov 1 : u8")]
+    (test.assert-true
+      (opt-test-instr-seq-eq
+        bases
+        (opt-test-fold-instrs bases (Nil) input)
+        expected)
+      "constant definitions do not override a consumer's operand or shift-count type")))
+
+(test
+  constant-consumer-shift-type
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (test.assert-true
+      (opt-test-instr-seq-eq
+        bases
+        (opt-test-fold-instrs
+          bases
+          (Nil)
+          (irt.instrs
+            "%0 = mov -1 : u64
+             %1 = shr %0, 1 : i64
+             %2 = mov -1 : i64
+             %3 = shr %2, 1 : u64"))
+        (irt.instrs
+          "%0 = mov -1 : u64
+           %1 = mov -1 : i64
+           %2 = mov -1 : i64
+           %3 = mov 9223372036854775807 : u64"))
+      "right shifts use the consumer's arithmetic or logical signedness")))
+
+(test
+  constant-consumer-shift-count-type
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (test.assert-true
+      (opt-test-instr-seq-eq
+        bases
+        (opt-test-fold-instrs
+          bases
+          (Nil)
+          (irt.instrs "%0 = mov 257 : u64\n%1 = shl 1, %0 : u8"))
+        (irt.instrs "%0 = mov 257 : u64\n%1 = mov 2 : u8"))
+      "shift counts normalize using the operation's count type")))
+
+(test
+  sccp-guarded-pointer-consumer-type
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [input : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           %0 = mov -1 : i64
+           %1 = bit_or 0, %0 : u64
+           jump guard
+         guard:
+           %2 = le %1, 0 : i64
+           branch %2, safe, unsafe
+         safe:
+           return 134
+         unsafe:
+           %3 = gep %1, 104 : u8
+           %4 = load %3 : i64
+           return %4")]
+    [expected : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+           %0 = mov -1 : i64
+           %1 = mov -1 : u64
+           jump guard
+         guard:
+           %2 = mov true : bool
+           jump safe
+         safe:
+           return 134")]
+    [actual : ir.CompilerIrBlockList
+      (opt.opt-sccp-blocks bases (& (ir.compiler-ir-param-seq-empty)) (& input))]
+    (test.assert-true
+      (opt.opt-block-list-eq bases (& actual) (& expected))
+      "the signed guard selects only the safe arm and removes the invalid load")))
+
+;; Comparison folds reproduce the backend's comparison of the operand type
+;; (compiler-backend-binop-operand-ty / compiler-backend-type-size): enum tags
+;; and pointers are signed 64-bit words, Region/Invalidate wrappers compare at
+;; the inner width with signed ordering, and a legacy Bool-typed comparison
+;; reads the lhs value's type.
+(define (opt-test-compare-tag) : ast.AstType
+  (Enum (opt-test-symbol "OptTestCompareTag")))
+
+(define (opt-test-backend-compare-input) : ir.CompilerIrInstrSeq
+  (opt-test-instrs
+    (ir.CompilerIrInstr.BinOp 0 Eq (I64 2) (I64 2) (opt-test-compare-tag))
+    (ir.CompilerIrInstr.BinOp 1 Ne (I64 0) (I64 3) (opt-test-compare-tag))
+    (ir.CompilerIrInstr.BinOp 2 Lt (I64 (- 0 1)) (I64 0) (opt-test-compare-tag))
+    (irt.instr "%3 = eq 0, 0 : (Ptr i64)")
+    (irt.instr "%4 = lt -1, 0 : (MutPtr u8)")
+    (irt.instr "%5 = eq 0, 0 : (CFunc nullable (-> i64 i64))")
+    (irt.instr "%6 = eq 22, 22 : (Region numbers i64)")
+    (irt.instr "%7 = lt -1, 0 : (Region numbers i64)")
+    (irt.instr "%8 = eq 1, 1 : (Region numbers u64)")
+    (irt.instr "%9 = eq 7, 7 : (Invalidate owner i64)")
+    (irt.instr "%10 = mov -1 : u64")
+    (irt.instr "%11 = lt %10, 0 : bool")
+    (irt.instr "%12 = mov -1 : i64")
+    (irt.instr "%13 = lt %12, 0 : bool")
+    (irt.instr "%14 = eq 0, 0 : bool")))
+
+(define (opt-test-backend-compare-expected) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    "%0 = mov true : bool
+     %1 = mov true : bool
+     %2 = mov true : bool
+     %3 = mov true : bool
+     %4 = mov true : bool
+     %5 = mov true : bool
+     %6 = mov true : bool
+     %7 = mov true : bool
+     %8 = mov true : bool
+     %9 = mov true : bool
+     %10 = mov -1 : u64
+     %11 = mov false : bool
+     %12 = mov -1 : i64
+     %13 = mov true : bool
+     %14 = mov true : bool"))
+
+;; Types the backend would compare differently, or not as one scalar word,
+;; stay unfolded.
+(define (opt-test-backend-compare-refused) : ir.CompilerIrInstrSeq
+  (irt.instrs
+    "%0 = lt -1, 0 : (Region numbers u64)
+     %1 = lt -1, 0 : (Invalidate owner u8)
+     %2 = eq 0, 0 : OptTestWordStruct
+     %3 = eq 0, 0 : (Tuple i64 i64)
+     %4 = eq 0, 0 : (& numbers i64)"))
+
+(test
+  constant-compare-backend-operand-type
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (test.assert-true
+      (opt-test-instr-seq-eq
+        bases
+        (opt-test-fold-instrs bases (Nil) (opt-test-backend-compare-input))
+        (opt-test-backend-compare-expected))
+      "enum tags, pointers, wrapped integers and Bool-typed comparisons fold as the backend compares them")
+    (test.assert-true
+      (opt-test-instr-seq-eq
+        bases
+        (opt-test-fold-instrs bases (Nil) (opt-test-backend-compare-refused))
+        (opt-test-backend-compare-refused))
+      "unsigned ordering under a wrapper, structs, tuples and references stay unfolded")))
+
+(test
+  sccp-compare-backend-operand-type
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [input : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks
+        (opt-agsplit-block
+          "entry"
+          (opt-test-instrs
+            (ir.CompilerIrInstr.Mov 0 (I64 0) (opt-test-compare-tag))
+            (ir.CompilerIrInstr.BinOp
+              1
+              Eq
+              (Var 0)
+              (I64 3)
+              (opt-test-compare-tag))
+            (ir.CompilerIrInstr.Branch
+              (Var 1)
+              (ir.compiler-ir-label "tag_equal")
+              (ir.compiler-ir-label "null_check"))))
+        (opt-agsplit-block "tag_equal" (opt-test-instrs (irt.instr "return 1")))
+        (opt-agsplit-block
+          "null_check"
+          (opt-test-instrs
+            (irt.instr "%2 = mov 0 : u64")
+            (irt.instr "%3 = eq %2, 0 : bool")
+            (irt.instr "branch %3, is_null, not_null")))
+        (opt-agsplit-block "is_null" (opt-test-instrs (irt.instr "return 42")))
+        (opt-agsplit-block "not_null" (opt-test-instrs (irt.instr "return 2"))))]
+    [actual : ir.CompilerIrBlockList
+      (opt.opt-sccp-blocks bases (& (ir.compiler-ir-param-seq-empty)) (& input))]
+    (test.assert-true
+      (opt.opt-block-list-eq
+        bases
+        (& actual)
+        (&
+          (ir.compiler-ir-blocks
+            (opt-agsplit-block
+              "entry"
+              (opt-test-instrs
+                (ir.CompilerIrInstr.Mov 0 (I64 0) (opt-test-compare-tag))
+                (irt.instr "%1 = mov false : bool")
+                (irt.instr "jump null_check")))
+            (opt-agsplit-block
+              "null_check"
+              (opt-test-instrs
+                (irt.instr "%2 = mov 0 : u64")
+                (irt.instr "%3 = mov true : bool")
+                (irt.instr "jump is_null")))
+            (opt-agsplit-block
+              "is_null"
+              (opt-test-instrs (irt.instr "return 42"))))))
+      "sccp folds an enum-tag guard and a Bool-typed null check to their only live arms")))
 
 (test
   bitwise-declared-width

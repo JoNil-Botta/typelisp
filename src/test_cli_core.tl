@@ -2306,6 +2306,7 @@
     "test"))
 
 (define (tltest-check-only
+  [source : String]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [count : i64]
@@ -2333,7 +2334,9 @@
       [(ResultCompilerTypecheck.Err diag)
         (io.print-error
           (driver.compiler-driver-render-source-diagnostic
-            (cdiag.compiler-diagnostic-list-first (deref diag))))
+            (tltest-diagnostic-with-source-fallback
+              source
+              (cdiag.compiler-diagnostic-list-first (deref diag)))))
         1])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -2587,6 +2590,7 @@
     true))
 
 (define (tltest-no-tests-check
+  [source : String]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
@@ -2608,7 +2612,9 @@
       [(ResultCompilerTypecheck.Err diag)
         (io.print-error
           (driver.compiler-driver-render-source-diagnostic
-            (cdiag.compiler-diagnostic-list-first (deref diag))))
+            (tltest-diagnostic-with-source-fallback
+              source
+              (cdiag.compiler-diagnostic-list-first (deref diag)))))
         1])))
 
 (define (tltest-no-tests-run
@@ -2879,6 +2885,7 @@
                 (match test-mode
                   [(Check)
                     (tltest-check-only
+                      source
                       program
                       harness-paths
                       count
@@ -2956,7 +2963,9 @@
         [(ResultCompilerTypecheck.Err diag)
           (io.print-error
             (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first (deref diag))))
+              (tltest-diagnostic-with-source-fallback
+                source
+                (cdiag.compiler-diagnostic-list-first (deref diag)))))
           (Err 1)]))
     (begin
       (io.print-error (tltest-package-integration-missing-main source))
@@ -3642,8 +3651,9 @@
         (let
           [status : i64
             (if (= count 0)
-              (tltest-no-tests-check decls paths roots backend-target)
+              (tltest-no-tests-check source decls paths roots backend-target)
               (tltest-check-only
+                source
                 program
                 harness-paths
                 count
@@ -4038,6 +4048,7 @@
                       (match test-mode
                         [(Check)
                           (tltest-no-tests-check
+                            source
                             decls
                             paths
                             roots
@@ -4054,6 +4065,7 @@
                       (match test-mode
                         [(Check)
                           (tltest-check-only
+                            source
                             program
                             harness-paths
                             count

@@ -47,6 +47,80 @@ run test --check "{{work}}/inline_test_pass.tl" --target {{host-target}} --stdli
 stderr empty
 stdout contains TypeLisp test typecheck passed: 2 test(s)
 
+# #9684: a typecheck diagnostic located at the start of a file names the
+# source path and line under `test --check` exactly as under `check`, for a
+# file with no tests, a file with tests, a package source with inline tests and
+# a package integration test.
+case test-check-start-of-file-diagnostic-path
+file unknown_type_no_tests.tl
+(define (f) : Nope 0)
+end-file
+file unknown_type_with_test.tl
+(define (f) : Nope 0)
+(test uses-f (f) unit)
+end-file
+file pkg/typelisp.pkg
+(package (name "start_diag_pkg") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file pkg/src/lib.tl
+(define (g) : i64 1)
+end-file
+file pkg/src/inline.tl
+(define (f) : Nope 0)
+(test uses-f (f) unit)
+end-file
+file integration/typelisp.pkg
+(package (name "start_diag_int") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file integration/src/lib.tl
+(define (g) : i64 1)
+end-file
+file integration/tests/unknown.tl
+(define (h) : Nope 0)
+(define (main) : i64 (begin (h) 0))
+end-file
+cwd {{dir}}
+step no-tests-check
+run check unknown_type_no_tests.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout not-contains passed:
+stderr contains error[E0201]
+stderr contains --> unknown_type_no_tests.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
+step no-tests-test-check
+run test --check unknown_type_no_tests.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout not-contains passed:
+stderr contains error[E0201]
+stderr contains --> unknown_type_no_tests.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
+step with-test-check
+run check unknown_type_with_test.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout not-contains passed:
+stderr contains error[E0201]
+stderr contains --> unknown_type_with_test.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
+step with-test-test-check
+run test --check unknown_type_with_test.tl --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout not-contains passed:
+stderr contains error[E0201]
+stderr contains --> unknown_type_with_test.tl:1:1
+stderr contains 1 | (define (f) : Nope 0)
+step package-inline
+run test --check --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0201]
+stderr contains --> start_diag_pkg/src/inline.tl:1:1
+step package-integration
+run test --check --manifest-path "{{dir}}/integration/typelisp.pkg" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stderr contains error[E0201]
+stderr not-contains --> :1:1
+stderr contains unknown.tl:1:1
+stderr contains 1 | (define (h) : Nope 0)
+
 # #6190: opt0 once suppressed AddrOf, then read its uninitialized home while
 # preparing the Windows WriteFile byte-count pointer used by the final summary.
 # A multi-test native harness runs that path on both hosts.

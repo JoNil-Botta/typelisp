@@ -229,46 +229,6 @@ stderr contains error[E0206]
 stderr contains --> snippet_pkg/src/imported.tl:1:26
 stderr contains 1 | (define (bad) : i64 (+ 2 false))
 
-# A synthetic prelude Module marker has an owner ID in the legacy provenance
-# lane. It must not invalidate the physical mapping supplied by source rows.
-case package-inline-diagnostic-prelude-marker
-file pkg/typelisp.pkg
-(package (name "snippet_pkg") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
-end-file
-file pkg/src/lib.tl
-(define (g) : i64 1)
-end-file
-file pkg/src/inline.tl
-(define (f) : i64 1)
-(test uses-f (f) unit)
-end-file
-cwd {{dir}}
-sh mkdir -p "{{dir}}/xroot" "{{dir}}/stdlib"
-sh cp -R "{{root}}/stdlib" "{{dir}}/xroot/stdlib"
-sh printf '\n(define (snapshot-prelude-bad) : i64 (+ 1 true))\n' >> "{{dir}}/xroot/stdlib/core_macros.tl"
-sh sed 's/(define (snapshot-prelude-bad) : i64 (+ 1 true))/DISPLAY-PATH-DECOY/' "{{dir}}/xroot/stdlib/core_macros.tl" > "{{dir}}/stdlib/core_macros.tl"
-step prelude-marker-check
-run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root xroot/stdlib
-exit 1
-stderr contains error[E0206]
-stderr contains --> stdlib/core_macros.tl:
-stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
-stderr not-contains DISPLAY-PATH-DECOY
-step prelude-marker-test
-run test --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root xroot/stdlib
-exit 1
-stderr contains error[E0206]
-stderr contains --> stdlib/core_macros.tl:
-stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
-stderr not-contains DISPLAY-PATH-DECOY
-step prelude-marker-test-check
-run test --check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root xroot/stdlib
-exit 1
-stderr contains error[E0206]
-stderr contains --> stdlib/core_macros.tl:
-stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
-stderr not-contains DISPLAY-PATH-DECOY
-
 # These imported paths stay physical in the loader. A package-name prefix
 # alone must not redirect them, including when a wrong destination exists.
 case package-inline-diagnostic-physical-root

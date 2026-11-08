@@ -72006,7 +72006,11 @@ return 0" true)
     (test.assert-true
       (opt.opt-block-list-eq
         bases
-        (& (opt.opt-sccp-blocks bases (& (ir.compiler-ir-param-seq-empty)) (& input)))
+        (&
+          (opt.opt-sccp-blocks
+            bases
+            (& (ir.compiler-ir-param-seq-empty))
+            (& input)))
         (& expected))
       "SCCP orders a propagated negative constant unsigned through nested wrappers")))
 

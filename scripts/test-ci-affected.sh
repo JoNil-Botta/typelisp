@@ -406,7 +406,7 @@ for host in linux windows; do
         "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
         has_gate "$work/direct-reader.ids" "$gate"
     done
-    for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
+    for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity' 'scripts/check-codegen-target-parity.sh stage2-codegen-target-parity'; do
         path=${row% *}
         gate=${row##* }
         printf '%s\n' "$path" > "$work/paths"

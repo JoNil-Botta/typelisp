@@ -2881,3 +2881,93 @@ stderr contains error[E0207]: typecheck: legacy box-get/__tl-box-place borrow re
 stderr contains {{each}}.tl:
 stderr contains help: use deref for each indirection level, or pass an owned Box
 stderr not-contains __tl_tc_
+
+# Prebound CPU calls use ordinary callable arity and the i64 signature.
+
+case check-xgetbv-no-args
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (xgetbv))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0202]: typecheck: call arity mismatch: xgetbv expected 1 argument, got 0 arguments
+
+case check-xgetbv-two-args
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (xgetbv 0 1))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0202]: typecheck: call arity mismatch: xgetbv expected 1 argument, got 2 arguments
+
+case check-xgetbv-i32
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (xgetbv (cast 0 : i32)))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: call `xgetbv` argument 1 type mismatch: expected i64, found i32
+
+case check-xgetbv-u32
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (xgetbv (cast 0 : u32)))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: call `xgetbv` argument 1 type mismatch: expected i64, found u32
+
+case check-xgetbv-u64
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (xgetbv (cast 0 : u64)))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: call `xgetbv` argument 1 type mismatch: expected i64, found u64
+
+case check-xgetbv-bool
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (xgetbv true))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: call `xgetbv` argument 1 type mismatch: expected i64, found bool
+
+case check-xgetbv-f64
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (xgetbv 1.0))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: call `xgetbv` argument 1 type mismatch: expected i64, found f64
+
+case check-xgetbv-comptime-unsupported
+target linux-x86_64 windows-x86_64
+opt -
+file input.tl
+(define (main) : i64 (comptime (xgetbv 0)))
+end-file
+run check "{{dir}}/input.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0506]: unsupported compile-time call xgetbv

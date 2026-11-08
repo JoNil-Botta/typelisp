@@ -12061,8 +12061,8 @@
 
 ;; Runtime stdlib signature + shadowing coverage (migrated from
 ;; src/typechecker.rs). `io.emit-string`/`emit-str`/`io.print-error` are stdlib
-;; functions that borrow `str`; `xgetbv` takes an integer; `cpuid` takes
-;; integers; `string.string-ref`/`char-at` require an integer index. A user declaration
+;; functions that borrow `str`; `xgetbv` and `cpuid` take i64 operands;
+;; `string.string-ref`/`char-at` require an integer index. A user declaration
 ;; may still define the same source-level name when no stdlib import brings it
 ;; into scope.
 (define (compiler-typecheck-runtime-builtin-emit-string-ok-source) : String
@@ -12148,7 +12148,7 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-cpu-source
         "(define (main) : i64 (begin (xgetbv \"x\") 0))")
-      "typecheck: xgetbv index must be integer")
+      "typecheck: call `xgetbv` argument 1 type mismatch: expected i64, found String")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-cpu-source
         "(define (main) : i64 (begin (cpuid \"x\" 0) 0))")

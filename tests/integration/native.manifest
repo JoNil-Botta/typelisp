@@ -416,6 +416,19 @@ crossblock_reload_elide|all|-|tests/integration/crossblock_reload_elide.tl|42|-|
 licm_desc_hoist|all|-|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl|-
 licm_memclean_global_promote|all|-|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl|-
 cpuid_operand_homes|all|-|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl|-
+cpu_intrinsic_shadow|all|0,1,2|tests/integration/cpu_intrinsic_shadow.tl|42|-|-|-|-
+cpu_intrinsic_scalar_shadow|all|0,1,2|tests/integration/cpu_intrinsic_scalar_shadow.tl|42|-|-|-|-
+cpu_intrinsic_local_shadow|all|0,1,2|tests/integration/cpu_intrinsic_local_shadow.tl|42|-|-|-|-
+cpu_intrinsic_unshadowed|all|0,1,2|tests/integration/cpu_intrinsic_unshadowed.tl|42|-|-|-|-
+cpu_intrinsic_import_shadow|all|0,1,2|tests/integration/cpu_intrinsic_import_shadow.tl|42|-|-|cpu_intrinsic_shadow_provider.tl|-
+cpu_intrinsic_foreign_tail|all|0,1,2|tests/integration/cpu_intrinsic_foreign_tail.tl|42|-|-|cpu_intrinsic_builtin_provider.tl|stage-stdlib
+cpu_intrinsic_foreign_xgetbv|all|0,1,2|tests/integration/cpu_intrinsic_foreign_xgetbv.tl|42|-|-|cpu_intrinsic_shadow_provider.tl|stage-stdlib
+cpu_intrinsic_foreign_cpuid|all|0,1,2|tests/integration/cpu_intrinsic_foreign_cpuid.tl|42|-|-|cpu_intrinsic_shadow_provider.tl|-
+cpu_intrinsic_selected_signatures|all|0,1,2|tests/integration/cpu_intrinsic_selected_signatures.tl|42|-|-|cpu_intrinsic_signature_provider.tl|-
+cpu_intrinsic_wildcard_signatures|all|0,1,2|tests/integration/cpu_intrinsic_wildcard_signatures.tl|42|-|-|cpu_intrinsic_signature_provider.tl|-
+cpu_intrinsic_qualified_signatures|all|0,1,2|tests/integration/cpu_intrinsic_qualified_signatures.tl|42|-|-|cpu_intrinsic_signature_provider.tl|-
+cpu_intrinsic_own_signatures|all|0,1,2|tests/integration/cpu_intrinsic_own_signatures.tl|42|-|-|-|-
+cpu_intrinsic_local_signatures|all|0,1,2|tests/integration/cpu_intrinsic_local_signatures.tl|42|-|-|-|-
 global_cell_writer_loop_reads|all|-|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl|-
 lftr_counter_retire|all|-|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl|-
 licm_alias_stress|all|-|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl|-

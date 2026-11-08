@@ -1,0 +1,1070 @@
+;; Generated matrix: every function is branch-free and cast-free, so the
+;; artifact stays on the direct-object route (see direct-object-compare-matrix
+;; in tests/codegen/native-link.cases).
+(define (lt-u8 [a : u8] [b : u8]) : bool
+  (< a b))
+
+(define (le-u8 [a : u8] [b : u8]) : bool
+  (<= a b))
+
+(define (gt-u8 [a : u8] [b : u8]) : bool
+  (> a b))
+
+(define (ge-u8 [a : u8] [b : u8]) : bool
+  (>= a b))
+
+(define (eq-u8 [a : u8] [b : u8]) : bool
+  (= a b))
+
+(define (ne-u8 [a : u8] [b : u8]) : bool
+  (not (= a b)))
+
+(define (lt-u8-lit [a : u8]) : bool
+  (< a 5))
+
+(define (le-u8-lit [a : u8]) : bool
+  (<= a 5))
+
+(define (gt-u8-lit [a : u8]) : bool
+  (> a 5))
+
+(define (ge-u8-lit [a : u8]) : bool
+  (>= a 5))
+
+(define (eq-u8-lit [a : u8]) : bool
+  (= a 5))
+
+(define (ne-u8-lit [a : u8]) : bool
+  (not (= a 5)))
+
+(define (lt-u8-zero [a : u8]) : bool
+  (< a 0))
+
+(define (le-u8-zero [a : u8]) : bool
+  (<= a 0))
+
+(define (gt-u8-zero [a : u8]) : bool
+  (> a 0))
+
+(define (ge-u8-zero [a : u8]) : bool
+  (>= a 0))
+
+(define (eq-u8-zero [a : u8]) : bool
+  (= a 0))
+
+(define (ne-u8-zero [a : u8]) : bool
+  (not (= a 0)))
+
+(define (lt-u8-high [a : u8]) : bool
+  (< a 200))
+
+(define (le-u8-high [a : u8]) : bool
+  (<= a 200))
+
+(define (gt-u8-high [a : u8]) : bool
+  (> a 200))
+
+(define (ge-u8-high [a : u8]) : bool
+  (>= a 200))
+
+(define (eq-u8-high [a : u8]) : bool
+  (= a 200))
+
+(define (ne-u8-high [a : u8]) : bool
+  (not (= a 200)))
+
+(define (lt-u16 [a : u16] [b : u16]) : bool
+  (< a b))
+
+(define (le-u16 [a : u16] [b : u16]) : bool
+  (<= a b))
+
+(define (gt-u16 [a : u16] [b : u16]) : bool
+  (> a b))
+
+(define (ge-u16 [a : u16] [b : u16]) : bool
+  (>= a b))
+
+(define (eq-u16 [a : u16] [b : u16]) : bool
+  (= a b))
+
+(define (ne-u16 [a : u16] [b : u16]) : bool
+  (not (= a b)))
+
+(define (lt-u16-lit [a : u16]) : bool
+  (< a 5))
+
+(define (le-u16-lit [a : u16]) : bool
+  (<= a 5))
+
+(define (gt-u16-lit [a : u16]) : bool
+  (> a 5))
+
+(define (ge-u16-lit [a : u16]) : bool
+  (>= a 5))
+
+(define (eq-u16-lit [a : u16]) : bool
+  (= a 5))
+
+(define (ne-u16-lit [a : u16]) : bool
+  (not (= a 5)))
+
+(define (lt-u16-zero [a : u16]) : bool
+  (< a 0))
+
+(define (le-u16-zero [a : u16]) : bool
+  (<= a 0))
+
+(define (gt-u16-zero [a : u16]) : bool
+  (> a 0))
+
+(define (ge-u16-zero [a : u16]) : bool
+  (>= a 0))
+
+(define (eq-u16-zero [a : u16]) : bool
+  (= a 0))
+
+(define (ne-u16-zero [a : u16]) : bool
+  (not (= a 0)))
+
+(define (lt-u32 [a : u32] [b : u32]) : bool
+  (< a b))
+
+(define (le-u32 [a : u32] [b : u32]) : bool
+  (<= a b))
+
+(define (gt-u32 [a : u32] [b : u32]) : bool
+  (> a b))
+
+(define (ge-u32 [a : u32] [b : u32]) : bool
+  (>= a b))
+
+(define (eq-u32 [a : u32] [b : u32]) : bool
+  (= a b))
+
+(define (ne-u32 [a : u32] [b : u32]) : bool
+  (not (= a b)))
+
+(define (lt-u32-lit [a : u32]) : bool
+  (< a 5))
+
+(define (le-u32-lit [a : u32]) : bool
+  (<= a 5))
+
+(define (gt-u32-lit [a : u32]) : bool
+  (> a 5))
+
+(define (ge-u32-lit [a : u32]) : bool
+  (>= a 5))
+
+(define (eq-u32-lit [a : u32]) : bool
+  (= a 5))
+
+(define (ne-u32-lit [a : u32]) : bool
+  (not (= a 5)))
+
+(define (lt-u32-zero [a : u32]) : bool
+  (< a 0))
+
+(define (le-u32-zero [a : u32]) : bool
+  (<= a 0))
+
+(define (gt-u32-zero [a : u32]) : bool
+  (> a 0))
+
+(define (ge-u32-zero [a : u32]) : bool
+  (>= a 0))
+
+(define (eq-u32-zero [a : u32]) : bool
+  (= a 0))
+
+(define (ne-u32-zero [a : u32]) : bool
+  (not (= a 0)))
+
+(define (lt-u64 [a : u64] [b : u64]) : bool
+  (< a b))
+
+(define (le-u64 [a : u64] [b : u64]) : bool
+  (<= a b))
+
+(define (gt-u64 [a : u64] [b : u64]) : bool
+  (> a b))
+
+(define (ge-u64 [a : u64] [b : u64]) : bool
+  (>= a b))
+
+(define (eq-u64 [a : u64] [b : u64]) : bool
+  (= a b))
+
+(define (ne-u64 [a : u64] [b : u64]) : bool
+  (not (= a b)))
+
+(define (lt-u64-lit [a : u64]) : bool
+  (< a 5))
+
+(define (le-u64-lit [a : u64]) : bool
+  (<= a 5))
+
+(define (gt-u64-lit [a : u64]) : bool
+  (> a 5))
+
+(define (ge-u64-lit [a : u64]) : bool
+  (>= a 5))
+
+(define (eq-u64-lit [a : u64]) : bool
+  (= a 5))
+
+(define (ne-u64-lit [a : u64]) : bool
+  (not (= a 5)))
+
+(define (lt-u64-zero [a : u64]) : bool
+  (< a 0))
+
+(define (le-u64-zero [a : u64]) : bool
+  (<= a 0))
+
+(define (gt-u64-zero [a : u64]) : bool
+  (> a 0))
+
+(define (ge-u64-zero [a : u64]) : bool
+  (>= a 0))
+
+(define (eq-u64-zero [a : u64]) : bool
+  (= a 0))
+
+(define (ne-u64-zero [a : u64]) : bool
+  (not (= a 0)))
+
+(define (lt-u64-ones [a : u64]) : bool
+  (< a 18446744073709551615))
+
+(define (le-u64-ones [a : u64]) : bool
+  (<= a 18446744073709551615))
+
+(define (gt-u64-ones [a : u64]) : bool
+  (> a 18446744073709551615))
+
+(define (ge-u64-ones [a : u64]) : bool
+  (>= a 18446744073709551615))
+
+(define (eq-u64-ones [a : u64]) : bool
+  (= a 18446744073709551615))
+
+(define (ne-u64-ones [a : u64]) : bool
+  (not (= a 18446744073709551615)))
+
+(define (lt-char [a : char] [b : char]) : bool
+  (< a b))
+
+(define (le-char [a : char] [b : char]) : bool
+  (<= a b))
+
+(define (gt-char [a : char] [b : char]) : bool
+  (> a b))
+
+(define (ge-char [a : char] [b : char]) : bool
+  (>= a b))
+
+(define (eq-char [a : char] [b : char]) : bool
+  (= a b))
+
+(define (ne-char [a : char] [b : char]) : bool
+  (not (= a b)))
+
+(define (lt-char-lit [a : char]) : bool
+  (< a 'a'))
+
+(define (le-char-lit [a : char]) : bool
+  (<= a 'a'))
+
+(define (gt-char-lit [a : char]) : bool
+  (> a 'a'))
+
+(define (ge-char-lit [a : char]) : bool
+  (>= a 'a'))
+
+(define (eq-char-lit [a : char]) : bool
+  (= a 'a'))
+
+(define (ne-char-lit [a : char]) : bool
+  (not (= a 'a')))
+
+(define (lt-i8 [a : i8] [b : i8]) : bool
+  (< a b))
+
+(define (le-i8 [a : i8] [b : i8]) : bool
+  (<= a b))
+
+(define (gt-i8 [a : i8] [b : i8]) : bool
+  (> a b))
+
+(define (ge-i8 [a : i8] [b : i8]) : bool
+  (>= a b))
+
+(define (eq-i8 [a : i8] [b : i8]) : bool
+  (= a b))
+
+(define (ne-i8 [a : i8] [b : i8]) : bool
+  (not (= a b)))
+
+(define (lt-i8-lit [a : i8]) : bool
+  (< a 5))
+
+(define (le-i8-lit [a : i8]) : bool
+  (<= a 5))
+
+(define (gt-i8-lit [a : i8]) : bool
+  (> a 5))
+
+(define (ge-i8-lit [a : i8]) : bool
+  (>= a 5))
+
+(define (eq-i8-lit [a : i8]) : bool
+  (= a 5))
+
+(define (ne-i8-lit [a : i8]) : bool
+  (not (= a 5)))
+
+(define (lt-i8-zero [a : i8]) : bool
+  (< a 0))
+
+(define (le-i8-zero [a : i8]) : bool
+  (<= a 0))
+
+(define (gt-i8-zero [a : i8]) : bool
+  (> a 0))
+
+(define (ge-i8-zero [a : i8]) : bool
+  (>= a 0))
+
+(define (eq-i8-zero [a : i8]) : bool
+  (= a 0))
+
+(define (ne-i8-zero [a : i8]) : bool
+  (not (= a 0)))
+
+(define (lt-i8-neg [a : i8]) : bool
+  (< a -1))
+
+(define (le-i8-neg [a : i8]) : bool
+  (<= a -1))
+
+(define (gt-i8-neg [a : i8]) : bool
+  (> a -1))
+
+(define (ge-i8-neg [a : i8]) : bool
+  (>= a -1))
+
+(define (eq-i8-neg [a : i8]) : bool
+  (= a -1))
+
+(define (ne-i8-neg [a : i8]) : bool
+  (not (= a -1)))
+
+(define (lt-i16 [a : i16] [b : i16]) : bool
+  (< a b))
+
+(define (le-i16 [a : i16] [b : i16]) : bool
+  (<= a b))
+
+(define (gt-i16 [a : i16] [b : i16]) : bool
+  (> a b))
+
+(define (ge-i16 [a : i16] [b : i16]) : bool
+  (>= a b))
+
+(define (eq-i16 [a : i16] [b : i16]) : bool
+  (= a b))
+
+(define (ne-i16 [a : i16] [b : i16]) : bool
+  (not (= a b)))
+
+(define (lt-i16-lit [a : i16]) : bool
+  (< a 5))
+
+(define (le-i16-lit [a : i16]) : bool
+  (<= a 5))
+
+(define (gt-i16-lit [a : i16]) : bool
+  (> a 5))
+
+(define (ge-i16-lit [a : i16]) : bool
+  (>= a 5))
+
+(define (eq-i16-lit [a : i16]) : bool
+  (= a 5))
+
+(define (ne-i16-lit [a : i16]) : bool
+  (not (= a 5)))
+
+(define (lt-i16-zero [a : i16]) : bool
+  (< a 0))
+
+(define (le-i16-zero [a : i16]) : bool
+  (<= a 0))
+
+(define (gt-i16-zero [a : i16]) : bool
+  (> a 0))
+
+(define (ge-i16-zero [a : i16]) : bool
+  (>= a 0))
+
+(define (eq-i16-zero [a : i16]) : bool
+  (= a 0))
+
+(define (ne-i16-zero [a : i16]) : bool
+  (not (= a 0)))
+
+(define (lt-i16-neg [a : i16]) : bool
+  (< a -1))
+
+(define (le-i16-neg [a : i16]) : bool
+  (<= a -1))
+
+(define (gt-i16-neg [a : i16]) : bool
+  (> a -1))
+
+(define (ge-i16-neg [a : i16]) : bool
+  (>= a -1))
+
+(define (eq-i16-neg [a : i16]) : bool
+  (= a -1))
+
+(define (ne-i16-neg [a : i16]) : bool
+  (not (= a -1)))
+
+(define (lt-i32 [a : i32] [b : i32]) : bool
+  (< a b))
+
+(define (le-i32 [a : i32] [b : i32]) : bool
+  (<= a b))
+
+(define (gt-i32 [a : i32] [b : i32]) : bool
+  (> a b))
+
+(define (ge-i32 [a : i32] [b : i32]) : bool
+  (>= a b))
+
+(define (eq-i32 [a : i32] [b : i32]) : bool
+  (= a b))
+
+(define (ne-i32 [a : i32] [b : i32]) : bool
+  (not (= a b)))
+
+(define (lt-i32-lit [a : i32]) : bool
+  (< a 5))
+
+(define (le-i32-lit [a : i32]) : bool
+  (<= a 5))
+
+(define (gt-i32-lit [a : i32]) : bool
+  (> a 5))
+
+(define (ge-i32-lit [a : i32]) : bool
+  (>= a 5))
+
+(define (eq-i32-lit [a : i32]) : bool
+  (= a 5))
+
+(define (ne-i32-lit [a : i32]) : bool
+  (not (= a 5)))
+
+(define (lt-i32-zero [a : i32]) : bool
+  (< a 0))
+
+(define (le-i32-zero [a : i32]) : bool
+  (<= a 0))
+
+(define (gt-i32-zero [a : i32]) : bool
+  (> a 0))
+
+(define (ge-i32-zero [a : i32]) : bool
+  (>= a 0))
+
+(define (eq-i32-zero [a : i32]) : bool
+  (= a 0))
+
+(define (ne-i32-zero [a : i32]) : bool
+  (not (= a 0)))
+
+(define (lt-i32-neg [a : i32]) : bool
+  (< a -1))
+
+(define (le-i32-neg [a : i32]) : bool
+  (<= a -1))
+
+(define (gt-i32-neg [a : i32]) : bool
+  (> a -1))
+
+(define (ge-i32-neg [a : i32]) : bool
+  (>= a -1))
+
+(define (eq-i32-neg [a : i32]) : bool
+  (= a -1))
+
+(define (ne-i32-neg [a : i32]) : bool
+  (not (= a -1)))
+
+(define (lt-i64 [a : i64] [b : i64]) : bool
+  (< a b))
+
+(define (le-i64 [a : i64] [b : i64]) : bool
+  (<= a b))
+
+(define (gt-i64 [a : i64] [b : i64]) : bool
+  (> a b))
+
+(define (ge-i64 [a : i64] [b : i64]) : bool
+  (>= a b))
+
+(define (eq-i64 [a : i64] [b : i64]) : bool
+  (= a b))
+
+(define (ne-i64 [a : i64] [b : i64]) : bool
+  (not (= a b)))
+
+(define (lt-i64-lit [a : i64]) : bool
+  (< a 5))
+
+(define (le-i64-lit [a : i64]) : bool
+  (<= a 5))
+
+(define (gt-i64-lit [a : i64]) : bool
+  (> a 5))
+
+(define (ge-i64-lit [a : i64]) : bool
+  (>= a 5))
+
+(define (eq-i64-lit [a : i64]) : bool
+  (= a 5))
+
+(define (ne-i64-lit [a : i64]) : bool
+  (not (= a 5)))
+
+(define (lt-i64-zero [a : i64]) : bool
+  (< a 0))
+
+(define (le-i64-zero [a : i64]) : bool
+  (<= a 0))
+
+(define (gt-i64-zero [a : i64]) : bool
+  (> a 0))
+
+(define (ge-i64-zero [a : i64]) : bool
+  (>= a 0))
+
+(define (eq-i64-zero [a : i64]) : bool
+  (= a 0))
+
+(define (ne-i64-zero [a : i64]) : bool
+  (not (= a 0)))
+
+(define (lt-i64-neg [a : i64]) : bool
+  (< a -1))
+
+(define (le-i64-neg [a : i64]) : bool
+  (<= a -1))
+
+(define (gt-i64-neg [a : i64]) : bool
+  (> a -1))
+
+(define (ge-i64-neg [a : i64]) : bool
+  (>= a -1))
+
+(define (eq-i64-neg [a : i64]) : bool
+  (= a -1))
+
+(define (ne-i64-neg [a : i64]) : bool
+  (not (= a -1)))
+
+(define (add-lt-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (< (+ a b) c))
+
+(define (add-le-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (<= (+ a b) c))
+
+(define (add-gt-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (> (+ a b) c))
+
+(define (add-ge-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (>= (+ a b) c))
+
+(define (add-eq-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (= (+ a b) c))
+
+(define (add-ne-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (not (= (+ a b) c)))
+
+(define (add-iszero-u8 [a : u8] [b : u8]) : bool
+  (= (+ a b) 0))
+
+(define (sub-lt-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (< (- a b) c))
+
+(define (sub-le-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (<= (- a b) c))
+
+(define (sub-gt-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (> (- a b) c))
+
+(define (sub-ge-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (>= (- a b) c))
+
+(define (sub-eq-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (= (- a b) c))
+
+(define (sub-ne-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (not (= (- a b) c)))
+
+(define (sub-iszero-u8 [a : u8] [b : u8]) : bool
+  (= (- a b) 0))
+
+(define (mul-lt-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (< (* a b) c))
+
+(define (mul-le-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (<= (* a b) c))
+
+(define (mul-gt-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (> (* a b) c))
+
+(define (mul-ge-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (>= (* a b) c))
+
+(define (mul-eq-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (= (* a b) c))
+
+(define (mul-ne-u8 [a : u8] [b : u8] [c : u8]) : bool
+  (not (= (* a b) c)))
+
+(define (mul-iszero-u8 [a : u8] [b : u8]) : bool
+  (= (* a b) 0))
+
+(define (add-lt-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (< (+ a b) c))
+
+(define (add-le-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (<= (+ a b) c))
+
+(define (add-gt-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (> (+ a b) c))
+
+(define (add-ge-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (>= (+ a b) c))
+
+(define (add-eq-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (= (+ a b) c))
+
+(define (add-ne-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (not (= (+ a b) c)))
+
+(define (add-iszero-u16 [a : u16] [b : u16]) : bool
+  (= (+ a b) 0))
+
+(define (sub-lt-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (< (- a b) c))
+
+(define (sub-le-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (<= (- a b) c))
+
+(define (sub-gt-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (> (- a b) c))
+
+(define (sub-ge-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (>= (- a b) c))
+
+(define (sub-eq-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (= (- a b) c))
+
+(define (sub-ne-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (not (= (- a b) c)))
+
+(define (sub-iszero-u16 [a : u16] [b : u16]) : bool
+  (= (- a b) 0))
+
+(define (mul-lt-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (< (* a b) c))
+
+(define (mul-le-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (<= (* a b) c))
+
+(define (mul-gt-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (> (* a b) c))
+
+(define (mul-ge-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (>= (* a b) c))
+
+(define (mul-eq-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (= (* a b) c))
+
+(define (mul-ne-u16 [a : u16] [b : u16] [c : u16]) : bool
+  (not (= (* a b) c)))
+
+(define (mul-iszero-u16 [a : u16] [b : u16]) : bool
+  (= (* a b) 0))
+
+(define (add-lt-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (< (+ a b) c))
+
+(define (add-le-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (<= (+ a b) c))
+
+(define (add-gt-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (> (+ a b) c))
+
+(define (add-ge-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (>= (+ a b) c))
+
+(define (add-eq-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (= (+ a b) c))
+
+(define (add-ne-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (not (= (+ a b) c)))
+
+(define (add-iszero-u32 [a : u32] [b : u32]) : bool
+  (= (+ a b) 0))
+
+(define (sub-lt-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (< (- a b) c))
+
+(define (sub-le-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (<= (- a b) c))
+
+(define (sub-gt-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (> (- a b) c))
+
+(define (sub-ge-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (>= (- a b) c))
+
+(define (sub-eq-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (= (- a b) c))
+
+(define (sub-ne-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (not (= (- a b) c)))
+
+(define (sub-iszero-u32 [a : u32] [b : u32]) : bool
+  (= (- a b) 0))
+
+(define (mul-lt-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (< (* a b) c))
+
+(define (mul-le-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (<= (* a b) c))
+
+(define (mul-gt-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (> (* a b) c))
+
+(define (mul-ge-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (>= (* a b) c))
+
+(define (mul-eq-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (= (* a b) c))
+
+(define (mul-ne-u32 [a : u32] [b : u32] [c : u32]) : bool
+  (not (= (* a b) c)))
+
+(define (mul-iszero-u32 [a : u32] [b : u32]) : bool
+  (= (* a b) 0))
+
+(define (add-lt-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (< (+ a b) c))
+
+(define (add-le-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (<= (+ a b) c))
+
+(define (add-gt-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (> (+ a b) c))
+
+(define (add-ge-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (>= (+ a b) c))
+
+(define (add-eq-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (= (+ a b) c))
+
+(define (add-ne-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (not (= (+ a b) c)))
+
+(define (add-iszero-i8 [a : i8] [b : i8]) : bool
+  (= (+ a b) 0))
+
+(define (sub-lt-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (< (- a b) c))
+
+(define (sub-le-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (<= (- a b) c))
+
+(define (sub-gt-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (> (- a b) c))
+
+(define (sub-ge-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (>= (- a b) c))
+
+(define (sub-eq-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (= (- a b) c))
+
+(define (sub-ne-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (not (= (- a b) c)))
+
+(define (sub-iszero-i8 [a : i8] [b : i8]) : bool
+  (= (- a b) 0))
+
+(define (mul-lt-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (< (* a b) c))
+
+(define (mul-le-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (<= (* a b) c))
+
+(define (mul-gt-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (> (* a b) c))
+
+(define (mul-ge-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (>= (* a b) c))
+
+(define (mul-eq-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (= (* a b) c))
+
+(define (mul-ne-i8 [a : i8] [b : i8] [c : i8]) : bool
+  (not (= (* a b) c)))
+
+(define (mul-iszero-i8 [a : i8] [b : i8]) : bool
+  (= (* a b) 0))
+
+(define (add-lt-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (< (+ a b) c))
+
+(define (add-le-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (<= (+ a b) c))
+
+(define (add-gt-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (> (+ a b) c))
+
+(define (add-ge-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (>= (+ a b) c))
+
+(define (add-eq-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (= (+ a b) c))
+
+(define (add-ne-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (not (= (+ a b) c)))
+
+(define (add-iszero-i16 [a : i16] [b : i16]) : bool
+  (= (+ a b) 0))
+
+(define (sub-lt-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (< (- a b) c))
+
+(define (sub-le-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (<= (- a b) c))
+
+(define (sub-gt-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (> (- a b) c))
+
+(define (sub-ge-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (>= (- a b) c))
+
+(define (sub-eq-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (= (- a b) c))
+
+(define (sub-ne-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (not (= (- a b) c)))
+
+(define (sub-iszero-i16 [a : i16] [b : i16]) : bool
+  (= (- a b) 0))
+
+(define (mul-lt-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (< (* a b) c))
+
+(define (mul-le-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (<= (* a b) c))
+
+(define (mul-gt-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (> (* a b) c))
+
+(define (mul-ge-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (>= (* a b) c))
+
+(define (mul-eq-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (= (* a b) c))
+
+(define (mul-ne-i16 [a : i16] [b : i16] [c : i16]) : bool
+  (not (= (* a b) c)))
+
+(define (mul-iszero-i16 [a : i16] [b : i16]) : bool
+  (= (* a b) 0))
+
+(define (add-lt-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (< (+ a b) c))
+
+(define (add-le-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (<= (+ a b) c))
+
+(define (add-gt-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (> (+ a b) c))
+
+(define (add-ge-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (>= (+ a b) c))
+
+(define (add-eq-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (= (+ a b) c))
+
+(define (add-ne-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (not (= (+ a b) c)))
+
+(define (add-iszero-i32 [a : i32] [b : i32]) : bool
+  (= (+ a b) 0))
+
+(define (sub-lt-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (< (- a b) c))
+
+(define (sub-le-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (<= (- a b) c))
+
+(define (sub-gt-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (> (- a b) c))
+
+(define (sub-ge-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (>= (- a b) c))
+
+(define (sub-eq-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (= (- a b) c))
+
+(define (sub-ne-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (not (= (- a b) c)))
+
+(define (sub-iszero-i32 [a : i32] [b : i32]) : bool
+  (= (- a b) 0))
+
+(define (mul-lt-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (< (* a b) c))
+
+(define (mul-le-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (<= (* a b) c))
+
+(define (mul-gt-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (> (* a b) c))
+
+(define (mul-ge-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (>= (* a b) c))
+
+(define (mul-eq-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (= (* a b) c))
+
+(define (mul-ne-i32 [a : i32] [b : i32] [c : i32]) : bool
+  (not (= (* a b) c)))
+
+(define (mul-iszero-i32 [a : i32] [b : i32]) : bool
+  (= (* a b) 0))
+
+(define (bitnot-first-u8 [a : u8] [_decoy : u8]) : u8
+  (bit-not a))
+
+(define (bitnot-second-u8 [_decoy : u8] [a : u8]) : u8
+  (bit-not a))
+
+(define (bitnot-lt-u8 [a : u8] [_decoy : u8] [b : u8]) : bool
+  (< (bit-not a) b))
+
+(define (bitnot-first-u16 [a : u16] [_decoy : u16]) : u16
+  (bit-not a))
+
+(define (bitnot-second-u16 [_decoy : u16] [a : u16]) : u16
+  (bit-not a))
+
+(define (bitnot-lt-u16 [a : u16] [_decoy : u16] [b : u16]) : bool
+  (< (bit-not a) b))
+
+(define (bitnot-first-u32 [a : u32] [_decoy : u32]) : u32
+  (bit-not a))
+
+(define (bitnot-second-u32 [_decoy : u32] [a : u32]) : u32
+  (bit-not a))
+
+(define (bitnot-lt-u32 [a : u32] [_decoy : u32] [b : u32]) : bool
+  (< (bit-not a) b))
+
+(define (bitnot-first-u64 [a : u64] [_decoy : u64]) : u64
+  (bit-not a))
+
+(define (bitnot-second-u64 [_decoy : u64] [a : u64]) : u64
+  (bit-not a))
+
+(define (bitnot-lt-u64 [a : u64] [_decoy : u64] [b : u64]) : bool
+  (< (bit-not a) b))
+
+(define (bitnot-first-i8 [a : i8] [_decoy : i8]) : i8
+  (bit-not a))
+
+(define (bitnot-second-i8 [_decoy : i8] [a : i8]) : i8
+  (bit-not a))
+
+(define (bitnot-lt-i8 [a : i8] [_decoy : i8] [b : i8]) : bool
+  (< (bit-not a) b))
+
+(define (bitnot-first-i16 [a : i16] [_decoy : i16]) : i16
+  (bit-not a))
+
+(define (bitnot-second-i16 [_decoy : i16] [a : i16]) : i16
+  (bit-not a))
+
+(define (bitnot-lt-i16 [a : i16] [_decoy : i16] [b : i16]) : bool
+  (< (bit-not a) b))
+
+(define (bitnot-first-i32 [a : i32] [_decoy : i32]) : i32
+  (bit-not a))
+
+(define (bitnot-second-i32 [_decoy : i32] [a : i32]) : i32
+  (bit-not a))
+
+(define (bitnot-lt-i32 [a : i32] [_decoy : i32] [b : i32]) : bool
+  (< (bit-not a) b))
+
+(define (bitnot-first-i64 [a : i64] [_decoy : i64]) : i64
+  (bit-not a))
+
+(define (bitnot-second-i64 [_decoy : i64] [a : i64]) : i64
+  (bit-not a))
+
+(define (bitnot-lt-i64 [a : i64] [_decoy : i64] [b : i64]) : bool
+  (< (bit-not a) b))
+
+(define (neg-first-i8 [a : i8] [_decoy : i8]) : i8
+  (neg a))
+
+(define (neg-second-i8 [_decoy : i8] [a : i8]) : i8
+  (neg a))
+
+(define (neg-lt-i8 [a : i8] [_decoy : i8] [b : i8]) : bool
+  (< (neg a) b))
+
+(define (neg-first-i16 [a : i16] [_decoy : i16]) : i16
+  (neg a))
+
+(define (neg-second-i16 [_decoy : i16] [a : i16]) : i16
+  (neg a))
+
+(define (neg-lt-i16 [a : i16] [_decoy : i16] [b : i16]) : bool
+  (< (neg a) b))
+
+(define (neg-first-i32 [a : i32] [_decoy : i32]) : i32
+  (neg a))
+
+(define (neg-second-i32 [_decoy : i32] [a : i32]) : i32
+  (neg a))
+
+(define (neg-lt-i32 [a : i32] [_decoy : i32] [b : i32]) : bool
+  (< (neg a) b))
+
+(define (neg-first-i64 [a : i64] [_decoy : i64]) : i64
+  (neg a))
+
+(define (neg-second-i64 [_decoy : i64] [a : i64]) : i64
+  (neg a))
+
+(define (neg-lt-i64 [a : i64] [_decoy : i64] [b : i64]) : bool
+  (< (neg a) b))
+
+(define (not-first [a : bool] [_decoy : bool]) : bool
+  (not a))
+
+(define (not-second [_decoy : bool] [a : bool]) : bool
+  (not a))

@@ -396,6 +396,174 @@ exit 42
 stdout empty
 stderr empty
 
+# Every compare the direct-object route admits, against the assembly route's
+# run-time result. The generated library is cast-free and branch-free; one
+# unused branching function sends the same library to the assembly route. The
+# failing `as` proves which route each library took (#9713, #9714).
+case direct-object-compare-matrix
+opt 0 1 2
+file direct/typelisp.pkg
+(package
+  (name "compare_matrix")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (m "vendor/m")))
+end-file
+file direct/vendor/m/typelisp.pkg
+(package
+  (name "m")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "src/lib.tl"))
+end-file
+file force-assembly.tl
+(define (force-assembly-route [a : i64]) : i64 (if (< a 0) 1 0))
+end-file
+sh chmod +x "{{work}}/no-assembler-bin/as"
+sh mkdir -p "{{dir}}/direct/src" "{{dir}}/direct/vendor/m/src"
+sh cp "{{root}}/tests/fixtures/direct-object-compare/main.tl" "{{dir}}/direct/src/main.tl"
+sh cp "{{root}}/tests/fixtures/direct-object-compare/lib.tl" "{{dir}}/direct/vendor/m/src/lib.tl"
+sh cp -R "{{dir}}/direct" "{{dir}}/assembly"
+sh cat "{{dir}}/force-assembly.tl" >> "{{dir}}/assembly/vendor/m/src/lib.tl"
+step direct-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --manifest-path "{{dir}}/direct/vendor/m/typelisp.pkg" --target linux-x86_64 --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+step assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --manifest-path "{{dir}}/assembly/vendor/m/typelisp.pkg" --target linux-x86_64 --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr contains unexpected assembler fallback
+step build
+exec "{{compiler}}" build --manifest-path "{{dir}}/direct/typelisp.pkg" --target linux-x86_64 --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+exec "{{compiler}}" build --manifest-path "{{dir}}/assembly/typelisp.pkg" --target linux-x86_64 --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+step assembly-result
+sh "{{dir}}/assembly/target/release/compare_matrix" > "{{dir}}/assembly.out"; test "$?" = 42
+step direct-result
+sh "{{dir}}/direct/target/release/compare_matrix" > "{{dir}}/direct.out"; test "$?" = 42
+step routes-agree
+sh cmp "{{dir}}/direct.out" "{{dir}}/assembly.out"
+
+# Region-tagged compares reach the direct route only through opt-2 inlining in
+# a program. The failing `as` proves the route of each build (#9713).
+case direct-object-region-compare
+opt 2
+sh chmod +x "{{work}}/no-assembler-bin/as"
+step u8-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u8.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u8-direct"
+stderr empty
+exec "{{dir}}/u8-direct"
+exit 35
+step u8-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u8.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u8-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step u8-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u8.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u8-assembly"
+stderr empty
+exec "{{dir}}/u8-assembly"
+exit 35
+step u16-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u16.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u16-direct"
+stderr empty
+exec "{{dir}}/u16-direct"
+exit 35
+step u16-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u16.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u16-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step u16-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u16.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u16-assembly"
+stderr empty
+exec "{{dir}}/u16-assembly"
+exit 35
+step u32-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u32.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u32-direct"
+stderr empty
+exec "{{dir}}/u32-direct"
+exit 35
+step u32-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u32.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u32-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step u32-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u32.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u32-assembly"
+stderr empty
+exec "{{dir}}/u32-assembly"
+exit 35
+step u64-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u64.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u64-direct"
+stderr empty
+exec "{{dir}}/u64-direct"
+exit 35
+step u64-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u64.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u64-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step u64-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-u64.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/u64-assembly"
+stderr empty
+exec "{{dir}}/u64-assembly"
+exit 35
+step i8-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i8.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i8-direct"
+stderr empty
+exec "{{dir}}/i8-direct"
+exit 35
+step i8-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i8.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i8-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step i8-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i8.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i8-assembly"
+stderr empty
+exec "{{dir}}/i8-assembly"
+exit 35
+step i16-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i16.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i16-direct"
+stderr empty
+exec "{{dir}}/i16-direct"
+exit 35
+step i16-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i16.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i16-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step i16-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i16.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i16-assembly"
+stderr empty
+exec "{{dir}}/i16-assembly"
+exit 35
+step i32-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i32.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i32-direct"
+stderr empty
+exec "{{dir}}/i32-direct"
+exit 35
+step i32-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i32.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i32-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step i32-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i32.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i32-assembly"
+stderr empty
+exec "{{dir}}/i32-assembly"
+exit 35
+step i64-direct
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i64.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i64-direct"
+stderr empty
+exec "{{dir}}/i64-direct"
+exit 35
+step i64-assembly-route
+exec env PATH="{{work}}/no-assembler-bin:$PATH" "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i64.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i64-probe"
+exit nonzero
+stderr contains unexpected assembler fallback
+step i64-assembly
+exec "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-i64.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/i64-assembly"
+stderr empty
+exec "{{dir}}/i64-assembly"
+exit 35
+
 case direct-object-fallback
 file ordinary-call-abi.tl
 (define (seventh

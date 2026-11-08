@@ -80,6 +80,7 @@ tests/codegen/math.cases	stage2-math-exp-codegen-verifier,stage2-math-log-codege
 tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-mandelbrot-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Exact case file named by the ISPC contract gates.
 tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpus	Exact case file named by the must-use gate.
 tests/codegen/asm-shape.cases	stage2-regalloc-backend-asm-shape-gates	@corpus	Exact case file named by the backend shape gate.
+tests/fixtures/direct-object-compare/*	stage2-native-link-generated-programs	@corpus	Generated compare-matrix sources the native-link cases copy and build.
 tests/codegen/native-link.cases	stage2-native-link-generated-programs	@corpus	The Linux native-link runner directly consumes this case file.
 tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus,integration-batch-observability	@corpus	Native integration executes this case file; observability exercises its real entry-helper transcript rows without a compiler build.
 tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	The stdlib verifier directly executes the for-source macro cases.

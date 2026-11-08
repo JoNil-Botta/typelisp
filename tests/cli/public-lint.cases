@@ -230,6 +230,165 @@ stdout contains unreachable from package entry/test roots
 stdout contains lint: 1 finding(s)
 stdout not-contains suppressed-bin
 
+# Whole-file lazy-import demand must agree with the loader, including forms
+# before the import and forms outside the module body holding the import.
+case lint-package-alias-use-before
+file typelisp.pkg
+(package
+  (name "lintprobe")
+  (version "0.1.0")
+  (kind "bin"))
+end-file
+file src/dep.tl
+(define v : i64 41)
+(define (unused-helper) : i64 1)
+end-file
+file src/main.tl
+(define (f) : i64 o.v)
+(import dep as o)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (f))
+end-file
+run lint --manifest-path "{{dir}}/typelisp.pkg" --format flat
+stderr empty
+stdout contains dead code: top-level declaration unused-helper is unreachable from package entry/test roots
+stdout count-fixed = 1 unused-helper
+stdout not-contains top-level declaration v is unreachable
+
+case lint-package-alias-use-after
+file typelisp.pkg
+(package
+  (name "lintprobe")
+  (version "0.1.0")
+  (kind "bin"))
+end-file
+file src/dep.tl
+(define v : i64 41)
+(define (unused-helper) : i64 1)
+end-file
+file src/main.tl
+(import dep as o)
+(define (f) : i64 o.v)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (f))
+end-file
+run lint --manifest-path "{{dir}}/typelisp.pkg" --format flat
+stderr empty
+stdout contains dead code: top-level declaration unused-helper is unreachable from package entry/test roots
+stdout count-fixed = 1 unused-helper
+stdout not-contains top-level declaration v is unreachable
+
+case lint-package-alias-macro-before
+file typelisp.pkg
+(package
+  (name "lintprobe")
+  (version "0.1.0")
+  (kind "bin"))
+end-file
+file src/dep.tl
+(define (unused-helper) : i64 1)
+end-file
+file src/main.tl
+(defmacro (identity [value : i64]) : i64 value)
+(import dep as o)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (identity 41))
+end-file
+run lint --manifest-path "{{dir}}/typelisp.pkg" --format flat
+stderr empty
+stdout contains dead code: top-level declaration unused-helper is unreachable from package entry/test roots
+stdout count-fixed = 1 unused-helper
+
+case lint-package-alias-macro-after
+file typelisp.pkg
+(package
+  (name "lintprobe")
+  (version "0.1.0")
+  (kind "bin"))
+end-file
+file src/dep.tl
+(define (unused-helper) : i64 1)
+end-file
+file src/main.tl
+(import dep as o)
+(defmacro (identity [value : i64]) : i64 value)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (identity 41))
+end-file
+run lint --manifest-path "{{dir}}/typelisp.pkg" --format flat
+stderr empty
+stdout contains dead code: top-level declaration unused-helper is unreachable from package entry/test roots
+stdout count-fixed = 1 unused-helper
+
+case lint-package-alias-outer-macro
+file typelisp.pkg
+(package
+  (name "lintprobe")
+  (version "0.1.0")
+  (kind "bin"))
+end-file
+file src/dep.tl
+(define (unused-helper) : i64 1)
+end-file
+file src/main.tl
+(defmacro (identity [value : i64]) : i64 value)
+(module nested
+  (import dep as o)
+  (defstruct Pair
+    (value i64)))
+(define (main) : i64 (identity 41))
+end-file
+run lint --manifest-path "{{dir}}/typelisp.pkg" --format flat
+stderr empty
+stdout contains dead code: top-level declaration unused-helper is unreachable from package entry/test roots
+stdout count-fixed = 1 unused-helper
+
+case lint-package-alias-unused-before
+file typelisp.pkg
+(package
+  (name "lintprobe")
+  (version "0.1.0")
+  (kind "bin"))
+end-file
+file src/dep.tl
+(define (unused-helper) : i64 1)
+end-file
+file src/main.tl
+(import dep as o)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 0)
+end-file
+run lint --manifest-path "{{dir}}/typelisp.pkg" --format flat
+stderr empty
+stdout contains unused import: module alias o from dep is never referenced
+stdout not-contains unused-helper
+
+case lint-package-alias-unused-after
+file typelisp.pkg
+(package
+  (name "lintprobe")
+  (version "0.1.0")
+  (kind "bin"))
+end-file
+file src/dep.tl
+(define (unused-helper) : i64 1)
+end-file
+file src/main.tl
+(define (main) : i64 0)
+(import dep as o)
+(defstruct Pair
+  (value i64))
+end-file
+run lint --manifest-path "{{dir}}/typelisp.pkg" --format flat
+stderr empty
+stdout contains unused import: module alias o from dep is never referenced
+stdout not-contains unused-helper
+
 case lint-package-lib
 file typelisp.pkg
 (package

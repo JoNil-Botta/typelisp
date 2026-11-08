@@ -79832,7 +79832,7 @@ tl_shared_object_init:
 
 (define (compiler-backend-object-binop-bytes
   [type-segment-bases : i64]
-  [op : compiler_ir_types.CompilerIrBinOp]
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [ty : (& ty compiler_ast_types.AstType)]) : String
   (match op
     [(Add) (object_target.compiler-backend-object-bytes-from-hex "4c01c0")]
@@ -79846,30 +79846,10 @@ tl_shared_object_init:
       (compiler-backend-object-divmod-bytes
         (compiler-backend-type-signed? type-segment-bases ty)
         true)]
-    [(Eq)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c39c00f94c0480fb6c0")]
-    [(Ne)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c39c00f95c0480fb6c0")]
-    [(Lt)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c39c00f9cc0480fb6c0")]
-    [(Le)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c39c00f9ec0480fb6c0")]
-    [(Gt)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c39c00f9fc0480fb6c0")]
-    [(Ge)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c39c00f9dc0480fb6c0")]
-    [(BitTestEq)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f94c0480fb6c0")]
-    [(BitTestNe)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4c85c00f95c0480fb6c0")]
+    [(or (Eq) (Ne) (Lt) (Le) (Gt) (Ge))
+      (compiler-backend-object-compare-bytes type-segment-bases op ty 0x38 true)]
+    [(or (BitTestEq) (BitTestNe))
+      (compiler-backend-object-compare-bytes type-segment-bases op ty 0x84 true)]
     [(or (And) (BitAnd))
       (object_target.compiler-backend-object-bytes-from-hex "4c21c0")]
     [(or (Or) (BitOr))
@@ -79877,28 +79857,54 @@ tl_shared_object_init:
     [(BitXor) (object_target.compiler-backend-object-bytes-from-hex "4c31c0")]
     [_ ""]))
 
+;; `<byte-opcode> <r8 or rax>, rax` at the operand's width, then `set<cc> %al`
+;; and `movzbq %al, %rax`. Like the assembly route's sized `cmp` and `test`, it
+;; reads only the operand's own bits: a narrow value's frame slot can hold
+;; anything above them, from wrapping arithmetic or an assembly-route caller.
+;; `byte-opcode` is the 8-bit form; the wider forms are the next opcode.
+(define (compiler-backend-object-compare-bytes
+  [type-segment-bases : i64]
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [ty : (& ty compiler_ast_types.AstType)]
+  [byte-opcode : i64]
+  [rhs-r8? : bool]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [size : i64 (compiler-backend-type-size type-segment-bases ty)]
+    [wide? : bool (not (or (= size 1) (= size 2) (= size 4)))]
+    [rex : i64
+      (bit-or
+        (if wide?
+          0x48
+          0x40)
+        (if rhs-r8?
+          0x04
+          0))]
+    (when (= size 2) (compiler-backend-object-push-u8! (&mut out) 0x66))
+    (when (not (= rex 0x40)) (compiler-backend-object-push-u8! (&mut out) rex))
+    (compiler-backend-object-push-u8!
+      (&mut out)
+      (if (= size 1)
+        byte-opcode
+        (+ byte-opcode 1)))
+    (compiler-backend-object-push-u8! (&mut out) 0xc0)
+    (compiler-backend-object-push-u8! (&mut out) 0x0f)
+    (compiler-backend-object-push-u8!
+      (&mut out)
+      (+ 0x90 (compiler-backend-object-compare-cc type-segment-bases op ty)))
+    (compiler-backend-object-push-u8! (&mut out) 0xc0)
+    (compiler-backend-object-push-u8! (&mut out) 0x48)
+    (compiler-backend-object-push-u8! (&mut out) 0x0f)
+    (compiler-backend-object-push-u8! (&mut out) 0xb6)
+    (compiler-backend-object-push-u8! (&mut out) 0xc0)
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+
+;; `test` clears CF and OF, so every condition reads as a compare against zero.
 (define (compiler-backend-object-zero-compare-bytes
-  [op : compiler_ir_types.CompilerIrBinOp]) : String
-  (match op
-    [(Eq)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4885c00f94c0480fb6c0")]
-    [(Ne)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4885c00f95c0480fb6c0")]
-    [(Lt)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4885c00f9cc0480fb6c0")]
-    [(Le)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4885c00f9ec0480fb6c0")]
-    [(Gt)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4885c00f9fc0480fb6c0")]
-    [(Ge)
-      (object_target.compiler-backend-object-bytes-from-hex
-        "4885c00f9dc0480fb6c0")]
-    [_ ""]))
+  [type-segment-bases : i64]
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [ty : (& ty compiler_ast_types.AstType)]) : String
+  (compiler-backend-object-compare-bytes type-segment-bases op ty 0x84 false))
 
 (define (compiler-backend-object-binop
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -79917,7 +79923,10 @@ tl_shared_object_init:
         [_ false])]
     [op-bytes : String
       (if zero-test?
-        (compiler-backend-object-zero-compare-bytes op)
+        (compiler-backend-object-zero-compare-bytes
+          program-index.type-segment-bases
+          op
+          ty)
         (compiler-backend-object-binop-bytes
           program-index.type-segment-bases
           op
@@ -80447,15 +80456,26 @@ tl_shared_object_init:
 ;; The x86 condition code the object compare leaves in the flags for `op`,
 ;; the one its `set<cc>` reads; -1 for anything else.
 (define (compiler-backend-object-compare-cc
-  [op : (& compiler_ir_types.CompilerIrBinOp)]) : i64
+  [type-segment-bases : i64]
+  [op : (& compiler_ir_types.CompilerIrBinOp)]
+  [ty : (& compiler_ast_types.AstType)]) : i64
   (match op
     [(or (Eq) (BitTestEq)) 0x4]
     [(or (Ne) (BitTestNe)) 0x5]
-    [(Lt) 0xc]
-    [(Le) 0xe]
-    [(Gt) 0xf]
-    [(Ge) 0xd]
+    [(Lt) (compiler-backend-object-ordering-cc type-segment-bases ty 0x2 0xc)]
+    [(Le) (compiler-backend-object-ordering-cc type-segment-bases ty 0x6 0xe)]
+    [(Gt) (compiler-backend-object-ordering-cc type-segment-bases ty 0x7 0xf)]
+    [(Ge) (compiler-backend-object-ordering-cc type-segment-bases ty 0x3 0xd)]
     [_ -1]))
+
+(define (compiler-backend-object-ordering-cc
+  [type-segment-bases : i64]
+  [ty : (& compiler_ast_types.AstType)]
+  [unsigned-cc : i64]
+  [signed-cc : i64]) : i64
+  (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
+    unsigned-cc
+    signed-cc))
 
 ;; An integer compare stores its `set<cc>` result with plain moves, which keep
 ;; the flags. When it is the instruction right before a branch, the branch can
@@ -80475,7 +80495,11 @@ tl_shared_object_init:
           (- index 1))
           [(BinOp dst op _ _ ty)
             (let
-              [cc : i64 (compiler-backend-object-compare-cc op)]
+              [cc : i64
+                (compiler-backend-object-compare-cc
+                  program-index.type-segment-bases
+                  op
+                  ty)]
               (if (or (< cc 0) (compiler-backend-float-type? ty))
                 -1
                 (begin
@@ -80609,13 +80633,22 @@ tl_shared_object_init:
         program-index)]
     [(compiler_ir_types.CompilerIrInstr.UnOp dst op src ty)
       (let
+        [site : String (compiler-backend-global-shared-view function)]
         [with-src : object_target.CompilerBackendObjectTargetParts
-          (compiler-backend-object-value-ref-with-type
-            parts
-            (compiler-backend-global-shared-view function)
-            src
-            ty
-            program-index)]
+          (if (compiler-backend-float-type? ty)
+            (compiler-backend-object-value-ref-with-type
+              parts
+              site
+              src
+              ty
+              program-index)
+            ;; The integer operators below work on %rax in place.
+            (compiler-backend-object-load-value-to-reg
+              parts
+              site
+              src
+              "%rax"
+              program-index))]
         (if (and
           (compiler-backend-float-type? ty)
           (match op

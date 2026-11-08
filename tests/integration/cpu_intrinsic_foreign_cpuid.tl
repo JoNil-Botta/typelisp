@@ -2,6 +2,7 @@
 
 ;; This used to pass checking but fail linkage on main for cpuid as well.
 (define (main) : i64
+  (unless (= (tuple-ref (foreign.cpuid 0 0) 0) 7) (return 2))
   (let
     [words : (Tuple i32 i32 i32 i32) (cpuid 0 0)]
     (if (=

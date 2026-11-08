@@ -1,4 +1,4 @@
-(import stdlib.cpu as cpu)
+(import stdlib.cpu)
 (import cpu_intrinsic_builtin_provider as provider)
 
 ;; These compatible entry definitions are not visible in either imported body.

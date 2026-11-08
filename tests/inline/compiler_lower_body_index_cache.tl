@@ -16,8 +16,8 @@
     (match (compiler_lower.lower-compiler-source-with-path-mode-and-state
       lower-state
       "<source>"
-      "(define (helper) : i64 42)
-(module main)
+      "(module main)
+(define (helper) : i64 42)
 (define (main) : i64 (helper))"
       (Scalar))
       [(Ok _ _ owner)

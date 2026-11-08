@@ -2079,6 +2079,31 @@ end-file
 run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
 exit 42
 
+# A runtime-owned identity also arrives through the ordinary definition-site
+# route: a template calling a function its module flat-imports from the runtime.
+case run-macro-template-runtime-owned-definition-route
+file mac.tl
+(import stdlib.runtime.*)
+
+(defmacro (addr-of [p : Expr]) : i64
+  `(ptr-arg ,p))
+end-file
+file main.tl
+(import mac)
+
+(define (ptr-arg [x : i64]) : i64
+  x)
+
+(define (main) : i64
+  (let [v : i64 7]
+    (let [p : (Ptr u8) (unsafe (ptr-cast (ptr-addr-of v) : (Ptr u8)))]
+      (if (> (mac.addr-of p) 0)
+        42
+        1))))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
 # A use-site macro with a prelude spelling does not capture the template's call.
 case run-macro-template-prelude-under-use-site-macro
 file mac.tl

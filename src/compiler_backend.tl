@@ -12875,6 +12875,7 @@
           (not (string.eq rhs-home "")))]
       [cmov : String
         (compiler-backend-compare-cmov
+          type-segment-bases
           (if swap?
             (compiler-backend-compare-swapped-op op)
             op)
@@ -18412,9 +18413,19 @@
     [(F64) true]
     [_ false]))
 
-(define (compiler-backend-type-signed? [ty : (& ty compiler_ast_types.AstType)]) : bool
+(define (compiler-backend-type-signed?
+  [type-segment-bases : i64]
+  [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match ty
     [(or (I64) (I32) (I16) (I8)) true]
+    ;; A region-tagged scalar has its inner type's signedness (#9688).
+    [(or (Region _ inner) (Invalidate _ inner))
+      (compiler-backend-type-signed?
+        type-segment-bases
+        (&
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            inner)))]
     [_ false]))
 
 (define (compiler-backend-intlike-scalar-type?
@@ -19190,13 +19201,15 @@
       (str_cat.str-cat "    pushq " reg "\n")
       (str_cat.str-cat
         "    "
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (cond [(= size 1) "movsbq"] [(= size 2) "movswq"] [else "movslq"])
           (cond [(= size 1) "movzbq"] [(= size 2) "movzwq"] [else "movl"]))
         " "
         src
         ", "
-        (if (and (not (compiler-backend-type-signed? ty)) (= size 4))
+        (if (and
+          (not (compiler-backend-type-signed? type-segment-bases ty))
+          (= size 4))
           "%r11d"
           "%r11")
         "\n    pushq %r11\n"))))
@@ -19830,15 +19843,15 @@
     (cond
       [(= size 8) (str_cat.str-cat "    movq " addr ", %rax\n")]
       [(= size 4)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movslq " addr ", %rax\n")
           (str_cat.str-cat "    movl " addr ", %eax\n"))]
       [(= size 2)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movswq " addr ", %rax\n")
           (str_cat.str-cat "    movzwq " addr ", %rax\n"))]
       [(= size 1)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movsbq " addr ", %rax\n")
           (str_cat.str-cat "    movzbq " addr ", %rax\n"))]
       [else ""])))
@@ -19920,7 +19933,7 @@
     (cond
       [(= size 8) (str_cat.str-cat "    movq " addr ", " reg "\n")]
       [(= size 4)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movslq " addr ", " reg "\n")
           (str_cat.str-cat
             "    movl "
@@ -19929,11 +19942,11 @@
             (compiler-backend-reg-part reg 4)
             "\n"))]
       [(= size 2)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movswq " addr ", " reg "\n")
           (str_cat.str-cat "    movzwq " addr ", " reg "\n"))]
       [(= size 1)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movsbq " addr ", " reg "\n")
           (str_cat.str-cat "    movzbq " addr ", " reg "\n"))]
       [else ""])))
@@ -19951,7 +19964,7 @@
           ""
           (compiler-backend-machine-move-line (W64) src-reg dst-reg))]
       [(= size 4)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat
             "    movslq "
             (compiler-backend-reg-part src-reg size)
@@ -19960,7 +19973,7 @@
             "\n")
           (compiler-backend-machine-move-line (W32) src-reg dst-reg))]
       [(= size 2)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat
             "    movswq "
             (compiler-backend-reg-part src-reg size)
@@ -19974,7 +19987,7 @@
             dst-reg
             "\n"))]
       [(= size 1)
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat
             "    movsbq "
             (compiler-backend-reg-part src-reg size)
@@ -22440,9 +22453,19 @@
     (compiler-backend-state-user-symbol-id program-index.backend-state name)))
 
 (define (compiler-backend-unsigned-rel-ty?
+  [type-segment-bases : i64]
   [ty : (& compiler_ast_types.AstType)]) : bool
   (match ty
     [(or (U64) (U32) (U16) (U8) (Char)) true]
+    ;; Comparison IR keeps the operand's region tag; order by the inner type
+    ;; (#9688).
+    [(or (Region _ inner) (Invalidate _ inner))
+      (compiler-backend-unsigned-rel-ty?
+        type-segment-bases
+        (&
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            inner)))]
     [_ false]))
 
 (define (compiler-backend-global-type-lookup
@@ -22715,7 +22738,7 @@
       lhs)
     (str_cat.str-cat
       "    "
-      (compiler-backend-compare-setcc op ty)
+      (compiler-backend-compare-setcc type-segment-bases op ty)
       " "
       (compiler-backend-reg-part (string.copy dst-reg) 1)
       "\n    movzbq "
@@ -22754,25 +22777,26 @@
         "\n"))))
 
 (define (compiler-backend-compare-setcc
+  [type-segment-bases : i64]
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [ty : compiler_ast_types.AstType]) : String
   (match op
     [(or (Eq) (BitTestEq)) "sete"]
     [(or (Ne) (BitTestNe)) "setne"]
     [(Lt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "setb"
         "setl")]
     [(Le)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "setbe"
         "setle")]
     [(Gt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "seta"
         "setg")]
     [(Ge)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "setae"
         "setge")]
     [_ ""]))
@@ -22846,7 +22870,7 @@
   [_planned-min : String]
   [_planned-neg : String]
   [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-type-signed? ty)
+  (if (compiler-backend-type-signed? type-segment-bases ty)
     (let
       [suffix : String
         (compiler-backend-int-instruction-suffix
@@ -22925,7 +22949,7 @@
   [divisor-reg : String]) : String
   (let
     [size : i64 (compiler-backend-type-size type-segment-bases ty)]
-    [signed : bool (compiler-backend-type-signed? ty)]
+    [signed : bool (compiler-backend-type-signed? type-segment-bases ty)]
     [divisor : String
       (compiler-backend-sized-reg type-segment-bases divisor-reg ty)]
     (cond
@@ -23017,38 +23041,62 @@
   (- (- 0 9223372036854775807) 1))
 
 (define (compiler-backend-normalized-signed-immediate
+  [type-segment-bases : i64]
   [n : i64]
   [ty : (& ty compiler_ast_types.AstType)]) : i64
   (match ty
     [(I8) (cast (cast n : i8) : i64)]
     [(I16) (cast (cast n : i16) : i64)]
     [(I32) (cast (cast n : i32) : i64)]
+    [(or (Region _ inner) (Invalidate _ inner))
+      (compiler-backend-normalized-signed-immediate
+        type-segment-bases
+        n
+        (&
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            inner)))]
     [_ n]))
 
 (define (compiler-backend-normalized-unsigned-immediate
+  [type-segment-bases : i64]
   [n : i64]
   [ty : (& ty compiler_ast_types.AstType)]) : u64
   (match ty
     [(U8) (cast (cast n : u8) : u64)]
     [(U16) (cast (cast n : u16) : u64)]
     [(U32) (cast (cast n : u32) : u64)]
+    [(or (Region _ inner) (Invalidate _ inner))
+      (compiler-backend-normalized-unsigned-immediate
+        type-segment-bases
+        n
+        (&
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            inner)))]
     [_ (cast n : u64)]))
 
 (define (compiler-backend-divmod-safe-literal-i64?
+  [type-segment-bases : i64]
   [n : i64]
   [ty : (& ty compiler_ast_types.AstType)]) : bool
-  (if (compiler-backend-type-signed? ty)
+  (if (compiler-backend-type-signed? type-segment-bases ty)
     (let
-      [d : i64 (compiler-backend-normalized-signed-immediate n ty)]
+      [d : i64
+        (compiler-backend-normalized-signed-immediate type-segment-bases n ty)]
       (and (not (= d 0)) (not (= d (- 0 1)))))
     (not
-      (= (compiler-backend-normalized-unsigned-immediate n ty) (cast 0 : u64)))))
+      (=
+        (compiler-backend-normalized-unsigned-immediate type-segment-bases n ty)
+        (cast 0 : u64)))))
 
 (define (compiler-backend-divmod-safe-literal?
+  [type-segment-bases : i64]
   [value : compiler_ir_types.CompilerIrValue]
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (match (compiler-backend-value-as-i64 value)
-    [(Some n) (compiler-backend-divmod-safe-literal-i64? n ty)]
+    [(Some n)
+      (compiler-backend-divmod-safe-literal-i64? type-segment-bases n ty)]
     [(None) false]))
 
 (define (compiler-backend-u64-div-pow2 [bits : i64] [divisor : u64]) : CompilerBackendU64DivPow2
@@ -23629,8 +23677,11 @@
           [(Some n)
             (if (and
               (= (compiler-backend-type-size type-segment-bases ty) 8)
-              (compiler-backend-divmod-safe-literal-i64? n ty))
-              (if (compiler-backend-type-signed? ty)
+              (compiler-backend-divmod-safe-literal-i64?
+                type-segment-bases
+                n
+                ty))
+              (if (compiler-backend-type-signed? type-segment-bases ty)
                 (compiler-backend-const-hoist-signed-magic n)
                 (compiler-backend-const-hoist-unsigned-magic (cast n : u64)))
               0)]
@@ -25292,9 +25343,14 @@
   [scratch-reg : String]) : String
   (str_cat.str-cat
     (compiler-backend-emit-load-i64-absolute
-      (if (compiler-backend-type-signed? ty)
-        (compiler-backend-normalized-signed-immediate n ty)
-        (cast (compiler-backend-normalized-unsigned-immediate n ty) : i64))
+      (if (compiler-backend-type-signed? type-segment-bases ty)
+        (compiler-backend-normalized-signed-immediate type-segment-bases n ty)
+        (cast
+          (compiler-backend-normalized-unsigned-immediate
+            type-segment-bases
+            n
+            ty)
+          : i64))
       (compiler-backend-global-shared-view scratch-reg))
     (compiler-backend-binop-divmod-core-asm
       type-segment-bases
@@ -25312,7 +25368,8 @@
   [mask-reg : String]
   [hoist : CompilerBackendConstHoistHome]) : CompilerBackendMaybeAsm
   (cond
-    [(not (compiler-backend-divmod-safe-literal-i64? n ty)) (No)]
+    [(not (compiler-backend-divmod-safe-literal-i64? type-segment-bases n ty))
+      (No)]
     [(not (= (compiler-backend-type-size type-segment-bases ty) 8))
       (Some
         (compiler-backend-constant-divmod-unguarded-asm
@@ -25321,9 +25378,10 @@
           ty
           want-remainder
           scratch-reg))]
-    [(compiler-backend-type-signed? ty)
+    [(compiler-backend-type-signed? type-segment-bases ty)
       (let
-        [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
+        [divisor : i64
+          (compiler-backend-normalized-signed-immediate type-segment-bases n ty)]
         (match (compiler-backend-signed-constant-divmod-strength-asm
           divisor
           want-remainder
@@ -25342,7 +25400,11 @@
                 scratch-reg))]))]
     [else
       (let
-        [divisor : u64 (compiler-backend-normalized-unsigned-immediate n ty)]
+        [divisor : u64
+          (compiler-backend-normalized-unsigned-immediate
+            type-segment-bases
+            n
+            ty)]
         ;; The 64-bit magic search below assumes divisor < 2^63 so rem*2 cannot
         ;; overflow while generating constants. Wider unsigned literals reduce to
         ;; a compare because the quotient can only be 0 or 1.
@@ -25390,8 +25452,10 @@
     [(Some asm) (Some asm)]
     [(No)
       (if (and
-        (compiler-backend-type-signed? ty)
-        (= (compiler-backend-normalized-signed-immediate n ty) (- 0 1)))
+        (compiler-backend-type-signed? type-segment-bases ty)
+        (=
+          (compiler-backend-normalized-signed-immediate type-segment-bases n ty)
+          (- 0 1)))
         (Some
           (compiler-backend-constant-divmod-unguarded-asm
             type-segment-bases
@@ -25489,15 +25553,18 @@
   [ty : compiler_ast_types.AstType]) : bool
   (and
     (compiler-backend-const-hoist-divmod-op? op)
-    (compiler-backend-type-signed? ty)
+    (compiler-backend-type-signed? type-segment-bases ty)
     (= (compiler-backend-type-size type-segment-bases ty) 8)
     (match (compiler-backend-value-as-i64 rhs)
       [(Some n)
         (and
-          (compiler-backend-divmod-safe-literal-i64? n ty)
+          (compiler-backend-divmod-safe-literal-i64? type-segment-bases n ty)
           (not
             (=
-              (compiler-backend-normalized-signed-immediate n ty)
+              (compiler-backend-normalized-signed-immediate
+                type-segment-bases
+                n
+                ty)
               (compiler-backend-i64-min-value))))]
       [(None) false])))
 
@@ -25506,6 +25573,7 @@
 ;; wide power-of-two mask, or a wide remainder divisor that must reuse the
 ;; magic register after the quotient multiply, still needs one.
 (define (compiler-backend-signed-literal-divmod-needs-material-reg?
+  [type-segment-bases : i64]
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : (& ty compiler_ast_types.AstType)]
   [want-remainder : bool]
@@ -25513,7 +25581,8 @@
   (match (compiler-backend-value-as-i64 rhs)
     [(Some n)
       (let
-        [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
+        [divisor : i64
+          (compiler-backend-normalized-signed-immediate type-segment-bases n ty)]
         [abs-divisor : i64
           (if (< divisor 0)
             (- 0 divisor)
@@ -25543,6 +25612,7 @@
 ;; SRC for `dividend - quotient*divisor`; high-bit magic needs it for
 ;; `addq SRC, %rdx`; divisor 1 is already a direct result move and gains nothing.
 (define (compiler-backend-signed-literal-divmod-direct-rax-src?
+  [type-segment-bases : i64]
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : (& ty compiler_ast_types.AstType)]) : bool
@@ -25551,9 +25621,17 @@
     (match (compiler-backend-value-as-i64 rhs)
       [(Some n)
         (let
-          [divisor : i64 (compiler-backend-normalized-signed-immediate n ty)]
+          [divisor : i64
+            (compiler-backend-normalized-signed-immediate
+              type-segment-bases
+              n
+              ty)]
           (if (or
-            (not (compiler-backend-divmod-safe-literal-i64? n ty))
+            (not
+              (compiler-backend-divmod-safe-literal-i64?
+                type-segment-bases
+                n
+                ty))
             (= divisor (compiler-backend-i64-min-value)))
             false
             (let
@@ -25574,6 +25652,7 @@
       [(None) false])))
 
 (define (compiler-backend-signed-literal-divmod-src-asm
+  [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [rhs : compiler_ir_types.CompilerIrValue]
   [ty : compiler_ast_types.AstType]
@@ -25584,7 +25663,7 @@
   (match (compiler-backend-value-as-i64 rhs)
     [(Some n)
       (compiler-backend-signed-constant-divmod-src-asm
-        (compiler-backend-normalized-signed-immediate n ty)
+        (compiler-backend-normalized-signed-immediate type-segment-bases n ty)
         (compiler-backend-binop-wants-remainder? op)
         scratch-reg
         src-reg
@@ -25624,6 +25703,7 @@
         (let
           [needs-material : bool
             (compiler-backend-signed-literal-divmod-needs-material-reg?
+              type-segment-bases
               (compiler-backend-global-shared-view rhs)
               ty
               (compiler-backend-binop-wants-remainder? op)
@@ -25661,6 +25741,7 @@
                 6)
               backend-state)]
           (match (compiler-backend-signed-literal-divmod-src-asm
+            type-segment-bases
             op
             rhs
             ty
@@ -25759,6 +25840,7 @@
         (let
           [magic : String
             (if (compiler-backend-signed-literal-divmod-needs-material-reg?
+              type-segment-bases
               (compiler-backend-global-shared-view rhs)
               ty
               (compiler-backend-binop-wants-remainder? op)
@@ -25776,6 +25858,7 @@
               5
               backend-state)]
           (match (compiler-backend-signed-literal-divmod-src-asm
+            type-segment-bases
             op
             rhs
             ty
@@ -25828,7 +25911,7 @@
   [count : i64]
   [count-ty : compiler_ast_types.AstType]
   [lhs-ty : compiler_ast_types.AstType]) : bool
-  (if (compiler-backend-type-signed? count-ty)
+  (if (compiler-backend-type-signed? type-segment-bases count-ty)
     (and
       (>= count 0)
       (< count (compiler-backend-shift-count-width type-segment-bases lhs-ty)))
@@ -26003,7 +26086,8 @@
         type-segment-bases
         (compiler-backend-global-shared-view count-reg)
         (compiler-backend-global-shared-view count-ty))]
-    [count-signed? : bool (compiler-backend-type-signed? count-ty)]
+    [count-signed? : bool
+      (compiler-backend-type-signed? type-segment-bases count-ty)]
     [negative-abort : String
       (if (compiler-backend-abort-site-active? backend-state)
         (compiler-backend-abort-call-shift-asm
@@ -26170,45 +26254,16 @@
           lhs
           "setne"
           staging-reg)]
-      [(Lt)
+      [(or (Lt) (Le) (Gt) (Ge))
         (compiler-backend-binop-cmp-set-asm
           type-segment-bases
           (compiler-backend-global-shared-view ty)
           rhs
           lhs
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setb"
-            "setl")
-          staging-reg)]
-      [(Le)
-        (compiler-backend-binop-cmp-set-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          rhs
-          lhs
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setbe"
-            "setle")
-          staging-reg)]
-      [(Gt)
-        (compiler-backend-binop-cmp-set-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          rhs
-          lhs
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "seta"
-            "setg")
-          staging-reg)]
-      [(Ge)
-        (compiler-backend-binop-cmp-set-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          rhs
-          lhs
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setae"
-            "setge")
+          (compiler-backend-compare-setcc
+            type-segment-bases
+            op
+            (compiler-backend-global-shared-view ty))
           staging-reg)]
       [(or (BitTestEq) (BitTestNe))
         (compiler-backend-binop-compare-set-reg-asm
@@ -26236,7 +26291,7 @@
       [(Shr count-ty)
         (compiler-backend-binop-shift-asm
           type-segment-bases
-          (if (compiler-backend-type-signed? ty)
+          (if (compiler-backend-type-signed? type-segment-bases ty)
             "sar"
             "shr")
           ty
@@ -26417,7 +26472,7 @@
           type-segment-bases
           (compiler-backend-global-shared-view ty)
           imm
-          (compiler-backend-compare-setcc op ty)
+          (compiler-backend-compare-setcc type-segment-bases op ty)
           dst-reg
           rhs-zero?))]
     [(or (BitTestEq) (BitTestNe))
@@ -26443,7 +26498,7 @@
     [(Shr count-ty)
       (compiler-backend-binop-immediate-shift-reg-asm
         type-segment-bases
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           "sar"
           "shr")
         ty
@@ -26584,7 +26639,7 @@
       (match op
         [(Shl _) "shl"]
         [(Shr _)
-          (if (compiler-backend-type-signed? ty)
+          (if (compiler-backend-type-signed? type-segment-bases ty)
             "sar"
             "shr")]
         [_ ""])]
@@ -26614,12 +26669,13 @@
         "\n"))))
 
 (define (compiler-backend-binop-shift-mnemonic
+  [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [ty : (& ty compiler_ast_types.AstType)]) : String
   (match op
     [(Shl _) "shl"]
     [(Shr _)
-      (if (compiler-backend-type-signed? ty)
+      (if (compiler-backend-type-signed? type-segment-bases ty)
         "sar"
         "shr")]
     [_ ""]))
@@ -26686,7 +26742,10 @@
           (str_cat.str-cat
             (compiler-backend-binop-shift-asm
               type-segment-bases
-              (compiler-backend-binop-shift-mnemonic op operand-ty)
+              (compiler-backend-binop-shift-mnemonic
+                type-segment-bases
+                op
+                operand-ty)
               (compiler-backend-global-shared-view operand-ty)
               count-ty
               (compiler-backend-sized-reg
@@ -26770,51 +26829,16 @@
           "%rax"
           "%rax"
           rhs-zero?))]
-    [(Lt)
+    [(or (Lt) (Le) (Gt) (Ge))
       (Some
         (compiler-backend-binop-immediate-cmp-asm
           type-segment-bases
           (compiler-backend-global-shared-view ty)
           imm
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setb"
-            "setl")
-          staging-reg
-          result-reg
-          rhs-zero?))]
-    [(Le)
-      (Some
-        (compiler-backend-binop-immediate-cmp-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          imm
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setbe"
-            "setle")
-          staging-reg
-          result-reg
-          rhs-zero?))]
-    [(Gt)
-      (Some
-        (compiler-backend-binop-immediate-cmp-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          imm
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "seta"
-            "setg")
-          staging-reg
-          result-reg
-          rhs-zero?))]
-    [(Ge)
-      (Some
-        (compiler-backend-binop-immediate-cmp-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          imm
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setae"
-            "setge")
+          (compiler-backend-compare-setcc
+            type-segment-bases
+            op
+            (compiler-backend-global-shared-view ty))
           staging-reg
           result-reg
           rhs-zero?))]
@@ -26891,7 +26915,7 @@
     [(Shr count-ty)
       (compiler-backend-binop-immediate-shift-asm
         type-segment-bases
-        (if (compiler-backend-type-signed? ty)
+        (if (compiler-backend-type-signed? type-segment-bases ty)
           "sar"
           "shr")
         ty
@@ -26937,13 +26961,14 @@
 
 ;; Integer unary ops whose lowering depends on the operand type.
 (define (compiler-backend-unop-typed-reg-asm
+  [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrUnOp]
   [ty : compiler_ast_types.AstType]
   [reg : String]) : String
   (match op
     [(BitLength)
       (compiler-backend-bit-length-reg-asm
-        (compiler-backend-type-signed? ty)
+        (compiler-backend-type-signed? type-segment-bases ty)
         reg)]
     [_ (compiler-backend-unop-reg-asm op reg)]))
 
@@ -27786,7 +27811,7 @@
             ty)
           "setne"
           staging-reg))]
-    [(Lt)
+    [(or (Lt) (Le) (Gt) (Ge))
       (Some
         (compiler-backend-binop-cmp-set-asm
           type-segment-bases
@@ -27796,51 +27821,10 @@
             type-segment-bases
             (compiler-backend-global-shared-view staging-reg)
             (compiler-backend-global-shared-view ty))
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setb"
-            "setl")
-          staging-reg))]
-    [(Le)
-      (Some
-        (compiler-backend-binop-cmp-set-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          rhs
-          (compiler-backend-sized-reg
+          (compiler-backend-compare-setcc
             type-segment-bases
-            (compiler-backend-global-shared-view staging-reg)
+            op
             (compiler-backend-global-shared-view ty))
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setbe"
-            "setle")
-          staging-reg))]
-    [(Gt)
-      (Some
-        (compiler-backend-binop-cmp-set-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          rhs
-          (compiler-backend-sized-reg
-            type-segment-bases
-            (compiler-backend-global-shared-view staging-reg)
-            (compiler-backend-global-shared-view ty))
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "seta"
-            "setg")
-          staging-reg))]
-    [(Ge)
-      (Some
-        (compiler-backend-binop-cmp-set-asm
-          type-segment-bases
-          (compiler-backend-global-shared-view ty)
-          rhs
-          (compiler-backend-sized-reg
-            type-segment-bases
-            (compiler-backend-global-shared-view staging-reg)
-            (compiler-backend-global-shared-view ty))
-          (if (compiler-backend-unsigned-rel-ty? ty)
-            "setae"
-            "setge")
           staging-reg))]
     [(or (BitTestEq) (BitTestNe))
       (Some
@@ -28396,6 +28380,7 @@
 ;; destination home, when available, is the natural one-copy SRC; only a
 ;; fixed/memory/live dividend needs a scavenged source register.
 (define (compiler-backend-emit-signed-literal-divmod-dst
+  [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -28413,6 +28398,7 @@
         (compiler-backend-global-shared-view hoist))]
     [needs-material : bool
       (compiler-backend-signed-literal-divmod-needs-material-reg?
+        type-segment-bases
         (compiler-backend-global-shared-view rhs)
         operand-ty
         (compiler-backend-binop-wants-remainder? op)
@@ -28447,6 +28433,7 @@
         (not (string.eq lhs-home "%rax"))
         (not (string.eq lhs-home "%rdx"))
         (compiler-backend-signed-literal-divmod-direct-rax-src?
+          type-segment-bases
           op
           (compiler-backend-global-shared-view rhs)
           operand-ty))]
@@ -28506,6 +28493,7 @@
           (compiler-backend-global-shared-view src)
           backend-state))]
     (match (compiler-backend-signed-literal-divmod-src-asm
+      type-segment-bases
       op
       rhs
       operand-ty
@@ -28534,6 +28522,7 @@
               "backend: signed literal divmod shape unavailable")))])))
 
 (define (compiler-backend-emit-signed-literal-divmod-here
+  [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
@@ -28544,6 +28533,7 @@
     [hoist : CompilerBackendConstHoistHome (CompilerBackendNoConstHoistHome)]
     [needs-material : bool
       (compiler-backend-signed-literal-divmod-needs-material-reg?
+        type-segment-bases
         (compiler-backend-global-shared-view rhs)
         operand-ty
         (compiler-backend-binop-wants-remainder? op)
@@ -28588,6 +28578,7 @@
           (compiler-backend-global-shared-view src)
           backend-state))]
     (match (compiler-backend-signed-literal-divmod-src-asm
+      type-segment-bases
       op
       rhs
       operand-ty
@@ -29056,6 +29047,7 @@
             (compiler-backend-global-shared-view rhs)
             (compiler-backend-global-shared-view operand-ty))
             (compiler-backend-emit-signed-literal-divmod-dst
+              type-segment-bases
               assignments
               dst
               op
@@ -30113,6 +30105,7 @@
             [asm
               (try
                 (compiler-backend-emit-signed-literal-divmod-here
+                  type-segment-bases
                   assignments
                   op
                   (compiler-backend-global-shared-view lhs)
@@ -30712,49 +30705,51 @@
     [_ false]))
 
 (define (compiler-backend-compare-true-jcc
+  [type-segment-bases : i64]
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [ty : (& compiler_ast_types.AstType)]) : String
   (match op
     [(or (Eq) (BitTestEq)) "je"]
     [(or (Ne) (BitTestNe)) "jne"]
     [(Lt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "jb"
         "jl")]
     [(Le)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "jbe"
         "jle")]
     [(Gt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "ja"
         "jg")]
     [(Ge)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "jae"
         "jge")]
     [_ ""]))
 
 (define (compiler-backend-compare-false-jcc
+  [type-segment-bases : i64]
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [ty : (& compiler_ast_types.AstType)]) : String
   (match op
     [(or (Eq) (BitTestEq)) "jne"]
     [(or (Ne) (BitTestNe)) "je"]
     [(Lt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "jae"
         "jge")]
     [(Le)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "ja"
         "jg")]
     [(Gt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "jbe"
         "jle")]
     [(Ge)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "jb"
         "jl")]
     [_ ""]))
@@ -30767,25 +30762,26 @@
 ;; flags come from `bt`/`test`, not from the `cmp` the select-on-flags path
 ;; emits, and "" is that path's decline.
 (define (compiler-backend-compare-cmov
+  [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [ty : compiler_ast_types.AstType]) : String
   (match op
     [(Eq) "cmove"]
     [(Ne) "cmovne"]
     [(Lt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "cmovb"
         "cmovl")]
     [(Le)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "cmovbe"
         "cmovle")]
     [(Gt)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "cmova"
         "cmovg")]
     [(Ge)
-      (if (compiler-backend-unsigned-rel-ty? ty)
+      (if (compiler-backend-unsigned-rel-ty? type-segment-bases ty)
         "cmovae"
         "cmovge")]
     [_ ""]))
@@ -31237,8 +31233,10 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
-    [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
+    [true-jcc : String
+      (compiler-backend-compare-true-jcc type-segment-bases op ty)]
+    [false-jcc : String
+      (compiler-backend-compare-false-jcc type-segment-bases op ty)]
     ;; An immediate LHS can compare directly against a scalar RHS home below.
     ;; Preserve that home so no scratch can overwrite it before the compare.
     [rhs-home : String
@@ -31250,9 +31248,9 @@
       (compiler-backend-compare-swapped-op
         (compiler-backend-global-shared-view op))]
     [swapped-true-jcc : String
-      (compiler-backend-compare-true-jcc swapped-op ty)]
+      (compiler-backend-compare-true-jcc type-segment-bases swapped-op ty)]
     [swapped-false-jcc : String
-      (compiler-backend-compare-false-jcc swapped-op ty)]
+      (compiler-backend-compare-false-jcc type-segment-bases swapped-op ty)]
     ;; Compare/branch fusion does not materialize the comparison result. When
     ;; the ordinary plan has no dedicated RHS slot, its result staging home is
     ;; therefore free and can stage a non-encodable RHS instead.
@@ -31441,6 +31439,7 @@
     (compiler-backend-copy-address 0 base)))
 
 (define (compiler-backend-emit-load-compare-branch
+  [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
   [ptr : compiler_ir_types.CompilerIrValue]
@@ -31452,8 +31451,10 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
-    [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
+    [true-jcc : String
+      (compiler-backend-compare-true-jcc type-segment-bases op ty)]
+    [false-jcc : String
+      (compiler-backend-compare-false-jcc type-segment-bases op ty)]
     (if (string.eq true-jcc "")
       (Err
         (box
@@ -31571,8 +31572,10 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
-    [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
+    [true-jcc : String
+      (compiler-backend-compare-true-jcc type-segment-bases op ty)]
+    [false-jcc : String
+      (compiler-backend-compare-false-jcc type-segment-bases op ty)]
     (if (string.eq true-jcc "")
       (Err
         (box
@@ -32021,6 +32024,7 @@
                 program-index))))))))
 
 (define (compiler-backend-emit-unop
+  [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [op : compiler_ir_types.CompilerIrUnOp]
@@ -32098,6 +32102,7 @@
             (str_cat.str-cat
               src-asm
               (compiler-backend-unop-typed-reg-asm
+                type-segment-bases
                 op
                 ty
                 (compiler-backend-global-shared-view result-reg))
@@ -32117,7 +32122,11 @@
           (Ok
             (str_cat.str-cat
               src-asm
-              (compiler-backend-unop-typed-reg-asm op ty dst-home))))))))
+              (compiler-backend-unop-typed-reg-asm
+                type-segment-bases
+                op
+                ty
+                dst-home))))))))
 
 (define (compiler-backend-emit-addr-of
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -45003,6 +45012,7 @@
       true-label
       false-label))
     (compiler-backend-emit-load-compare-branch
+      type-segment-bases
       assignments
       function
       ptr
@@ -45029,6 +45039,7 @@
       [branch-asm
         (try
           (compiler-backend-emit-load-compare-branch
+            type-segment-bases
             assignments
             (compiler-backend-global-shared-view function)
             ptr
@@ -49889,6 +49900,7 @@
       [(UnOp dst op src ty)
         (compiler-backend-with-instr-diagnostic
           (compiler-backend-emit-unop
+            ctx.type-segment-bases
             ctx.assignments
             dst
             op
@@ -53827,10 +53839,14 @@
               (= (compiler-backend-type-size ctx.type-segment-bases to-ty) 8))
             (not
               (=
-                (if (compiler-backend-type-signed? from-ty)
+                (if (compiler-backend-type-signed?
+                  ctx.type-segment-bases
+                  from-ty)
                   1
                   0)
-                (if (compiler-backend-type-signed? load-ty)
+                (if (compiler-backend-type-signed?
+                  ctx.type-segment-bases
+                  load-ty)
                   1
                   0))))
             (No)
@@ -53885,10 +53901,10 @@
       (not (= (compiler-backend-type-size ctx.type-segment-bases to-ty) 8))
       (not
         (=
-          (if (compiler-backend-type-signed? from-ty)
+          (if (compiler-backend-type-signed? ctx.type-segment-bases from-ty)
             1
             0)
-          (if (compiler-backend-type-signed? load-ty)
+          (if (compiler-backend-type-signed? ctx.type-segment-bases load-ty)
             1
             0))))
       ""
@@ -53896,7 +53912,7 @@
         [(Some k)
           (if (compiler-backend-narrow-cmp-literal-ok?
             width
-            (compiler-backend-type-signed? load-ty)
+            (compiler-backend-type-signed? ctx.type-segment-bases load-ty)
             k)
             (compiler-backend-cmp-mem-operands-asm
               op
@@ -53955,7 +53971,8 @@
   [other : compiler_ir_types.CompilerIrValue]) : String
   (let
     [width : i64 (compiler-backend-type-size ctx.type-segment-bases load-ty)]
-    [signed? : bool (compiler-backend-type-signed? load-ty)]
+    [signed? : bool
+      (compiler-backend-type-signed? ctx.type-segment-bases load-ty)]
     [suffix : String
       (compiler-backend-int-instruction-suffix
         ctx.type-segment-bases
@@ -53968,7 +53985,7 @@
       (not (= (compiler-backend-type-size ctx.type-segment-bases cmp-ty) width))
       (not
         (=
-          (if (compiler-backend-type-signed? cmp-ty)
+          (if (compiler-backend-type-signed? ctx.type-segment-bases cmp-ty)
             1
             0)
           (if signed?
@@ -54094,6 +54111,7 @@
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs cmp-index)
         [(BinOp cmp-dst op lhs rhs cmp-ty)
           (let
+            [type-segment-bases : i64 ctx.type-segment-bases]
             [mem-is-lhs? : bool
               (and
                 (compiler-backend-branch-uses-var? lhs cmp-var)
@@ -54162,9 +54180,15 @@
                         load-ty
                         cmp-ty)]
                     [true-jcc : String
-                      (compiler-backend-compare-true-jcc op jcc-ty)]
+                      (compiler-backend-compare-true-jcc
+                        type-segment-bases
+                        op
+                        jcc-ty)]
                     [false-jcc : String
-                      (compiler-backend-compare-false-jcc op jcc-ty)]
+                      (compiler-backend-compare-false-jcc
+                        type-segment-bases
+                        op
+                        jcc-ty)]
                     (if (and
                       (not (string.eq cmp-asm ""))
                       (not (string.eq true-jcc ""))
@@ -57162,6 +57186,7 @@
       (compiler-backend-magic-home-reg-name
         (compiler-backend-global-shared-view hoist))]
     (if (compiler-backend-signed-literal-divmod-needs-material-reg?
+      _ctx.type-segment-bases
       rhs
       ty
       (compiler-backend-binop-wants-remainder? op)
@@ -58597,6 +58622,7 @@
                     (compiler-backend-var-single-use? ctx.use-counts dst)
                     (compiler-backend-var-single-use? ctx.use-counts cast-dst)
                     (compiler-backend-divmod-safe-literal?
+                      ctx.type-segment-bases
                       (compiler-backend-global-shared-view src)
                       bin-ty))
                     ;; The Mov and Cast are elided, but the BinOp still owns
@@ -58655,6 +58681,7 @@
             (compiler-backend-divmod-op? op)
             (compiler-backend-branch-uses-var? rhs dst)
             (compiler-backend-divmod-safe-literal?
+              ctx.type-segment-bases
               (compiler-backend-global-shared-view src)
               bin-ty))
             (let
@@ -60191,10 +60218,19 @@
             (compiler-backend-global-shared-view ty))]
         [setcc : String
           (compiler-backend-compare-setcc
+            ctx.type-segment-bases
             op
             (compiler-backend-global-shared-view operand-ty))]
-        [true-jcc : String (compiler-backend-compare-true-jcc op operand-ty)]
-        [false-jcc : String (compiler-backend-compare-false-jcc op operand-ty)]
+        [true-jcc : String
+          (compiler-backend-compare-true-jcc
+            ctx.type-segment-bases
+            op
+            operand-ty)]
+        [false-jcc : String
+          (compiler-backend-compare-false-jcc
+            ctx.type-segment-bases
+            op
+            operand-ty)]
         (if (or
           (string.eq setcc "")
           (string.eq true-jcc "")
@@ -79246,7 +79282,7 @@ tl_shared_object_init:
   [ty : compiler_ast_types.AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size type-segment-bases ty)]
-    [signed : bool (compiler-backend-type-signed? ty)]
+    [signed : bool (compiler-backend-type-signed? type-segment-bases ty)]
     (cond
       [(= size 8)
         (object_target.compiler-backend-object-bytes-from-hex "488b00")]
@@ -79795,6 +79831,7 @@ tl_shared_object_init:
         [else "31d249f7f0"]))))
 
 (define (compiler-backend-object-binop-bytes
+  [type-segment-bases : i64]
   [op : compiler_ir_types.CompilerIrBinOp]
   [ty : (& ty compiler_ast_types.AstType)]) : String
   (match op
@@ -79803,11 +79840,11 @@ tl_shared_object_init:
     [(Mul) (object_target.compiler-backend-object-bytes-from-hex "490fafc0")]
     [(Div)
       (compiler-backend-object-divmod-bytes
-        (compiler-backend-type-signed? ty)
+        (compiler-backend-type-signed? type-segment-bases ty)
         false)]
     [(Mod)
       (compiler-backend-object-divmod-bytes
-        (compiler-backend-type-signed? ty)
+        (compiler-backend-type-signed? type-segment-bases ty)
         true)]
     [(Eq)
       (object_target.compiler-backend-object-bytes-from-hex
@@ -79881,7 +79918,10 @@ tl_shared_object_init:
     [op-bytes : String
       (if zero-test?
         (compiler-backend-object-zero-compare-bytes op)
-        (compiler-backend-object-binop-bytes op ty))]
+        (compiler-backend-object-binop-bytes
+          program-index.type-segment-bases
+          op
+          ty))]
     (if (or
       (= (string.string-length op-bytes) 0)
       (compiler-backend-float-type? ty))

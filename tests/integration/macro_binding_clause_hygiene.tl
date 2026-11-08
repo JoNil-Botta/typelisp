@@ -81,6 +81,29 @@
   `(any? [i (iterator.range 0 4)]
     ,p))
 
+;; A user binding-prefix macro, signature `[ExprBindingClause ...] [Expr ...]`
+;; like `for`, whose bodies expansion defers under its binders: the template's
+;; clause binder is hygienic here as well.
+(defmacro (each-clause [bindings : ExprBindingClause ...] [body : Expr ...]) : unit
+  (let
+    [binding : comptime.ExprBindingClause
+      (comptime.expr-binding-clause-list-nth bindings 0)]
+    [name : comptime.Expr
+      (comptime.expr-var (comptime.expr-binding-clause-name binding))]
+    [source : comptime.Expr (comptime.expr-binding-clause-init binding)]
+    `(for [,name ,source]
+      ,@body)))
+
+(defmacro (prefix-step [p : Expr]) : bool
+  `(let
+    [found false]
+    (each-clause
+      [i (iterator.range 0 4)]
+      (if ,p
+        (set! found true)
+        unit))
+    found))
+
 ;; `cond` arms keep their tests and `else` heads.
 (defmacro (classify [v : Expr]) : i64
   `(let
@@ -106,6 +129,7 @@
       ;; outer `k` adds 7.
       (= (outer-count (= k 1)) 12)
       (= seen 6)
+      (not (prefix-step (> i 2)))
       (not (has-big (> i 2)))
       (has-big (> k 0))
       (= (classify -5) 1)

@@ -613,7 +613,7 @@
   [modules : ast.AstDeclModuleList]
   [count : i64]) : bool
   (if (>= count (ast.ast-decl-module-list-len (& modules)))
-    (= count 10)
+    (= count 12)
     (and
       (compiler-load-entry-cycle-module-name?
         (ast_tests.ast-decl-module-list-get (& modules) count ""))
@@ -1268,9 +1268,11 @@
   (match (compiler-load-file-with-paths
     "target/compiler_load_entry.tl"
     (sym_i64_env.sym-i64-empty))
+    ;; dep's unused `entry` import names a module this traversal already
+    ;; loaded, so it is deduplicated instead of lazily skipped (#9682).
     [(Ok decls _ modules seen)
       (and
-        (= (compiler-load-decl-list-count decls) 10)
+        (= (compiler-load-decl-list-count decls) 12)
         (compiler-load-entry-cycle-modules? modules)
         (compiler-load-test-seen-contains? seen "compiler_load_entry")
         (compiler-load-test-seen-contains? seen "compiler_load_dep"))]

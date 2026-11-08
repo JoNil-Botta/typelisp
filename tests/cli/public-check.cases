@@ -1047,6 +1047,148 @@ exit 1
 stdout empty
 stderr contains error[E0200]: typecheck: unknown qualified name stdlib.iterator.range; import the module or use a visible dotted module alias
 
+# A local defstruct, defenum or extern demands an aliased import only through
+# the types it names, so an unused import stays skipped and its module is not
+# checked (#9682). Real uses, including the canonical path, still load it; a
+# cleanup owner and a local macro stay eager.
+case check-local-declaration-lazy-import
+file root/local_decl_lib.tl
+;; Loading this import reports its type error.
+(defstruct T
+  (value i64))
+(define (close [x : i64]) : unit
+  unit)
+(define (broken) : i64 true)
+end-file
+file unused-struct.tl
+(import local_decl_lib as unused)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 0)
+end-file
+file unused-enum.tl
+(import local_decl_lib as unused)
+(defenum Choice
+  (One i64)
+  (None))
+(define (main) : i64 0)
+end-file
+file unused-extern.tl
+(import local_decl_lib as unused)
+(extern (read-byte [arg0 : (Ptr u8)]) : u8)
+(define (main) : i64 0)
+end-file
+file cleanup-owner.tl
+(import local_decl_lib as unused)
+(define (local-close [x : i64]) : unit
+  unit)
+(defstruct Handle
+  (:cleanup close-handle)
+  (fd i64 (:cleanup local-close)))
+(define (main) : i64 0)
+end-file
+file field-type.tl
+(import local_decl_lib as unused)
+(defstruct Pair
+  (inner unused.T))
+(define (main) : i64 0)
+end-file
+file field-canonical.tl
+(import local_decl_lib as unused)
+(defstruct Pair
+  (inner local_decl_lib.T))
+(define (main) : i64 0)
+end-file
+file field-cleanup.tl
+(import local_decl_lib as unused)
+(defstruct Handle
+  (:cleanup close-handle)
+  (fd i64 (:cleanup unused.close)))
+(define (main) : i64 0)
+end-file
+file payload-type.tl
+(import local_decl_lib as unused)
+(defenum Choice
+  (One unused.T)
+  (None))
+(define (main) : i64 0)
+end-file
+file payload-cleanup.tl
+(import local_decl_lib as unused)
+(defenum Slot
+  (:cleanup close-slot)
+  (Full i64 (:cleanup unused.close))
+  (Empty))
+(define (main) : i64 0)
+end-file
+file extern-type.tl
+(import local_decl_lib as unused)
+(extern (read-t [arg0 : (Ptr unused.T)]) : u8)
+(define (main) : i64 0)
+end-file
+file local-macro.tl
+(import local_decl_lib as unused)
+(defmacro (one) : Expr
+  (expr-int 1))
+(define (main) : i64 0)
+end-file
+step check-unused-struct
+run check "{{dir}}/unused-struct.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-unused-enum
+run check "{{dir}}/unused-enum.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-unused-extern
+run check "{{dir}}/unused-extern.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+step check-cleanup-owner
+run check "{{dir}}/cleanup-owner.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-field-type
+run check "{{dir}}/field-type.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-field-canonical
+run check "{{dir}}/field-canonical.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-field-cleanup
+run check "{{dir}}/field-cleanup.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-payload-type
+run check "{{dir}}/payload-type.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-payload-cleanup
+run check "{{dir}}/payload-cleanup.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-extern-type
+run check "{{dir}}/extern-type.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-local-macro
+run check "{{dir}}/local-macro.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step compile-unused-struct
+run compile "{{dir}}/unused-struct.tl" -o "{{dir}}/unused-struct.s" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout match Wrote[ ]
+
 case compile-hello
 run compile examples/hello.tl -o "{{dir}}/hello.s"
 stderr empty

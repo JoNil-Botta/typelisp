@@ -2881,3 +2881,144 @@ stderr contains error[E0207]: typecheck: legacy box-get/__tl-box-place borrow re
 stderr contains {{each}}.tl:
 stderr contains help: use deref for each indirection level, or pass an owned Box
 stderr not-contains __tl_tc_
+
+# #9711: package and single-file loads keep the same nested macro scopes.
+case check-package-nested-file-macro
+opt 0 1 2
+file typelisp.pkg
+(package (name "nested_file_macro") (version "0.1.0") (kind "bin"))
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner (define (g) : i64 0))
+(define (main) : i64 (m))
+(test file-macro (assert (= (m) 42) "file macro"))
+end-file
+step single-check
+run check "{{dir}}/src/main.tl"
+stdout contains Type checking passed!
+stderr empty
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step single-test
+run test "{{dir}}/src/main.tl" --target {{host-target}} --opt-level {{opt}}
+stderr contains 1 passed; 0 failed
+step package-test
+run test --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr contains 1 passed; 0 failed
+step single-build
+run build "{{dir}}/src/main.tl" --target {{host-target}} --opt-level {{opt}} -o "{{dir}}/single{{exe}}"
+stderr empty
+exec "{{dir}}/single{{exe}}"
+exit 42
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/nested_file_macro{{exe}}"
+exit 42
+
+case check-package-nested-macro-scope
+opt 0 1 2
+file typelisp.pkg
+(package (name "nested_macro_scope") (version "0.1.0") (kind "bin"))
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner
+  (defmacro (m) : i64 (expr-int 7))
+  (module deeper
+    (defmacro (m) : i64 (expr-int 9))
+    (define (g) : i64 (m))
+    (test deeper-macro (assert (= (g) 9) "deeper macro")))
+  (define (g) : i64 (m))
+  (test inner-macro (assert (= (g) 7) "inner macro")))
+(define (main) : i64 (m))
+(test macro-scope (assert (= (main) 42) "root macro"))
+end-file
+step single-check
+run check "{{dir}}/src/main.tl"
+stdout contains Type checking passed!
+stderr empty
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step package-test
+run test --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr contains 3 passed; 0 failed
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/nested_macro_scope{{exe}}"
+exit 42
+
+case check-package-nested-macro-import
+opt 0 1 2
+file typelisp.pkg
+(package (name "nested_macro_import") (version "0.1.0") (kind "bin"))
+end-file
+file src/helper.tl
+(define v : i64 41)
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner
+  (defmacro (n) : i64 `(+ dep.v 1))
+  (import helper as dep)
+  (define (g) : i64 (n))
+  (test inner-import (assert (= (g) 42) "nested import")))
+(define (main) : i64 (m))
+(test macro-import (assert (= (main) 42) "root macro"))
+end-file
+step single-check
+run check "{{dir}}/src/main.tl" --stdlib-root "{{dir}}/src"
+stdout contains Type checking passed!
+stderr empty
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step package-test
+run test --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr contains 2 passed; 0 failed
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/nested_macro_import{{exe}}"
+exit 42
+
+case check-package-nested-duplicate-name
+opt -
+file typelisp.pkg
+(package (name "nested_duplicate") (version "0.1.0") (kind "bin"))
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner (define (g) : i64 0))
+(module inner (define (h) : i64 1))
+(define (main) : i64 (m))
+end-file
+step single-duplicate-module
+run check "{{dir}}/src/main.tl"
+exit 1
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+step package-duplicate-module
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner (define (g) : i64 0))
+(defmacro (m) : i64 (expr-int 7))
+(define (main) : i64 (m))
+end-file
+step single-duplicate-macro
+run check "{{dir}}/src/main.tl"
+exit 1
+stderr contains duplicate
+step package-duplicate-macro
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains duplicate

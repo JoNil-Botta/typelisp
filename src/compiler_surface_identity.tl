@@ -326,8 +326,8 @@
             [(No) -2]
             [(Some record)
               (let
-                ;; A captured surface holds finished output, so a reflected reference
-                ;; is its resolution: Context on the wire.
+                ;; A captured surface holds finished output. A reflected role leaves
+                ;; below as its plain spelling; only Legacy and Context stay on the wire.
                 [role : i64
                   (match record.role
                     [(Legacy) 0]

@@ -5515,14 +5515,11 @@
     (__tl_make-array compiler_diagnostic.CompilerDiagnosticSource 4)
     0))
 
-(define (compiler-driver-diagnostic-source-read
-  [path : (& path str)]
-  [load-failure? : bool]) : compiler_diagnostic.CompilerDiagnosticSource
+(define (compiler-driver-diagnostic-source-read [path : (& path str)]) : compiler_diagnostic.CompilerDiagnosticSource
   (compiler_diagnostic.compiler-diagnostic-source-index
     (if (string.eq path "")
       ""
-      (match (io.try-read-file
-        (& (compiler_load.compiler-load-prelude-source-path path load-failure?)))
+      (match (io.try-read-file path)
         [(OkIoBytes source) (byte_buf.to-string source)]
         [(ErrIoBytes _) ""]))))
 
@@ -5530,8 +5527,7 @@
 ;; no earlier diagnostic named it.
 (define (compiler-driver-diagnostic-sources-slot
   [sources : (&mut sources CompilerDriverDiagnosticSources)]
-  [path : String]
-  [load-failure? : bool]) : i64
+  [path : String]) : i64
   (let
     [slot : i64 0]
     [found : i64 (- 0 1)]
@@ -5569,7 +5565,7 @@
           unit)
         (set!
           (array-ref sources.sources sources.count)
-          (compiler-driver-diagnostic-source-read (& path) load-failure?))
+          (compiler-driver-diagnostic-source-read (& path)))
         (set! (array-ref sources.paths sources.count) path)
         (+= sources.count 1)
         (- sources.count 1)))))
@@ -5583,8 +5579,9 @@
     [slot : i64
       (compiler-driver-diagnostic-sources-slot
         sources
-        (compiler_diagnostic.compiler-diagnostic-path diag)
-        (compiler_diagnostic.compiler-diagnostic-load-failure? (& diag)))]
+        (compiler_load.compiler-load-prelude-source-path
+          (& (compiler_diagnostic.compiler-diagnostic-path diag))
+          (compiler_diagnostic.compiler-diagnostic-load-failure? (& diag))))]
     (compiler_diagnostic.compiler-diagnostic-render-indexed-source
       (& diag)
       (& (array-ref sources.sources slot)))))

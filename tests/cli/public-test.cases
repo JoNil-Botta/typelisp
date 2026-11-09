@@ -1198,9 +1198,10 @@ stderr not-contains DISPLAY-PATH-DECOY
 step entry-at-display-path
 run check stdlib/core_macros.tl --target {{host-target}} --stdlib-root xroot/stdlib
 exit 1
-stderr contains --> stdlib/core_macros.tl:
+stderr contains error[E0103]
+stderr contains | DISPLAY-PATH-DECOY
+stderr contains error[E0206]
 stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
-stderr not-contains DISPLAY-PATH-DECOY
 step runtime-prelude
 run compile single.tl -o "{{dir}}/runtime.s" --target {{host-target}} --stdlib-root xrt/stdlib
 exit 1
@@ -1231,8 +1232,8 @@ exit 1
 stderr contains --> bad.tl:1:
 stderr contains | (define (main) : i64 (+ 1 true))
 
-# An explicit prelude import prefers a working-directory file and parses it
-# before deduplication, so that file's load failure quotes that file.
+# An entry or import can parse a working-directory file at a prelude's display
+# path before deduplication, so that file's load failure quotes that file.
 case prelude-import-shadow-load-failure-source
 file imp.tl
 (import stdlib.core_macros)
@@ -1240,6 +1241,10 @@ file imp.tl
 end-file
 file imprt.tl
 (import stdlib.runtime)
+(define (main) : i64 0)
+end-file
+file stdlib/rel.tl
+(import core_macros)
 (define (main) : i64 0)
 end-file
 cwd {{dir}}
@@ -1277,6 +1282,50 @@ stderr contains error[E0101]
 stderr contains --> stdlib/runtime.tl:
 stderr contains | (define (cwd-rt-unterminated) ;; CWD-READER-TEXT
 stderr not-contains ROOT-TEXT-AT-ERROR-LINE
+step entry-at-display-path
+run check stdlib/core_macros.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0101]
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (cwd-unterminated) ;; CWD-READER-TEXT
+stderr not-contains ROOT-TEXT-AT-ERROR-LINE
+step runtime-entry-at-display-path
+run compile stdlib/runtime.tl -o "{{dir}}/entry.s" --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0101]
+stderr contains | (define (cwd-rt-unterminated) ;; CWD-READER-TEXT
+stderr not-contains ROOT-TEXT-AT-ERROR-LINE
+step relative-import
+run check stdlib/rel.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0101]
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (cwd-unterminated) ;; CWD-READER-TEXT
+stderr not-contains ROOT-TEXT-AT-ERROR-LINE
+
+# A configured prelude's own load failure quotes the configured file.
+case prelude-root-load-failure-source
+file single.tl
+(define (main) : i64 0)
+end-file
+cwd {{dir}}
+sh mkdir -p "{{dir}}/xroot" "{{dir}}/stdlib"
+sh cp -R "{{root}}/stdlib" "{{dir}}/xroot/stdlib"
+sh printf '\n(define (root-unterminated) ;; ROOT-READER-TEXT\n' >> "{{dir}}/xroot/stdlib/core_macros.tl"
+sh sed 's/(define (root-unterminated) ;; ROOT-READER-TEXT/;; DISPLAY-PATH-DECOY/' "{{dir}}/xroot/stdlib/core_macros.tl" > "{{dir}}/stdlib/core_macros.tl"
+step check
+run check single.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0101]
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (root-unterminated) ;; ROOT-READER-TEXT
+stderr not-contains DISPLAY-PATH-DECOY
+step test-check
+run test --check single.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0101]
+stderr contains | (define (root-unterminated) ;; ROOT-READER-TEXT
+stderr not-contains DISPLAY-PATH-DECOY
 
 # The same import of a working-directory file that parses leaves a later error
 # in the configured prelude quoting the configured file.

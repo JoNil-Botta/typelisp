@@ -3276,7 +3276,7 @@
               (load.compiler-load-prelude-source-path
                 "stdlib/core_macros.tl"
                 true)
-              "target/cl_prelude_root/core_macros.tl")
+              "stdlib/core_macros.tl")
             (string.eq
               (load.compiler-load-prelude-source-path
                 "target/not_prelude.tl"

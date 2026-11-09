@@ -1844,11 +1844,12 @@ can be created inside a region scope:
 
 Scalars (`i64`, `bool`, `char`, `f64`, etc.), function values, and fixed-size
 arrays are **not** region-tagged by allocation, because they do not allocate
-through `tl_alloc`: a `with-arena` body never tags them, and a scalar field or
-element read out of a tagged aggregate is plain. `(in r T)` may still be
+through `tl_alloc`: a `with-arena` body never tags a scalar, and a scalar field
+or element read out of a tagged aggregate is plain. `(in r T)` may still be
 written for such a type, in a signature or on a binding, and then means what it
-means for any other `T`. A plain scalar converts to `(in r T)` where that type
-is expected.
+means for any other `T`. A plain scalar name or non-literal expression converts
+to `(in r T)` where that type is expected; an integer literal at a call argument
+is currently rejected (#8806).
 
 A region-tagged type `(in r T)` is a **subtype** of the plain type `T` for
 operations that do not escape the region: field access, `array-ref`, array
@@ -1863,12 +1864,13 @@ enclosing function.
 
 An expression whose static type is `(in r T)` escapes at a return of plain type,
 a by-value parameter of plain type (by default; section 5.16), a store into a
-plain place, a constructor field, a tuple or array element, and a closure
-capture, whether or not `T` is Copy. Copying such a value does not remove the
-tag: section 4.7.2 fixes only its copy or move class. `(cast e : T)` yields its
-target type and applies to numeric scalars only (section 5.12). Whether a read
-of a Copy value through a reference carries a tag is not specified here
-(#8585).
+plain place, a constructor field, a tuple or array element (other than one of an
+aggregate built inside the active region, whose own escape is then checked), and
+a closure capture, whether or not `T` is Copy. Copying such a value does not
+remove the tag: section 4.7.2 fixes only its copy or move class. `(cast e : T)`
+yields its target type and applies to numeric scalars only (section 5.12).
+Whether a read of a Copy value through a reference carries a tag is not
+specified here (#8585).
 
 **Implementation note (non-normative).** The current checker can give a plain
 type to a *scalar* of type `(in r T)` when it is the result of an `if` or `match`
@@ -1877,7 +1879,7 @@ operand is plain. This is a checker gap that programs must not rely on. This
 note does not describe aggregates of any kind on these routes. Related: #9061;
 tracked in #9768.
 
-**Implementation note (non-normative).** Three listed shapes are not yet accepted.
+**Implementation note (non-normative).** Three shapes are not yet accepted.
 Inside `with-arena`, `io.print-format` is rejected for every operand (#8475).
 Outside one, a direct call returning a tagged scalar is rejected as an
 `io.print-format` operand (#9766), and field access, `tuple-ref` or `array-ref`

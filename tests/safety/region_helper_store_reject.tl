@@ -1,5 +1,5 @@
 ;; A value allocated in an arena cannot be stored into a longer-lived binding,
-;; whatever helpers it was lent to first (SPEC 3.9, 5.16; #9475).
+;; so the store below is an escape (SPEC 3.9, 5.16; #9475).
 (import stdlib.string)
 
 (define (keep) : i64

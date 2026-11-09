@@ -1821,7 +1821,7 @@ internal names except in deliberate debug output.
 
 A value allocated inside a `(with-arena r ...)` scope carries a **region tag**
 in its type, written `(in r T)` where `r` is the region name and `T` is the
-underlying heap-allocated type. Region tags are a compile-time-only
+underlying type. Region tags are a compile-time-only
 annotation; they do not change ABI representation, runtime size, or data
 layout. The tag exists solely to enable static escape checking.
 
@@ -1843,16 +1843,48 @@ can be created inside a region scope:
 - Tuple values
 
 Scalars (`i64`, `bool`, `char`, `f64`, etc.), function values, and fixed-size
-arrays are **not** region-tagged because they do not allocate through
-`tl_alloc`.
+arrays are **not** region-tagged by allocation, because they do not allocate
+through `tl_alloc`: a `with-arena` body never tags a scalar, and a scalar field
+or element read out of a tagged aggregate is plain. `(in r T)` may still be
+written for such a type, in a signature or on a binding, and then means what it
+means for any other `T`. A plain scalar name or non-literal expression converts
+to `(in r T)` where that type is expected; an integer literal at a call argument
+is currently rejected (#8806).
 
 A region-tagged type `(in r T)` is a **subtype** of the plain type `T` for
 operations that do not escape the region: field access, `array-ref`, array
-element place assignment, `match` arms, `io.print-format`, and function calls whose parameter
-types accept `T`. It is **not** a subtype where the value would leave the
-region's scope: as the result of the `with-arena` form, stored into an outer
-`let` or global, captured by an escaping closure, or returned from an enclosing
-function.
+element place assignment, `match` arms, arithmetic and comparison,
+`io.print-format`, and function calls whose parameter accepts the tagged value,
+which is a borrow parameter or an `(in q T)` parameter tied to `r` under the
+confinement rule below. A comparison yields a plain `bool`; arithmetic on a
+tagged operand yields `(in r T)`. It is **not** a subtype where the value would
+leave the region's scope: as the result of the `with-arena` form, stored into an
+outer `let` or global, captured by an escaping closure, or returned from an
+enclosing function.
+
+An expression whose static type is `(in r T)` escapes at a return of plain type,
+a by-value parameter of plain type (by default; section 5.16), a store into a
+plain place, a constructor field, a tuple or array element (other than one of an
+aggregate built inside the active region, whose own escape is then checked), and
+a closure capture, whether or not `T` is Copy. Copying such a value does not
+remove the tag: section 4.7.2 fixes only its copy or move class. `(cast e : T)`
+yields its target type and applies to numeric scalars only (section 5.12).
+Whether a read of a Copy value through a reference carries a tag is not
+specified here (#8585).
+
+**Implementation note (non-normative).** The current checker can give a plain
+type to a *scalar* of type `(in r T)` when it is the result of an `if` or `match`
+checked against a plain expected type, or an operand of `+` or `-` whose left
+operand is plain. This is a checker gap that programs must not rely on. This
+note does not describe aggregates of any kind on these routes. Related: #9061;
+tracked in #9768.
+
+**Implementation note (non-normative).** Three shapes are not yet accepted.
+Inside `with-arena`, `io.print-format` is rejected for every operand (#8475).
+Outside one, a direct call returning a tagged scalar is rejected as an
+`io.print-format` operand (#9766), and field access, `tuple-ref` or `array-ref`
+applied directly to a call returning `(in r T)` is rejected (#9767). Binding the
+call's result to a name first is accepted outside an arena.
 
 **Views read through a reference.** Reading a region-taggable field through a
 reference, such as `r.items` for `r : (& r S)`, produces a value tagged with the
@@ -1909,6 +1941,37 @@ constructor for `(State r)` may accept `(in r T)`. Calls substitute `r` in
 region wrappers exactly as they do in references and nominal lifetime
 arguments. Untied region-tagged arguments and returns remain escape errors;
 distinct first-class arena brands cannot be mixed.
+
+Lending arena data to a helper through a borrow parameter does not escape:
+
+```lisp test=check name=region-borrowed-helper
+(defstruct Line
+  (value i64))
+
+(define (line-value [line : (& Line)]) : i64
+  line.value)
+
+(define (main) : i64
+  (with-arena
+    scratch
+    (let
+      [line : (Box Line) (box (Line 40))]
+      (+ (line-value (& (deref line))) 2))))
+```
+
+Storing arena data into a longer-lived binding does, and is rejected with
+`E0205` (`tests/safety/region_helper_store_reject.tl`):
+
+```lisp test=ignore name=region-store-rejected reason="rejected with E0205; pinned for both targets by the safety corpus"
+(import stdlib.string)
+
+(define (keep) : i64
+  (let
+    [kept : String (string.int->string 1)]
+    (begin
+      (with-arena scratch (set! kept (string.int->string 2)))
+      (string.string-length (& kept)))))
+```
 
 ### 3.10 Reference types and borrow expressions
 
@@ -5558,6 +5621,8 @@ projection rules:
 See §3.8. Casts cover the full scalar numeric matrix: integer/`char`
 widening, narrowing, and truncation; `f64` ↔ `f32` precision changes; and
 integer/`char` ↔ float conversions (float → integer truncates toward zero).
+A cast yields exactly its target type, so casting a region-tagged numeric scalar
+to a plain type drops the tag (§3.9). Aggregates cannot be cast.
 
 ### 5.12.1 `(init : T)` and contextual `(init)` - zero/identity initialization
 
@@ -6825,7 +6890,9 @@ region-tagged value escape its scope:
 - Stored into an outer `let`, `set!`, or global binding.
 - Captured by a lambda whose closure outlives the region.
 - Returned from an enclosing function.
-- Passed to a function call (function parameters carry no region tag).
+- Passed by value to a parameter of plain type, by default. A borrow parameter
+  or an `(in q T)` parameter tied to the region is admitted under §3.9's
+  confinement rule; any other exemption in the checker is not a guarantee.
 
 **Nested regions:** Inner and outer regions are distinct. A value allocated in
 an inner region may not escape to the outer region, and a value from an outer

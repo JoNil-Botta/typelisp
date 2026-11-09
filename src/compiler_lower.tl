@@ -32105,12 +32105,14 @@
             (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))]
       (match lowered
         [(Expr value-state value _)
+          ;; A comparison carries its operand type: the nullable CFunc word is
+          ;; compared as I64 against the I64 zero literal (Refs #9670).
           (match (lower-emit-binop
             value-state
             Eq
             (lower-global-shared-view value)
             (I64 0)
-            (Bool))
+            (I64))
             [(Expr condition-state condition _)
               (match (lower-state-fresh-label condition-state "c_fn_null")
                 [(Label fail-state fail-label)
@@ -32169,8 +32171,9 @@
       op
       (lower-global-shared-view inner)
       expr-ty)
-      [(Ok result-ty)
+      [(Ok tagged-result)
         (let
+          [result-ty : ast.AstType (lower-float-without-region tagged-result)]
           [lowered
             (try
               (match (tc_core.tc-unop-contextual-operand-type
@@ -32204,6 +32207,19 @@
                       (Var var-id)
                       result-ty))])]))]
       [(Err message) (Err (box (lower-diagnostic-at-expr ctx origin message)))])))
+
+;; IR float types carry no region tag: every backend and optimizer float
+;; classifier reads the outer constructor (#9690).
+(define (lower-float-without-region [ty : ast.AstType]) : ast.AstType
+  (match (& ty)
+    [(or (Region _ wrapped) (Invalidate _ wrapped))
+      (let
+        [inner : ast.AstType
+          (tc_core.tc-type-strip-region (ast.ty-node-get wrapped))]
+        (match (& inner)
+          [(or (F64) (F32)) inner]
+          [_ ty]))]
+    [_ ty]))
 
 ;; Logical operators lower through the existing conditional path. Other
 ;; operators lower left then right, carrying the returned state forward once.
@@ -32251,8 +32267,14 @@
           expr-ty)
           [(tc_core.ResultTcBinOpTypes.Ok binop-types)
             (match binop-types
-              [(tc_core.TcBinOpTypes left-ty right-ty result-ty)
+              [(tc_core.TcBinOpTypes tagged-left tagged-right tagged-result)
                 (let
+                  [left-ty : ast.AstType
+                    (lower-float-without-region tagged-left)]
+                  [right-ty : ast.AstType
+                    (lower-float-without-region tagged-right)]
+                  [result-ty : ast.AstType
+                    (lower-float-without-region tagged-result)]
                   [first-var : i64 (lower-state-next-var state)]
                   (match (lower-expr-expected
                     ctx
@@ -33345,7 +33367,9 @@
         [lowered : LowerExpr (try (lower-expr ctx state env type-env inner))]
         (match lowered
           [(Expr inner-state inner-value _)
-            (Ok (lower-emit-binop inner-state Eq inner-value (I64 0) (Bool)))]))]
+            ;; The pointer word is compared as I64 against the I64 zero
+            ;; literal; the BinOp field is the operand type (Refs #9670).
+            (Ok (lower-emit-binop inner-state Eq inner-value (I64 0) (I64)))]))]
     [(PtrAddrOf place-box)
       (let
         [place : ast.AstExpr (lower-context-expr-get ctx place-box)]

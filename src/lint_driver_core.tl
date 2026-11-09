@@ -2815,6 +2815,7 @@
 
 (define (selfhost-lint-package-dead-import-paths-from-decls
   [decls : ast.AstDeclList]
+  [importer-scan-decls : (& ast.AstDeclList)]
   [importer-path : String]
   [import-root : String]
   [source-set : package_source_core.PackageSourceSet]
@@ -2831,6 +2832,7 @@
           (if (compiler_load.compiler-load-macro-import-kind? kind)
             (selfhost-lint-package-dead-import-paths-from-decls
               rest
+              importer-scan-decls
               importer-path
               import-root
               source-set
@@ -2887,7 +2889,7 @@
                       (compiler_load.compiler-load-lazy-import-preload-demand
                         preload-candidate
                         alias
-                        (& rest)
+                        importer-scan-decls
                         pools)]
                     [preload-summary-needed : bool
                       (and
@@ -2915,7 +2917,7 @@
                           resolved-id
                           expected-module
                           alias
-                          (& rest)
+                          importer-scan-decls
                           pools
                           preload-demand
                           (& stdlib-roots)))]
@@ -2934,6 +2936,7 @@
                           (compiler_load.compiler-load-normalize-path resolved)))]
                     (selfhost-lint-package-dead-import-paths-from-decls
                       rest
+                      importer-scan-decls
                       importer-path
                       import-root
                       source-set
@@ -2948,6 +2951,7 @@
               (try
                 (selfhost-lint-package-dead-import-paths-from-decls
                   (ast.ast-decl-list-box-shared-view body-box)
+                  importer-scan-decls
                   (owned_view.compiler-owned-shared-view importer-path)
                   (owned_view.compiler-owned-shared-view import-root)
                   (owned_view.compiler-owned-shared-view source-set)
@@ -2958,6 +2962,7 @@
                   items))]
             (selfhost-lint-package-dead-import-paths-from-decls
               rest
+              importer-scan-decls
               importer-path
               import-root
               source-set
@@ -2969,6 +2974,7 @@
         [_
           (selfhost-lint-package-dead-import-paths-from-decls
             rest
+            importer-scan-decls
             importer-path
             import-root
             source-set
@@ -3011,16 +3017,23 @@
               [(Ok program)
                 (match program
                   [(Program decls-box)
-                    (selfhost-lint-package-dead-import-paths-from-decls
-                      (ast.ast-decl-list-box-shared-view decls-box)
-                      path
-                      import-root
-                      source-set
-                      root-sources
-                      stdlib-roots
-                      pools
-                      package-imports
-                      (lint_svec.new))])])]
+                    (let
+                      [decls : ast.AstDeclList
+                        (ast.ast-decl-list-box-shared-view decls-box)]
+                      [importer-scan-decls : ast.AstDeclList
+                        (compiler_load.compiler-load-importer-scan-decls
+                          (& decls))]
+                      (selfhost-lint-package-dead-import-paths-from-decls
+                        decls
+                        (& importer-scan-decls)
+                        path
+                        import-root
+                        source-set
+                        root-sources
+                        stdlib-roots
+                        pools
+                        package-imports
+                        (lint_svec.new)))])])]
           (in-arena home (selfhost-lint-reset-file-state!))
           scratch-result))]
     (ast.ast-node-pool-context-reset-to! pools 0 0)

@@ -1670,12 +1670,6 @@
             (owned_view.compiler-owned-reference-shared-view from-ty)
             (owned_view.compiler-owned-reference-shared-view to-ty)))])))
 
-;; Equality and bit tests compare the same bits under either signedness.
-(define (opt-compare-sign-independent? [op : (& op ir.CompilerIrBinOp)]) : bool
-  (match op
-    [(or (Eq) (Ne) (BitTestEq) (BitTestNe)) true]
-    [_ false]))
-
 ;; Enum tags, pointers and function values: 8-byte words the backend orders
 ;; signed, exactly like I64.
 (define (opt-compare-word-type? [ty : (& ty ast.AstType)]) : bool
@@ -1699,9 +1693,8 @@
 ;; Folds a comparison exactly as the backend compares operands typed `ty`:
 ;; compiler-backend-type-size gives the width, and ordering is unsigned only
 ;; for U*/Char (compiler-backend-unsigned-rel-ty?). Region and Invalidate
-;; wrappers compare at their inner width but still order signed, so only a
-;; signed or word inner type folds for ordering; an unsigned inner type folds
-;; only for sign-independent ops. Other non-scalar types do not fold.
+;; wrappers preserve their inner width and signedness, including nested
+;; wrappers. Integer, Char and word inner types fold; other inner types do not.
 (define (opt-fold-backend-compare
   [type-segment-bases : i64]
   [op : (& ir.CompilerIrBinOp)]
@@ -1725,11 +1718,8 @@
               (& inner-ty))]
           [_
             (if (or
-              (opt-signed-integer-type? (& inner-ty))
-              (opt-compare-word-type? (& inner-ty))
-              (and
-                (opt-compare-sign-independent? op)
-                (opt-int-or-char-type? (& inner-ty))))
+              (opt-int-or-char-type? (& inner-ty))
+              (opt-compare-word-type? (& inner-ty)))
               (opt-fold-backend-compare
                 type-segment-bases
                 op

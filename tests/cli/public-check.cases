@@ -1189,6 +1189,122 @@ run compile "{{dir}}/unused-struct.tl" -o "{{dir}}/unused-struct.s" --stdlib-roo
 stderr empty
 stdout match Wrote[ ]
 
+
+case check-imports-before-forms-lazy-import
+file root/before_lib.tl
+(define v : i64 41)
+end-file
+file root/before_broken.tl
+;; Loading this import reports its type error.
+(define (broken) : i64 true)
+end-file
+file macro-before.tl
+(defmacro (m) : i64
+  `(+ v 1))
+(import before_lib as o)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (let [v : i64 7] (m)))
+end-file
+file macro-before-no-local.tl
+(defmacro (m) : i64
+  `(+ v 1))
+(import before_lib as o)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (m))
+end-file
+file macro-through-alias.tl
+(defmacro (m) : i64
+  `(+ o.v 1))
+(import before_lib as o)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (m))
+end-file
+file macro-before-no-struct.tl
+(defmacro (m) : i64
+  `(+ v 1))
+(import before_lib as o)
+(define (main) : i64 (let [v : i64 7] (m)))
+end-file
+file macro-after.tl
+(import before_lib as o)
+(defmacro (m) : i64
+  `(+ v 1))
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (let [v : i64 7] (m)))
+end-file
+file function-before.tl
+(define (f) : i64 o.v)
+(import before_lib as o)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (f))
+end-file
+file function-before-no-struct.tl
+(define (f) : i64 o.v)
+(import before_lib as o)
+(define (main) : i64 (f))
+end-file
+file macro-outside-nested-import.tl
+(defmacro (m) : i64
+  `(+ v 1))
+(module inner
+  (import before_lib as o)
+  (defstruct Pair
+    (value i64))
+  (define (g) : i64 0))
+(define (main) : i64 (let [v : i64 7] (m)))
+end-file
+file macro-loads-broken.tl
+(defmacro (one) : Expr
+  (expr-int 1))
+(import before_broken as unused)
+(define (main) : i64 0)
+end-file
+file unrelated-before-stays-lazy.tl
+(define (f) : i64 0)
+(import before_broken as unused)
+(defstruct Pair
+  (value i64))
+(define (main) : i64 (f))
+end-file
+step run-macro-before
+run run "{{dir}}/macro-before.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 42
+step run-macro-before-no-local
+run run "{{dir}}/macro-before-no-local.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 42
+step run-macro-through-alias
+run run "{{dir}}/macro-through-alias.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 42
+step run-macro-before-no-struct
+run run "{{dir}}/macro-before-no-struct.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 42
+step run-macro-after
+run run "{{dir}}/macro-after.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 42
+step run-function-before
+run run "{{dir}}/function-before.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 41
+step run-function-before-no-struct
+run run "{{dir}}/function-before-no-struct.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 41
+step run-macro-outside-nested-import
+run run "{{dir}}/macro-outside-nested-import.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 42
+step check-macro-loads-broken
+run check "{{dir}}/macro-loads-broken.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0206]: typecheck: return type mismatch: expected i64, found bool
+step check-unrelated-before-stays-lazy
+run check "{{dir}}/unrelated-before-stays-lazy.tl" --stdlib-root "{{dir}}/root" --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains Type checking passed!
+
 case compile-hello
 run compile examples/hello.tl -o "{{dir}}/hello.s"
 stderr empty
@@ -2765,3 +2881,147 @@ stderr contains error[E0207]: typecheck: legacy box-get/__tl-box-place borrow re
 stderr contains {{each}}.tl:
 stderr contains help: use deref for each indirection level, or pass an owned Box
 stderr not-contains __tl_tc_
+
+# #9711: package and single-file loads keep the same nested macro scopes.
+case check-package-nested-file-macro
+opt 0 1 2
+file typelisp.pkg
+(package (name "nested_file_macro") (version "0.1.0") (kind "bin"))
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner (define (g) : i64 0))
+(define (main) : i64 (m))
+(test file-macro (m) unit)
+end-file
+step single-check
+run check "{{dir}}/src/main.tl"
+stdout contains Type checking passed!
+stderr empty
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step single-test
+run test "{{dir}}/src/main.tl" --target {{host-target}} --opt-level {{opt}}
+stderr contains 1 passed; 0 failed
+step package-test
+run test --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr contains 1 passed; 0 failed
+step single-build
+run build "{{dir}}/src/main.tl" --target {{host-target}} --opt-level {{opt}} -o "{{dir}}/single{{exe}}"
+stderr empty
+exec "{{dir}}/single{{exe}}"
+exit 42
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/nested_file_macro{{exe}}"
+exit 42
+
+case check-package-nested-macro-scope
+opt 0 1 2
+file typelisp.pkg
+(package (name "nested_macro_scope") (version "0.1.0") (kind "bin"))
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner
+  (import stdlib.test)
+  (defmacro (m) : i64 (expr-int 7))
+  (module deeper
+    (import stdlib.test)
+    (defmacro (m) : i64 (expr-int 9))
+    (define (g) : i64 (m))
+    (test deeper-macro (test.assert-i64-eq (g) 9 "deeper macro")))
+  (define (g) : i64 (m))
+  (test inner-macro (test.assert-i64-eq (g) 7 "inner macro")))
+(define (main) : i64 (m))
+(test macro-scope (m) unit)
+end-file
+step single-check
+run check "{{dir}}/src/main.tl"
+stdout contains Type checking passed!
+stderr empty
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step package-test
+run test --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr contains 3 passed; 0 failed
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/nested_macro_scope{{exe}}"
+exit 42
+
+case check-package-nested-macro-import
+opt 0 1 2
+file typelisp.pkg
+(package (name "nested_macro_import") (version "0.1.0") (kind "bin"))
+end-file
+file src/helper.tl
+(define v : i64 41)
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner
+  (import stdlib.test)
+  (defmacro (n) : i64 `(+ dep.v 1))
+  (import helper as dep)
+  (define (g) : i64 (n))
+  (test inner-import (test.assert-i64-eq (g) 42 "nested import")))
+(define (main) : i64 (m))
+(test macro-import (m) unit)
+end-file
+step single-check
+run check "{{dir}}/src/main.tl" --stdlib-root "{{dir}}/src"
+stdout contains Type checking passed!
+stderr empty
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step package-test
+run test --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr contains 2 passed; 0 failed
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/nested_macro_import{{exe}}"
+exit 42
+
+case check-package-nested-duplicate-name
+opt -
+file typelisp.pkg
+(package (name "nested_duplicate") (version "0.1.0") (kind "bin"))
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner (define (g) : i64 0))
+(module inner (define (h) : i64 1))
+(define (main) : i64 (m))
+end-file
+step single-duplicate-module
+run check "{{dir}}/src/main.tl"
+exit 1
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+step package-duplicate-module
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner (define (g) : i64 0))
+(defmacro (m) : i64 (expr-int 7))
+(define (main) : i64 (m))
+end-file
+step single-duplicate-macro
+run check "{{dir}}/src/main.tl"
+exit 1
+stderr contains duplicate
+step package-duplicate-macro
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains duplicate

@@ -1,5 +1,17 @@
 # Selfhost compiler testing
 
+`region_float_arith.tl` runs f32 and f64 `+ - * /`, all six compares (value,
+branch and literal forms, including signed zero and NaN), negation, literals
+and casts to every integer width and the other float width on values read
+through `(in p T)`, each beside a plain control, at opt0/1/2 on both hosts.
+Lowering removes the region tag from these operators, so the
+`region-float-ir-untagged` native-link case keeps every float in the IR
+unwrapped. `direct-object-region-float-fail-closed` keeps these programs off
+the direct-object route, with an integer control that stays on it.
+`float_neg_mixed_f64_first.tl` and `float_neg_mixed_f32_first.tl` negate both
+widths in one program in each collection order, so both sign-bit constants
+must be emitted.
+
 `char_comparisons.tl` checks all six comparison operators against zero-extended
 `i64` operands for every byte pair, with separate bool-return, side-effecting
 branch and conditional-selection routes. Literal and runtime boundary cases

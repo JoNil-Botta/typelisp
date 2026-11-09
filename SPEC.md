@@ -2675,6 +2675,15 @@ borrow of it is checked against `m` like any other:
   (set! b.value v))
 ```
 
+Lifetime names are compared by spelling. When a local, parameter or other value
+binder is named like an enclosing signature lifetime, arena or arena owner, a
+value of a different lifetime converts to that name only if it also outlives
+each enclosing owner of the name. This covers a type written above the binder,
+such as a store target, and a lifetime annotation written under it, which names
+the binder. A borrow of the binder itself is unaffected. To annotate at only
+the local's lifetime, rename the local. The rule is conservative until
+lifetimes carry binding identity (#8890).
+
 The checker rejects returned, stored, or assigned nominal aggregate values when
 any stored reference lifetime is local, scoped, unknown, untied to an input, or
 otherwise shorter than the destination lifetime:
@@ -6827,7 +6836,8 @@ lifetime's identity, and references into the arena would pass as references of
 the outer lifetime and could outlive the arena. This is an entry restriction
 only: inside an admissible arena, locals, parameters, pattern binders, loop
 items and SPMD indices may use any name, including one spelled like an
-enclosing lifetime, with their ordinary meaning (§5.7, §5.15).
+enclosing lifetime, with their ordinary meaning (§5.7, §5.15), subject to the
+conversion rule for such a name in §3.10.2.
 
 ```lisp test=ignore name=with-arena-name-collision reason=illustrative
 (define (store [b : (&mut r (RefBox r))]) : unit

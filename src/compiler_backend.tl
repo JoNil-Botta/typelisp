@@ -65026,18 +65026,14 @@
       deepest
       -1)))
 
-;; Decide whether this function's frame lives in the red zone, and how deep
-;; below %rsp its slot region must be anchored so the body's own transient
-;; pushes cannot reach it. Always writes both facts, so a stale decision from
-;; an abandoned emission attempt can never be read by the prologue, the rebase
-;; or the dead-frame-store sweep.
-(define (compiler-backend-red-zone-decide!
+;; Return the required red-zone guard, or -1 when a real frame is needed.
+(define (compiler-backend-red-zone-guard-for
   [backend-state : CompilerBackendState]
   [text : (& text str)]
   [fpo-attempt : bool]
   [frame : i64]
   [outgoing : i64]
-  [shrinkwrap-active? : bool]) : unit
+  [shrinkwrap-active? : bool]) : i64
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
@@ -65062,11 +65058,36 @@
       (if (< dip 0)
         -1
         (compiler-backend-round-up-16 dip))]
-    [accept : bool
-      (and
-        eligible
-        (>= guard 0)
-        (<= (+ guard frame) compiler-backend-red-zone-limit))]
+    (if (and
+      eligible
+      (>= guard 0)
+      (<= (+ guard frame) compiler-backend-red-zone-limit))
+      guard
+      -1)))
+
+;; Always writes both facts, so an abandoned attempt cannot leave stale frame
+;; state for the prologue, rebase or dead-frame-store sweep.
+(define (compiler-backend-red-zone-decide!
+  [backend-state : CompilerBackendState]
+  [text : (& text str)]
+  [fpo-attempt : bool]
+  [frame : i64]
+  [outgoing : i64]
+  [shrinkwrap-active? : bool]) : unit
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [guard : i64
+      (if (> frame 0)
+        (compiler-backend-red-zone-guard-for
+          backend-state
+          text
+          fpo-attempt
+          frame
+          outgoing
+          shrinkwrap-active?)
+        -1)]
+    [accept : bool (and (> frame 0) (>= guard 0))]
     (compiler-backend-function-state-set-bool!
       function-state
       compiler-backend-function-bool-red-zone
@@ -72772,6 +72793,25 @@
                         rebase-result.text)]
                     [rebase-ok : bool rebase-result.ok]
                     [fpo-ok : bool (and fpo-attempt rebase-ok)]
+                    ;; Form (a) must not turn a SysV leaf's red-zone slots into
+                    ;; a frame when it has no save pushes to bypass. An already
+                    ;; empty frame keeps the rewrite's useful guard placement.
+                    ;; Query the ordinary layout without changing wrapped state;
+                    ;; refusal below retries the original IR and register plan.
+                    [shrinkwrap-frameless? : bool
+                      (and
+                        shrinkwrap-active?
+                        fpo-ok
+                        (= final-push-count 0)
+                        (>=
+                          (compiler-backend-red-zone-guard-for
+                            program-index.backend-state
+                            post-prologue
+                            fpo-ok
+                            fpo-frame
+                            outgoing-frame-space
+                            false)
+                          0))]
                     ;; A failed audit falls back to the rbp frame, whose
                     ;; prologue moves %rsp again: retract the red-zone
                     ;; fact so no later reader (prologue, sweep record)
@@ -73010,6 +73050,7 @@
                           ;; render bare and the prologue is spliced at
                           ;; the saving block.
                           [(and
+                              (not shrinkwrap-frameless?)
                               (not swb-active?)
                               (compiler_ir_types.compiler-ir-label-some?
                                 swb-plan.label))
@@ -73056,6 +73097,7 @@
                               compiler-backend-swb-refused
                               (__tl_make-array i64 0))]
                           [(or
+                              shrinkwrap-frameless?
                               ;; The IR was split before allocation. If later
                               ;; admission cannot render both scratch-free
                               ;; prefixes (or intentionally excludes `main`),

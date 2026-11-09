@@ -386,6 +386,8 @@
   (explicit-module bool)
   ;; True when this source was established through a module-qualified identity.
   (qualified-load bool)
+  ;; False for a speculative lazy summary, which claims no module.
+  (loaded bool)
   (source-path-id i64)
   (source-path String)
   (root-id String)
@@ -8924,6 +8926,7 @@
     cbi.compiler-builtin-id-fix-empty
     false
     false
+    false
     cbi.compiler-builtin-id-fix-empty
     ""
     ""
@@ -9774,6 +9777,7 @@
   [declaration-module-id : i64]
   [explicit-module : bool]
   [qualified-load : bool]
+  [loaded : bool]
   [decls : (& ast.AstDeclList)]) : CompilerLoadSurfaceSummary
   (let
     [source-path : String (compiler-load-normalize-path path)]
@@ -9787,6 +9791,7 @@
       declaration-module-id
       explicit-module
       qualified-load
+      loaded
       source-path-id
       source-path
       (compiler-load-normalize-path root-id)
@@ -9838,6 +9843,7 @@
                   module-id
                   (compiler-load-decl-list-has-module? decls)
                   qualified-load
+                  false
                   (& decls))))]
           [(Err diag) (Err diag)]))]))
 
@@ -10936,6 +10942,7 @@
                                 (not
                                   (compiler-load-no-expected-module?
                                     (clone expected-module)))
+                                true
                                 (& load-decls))))
                           (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                             (CompilerLoadTraversalContext
@@ -13225,47 +13232,131 @@
   [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
   (Available version spmd-callables))
 
-;; A source is loaded once its summary exists or its package's surface has
-;; been imported, which brings every source of that package with it.
-(define (compiler-load-session-state-source-loaded?
-  [state : (& CompilerLoadSessionState)]
-  [source-path-id : i64]) : bool
-  (match (compiler-load-session-state-surface-summary-find-source
-    state
-    source-path-id)
-    [(CompilerLoadSomeSurfaceSummary _) true]
-    [(CompilerLoadNoSurfaceSummary)
-      (let
-        [slot : i64
-          (compiler-load-dependency-catalog-slot-for-provenance-id
-            state
-            source-path-id)]
-        (and
-          (>= slot 0)
-          (< slot (array-ref state.dependency-surfaces.fragments 0).len)
-          (array-ref
-            (array-ref state.dependency-surfaces.fragments 0).imported
-            slot)))]))
+;; The source of a hydrated surface's own marker for a module, or -1. A module
+;; body owns its marker and holds nothing.
+(define (compiler-load-dependency-surface-module-holder
+  [hydration : (& hydration surface_hydrate.CompilerSurfaceHydration)]
+  [module-id : i64]) : i64
+  (let
+    [surface : surface_ast.SurfaceAstHydration hydration.ast]
+    [count : i64 (ast.ast-decl-list-len (& surface.decls))]
+    (for [index (iterator.range 0 count)]
+      (match (ast.ast-decl-list-get
+        (& surface.decls)
+        index
+        (ast.ast-decl-fallback))
+        [(Module name)
+          (when
+            (and
+              (= name module-id)
+              (not
+                (=
+                  (ast.ast-decl-path-list-owner-id
+                    (& surface.paths)
+                    index
+                    cbi.compiler-builtin-id-fix-empty)
+                  name)))
+            (return
+              (compiler-load-source-path-id
+                (compiler-load-normalize-path
+                  (ci.intern-str
+                    (ast.ast-decl-path-list-provenance-id
+                      (& surface.paths)
+                      index
+                      cbi.compiler-builtin-id-fix-empty))))))]
+        [_ unit]))
+    -1))
 
-;; Two sources cannot hold one module identity. A dependency whose module was
-;; seen without loading it, or whose module the importer already holds, would
-;; lose its declarations and bind the alias to the other source. A same-named
-;; module body is not yet held, so the dependency loads and shares that module.
+;; The one source recorded as holding a module: a real load, or the file whose
+;; marker an imported surface carries. -1 when nothing records it.
+(define (compiler-load-module-holder-source-id
+  [state : (& CompilerLoadSessionState)]
+  [module-id : i64]) : i64
+  (let
+    [summaries : CompilerLoadSurfaceSummaryList
+      (compiler-load-session-state-surface-summaries state)]
+    (for [index
+      (iterator.range
+        0
+        (compiler-load-surface-summary-list-count (& summaries)))]
+      (let
+        [summary : CompilerLoadSurfaceSummary
+          (compiler-load-surface-summary-list-at (& summaries) index)]
+        (when
+          (and summary.loaded (= summary.declaration-module-id module-id))
+          (return summary.source-path-id))))
+    (for [slot
+      (iterator.range 0 (array-ref state.dependency-surfaces.fragments 0).len)]
+      (when
+        (array-ref
+          (array-ref state.dependency-surfaces.fragments 0).imported
+          slot)
+        (match (&
+          (array-ref
+            (array-ref state.dependency-surfaces.fragments 0).slots
+            slot))
+          [(Ready hydration _)
+            (let
+              [holder : i64
+                (compiler-load-dependency-surface-module-holder
+                  hydration
+                  module-id)]
+              (when (>= holder 0) (return holder)))]
+          [(Unavailable) unit])))
+    -1))
+
+(define (compiler-load-path-in-package-dependency?
+  [path : (& str)]
+  [manifest-dir : (& str)]
+  [deps : (& CompilerPkgDeps)]) : bool
+  (let
+    [ordered : CompilerPkgDepList
+      (compiler-pkg-deps-list
+        (owned_view.compiler-owned-reference-shared-view deps))]
+    (for [index (iterator.range 0 (compiler-pkg-dep-list-count ordered))]
+      (let
+        [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
+        (when
+          (compiler-load-path-under-root?
+            path
+            (&
+              (compiler-load-normalize-path
+                (compiler-load-join-root-path
+                  (string.copy manifest-dir)
+                  (string.copy dep.path)))))
+          (return true))))
+    false))
+
+;; A module identity has one recorded holder. A package import that finds its
+;; module already held, by a source other than itself, would lose its own
+;; declarations and bind its alias to the other source. Local sources may still
+;; share a module among themselves; a same-named module body is not a holder.
 (define (compiler-load-package-import-identity-taken?
   [state : (& CompilerLoadSessionState)]
   [source-path-id : i64]
   [module : ast.AstMaybeModuleName]
-  [importer-source-module-id : i64]
-  [seen : sym_i64_env.SymI64Env]) : bool
-  (or
-    (not (compiler-load-session-state-source-loaded? state source-path-id))
-    (match module
-      [(Some module-id)
-        (and
-          (not (= module-id cbi.compiler-builtin-id-fix-empty))
-          (= module-id importer-source-module-id)
-          (sym_i64_env.sym-i64-contains-id seen module-id))]
-      [(No) false])))
+  [seen : sym_i64_env.SymI64Env]
+  [package-externs : bool]
+  [manifest-dir : (& str)]
+  [deps : (& CompilerPkgDeps)]) : bool
+  (match module
+    [(Some module-id)
+      (and
+        (not (= module-id cbi.compiler-builtin-id-fix-empty))
+        (sym_i64_env.sym-i64-contains-id seen module-id)
+        (let
+          [holder : i64 (compiler-load-module-holder-source-id state module-id)]
+          (and
+            (not (= holder source-path-id))
+            (or
+              package-externs
+              (and
+                (>= holder 0)
+                (compiler-load-path-in-package-dependency?
+                  (& (ci.intern-str holder))
+                  manifest-dir
+                  deps))))))]
+    [(No) false]))
 
 ;; The module governing the entry source's declarations in a hydrated
 ;; dependency, or -1 when the source route must serve it instead. Declarations
@@ -13449,11 +13540,12 @@
                       hydration
                       slot
                       source-path-id
-                      (if (compiler-load-session-state-source-loaded?
+                      (match (compiler-load-session-state-surface-summary-find-source
                         (& state)
                         source-path-id)
-                        (sym_i64_env.sym-i64-empty)
-                        seen))
+                        [(CompilerLoadSomeSurfaceSummary _)
+                          (sym_i64_env.sym-i64-empty)]
+                        [(CompilerLoadNoSurfaceSummary) seen]))
                     -1)]
                 [_ : unit (when (< source-module-id 0) (return Unavailable))]
                 [selection : CompilerLoadDependencySurfaceSelection
@@ -13505,6 +13597,7 @@
                           true
                           (not
                             (compiler-load-no-expected-module? expected-module))
+                          true
                           (& copied-decls))))])
                 (match (compiler-load-package-extern-decls
                   entry.owner
@@ -13908,14 +14001,14 @@
                               alias
                               (& imported-decls))]
                           (when
-                            (and
+                            (compiler-load-package-import-identity-taken?
+                              (& active-state)
+                              resolved-id
+                              (clone validated-module)
+                              seen
                               package-externs
-                              (compiler-load-package-import-identity-taken?
-                                (& active-state)
-                                resolved-id
-                                (clone validated-module)
-                                importer-source-module-id
-                                seen))
+                              (& manifest-dir)
+                              deps)
                             (return
                               (Err
                                 (box
@@ -13925,7 +14018,7 @@
                                       importer-path
                                       (__tl-box-place span)
                                       (str_cat.str-cat
-                                        "compiler-load: dependency import '"
+                                        "compiler-load: import '"
                                         import-path
                                         "' has the module identity of another loaded source; declare a distinct module in one of them")))))))
                           (when
@@ -14320,6 +14413,7 @@
                                 (not
                                   (compiler-load-no-expected-module?
                                     (clone expected-module)))
+                                true
                                 (& load-decls))))
                           (compiler-load-package-decls-with-module-and-roots
                             (& load-decls)

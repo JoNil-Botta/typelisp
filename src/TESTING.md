@@ -707,7 +707,9 @@ nor removes the importer's macros; `check` loads it from source and `build`
 from its artifact, and both must agree. Repeating an import binds another alias
 to the module the dependency declares. Run these with `main` inside a module
 body where a body has to execute: `typelisp test` does not yet link path
-dependencies.
+dependencies. `package-dependency-module-holder-*` pin the one-holder rule for
+module identities; they also build through a bare `typelisp` on `PATH`, because
+the package doctest worker cannot start there and only the emit load decides.
 
 `package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
 runs separate dependency and consumer objects at opt0/1/2 on both hosts. It

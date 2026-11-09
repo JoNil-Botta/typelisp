@@ -1519,11 +1519,134 @@ end-file
 step check
 run check --manifest-path "{{dir}}/typelisp.pkg"
 exit 1
-stderr contains error[E0305]: compiler-load: dependency import
+stderr contains error[E0305]: compiler-load: import
 stderr contains {{each}}.tl:
 step build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
 exit 1
-stderr contains error[E0305]: compiler-load: dependency import
+stderr contains error[E0305]: compiler-load: import
 stderr contains {{each}}.tl:
+
+# One recorded holder per module identity. The compiler is also reached by bare
+# name through PATH: there the doctest worker cannot start, so the emit load
+# itself must reject these programs.
+case package-dependency-module-holder-conflict
+opt -
+each local-after-closure-entry local-before-entry nonentry-before-local selected-nonentry
+sh mkdir -p "{{dir}}/bin" && cp "{{compiler}}" "{{dir}}/bin/typelisp{{exe}}"
+file -x typelisp.pkg
+(package (name "holder_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(module libx)
+(import other as o2)
+(define (lv) : i64 (o2.ov))
+end-file
+file vendor/libd/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/other.tl
+(module other)
+(define (ov) : i64 1)
+end-file
+file src/local-after-closure-entry.tl
+(import libd.src.lib as l)
+(import other as x)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/local-before-entry.tl
+(import other as x)
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/nonentry-before-local.tl
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(import other as x)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/selected-nonentry.tl
+(import other as x)
+(import libd.src.lib as l)
+(import libd.src.other.ov as got)
+(define (main) : i64 (+ (l.lv) (x.ov) (got) -1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+step build-by-path
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+step build-by-bare-name
+exec env PATH="{{dir}}/bin:$PATH" typelisp build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+
+# The same programs with no conflict stay accepted and correct on both routes.
+case package-dependency-module-holder-no-conflict
+opt 0 1 2
+each entry-first local-first nonentry-before-local
+sh mkdir -p "{{dir}}/bin" && cp "{{compiler}}" "{{dir}}/bin/typelisp{{exe}}"
+file -x typelisp.pkg
+(package (name "holder_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(module libx)
+(import other as o2)
+(define (lv) : i64 (o2.ov))
+end-file
+file vendor/libd/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/localm.tl
+(module localm)
+(define (ov) : i64 1)
+end-file
+file src/entry-first.tl
+(import libd.src.lib as l)
+(import localm as x)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/local-first.tl
+(import localm as x)
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/nonentry-before-local.tl
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(import localm as x)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build-by-path
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/holder_app{{exe}}"
+exit 82
+step build-by-bare-name
+exec env PATH="{{dir}}/bin:$PATH" typelisp build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/holder_app{{exe}}"
+exit 82
 

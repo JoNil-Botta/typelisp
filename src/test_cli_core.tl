@@ -2426,7 +2426,9 @@
         [(>= provenance 0) (ci.intern-str provenance)]
         [else path])]
     [text : cdiag.CompilerDiagnosticSource
-      (driver.compiler-driver-diagnostic-source-read (& physical-path))]
+      (driver.compiler-driver-diagnostic-source-read
+        (& physical-path)
+        (cdiag.compiler-diagnostic-load-failure? (& located)))]
     (cdiag.compiler-diagnostic-render-indexed-source (& located) (& text))))
 
 (define (tltest-executable-spawn-detail [bin-path : String]) : String

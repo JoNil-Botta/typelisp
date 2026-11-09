@@ -3268,10 +3268,19 @@
               (compiler-load-test-path-at paths 0)
               (load.compiler-load-core-macro-prelude-path-shared-view))
             (string.eq
-              (load.compiler-load-prelude-source-path "stdlib/core_macros.tl")
+              (load.compiler-load-prelude-source-path
+                "stdlib/core_macros.tl"
+                false)
               "target/cl_prelude_root/core_macros.tl")
             (string.eq
-              (load.compiler-load-prelude-source-path "target/not_prelude.tl")
+              (load.compiler-load-prelude-source-path
+                "stdlib/core_macros.tl"
+                true)
+              "target/cl_prelude_root/core_macros.tl")
+            (string.eq
+              (load.compiler-load-prelude-source-path
+                "target/not_prelude.tl"
+                false)
               "target/not_prelude.tl")
             (string.eq
               (ast_tests.ast-decl-module-list-get (& modules) 0 "")

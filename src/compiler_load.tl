@@ -3140,8 +3140,13 @@
 ;: The file this session read the prelude displayed at PATH from. A prelude
 ;: keeps its canonical path whichever root supplied it, so source-quoting routes
 ;: ask here rather than opening that spelling in the working directory. Any
-;: other path, and a prelude no root supplied, comes back unchanged.
-(define (compiler-load-prelude-source-path [path : (& path str)]) : String
+;: other path, and a prelude no root supplied, comes back unchanged. An import
+;: can also parse a working-directory file at that path. The prelude parsed
+;: first and the import's declarations are dropped, so with two files noted a
+;: load failure is the import's and anything later is the prelude's.
+(define (compiler-load-prelude-source-path
+  [path : (& path str)]
+  [load-failure? : bool]) : String
   (if (compiler-load-prelude-importer? path)
     (match (ci.intern-lookup
       (compiler-load-stdlib-suffix (& (compiler-load-normalize-path path))))
@@ -3154,9 +3159,20 @@
                   (ptr-addr-of
                     compiler-load-active-session-state.embedded-stdlib-provenance.suffix-claims)))
               0)]
+          [paths : sym_i64_env.SymI64Env
+            (array-ref
+              (unsafe
+                (ptr-read
+                  (ptr-addr-of
+                    compiler-load-active-session-state.embedded-stdlib-provenance.canonical-paths)))
+              0)]
           [claim : i64
             (sym_i64_env.sym-i64-lookup-id-or (& claims) suffix-id -1)]
-          (if (< claim 0)
+          (if (or
+            (< claim 0)
+            (and
+              load-failure?
+              (= (sym_i64_env.sym-i64-lookup-id-or (& paths) claim 0) -1)))
             (string.copy path)
             (ci.intern-str claim)))]
       [(InternLookupMissing) (string.copy path)])

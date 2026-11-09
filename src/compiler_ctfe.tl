@@ -6948,14 +6948,13 @@
 (define (ctfe-reflected-root-declaration-id
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
-  (begin
-    (set! ctfe-reflected-root-names-issued true)
-    (cis.intern-macro-global-identity-raw
-      (cis.intern-structural-session-macro-global-identity
-        session
-        cis.InternMacroGlobalRole.ReflectedDeclaration
-        cbi.compiler-builtin-id-fix-empty
-        name-id))))
+  (set! ctfe-reflected-root-names-issued true)
+  (cis.intern-macro-global-identity-raw
+    (cis.intern-structural-session-macro-global-identity
+      session
+      cis.InternMacroGlobalRole.ReflectedDeclaration
+      cbi.compiler-builtin-id-fix-empty
+      name-id)))
 
 ;; Set once a program builds a reference from reflection, so hygiene tracks
 ;; plain binders only for programs that can need them.
@@ -6965,9 +6964,8 @@
 (define (ctfe-reflected-root-reference-id
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
-  (begin
-    (set! ctfe-reflected-root-names-issued true)
-    (ctfe-reflected-root-name-id session name-id)))
+  (set! ctfe-reflected-root-names-issued true)
+  (ctfe-reflected-root-name-id session name-id))
 
 ;; The reference a `""` module owner denotes. Only an authorized owner names
 ;; the entry module, and only a plain spelling can become its reference: an

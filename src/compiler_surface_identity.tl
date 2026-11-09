@@ -326,8 +326,8 @@
             [(No) -2]
             [(Some record)
               (let
+                ;; Hygiene settles reflected references before output can be captured.
                 [role : i64
-;; Hygiene settles reflected references before output can be captured.
                   (match record.role
                     [(Legacy) 0]
                     [(Context) 1]

@@ -38420,22 +38420,19 @@
 
 ;; The symbol-table spelling of a root-defined global. Root rows are bare.
 (define (lower-hygiene-root-source-id [ctx : tc_core.TcContext] [name-id : i64]) : i64
-  (if (< name-id (ci.intern-structural-key-base))
+  (if (or
+    (not cis.intern-root-macro-global-issued)
+    (< name-id (ci.intern-structural-key-base)))
     name-id
-    (lower-hygiene-root-source-structural-id ctx name-id)))
-
-(define (lower-hygiene-root-source-structural-id
-  [ctx : tc_core.TcContext]
-  [name-id : i64]) : i64
-  (let
-    [session : cis.InternStructuralSessionHandle
-      (tc_core.tc-context-structural-session ctx)]
-    (if (and
-      (tc_core.macro-hygiene-global-id? session name-id)
-      (csym.compiler-symbol-root-module-id?
-        (tc_core.macro-hygiene-global-module-id session name-id)))
-      (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)
-      name-id)))
+    (let
+      [source : i64
+        (cis.intern-macro-global-source-id-or-neg
+          (tc_core.tc-context-structural-session ctx)
+          name-id
+          4)]
+      (if (< source 0)
+        name-id
+        source))))
 
 ;; Whether a call names a constructor. A root identity naming an entry value is
 ;; never one, whichever struct elsewhere shares its spelling.
@@ -38459,29 +38456,20 @@
   [env : sym_i64_env.SymI64Env]
   [raw-name : i64]
   [resolved-id : i64]) : i64
-  (if (< raw-name (ci.intern-structural-key-base))
-    resolved-id
-    (lower-hygiene-root-structural-lookup-id ctx env raw-name resolved-id)))
-
-(define (lower-hygiene-root-structural-lookup-id
-  [ctx : tc_core.TcContext]
-  [env : sym_i64_env.SymI64Env]
-  [raw-name : i64]
-  [resolved-id : i64]) : i64
-  (let
-    [session : cis.InternStructuralSessionHandle
-      (tc_core.tc-context-structural-session ctx)]
-    (if (and
-      (or
-        (not
-          (csym.compiler-symbol-root-module-id?
-            (tc_core.tc-context-module-id ctx)))
-        (sym_i64_env.sym-i64-contains-id env resolved-id))
-      (tc_core.macro-hygiene-global-id? session raw-name)
-      (csym.compiler-symbol-root-module-id?
-        (tc_core.macro-hygiene-global-module-id session raw-name)))
-      raw-name
-      resolved-id)))
+  (if (and
+    cis.intern-root-macro-global-issued
+    (>= raw-name (ci.intern-structural-key-base))
+    (or
+      (not (csym.compiler-symbol-root-module-id? (tc_core.tc-context-module-id ctx)))
+      (sym_i64_env.sym-i64-contains-id env resolved-id))
+    (>=
+      (cis.intern-macro-global-source-id-or-neg
+        (tc_core.tc-context-structural-session ctx)
+        raw-name
+        4)
+      0))
+    raw-name
+    resolved-id))
 
 (define (lower-direct-call-id-with-lookup-id
   [ctx : tc_core.TcContext]

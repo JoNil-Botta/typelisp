@@ -878,11 +878,21 @@
 (define intern-macro-global-runtime-owned? : bool
   false)
 
+;; Set once any macro-global identity is defined at the entry module, at the same
+;; place. The root-identity paths in typecheck and lowering read it first, so a
+;; program without such an identity never decodes a record there. It only ever
+;; turns on.
+(define intern-root-macro-global-issued : bool
+  false)
+
 (define (intern-structural-session-macro-global-identity
   [handle : InternStructuralSessionHandle]
   [role : InternMacroGlobalRole]
   [definition-module-id : i64]
   [source-name-id : i64]) : InternMacroGlobalIdentity
+  (when
+    (= definition-module-id cbi.compiler-builtin-id-fix-empty)
+    (set! intern-root-macro-global-issued true))
   (when
     (= definition-module-id cbi.compiler-builtin-id-runtime-module)
     (set! intern-macro-global-runtime-owned? true))
@@ -894,6 +904,33 @@
         (intern-macro-global-role-code role)
         definition-module-id
         source-name-id))))
+
+;; The source spelling of a macro-global matching `mask`, or -1: 1 Reflected,
+;; 2 ReflectedDeclaration, 4 any role defined at root.
+(define (intern-macro-global-source-id-or-neg
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [mask : i64]) : i64
+  (match (intern-structural-session-macro-global-record
+    handle
+    (InternMacroGlobalIdentity raw))
+    [(Some record)
+      (if (not
+        (=
+          (bit-and
+            mask
+            (bit-or
+              (match record.role
+                [(Reflected) 1]
+                [(ReflectedDeclaration) 2]
+                [_ 0])
+              (if (= record.definition-module-id cbi.compiler-builtin-id-fix-empty)
+                4
+                0)))
+          0))
+        record.source-name-id
+        -1)]
+    [(No) -1]))
 
 (define (intern-structural-session-macro-global-record
   [handle : InternStructuralSessionHandle]

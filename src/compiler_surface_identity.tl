@@ -340,14 +340,22 @@
                   (surface-identity-local-ref
                     record.source-name-id
                     source-count)]
-                (if (or (< module-ref 0) (< source-ref 0))
-                  -2
-                  (+
-                    (surface-identity-portable-macro-global-offset
-                      identity-count)
-                    (+
-                      (* (+ (* role identity-count) module-ref) identity-count)
-                      source-ref))))])]
+                (match record.role
+                  ;; The image has no reflected role: its plain spelling, as a
+                  ;; dependency's own source names it.
+                  [(or (Reflected) (ReflectedDeclaration))
+                    (if (< source-ref 0)
+                      -2
+                      source-ref)]
+                  [_
+                    (if (or (< module-ref 0) (< source-ref 0))
+                      -2
+                      (+
+                        (surface-identity-portable-macro-global-offset
+                          identity-count)
+                        (+
+                          (* (+ (* role identity-count) module-ref) identity-count)
+                          source-ref)))]))])]
         [(match (cis.intern-structural-session-macro-local-record-for-raw
             session
             id)

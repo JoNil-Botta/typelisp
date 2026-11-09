@@ -6984,7 +6984,11 @@
   [session : cis.InternStructuralSessionHandle]
   [value : (& value CompilerCtfeValue)]) : bool
   (match value
-    [(Name _ name-id) (= name-id (ctfe-root-owner-authority-id session))]
+    ;; Building the token sets the flag, so only compare once one can exist.
+    [(Name _ name-id)
+      (and
+        ctfe-reflected-root-names-issued
+        (= name-id (ctfe-root-owner-authority-id session)))]
     [_ false]))
 
 ;; Look up a module value by its resolved identities. `query-kind` 0 answers

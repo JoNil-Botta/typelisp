@@ -15407,17 +15407,16 @@
     [session : cis.InternStructuralSessionHandle
       (tc-context-structural-session ctx)]
     (and
+      cis.intern-root-macro-global-issued
       (>= name-id (ci.intern-structural-key-base))
-      (macro-hygiene-global-id? session name-id)
-      (csym.compiler-symbol-root-module-id?
-        (macro-hygiene-global-module-id session name-id))
+      (>= (cis.intern-macro-global-source-id-or-neg session name-id 4) 0)
       (let
         [symbols (tc-context-symbols ctx)]
         [handle : i64
           (csym.compiler-symbols-lookup-value-in-module-id-or
             symbols
             cbi.compiler-builtin-id-fix-empty
-            (macro-hygiene-global-source-name-id-or session name-id name-id)
+            (cis.intern-macro-global-source-id-or-neg session name-id 4)
             (csym.compiler-symbols-missing-handle))]
         (and
           (csym.compiler-symbols-handle-found? handle)
@@ -106906,27 +106905,70 @@
 
 ;; Reflected references settle here, where scope is known. A name from `expr-var`
 ;; is hygienic by name: a binder in the output or a local at the call site takes
-;; it by spelling. Otherwise it keeps its role, so a later macro still reads it as
-;; a reflected name, and it resolves like Context(root, s). A reference built from
-;; root authority denotes the declaration and is never captured.
+;; it by spelling, at any depth of an operand. Otherwise it keeps its role, so a
+;; later macro still reads it as a reflected name, and it resolves like
+;; Context(root, s). A reference built from root authority denotes the
+;; declaration and is never captured.
+(define (macro-hygiene-settle-reflected-children
+  [expr-bases : i64]
+  [env : MacroHygieneEnv]
+  [expr : ast.AstExpr]) : i64
+  (let
+    [ids : ast.AstExprList (ast.ast-expr-child-ids (ast.ast-global-shared-view expr))]
+    [out : ast.AstExprList (ast.ast-expr-list-new)]
+    [changed : bool false]
+    (for [index (iterator.range 0 (ast.ast-expr-list-len (& ids)))]
+      (let
+        [child : i64 (ast.ast-expr-list-get (& ids) index -1)]
+        [settled : i64 (macro-hygiene-settle-reflected-walk expr-bases env child)]
+        (when (not (= settled child)) (set! changed true))
+        (ast.ast-expr-list-push (&mut out) settled)))
+    (if changed
+      (macro-hygiene-expr-push env (ast.ast-expr-with-child-ids expr (& out)))
+      -1)))
+
+(define (macro-hygiene-settle-reflected-walk
+  [expr-bases : i64]
+  [env : MacroHygieneEnv]
+  [id : i64]) : i64
+  (let
+    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases id)]
+    (match (ast.ast-global-shared-view expr)
+      [(Var name)
+        (let
+          [settled : i64 (macro-hygiene-settle-reflected-id env name)]
+          (if (= settled name)
+            id
+            (macro-hygiene-expr-push env (ast.AstExpr.Var settled))))]
+      [(Set name value)
+        (let
+          [settled : i64 (macro-hygiene-settle-reflected-id env name)]
+          [next : i64 (macro-hygiene-settle-reflected-walk expr-bases env value)]
+          (if (and (= settled name) (= next value))
+            id
+            (macro-hygiene-expr-push env (ast.AstExpr.Set settled next))))]
+      [_
+        (let
+          [rebuilt : i64 (macro-hygiene-settle-reflected-children expr-bases env expr)]
+          (if (< rebuilt 0)
+            id
+            rebuilt))])))
+
 (define (macro-hygiene-settle-reflected-operand
   [expr-bases : i64]
-  [inner-box : i64]
   [env : MacroHygieneEnv]
   [expr : ast.AstExpr]) : i64
   (if (not ctfe_support.ctfe-reflected-root-names-issued)
     (ast.ast-node-pool-context-expr-push env.pools expr)
     (let
-      [inner : ast.AstExpr
-        (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& inner))
-        [(Var name)
-          (let
-            [settled : i64 (macro-hygiene-settle-reflected-id env name)]
-            (if (= settled name)
-              (ast.ast-node-pool-context-expr-push env.pools expr)
-              (macro-hygiene-expr-push env (ast.AstExpr.Var settled))))]
-        [_ (ast.ast-node-pool-context-expr-push env.pools expr)]))))
+      [rebuilt : i64
+        (macro-hygiene-settle-reflected-children
+          expr-bases
+          env
+          (ast.ast-global-shared-view expr))]
+      (if (< rebuilt 0)
+        (ast.ast-node-pool-context-expr-push env.pools expr)
+        rebuilt))))
 
 (define (macro-hygiene-settle-reflected-id
   [env : MacroHygieneEnv]
@@ -108975,10 +109017,8 @@
     ;; Do not apply a later expansion's hygiene environment to syntax behind a
     ;; provenance boundary.  Macro discovery still walks through the marker so
     ;; nested, not-yet-expanded calls can fire in their own hygiene pass.
-    [(MacroExpansion inner-box _ _)
-      ;; A reflected name is bound by name. A binder this output gives its
-      ;; spelling takes an operand the same way it takes a plain name.
-      (macro-hygiene-settle-reflected-operand expr-bases inner-box env expr)]
+    [(MacroExpansion _ _ _)
+      (macro-hygiene-settle-reflected-operand expr-bases env expr)]
     [(Var name)
       (macro-hygiene-expr-push
         env

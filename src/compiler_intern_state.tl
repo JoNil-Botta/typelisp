@@ -6,6 +6,7 @@
 (import compiler_abort as abort)
 (import stdlib.iterator)
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 (import compiler_owned_view as owned_view)
 
 (defstruct InternStructuralKey
@@ -864,11 +865,21 @@
     [(Legacy) 0]
     [(Context) 1]))
 
+;; Set once any macro-global identity names the runtime module, at the one place
+;; such records are created. It lets builtin classification skip the record read
+;; for every ordinary call head. It only ever turns on, which costs speed, never
+;; correctness.
+(define intern-macro-global-runtime-owned? : bool
+  false)
+
 (define (intern-structural-session-macro-global-identity
   [handle : InternStructuralSessionHandle]
   [role : InternMacroGlobalRole]
   [definition-module-id : i64]
   [source-name-id : i64]) : InternMacroGlobalIdentity
+  (when
+    (= definition-module-id cbi.compiler-builtin-id-runtime-module)
+    (set! intern-macro-global-runtime-owned? true))
   (InternMacroGlobalIdentity
     (intern-structural-key-raw
       (intern-structural-session-key

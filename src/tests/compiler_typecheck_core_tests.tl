@@ -5698,11 +5698,13 @@
                 _resource-id))
             (tc_core.tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
               (tc_core.tc-global-shared-view snapshot)
+              base
               _resource-id
               _arena-id)
             (not
               (tc_core.tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
                 snapshot
+                base
                 _arena-id
                 _resource-id))
             (tc_core.tc-binding-unsafe-id?

@@ -1676,6 +1676,28 @@ view_mut_tuple_plain_binding_reject|check-fail|tests/safety/view_mut_tuple_plain
 view_mut_tuple_plain_binding_reject_windows|check-fail-windows|tests/safety/view_mut_tuple_plain_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
 view_mut_tuple_unannotated_binding_reject|check-fail|tests/safety/view_mut_tuple_unannotated_binding_reject.tl|tests/safety/view_mut_tuple_unannotated_binding_reject.tl:4:12|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
 view_mut_tuple_unannotated_binding_reject_windows|check-fail-windows|tests/safety/view_mut_tuple_unannotated_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_field_call_arg_reject|check-fail|tests/safety/view_mut_field_call_arg_reject.tl|tests/safety/view_mut_field_call_arg_reject.tl:12:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_call_arg_help_reject|check-fail|tests/safety/view_mut_field_call_arg_reject.tl|-|help: pass an owned clone, or make the parameter a reference and pass `(& ...)`; or bind a borrow `(& ...)` or an owned `(clone ...)` in place of this view
+view_mut_field_call_arg_reject_windows|check-fail-windows|tests/safety/view_mut_field_call_arg_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_return_reject|check-fail|tests/safety/view_mut_field_return_reject.tl|tests/safety/view_mut_field_return_reject.tl:8:5|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_return_reject_windows|check-fail-windows|tests/safety/view_mut_field_return_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_construct_reject|check-fail|tests/safety/view_mut_field_construct_reject.tl|tests/safety/view_mut_field_construct_reject.tl:11:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_construct_reject_windows|check-fail-windows|tests/safety/view_mut_field_construct_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_name_chain_reject|check-fail|tests/safety/view_mut_name_chain_reject.tl|tests/safety/view_mut_name_chain_reject.tl:13:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_name_chain_reject_windows|check-fail-windows|tests/safety/view_mut_name_chain_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_match_binder_reject|check-fail|tests/safety/view_mut_match_binder_reject.tl|tests/safety/view_mut_match_binder_reject.tl:15:30|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_match_binder_reject_windows|check-fail-windows|tests/safety/view_mut_match_binder_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_shared_reborrow_of_mut_reject|check-fail|tests/safety/view_shared_reborrow_of_mut_reject.tl|tests/safety/view_shared_reborrow_of_mut_reject.tl:13:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_reborrow_of_mut_reject_windows|check-fail-windows|tests/safety/view_shared_reborrow_of_mut_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_mut_held_reference_reject|check-fail|tests/safety/view_mut_held_reference_reject.tl|tests/safety/view_mut_held_reference_reject.tl:16:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_held_reference_reject_windows|check-fail-windows|tests/safety/view_mut_held_reference_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_shared_held_reference_reject|check-fail|tests/safety/view_shared_held_reference_reject.tl|tests/safety/view_shared_held_reference_reject.tl:16:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_held_reference_reject_windows|check-fail-windows|tests/safety/view_shared_held_reference_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_root_reject|check-fail|tests/safety/view_shared_payload_mut_root_reject.tl|tests/safety/view_shared_payload_mut_root_reject.tl:18:32|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_root_reject_windows|check-fail-windows|tests/safety/view_shared_payload_mut_root_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_view_reject|check-fail|tests/safety/view_shared_payload_mut_view_reject.tl|tests/safety/view_shared_payload_mut_view_reject.tl:20:34|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_view_reject_windows|check-fail-windows|tests/safety/view_shared_payload_mut_view_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_view_call_arg_help_reject|check-fail|tests/safety/box_field_shared_view_call_arg_reject.tl|-|; or bind a borrow `(& ...)` or an owned `(clone ...)` in place of this view
 view_plain_field_name_chain_ok|run-exit|tests/safety/view_plain_field_name_chain_ok.tl|42|-
 view_plain_if_owned_reject|check-fail|tests/safety/view_plain_if_owned_reject.tl|tests/safety/view_plain_if_owned_reject.tl:9:9|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
 view_plain_if_owned_reject_windows|check-fail-windows|tests/safety/view_plain_if_owned_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
@@ -2693,3 +2715,50 @@ cond_else_not_final_comptime_const_reject|check-fail|tests/safety/cond_else_not_
 cond_missing_else_comptime_nested_reject|check-fail|tests/safety/cond_missing_else_comptime_nested_reject.tl|tests/safety/cond_missing_else_comptime_nested_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
 cond_else_not_final_comptime_nested_reject|check-fail|tests/safety/cond_else_not_final_comptime_nested_reject.tl|tests/safety/cond_else_not_final_comptime_nested_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
 loop_address_stored_mut_borrow_reject|check-fail|tests/safety/loop_address_stored_mut_borrow_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
+#
+# A value binder spelled like an older signature lifetime, arena or arena owner
+# (#9609, #9751, D-C216). The conservative_* rows are the rule that stands until
+# lifetimes carry binding identity; they become check-ok under #8890.
+binder_shadow_let_scalar_store_reject|check-fail|tests/safety/binder_shadow_let_scalar_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_carrier_store_reject|check-fail|tests/safety/binder_shadow_carrier_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_typed_for_store_reject|check-fail|tests/safety/binder_shadow_typed_for_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_inferred_for_store_reject|check-fail|tests/safety/binder_shadow_inferred_for_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_lambda_param_store_reject|check-fail|tests/safety/binder_shadow_lambda_param_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_match_binder_store_reject|check-fail|tests/safety/binder_shadow_match_binder_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_inferred_let_store_reject|check-fail|tests/safety/binder_shadow_inferred_let_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_if_value_store_reject|check-fail|tests/safety/binder_shadow_if_value_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_let_body_value_store_reject|check-fail|tests/safety/binder_shadow_let_body_value_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_array_element_store_reject|check-fail|tests/safety/binder_shadow_array_element_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_array_push_store_reject|check-fail|tests/safety/binder_shadow_array_push_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_call_result_root_store_reject|check-fail|tests/safety/binder_shadow_call_result_root_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_annotated_relabel_store_reject|check-fail|tests/safety/binder_shadow_annotated_relabel_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_ann_relabel_store_reject|check-fail|tests/safety/binder_shadow_ann_relabel_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_ann_inferred_relabel_store_reject|check-fail|tests/safety/binder_shadow_ann_inferred_relabel_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_annotated_aggregate_store_reject|check-fail|tests/safety/binder_shadow_annotated_aggregate_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_nested_relabel_store_reject|check-fail|tests/safety/binder_shadow_nested_relabel_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_deep_scope_store_reject|check-fail|tests/safety/binder_shadow_deep_scope_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_arena_owner_store_reject|check-fail|tests/safety/binder_shadow_arena_owner_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_enclosing_arena_store_reject|check-fail|tests/safety/binder_shadow_enclosing_arena_store_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_enclosing_arena_relabel_reject|check-fail|tests/safety/binder_shadow_enclosing_arena_relabel_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_enclosing_arena_control_reject|check-fail|tests/safety/binder_shadow_enclosing_arena_control_reject.tl|-|expected (& outer i64), found (& inner i64)
+binder_shadow_enclosing_arena_other_name_reject|check-fail|tests/safety/binder_shadow_enclosing_arena_other_name_reject.tl|-|expected (& outer i64), found (& inner i64)
+binder_shadow_no_binder_control_reject|check-fail|tests/safety/binder_shadow_no_binder_control_reject.tl|-|expected (& r i64), found (& s i64)
+binder_shadow_other_name_control_reject|check-fail|tests/safety/binder_shadow_other_name_control_reject.tl|-|expected (& r i64), found (& s i64)
+binder_shadow_call_argument_reject|check-fail|tests/safety/binder_shadow_call_argument_reject.tl|-|argument 2
+binder_shadow_call_no_binder_control_reject|check-fail|tests/safety/binder_shadow_call_no_binder_control_reject.tl|-|argument 1
+binder_shadow_call_other_name_control_reject|check-fail|tests/safety/binder_shadow_call_other_name_control_reject.tl|-|argument 1
+binder_shadow_conservative_other_param_reject|check-fail|tests/safety/binder_shadow_conservative_other_param_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_conservative_older_local_reject|check-fail|tests/safety/binder_shadow_conservative_older_local_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_conservative_ann_reject|check-fail|tests/safety/binder_shadow_conservative_ann_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_conservative_assign_reject|check-fail|tests/safety/binder_shadow_conservative_assign_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_stack_carrier_reject|check-fail|tests/safety/binder_shadow_stack_carrier_reject.tl|-|is shadowed by a binding of that name
+binder_shadow_same_spelled_stack_alias_reject|check-fail|tests/safety/binder_shadow_same_spelled_stack_alias_reject.tl|-|does not live long enough
+binder_shadow_annotated_borrow_stack_reject|check-fail|tests/safety/binder_shadow_annotated_borrow_stack_reject.tl|-|does not live long enough
+binder_shadow_scope_escape_reject|check-fail|tests/safety/binder_shadow_scope_escape_reject.tl|-|would escape lexical scope
+binder_shadow_older_local_annotated_reject|check-fail|tests/safety/binder_shadow_older_local_annotated_reject.tl|-|cannot store reference into longer-lived struct field
+binder_shadow_older_local_direct_reject|check-fail|tests/safety/binder_shadow_older_local_direct_reject.tl|-|cannot store reference into longer-lived struct field
+binder_shadow_caller_ref_ok|check-ok|tests/safety/binder_shadow_caller_ref_ok.tl|-|-
+binder_shadow_inferred_alias_ok|check-ok|tests/safety/binder_shadow_inferred_alias_ok.tl|-|-
+binder_shadow_rebind_after_scope_ok|check-ok|tests/safety/binder_shadow_rebind_after_scope_ok.tl|-|-
+binder_shadow_lambda_param_annotated_ok|check-ok|tests/safety/binder_shadow_lambda_param_annotated_ok.tl|-|-
+binder_shadow_inferred_borrow_ok|check-ok|tests/safety/binder_shadow_inferred_borrow_ok.tl|-|-

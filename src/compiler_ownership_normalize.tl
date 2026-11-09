@@ -6159,7 +6159,8 @@
                 ;; container's element is an element move.
                 (cond
                   [(>= loan 0)
-                    (if (normalize-move-out-mutable? (& state) loan)
+                    (if (try
+                      (normalize-move-out-mutable? (& state) store lease loan))
                       2
                       1)]
                   ;; A fixed array's element at a runtime index (a literal
@@ -6731,25 +6732,53 @@
 (define (normalize-view-loan? [state : (& state NormalizeState)] [loan : i64]) : bool
   (normalize-i64-member? (& state.view-loans) loan))
 
+;; Whether the binder of the opaque referent `loan` holds a view, not a
+;; reference bound by value (its class is the same; only the typed type tells
+;; them apart).
+(define (normalize-opaque-view-binder?
+  [state : (& state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [loan : i64]) : NormalizeBool
+  (let
+    [place : i64 (array-ref state.body.loans loan).place.index]
+    [index : i64 0]
+    [binder : i64 -1]
+    (while (< index (array-length state.opaque-places))
+      (when
+        (= (array-ref state.opaque-places index) place)
+        (set! binder (array-ref state.opaque-binders index)))
+      (set! index (+ index 1)))
+    (if (< binder 0)
+      (NormalizeBool.Ok false)
+      (normalize-view-type! store lease (array-ref state.place-typed binder)))))
+
 ;; Whether a move out through `loan` leaves a mutable reference: `loan` is
 ;; exclusive, or is reached through one as a view (issued shared until
-;; written) or a binder routed through its view is. The root of such a path
-;; may be a `&mut`'s opaque referent, which a view's read issued shared
+;; written) or a view binder routed through its view is. The root of such a
+;; path may be a `&mut`'s opaque referent, which a view's read issued shared
 ;; (`normalize-borrow!` marks only an exclusive one a view loan).
 (define (normalize-move-out-mutable?
   [state : (& state NormalizeState)]
-  [loan : i64]) : bool
-  (or
-    (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan)))
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [loan : i64]) : NormalizeBool
+  (if (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan)))
+    (NormalizeBool.Ok true)
     (let
+      [view? : bool (normalize-view-loan? state loan)]
       [parent : i64 (normalize-write-parent state loan)]
-      (if (>= parent 0)
-        (normalize-move-out-mutable? state parent)
-        (and
-          (normalize-view-loan? state loan)
-          (normalize-i64-member?
-            (& state.opaque-places)
-            (array-ref state.body.loans loan).place.index))))))
+      (cond
+        [(< parent 0)
+          (NormalizeBool.Ok
+            (and
+              view?
+              (normalize-i64-member?
+                (& state.opaque-places)
+                (array-ref state.body.loans loan).place.index)))]
+        [(or view? (try (normalize-opaque-view-binder? state store lease loan)))
+          (normalize-move-out-mutable? state store lease parent)]
+        [else (NormalizeBool.Ok false)]))))
 
 ;; The loan a write through `loan` would also go through: a view's parent
 ;; (the reference it was read through), or the view an opaque referent's

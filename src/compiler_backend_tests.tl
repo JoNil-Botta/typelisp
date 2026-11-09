@@ -45323,3 +45323,110 @@ user_fn:
                 ".seh_pushreg %rsi\n"
                 ".seh_pushreg %rdi\n"))
             "C entry must preserve registers, forward stack words and describe its own frame"))])))
+
+;; One `int->string` per byte: the text the `.byte` emitter must produce.
+(define (compiler-backend-reference-byte-directives [bytes : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length bytes)]
+    [col : i64 0]
+    [out : text_buf.TextBuf (text_buf.append (text_buf.empty) "<")]
+    (if (= n 0)
+      (set! out (text_buf.append out "    .byte 0\n"))
+      (while (< i n)
+        (if (= col 0)
+          (set! out (text_buf.append out "    .byte "))
+          (set! out (text_buf.append out ",")))
+        (set!
+          out
+          (text_buf.append
+            out
+            (string.int->string (cast (string.string-ref bytes i) : i64))))
+        (+= i 1)
+        (+= col 1)
+        (when
+          (or (= col 16) (= i n))
+          (set! out (text_buf.append out "\n"))
+          (set! col 0))))
+    (text_buf.render out)))
+
+(define (compiler-backend-test-byte-directives [bytes : String]) : String
+  (text_buf.render
+    (backend.compiler-backend-emit-byte-directives-into
+      bytes
+      (text_buf.append (text_buf.empty) "<"))))
+
+;; `count` bytes counting up by `step` from `start`, wrapping at 256.
+(define (compiler-backend-test-byte-run
+  [start : i64]
+  [step : i64]
+  [count : i64]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity count)]
+    [i : i64 0]
+    (while (< i count)
+      (byte_buf_core.byte-buf-builder-push
+        (&mut out)
+        (cast (bit-and (+ start (* i step)) 255) : u8))
+      (+= i 1))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+
+(define (compiler-backend-test-digit-boundary-bytes) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 6)]
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 9 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 10 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 99 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 100 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 255 : u8))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+
+(define (compiler-backend-byte-directives-match-reference? [bytes : String]) : bool
+  (string.eq
+    (compiler-backend-test-byte-directives (clone bytes))
+    (compiler-backend-reference-byte-directives bytes)))
+
+(test
+  backend-byte-directives-text-is-stable
+  (unless
+    (and
+      (string.eq (compiler-backend-test-byte-directives "") "<    .byte 0\n")
+      (string.eq
+        (compiler-backend-test-byte-directives
+          (compiler-backend-test-byte-run 7 0 1))
+        "<    .byte 7\n")
+      (string.eq
+        (compiler-backend-test-byte-directives
+          (compiler-backend-test-digit-boundary-bytes))
+        "<    .byte 0,9,10,99,100,255\n")
+      (string.eq
+        (compiler-backend-test-byte-directives
+          (compiler-backend-test-byte-run 1 0 16))
+        "<    .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\n")
+      (string.eq
+        (compiler-backend-test-byte-directives
+          (compiler-backend-test-byte-run 1 0 17))
+        "<    .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1\n    .byte 1\n"))
+    (io.panic "the .byte directive text changed")))
+
+(test
+  backend-byte-directives-match-per-byte-reference
+  (unless
+    (and
+      (compiler-backend-byte-directives-match-reference? "")
+      (compiler-backend-byte-directives-match-reference?
+        (compiler-backend-test-byte-run 0 1 256))
+      (compiler-backend-byte-directives-match-reference?
+        (compiler-backend-test-byte-run 250 1 15))
+      (compiler-backend-byte-directives-match-reference?
+        (compiler-backend-test-byte-run 95 1 16))
+      (compiler-backend-byte-directives-match-reference?
+        (compiler-backend-test-byte-run 5 3 17))
+      (compiler-backend-byte-directives-match-reference?
+        (compiler-backend-test-byte-run 200 7 32))
+      (compiler-backend-byte-directives-match-reference?
+        (compiler-backend-test-byte-run 11 13 33)))
+    (io.panic "the .byte directives differ from the per-byte reference")))

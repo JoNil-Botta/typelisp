@@ -74782,33 +74782,53 @@
         buf
         (byte_buf_core.byte-buf-builder-finish-string (& out))))))
 
+;; Append the decimal text of `value`, which is in 0..255.
+(define (compiler-backend-push-byte-decimal!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
+  (when
+    (>= value 100)
+    (byte_buf_core.byte-buf-builder-push out (cast (+ 48 (/ value 100)) : u8)))
+  (when
+    (>= value 10)
+    (byte_buf_core.byte-buf-builder-push
+      out
+      (cast (+ 48 (% (/ value 10) 10)) : u8)))
+  (byte_buf_core.byte-buf-builder-push out (cast (+ 48 (% value 10)) : u8)))
+
 (define (compiler-backend-emit-byte-directives-into
   [bytes : String]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [i : i64 0]
     [n : i64 (string.string-length bytes)]
-    [col : i64 0]
-    [out : text_buf.TextBuf buf]
     (if (= n 0)
-      (set! out (text_buf.append out "    .byte 0\n"))
-      (while (< i n)
-        (if (= col 0)
-          (set! out (text_buf.append out "    .byte "))
-          (set! out (text_buf.append out ",")))
-        (set!
-          out
-          (text_buf.append
-            out
-            (string.int->string
-              (compiler-backend-char-code (string.string-ref bytes i)))))
-        (+= i 1)
-        (+= col 1)
-        (when
-          (or (= col 16) (= i n))
-          (set! out (text_buf.append out "\n"))
-          (set! col 0))))
-    out))
+      (text_buf.append buf "    .byte 0\n")
+      (let
+        ;; At most three digits and one separator per byte, and one
+        ;; ten-byte prefix per line of 16.
+        [text : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-with-capacity
+            (+ (* n 4) (* (+ (/ n 16) 1) 10)))]
+        [i : i64 0]
+        [col : i64 0]
+        (while (< i n)
+          (if (= col 0)
+            (byte_buf_core.byte-buf-builder-append-string
+              (&mut text)
+              "    .byte ")
+            (byte_buf_core.byte-buf-builder-push (&mut text) (cast 44 : u8)))
+          (compiler-backend-push-byte-decimal!
+            (&mut text)
+            (compiler-backend-char-code (string.string-ref bytes i)))
+          (+= i 1)
+          (+= col 1)
+          (when
+            (or (= col 16) (= i n))
+            (byte_buf_core.byte-buf-builder-push (&mut text) (cast 10 : u8))
+            (set! col 0)))
+        (text_buf.append
+          buf
+          (byte_buf_core.byte-buf-builder-finish-string (& text)))))))
 
 (define (compiler-backend-emit-bytes-entry-into
   [bytes : String]

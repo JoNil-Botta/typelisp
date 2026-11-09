@@ -712,7 +712,10 @@ The `package-moduleless-dep-*`, `package-repeated-*`,
 `tests/cli/public-package.cases` pin dependency module identity. A moduleless
 dependency has its dotted identity, so it neither shares the importer's module
 nor removes the importer's macros; `check` loads it from source and `build`
-from its artifact, and both must agree. Repeating an import binds another alias
+from its artifact, and both must agree. The exception is a moduleless dependency
+with macro-generated items, which keeps its artifact identity on `build` (#9750),
+so `check` can reject a program `build` accepts; the `-residual` case pins it.
+Repeating an import binds another alias
 to the module the dependency declares. Run these with `main` inside a module
 body where a body has to execute: `typelisp test` does not yet link path
 dependencies. `package-dependency-module-holder-*` pin the one-holder rule for

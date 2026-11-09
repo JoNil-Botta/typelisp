@@ -1650,3 +1650,59 @@ exec env PATH="{{dir}}/bin:$PATH" typelisp build --manifest-path "{{dir}}/typeli
 exec "{{dir}}/target/release/holder_app{{exe}}"
 exit 82
 
+# A macro from a moduleless dependency resolves free template names in its own
+# module, so a name only the importer defines is not visible to it.
+case package-moduleless-dep-macro-free-name
+file typelisp.pkg
+(package (name "free_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(defmacro (f) : i64 `(outside))
+end-file
+file src/main.tl
+(import libd.src.lib.f)
+(define (outside) : i64 5)
+(define (main) : i64 (f))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0201]
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0201]
+
+# #9750 residual: a moduleless dependency with generated items keeps its artifact
+# identity on build, so check and build disagree here. Pinned until #9750 closes.
+case package-moduleless-dep-generated-macro-free-name-residual
+file typelisp.pkg
+(package (name "free_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(defmacro (gen) : Decls `(define (made) : i64 1))
+(gen)
+(defmacro (f) : i64 `(outside))
+end-file
+file src/main.tl
+(import libd.src.lib.f)
+(define (outside) : i64 5)
+(define (main) : i64 (f))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0201]
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exec "{{dir}}/target/release/free_app{{exe}}"
+exit 5
+

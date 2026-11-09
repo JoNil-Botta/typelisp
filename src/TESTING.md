@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`packed_bool_payload.tl` compares, branches on and stores bools unpacked from
+enum payload words, at byte offsets 0, 1 and 3 and in the top byte, beside
+all-ones neighbour fields, at opt0/1/2 on both hosts. The
+`compiler-lower-packed-bool-compares-have-bool-operands` inline test requires
+every Bool-metadata `Eq`/`Ne` of unpacked bools to have operands defined at
+IR type Bool at each level.
+
 `region_float_arith.tl` runs f32 and f64 `+ - * /`, all six compares (value,
 branch and literal forms, including signed zero and NaN), negation, literals
 and casts to every integer width and the other float width on values read

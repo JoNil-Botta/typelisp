@@ -660,6 +660,12 @@
       "comptime"]
     [else "typecheck"]))
 
+(define (compiler-diagnostic-load-failure? [diag : (& diag CompilerDiagnostic)]) : bool
+  (match (compiler-diagnostic-category diag)
+    [(CompilerDiagnosticSomeString category)
+      (or (string.eq category "parse") (string.eq category "load"))]
+    [CompilerDiagnosticNoString false]))
+
 ;; `message` tagged with `kind`.
 ;; The tag for `kind`, as a literal: tagging a message is then one
 ;; concatenation, and a raise site that builds its message with `str-cat`

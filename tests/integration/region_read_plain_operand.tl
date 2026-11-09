@@ -82,6 +82,25 @@
 (define (expression-at-tagged-parameter [p : (& p i64)] [x : i64]) : bool
   (tagged-parameter p (+ x 0)))
 
+;; A name where its region-tagged type is declared, as an expression already is.
+(define (name-returned [p : (& p i64)] [x : i64]) : (in p i64)
+  x)
+
+(define (expression-returned [p : (& p i64)] [x : i64]) : (in p i64)
+  (+ x 0))
+
+(define (name-at-tagged-let [p : (& p i64)] [x : i64]) : bool
+  (let
+    [y : (in p i64) x]
+    (= y 2)))
+
+(define (name-at-tagged-branch [p : (& p i64)] [x : i64] [y : i64] [c : bool]) : (in
+    p
+    i64)
+  (if c
+    x
+    y))
+
 (define (main) : i64
   (let
     [a : i64 7]
@@ -100,6 +119,10 @@
       (compares-i64 (& a) 2)
       (branch-operand-i64 (& a) 9 4)
       (name-at-tagged-parameter (& a) 2)
-      (expression-at-tagged-parameter (& a) 2))
+      (expression-at-tagged-parameter (& a) 2)
+      (= (name-returned (& a) 9) 9)
+      (= (expression-returned (& a) 8) 8)
+      (name-at-tagged-let (& a) 2)
+      (= (name-at-tagged-branch (& a) 3 4 false) 4))
       42
       7)))

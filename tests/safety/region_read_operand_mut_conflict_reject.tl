@@ -1,5 +1,5 @@
-;; The region-read operand's loan is live while its operator evaluates, so a
-;; conflicting mutable borrow in the other operand is still rejected (#9737).
+;; A body with a plain variable beside a region-read operand still reports a
+;; real borrow error in it (#9737); `bump`'s own two arguments conflict here.
 (define (read-i64 [p : (& p i64)]) : (in p i64)
   (deref p))
 

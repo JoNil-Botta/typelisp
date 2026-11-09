@@ -5581,7 +5581,9 @@
     [slot : i64
       (compiler-driver-diagnostic-sources-slot
         sources
-        (compiler_diagnostic.compiler-diagnostic-path diag))]
+        (compiler_load.compiler-load-prelude-source-path
+          (& (compiler_diagnostic.compiler-diagnostic-path diag))
+          (compiler_diagnostic.compiler-diagnostic-load-failure? (& diag))))]
     (compiler_diagnostic.compiler-diagnostic-render-indexed-source
       (& diag)
       (& (array-ref sources.sources slot)))))

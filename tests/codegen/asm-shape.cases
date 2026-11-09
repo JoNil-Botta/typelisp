@@ -1808,3 +1808,28 @@ count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
 in fn _tl_char_comparisons_select_ge
 match ^[[:space:]]+cmovae[ ]
 count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+
+# Refs #9695: the null path was already bare on SysV. Wrapping the CAS path
+# must not replace its red-zone spill with a new stack allocation.
+case shrinkwrap-red-zone-linux
+source tests/integration/shrinkwrap_red_zone.tl
+target linux-x86_64
+in fn tl_rz_claim
+contains lock cmpxchgq
+match [-][0-9]+\(%rsp\)
+not-match ^[[:space:]]+(subq|addq) \$[0-9]+, %rsp$
+not-match ^[[:space:]]+(pushq|popq)[ ]
+not-contains __shrinkwrap
+in fn tl_rz_empty
+contains __shrinkwrap
+not-match %(rsp|rbp)
+
+# Win64 has no red zone: bypassing the frame on the null path remains useful.
+case shrinkwrap-red-zone-win64
+source tests/integration/shrinkwrap_red_zone.tl
+target windows-x86_64
+in fn tl_rz_claim$typelisp
+contains lock cmpxchgq
+contains __shrinkwrap_save
+order testq || __shrinkwrap_bare0: || ret || __shrinkwrap_save: || subq
+not-match [-][0-9]+\(%rsp\)

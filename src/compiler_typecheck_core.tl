@@ -106707,33 +106707,24 @@
 ;; spelling cannot be assumed to mean a builtin. Hygiene cannot see the binder's
 ;; scope, so a real builtin call beside such an operand reports as unbound. This
 ;; scans the expansion's output, only when a captured head would become a builtin.
-(defmacro (macro-hygiene-operand-scan-skip
-  [_expr-bases : Expr]
-  [_session : Expr]
-  [_source-id : Expr]
-  [_child : Expr]) : bool
-  `false)
-
 (define (macro-hygiene-operand-scan-list?
   [items : ast.AstExprList]
-  [index : i64]
   [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [source-id : i64]) : bool
-  (and
-    (< index items.len)
-    (or
-      (macro-hygiene-operand-scan?
-        expr-bases
-        session
-        source-id
-        (ast.ast-expr-list-get (& items) index 0))
-      (macro-hygiene-operand-scan-list?
-        items
-        (+ index 1)
-        expr-bases
-        session
-        source-id))))
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index items.len))
+      (set!
+        found
+        (macro-hygiene-operand-scan?
+          expr-bases
+          session
+          source-id
+          (ast.ast-expr-list-get (& items) index 0)))
+      (set! index (+ index 1)))
+    found))
 
 (define (macro-hygiene-operand-scan?
   [expr-bases : i64]
@@ -106761,16 +106752,12 @@
                 session
                 source-id
                 func-box)])
-          (macro-hygiene-operand-scan-list? args 0 expr-bases session source-id))]
+          (macro-hygiene-operand-scan-list? args expr-bases session source-id))]
+      ;; The child-id list, not the fold macro at this call site: the macro
+      ;; expands an arm per expression variant, about 120 KB of assembly here.
       [_
-        (ast.ast-expr-fold-children
-          expr
-          ast.ast-fold-or
-          false
-          macro-hygiene-operand-scan?
-          macro-hygiene-operand-scan-skip
-          macro-hygiene-operand-scan-skip
-          macro-hygiene-operand-scan-skip
+        (macro-hygiene-operand-scan-list?
+          (ast.ast-expr-child-ids expr)
           expr-bases
           session
           source-id)])))

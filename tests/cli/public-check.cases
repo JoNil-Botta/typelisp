@@ -2223,6 +2223,44 @@ end-file
 run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
 exit 42
 
+# The scan for a handed binder finds it through any enclosing form, not only
+# directly under a call.
+case run-macro-template-handed-binder-nested-in-other-forms
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (rev-let [body : Expr] [name : Expr] [value : Expr]) : i64
+  (match name
+    [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+    [_ (comptime.comptime-error "expected binder")]))
+
+(defmacro (use-if) : i64
+  `(if true
+    (begin
+      (let [u : i64 0]
+        (rev-let (slice-view 10) slice-view
+          (lambda ([v : i64]) : i64 (+ u v)))))
+    0))
+
+(defmacro (use-match) : i64
+  `(match 0
+    [_ (rev-let (slice-view 20) slice-view (lambda ([v : i64]) : i64 v))]))
+
+(defmacro (use-lambda) : i64
+  `((lambda ([x : i64]) : i64
+      (+ x (rev-let (slice-view 12) slice-view (lambda ([v : i64]) : i64 v))))
+    0))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [slice-view : i64 9]
+    (+ (+ (mac.use-if) (mac.use-match)) (mac.use-lambda))))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
 case run-macro-template-reversed-handed-binder-under-use-site-global
 file mac.tl
 (import stdlib.comptime)

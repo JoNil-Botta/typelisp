@@ -2371,6 +2371,111 @@ stdout empty
 stderr contains error[E0201]: typecheck: unbound name array-length
 stderr not-contains <structural
 
+# A macro can read its binder from the head of a call form it receives, so that
+# head and the calls in its body are the binder, not the builtin.
+case run-macro-template-binder-from-call-form-head-under-caller-local
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (bind-call [spec : Expr] [value : Expr] [body : Expr]) : i64
+  (match spec
+    [(comptime.Expr.Call head _)
+      (match head
+        [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+        [_ (comptime.comptime-error "expected head")])]
+    [_ (comptime.comptime-error "expected call")]))
+
+(defmacro (use-length) : i64
+  `(bind-call (array-length)
+    (lambda ([v : (Array i64 3)]) : i64 42)
+    (array-length (make-array i64 3))))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [array-length : i64 9]
+    (mac.use-length)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+case run-macro-template-binder-from-call-form-head-under-use-site-global
+file mac.tl
+(import stdlib.comptime)
+
+(defmacro (bind-call [spec : Expr] [value : Expr] [body : Expr]) : i64
+  (match spec
+    [(comptime.Expr.Call head _)
+      (match head
+        [(comptime.Expr.Var binder) (comptime.expr-let-scope binder value body)]
+        [_ (comptime.comptime-error "expected head")])]
+    [_ (comptime.comptime-error "expected call")]))
+
+(defmacro (use-length) : i64
+  `(bind-call (array-length)
+    (lambda ([v : (Array i64 3)]) : i64 42)
+    (array-length (make-array i64 3))))
+end-file
+file main.tl
+(import mac)
+
+(define array-length : i64 9)
+
+(define (main) : i64
+  (mac.use-length))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# A prelude macro only evaluates its operands, and a function's arguments are
+# ordinary calls: a builtin there keeps its definition-site meaning.
+case run-macro-template-builtin-in-prelude-macro-and-function-operands
+file mac.tl
+(define (same [v : i64]) : i64 v)
+
+(defmacro (use-length) : i64
+  `(+
+    (cond
+      [true (array-length (make-array i64 40))]
+      [else 0])
+    (same (array-length (make-array i64 2)))))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [array-length : i64 9]
+    (mac.use-length)))
+end-file
+run run "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit 42
+
+# KNOWN LIMIT, not a statement of correct behaviour (#9738): a real builtin call
+# inside an operand of a user macro, under a same-spelled caller local, reports
+# E0201, as it does without this repair. The macro might read that head as a
+# binder, and hygiene cannot see which.
+case check-macro-template-builtin-in-user-macro-operand-known-limit
+file mac.tl
+(defmacro (pass [e : Expr]) : i64
+  e)
+
+(defmacro (call-through) : i64
+  `(pass (array-length (make-array i64 42))))
+end-file
+file main.tl
+(import mac)
+
+(define (main) : i64
+  (let [array-length : i64 9]
+    (mac.call-through)))
+end-file
+run check "{{dir}}/main.tl" --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stdout empty
+stderr contains error[E0201]: typecheck: unbound name array-length
+stderr not-contains <structural
+
 # KNOWN LIMIT, not a statement of correct behaviour (#9738): the real builtin
 # written before the handed binder reports E0201 the same way, under a caller local.
 case check-macro-template-real-builtin-then-handed-binder-known-limit

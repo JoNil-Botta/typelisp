@@ -106707,11 +106707,34 @@
 ;; spelling cannot be assumed to mean a builtin. Hygiene cannot see the binder's
 ;; scope, so a real builtin call beside such an operand reports as unbound. This
 ;; scans the expansion's output, only when a captured head would become a builtin.
-(define (macro-hygiene-operand-scan-list?
-  [items : ast.AstExprList]
+(define (macro-hygiene-operand-macro-call?
+  [state : TcMacroState]
   [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
-  [source-id : i64]) : bool
+  [head : ast.AstExpr]) : bool
+  (match head
+    [(Var name)
+      (and
+        (macro-call-callee-maybe-macro? expr-bases state (ast.AstExpr.Var name))
+        (let
+          [symbols : csym.CompilerSymbols
+            (tc-macro-walk-field state macro-live-symbols-value)]
+          (not
+            (csym.compiler-symbols-handle-found?
+              (csym.compiler-symbols-lookup-macro-in-module-id-or
+                (& symbols)
+                cbi.compiler-builtin-id-core-macros-module
+                (macro-hygiene-source-name-id-or session name name)
+                (csym.compiler-symbols-missing-handle))))))]
+    [_ false]))
+
+(define (macro-hygiene-operand-scan-list?
+  [items : ast.AstExprList]
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [session : cis.InternStructuralSessionHandle]
+  [source-id : i64]
+  [macro-operand? : bool]) : bool
   (let
     [index : i64 0]
     [found : bool false]
@@ -106719,18 +106742,22 @@
       (set!
         found
         (macro-hygiene-operand-scan?
+          state
           expr-bases
           session
           source-id
-          (ast.ast-expr-list-get (& items) index 0)))
+          (ast.ast-expr-list-get (& items) index 0)
+          macro-operand?))
       (set! index (+ index 1)))
     found))
 
 (define (macro-hygiene-operand-scan?
+  [state : TcMacroState]
   [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [source-id : i64]
-  [node-id : i64]) : bool
+  [node-id : i64]
+  [macro-operand? : bool]) : bool
   (let
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases node-id)]
     (match expr
@@ -106740,27 +106767,50 @@
         (and
           (= (macro-hygiene-source-name-id-or session name -1) source-id)
           (not (macro-hygiene-global-id? session name)))]
+      ;; A macro can read a binder from the head of a call form it receives, so
+      ;; a head inside its operand can be a binder too. A prelude macro only
+      ;; evaluates its operands, and a function's arguments are ordinary calls.
       [(Call func-box args)
-        (or
-          (match (ast.ast-expr-unspan-with-segment-bases
-            expr-bases
-            (& (ast.ast-expr-segment-bases-get expr-bases func-box)))
-            [(Var _) false]
-            [_
+        (let
+          [head : ast.AstExpr
+            (ast.ast-expr-unspan-with-segment-bases
+              expr-bases
+              (& (ast.ast-expr-segment-bases-get expr-bases func-box)))]
+          (or
+            (and
+              (match head
+                [(Var _) macro-operand?]
+                [_ true])
               (macro-hygiene-operand-scan?
+                state
                 expr-bases
                 session
                 source-id
-                func-box)])
-          (macro-hygiene-operand-scan-list? args expr-bases session source-id))]
+                func-box
+                macro-operand?))
+            (macro-hygiene-operand-scan-list?
+              args
+              state
+              expr-bases
+              session
+              source-id
+              (or
+                macro-operand?
+                (macro-hygiene-operand-macro-call?
+                  state
+                  expr-bases
+                  session
+                  head)))))]
       ;; The child-id list, not the fold macro at this call site: the macro
       ;; expands an arm per expression variant, about 120 KB of assembly here.
       [_
         (macro-hygiene-operand-scan-list?
           (ast.ast-expr-child-ids expr)
+          state
           expr-bases
           session
-          source-id)])))
+          source-id
+          macro-operand?)])))
 
 (define (macro-hygiene-output-has-operand?
   [env : MacroHygieneEnv]
@@ -106770,10 +106820,12 @@
     (and
       (>= root 0)
       (macro-hygiene-operand-scan?
+        env.state
         (macro-hygiene-expr-segment-bases env)
         (macro-hygiene-env-structural-session env)
         source-id
-        root))))
+        root
+        false))))
 
 ;; The identity of a free template name that names nothing at the definition
 ;; site. Template binders use the expansion depth itself, so this lane cannot

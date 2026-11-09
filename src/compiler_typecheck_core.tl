@@ -127612,16 +127612,26 @@
 
 ;; The help a move-only value read through a reference gets for what consumes
 ;; it (`OwnershipMoveOutDiagnostic.context`), as typing words it (#8554).
-(define (tc-selected-move-out-reference-help [context : i64]) : String
-  (cond
-    [(= context 1) "bind a borrow `(& ...)` of it instead, or an owned clone"]
-    [(= context 2)
-      "pass an owned clone, or make the parameter a reference and pass `(& ...)`"]
-    [(= context 3)
-      "construct with an owned clone of it, or make the field a reference"]
-    [(= context 4)
-      "return an owned clone, or return a reference tied to a parameter's lifetime"]
-    [else "borrow it with `(& ...)` instead, or use an owned clone"]))
+(define (tc-selected-move-out-reference-help
+  [context : i64]
+  [through-view : bool]) : String
+  (let
+    [help : String
+      (cond
+        [(= context 1)
+          "bind a borrow `(& ...)` of it instead, or an owned clone"]
+        [(= context 2)
+          "pass an owned clone, or make the parameter a reference and pass `(& ...)`"]
+        [(= context 3)
+          "construct with an owned clone of it, or make the field a reference"]
+        [(= context 4)
+          "return an owned clone, or return a reference tied to a parameter's lifetime"]
+        [else "borrow it with `(& ...)` instead, or use an owned clone"])]
+    (if (and through-view (!= context 1))
+      (str_cat.str-cat
+        help
+        "; or bind a borrow `(& ...)` or an owned `(clone ...)` in place of this view")
+      help)))
 
 ;; The E0208 for a move-only value read through a shared (kind 1) or mutable
 ;; (kind 2) reference, naming its type as typing does (#8554); No when the
@@ -127659,7 +127669,9 @@
                   (tc-rich-error-one-secondary
                     (tc-selected-source-span (& diagnostic.source))
                     message
-                    (tc-selected-move-out-reference-help diagnostic.context)
+                    (tc-selected-move-out-reference-help
+                      diagnostic.context
+                      diagnostic.through-view)
                     (tc-selected-source-span (& diagnostic.source))
                     "this reads the value through a reference"))))])])))
 

@@ -71,9 +71,11 @@
   (source own.OwnershipSource)
   ;; The moved value's type, and what consumes it (`move-context`: 1 a `let`
   ;; initializer, 2 a call argument, 3 a constructor argument, 4 a returned
-  ;; value, 0 another use), for the diagnostic's wording.
+  ;; value, 0 another use), and whether it was reached through a view, for
+  ;; the diagnostic's wording.
   (type NormalizeMaybeType)
-  (context i64))
+  (context i64)
+  (through-view bool))
 
 (defenum NormalizeMaybeType
   (Some typed.TypedTypeId)
@@ -2982,7 +2984,8 @@
         3
         (try (normalize-source-copy! state source))
         NormalizeMaybeType.No
-        state.move-context))))
+        state.move-context
+        false))))
 
 ;; `normalize-global-move-out` as a walk's result.
 (define (normalize-value-global-move-out
@@ -6092,7 +6095,8 @@
                 4
                 (try (normalize-source-copy! state (& node.source)))
                 NormalizeMaybeType.No
-                state.move-context))))
+                state.move-context
+                false))))
         (try
           (normalize-emit!
             state
@@ -6155,9 +6159,9 @@
                 ;; container's element is an element move.
                 (cond
                   [(>= loan 0)
-                    (match (& (array-ref state.body.loans loan).kind)
-                      [(own.OwnershipLoanKind.Exclusive) 2]
-                      [_ 1])]
+                    (if (normalize-move-out-mutable? (& state) loan)
+                      2
+                      1)]
                   ;; A fixed array's element at a runtime index (a literal
                   ;; index in range is an exact path, moved on its own).
                   [(and indexed fixed) 4]
@@ -6174,7 +6178,8 @@
                       (typed.TypedTypeId
                         (typed.typed-handle-copy (& occurrence.type.handle))))]
                   [(typed.TypedNodeResult.Err _) NormalizeMaybeType.No])
-                state.move-context))))
+                state.move-context
+                (and (>= loan 0) (normalize-view-loan? (& state) loan))))))
         (if (< loan 0)
           (try
             (normalize-emit!
@@ -6725,6 +6730,18 @@
 ;; Whether `loan` is a view's loan (`normalize-borrow!`).
 (define (normalize-view-loan? [state : (& state NormalizeState)] [loan : i64]) : bool
   (normalize-i64-member? (& state.view-loans) loan))
+
+;; Whether a move out through `loan` leaves a mutable reference: `loan` is
+;; exclusive, or is reached through one as a view (issued shared until
+;; written) or a binder routed through its view is.
+(define (normalize-move-out-mutable?
+  [state : (& state NormalizeState)]
+  [loan : i64]) : bool
+  (or
+    (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan)))
+    (let
+      [parent : i64 (normalize-write-parent state loan)]
+      (and (>= parent 0) (normalize-move-out-mutable? state parent)))))
 
 ;; The loan a write through `loan` would also go through: a view's parent
 ;; (the reference it was read through), or the view an opaque referent's

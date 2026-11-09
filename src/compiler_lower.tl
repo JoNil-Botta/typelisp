@@ -17764,6 +17764,18 @@
                         (lower-global-shared-view field-ty))
                         [(F32)
                           (lower-bitcast-value shr-state shr-value (U64) (F32))]
+                        ;; Comparison metadata of Bool means Bool operands, so
+                        ;; an unpacked bool must be typed Bool in the IR too.
+                        ;; The optimizer keeps this Cast, unlike a Mov, whose
+                        ;; copy would bring the U64 var back into the compare.
+                        [(Bool)
+                          (match (lower-emit-cast
+                            shr-state
+                            shr-value
+                            (U64)
+                            (Bool))
+                            [(Expr cast-state cast-value _)
+                              (Expr cast-state cast-value field-ty)])]
                         [_ (Expr shr-state shr-value field-ty)])])]))])))))
 
 ;; OR one field value into the packed-word accumulator: mask it to its byte

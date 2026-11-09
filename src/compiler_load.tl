@@ -13205,19 +13205,21 @@
             (& surface.modules)
             index
             cbi.compiler-builtin-id-fix-empty))
-        ;; A module body owns its marker and holds nothing.
+        ;; The root module has no holder, and a module body owns its marker.
         (match (ast.ast-decl-list-get
           (& surface.decls)
           index
           (ast.ast-decl-fallback))
           [(Module name)
             (unless
-              (=
-                (ast.ast-decl-path-list-owner-id
-                  (& surface.paths)
-                  index
-                  cbi.compiler-builtin-id-fix-empty)
-                name)
+              (or
+                (= name cbi.compiler-builtin-id-fix-empty)
+                (=
+                  (ast.ast-decl-path-list-owner-id
+                    (& surface.paths)
+                    index
+                    cbi.compiler-builtin-id-fix-empty)
+                  name))
               (set!
                 held
                 (sym_i64_env.sym-i64-bind-id

@@ -800,3 +800,909 @@ exec "{{dir}}/target/release/abi_export_consumer{{exe}}"
 exit 42
 stdout empty
 stderr empty
+
+# #9730/#9731/#9732: a moduleless dependency keeps its dotted identity, so it
+# never shares the importer's module, whatever the importer declares. `check`
+# loads dependencies from source and `build` from their package artifacts.
+case package-moduleless-dep-keeps-local-macro
+opt 0 1 2
+each macro-first import-first after-function main-first body-import dep-macro body-dep-macro qualified-dep-macro
+file -x typelisp.pkg
+(package (name "macro_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(defmacro (m) : i64 (expr-int 41))
+(define (lv) : i64 41)
+end-file
+file src/macro-first.tl
+(defmacro (m) : i64 (expr-int 42))
+(import libd.src.lib as l)
+(define (main) : i64 (m))
+end-file
+file src/import-first.tl
+(import libd.src.lib as l)
+(defmacro (m) : i64 (expr-int 42))
+(define (main) : i64 (m))
+end-file
+file src/after-function.tl
+(define (before) : i64 1)
+(defmacro (m) : i64 (expr-int 41))
+(import libd.src.lib as l)
+(define (main) : i64 (+ (before) (m)))
+end-file
+file src/main-first.tl
+(defmacro (m) : i64 (expr-int 42))
+(define (main) : i64 (m))
+(import libd.src.lib as l)
+end-file
+file src/body-import.tl
+(defmacro (m) : i64 (expr-int 42))
+(define (main) : i64 (m))
+(module one
+  (import libd.src.lib as l)
+  (define (g) : i64 1))
+end-file
+file src/dep-macro.tl
+(defmacro (m) : i64 (expr-int 42))
+(import libd.src.lib as l)
+(define (g) : i64 0)
+(define (main) : i64 (m))
+end-file
+file src/body-dep-macro.tl
+(defmacro (m) : i64 (expr-int 42))
+(module inner
+  (import libd.src.lib as l)
+  (define (g) : i64 0))
+(define (main) : i64 (m))
+end-file
+file src/qualified-dep-macro.tl
+(defmacro (m) : i64 (expr-int 1))
+(import libd.src.lib as l)
+(define (main) : i64 (+ (m) (l.m)))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/macro_app{{exe}}"
+exit 42
+step warm-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/macro_app{{exe}}"
+exit 42
+
+# Genuine duplicates in one module stay diagnosed beside a dependency import.
+case package-moduleless-dep-duplicate-macro
+file typelisp.pkg
+(package (name "dup_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(define (lv) : i64 41)
+end-file
+file src/main.tl
+(defmacro (m) : i64 (expr-int 42))
+(defmacro (m) : i64 (expr-int 41))
+(import libd.src.lib as l)
+(define (main) : i64 (m))
+end-file
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0501]: symbols: duplicate macro declaration m
+
+case package-moduleless-dep-importers
+opt 0 1 2
+each named body helper-file selected selected-moduleless selected-renamed selected-body wildcard local-same-name
+file -x typelisp.pkg
+(package (name "importer_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(define (lv) : i64 41)
+end-file
+file src/named.tl
+(module app.mod)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+file src/body.tl
+(module inner
+  (import libd.src.lib as l)
+  (define (g) : i64 (l.lv)))
+(define (main) : i64 42)
+end-file
+file src/helper.tl
+(import libd.src.lib as l)
+(define (hv) : i64 (l.lv))
+end-file
+file src/helper-file.tl
+(import helper as h)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (h.hv) (l.lv) -40))
+end-file
+file src/selected.tl
+(module app.mod)
+(import libd.src.lib.lv)
+(define (main) : i64 (+ (lv) 1))
+end-file
+file src/selected-moduleless.tl
+(import libd.src.lib.lv)
+(define (main) : i64 (+ (lv) 1))
+end-file
+file src/selected-renamed.tl
+(module app.mod)
+(import libd.src.lib.lv as got)
+(define (main) : i64 (+ (got) 1))
+end-file
+file src/selected-body.tl
+(module inner
+  (import libd.src.lib.lv)
+  (define (g) : i64 (lv)))
+(define (main) : i64 42)
+end-file
+file src/wildcard.tl
+(module app.mod)
+(import libd.src.lib.*)
+(define (main) : i64 (+ (lv) 1))
+end-file
+file src/local-same-name.tl
+(import libd.src.lib as l)
+(define (lv) : i64 1)
+(define (main) : i64 (+ (l.lv) (lv)))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/importer_app{{exe}}"
+exit 42
+step warm-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/importer_app{{exe}}"
+exit 42
+
+# The module body itself runs: an unused body beside a root main proves nothing.
+# `main` is inside the body, so the exit status comes from the body's own calls.
+case package-dependency-alias-in-body-main
+opt 0 1 2
+each moduleless explicit
+file -x typelisp.pkg
+(package (name "body_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/{{each}}")))
+end-file
+file vendor/moduleless/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/moduleless/src/lib.tl
+(define (lv) : i64 41)
+end-file
+file vendor/explicit/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/explicit/src/lib.tl
+(module libx)
+(define (lv) : i64 41)
+end-file
+file src/main.tl
+(import libd.src.lib as l)
+(defmacro (m) : i64 (expr-int 1))
+(define (root-value) : i64 (+ (l.lv) (m)))
+(module inner
+  (import stdlib.test)
+  (import libd.src.lib as l2)
+  (import libd.src.lib.lv)
+  (test body-alias (test.assert-i64-eq (+ (l2.lv) 1) 42 "alias in body"))
+  (test body-selected (test.assert-i64-eq (+ (lv) 1) 42 "selected in body"))
+  (define (main) : i64 (+ (l2.lv) (lv) -40)))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step test-check
+run test --check --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/body_app{{exe}}"
+exit 42
+
+# An import does not merge names, and real alias and export errors stay located.
+case package-moduleless-dep-diagnostics
+each bare bare-named unknown-alias unknown-member missing-selected local-collision
+file -x typelisp.pkg
+(package (name "diag_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(define (lv) : i64 41)
+end-file
+file src/bare.tl
+(import libd.src.lib as l)
+(define (main) : i64 (+ (lv) 1))
+end-file
+file src/bare-named.tl
+(module app.mod)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (lv) 1))
+end-file
+file src/unknown-alias.tl
+(module app.mod)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (z.lv) 1))
+end-file
+file src/unknown-member.tl
+(module app.mod)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.nope) 1))
+end-file
+file src/missing-selected.tl
+(module app.mod)
+(import libd.src.lib.nope)
+(define (main) : i64 42)
+end-file
+file src/local-collision.tl
+(module app.mod)
+(import libd.src.lib.lv)
+(define (lv) : i64 1)
+(define (main) : i64 (lv))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr match error\[E0(200|201|304|305)\]
+stderr contains {{each}}.tl:
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr match error\[E0(200|201|304|305)\]
+
+# #9733: each requested alias binds the module the dependency declares, and
+# a repeated request neither loses that identity nor loads the module twice.
+case package-repeated-dependency-import
+opt 0 1 2
+each two-aliases two-aliases-named swapped-order root-and-body sibling-bodies alias-and-selected macro-both-aliases macro-selected macro-sibling-bodies
+file -x typelisp.pkg
+(package (name "repeat_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(module libx)
+(defmacro (m) : i64 (expr-int 21))
+(define (lv) : i64 41)
+end-file
+file src/macro-both-aliases.tl
+(import libd.src.lib as l)
+(import libd.src.lib as l2)
+(define (main) : i64 (+ (l.m) (l2.m)))
+end-file
+file src/macro-selected.tl
+(import libd.src.lib as l)
+(import libd.src.lib.m as mm)
+(define (main) : i64 (+ (mm) (l.m)))
+end-file
+file src/macro-sibling-bodies.tl
+(import libd.src.lib as l)
+(module first
+  (import libd.src.lib as p)
+  (define (g) : i64 (p.m)))
+(module second
+  (import libd.src.lib as q)
+  (define (g) : i64 (q.lv)))
+(define (main) : i64 (+ (l.m) 21))
+end-file
+file src/two-aliases.tl
+(import libd.src.lib as l)
+(import libd.src.lib as l2)
+(define (main) : i64 (+ (l.lv) (l2.lv) -40))
+end-file
+file src/two-aliases-named.tl
+(module app.mod)
+(import libd.src.lib as l)
+(import libd.src.lib as l2)
+(define (main) : i64 (+ (l.lv) (l2.lv) -40))
+end-file
+file src/swapped-order.tl
+(module app.mod)
+(import libd.src.lib as l2)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.lv) (l2.lv) -40))
+end-file
+file src/root-and-body.tl
+(import libd.src.lib as l)
+(module inner
+  (import libd.src.lib as l2)
+  (define (g) : i64 (l2.lv)))
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+file src/sibling-bodies.tl
+(module first
+  (import libd.src.lib as p)
+  (define (g) : i64 (p.lv)))
+(module second
+  (import libd.src.lib as q)
+  (define (g) : i64 (q.lv)))
+(define (main) : i64 42)
+end-file
+file src/alias-and-selected.tl
+(import libd.src.lib as l)
+(import libd.src.lib.lv as got)
+(define (main) : i64 (+ (l.lv) (got) -40))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/repeat_app{{exe}}"
+exit 42
+step warm-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/repeat_app{{exe}}"
+exit 42
+
+case package-repeated-moduleless-dependency-import
+opt 0 1 2
+each two-aliases root-and-body root-macro-and-body
+file -x typelisp.pkg
+(package (name "repeat_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(define (lv) : i64 41)
+end-file
+file src/two-aliases.tl
+(import libd.src.lib as l)
+(import libd.src.lib as l2)
+(define (main) : i64 (+ (l.lv) (l2.lv) -40))
+end-file
+file src/root-and-body.tl
+(import libd.src.lib as l)
+(module inner
+  (import libd.src.lib as l2)
+  (define (g) : i64 (l2.lv)))
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+file src/root-macro-and-body.tl
+(defmacro (m) : i64 (expr-int 1))
+(import libd.src.lib as l)
+(module inner
+  (import libd.src.lib as l2)
+  (define (g) : i64 1))
+(define (main) : i64 (+ (l.lv) (m)))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/repeat_app{{exe}}"
+exit 42
+
+# One type owner per moduleless dependency: repeated aliases share it, and two
+# dependencies may declare the same bare type name.
+case package-moduleless-dependency-type-owner
+opt 0 1 2
+each repeated two-dependencies
+file -x typelisp.pkg
+(package (name "owner_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (depabi "vendor/depabi") (other "vendor/other")))
+end-file
+file vendor/depabi/typelisp.pkg
+(package (name "depabi") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/depabi/src/lib.tl
+(defstruct Word (x i64))
+(define (make [x : i64]) : Word (Word x))
+(define (read [x : Word]) : i64 x.x)
+end-file
+file vendor/other/typelisp.pkg
+(package (name "other") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/other/src/lib.tl
+(defstruct Word (x i64))
+(define (make [x : i64]) : Word (Word x))
+(define (read [x : Word]) : i64 x.x)
+end-file
+file src/repeated.tl
+(import depabi.src.lib as e)
+(import depabi.src.lib as f)
+(define (main) : i64
+  (let [x : e.Word (f.make 42)] (e.read x)))
+end-file
+file src/two-dependencies.tl
+(import depabi.src.lib as e)
+(import other.src.lib as f)
+(define (main) : i64
+  (let [x : e.Word (e.make 20)] [y : f.Word (f.make 22)]
+    (+ (e.read x) (f.read y))))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/owner_app{{exe}}"
+exit 42
+
+# Identity edges: the surface serves only a dependency's entry, and link names
+# follow the module a declaration really has.
+case package-dependency-identity-edges
+opt 0 1 2
+each explicit-non-entry explicit-entry-and-non-entry body-same-name header-same-name
+file -x typelisp.pkg
+(package (name "edge_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/{{each}}")))
+end-file
+file vendor/explicit-entry-and-non-entry/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/explicit-entry-and-non-entry/src/lib.tl
+(module libx)
+(import other as o)
+(define (lv) : i64 (o.ov))
+end-file
+file vendor/explicit-entry-and-non-entry/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/explicit-entry-and-non-entry.tl
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (o.ov) -40))
+end-file
+file vendor/explicit-non-entry/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/explicit-non-entry/src/lib.tl
+(module libx)
+(import helpermod as h)
+(define (lv) : i64 (h.hv))
+end-file
+file vendor/explicit-non-entry/src/helpermod.tl
+(module helpermod)
+(define (hv) : i64 41)
+end-file
+file vendor/body-same-name/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/body-same-name/src/lib.tl
+(module libd.src.lib
+  (define (lv) : i64 41))
+end-file
+file vendor/header-same-name/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/header-same-name/src/lib.tl
+(module libd.src.lib)
+(define (lv) : i64 41)
+end-file
+file src/explicit-non-entry.tl
+(import libd.src.helpermod as h)
+(define (main) : i64 (+ (h.hv) 1))
+end-file
+file src/body-same-name.tl
+(import libd.src.lib as l)
+(module libd.src.lib
+  (define (main) : i64 (+ (lv) 1)))
+end-file
+file src/header-same-name.tl
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/edge_app{{exe}}"
+exit 42
+
+# A consumer module spelled like a dependency's internal helper must not capture
+# the helper's alias. Importing a moduleless non-entry file does not link yet,
+# so the build is rejected; it must never produce a program using the local name.
+case package-dependency-non-entry-alias-not-captured
+file typelisp.pkg
+(package (name "capture_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(module libx)
+(import helper as h)
+(define (lv) : i64 (h.hv))
+end-file
+file vendor/libd/src/helper.tl
+(define (hv) : i64 41)
+end-file
+file src/main.tl
+(module helper)
+(import libd.src.helper as h)
+(define (hv) : i64 1)
+(define (main) : i64 (+ (h.hv) 1))
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit nonzero
+
+# The source route cannot project macro-generated items, so a moduleless
+# dependency that has them stays on its artifact; `build` is the route under test.
+case package-moduleless-dependency-generated-items
+opt 0 1 2
+each function type explicit-dot-entry
+file -x typelisp.pkg
+(package (name "generated_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/{{each}}")))
+end-file
+file vendor/explicit-dot-entry/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "./src/lib.tl"))
+end-file
+file vendor/explicit-dot-entry/src/lib.tl
+(module libx)
+(defmacro (gen) : Decls `(define (made) : i64 41))
+(gen)
+end-file
+file src/explicit-dot-entry.tl
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.made) 1))
+end-file
+file vendor/function/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/function/src/lib.tl
+(defmacro (gen) : Decls `(define (made) : i64 41))
+(gen)
+end-file
+file vendor/type/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/type/src/lib.tl
+(defmacro (gen) : Decls `(defstruct Made (x i64)))
+(gen)
+(define (make) : Made (Made 41))
+(define (read [m : Made]) : i64 m.x)
+end-file
+file src/function.tl
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.made) 1))
+end-file
+file src/type.tl
+(import libd.src.lib as l)
+(define (main) : i64
+  (let [m : l.Made (l.make)] (+ (l.read m) 1)))
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/generated_app{{exe}}"
+exit 42
+
+# Explicit dependencies stay on their artifacts while moduleless ones load from
+# source, in either import order and with types crossing both.
+case package-mixed-explicit-and-moduleless-dependencies
+opt 0 1 2
+each explicit-first moduleless-first named-importer
+file -x typelisp.pkg
+(package (name "mixed_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (ex "vendor/ex") (ml "vendor/ml")))
+end-file
+file vendor/ex/typelisp.pkg
+(package (name "ex") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/ex/src/lib.tl
+(module pub.ex)
+(defstruct Word (x i64))
+(define (make [x : i64]) : Word (Word x))
+(define (read [x : Word]) : i64 x.x)
+end-file
+file vendor/ml/typelisp.pkg
+(package (name "ml") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/ml/src/lib.tl
+(defstruct Word (x i64))
+(define (make [x : i64]) : Word (Word x))
+(define (read [x : Word]) : i64 x.x)
+end-file
+file src/explicit-first.tl
+(import ex.src.lib as e)
+(import ml.src.lib as m)
+(define (main) : i64
+  (let [a : e.Word (e.make 20)] [b : m.Word (m.make 22)]
+    (+ (e.read a) (m.read b))))
+end-file
+file src/moduleless-first.tl
+(import ml.src.lib as m)
+(import ex.src.lib as e)
+(define (main) : i64
+  (let [a : e.Word (e.make 20)] [b : m.Word (m.make 22)]
+    (+ (e.read a) (m.read b))))
+end-file
+file src/named-importer.tl
+(module app.mod)
+(import ml.src.lib as m)
+(import ex.src.lib as e)
+(define (main) : i64
+  (let [a : e.Word (e.make 20)] [b : m.Word (m.make 22)]
+    (+ (e.read a) (m.read b))))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/mixed_app{{exe}}"
+exit 42
+
+# Two sources cannot hold one module identity: loading the dependency would
+# duplicate the module, and skipping it would bind the alias to the wrong source.
+case package-dependency-module-identity-collision
+opt 0 1 2
+each moduleless-alias moduleless-selected no-local-name explicit-alias nested-module
+file -x typelisp.pkg
+(package (name "collision_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd") (libx "vendor/libx")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(import other as o)
+(define (lv) : i64 (o.ov))
+end-file
+file vendor/libx/typelisp.pkg
+(package (name "libx") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libx/src/lib.tl
+(module shared.name)
+(define (lv) : i64 41)
+end-file
+file vendor/libd/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/nested-module.tl
+(module other)
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (ov) : i64 1)
+(define (main) : i64 (+ (o.ov) 1))
+end-file
+file src/moduleless-alias.tl
+(module libd.src.lib)
+(import libd.src.lib as l)
+(define (lv) : i64 1)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+file src/moduleless-selected.tl
+(module libd.src.lib)
+(import libd.src.lib.lv as got)
+(define (lv) : i64 1)
+(define (main) : i64 (+ (got) 1))
+end-file
+file src/no-local-name.tl
+(module libd.src.lib)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+file src/explicit-alias.tl
+(module shared.name)
+(import libx.src.lib as l)
+(define (lv) : i64 1)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+
+# One recorded holder per module identity. The compiler is also reached by bare
+# name through PATH: there the doctest worker cannot start, so the emit load
+# itself must reject these programs.
+case package-dependency-module-holder-conflict
+opt -
+each local-after-closure-entry local-before-entry nonentry-before-local selected-nonentry
+sh mkdir -p "{{dir}}/bin" && cp "{{compiler}}" "{{dir}}/bin/typelisp{{exe}}"
+file -x typelisp.pkg
+(package (name "holder_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(module libx)
+(import other as o2)
+(define (lv) : i64 (o2.ov))
+end-file
+file vendor/libd/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/other.tl
+(module other)
+(define (ov) : i64 1)
+end-file
+file src/local-after-closure-entry.tl
+(import libd.src.lib as l)
+(import other as x)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/local-before-entry.tl
+(import other as x)
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/nonentry-before-local.tl
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(import other as x)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/selected-nonentry.tl
+(import other as x)
+(import libd.src.lib as l)
+(import libd.src.other.ov as got)
+(define (main) : i64 (+ (l.lv) (x.ov) (got) -1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+step build-by-path
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+step build-by-bare-name
+exec env PATH="{{dir}}/bin:$PATH" typelisp build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0305]: compiler-load: import
+stderr contains {{each}}.tl:
+
+# The same programs with no conflict stay accepted and correct on both routes.
+case package-dependency-module-holder-no-conflict
+opt 0 1 2
+each entry-first local-first nonentry-before-local
+sh mkdir -p "{{dir}}/bin" && cp "{{compiler}}" "{{dir}}/bin/typelisp{{exe}}"
+file -x typelisp.pkg
+(package (name "holder_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(module libx)
+(import other as o2)
+(define (lv) : i64 (o2.ov))
+end-file
+file vendor/libd/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/localm.tl
+(module localm)
+(define (ov) : i64 1)
+end-file
+file src/entry-first.tl
+(import libd.src.lib as l)
+(import localm as x)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/local-first.tl
+(import localm as x)
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+file src/nonentry-before-local.tl
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(import localm as x)
+(define (main) : i64 (+ (l.lv) (x.ov) (o.ov) -1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build-by-path
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/holder_app{{exe}}"
+exit 82
+step build-by-bare-name
+exec env PATH="{{dir}}/bin:$PATH" typelisp build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/holder_app{{exe}}"
+exit 82
+
+# A macro from a moduleless dependency resolves free template names in its own
+# module, so a name only the importer defines is not visible to it.
+case package-moduleless-dep-macro-free-name
+file typelisp.pkg
+(package (name "free_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(defmacro (f) : i64 `(outside))
+end-file
+file src/main.tl
+(import libd.src.lib.f)
+(define (outside) : i64 5)
+(define (main) : i64 (f))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0201]
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit 1
+stderr contains error[E0201]
+
+# #9750 residual: a moduleless dependency with generated items keeps its artifact
+# identity on build, so check and build disagree here. Pinned until #9750 closes.
+case package-moduleless-dep-generated-macro-free-name-residual
+file typelisp.pkg
+(package (name "free_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(defmacro (gen) : Decls `(define (made) : i64 1))
+(gen)
+(defmacro (f) : i64 `(outside))
+end-file
+file src/main.tl
+(import libd.src.lib.f)
+(define (outside) : i64 5)
+(define (main) : i64 (f))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0201]
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exec "{{dir}}/target/release/free_app{{exe}}"
+exit 5
+

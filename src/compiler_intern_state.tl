@@ -60,7 +60,11 @@
 
 (defenum InternMacroGlobalRole
   (Legacy)
-  (Context))
+  (Context)
+  ;; An entry-module name handed out by reflection, and a reference built from
+  ;; root authority that denotes the declaration. Both resolve like Context.
+  (Reflected)
+  (ReflectedDeclaration))
 
 (defstruct InternTemplateSourceRecord
   (source-name-id i64))
@@ -863,7 +867,9 @@
 (define (intern-macro-global-role-code [role : InternMacroGlobalRole]) : i64
   (match role
     [(Legacy) 0]
-    [(Context) 1]))
+    [(Context) 1]
+    [(Reflected) 2]
+    [(ReflectedDeclaration) 3]))
 
 ;; Set once any macro-global identity names the runtime module, at the one place
 ;; such records are created. It lets builtin classification skip the record read
@@ -872,11 +878,21 @@
 (define intern-macro-global-runtime-owned? : bool
   false)
 
+;; Set once any macro-global identity is defined at the entry module, at the same
+;; place. The root-identity paths in typecheck and lowering read it first, so a
+;; program without such an identity never decodes a record there. It only ever
+;; turns on.
+(define intern-root-macro-global-issued : bool
+  false)
+
 (define (intern-structural-session-macro-global-identity
   [handle : InternStructuralSessionHandle]
   [role : InternMacroGlobalRole]
   [definition-module-id : i64]
   [source-name-id : i64]) : InternMacroGlobalIdentity
+  (when
+    (= definition-module-id cbi.compiler-builtin-id-fix-empty)
+    (set! intern-root-macro-global-issued true))
   (when
     (= definition-module-id cbi.compiler-builtin-id-runtime-module)
     (set! intern-macro-global-runtime-owned? true))
@@ -888,6 +904,35 @@
         (intern-macro-global-role-code role)
         definition-module-id
         source-name-id))))
+
+;; The source spelling of a macro-global matching `mask`, or -1: 1 Reflected,
+;; 2 ReflectedDeclaration, 4 any role defined at root.
+(define (intern-macro-global-source-id-or-neg
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [mask : i64]) : i64
+  (match (intern-structural-session-macro-global-record
+    handle
+    (InternMacroGlobalIdentity raw))
+    [(Some record)
+      (if (not
+        (=
+          (bit-and
+            mask
+            (bit-or
+              (match record.role
+                [(Reflected) 1]
+                [(ReflectedDeclaration) 2]
+                [_ 0])
+              (if (=
+                record.definition-module-id
+                cbi.compiler-builtin-id-fix-empty)
+                4
+                0)))
+          0))
+        record.source-name-id
+        -1)]
+    [(No) -1]))
 
 (define (intern-structural-session-macro-global-record
   [handle : InternStructuralSessionHandle]
@@ -929,6 +974,18 @@
                         Context
                         definition-module-id
                         source-name-id))]
+                  [(= role 2)
+                    (Some
+                      (InternMacroGlobalRecord
+                        Reflected
+                        definition-module-id
+                        source-name-id))]
+                  [(= role 3)
+                    (Some
+                      (InternMacroGlobalRecord
+                        ReflectedDeclaration
+                        definition-module-id
+                        source-name-id))]
                   [else No]))))
           (match (intern-structural-session-record-for-raw handle raw)
             [(No) No]
@@ -946,6 +1003,18 @@
                     (Some
                       (InternMacroGlobalRecord
                         Context
+                        record.middle-id
+                        record.right-id))]
+                  [(= record.left-id 2)
+                    (Some
+                      (InternMacroGlobalRecord
+                        Reflected
+                        record.middle-id
+                        record.right-id))]
+                  [(= record.left-id 3)
+                    (Some
+                      (InternMacroGlobalRecord
+                        ReflectedDeclaration
                         record.middle-id
                         record.right-id))]
                   [else No]))]))))))
@@ -1292,7 +1361,7 @@
                   record.right-id
                   fallback)]
               [(= record.kind (ci.intern-structural-kind-macro-global))
-                (if (or (= record.left-id 0) (= record.left-id 1))
+                (if (and (>= record.left-id 0) (<= record.left-id 3))
                   record.right-id
                   fallback)]
               [(= record.kind (ci.intern-structural-kind-macro-local))

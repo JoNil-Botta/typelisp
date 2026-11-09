@@ -326,10 +326,12 @@
             [(No) -2]
             [(Some record)
               (let
+                ;; A captured surface holds finished output. A reflected role leaves
+                ;; below as its plain spelling; only Legacy and Context stay on the wire.
                 [role : i64
                   (match record.role
                     [(Legacy) 0]
-                    [(Context) 1])]
+                    [_ 1])]
                 [module-ref : i64
                   (surface-identity-local-ref
                     record.definition-module-id
@@ -338,14 +340,24 @@
                   (surface-identity-local-ref
                     record.source-name-id
                     source-count)]
-                (if (or (< module-ref 0) (< source-ref 0))
-                  -2
-                  (+
-                    (surface-identity-portable-macro-global-offset
-                      identity-count)
-                    (+
-                      (* (+ (* role identity-count) module-ref) identity-count)
-                      source-ref))))])]
+                (match record.role
+                  ;; The image has no reflected role: its plain spelling, as a
+                  ;; dependency's own source names it.
+                  [(or (Reflected) (ReflectedDeclaration))
+                    (if (< source-ref 0)
+                      -2
+                      source-ref)]
+                  [_
+                    (if (or (< module-ref 0) (< source-ref 0))
+                      -2
+                      (+
+                        (surface-identity-portable-macro-global-offset
+                          identity-count)
+                        (+
+                          (*
+                            (+ (* role identity-count) module-ref)
+                            identity-count)
+                          source-ref)))]))])]
         [(match (cis.intern-structural-session-macro-local-record-for-raw
             session
             id)

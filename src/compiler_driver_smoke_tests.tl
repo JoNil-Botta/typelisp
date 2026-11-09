@@ -1733,8 +1733,8 @@
       (match (lower.lower-compiler-source-with-path-mode-package-and-state
         lower-a
         "<state-a>"
-        "(define (helper) : i64 42)
-(module main)
+        "(module main)
+(define (helper) : i64 42)
 (define (main) : i64 (helper))"
         (Scalar)
         "package-a")
@@ -1765,8 +1765,8 @@
               (match (lower.lower-compiler-source-with-path-mode-package-and-state
                 lower-b
                 "<state-b-reuse>"
-                "(define (helper) : i64 42)
-(module main)
+                "(module main)
+(define (helper) : i64 42)
 (define (main) : i64 (helper))"
                 (Scalar)
                 "package-b-reuse")

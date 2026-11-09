@@ -51,6 +51,29 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-identity-test-macro-global-reflected-id
+    [session : cis.InternStructuralSessionHandle]
+    [source-name-id : i64]) : i64
+    (surface-identity-test-macro-global-reflected-id-role
+      session
+      cis.InternMacroGlobalRole.Reflected
+      source-name-id)))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-identity-test-macro-global-reflected-id-role
+    [session : cis.InternStructuralSessionHandle]
+    [role : cis.InternMacroGlobalRole]
+    [source-name-id : i64]) : i64
+    (cis.intern-macro-global-identity-raw
+      (cis.intern-structural-session-macro-global-identity
+        session
+        role
+        0
+        source-name-id))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-identity-test-macro-local-id
     [session : cis.InternStructuralSessionHandle]
     [module-id : i64]
@@ -159,6 +182,8 @@
           (cis.intern-structural-session-fresh-local-identity session 7 alpha))]
       [macro-global-id : i64
         (surface-identity-test-macro-global-id session module-id alpha false)]
+      [macro-global-reflected-id : i64
+        (surface-identity-test-macro-global-reflected-id session alpha)]
       [macro-global-root-id : i64
         (surface-identity-test-macro-global-id
           session
@@ -200,6 +225,27 @@
         (surface_identity.surface-identity-portable-id
           session
           macro-global-id
+          source-count
+          identity-count)]
+      [portable-macro-global-reflected : i64
+        (surface_identity.surface-identity-portable-id
+          session
+          macro-global-reflected-id
+          source-count
+          identity-count)]
+      [portable-macro-global-declaration : i64
+        (surface_identity.surface-identity-portable-id
+          session
+          (surface-identity-test-macro-global-reflected-id-role
+            session
+            cis.InternMacroGlobalRole.ReflectedDeclaration
+            alpha)
+          source-count
+          identity-count)]
+      [portable-macro-global-context-alpha : i64
+        (surface_identity.surface-identity-portable-id
+          session
+          (surface-identity-test-macro-global-id session 0 alpha false)
           source-count
           identity-count)]
       [portable-macro-global-root : i64
@@ -285,6 +331,12 @@
                               hydrated-session
                               7
                               mapped-alpha)))
+                        (=
+                          portable-macro-global-reflected
+                          portable-macro-global-context-alpha)
+                        (=
+                          portable-macro-global-declaration
+                          portable-macro-global-context-alpha)
                         (=
                           (surface_identity.surface-identity-resolve-portable-id
                             hydrated-session

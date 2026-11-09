@@ -6733,7 +6733,9 @@
 
 ;; Whether a move out through `loan` leaves a mutable reference: `loan` is
 ;; exclusive, or is reached through one as a view (issued shared until
-;; written) or a binder routed through its view is.
+;; written) or a binder routed through its view is. The root of such a path
+;; may be a `&mut`'s opaque referent, which a view's read issued shared
+;; (`normalize-borrow!` marks only an exclusive one a view loan).
 (define (normalize-move-out-mutable?
   [state : (& state NormalizeState)]
   [loan : i64]) : bool
@@ -6741,7 +6743,13 @@
     (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan)))
     (let
       [parent : i64 (normalize-write-parent state loan)]
-      (and (>= parent 0) (normalize-move-out-mutable? state parent)))))
+      (if (>= parent 0)
+        (normalize-move-out-mutable? state parent)
+        (and
+          (normalize-view-loan? state loan)
+          (normalize-i64-member?
+            (& state.opaque-places)
+            (array-ref state.body.loans loan).place.index))))))
 
 ;; The loan a write through `loan` would also go through: a view's parent
 ;; (the reference it was read through), or the view an opaque referent's

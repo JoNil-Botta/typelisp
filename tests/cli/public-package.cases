@@ -1249,3 +1249,184 @@ step build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
 exec "{{dir}}/target/release/owner_app{{exe}}"
 exit 42
+
+# Identity edges: the surface serves only a dependency's entry, and link names
+# follow the module a declaration really has.
+case package-dependency-identity-edges
+opt 0 1 2
+each explicit-non-entry body-same-name header-same-name
+file -x typelisp.pkg
+(package (name "edge_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/{{each}}")))
+end-file
+file vendor/explicit-non-entry/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/explicit-non-entry/src/lib.tl
+(module libx)
+(import helpermod as h)
+(define (lv) : i64 (h.hv))
+end-file
+file vendor/explicit-non-entry/src/helpermod.tl
+(module helpermod)
+(define (hv) : i64 41)
+end-file
+file vendor/body-same-name/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/body-same-name/src/lib.tl
+(module libd.src.lib
+  (define (lv) : i64 41))
+end-file
+file vendor/header-same-name/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/header-same-name/src/lib.tl
+(module libd.src.lib)
+(define (lv) : i64 41)
+end-file
+file src/explicit-non-entry.tl
+(import libd.src.helpermod as h)
+(define (main) : i64 (+ (h.hv) 1))
+end-file
+file src/body-same-name.tl
+(import libd.src.lib as l)
+(module libd.src.lib
+  (define (main) : i64 (+ (lv) 1)))
+end-file
+file src/header-same-name.tl
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/edge_app{{exe}}"
+exit 42
+
+# A consumer module spelled like a dependency's internal helper must not capture
+# the helper's alias. Importing a moduleless non-entry file does not link yet,
+# so the build is rejected; it must never produce a program using the local name.
+case package-dependency-non-entry-alias-not-captured
+file typelisp.pkg
+(package (name "capture_app") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "vendor/libd")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(module libx)
+(import helper as h)
+(define (lv) : i64 (h.hv))
+end-file
+file vendor/libd/src/helper.tl
+(define (hv) : i64 41)
+end-file
+file src/main.tl
+(module helper)
+(import libd.src.helper as h)
+(define (hv) : i64 1)
+(define (main) : i64 (+ (h.hv) 1))
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+exit nonzero
+
+# The source route cannot project macro-generated items, so a moduleless
+# dependency that has them stays on its artifact; `build` is the route under test.
+case package-moduleless-dependency-generated-items
+opt 0 1 2
+each function type
+file -x typelisp.pkg
+(package (name "generated_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/{{each}}")))
+end-file
+file vendor/function/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/function/src/lib.tl
+(defmacro (gen) : Decls `(define (made) : i64 41))
+(gen)
+end-file
+file vendor/type/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/type/src/lib.tl
+(defmacro (gen) : Decls `(defstruct Made (x i64)))
+(gen)
+(define (make) : Made (Made 41))
+(define (read [m : Made]) : i64 m.x)
+end-file
+file src/function.tl
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.made) 1))
+end-file
+file src/type.tl
+(import libd.src.lib as l)
+(define (main) : i64
+  (let [m : l.Made (l.make)] (+ (l.read m) 1)))
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/generated_app{{exe}}"
+exit 42
+
+# Explicit dependencies stay on their artifacts while moduleless ones load from
+# source, in either import order and with types crossing both.
+case package-mixed-explicit-and-moduleless-dependencies
+opt 0 1 2
+each explicit-first moduleless-first named-importer
+file -x typelisp.pkg
+(package (name "mixed_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (ex "vendor/ex") (ml "vendor/ml")))
+end-file
+file vendor/ex/typelisp.pkg
+(package (name "ex") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/ex/src/lib.tl
+(module pub.ex)
+(defstruct Word (x i64))
+(define (make [x : i64]) : Word (Word x))
+(define (read [x : Word]) : i64 x.x)
+end-file
+file vendor/ml/typelisp.pkg
+(package (name "ml") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/ml/src/lib.tl
+(defstruct Word (x i64))
+(define (make [x : i64]) : Word (Word x))
+(define (read [x : Word]) : i64 x.x)
+end-file
+file src/explicit-first.tl
+(import ex.src.lib as e)
+(import ml.src.lib as m)
+(define (main) : i64
+  (let [a : e.Word (e.make 20)] [b : m.Word (m.make 22)]
+    (+ (e.read a) (m.read b))))
+end-file
+file src/moduleless-first.tl
+(import ml.src.lib as m)
+(import ex.src.lib as e)
+(define (main) : i64
+  (let [a : e.Word (e.make 20)] [b : m.Word (m.make 22)]
+    (+ (e.read a) (m.read b))))
+end-file
+file src/named-importer.tl
+(module app.mod)
+(import ml.src.lib as m)
+(import ex.src.lib as e)
+(define (main) : i64
+  (let [a : e.Word (e.make 20)] [b : m.Word (m.make 22)]
+    (+ (e.read a) (m.read b))))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stdout contains Type checking passed!
+stderr empty
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exec "{{dir}}/target/release/mixed_app{{exe}}"
+exit 42
+

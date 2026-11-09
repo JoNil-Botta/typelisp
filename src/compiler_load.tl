@@ -12927,8 +12927,11 @@
           (match (clone decl)
             ;; The archive was compiled with this source as its root, so the
             ;; dotted identity its importer gives it is not part of link names.
+            ;; A same-named module body owns its marker and keeps its module.
             [(Module name)
-              (if (= name moduleless-context-id)
+              (if (and
+                (= name moduleless-context-id)
+                (not (= decl-path-id name)))
                 ""
                 (ci.intern-str name))]
             [_ (string.copy module)])]
@@ -13156,10 +13159,12 @@
   [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
   (Available version spmd-callables))
 
-;; The module governing a source's declarations in a hydrated dependency, or -1
-;; when the surface cannot serve it. Declarations of a moduleless dependency
-;; source sit in the producer's root module with their facts keyed there, so
-;; they cannot adopt the dotted identity the importing package gives them.
+;; The module governing the entry source's declarations in a hydrated
+;; dependency, or -1 when the source route must serve it instead. Declarations
+;; of a moduleless dependency source sit in the producer's root module with
+;; their facts keyed there, so they cannot adopt the dotted identity the
+;; importing package gives them. Macro-generated items exist only in the
+;; surface, so a moduleless dependency with any keeps its root identity here.
 (define (compiler-load-dependency-surface-source-module-id
   [state : (& CompilerLoadSessionState)]
   [hydration : (& hydration surface_hydrate.CompilerSurfaceHydration)]
@@ -13171,6 +13176,9 @@
     [root-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [source-module-id : i64 root-module-id]
     [checked-provenance-id : i64 -1]
+    [in-package : bool false]
+    [moduleless : bool false]
+    [generated : bool false]
     (for [index (iterator.range 0 count)]
       (let
         [provenance-id : i64
@@ -13183,31 +13191,42 @@
             (& surface.modules)
             index
             root-module-id)]
-        (match (ast.ast-decl-list-get
-          (& surface.decls)
-          index
-          (ast.ast-decl-fallback))
+        [decl : ast.AstDecl
+          (ast.ast-decl-list-get
+            (& surface.decls)
+            index
+            (ast.ast-decl-fallback))]
+        (unless
+          (= provenance-id checked-provenance-id)
+          (set! checked-provenance-id provenance-id)
+          (set!
+            in-package
+            (=
+              (compiler-load-dependency-catalog-slot-for-provenance-id
+                state
+                provenance-id)
+              slot)))
+        (match decl
           [(Module name)
             (when (= provenance-id source-path-id) (set! source-module-id name))]
           [_
             (when
-              (and
-                (= row-module-id root-module-id)
-                (not (= provenance-id checked-provenance-id)))
-              (set! checked-provenance-id provenance-id)
+              in-package
+              (when (= row-module-id root-module-id) (set! moduleless true))
               (when
-                (=
-                  (compiler-load-dependency-catalog-slot-for-provenance-id
-                    state
-                    provenance-id)
-                  slot)
-                (return -1)))
+                (compiler-load-surface-generated-meta?
+                  (& (ast.ast-decl-generated-meta (& decl))))
+                (set! generated true)))
             (when
               (= provenance-id source-path-id)
               (set! source-module-id row-module-id))])))
-    (if (= source-module-id root-module-id)
-      -1
-      source-module-id)))
+    (cond
+      [moduleless
+        (if generated
+          root-module-id
+          -1)]
+      [(= source-module-id root-module-id) -1]
+      [else source-module-id])))
 
 (define (compiler-load-session-state-dependency-surface-provenance?
   [state : (& CompilerLoadSessionState)]
@@ -13299,12 +13318,16 @@
             [(Ready hydration spmd-callables)
               (let
                 [source-path-id : i64 (compiler-load-source-path-id resolved)]
+                ;; Only the entry's module is known to be its own: the producer
+                ;; gave any other moduleless file an identity from its own import.
                 [source-module-id : i64
-                  (compiler-load-dependency-surface-source-module-id
-                    (& state)
-                    hydration
-                    slot
-                    source-path-id)]
+                  (if (string.eq resolved entry.entry-path)
+                    (compiler-load-dependency-surface-source-module-id
+                      (& state)
+                      hydration
+                      slot
+                      source-path-id)
+                    -1)]
                 [_ : unit (when (< source-module-id 0) (return Unavailable))]
                 [selection : CompilerLoadDependencySurfaceSelection
                   (compiler-load-dependency-surface-select hydration seen)]

@@ -1303,6 +1303,33 @@ stderr contains --> stdlib/core_macros.tl:
 stderr contains | (define (cwd-unterminated) ;; CWD-READER-TEXT
 stderr not-contains ROOT-TEXT-AT-ERROR-LINE
 
+# One prelude importing the other reaches a working-directory file at the
+# second's display path, and that failure is not the second prelude's own.
+case prelude-transitive-shadow-load-failure-source
+file single.tl
+(define (main) : i64 0)
+end-file
+cwd {{dir}}
+sh mkdir -p "{{dir}}/xroot" "{{dir}}/stdlib"
+sh cp -R "{{root}}/stdlib" "{{dir}}/xroot/stdlib"
+sh cp "{{root}}/stdlib/runtime.tl" "{{dir}}/stdlib/runtime.tl"
+sh printf '\n(import stdlib.runtime)\n' >> "{{dir}}/xroot/stdlib/core_macros.tl"
+sh printf '\n(define (cwd-rt-unterminated) ;; CWD-READER-TEXT\n' >> "{{dir}}/stdlib/runtime.tl"
+sh printf '\n;; ROOT-TEXT-AT-ERROR-LINE\n;; ROOT-PADDING\n' >> "{{dir}}/xroot/stdlib/runtime.tl"
+step compile
+run compile single.tl -o "{{dir}}/single.s" --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0101]
+stderr contains --> stdlib/runtime.tl:
+stderr contains | (define (cwd-rt-unterminated) ;; CWD-READER-TEXT
+stderr not-contains ROOT-TEXT-AT-ERROR-LINE
+step test-check
+run test --check single.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0101]
+stderr contains | (define (cwd-rt-unterminated) ;; CWD-READER-TEXT
+stderr not-contains ROOT-TEXT-AT-ERROR-LINE
+
 # A configured prelude's own load failure quotes the configured file.
 case prelude-root-load-failure-source
 file single.tl

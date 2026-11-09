@@ -3183,18 +3183,21 @@
     (string.copy path)))
 
 (define (compiler-load-note-prelude-load-result
+  [path : (& path str)]
   [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
   (match result
     [(Ok decls paths modules seen) (Ok decls paths modules seen)]
     [(Err diag)
-      (let
-        [failed : (__tl_dyn-array bool)
-          (unsafe
-            (ptr-read
-              (ptr-addr-of
-                compiler-load-active-session-state.embedded-stdlib-provenance.prelude-load-failed)))]
-        (set! (array-ref failed 0) true)
-        (Err diag))]))
+      (when
+        (string.eq (cdiag.compiler-diagnostic-path (& (deref diag))) path)
+        (let
+          [failed : (__tl_dyn-array bool)
+            (unsafe
+              (ptr-read
+                (ptr-addr-of
+                  compiler-load-active-session-state.embedded-stdlib-provenance.prelude-load-failed)))]
+          (set! (array-ref failed 0) true)))
+      (Err diag)]))
 
 (define (compiler-load-note-embedded-equivalent-if-matching!
   [suffix : String]
@@ -5214,6 +5217,7 @@
           suffix
           (& (string.copy source-path)))
         (compiler-load-note-prelude-load-result
+          path
           (compiler-load-source-with-paths-and-roots-cfg
             (& (string.copy path))
             (& (compiler-load-session-read-source-text source-path))
@@ -5279,6 +5283,7 @@
               (owned_view.compiler-owned-shared-view load-state)
               (& source-path))]
           (compiler-load-note-prelude-load-result
+            path
             (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
               load-state
               (& (string.copy path))
@@ -14445,6 +14450,7 @@
           suffix
           (& (string.copy source-path)))
         (compiler-load-note-prelude-load-result
+          path
           (compiler-load-package-stdlib-prelude-source-with-roots-cfg
             (& (string.copy path))
             (& (compiler-load-session-read-source-text source-path))

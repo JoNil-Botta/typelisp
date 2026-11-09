@@ -386,8 +386,6 @@
   (explicit-module bool)
   ;; True when this source was established through a module-qualified identity.
   (qualified-load bool)
-  ;; False for a speculative lazy summary, which claims no module.
-  (loaded bool)
   (source-path-id i64)
   (source-path String)
   (root-id String)
@@ -5429,11 +5427,14 @@
   [name-id : i64]) : bool
   (sym_i64_env.sym-i64-contains-id seen name-id))
 
+;; A module's value in `seen` is the source that holds it. A surface's own
+;; `seen` set is serialized without holders, as 1.
 (define (compiler-load-seen-module-bind
   [seen : sym_i64_env.SymI64Env]
   [_name : (& str)]
-  [name-id : i64]) : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-bind-id seen name-id 1))
+  [name-id : i64]
+  [holder-source-id : i64]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind-id seen name-id holder-source-id))
 
 (define (compiler-load-duplicate-module-diagnostic [path : String]) : (Box
     cdiag.CompilerDiagnostic)
@@ -8926,7 +8927,6 @@
     cbi.compiler-builtin-id-fix-empty
     false
     false
-    false
     cbi.compiler-builtin-id-fix-empty
     ""
     ""
@@ -9777,7 +9777,6 @@
   [declaration-module-id : i64]
   [explicit-module : bool]
   [qualified-load : bool]
-  [loaded : bool]
   [decls : (& ast.AstDeclList)]) : CompilerLoadSurfaceSummary
   (let
     [source-path : String (compiler-load-normalize-path path)]
@@ -9791,7 +9790,6 @@
       declaration-module-id
       explicit-module
       qualified-load
-      loaded
       source-path-id
       source-path
       (compiler-load-normalize-path root-id)
@@ -9843,7 +9841,6 @@
                   module-id
                   (compiler-load-decl-list-has-module? decls)
                   qualified-load
-                  false
                   (& decls))))]
           [(Err diag) (Err diag)]))]))
 
@@ -10942,7 +10939,6 @@
                                 (not
                                   (compiler-load-no-expected-module?
                                     (clone expected-module)))
-                                true
                                 (& load-decls))))
                           (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                             (CompilerLoadTraversalContext
@@ -10959,7 +10955,8 @@
                             (compiler-load-seen-module-bind
                               seen
                               (& module-id)
-                              module-name-id)
+                              module-name-id
+                              source-path-id)
                             (owned_view.compiler-owned-reference-shared-view
                               stdlib-roots)
                             import-root
@@ -13123,7 +13120,8 @@
 (defstruct CompilerLoadDependencySurfaceSelection
   (decls ast.AstDeclList)
   (paths ast.AstDeclPathList)
-  (modules ast.AstDeclModuleList))
+  (modules ast.AstDeclModuleList)
+  (seen sym_i64_env.SymI64Env))
 
 (defenum CompilerLoadDependencySurfaceImport
   (Unavailable)
@@ -13173,6 +13171,7 @@
     [paths : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
     [modules : ast.AstDeclModuleList
       (ast.ast-decl-module-list-with-capacity count)]
+    [held : sym_i64_env.SymI64Env seen]
     (for [index (iterator.range 0 count)]
       (unless
         (compiler-load-dependency-surface-decl-seen?
@@ -13205,8 +13204,34 @@
           (ast.ast-decl-module-list-get-id
             (& surface.modules)
             index
-            cbi.compiler-builtin-id-fix-empty))))
-    (CompilerLoadDependencySurfaceSelection decls paths modules)))
+            cbi.compiler-builtin-id-fix-empty))
+        ;; A module body owns its marker and holds nothing.
+        (match (ast.ast-decl-list-get
+          (& surface.decls)
+          index
+          (ast.ast-decl-fallback))
+          [(Module name)
+            (unless
+              (=
+                (ast.ast-decl-path-list-owner-id
+                  (& surface.paths)
+                  index
+                  cbi.compiler-builtin-id-fix-empty)
+                name)
+              (set!
+                held
+                (sym_i64_env.sym-i64-bind-id
+                  held
+                  name
+                  (compiler-load-source-path-id
+                    (compiler-load-normalize-path
+                      (ci.intern-str
+                        (ast.ast-decl-path-list-provenance-id
+                          (& surface.paths)
+                          index
+                          cbi.compiler-builtin-id-fix-empty)))))))]
+          [_ unit])))
+    (CompilerLoadDependencySurfaceSelection decls paths modules held)))
 
 (define (compiler-load-dependency-surface-merge-seen
   [base : sym_i64_env.SymI64Env]
@@ -13219,10 +13244,8 @@
       (match (sym_i64_env.sym-i64-view cursor)
         [(SymI64ViewNil) (set! done true)]
         [(SymI64ViewBind key value rest)
-          (if (and
+          (unless
             (sym_i64_env.sym-i64-contains-id out key)
-            (= (sym_i64_env.sym-i64-lookup-id-or out key -1) value))
-            unit
             (set! out (sym_i64_env.sym-i64-bind-id out key value)))
           (set! cursor rest)]))
     out))
@@ -13232,107 +13255,28 @@
   [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
   (Available version spmd-callables))
 
-;; The source of a hydrated surface's own marker for a module, or -1. A module
-;; body owns its marker and holds nothing.
-(define (compiler-load-dependency-surface-module-holder
-  [hydration : (& hydration surface_hydrate.CompilerSurfaceHydration)]
-  [module-id : i64]) : i64
-  (let
-    [surface : surface_ast.SurfaceAstHydration hydration.ast]
-    [count : i64 (ast.ast-decl-list-len (& surface.decls))]
-    (for [index (iterator.range 0 count)]
-      (match (ast.ast-decl-list-get
-        (& surface.decls)
-        index
-        (ast.ast-decl-fallback))
-        [(Module name)
-          (when
-            (and
-              (= name module-id)
-              (not
-                (=
-                  (ast.ast-decl-path-list-owner-id
-                    (& surface.paths)
-                    index
-                    cbi.compiler-builtin-id-fix-empty)
-                  name)))
-            (return
-              (compiler-load-source-path-id
-                (compiler-load-normalize-path
-                  (ci.intern-str
-                    (ast.ast-decl-path-list-provenance-id
-                      (& surface.paths)
-                      index
-                      cbi.compiler-builtin-id-fix-empty))))))]
-        [_ unit]))
-    -1))
-
-;; The one source recorded as holding a module: a real load, or the file whose
-;; marker an imported surface carries. -1 when nothing records it.
-(define (compiler-load-module-holder-source-id
-  [state : (& CompilerLoadSessionState)]
-  [module-id : i64]) : i64
-  (let
-    [summaries : CompilerLoadSurfaceSummaryList
-      (compiler-load-session-state-surface-summaries state)]
-    (for [index
-      (iterator.range
-        0
-        (compiler-load-surface-summary-list-count (& summaries)))]
-      (let
-        [summary : CompilerLoadSurfaceSummary
-          (compiler-load-surface-summary-list-at (& summaries) index)]
-        (when
-          (and summary.loaded (= summary.declaration-module-id module-id))
-          (return summary.source-path-id))))
-    (for [slot
-      (iterator.range 0 (array-ref state.dependency-surfaces.fragments 0).len)]
-      (when
-        (array-ref
-          (array-ref state.dependency-surfaces.fragments 0).imported
-          slot)
-        (match (&
-          (array-ref
-            (array-ref state.dependency-surfaces.fragments 0).slots
-            slot))
-          [(Ready hydration _)
-            (let
-              [holder : i64
-                (compiler-load-dependency-surface-module-holder
-                  hydration
-                  module-id)]
-              (when (>= holder 0) (return holder)))]
-          [(Unavailable) unit])))
-    -1))
-
 (define (compiler-load-path-in-package-dependency?
   [path : (& str)]
   [manifest-dir : (& str)]
   [deps : (& CompilerPkgDeps)]) : bool
-  (let
-    [ordered : CompilerPkgDepList
-      (compiler-pkg-deps-list
-        (owned_view.compiler-owned-reference-shared-view deps))]
-    (for [index (iterator.range 0 (compiler-pkg-dep-list-count ordered))]
-      (let
-        [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
-        (when
-          (compiler-load-path-under-root?
-            path
-            (&
-              (compiler-load-normalize-path
-                (compiler-load-join-root-path
-                  (string.copy manifest-dir)
-                  (string.copy dep.path)))))
-          (return true))))
-    false))
+  (for [index (iterator.range 0 (compiler-pkg-dep-list-count (& deps.ordered)))]
+    (let
+      [dep : CompilerPkgDep (compiler-pkg-dep-list-at (& deps.ordered) index)]
+      (when
+        (compiler-load-path-under-root?
+          path
+          (&
+            (compiler-load-normalize-path
+              (compiler-load-join-root-path
+                (string.copy manifest-dir)
+                (string.copy dep.path)))))
+        (return true))))
+  false)
 
 ;; A module identity has one recorded holder. A package import that finds its
-;; module already held, by a source other than itself, would lose its own
-;; declarations and bind its alias to the other source. Local sources may still
-;; share a module among themselves; a same-named module body is not a holder.
+;; module already held by another source would lose its declarations and bind
+;; its alias to that source. Local sources may share a module among themselves.
 (define (compiler-load-package-import-identity-taken?
-  [state : (& CompilerLoadSessionState)]
   [source-path-id : i64]
   [module : ast.AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]
@@ -13341,21 +13285,20 @@
   [deps : (& CompilerPkgDeps)]) : bool
   (match module
     [(Some module-id)
-      (and
-        (not (= module-id cbi.compiler-builtin-id-fix-empty))
-        (sym_i64_env.sym-i64-contains-id seen module-id)
-        (let
-          [holder : i64 (compiler-load-module-holder-source-id state module-id)]
-          (and
-            (not (= holder source-path-id))
-            (or
-              package-externs
-              (and
-                (>= holder 0)
-                (compiler-load-path-in-package-dependency?
-                  (& (ci.intern-str holder))
-                  manifest-dir
-                  deps))))))]
+      (let
+        [holder : i64 (sym_i64_env.sym-i64-lookup-id-or (& seen) module-id -1)]
+        (and
+          (not (= module-id cbi.compiler-builtin-id-fix-empty))
+          (>= holder 0)
+          (not (= holder source-path-id))
+          (or
+            package-externs
+            (and
+              (> holder 1)
+              (compiler-load-path-in-package-dependency?
+                (& (ci.intern-str holder))
+                manifest-dir
+                deps)))))]
     [(No) false]))
 
 ;; The module governing the entry source's declarations in a hydrated
@@ -13570,7 +13513,7 @@
                     [(AstProgramCompaction _ pools) pools])]
                 [merged-seen : sym_i64_env.SymI64Env
                   (compiler-load-dependency-surface-merge-seen
-                    seen
+                    selection.seen
                     hydration.ast.seen)]
                 (ast.ast-node-pool-context-install! copied-pools)
                 ;; Source loading publishes this compact summary before
@@ -13597,7 +13540,6 @@
                           true
                           (not
                             (compiler-load-no-expected-module? expected-module))
-                          true
                           (& copied-decls))))])
                 (match (compiler-load-package-extern-decls
                   entry.owner
@@ -14002,7 +13944,6 @@
                               (& imported-decls))]
                           (when
                             (compiler-load-package-import-identity-taken?
-                              (& active-state)
                               resolved-id
                               (clone validated-module)
                               seen
@@ -14017,10 +13958,7 @@
                                     (cdiag.compiler-diagnostic-from-ast-span
                                       importer-path
                                       (__tl-box-place span)
-                                      (str_cat.str-cat
-                                        "compiler-load: import '"
-                                        import-path
-                                        "' has the module identity of another loaded source; declare a distinct module in one of them")))))))
+                                      "compiler-load: import has the module identity of another loaded source; declare a distinct module in one of them"))))))
                           (when
                             (not
                               (or
@@ -14413,7 +14351,6 @@
                                 (not
                                   (compiler-load-no-expected-module?
                                     (clone expected-module)))
-                                true
                                 (& load-decls))))
                           (compiler-load-package-decls-with-module-and-roots
                             (& load-decls)
@@ -14428,7 +14365,8 @@
                             (compiler-load-seen-module-bind
                               seen
                               (& (string.copy module-id))
-                              module-name-id)
+                              module-name-id
+                              source-path-id)
                             stdlib-roots
                             (string.copy manifest-dir)
                             deps

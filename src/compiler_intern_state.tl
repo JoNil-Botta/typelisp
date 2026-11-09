@@ -924,7 +924,9 @@
                 [(Reflected) 1]
                 [(ReflectedDeclaration) 2]
                 [_ 0])
-              (if (= record.definition-module-id cbi.compiler-builtin-id-fix-empty)
+              (if (=
+                record.definition-module-id
+                cbi.compiler-builtin-id-fix-empty)
                 4
                 0)))
           0))

@@ -38460,7 +38460,9 @@
     cis.intern-root-macro-global-issued
     (>= raw-name (ci.intern-structural-key-base))
     (or
-      (not (csym.compiler-symbol-root-module-id? (tc_core.tc-context-module-id ctx)))
+      (not
+        (csym.compiler-symbol-root-module-id?
+          (tc_core.tc-context-module-id ctx)))
       (sym_i64_env.sym-i64-contains-id env resolved-id))
     (>=
       (cis.intern-macro-global-source-id-or-neg

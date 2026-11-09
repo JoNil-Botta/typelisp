@@ -106909,66 +106909,74 @@
 ;; later macro still reads it as a reflected name, and it resolves like
 ;; Context(root, s). A reference built from root authority denotes the
 ;; declaration and is never captured.
+;; `id`'s children settled, or -1 when none changed.
 (define (macro-hygiene-settle-reflected-children
   [expr-bases : i64]
   [env : MacroHygieneEnv]
-  [expr : ast.AstExpr]) : i64
+  [id : i64]) : i64
   (let
-    [ids : ast.AstExprList (ast.ast-expr-child-ids (ast.ast-global-shared-view expr))]
+    [ids : ast.AstExprList
+      (ast.ast-expr-child-ids (ast.ast-expr-segment-bases-get expr-bases id))]
     [out : ast.AstExprList (ast.ast-expr-list-new)]
     [changed : bool false]
     (for [index (iterator.range 0 (ast.ast-expr-list-len (& ids)))]
       (let
         [child : i64 (ast.ast-expr-list-get (& ids) index -1)]
-        [settled : i64 (macro-hygiene-settle-reflected-walk expr-bases env child)]
+        [settled : i64
+          (macro-hygiene-settle-reflected-walk expr-bases env child)]
         (when (not (= settled child)) (set! changed true))
         (ast.ast-expr-list-push (&mut out) settled)))
     (if changed
-      (macro-hygiene-expr-push env (ast.ast-expr-with-child-ids expr (& out)))
+      (macro-hygiene-expr-push
+        env
+        (ast.ast-expr-with-child-ids
+          (ast.ast-expr-segment-bases-get expr-bases id)
+          (& out)))
       -1)))
 
 (define (macro-hygiene-settle-reflected-walk
   [expr-bases : i64]
   [env : MacroHygieneEnv]
   [id : i64]) : i64
-  (let
-    [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases id)]
-    (match (ast.ast-global-shared-view expr)
-      [(Var name)
-        (let
-          [settled : i64 (macro-hygiene-settle-reflected-id env name)]
-          (if (= settled name)
-            id
-            (macro-hygiene-expr-push env (ast.AstExpr.Var settled))))]
-      [(Set name value)
-        (let
-          [settled : i64 (macro-hygiene-settle-reflected-id env name)]
-          [next : i64 (macro-hygiene-settle-reflected-walk expr-bases env value)]
-          (if (and (= settled name) (= next value))
-            id
-            (macro-hygiene-expr-push env (ast.AstExpr.Set settled next))))]
-      [_
-        (let
-          [rebuilt : i64 (macro-hygiene-settle-reflected-children expr-bases env expr)]
-          (if (< rebuilt 0)
-            id
-            rebuilt))])))
+  (match (ast.ast-expr-segment-bases-get expr-bases id)
+    [(Var name)
+      (let
+        [settled : i64 (macro-hygiene-settle-reflected-id env name)]
+        (if (= settled name)
+          id
+          (macro-hygiene-expr-push env (ast.AstExpr.Var settled))))]
+    [(Set name value)
+      (let
+        [settled : i64 (macro-hygiene-settle-reflected-id env name)]
+        [next : i64 (macro-hygiene-settle-reflected-walk expr-bases env value)]
+        (if (and (= settled name) (= next value))
+          id
+          (macro-hygiene-expr-push env (ast.AstExpr.Set settled next))))]
+    [_
+      (let
+        [rebuilt : i64
+          (macro-hygiene-settle-reflected-children expr-bases env id)]
+        (if (< rebuilt 0)
+          id
+          rebuilt))]))
 
 (define (macro-hygiene-settle-reflected-operand
   [expr-bases : i64]
+  [inner-box : i64]
+  [origin : i64]
+  [depth : i64]
   [env : MacroHygieneEnv]
   [expr : ast.AstExpr]) : i64
-  (if (not ctfe_support.ctfe-reflected-root-names-issued)
-    (ast.ast-node-pool-context-expr-push env.pools expr)
-    (let
-      [rebuilt : i64
-        (macro-hygiene-settle-reflected-children
-          expr-bases
-          env
-          (ast.ast-global-shared-view expr))]
-      (if (< rebuilt 0)
-        (ast.ast-node-pool-context-expr-push env.pools expr)
-        rebuilt))))
+  (let
+    [next : i64
+      (if ctfe_support.ctfe-reflected-root-names-issued
+        (macro-hygiene-settle-reflected-walk expr-bases env inner-box)
+        inner-box)]
+    (if (= next inner-box)
+      (ast.ast-node-pool-context-expr-push env.pools expr)
+      (macro-hygiene-expr-push
+        env
+        (ast.AstExpr.MacroExpansion next origin depth)))))
 
 (define (macro-hygiene-settle-reflected-id
   [env : MacroHygieneEnv]
@@ -109017,8 +109025,14 @@
     ;; Do not apply a later expansion's hygiene environment to syntax behind a
     ;; provenance boundary.  Macro discovery still walks through the marker so
     ;; nested, not-yet-expanded calls can fire in their own hygiene pass.
-    [(MacroExpansion _ _ _)
-      (macro-hygiene-settle-reflected-operand expr-bases env expr)]
+    [(MacroExpansion inner-box origin depth)
+      (macro-hygiene-settle-reflected-operand
+        expr-bases
+        inner-box
+        origin
+        depth
+        env
+        expr)]
     [(Var name)
       (macro-hygiene-expr-push
         env

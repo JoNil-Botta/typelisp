@@ -354,7 +354,9 @@
                         (surface-identity-portable-macro-global-offset
                           identity-count)
                         (+
-                          (* (+ (* role identity-count) module-ref) identity-count)
+                          (*
+                            (+ (* role identity-count) module-ref)
+                            identity-count)
                           source-ref)))]))])]
         [(match (cis.intern-structural-session-macro-local-record-for-raw
             session

@@ -13220,6 +13220,7 @@
     [source-module-id : i64 root-module-id]
     [checked-provenance-id : i64 -1]
     [in-package : bool false]
+    [in-source : bool false]
     [moduleless : bool false]
     [generated : bool false]
     (for [index (iterator.range 0 count)]
@@ -13248,7 +13249,14 @@
               (compiler-load-dependency-catalog-slot-for-provenance-id
                 state
                 provenance-id)
-              slot)))
+              slot))
+          ;; The artifact keeps the manifest's own spelling of the entry path.
+          (set!
+            in-source
+            (=
+              (compiler-load-source-path-id
+                (compiler-load-normalize-path (ci.intern-str provenance-id)))
+              source-path-id)))
         (match decl
           [(Module name)
             ;; A module another source already holds would lose these rows.
@@ -13258,7 +13266,7 @@
                 (not (= name root-module-id))
                 (sym_i64_env.sym-i64-contains-id held-modules name))
               (return -1))
-            (when (= provenance-id source-path-id) (set! source-module-id name))]
+            (when in-source (set! source-module-id name))]
           [_
             (when
               in-package
@@ -13267,9 +13275,7 @@
                 (compiler-load-surface-generated-meta?
                   (& (ast.ast-decl-generated-meta (& decl))))
                 (set! generated true)))
-            (when
-              (= provenance-id source-path-id)
-              (set! source-module-id row-module-id))])))
+            (when in-source (set! source-module-id row-module-id))])))
     (cond
       [moduleless
         (if generated

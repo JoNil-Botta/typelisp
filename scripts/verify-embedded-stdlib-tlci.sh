@@ -8,6 +8,67 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-build-provenance.sh"
 
+verify_no_checkout_root() {
+    checkout_image=$1
+    checkout_root=$2
+    checkout_root_mixed=$(cygpath -m "$checkout_root" 2>/dev/null || :)
+    checkout_root_windows=$(cygpath -w "$checkout_root" 2>/dev/null || :)
+    for checkout_spelling in "$checkout_root" "$checkout_root_mixed" "$checkout_root_windows"; do
+        # Empty conversions and implausibly short roots would match unrelated
+        # image contents (or every image), rather than identify a checkout.
+        [ "${#checkout_spelling}" -ge 8 ] || continue
+        if grep -aFq -e "$checkout_spelling" "$checkout_image"; then
+            printf '%s\n' "embedded stdlib tlci image records the checkout root: $checkout_spelling" >&2
+            return 1
+        fi
+    done
+}
+
+run_checkout_root_self_test() (
+    selftest_dir=target/exp/embedded-stdlib-tlci-checkout-root-self-test
+    mkdir -p "$selftest_dir"
+    selftest_image=$selftest_dir/image.tlci
+    selftest_root='/c/checkout [1] with space'
+    selftest_mixed='C:/checkout [1] with space'
+    selftest_windows='C:\checkout [1] with space'
+    # Exercise the Windows conversions on every host, without changing the
+    # production cygpath lookup outside this subshell.
+    cygpath() {
+        case "$1" in
+            -m) printf '%s\n' "$selftest_mixed" ;;
+            -w) printf '%s\n' "$selftest_windows" ;;
+        esac
+    }
+
+    for selftest_spelling in "$selftest_root" "$selftest_mixed" "$selftest_windows"; do
+        for selftest_suffix in '' '/src/checkout-root-probe.tl' '/stdlib/checkout-root-probe.tl'; do
+            printf 'TLCI\000%s%s\000' "$selftest_spelling" "$selftest_suffix" > "$selftest_image"
+            if verify_no_checkout_root "$selftest_image" "$selftest_root" \
+                2> "$selftest_dir/stderr.txt"; then
+                printf '%s\n' "checkout root self-test accepted a leaked root: $selftest_spelling$selftest_suffix" >&2
+                return 1
+            fi
+            grep -F -e "records the checkout root: $selftest_spelling" \
+                "$selftest_dir/stderr.txt" > /dev/null
+        done
+    done
+
+    # Individual words and regex lookalikes are not the complete spelling.
+    printf 'TLCI\000%s\000' '/c/checkout C:/checkout C:\checkout with space /c/checkout 1 with space' > "$selftest_image"
+    verify_no_checkout_root "$selftest_image" "$selftest_root"
+
+    selftest_mixed=
+    selftest_windows=
+    printf 'TLCI\000/short7 checkout\000' > "$selftest_image"
+    verify_no_checkout_root "$selftest_image" ''
+    verify_no_checkout_root "$selftest_image" '/short7'
+    if verify_no_checkout_root "$selftest_image" checkout \
+        2> "$selftest_dir/stderr.txt"; then
+        echo "checkout root self-test accepted an eight-character root" >&2
+        return 1
+    fi
+)
+
 required_native_identities() {
     printf '%s\n' \
         stdlib.clone/gen-clone \
@@ -88,16 +149,22 @@ run_native_identity_self_test() {
     rmdir "$selftest_dir"
 }
 
+if [ "$#" -eq 1 ] && [ "$1" = "--self-test-checkout-root" ]; then
+    run_checkout_root_self_test
+    echo "embedded stdlib tlci checkout root self-test passed"
+    exit 0
+fi
 if [ "$#" -eq 1 ] && [ "$1" = "--self-test-native-identities" ]; then
     run_native_identity_self_test
     echo "embedded stdlib tlci native identity self-test passed"
     exit 0
 fi
 if [ "$#" -ne 0 ]; then
-    echo "usage: scripts/verify-embedded-stdlib-tlci.sh [--self-test-native-identities]" >&2
+    echo "usage: scripts/verify-embedded-stdlib-tlci.sh [--self-test-native-identities|--self-test-checkout-root]" >&2
     exit 2
 fi
 
+run_checkout_root_self_test
 run_native_identity_self_test
 
 . "$ROOT/scripts/lib-gate.sh"
@@ -221,13 +288,7 @@ if ! cmp -s "$ENVELOPE_A" "$ENVELOPE_B"; then
 fi
 # The frontend surface names prelude sources root-relatively (`stdlib/...`), so
 # the image must not depend on, or show users, this checkout's location (#9667).
-for ROOT_SPELLING in "$ROOT" \
-    $(cygpath -m "$ROOT" 2>/dev/null || :) $(cygpath -w "$ROOT" 2>/dev/null || :); do
-    if grep -aFq -e "$ROOT_SPELLING/stdlib" -e "$ROOT_SPELLING\\stdlib" "$IMAGE_A"; then
-        echo "embedded stdlib tlci image records the checkout root: $ROOT_SPELLING" >&2
-        exit 1
-    fi
-done
+verify_no_checkout_root "$IMAGE_A" "$ROOT"
 "$COMPILER" run tools/embedded-stdlib-tlci/verify-envelope.tl \
     --stdlib-root stdlib --stdlib-root src -- \
     "$IMAGE_A" "$ENVELOPE_A"

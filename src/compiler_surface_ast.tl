@@ -1433,10 +1433,11 @@
           [(SymI64ViewNil)
             (codec.surface-ast-write-i64! out 0)
             (return unit)]
-          [(SymI64ViewBind key value rest)
+          [(SymI64ViewBind key _ rest)
             (codec.surface-ast-write-i64! out 1)
             (codec.surface-ast-write-name! out context key)
-            (codec.surface-ast-write-i64! out value)
+            ;; A set in the artifact: holders are this load's source ids.
+            (codec.surface-ast-write-i64! out 1)
             (set! cursor rest)]))
       unit)))
 

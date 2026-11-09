@@ -3929,10 +3929,28 @@
 
 ;; Public String arguments also accept inspected Name values, which is how
 ;; reflected names flow through ordinary string helpers.
+;; A reflected root name is meaningful only as a reference; everywhere a value
+;; is read as a name it stands for its source spelling.
+(define (ctfe-public-name-id [name-id : i64]) : i64
+  (if (>= name-id (ci.intern-structural-key-base))
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-capture-active-handle))]
+      (match (cis.intern-structural-session-macro-global-record-for-raw
+        session
+        name-id)
+        [(Some record)
+          (match record.role
+            [(or (Reflected) (ReflectedDeclaration)) record.source-name-id]
+            [_ name-id])]
+        [(No) name-id]))
+    name-id))
+
 (define (ctfe-value-named [value : CompilerCtfeValue]) : CtfeMaybeNamed
   (match value
     [(String text string-id) (Some text string-id)]
-    [(Name text name-id) (Some text name-id)]
+    [(Name text name-id) (Some text (ctfe-public-name-id name-id))]
     [_ (None)]))
 
 ;; Binding-oriented syntax constructors preserve an inspected or explicitly
@@ -3944,8 +3962,34 @@
   (match value
     [(String text string-id)
       (Some (ctfe-string-syntax-name-id source-names (& text) string-id))]
-    [(Name _ name-id) (Some name-id)]
+    [(Name _ name-id) (Some (ctfe-public-name-id name-id))]
     [_ (None)]))
+
+;; `expr-var` alone keeps a reflected root name, for hygiene to settle. It is a
+;; reference by name, even when the name was read from a declaration reference.
+(define (ctfe-value-reference-name-id
+  [source-names : ci.InternSourceNameSessionHandle]
+  [value : (& CompilerCtfeValue)]) : CtfeMaybeNameId
+  (match value
+    [(Name _ name-id) (Some (ctfe-reference-by-name-id name-id))]
+    [_ (ctfe-value-syntax-name-id source-names value)]))
+
+(define (ctfe-reference-by-name-id [name-id : i64]) : i64
+  (if (>= name-id (ci.intern-structural-key-base))
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-capture-active-handle))]
+      (match (cis.intern-structural-session-macro-global-record-for-raw
+        session
+        name-id)
+        [(Some record)
+          (match record.role
+            [(ReflectedDeclaration)
+              (ctfe-reflected-root-name-id session record.source-name-id)]
+            [_ name-id])]
+        [(No) name-id]))
+    name-id))
 
 ;; A syntax operand read by its spelling -- a struct member, an `offset-of`
 ;; field, a `cond` `else` head -- names no binding. A macro template's `Var`
@@ -3987,7 +4031,7 @@
         [text-id : i64
           (ctfe-string-syntax-name-id source-names (& text) string-id)]
         (Some text text-id))]
-    [(Name text name-id) (Some text name-id)]
+    [(Name text name-id) (Some text (ctfe-public-name-id name-id))]
     [_ (None)]))
 
 (define (ctfe-reflect-info-canonical-id [info : (& CtfeReflectInfo)]) : i64
@@ -5394,13 +5438,22 @@
         [(string.eq name "type-cleanup-function")
           (match (ctfe-reflect-info-cleanup (clone info))
             [(Fn cleanup-name cleanup-name-id)
-              (Ok (String cleanup-name cleanup-name-id))]
+              (Ok
+                (if (ctfe-root-module-id?
+                  (ctfe-reflect-info-nominal-module-id (& info)))
+                  (Name
+                    cleanup-name
+                    (ctfe-reflected-root-reference-id session cleanup-name-id))
+                  (String cleanup-name cleanup-name-id)))]
             [(No) (ctfe-reflection-requires name "cleanup-owning type")])]
         [(string.eq name "type-nominal-module")
           (Ok
-            (ctfe-name-value-for-session
-              session
-              (ctfe-reflect-info-nominal-module-id (& info))))]
+            (if (ctfe-root-module-id?
+              (ctfe-reflect-info-nominal-module-id (& info)))
+              (Name "" (ctfe-root-owner-authority-id session))
+              (ctfe-name-value-for-session
+                session
+                (ctfe-reflect-info-nominal-module-id (& info)))))]
         [(string.eq name "type-nominal-name")
           (Ok
             (ctfe-name-value-for-session
@@ -6772,7 +6825,7 @@
       [arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       (match (compiler-ctfe-eval (& arg) env fuel)
         [(Ok value arg-fuel)
-          (match (ctfe-value-syntax-name-id
+          (match (ctfe-value-reference-name-id
             (ctfe-env-source-names env)
             (& value))
             [(Some name-id)
@@ -6861,6 +6914,79 @@
           expr
           "module-export-macro? expects exactly two args")))))
 
+;; A name reflection hands out for an entry-module definition. Its record role
+;; tells it from every macro hygiene identity.
+(define (ctfe-reflected-root-name-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (cis.intern-macro-global-identity-raw
+    (cis.intern-structural-session-macro-global-identity
+      session
+      cis.InternMacroGlobalRole.Reflected
+      cbi.compiler-builtin-id-fix-empty
+      name-id)))
+
+;; A reference built from root authority denotes the declaration itself.
+(define (ctfe-reflected-root-declaration-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (set! ctfe-reflected-root-names-issued true)
+  (cis.intern-macro-global-identity-raw
+    (cis.intern-structural-session-macro-global-identity
+      session
+      cis.InternMacroGlobalRole.ReflectedDeclaration
+      cbi.compiler-builtin-id-fix-empty
+      name-id)))
+
+;; Set once a program builds a reference from reflection, so hygiene tracks
+;; plain binders only for programs that can need them.
+(define ctfe-reflected-root-names-issued : bool
+  false)
+
+(define (ctfe-reflected-root-reference-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (set! ctfe-reflected-root-names-issued true)
+  (ctfe-reflected-root-name-id session name-id))
+
+;; The reference a `""` module owner denotes. Only an authorized owner names
+;; the entry module, and only a plain spelling can become its reference: an
+;; inspected identity already says what it refers to.
+(define (ctfe-root-reference-id
+  [state : CompilerCtfeMacroState]
+  [name-id : i64]
+  [root-authority : bool]) : i64
+  (if (and
+    root-authority
+    (< name-id (ci.intern-structural-key-base))
+    (not (= name-id cbi.compiler-builtin-id-fix-empty))
+    (not (ci.intern-generated-id-active? name-id)))
+    (ctfe-reflected-root-declaration-id
+      (compiler-ctfe-macro-state-structural-session state)
+      name-id)
+    name-id))
+
+;; `type-nominal-module`'s owner value for an entry-module type. The private
+;; identity is what grants root authority; syntax inspection and computed text
+;; can produce an empty name, but not this one.
+(define (ctfe-root-owner-authority-id
+  [session : cis.InternStructuralSessionHandle]) : i64
+  (ctfe-reflected-root-reference-id session cbi.compiler-builtin-id-fix-empty))
+
+(define (ctfe-root-module-id? [module-id : i64]) : bool
+  (= module-id cbi.compiler-builtin-id-fix-empty))
+
+(define (ctfe-value-root-authority?
+  [session : cis.InternStructuralSessionHandle]
+  [value : (& value CompilerCtfeValue)]) : bool
+  (match value
+    ;; Building the token sets the flag, so only compare once one can exist.
+    [(Name _ name-id)
+      (and
+        ctfe-reflected-root-names-issued
+        (= name-id (ctfe-root-owner-authority-id session)))]
+    [_ false]))
+
 ;; Look up a module value by its resolved identities. `query-kind` 0 answers
 ;; module-value?, 1 its public signature (module-value-type), and 2 a reference
 ;; to it (module-value-expr).
@@ -6871,7 +6997,8 @@
   [module : String]
   [module-id : i64]
   [name : String]
-  [name-id : i64]) : CtfeBuilt
+  [name-id : i64]
+  [root-authority : bool]) : CtfeBuilt
   (match (ctfe-module-value-type-id-for-state state module-id name-id)
     [(Some ty)
       (Ok
@@ -6884,7 +7011,7 @@
                 pools
                 (Var
                   (if (string.eq module "")
-                    name-id
+                    (ctfe-root-reference-id state name-id root-authority)
                     (if (or
                       (ci.intern-generated-canonical-id? module-id)
                       (ci.intern-generated-canonical-id? name-id))
@@ -6916,33 +7043,40 @@
     (let
       [module-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [name-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-module-index-arg
-        (& module-arg)
-        expr
-        env
-        fuel
-        (owned_view.compiler-owned-shared-view query-name))
-        [(Ok module module-id module-fuel)
-          (match (ctfe-eval-module-index-arg
-            (& name-arg)
-            expr
-            env
-            module-fuel
-            query-name)
-            [(Ok name name-id name-fuel)
-              (ctfe-built-result
-                (ctfe-module-value
-                  (ctfe-env-macro-state env)
-                  (ctfe-env-pools env)
-                  query-kind
-                  module
-                  module-id
-                  name
-                  name-id)
-                expr
-                name-fuel)]
-            [(Err d) (Err d)])]
-        [(Err d) (Err d)]))
+      (match (compiler-ctfe-eval (& module-arg) env fuel)
+        [(Err d) (Err d)]
+        [(Ok module-value module-fuel)
+          (let
+            [root-authority : bool
+              (ctfe-value-root-authority?
+                (compiler-ctfe-macro-state-structural-session
+                  (ctfe-env-macro-state env))
+                (& module-value))]
+            (match (ctfe-value-module-index
+              (ctfe-env-source-names env)
+              module-value)
+              [(None) (Err (ctfe-string-arg-error expr query-name))]
+              [(Some module module-id)
+                (match (ctfe-eval-module-index-arg
+                  (& name-arg)
+                  expr
+                  env
+                  module-fuel
+                  query-name)
+                  [(Ok name name-id name-fuel)
+                    (ctfe-built-result
+                      (ctfe-module-value
+                        (ctfe-env-macro-state env)
+                        (ctfe-env-pools env)
+                        query-kind
+                        module
+                        module-id
+                        name
+                        name-id
+                        root-authority)
+                      expr
+                      name-fuel)]
+                  [(Err d) (Err d)])]))]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
@@ -7045,7 +7179,8 @@
   [module : String]
   [module-id : i64]
   [name : String]
-  [name-id : i64]) : CtfeBuilt
+  [name-id : i64]
+  [root-authority : bool]) : CtfeBuilt
   (if (or
     (string.eq module "")
     (ctfe-module-macro-export-id-for-state? state module-id name-id))
@@ -7055,7 +7190,7 @@
           pools
           (Var
             (if (string.eq module "")
-              name-id
+              (ctfe-root-reference-id state name-id root-authority)
               (ci.intern-composite-pair-id module-id name-id))))
         (ctfe-untyped-expr-type)))
     (Err (ctfe-module-hook-missing-message module name))))
@@ -7069,27 +7204,37 @@
     (let
       [module-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [name-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-string-arg (& module-arg) expr env fuel "module-hook")
-        [(Ok module module-id module-fuel)
-          (match (ctfe-eval-string-arg
-            (& name-arg)
-            expr
-            env
-            module-fuel
-            "module-hook")
-            [(Ok name name-id name-fuel)
-              (ctfe-built-result
-                (ctfe-module-hook
-                  (ctfe-env-macro-state env)
-                  (ctfe-env-pools env)
-                  module
-                  module-id
-                  name
-                  name-id)
-                expr
-                name-fuel)]
-            [(Err d) (Err d)])]
-        [(Err d) (Err d)]))
+      (match (compiler-ctfe-eval (& module-arg) env fuel)
+        [(Err d) (Err d)]
+        [(Ok module-value module-fuel)
+          (let
+            [root-authority : bool
+              (ctfe-value-root-authority?
+                (compiler-ctfe-macro-state-structural-session
+                  (ctfe-env-macro-state env))
+                (& module-value))]
+            (match (ctfe-value-named module-value)
+              [(None) (Err (ctfe-string-arg-error expr "module-hook"))]
+              [(Some module module-id)
+                (match (ctfe-eval-string-arg
+                  (& name-arg)
+                  expr
+                  env
+                  module-fuel
+                  "module-hook")
+                  [(Ok name name-id name-fuel)
+                    (ctfe-built-result
+                      (ctfe-module-hook
+                        (ctfe-env-macro-state env)
+                        (ctfe-env-pools env)
+                        module
+                        module-id
+                        name
+                        name-id
+                        root-authority)
+                      expr
+                      name-fuel)]
+                  [(Err d) (Err d)])]))]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
@@ -10579,7 +10724,10 @@
             expr
             (str_cat.str-cat
               "compile-time evaluation cannot reference runtime variable '"
-              (ci.intern-str name-id)
+              (ctfe-name-text-for-session
+                (compiler-ctfe-macro-state-structural-session
+                  (ctfe-env-macro-state env))
+                name-id)
               "'"))))]))
 
 ;; Dotted public places remain parser-owned Var nodes until semantic context can

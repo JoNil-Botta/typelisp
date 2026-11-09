@@ -3282,7 +3282,19 @@
           9
           source
           source)
-        (__tl_make-array (ci.intern-structural-kind-macro-global) 2 9 source -1)
+        (__tl_make-array
+          (ci.intern-structural-kind-macro-global)
+          2
+          9
+          source
+          source)
+        (__tl_make-array
+          (ci.intern-structural-kind-macro-global)
+          3
+          9
+          source
+          source)
+        (__tl_make-array (ci.intern-structural-kind-macro-global) 4 9 source -1)
         (__tl_make-array
           (ci.intern-structural-kind-template-source)
           1

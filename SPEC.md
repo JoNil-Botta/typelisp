@@ -3596,6 +3596,16 @@ identities and suggests alias-qualified access instead. Prelude bare names and
 deliberately retained prelude exceptions come
 from the implicit prelude and are not affected by these import rules.
 
+An imported module sees its own declarations, its own imports, the implicit
+prelude and builtins. The entry module's declarations and unqualified imports
+are not visible to it, so naming one is an unbound-name error. Type reflection
+still reaches a cleanup function or hook of an entry-module type through the
+type's owner, so a module generated for that type can call it. A reference that
+`module-value-expr` or `module-hook` builds from `type-nominal-module` authority
+and a plain spelling denotes that declaration, so no caller local or
+macro-output binder captures it; `expr-var` of a reflected name stays hygienic
+by name (output binder, then caller local, then the entry definition).
+
 An unqualified import that binds a name the importing module declares at
 module scope itself (a value, function, type, enum constructor or macro,
 including one a module-scope generator emits) is the same kind of namespace

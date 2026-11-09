@@ -5046,6 +5046,14 @@
         source-id
         true))))
 
+;; The global layer of a module's type cache, without its module overlay.
+(define (lower-type-cache-global-view [cache : LowerTypeCache]) : LowerTypeCache
+  (match (& cache)
+    [(Some _ _ _ (Global) owner-address)
+      (compiler-lower-state-decls-global-type-cache
+        (compiler-lower-state-from-address owner-address))]
+    [_ cache]))
+
 (define (lower-lookup-structural-hygiene-type-id
   [ctx : tc_core.TcContext]
   [type-cache : LowerTypeCache]
@@ -5097,7 +5105,10 @@
                     message)])]
             [(Err message) (Err message)])
           (lower-type-cache-lookup-id
-            type-cache
+            ;; A root-defined global is never the current module's own name.
+            (if (csym.compiler-symbol-root-module-id? module-id)
+              (lower-type-cache-global-view type-cache)
+              type-cache)
             (csym.compiler-symbol-module-key-id-by-id module-id source-id)
             source-name))))))
 
@@ -23217,7 +23228,9 @@
   (cond
     [(sym_i64_env.sym-i64-contains-id env name-id)
       (lower-var-id state env name-id ty)]
-    [(lower-extern-value-decl-id? ctx name-id)
+    [(lower-extern-value-decl-id?
+        ctx
+        (lower-hygiene-root-source-id ctx name-id))
       (let
         [lowered
           (try (lower-var-id state env name-id (lower-global-shared-view ty)))]
@@ -23234,7 +23247,9 @@
                     ty))])]))]
     [(and
         (lower-function-type? (lower-global-shared-view ty))
-        (lower-symbol-function-value-id? ctx name-id))
+        (lower-symbol-function-value-id?
+          ctx
+          (lower-hygiene-root-source-id ctx name-id)))
       (Ok
         (Expr state (Function (lower-resolve-name-symbol-id state name-id)) ty))]
     [else (lower-var-id state env name-id ty)]))
@@ -25748,7 +25763,7 @@
     [handle : i64
       (csym.compiler-symbols-lookup-value-id-or
         (tc_core.tc-context-symbols ctx)
-        lookup-id
+        (lower-hygiene-root-source-id ctx lookup-id)
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
       (let
@@ -25766,7 +25781,7 @@
     [handle : i64
       (csym.compiler-symbols-lookup-value-id-or
         (tc_core.tc-context-symbols ctx)
-        lookup-id
+        (lower-hygiene-root-source-id ctx lookup-id)
         (csym.compiler-symbols-missing-handle))]
     (and
       (csym.compiler-symbols-handle-found? handle)
@@ -30463,7 +30478,7 @@
               type-env
               lookup-name
               name-id
-              lookup-name-id
+              (lower-hygiene-root-lookup-id ctx env name-id lookup-name-id)
               expr-ty)]
           [(Err message) (Err (box (lower-diagnostic message)))])))))
 
@@ -38403,6 +38418,61 @@
     [(ast.AstType.Never) (ast.AstType.Never)]
     [_ contextual]))
 
+;; The symbol-table spelling of a root-defined global. Root rows are bare.
+(define (lower-hygiene-root-source-id [ctx : tc_core.TcContext] [name-id : i64]) : i64
+  (if (or
+    (not cis.intern-root-macro-global-issued)
+    (< name-id (ci.intern-structural-key-base)))
+    name-id
+    (let
+      [source : i64
+        (cis.intern-macro-global-source-id-or-neg
+          (tc_core.tc-context-structural-session ctx)
+          name-id
+          4)]
+      (if (< source 0)
+        name-id
+        source))))
+
+;; Whether a call names a constructor. A root identity naming an entry value is
+;; never one, whichever struct elsewhere shares its spelling.
+(define (lower-constructor-callee-id?
+  [ctx : tc_core.TcContext]
+  [raw-name-id : i64]
+  [lookup-id : i64]) : bool
+  (if (tc_core.tc-root-identity-names-entry-value? ctx raw-name-id)
+    false
+    (or
+      (tc_core.tc-constructor-name-id? ctx raw-name-id)
+      (and
+        (not (= raw-name-id lookup-id))
+        (tc_core.tc-constructor-name-id? ctx lookup-id)))))
+
+;; A global whose definition module is the entry module keeps its structural
+;; identity where its bare spelling would resolve to something else: in a named
+;; module, or under a same-named local.
+(define (lower-hygiene-root-lookup-id
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [raw-name : i64]
+  [resolved-id : i64]) : i64
+  (if (and
+    cis.intern-root-macro-global-issued
+    (>= raw-name (ci.intern-structural-key-base))
+    (or
+      (not
+        (csym.compiler-symbol-root-module-id?
+          (tc_core.tc-context-module-id ctx)))
+      (sym_i64_env.sym-i64-contains-id env resolved-id))
+    (>=
+      (cis.intern-macro-global-source-id-or-neg
+        (tc_core.tc-context-structural-session ctx)
+        raw-name
+        4)
+      0))
+    raw-name
+    resolved-id))
+
 (define (lower-direct-call-id-with-lookup-id
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -39901,9 +39971,7 @@
             args
             result-ty)
           (if (and
-            (or
-              (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
-              (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
+            (lower-constructor-callee-id? ctx raw-name-id callable-lookup-id)
             (csym.compiler-symbols-handle-found? struct-handle)
             (=
               (csym.compiler-symbol-handle-kind struct-handle)
@@ -40049,9 +40117,7 @@
             args
             result-ty))
         (if (and
-          (or
-            (tc_core.tc-constructor-source-name-id? ctx raw-name-id)
-            (tc_core.tc-constructor-source-name-id? ctx callable-lookup-id))
+          (lower-constructor-callee-id? ctx raw-name-id callable-lookup-id)
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)
@@ -40838,7 +40904,11 @@
                     [(Ok _ resolved-id)
                       (tc_core.TcNameLookup.Ok
                         (tc_core.tc-hygiene-global-call-name raw-text)
-                        resolved-id)]
+                        (lower-hygiene-root-lookup-id
+                          ctx
+                          env
+                          raw-name
+                          resolved-id))]
                     [(Err _)
                       (tc_core.TcNameLookup.Ok
                         (tc_core.tc-hygiene-global-call-name raw-text)
@@ -72969,9 +73039,7 @@
             ret-ty
             (csym.compiler-symbols-missing-handle))]
         (if (and
-          (or
-            (tc_core.tc-constructor-name-id? ctx raw-name-id)
-            (tc_core.tc-constructor-name-id? ctx lookup-name-id))
+          (lower-constructor-callee-id? ctx raw-name-id lookup-name-id)
           (csym.compiler-symbols-handle-found? struct-handle)
           (=
             (csym.compiler-symbol-handle-kind struct-handle)
@@ -73046,7 +73114,7 @@
                       ctx
                       type-env
                       raw-name)
-                    resolved-id)]
+                    (lower-hygiene-root-lookup-id ctx env raw-name resolved-id))]
                 [(tc_core.TcNameLookup.Err _)
                   (tc_core.TcNameLookup.Ok
                     (lower-hygiene-source-name-in-context-id
@@ -75949,6 +76017,23 @@
             "lower: owned cleanup field type is not a cleanup-owning aggregate "
             (tc_core.tc-type-render resolved)))])))
 
+;; The callee of a synthesized owned-field cleanup. A declared cleanup of an
+;; entry-module type is not visible from a named module (a generated module of
+;; `(vector.vector T)`, for one), so it is named by its canonical identity.
+(define (lower-owned-cleanup-callee-id
+  [ctx : tc_core.TcContext]
+  [cleanup-name-id : i64]) : i64
+  (if (and
+    (not
+      (csym.compiler-symbol-root-module-id? (tc_core.tc-context-module-id ctx)))
+    (tc_core.tc-entry-hidden-contains? cleanup-name-id))
+    (tc_core.macro-hygiene-global-id
+      (tc_core.tc-context-structural-session ctx)
+      cbi.compiler-builtin-id-fix-empty
+      cleanup-name-id
+      false)
+    cleanup-name-id))
+
 (define (lower-struct-cleanup-call-expr
   [pools : ast.AstNodePoolContext]
   [cleanup-name-id : i64]
@@ -75992,7 +76077,7 @@
               (ast.ast-expr-cons
                 (lower-struct-cleanup-call-expr
                   pools
-                  cleanup-name-id
+                  (lower-owned-cleanup-callee-id ctx cleanup-name-id)
                   value-name-id
                   (ci.intern-syntax-id-value field-name))
                 (& acc))))])]))
@@ -76253,7 +76338,7 @@
               (ast.ast-expr-cons
                 (lower-enum-cleanup-call-expr
                   pools
-                  cleanup-name-id
+                  (lower-owned-cleanup-callee-id ctx cleanup-name-id)
                   value-name-id)
                 (& acc))))]))))
 

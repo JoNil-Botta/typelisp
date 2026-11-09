@@ -101,7 +101,8 @@
       (cond
         [(and
             (= record.kind (ci.intern-structural-kind-macro-global))
-            (or (= record.left-id 0) (= record.left-id 1)))
+            (>= record.left-id 0)
+            (<= record.left-id 3))
           (doc-expand-source-name ctx record.right-id)]
         [(and
             (= record.kind (ci.intern-structural-kind-macro-local))

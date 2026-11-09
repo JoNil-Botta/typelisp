@@ -502,6 +502,7 @@ tests/integration/raw_pointer_field_place.tl	stage2-regalloc-backend-asm-shape-g
 tests/integration/rbp_sixth_csr.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/recursive_loop_import.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/red_zone_leaf.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/shrinkwrap_red_zone.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	SysV red-zone CAS leaves and Win64 early-exit frame placement are pinned by the assembly-shape suite.
 tests/integration/region_float_arith.tl	stage2-native-link-generated-programs	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/ref_fixed_array_return.tl	stage2-native-link-generated-programs	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/ref_param_identity.tl	stage2-native-link-generated-programs	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

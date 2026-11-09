@@ -8345,6 +8345,151 @@
       0
       "opt2 folds both constant-null checks")))
 
+;; Refs #9689: a bool unpacked from a packed payload word is typed Bool in the
+;; IR, so the Bool metadata of a comparison describes its operands at every
+;; optimization level. The word operands of the #9670 null checks looked the
+;; same as an untyped unpacked bool, so a wider operand must stay detectable.
+(define (compiler-lower-packed-bool-compare-source) : String
+  "(defenum Flag
+  (Absent)
+  (One bool)
+  (Far u32 u16 u8 bool))
+(define (same [l : Flag] [r : Flag]) : bool
+  (match l
+    [(One a)
+      (match r
+        [(One b) (= a b)]
+        [_ false])]
+    [_ false]))
+(define (differ [l : Flag] [r : Flag]) : bool
+  (match l
+    [(Far _ _ _ a)
+      (match r
+        [(One b) (!= a b)]
+        [_ false])]
+    [_ false]))
+(define (main) : i64
+  (if (same (One true) (One true))
+    (if (differ (Far (cast 1 : u32) (cast 2 : u16) (cast 3 : u8) true) (One false)) 1 2)
+    3))")
+
+;; False only for a definition that types its var as something other than Bool.
+(define (lower-test-instr-defines-bool? [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(or (Mov _ _ ty) (Load _ _ ty) (Cast _ _ _ ty) (Bitcast _ _ _ ty)
+         (Phi _ _ ty) (Word _ _ _ ty))
+      (match ty
+        [(Bool) true]
+        [_ false])]
+    [(BinOp _ op _ _ ty)
+      (or
+        (ir.compiler-ir-binop-compare? (& op))
+        (match ty
+          [(Bool) true]
+          [_ false]))]
+    [_ true]))
+
+(define (lower-test-value-bool-typed?
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [value : (& value ir.CompilerIrValue)]) : bool
+  (match value
+    [(Var var)
+      (let
+        [typed : bool true]
+        (for [block-index
+          (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq block-index)
+            [(Block _ instrs)
+              (for [index (iterator.range 0 instrs.len)]
+                (let
+                  [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+                  (when
+                    (= (ir.compiler-ir-instr-dst instr) var)
+                    (set!
+                      typed
+                      (and typed (lower-test-instr-defines-bool? instr))))))]))
+        typed)]
+    [_ true]))
+
+;; Bool-metadata Eq/Ne instructions in `seq`; with `wide-only`, just those with
+;; an operand defined at another IR type.
+(define (lower-test-blocks-bool-compare-count
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [wide-only : bool]) : i64
+  (let
+    [count : i64 0]
+    (for [block-index (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+      (match (ir.compiler-ir-block-seq-borrow seq block-index)
+        [(Block _ instrs)
+          (for [index (iterator.range 0 instrs.len)]
+            (match (ir.compiler-ir-instr-seq-borrow instrs index)
+              [(BinOp _ (or (Eq) (Ne)) lhs rhs (Bool))
+                (when
+                  (or
+                    (not wide-only)
+                    (not (lower-test-value-bool-typed? seq (& lhs)))
+                    (not (lower-test-value-bool-typed? seq (& rhs))))
+                  (+= count 1))]
+              [_ unit]))]))
+    count))
+
+(define (lower-test-functions-bool-compare-count
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [wide-only : bool]) : i64
+  (let
+    [count : i64 0]
+    (for [index (iterator.range 0 (ir.compiler-ir-function-seq-count funcs))]
+      (match (ir.compiler-ir-function-seq-borrow funcs index)
+        [(Function _ _ _ _ blocks _)
+          (match blocks
+            [(Array seq)
+              (+=
+                count
+                (lower-test-blocks-bool-compare-count (& seq) wide-only))])]))
+    count))
+
+;; Bool-metadata Eq/Ne instructions in the packed-bool program after optimization
+;; at `level` (0 inspects the lowered program unchanged); -1 if lowering fails.
+(define (lower-test-packed-bool-compare-count [level : i64] [wide-only : bool]) : i64
+  (match (lower.lower-compiler-source
+    (compiler-lower-packed-bool-compare-source))
+    [(Ok program spans lower-owner)
+      (let
+        [count : i64
+          (if (= level 0)
+            (match program
+              [(Program _ functions _ _authority)
+                (lower-test-functions-bool-compare-count
+                  (& functions)
+                  wide-only)])
+            (match (match (optimize.optimize-program-with-spans-and-level
+              (& program)
+              spans
+              level)
+              [(Program optimized _) optimized])
+              [(Program _ functions _ _authority)
+                (lower-test-functions-bool-compare-count
+                  (& functions)
+                  wide-only)]))]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        count)]
+    [(Err _) -1]))
+
+(test
+  compiler-lower-packed-bool-compares-have-bool-operands
+  (for [level (iterator.range 0 3)]
+    (test.assert-i64-eq
+      (if (> (lower-test-packed-bool-compare-count level false) 0)
+        1
+        0)
+      1
+      "the fixture keeps a Bool-metadata comparison of unpacked bools")
+    (test.assert-i64-eq
+      (lower-test-packed-bool-compare-count level true)
+      0
+      "every Bool-metadata comparison has Bool-typed operands")))
+
 (define (compiler-lower-make-array-init-shape-ok? [src : String]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)

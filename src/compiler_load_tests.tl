@@ -3220,6 +3220,8 @@
 ;; consuming the root's bytes. Rootless canonical paths prefer embedded source,
 ;; whereas a root that owns the suffix explicitly requests disk source.
 (define (compiler-load-prelude-source-precedence-ok?) : bool
+  ;; Earlier smokes claim these suffixes; a claim keeps its first path.
+  (load.compiler-load-session-reset-interns!)
   (let
     [root-dir : String "target/cl_prelude_root"]
     [root-path : String "target/cl_prelude_root/runtime.tl"]
@@ -3265,6 +3267,21 @@
             (string.eq
               (compiler-load-test-path-at paths 0)
               (load.compiler-load-core-macro-prelude-path-shared-view))
+            (string.eq
+              (load.compiler-load-prelude-source-path
+                "stdlib/core_macros.tl"
+                false)
+              "target/cl_prelude_root/core_macros.tl")
+            (string.eq
+              (load.compiler-load-prelude-source-path
+                "stdlib/core_macros.tl"
+                true)
+              "stdlib/core_macros.tl")
+            (string.eq
+              (load.compiler-load-prelude-source-path
+                "target/not_prelude.tl"
+                false)
+              "target/not_prelude.tl")
             (string.eq
               (ast_tests.ast-decl-module-list-get (& modules) 0 "")
               "stdlib.core_macros")

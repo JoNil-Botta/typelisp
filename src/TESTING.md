@@ -1,5 +1,20 @@
 # Selfhost compiler testing
 
+The `binder_shadow_*` safety fixtures cover a value binder spelled like an older
+signature lifetime, arena or arena owner (SPEC 3.10.2). Each binder form, value
+form, store place and annotation form rejects arena data reaching the older
+owner, beside no-binder and other-name controls, one binder below more than 32
+local binds, and caller data that stays accepted. The `conservative_*` rows are
+valid programs rejected until lifetimes carry binding identity (#8890); they
+become `check-ok` then.
+
+`packed_bool_payload.tl` compares, branches on and stores bools unpacked from
+enum payload words, at byte offsets 0, 1 and 3 and in the top byte, beside
+all-ones neighbour fields, at opt0/1/2 on both hosts. The
+`compiler-lower-packed-bool-compares-have-bool-operands` inline test requires
+every Bool-metadata `Eq`/`Ne` of unpacked bools to have operands defined at
+IR type Bool at each level.
+
 `region_float_arith.tl` runs f32 and f64 `+ - * /`, all six compares (value,
 branch and literal forms, including signed zero and NaN), negation, literals
 and casts to every integer width and the other float width on values read

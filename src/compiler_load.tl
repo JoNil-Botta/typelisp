@@ -13159,6 +13159,48 @@
   [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
   (Available version spmd-callables))
 
+;; A source is loaded once its summary exists or its package's surface has
+;; been imported, which brings every source of that package with it.
+(define (compiler-load-session-state-source-loaded?
+  [state : (& CompilerLoadSessionState)]
+  [source-path-id : i64]) : bool
+  (match (compiler-load-session-state-surface-summary-find-source
+    state
+    source-path-id)
+    [(CompilerLoadSomeSurfaceSummary _) true]
+    [(CompilerLoadNoSurfaceSummary)
+      (let
+        [slot : i64
+          (compiler-load-dependency-catalog-slot-for-provenance-id
+            state
+            source-path-id)]
+        (and
+          (>= slot 0)
+          (< slot (array-ref state.dependency-surfaces.fragments 0).len)
+          (array-ref
+            (array-ref state.dependency-surfaces.fragments 0).imported
+            slot)))]))
+
+;; Two sources cannot hold one module identity. A dependency whose module was
+;; seen without loading it, or whose module the importer already holds, would
+;; lose its declarations and bind the alias to the other source. A same-named
+;; module body is not yet held, so the dependency loads and shares that module.
+(define (compiler-load-package-import-identity-taken?
+  [state : (& CompilerLoadSessionState)]
+  [source-path-id : i64]
+  [module : ast.AstMaybeModuleName]
+  [importer-source-module-id : i64]
+  [seen : sym_i64_env.SymI64Env]) : bool
+  (or
+    (not (compiler-load-session-state-source-loaded? state source-path-id))
+    (match module
+      [(Some module-id)
+        (and
+          (not (= module-id cbi.compiler-builtin-id-fix-empty))
+          (= module-id importer-source-module-id)
+          (sym_i64_env.sym-i64-contains-id seen module-id))]
+      [(No) false])))
+
 ;; The module governing the entry source's declarations in a hydrated
 ;; dependency, or -1 when the source route must serve it instead. Declarations
 ;; of a moduleless dependency source sit in the producer's root module with
@@ -13169,7 +13211,8 @@
   [state : (& CompilerLoadSessionState)]
   [hydration : (& hydration surface_hydrate.CompilerSurfaceHydration)]
   [slot : i64]
-  [source-path-id : i64]) : i64
+  [source-path-id : i64]
+  [held-modules : sym_i64_env.SymI64Env]) : i64
   (let
     [surface : surface_ast.SurfaceAstHydration hydration.ast]
     [count : i64 (ast.ast-decl-list-len (& surface.decls))]
@@ -13208,6 +13251,13 @@
               slot)))
         (match decl
           [(Module name)
+            ;; A module another source already holds would lose these rows.
+            (when
+              (and
+                in-package
+                (not (= name root-module-id))
+                (sym_i64_env.sym-i64-contains-id held-modules name))
+              (return -1))
             (when (= provenance-id source-path-id) (set! source-module-id name))]
           [_
             (when
@@ -13326,7 +13376,12 @@
                       (& state)
                       hydration
                       slot
-                      source-path-id)
+                      source-path-id
+                      (if (compiler-load-session-state-source-loaded?
+                        (& state)
+                        source-path-id)
+                        (sym_i64_env.sym-i64-empty)
+                        seen))
                     -1)]
                 [_ : unit (when (< source-module-id 0) (return Unavailable))]
                 [selection : CompilerLoadDependencySurfaceSelection
@@ -13770,15 +13825,37 @@
                             (if lazy-skip
                               seen
                               import-seen)]
+                          [active-state : CompilerLoadSessionState
+                            (compiler-load-active-session-state-shared-view)]
                           [validated-module : ast.AstMaybeModuleName
                             (compiler-load-after-import-expected-module
-                              (&
-                                (compiler-load-active-session-state-shared-view))
+                              (& active-state)
                               resolved-id
                               kind
                               expected-module
                               alias
                               (& imported-decls))]
+                          (when
+                            (and
+                              package-externs
+                              (compiler-load-package-import-identity-taken?
+                                (& active-state)
+                                resolved-id
+                                (clone validated-module)
+                                importer-source-module-id
+                                seen))
+                            (return
+                              (Err
+                                (box
+                                  (cdiag.compiler-diagnostic-load
+                                    AmbiguousImport
+                                    (cdiag.compiler-diagnostic-from-ast-span
+                                      importer-path
+                                      (__tl-box-place span)
+                                      (str_cat.str-cat
+                                        "compiler-load: dependency import '"
+                                        import-path
+                                        "' has the module identity of another loaded source; declare a distinct module in one of them")))))))
                           (when
                             (not
                               (or

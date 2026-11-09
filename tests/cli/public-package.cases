@@ -1254,10 +1254,27 @@ exit 42
 # follow the module a declaration really has.
 case package-dependency-identity-edges
 opt 0 1 2
-each explicit-non-entry body-same-name header-same-name
+each explicit-non-entry explicit-entry-and-non-entry body-same-name header-same-name
 file -x typelisp.pkg
 (package (name "edge_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
   (dependencies (libd "vendor/{{each}}")))
+end-file
+file vendor/explicit-entry-and-non-entry/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/explicit-entry-and-non-entry/src/lib.tl
+(module libx)
+(import other as o)
+(define (lv) : i64 (o.ov))
+end-file
+file vendor/explicit-entry-and-non-entry/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/explicit-entry-and-non-entry.tl
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (main) : i64 (+ (l.lv) (o.ov) -40))
 end-file
 file vendor/explicit-non-entry/typelisp.pkg
 (package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
@@ -1429,4 +1446,72 @@ step build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
 exec "{{dir}}/target/release/mixed_app{{exe}}"
 exit 42
+
+# Two sources cannot hold one module identity: loading the dependency would
+# duplicate the module, and skipping it would bind the alias to the wrong source.
+case package-dependency-module-identity-collision
+opt 0 1 2
+each moduleless-alias moduleless-selected no-local-name explicit-alias nested-module
+file -x typelisp.pkg
+(package (name "collision_app") (version "0.1.0") (kind "bin") (entry "src/{{each}}.tl")
+  (dependencies (libd "vendor/libd") (libx "vendor/libx")))
+end-file
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(import other as o)
+(define (lv) : i64 (o.ov))
+end-file
+file vendor/libx/typelisp.pkg
+(package (name "libx") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libx/src/lib.tl
+(module shared.name)
+(define (lv) : i64 41)
+end-file
+file vendor/libd/src/other.tl
+(module other)
+(define (ov) : i64 41)
+end-file
+file src/nested-module.tl
+(module other)
+(import libd.src.lib as l)
+(import libd.src.other as o)
+(define (ov) : i64 1)
+(define (main) : i64 (+ (o.ov) 1))
+end-file
+file src/moduleless-alias.tl
+(module libd.src.lib)
+(import libd.src.lib as l)
+(define (lv) : i64 1)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+file src/moduleless-selected.tl
+(module libd.src.lib)
+(import libd.src.lib.lv as got)
+(define (lv) : i64 1)
+(define (main) : i64 (+ (got) 1))
+end-file
+file src/no-local-name.tl
+(module libd.src.lib)
+(import libd.src.lib as l)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+file src/explicit-alias.tl
+(module shared.name)
+(import libx.src.lib as l)
+(define (lv) : i64 1)
+(define (main) : i64 (+ (l.lv) 1))
+end-file
+step check
+run check --manifest-path "{{dir}}/typelisp.pkg"
+exit 1
+stderr contains error[E0305]: compiler-load: dependency import
+stderr contains {{each}}.tl:
+step build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+exit 1
+stderr contains error[E0305]: compiler-load: dependency import
+stderr contains {{each}}.tl:
 

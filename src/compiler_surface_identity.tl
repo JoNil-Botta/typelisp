@@ -326,12 +326,12 @@
             [(No) -2]
             [(Some record)
               (let
-                ;; Hygiene settles reflected references before output can be captured.
+                ;; A captured surface holds finished output, so a reflected reference
+                ;; is its resolution: Context on the wire.
                 [role : i64
                   (match record.role
                     [(Legacy) 0]
-                    [(Context) 1]
-                    [_ -1])]
+                    [_ 1])]
                 [module-ref : i64
                   (surface-identity-local-ref
                     record.definition-module-id
@@ -340,7 +340,7 @@
                   (surface-identity-local-ref
                     record.source-name-id
                     source-count)]
-                (if (or (< role 0) (< module-ref 0) (< source-ref 0))
+                (if (or (< module-ref 0) (< source-ref 0))
                   -2
                   (+
                     (surface-identity-portable-macro-global-offset

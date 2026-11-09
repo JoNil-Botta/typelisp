@@ -61,8 +61,7 @@
   (Legacy)
   (Context)
   ;; An entry-module name handed out by reflection, and a reference built from
-  ;; root authority that denotes the declaration. Only macro-time values and
-  ;; not-yet-settled output carry them; hygiene settles every reference.
+  ;; root authority that denotes the declaration. Both resolve like Context.
   (Reflected)
   (ReflectedDeclaration))
 

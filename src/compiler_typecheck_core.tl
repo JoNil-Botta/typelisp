@@ -105671,7 +105671,8 @@
       record.right-id]
     [(and
         (= record.kind (ci.intern-structural-kind-macro-global))
-        (or (= record.left-id 0) (= record.left-id 1)))
+        (>= record.left-id 0)
+        (<= record.left-id 3))
       record.right-id]
     [(and
         (= record.kind (ci.intern-structural-kind-macro-local))
@@ -105712,10 +105713,9 @@
       name-id)
       [(No) false]
       [(Some record)
-        ;; Unsettled reflected output fails closed to its spelling.
         (match record.role
-          [(Context) false]
-          [_ true])])))
+          [(Legacy) true]
+          [_ false])])))
 
 ;; Does the macro-hygiene global `name-id` name a binding the macro's
 ;; definition site resolved into a module other than the runtime prelude and
@@ -105734,7 +105734,8 @@
       [(No) false]
       [(Some record)
         (match record.role
-          [(Context)
+          [(Legacy) false]
+          [_
             (not
               (or
                 (=
@@ -105742,8 +105743,7 @@
                   cbi.compiler-builtin-id-runtime-module)
                 (=
                   record.definition-module-id
-                  cbi.compiler-builtin-id-fix-stdlib_dot_string)))]
-          [_ false])])))
+                  cbi.compiler-builtin-id-fix-stdlib_dot_string)))])])))
 
 (define (macro-hygiene-global-module-id
   [session : cis.InternStructuralSessionHandle]
@@ -106695,10 +106695,30 @@
         (macro-hygiene-settle-reflected-id env name-id))]
     result))
 
-;; Reflected references settle here, where scope is known. One built from root
-;; authority denotes the declaration. A name from `expr-var` is hygienic by name:
-;; a binder in the output or a local at the call site takes it by spelling, and
-;; otherwise it names the entry definition.
+;; Reflected references settle here, where scope is known. A name from `expr-var`
+;; is hygienic by name: a binder in the output or a local at the call site takes
+;; it by spelling. Otherwise it keeps its role, so a later macro still reads it as
+;; a reflected name, and it resolves like Context(root, s). A reference built from
+;; root authority denotes the declaration and is never captured.
+(define (macro-hygiene-settle-reflected-operand
+  [expr-bases : i64]
+  [inner-box : i64]
+  [env : MacroHygieneEnv]
+  [expr : ast.AstExpr]) : i64
+  (if (not ctfe_support.ctfe-reflected-root-names-issued)
+    (ast.ast-node-pool-context-expr-push env.pools expr)
+    (let
+      [inner : ast.AstExpr
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& inner))
+        [(Var name)
+          (let
+            [settled : i64 (macro-hygiene-settle-reflected-id env name)]
+            (if (= settled name)
+              (ast.ast-node-pool-context-expr-push env.pools expr)
+              (macro-hygiene-expr-push env (ast.AstExpr.Var settled))))]
+        [_ (ast.ast-node-pool-context-expr-push env.pools expr)]))))
+
 (define (macro-hygiene-settle-reflected-id
   [env : MacroHygieneEnv]
   [name-id : i64]) : i64
@@ -106722,13 +106742,7 @@
                   [(No) false])
                 (macro-hygiene-use-site-local? env record.source-name-id))
                 record.source-name-id
-                (ctfe_support.ctfe-root-value-identity-id
-                  session
-                  record.source-name-id))]
-            [(ReflectedDeclaration)
-              (ctfe_support.ctfe-root-value-identity-id
-                session
-                record.source-name-id)]
+                name-id)]
             [_ name-id])]
         [(No) name-id]))))
 
@@ -108319,8 +108333,10 @@
     ;; Do not apply a later expansion's hygiene environment to syntax behind a
     ;; provenance boundary.  Macro discovery still walks through the marker so
     ;; nested, not-yet-expanded calls can fire in their own hygiene pass.
-    [(MacroExpansion _ _ _)
-      (ast.ast-node-pool-context-expr-push env.pools expr)]
+    [(MacroExpansion inner-box _ _)
+      ;; A reflected name is bound by name. A binder this output gives its
+      ;; spelling takes an operand the same way it takes a plain name.
+      (macro-hygiene-settle-reflected-operand expr-bases inner-box env expr)]
     [(Var name)
       (macro-hygiene-expr-push
         env

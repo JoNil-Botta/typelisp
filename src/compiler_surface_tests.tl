@@ -242,6 +242,12 @@
             alpha)
           source-count
           identity-count)]
+      [portable-macro-global-context-alpha : i64
+        (surface_identity.surface-identity-portable-id
+          session
+          (surface-identity-test-macro-global-id session 0 alpha false)
+          source-count
+          identity-count)]
       [portable-macro-global-root : i64
         (surface_identity.surface-identity-portable-id
           session
@@ -325,8 +331,12 @@
                               hydrated-session
                               7
                               mapped-alpha)))
-                        (= portable-macro-global-reflected -2)
-                        (= portable-macro-global-declaration -2)
+                        (=
+                          portable-macro-global-reflected
+                          portable-macro-global-context-alpha)
+                        (=
+                          portable-macro-global-declaration
+                          portable-macro-global-context-alpha)
                         (=
                           (surface_identity.surface-identity-resolve-portable-id
                             hydrated-session

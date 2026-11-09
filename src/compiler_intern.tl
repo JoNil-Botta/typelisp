@@ -951,7 +951,7 @@
         [(and macro-names? (= kind (intern-structural-kind-macro-global)))
           (let
             [role : i64 (intern-composite-left-id-unchecked raw)]
-            (or (= role 0) (= role 1)))]
+            (and (>= role 0) (<= role 3)))]
         [(and macro-names? (= kind (intern-structural-kind-macro-local)))
           (=
             (intern-active-structural-record-kind-or

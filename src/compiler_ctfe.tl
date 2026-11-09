@@ -6918,20 +6918,6 @@
           expr
           "module-export-macro? expects exactly two args")))))
 
-;; The canonical root-qualified identity of an entry-module value: the macro
-;; global record with the root as definition module. Reflection reaches an
-;; entry value through it; a bare spelling would resolve at the expansion site,
-;; where a named module cannot see the entry module.
-(define (ctfe-root-value-identity-id
-  [session : cis.InternStructuralSessionHandle]
-  [name-id : i64]) : i64
-  (cis.intern-macro-global-identity-raw
-    (cis.intern-structural-session-macro-global-identity
-      session
-      cis.InternMacroGlobalRole.Context
-      cbi.compiler-builtin-id-fix-empty
-      name-id)))
-
 ;; A name reflection hands out for an entry-module definition. Its record role
 ;; tells it from every macro hygiene identity.
 (define (ctfe-reflected-root-name-id

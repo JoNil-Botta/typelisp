@@ -31238,12 +31238,6 @@
 ;; A hit is only a candidate; a miss proves the name is not hidden.
 (define tc-entry-hidden-filter-slots : (__tl_dyn-array i64)
   (__tl_make-array i64 4096))
-(define tc-entry-hidden-filter-touched : (__tl_dyn-array i64)
-  (__tl_make-array i64 4096))
-(define tc-entry-hidden-filter-touched-count : i64
-  0)
-(define tc-entry-hidden-filter-cleared : bool
-  false)
 
 (defmacro (tc-entry-hidden-filter-hit? [name-id : Expr]) : Expr
   `(unsafe
@@ -31256,31 +31250,11 @@
         0))))
 
 (define (tc-entry-hidden-filter-note! [key-id : i64]) : unit
-  (let
-    [slot : i64 (bit-and key-id 4095)]
-    (when
-      (= (array-ref tc-entry-hidden-filter-slots slot) 0)
-      (set! (array-ref tc-entry-hidden-filter-slots slot) 1)
-      (set!
-        (array-ref
-          tc-entry-hidden-filter-touched
-          tc-entry-hidden-filter-touched-count)
-        slot)
-      (+= tc-entry-hidden-filter-touched-count 1))))
+  (set! (array-ref tc-entry-hidden-filter-slots (bit-and key-id 4095)) 1))
 
 (define (tc-entry-hidden-filter-reset!) : unit
-  (if tc-entry-hidden-filter-cleared
-    (for [index (iterator.range 0 tc-entry-hidden-filter-touched-count)]
-      (set!
-        (array-ref
-          tc-entry-hidden-filter-slots
-          (array-ref tc-entry-hidden-filter-touched index))
-        0))
-    (begin
-      (for [slot (iterator.range 0 4096)]
-        (set! (array-ref tc-entry-hidden-filter-slots slot) 0))
-      (set! tc-entry-hidden-filter-cleared true)))
-  (set! tc-entry-hidden-filter-touched-count 0))
+  (for [slot (iterator.range 0 4096)]
+    (set! (array-ref tc-entry-hidden-filter-slots slot) 0)))
 
 (define (tc-entry-hidden-names-reset!) : unit
   (unsafe

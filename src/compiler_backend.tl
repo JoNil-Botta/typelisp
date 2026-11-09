@@ -65027,7 +65027,6 @@
       -1)))
 
 ;; Return the required red-zone guard, or -1 when a real frame is needed.
-;; An empty slot region is admitted too, for shrink-wrap profitability queries.
 (define (compiler-backend-red-zone-guard-for
   [backend-state : CompilerBackendState]
   [text : (& text str)]
@@ -65044,7 +65043,7 @@
         (compiler-backend-state-emission-target-policy backend-state).red-zone
         (not (compiler-backend-current-fn-win64? backend-state))
         (not shrinkwrap-active?)
-        (>= frame 0)
+        (> frame 0)
         (<= frame compiler-backend-red-zone-limit)
         (= outgoing 0)
         (not
@@ -72794,9 +72793,9 @@
                         rebase-result.text)]
                     [rebase-ok : bool rebase-result.ok]
                     [fpo-ok : bool (and fpo-attempt rebase-ok)]
-                    ;; A SysV leaf with neither save pushes nor a real frame
-                    ;; already returns bare on every path. Form (a) saves no
-                    ;; work there and can turn its red-zone slots into a frame.
+                    ;; Form (a) must not turn a SysV leaf's red-zone slots into
+                    ;; a frame when it has no save pushes to bypass. An already
+                    ;; empty frame keeps the rewrite's useful guard placement.
                     ;; Query the ordinary layout without changing wrapped state;
                     ;; refusal below retries the original IR and register plan.
                     [shrinkwrap-frameless? : bool

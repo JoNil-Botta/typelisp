@@ -1821,7 +1821,7 @@ not-match ^[[:space:]]+(subq|addq) \$[0-9]+, %rsp$
 not-match ^[[:space:]]+(pushq|popq)[ ]
 not-contains __shrinkwrap
 in fn tl_rz_empty
-not-contains __shrinkwrap
+contains __shrinkwrap
 not-match %(rsp|rbp)
 
 # Win64 has no red zone: bypassing the frame on the null path remains useful.

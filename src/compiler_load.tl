@@ -574,6 +574,8 @@
   ;; Stdlib suffix -> the first physical path noted for it.
   (suffix-claims (__tl_dyn-array sym_i64_env.SymI64Env))
   (noted (__tl_dyn-array bool))
+  ;; Whether a prelude read from a configured root failed to load.
+  (prelude-load-failed (__tl_dyn-array bool))
   ;; Not cleared by the per-entry reset; see CompilerLoadStdlibProofs.
   (retained-proofs (__tl_dyn-array CompilerLoadStdlibProofs)))
 
@@ -900,6 +902,7 @@
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
+    (compiler-load-session-state-bool-cell false)
     (compiler-load-session-state-bool-cell false)
     (__tl_make-array
       (CompilerLoadStdlibProofs (__tl_make-array CompilerLoadStdlibProof 0) 0 0))))
@@ -2817,6 +2820,10 @@
     state.embedded-stdlib-provenance.noted
     0
     false)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.prelude-load-failed
+    0
+    false)
   (let
     [owner : i64 (array-ref state.embedded-provenance-owner-arena 0)]
     (owned_view.compiler-owned-cell-set!
@@ -3136,6 +3143,61 @@
               path
               (str_cat.str-cat "stdlib/" (ci.intern-str suffix-id))))]
         [(InternLookupMissing) path]))))
+
+;: The file this session read the prelude displayed at PATH from. A prelude
+;: keeps its canonical path whichever root supplied it, so source-quoting routes
+;: ask here rather than opening that spelling in the working directory. Any
+;: other path, and a prelude no root supplied, comes back unchanged. An entry,
+;: import or include can also read a working-directory file at that path, so a
+;: load failure is the configured prelude's only when that prelude's own load
+;: failed. Later diagnostics can only be the prelude's: those files' declarations
+;: are dropped against it.
+(define (compiler-load-prelude-source-path
+  [path : (& path str)]
+  [load-failure? : bool]) : String
+  (if (compiler-load-prelude-importer? path)
+    (match (ci.intern-lookup
+      (compiler-load-stdlib-suffix (& (compiler-load-normalize-path path))))
+      [(InternLookupFound suffix-id)
+        (let
+          [claims : sym_i64_env.SymI64Env
+            (array-ref
+              (unsafe
+                (ptr-read
+                  (ptr-addr-of
+                    compiler-load-active-session-state.embedded-stdlib-provenance.suffix-claims)))
+              0)]
+          [prelude-failed : bool
+            (array-ref
+              (unsafe
+                (ptr-read
+                  (ptr-addr-of
+                    compiler-load-active-session-state.embedded-stdlib-provenance.prelude-load-failed)))
+              0)]
+          [claim : i64
+            (sym_i64_env.sym-i64-lookup-id-or (& claims) suffix-id -1)]
+          (if (or (< claim 0) (and load-failure? (not prelude-failed)))
+            (string.copy path)
+            (ci.intern-str claim)))]
+      [(InternLookupMissing) (string.copy path)])
+    (string.copy path)))
+
+(define (compiler-load-note-prelude-load-result
+  [path : (& path str)]
+  [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
+  (match result
+    [(Ok decls paths modules seen) (Ok decls paths modules seen)]
+    [(Err diag)
+      (when
+        (string.eq (cdiag.compiler-diagnostic-path (& (deref diag))) path)
+        (let
+          [failed : (__tl_dyn-array bool)
+            (unsafe
+              (ptr-read
+                (ptr-addr-of
+                  compiler-load-active-session-state.embedded-stdlib-provenance.prelude-load-failed)))]
+          (set! (array-ref failed 0) true)))
+      (Err diag)]))
 
 (define (compiler-load-note-embedded-equivalent-if-matching!
   [suffix : String]
@@ -5154,12 +5216,14 @@
         (compiler-load-note-embedded-equivalent-if-matching!
           suffix
           (& (string.copy source-path)))
-        (compiler-load-source-with-paths-and-roots-cfg
-          (& (string.copy path))
-          (& (compiler-load-session-read-source-text source-path))
-          seen
-          stdlib-roots
-          cfgs)]
+        (compiler-load-note-prelude-load-result
+          path
+          (compiler-load-source-with-paths-and-roots-cfg
+            (& (string.copy path))
+            (& (compiler-load-session-read-source-text source-path))
+            seen
+            stdlib-roots
+            cfgs))]
       [(CompilerLoadNoPath)
         (match (compiler-load-embedded-stdlib-source suffix)
           [(CompilerEmbeddedStdlibSomeSource source)
@@ -5218,14 +5282,16 @@
             (compiler-load-session-state-read-source-text
               (owned_view.compiler-owned-shared-view load-state)
               (& source-path))]
-          (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
-            load-state
-            (& (string.copy path))
-            (& text)
-            seen
-            stdlib-roots
-            cfgs
-            pools))]
+          (compiler-load-note-prelude-load-result
+            path
+            (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
+              load-state
+              (& (string.copy path))
+              (& text)
+              seen
+              stdlib-roots
+              cfgs
+              pools)))]
       [(CompilerLoadNoPath)
         (match (compiler-load-embedded-stdlib-source suffix)
           [(CompilerEmbeddedStdlibSomeSource source)
@@ -13478,6 +13544,72 @@
       (let
         [rest : ast.AstDeclList rest]
         (match (clone decl)
+          [(ModuleBody target-module-id body-box)
+            (let
+              [target-module : String (ci.intern-str target-module-id)]
+              [body : ast.AstDeclList (deref body-box)]
+              (match (compiler-load-package-decls-with-module-and-roots
+                (& body)
+                importer-scan-decls
+                (string.copy importer-path)
+                importer-path-id
+                (& target-module)
+                target-module-id
+                (string.copy target-module)
+                target-module-id
+                seen
+                stdlib-roots
+                (string.copy manifest-dir)
+                deps
+                cfgs)
+                [(Ok body-decls body-paths body-modules body-seen)
+                  (match (compiler-load-package-decls-with-module-and-roots
+                    (& rest)
+                    importer-scan-decls
+                    (string.copy importer-path)
+                    importer-path-id
+                    importer-module
+                    importer-module-id
+                    importer-source-module
+                    importer-source-module-id
+                    body-seen
+                    stdlib-roots
+                    manifest-dir
+                    deps
+                    cfgs)
+                    [(Ok rest-decls rest-paths rest-modules rest-seen)
+                      (Ok
+                        (compiler-load-decl-list-prepend
+                          (& (ast.ast-decl-module-id target-module-id))
+                          (compiler-load-decl-list-append-onto
+                            (& body-decls)
+                            (&
+                              (compiler-load-decl-list-prepend
+                                (&
+                                  (ast.ast-decl-module-id
+                                    importer-source-module-id))
+                                rest-decls))))
+                        (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+                          (string.copy importer-path)
+                          target-module-id
+                          importer-path-id
+                          (compiler-load-decl-path-list-append-onto
+                            (& body-paths)
+                            (ast.ast-decl-path-list-prepend-builder-with-owner-id
+                              importer-path
+                              importer-path-id
+                              rest-paths)))
+                        (ast.ast-decl-module-list-prepend-builder-id
+                          target-module-id
+                          (compiler-load-decl-module-list-append-onto
+                            (& body-modules)
+                            (&
+                              (ast.ast-decl-module-list-prepend-builder-id
+                                importer-module-id
+                                rest-modules))))
+                        rest-seen)]
+                    [(Err diag) (Err diag)])]
+                [(Err diag) (Err diag)]))]
           [(Import decl-meta (Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-package-decls-with-module-and-roots
@@ -14317,14 +14449,16 @@
         (compiler-load-note-embedded-equivalent-if-matching!
           suffix
           (& (string.copy source-path)))
-        (compiler-load-package-stdlib-prelude-source-with-roots-cfg
-          (& (string.copy path))
-          (& (compiler-load-session-read-source-text source-path))
-          seen
-          stdlib-roots
-          (& (string.copy manifest-dir))
-          deps
-          cfgs)]
+        (compiler-load-note-prelude-load-result
+          path
+          (compiler-load-package-stdlib-prelude-source-with-roots-cfg
+            (& (string.copy path))
+            (& (compiler-load-session-read-source-text source-path))
+            seen
+            stdlib-roots
+            (& (string.copy manifest-dir))
+            deps
+            cfgs))]
       [(CompilerLoadNoPath)
         (match (compiler-load-embedded-stdlib-source suffix)
           [(CompilerEmbeddedStdlibSomeSource source)

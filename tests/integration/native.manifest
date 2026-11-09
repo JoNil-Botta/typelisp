@@ -1114,6 +1114,7 @@ c_function_pointer_null|all|-,0,1,2|tests/integration/c_function_pointer_null.tl
 c_function_pointer_publication|all|-|tests/integration/c_function_pointer_publication.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c stdlib/thread.tl|-
 c_function_pointer_kind|all|-|tests/integration/c_function_pointer_kind.tl|42|-|-|-|-
 ptr_null_check_word|all|0,1,2|tests/integration/ptr_null_check_word.tl|42|-|-|-|-
+packed_bool_payload|all|0,1,2|tests/integration/packed_bool_payload.tl|42|-|-|-|-
 wide_struct_members|all|-|tests/integration/wide_struct_members.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|-
 wide_struct_members|all|0,2|tests/integration/wide_struct_members.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|stage-stdlib
 wide_enum_variants|all|-|tests/integration/wide_enum_variants.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|-
@@ -1278,3 +1279,6 @@ loop_address_argument|all|0,1,2|tests/integration/loop_address_argument.tl|1|-|-
 loop_address_callee|all|0,1,2|tests/integration/loop_address_callee.tl|42|-|-|-|-
 loop_address_snapshots|all|0,1,2|tests/integration/loop_address_snapshots.tl|42|-|-|-|-
 region_scalar_signedness|all|0,1,2|tests/integration/region_scalar_signedness.tl|42|-|-|-|-
+region_float_arith|all|0,1,2|tests/integration/region_float_arith.tl|42|-|-|-|-
+float_neg_mixed_f64_first|all|0,1,2|tests/integration/float_neg_mixed_f64_first.tl|42|-|-|-|-
+float_neg_mixed_f32_first|all|0,1,2|tests/integration/float_neg_mixed_f32_first.tl|42|-|-|-|-

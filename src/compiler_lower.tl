@@ -17764,6 +17764,18 @@
                         (lower-global-shared-view field-ty))
                         [(F32)
                           (lower-bitcast-value shr-state shr-value (U64) (F32))]
+                        ;; Comparison metadata of Bool means Bool operands, so
+                        ;; an unpacked bool must be typed Bool in the IR too.
+                        ;; The optimizer keeps this Cast, unlike a Mov, whose
+                        ;; copy would bring the U64 var back into the compare.
+                        [(Bool)
+                          (match (lower-emit-cast
+                            shr-state
+                            shr-value
+                            (U64)
+                            (Bool))
+                            [(Expr cast-state cast-value _)
+                              (Expr cast-state cast-value field-ty)])]
                         [_ (Expr shr-state shr-value field-ty)])])]))])))))
 
 ;; OR one field value into the packed-word accumulator: mask it to its byte
@@ -32156,8 +32168,9 @@
       op
       (lower-global-shared-view inner)
       expr-ty)
-      [(Ok result-ty)
+      [(Ok tagged-result)
         (let
+          [result-ty : ast.AstType (lower-float-without-region tagged-result)]
           [lowered
             (try
               (match (tc_core.tc-unop-contextual-operand-type
@@ -32191,6 +32204,19 @@
                       (Var var-id)
                       result-ty))])]))]
       [(Err message) (Err (box (lower-diagnostic-at-expr ctx origin message)))])))
+
+;; IR float types carry no region tag: every backend and optimizer float
+;; classifier reads the outer constructor (#9690).
+(define (lower-float-without-region [ty : ast.AstType]) : ast.AstType
+  (match (& ty)
+    [(or (Region _ wrapped) (Invalidate _ wrapped))
+      (let
+        [inner : ast.AstType
+          (tc_core.tc-type-strip-region (ast.ty-node-get wrapped))]
+        (match (& inner)
+          [(or (F64) (F32)) inner]
+          [_ ty]))]
+    [_ ty]))
 
 ;; Logical operators lower through the existing conditional path. Other
 ;; operators lower left then right, carrying the returned state forward once.
@@ -32238,8 +32264,14 @@
           expr-ty)
           [(tc_core.ResultTcBinOpTypes.Ok binop-types)
             (match binop-types
-              [(tc_core.TcBinOpTypes left-ty right-ty result-ty)
+              [(tc_core.TcBinOpTypes tagged-left tagged-right tagged-result)
                 (let
+                  [left-ty : ast.AstType
+                    (lower-float-without-region tagged-left)]
+                  [right-ty : ast.AstType
+                    (lower-float-without-region tagged-right)]
+                  [result-ty : ast.AstType
+                    (lower-float-without-region tagged-result)]
                   [first-var : i64 (lower-state-next-var state)]
                   (match (lower-expr-expected
                     ctx

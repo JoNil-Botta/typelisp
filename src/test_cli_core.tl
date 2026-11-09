@@ -2047,6 +2047,7 @@
 
 (define (tltest-inline-typecheck-loaded
   [source : String]
+  [diagnostic-source : TlTestDiagnosticSource]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
@@ -2081,10 +2082,10 @@
                   [(ResultCompilerTypecheck.Ok _) 0]
                   [(ResultCompilerTypecheck.Err diag)
                     (io.print-error
-                      (driver.compiler-driver-render-source-diagnostic
-                        (tltest-diagnostic-with-source-fallback
-                          source
-                          (cdiag.compiler-diagnostic-list-first (deref diag)))))
+                      (tltest-render-source-diagnostic
+                        source
+                        diagnostic-source
+                        (cdiag.compiler-diagnostic-list-first (deref diag))))
                     1]))])))]))
 
 (define (tltest-inline-stdlib-source?
@@ -2141,7 +2142,8 @@
         test-cfgs)
         [(Ok decls paths _ _)
           (tltest-inline-typecheck-loaded
-            source
+            (string.copy (& source))
+            (tltest-diagnostic-source source (& decls) (& paths))
             decls
             paths
             roots
@@ -2177,10 +2179,11 @@
         [(Ok decls paths _ _)
           (tltest-inline-typecheck-loaded
             (compiler_load.compiler-load-package-owned-path
-              package-owner
+              (string.copy (& package-owner))
               (& manifest-dir)
               (& legacy-roots)
-              source)
+              (string.copy (& source)))
+            (tltest-diagnostic-source source (& decls) (& paths))
             decls
             paths
             roots
@@ -2274,7 +2277,10 @@
         (if (= status 0)
           unit
           (io.print-error
-            (str_cat.str-cat "test: package inline preflight failed: " source)))
+            (str_cat.str-cat
+              "test: package inline preflight failed: "
+              source
+              "\n")))
         (+= cursor 1)))
     (tltest-inline-clear-load-only-caches!)
     (driver.compiler-driver-reset-file-state!)
@@ -2307,6 +2313,7 @@
 
 (define (tltest-check-only
   [source : String]
+  [diagnostic-source : TlTestDiagnosticSource]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [count : i64]
@@ -2333,10 +2340,10 @@
         0]
       [(ResultCompilerTypecheck.Err diag)
         (io.print-error
-          (driver.compiler-driver-render-source-diagnostic
-            (tltest-diagnostic-with-source-fallback
-              source
-              (cdiag.compiler-diagnostic-list-first (deref diag)))))
+          (tltest-render-source-diagnostic
+            source
+            diagnostic-source
+            (cdiag.compiler-diagnostic-list-first (deref diag))))
         1])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -2362,6 +2369,69 @@
   [source : String]
   [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-fallback-path diag source))
+
+;; Package harnesses select declarations by display path. Snapshot the loaded
+;; physical provenance before collection rebuilds the harness's path lanes.
+(defstruct TlTestDiagnosticSource
+  (physical-path String)
+  (paths sym_i64_env.SymI64Env))
+
+(define (tltest-diagnostic-source
+  [source : String]
+  [decls : (& decls ast.AstDeclList)]
+  [paths : (& paths ast.AstDeclPathList)]) : TlTestDiagnosticSource
+  (let
+    [physical-paths : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+      (let
+        [provenance : i64 (ast.ast-decl-path-list-provenance-id paths index -1)]
+        (when
+          (and
+            (>= provenance 0)
+            (match (ast.ast-decl-list-ref-borrowed decls index)
+              [(Module _) false]
+              [_ true]))
+          (let
+            [path : i64 (ci.intern (ast.ast-decl-path-list-get paths index ""))]
+            [previous : i64
+              (sym_i64_env.sym-i64-lookup-id-or (& physical-paths) path -1)]
+            (when
+              (and (not (= previous provenance)) (not (= previous -2)))
+              (set!
+                physical-paths
+                (sym_i64_env.sym-i64-bind-id
+                  physical-paths
+                  path
+                  (if (= previous -1)
+                    provenance
+                    -2))))))))
+    (TlTestDiagnosticSource source physical-paths)))
+
+(define (tltest-render-source-diagnostic
+  [source : String]
+  [diagnostic-source : TlTestDiagnosticSource]
+  [diag : cdiag.CompilerDiagnostic]) : String
+  (let
+    [located : cdiag.CompilerDiagnostic
+      (tltest-diagnostic-with-source-fallback (string.copy (& source)) diag)]
+    [path : String (cdiag.compiler-diagnostic-path (& located))]
+    [provenance : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        (& diagnostic-source.paths)
+        (ci.intern (string.copy (& path)))
+        -1)]
+    [physical-path : String
+      (cond
+        [(string.eq path source) diagnostic-source.physical-path]
+        [(>= provenance 0) (ci.intern-str provenance)]
+        [else path])]
+    [text : cdiag.CompilerDiagnosticSource
+      (driver.compiler-driver-diagnostic-source-read
+        (&
+          (compiler_load.compiler-load-prelude-source-path
+            (& physical-path)
+            (cdiag.compiler-diagnostic-load-failure? (& located)))))]
+    (cdiag.compiler-diagnostic-render-indexed-source (& located) (& text))))
 
 (define (tltest-executable-spawn-detail [bin-path : String]) : String
   (match (build_run_core.source-tool-try-file-exists? bin-path)
@@ -2427,6 +2497,7 @@
   [lower-state : lower.CompilerLowerState]
   [source : String]
   [entry-path : String]
+  [diagnostic-source : TlTestDiagnosticSource]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
@@ -2449,7 +2520,7 @@
         1)]
     (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
       lower-state
-      entry-path
+      (string.copy (& entry-path))
       program
       paths
       (tltest-harness-lower-mode target backend-mode)
@@ -2500,14 +2571,19 @@
             failed])]
       [(Err diag)
         (io.print-error
-          (driver.compiler-driver-render-source-diagnostic
-            (tltest-diagnostic-with-source-fallback source (deref diag))))
+          (tltest-render-source-diagnostic
+            (if (string.eq entry-path "")
+              (string.copy (& source))
+              entry-path)
+            diagnostic-source
+            (deref diag)))
         (build_run_core.source-tool-clean-temp-files files true)
         failed])))
 
 (define (tltest-run-harness-in-temp
   [source : String]
   [entry-path : String]
+  [diagnostic-source : TlTestDiagnosticSource]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
@@ -2523,6 +2599,7 @@
         lower-state
         source
         entry-path
+        diagnostic-source
         program
         paths
         roots
@@ -2539,6 +2616,7 @@
 (define (tltest-run-direct-with-entry
   [source : String]
   [entry-path : String]
+  [diagnostic-source : TlTestDiagnosticSource]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
@@ -2557,6 +2635,7 @@
           (tltest-run-harness-in-temp
             source
             entry-path
+            diagnostic-source
             (tltest-program-with-print-runtime program backend-target)
             (tltest-paths-with-print-runtime backend-target paths)
             roots
@@ -2580,7 +2659,8 @@
   [backend-mode : compiler_backend.CompilerBackendMode]) : i64
   (tltest-run-direct-with-entry
     (owned_view.compiler-owned-shared-view source)
-    source
+    (string.copy (& source))
+    (TlTestDiagnosticSource source (sym_i64_env.sym-i64-empty))
     program
     paths
     roots
@@ -2841,6 +2921,7 @@
 
 (define (tltest-package-run-one
   [source : String]
+  [diagnostic-source : TlTestDiagnosticSource]
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
@@ -2886,20 +2967,24 @@
                   [(Check)
                     (tltest-check-only
                       source
+                      diagnostic-source
                       program
                       harness-paths
                       count
                       backend-target
                       roots)]
                   [(Run)
-                    (tltest-run-direct
+                    (tltest-run-direct-with-entry
+                      (string.copy (& source))
                       source
+                      diagnostic-source
                       program
                       harness-paths
                       roots
                       target
                       opt-level
-                      backend-mode)])]
+                      backend-mode
+                      true)])]
               (if (= status 0)
                 (Ok 1 count)
                 (if (and (= status 1) (not (tltest-check-mode? test-mode)))
@@ -2987,8 +3072,9 @@
     (let
       [status : i64
         (tltest-run-direct-with-entry
-          source
+          (string.copy (& source))
           ""
+          (tltest-diagnostic-source source (& decls) (& paths))
           (ast.ast-program decls)
           paths
           roots
@@ -3177,12 +3263,13 @@
           (let
             [owned-source : String
               (compiler_load.compiler-load-package-owned-path
-                package-owner
+                (string.copy (& package-owner))
                 (& manifest-dir)
                 (& legacy-roots)
-                source)]
+                (string.copy (& source)))]
             (tltest-package-run-one
               owned-source
+              (tltest-diagnostic-source source (& decls) (& paths))
               target
               source-roots
               opt-level
@@ -3653,7 +3740,8 @@
             (if (= count 0)
               (tltest-no-tests-check source decls paths roots backend-target)
               (tltest-check-only
-                source
+                (string.copy (& source))
+                (tltest-diagnostic-source source (& decls) (& paths))
                 program
                 harness-paths
                 count
@@ -4065,7 +4153,11 @@
                       (match test-mode
                         [(Check)
                           (tltest-check-only
-                            source
+                            (string.copy (& source))
+                            (tltest-diagnostic-source
+                              source
+                              (& decls)
+                              (& paths))
                             program
                             harness-paths
                             count

@@ -1744,3 +1744,57 @@
           (io.panic
             "test CLI implicit prelude module set drifted from the prelude load"))]
       [(Err _) (io.panic "test CLI implicit prelude load failed")])))
+
+(test
+  test-cli-diagnostic-source-excludes-module-markers
+  (if (let
+    [owner : i64 (ci.intern "marker-owner")]
+    [physical : i64 (ci.intern "physical/source.tl")]
+    [display : i64 (ci.intern "display/source.tl")]
+    [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
+    [paths : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity 2)]
+    (ast.ast-decl-list-push
+      (&mut decls)
+      (ast.ast-decl-def-fn-id
+        owner
+        (ast.ast-param-list-new)
+        (Bool)
+        (ast.ast-node-push (Literal (Bool true)))))
+    (ast.ast-decl-list-push (&mut decls) (ast.ast-decl-module-id owner))
+    (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+      (&mut paths)
+      "display/source.tl"
+      owner
+      physical)
+    (ast.ast-decl-path-list-push-with-owner-id
+      (&mut paths)
+      "display/source.tl"
+      owner)
+    (let
+      [snapshot : tltest.TlTestDiagnosticSource
+        (tltest.tltest-diagnostic-source "entry.tl" (& decls) (& paths))]
+      [marker-decls : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+      [marker-paths : ast.AstDeclPathList
+        (ast.ast-decl-path-list-with-capacity 1)]
+      (ast.ast-decl-list-push
+        (&mut marker-decls)
+        (ast.ast-decl-module-id owner))
+      (ast.ast-decl-path-list-push-with-owner-id
+        (&mut marker-paths)
+        "display/source.tl"
+        owner)
+      (let
+        [marker-only : tltest.TlTestDiagnosticSource
+          (tltest.tltest-diagnostic-source
+            "entry.tl"
+            (& marker-decls)
+            (& marker-paths))]
+        (and
+          (=
+            (sym_i64_env.sym-i64-lookup-id-or (& snapshot.paths) display -1)
+            physical)
+          (=
+            (sym_i64_env.sym-i64-lookup-id-or (& marker-only.paths) display -1)
+            -1)))))
+    unit
+    (io.panic "test: diagnostic source marker exclusion mismatch")))

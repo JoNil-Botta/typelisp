@@ -369,6 +369,48 @@
     [(= op 2) (shr (u64-at p 0) 63)]
     [else (arith-u64 p (- op 3))]))
 
+;; Widening a loaded value exposes the extension the load chose: a signed
+;; narrow load sign-extends, an unsigned one zero-extends. Op 0 widens, op 1
+;; adds in 64 bits, and op 2 (signed rows) multiplies in 64 bits.
+(define (widen-i32 [p : (& p (Array i32 2))] [op : i64]) : i64
+  (cond
+    [(= op 0) (cast (i32-at p 0) : i64)]
+    [(= op 1) (+ (cast (i32-at p 0) : i64) 3)]
+    [(= op 2) (* (cast (i32-at p 0) : i64) (cast (i32-at p 0) : i64))]
+    [else (widen-i32 p (- op 3))]))
+
+(define (widen-i16 [p : (& p (Array i16 2))] [op : i64]) : i64
+  (cond
+    [(= op 0) (cast (i16-at p 0) : i64)]
+    [(= op 1) (+ (cast (i16-at p 0) : i64) 3)]
+    [(= op 2) (* (cast (i16-at p 0) : i64) (cast (i16-at p 0) : i64))]
+    [else (widen-i16 p (- op 3))]))
+
+(define (widen-i8 [p : (& p (Array i8 2))] [op : i64]) : i64
+  (cond
+    [(= op 0) (cast (i8-at p 0) : i64)]
+    [(= op 1) (+ (cast (i8-at p 0) : i64) 3)]
+    [(= op 2) (* (cast (i8-at p 0) : i64) (cast (i8-at p 0) : i64))]
+    [else (widen-i8 p (- op 3))]))
+
+(define (widen-u32 [p : (& p (Array u32 2))] [op : i64]) : i64
+  (cond
+    [(= op 0) (cast (u32-at p 0) : i64)]
+    [(= op 1) (+ (cast (u32-at p 0) : i64) 3)]
+    [else (widen-u32 p (- op 2))]))
+
+(define (widen-u16 [p : (& p (Array u16 2))] [op : i64]) : i64
+  (cond
+    [(= op 0) (cast (u16-at p 0) : i64)]
+    [(= op 1) (+ (cast (u16-at p 0) : i64) 3)]
+    [else (widen-u16 p (- op 2))]))
+
+(define (widen-u8 [p : (& p (Array u8 2))] [op : i64]) : i64
+  (cond
+    [(= op 0) (cast (u8-at p 0) : i64)]
+    [(= op 1) (+ (cast (u8-at p 0) : i64) 3)]
+    [else (widen-u8 p (- op 2))]))
+
 (define (main) : i64
   (let
     [u8s : (Array u8 2) (array (cast 200 : u8) (cast 1 : u8))]
@@ -410,4 +452,19 @@
     (assert (= (arith-u64 (& udiv) 0) (cast 9223372036854775807 : u64)))
     (assert (= (arith-u64 (& udiv) 1) (cast 1 : u64)))
     (assert (= (arith-u64 (& udiv) 2) (cast 1 : u64)))
+    (assert (= (widen-i32 (& i32s) 0) -5))
+    (assert (= (widen-i32 (& i32s) 1) -2))
+    (assert (= (widen-i32 (& i32s) 2) 25))
+    (assert (= (widen-i16 (& i16s) 0) -5))
+    (assert (= (widen-i16 (& i16s) 1) -2))
+    (assert (= (widen-i16 (& i16s) 2) 25))
+    (assert (= (widen-i8 (& i8s) 0) -5))
+    (assert (= (widen-i8 (& i8s) 1) -2))
+    (assert (= (widen-i8 (& i8s) 2) 25))
+    (assert (= (widen-u32 (& u32s) 0) 4294967295))
+    (assert (= (widen-u32 (& u32s) 1) 4294967298))
+    (assert (= (widen-u16 (& u16s) 0) 65535))
+    (assert (= (widen-u16 (& u16s) 1) 65538))
+    (assert (= (widen-u8 (& u8s) 0) 200))
+    (assert (= (widen-u8 (& u8s) 1) 203))
     (- 42 failures)))

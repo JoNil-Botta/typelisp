@@ -8604,6 +8604,7 @@
     [u64-id : i64 (ast.ast-node-pool-context-type-push pools (U64))]
     [i8-id : i64 (ast.ast-node-pool-context-type-push pools (I8))]
     [i16-id : i64 (ast.ast-node-pool-context-type-push pools (I16))]
+    [i32-id : i64 (ast.ast-node-pool-context-type-push pools (I32))]
     [i64-id : i64 (ast.ast-node-pool-context-type-push pools (I64))]
     [region-u32-id : i64
       (ast.ast-node-pool-context-type-push pools (Region 3 u32-id))]
@@ -8611,6 +8612,8 @@
     [region-region-u32 : ast.AstType (Region 4 region-u32-id)]
     [region-i64 : ast.AstType (Region 3 i64-id)]
     [region-i8 : ast.AstType (Region 3 i8-id)]
+    [region-i32 : ast.AstType (Region 3 i32-id)]
+    [invalidate-i32 : ast.AstType (ast.ast-ty-invalidate-id 5 i32-id)]
     [invalidate-u8 : ast.AstType (ast.ast-ty-invalidate-id 5 u8-id)]
     [invalidate-u16 : ast.AstType (ast.ast-ty-invalidate-id 5 u16-id)]
     [invalidate-i16 : ast.AstType (ast.ast-ty-invalidate-id 5 i16-id)]
@@ -8657,26 +8660,47 @@
           invalidate-u8-copy)
         (cast 255 : u64))
       (string.eq
-        (backend.compiler-backend-compare-true-jcc bases lt-op-1 invalidate-u8)
+        (backend.compiler-backend-compare-true-jcc
+          lt-op-1
+          (backend.compiler-backend-compare-unsigned?
+            bases
+            lt-op-1
+            invalidate-u8))
         "jb")
       (string.eq
-        (backend.compiler-backend-compare-false-jcc bases gt-op-2 region-u64)
+        (backend.compiler-backend-compare-false-jcc
+          gt-op-2
+          (backend.compiler-backend-compare-unsigned? bases gt-op-2 region-u64))
         "jbe")
       (string.eq
-        (backend.compiler-backend-compare-true-jcc bases lt-op-3 region-i64)
+        (backend.compiler-backend-compare-true-jcc
+          lt-op-3
+          (backend.compiler-backend-compare-unsigned? bases lt-op-3 region-i64))
         "jl")
       (string.eq
         (backend.compiler-backend-compare-setcc
-          bases
           ge-op-4
-          (owned_view.compiler-owned-shared-view region-region-u32))
+          (backend.compiler-backend-compare-unsigned?
+            bases
+            ge-op-4
+            region-region-u32))
         "setae")
       (string.eq
         (backend.compiler-backend-compare-cmov
-          bases
           le-op-5
-          (owned_view.compiler-owned-shared-view invalidate-u16))
+          (backend.compiler-backend-unsigned-rel-ty? bases invalidate-u16))
         "cmovbe")
+      ;; Width and signedness through the same wrappers.
+      (= (backend.compiler-backend-load-signed-width bases region-i32) -4)
+      (= (backend.compiler-backend-load-signed-width bases invalidate-i32) -4)
+      (= (backend.compiler-backend-load-signed-width bases region-i8) -1)
+      (= (backend.compiler-backend-load-signed-width bases invalidate-i16) -2)
+      (= (backend.compiler-backend-load-signed-width bases invalidate-i8) -1)
+      (= (backend.compiler-backend-load-signed-width bases invalidate-u16) 2)
+      (= (backend.compiler-backend-load-signed-width bases invalidate-u8) 1)
+      (= (backend.compiler-backend-load-signed-width bases region-region-u32) 4)
+      (= (backend.compiler-backend-load-signed-width bases region-u64) 8)
+      (= (backend.compiler-backend-load-signed-width bases region-i64) 8)
       ;; The direct-object compare classifies through the same wrappers, and
       ;; compares at the wrapped width (#9713).
       (=

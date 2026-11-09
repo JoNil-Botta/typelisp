@@ -8855,17 +8855,31 @@
 
 ;; A binder of a borrowed match whose scrutinee is a fresh view
 ;; (`normalize-borrow!`) views a part of it, reached through that view's loan
-;; (`normalize-opaque-referent-of!`).
+;; (`normalize-opaque-referent-of!`). A `&` bound by value from that part is
+;; not a view: its referent is outside the viewed place, so a write through it
+;; stops at that reference, however mutable the path to it was. A `&mut` keeps
+;; the route, since its own authority depends on the path it was read through.
 (define (normalize-note-view-binder!
   [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
   [scrutinee : i64]
-  [binder : i64]) : unit
+  [binder : i64]) : NormalizeUnit
   (let
     [view : i64 (normalize-direct-origin (& state) scrutinee)]
     (when
-      (normalize-view-loan? (& state) view)
+      (and
+        (normalize-view-loan? (& state) view)
+        (or
+          (not (= (normalize-reference-kind (& state) binder) 1))
+          (try
+            (normalize-view-type!
+              store
+              lease
+              (array-ref state.place-typed binder)))))
       (normalize-push! state.opaque-route-loans (- -2 binder))
-      (normalize-push! state.opaque-route-parents view))))
+      (normalize-push! state.opaque-route-parents view))
+    (NormalizeUnit.Ok unit)))
 
 ;; The arm's bindings, in pattern order from `first`: a by-value binder takes
 ;; its position (a copy, or a move that leaves the position empty); a borrowed
@@ -8953,10 +8967,13 @@
                   (own.OwnershipOperation.Assign
                     (normalize-place-id (& state) place))
                   source))
-              (normalize-note-view-binder!
-                state
-                (array-ref state.pattern-sources index)
-                place)
+              (try
+                (normalize-note-view-binder!
+                  state
+                  store
+                  lease
+                  (array-ref state.pattern-sources index)
+                  place))
               (try
                 (normalize-note-flow!
                   state

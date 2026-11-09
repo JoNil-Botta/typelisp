@@ -667,6 +667,7 @@ aggregate_constructor_loop_snapshot|all|0,1,2|tests/integration/aggregate_constr
 aggregate_parameter_storage|all|0,1,2|tests/integration/aggregate_parameter_storage.tl|42|-|-|-|-
 borrowed_pattern_descriptor|all|0,1,2|tests/integration/borrowed_pattern_descriptor.tl|42|-|-|-|-
 tail_call_aggregate_storage|all|0,1,2|tests/integration/tail_call_aggregate_storage.tl|42|-|-|-|-
+shrinkwrap_red_zone|all|0,1,2|tests/integration/shrinkwrap_red_zone.tl|42|-|-|-|-
 shrinkwrap_parameter_return|all|0,1,2|tests/integration/shrinkwrap_parameter_return.tl|42|-|-|stdlib/string.tl|-
 by_value_param_private_storage|all|-,0,1,2|tests/integration/by_value_param_private_storage.tl|42|-|-|-|-
 by_value_aggregate_abi|all|-|tests/integration/by_value_aggregate_abi.tl|42|-|-|stdlib/string.tl|-

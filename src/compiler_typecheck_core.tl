@@ -19102,10 +19102,11 @@
                   (tc-global-shared-view actual)
                   (tc-global-shared-view ty))
                 ;; A scalar read at a wider contextual type (an `f32` local
-                ;; under an `f64` result) is read as itself, then cast.
+                ;; under an `f64` result) or at its region-tagged type (`x`
+                ;; beside an `(in r T)` operand) is read as itself, then cast.
                 (and
                   (tc-selected-primitive-type? (& actual))
-                  (tc-selected-primitive-type? (& ty))))
+                  (tc-selected-tagged-primitive-type? (& ty))))
                 (match (tc-infer-selected-var
                   ctx
                   env
@@ -124795,6 +124796,13 @@
     [(ast.AstType.Char) true]
     [(ast.AstType.Never) true]
     [_ false]))
+
+;; A primitive type, under any region tags.
+(define (tc-selected-tagged-primitive-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Region _ inner)
+      (tc-selected-tagged-primitive-type? (& (ast.ty-node-get inner)))]
+    [_ (tc-selected-primitive-type? ty)]))
 
 (define (tc-selected-value-type-supported?
   [ctx : TcContext]

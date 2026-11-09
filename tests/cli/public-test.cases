@@ -1125,6 +1125,112 @@ run test --check --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 stderr empty
 stdout contains TypeLisp package test typecheck passed: 1 test(s) in 1 file(s)
 
+# #9725: a prelude supplied by a configured root keeps its canonical display
+# path but quotes the configured file. The working directory holds a
+# line-aligned decoy at that display path, which no route may read.
+case prelude-configured-root-diagnostic-source
+file pkg/typelisp.pkg
+(package (name "snippet_pkg") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file pkg/src/lib.tl
+(define (g) : i64 1)
+end-file
+file pkg/src/inline.tl
+(define (f) : i64 1)
+(test uses-f (f) unit)
+end-file
+file single.tl
+(define (main) : i64 0)
+end-file
+cwd {{dir}}
+sh mkdir -p "{{dir}}/xroot" "{{dir}}/xrt" "{{dir}}/stdlib"
+sh cp -R "{{root}}/stdlib" "{{dir}}/xroot/stdlib"
+sh cp -R "{{root}}/stdlib" "{{dir}}/xrt/stdlib"
+sh printf '\n(define (snapshot-prelude-bad) : i64 (+ 1 true))\n' >> "{{dir}}/xroot/stdlib/core_macros.tl"
+sh sed 's/(define (snapshot-prelude-bad) : i64 (+ 1 true))/DISPLAY-PATH-DECOY/' "{{dir}}/xroot/stdlib/core_macros.tl" > "{{dir}}/stdlib/core_macros.tl"
+sh printf '\n(define (snapshot-runtime-bad) : i64 (+ 1 true))\n' >> "{{dir}}/xrt/stdlib/runtime.tl"
+sh sed 's/(define (snapshot-runtime-bad) : i64 (+ 1 true))/DISPLAY-PATH-DECOY/' "{{dir}}/xrt/stdlib/runtime.tl" > "{{dir}}/stdlib/runtime.tl"
+step package-check
+run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0206]
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step package-test
+run test --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0206]
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step package-test-check
+run test --check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains error[E0206]
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step single-check
+run check single.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step single-compile
+run compile single.tl -o "{{dir}}/single.s" --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step single-test-check
+run test --check single.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step environment-root
+exec env TYPELISP_STDLIB_ROOT=xroot/stdlib "{{compiler}}" check single.tl --target {{host-target}}
+exit 1
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step entry-at-display-path
+run check stdlib/core_macros.tl --target {{host-target}} --stdlib-root xroot/stdlib
+exit 1
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (snapshot-prelude-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+step runtime-prelude
+run compile single.tl -o "{{dir}}/runtime.s" --target {{host-target}} --stdlib-root xrt/stdlib
+exit 1
+stderr contains --> stdlib/runtime.tl:
+stderr contains | (define (snapshot-runtime-bad) : i64 (+ 1 true))
+stderr not-contains DISPLAY-PATH-DECOY
+
+# A root spelled like the display path still quotes that file, and a rootless
+# entry diagnostic is untouched by a stdlib tree in the working directory.
+case prelude-diagnostic-source-controls
+file single.tl
+(define (main) : i64 0)
+end-file
+file bad.tl
+(define (main) : i64 (+ 1 true))
+end-file
+cwd {{dir}}
+sh cp -R "{{root}}/stdlib" "{{dir}}/stdlib"
+sh printf '\n(define (display-root-bad) : i64 (+ 1 true))\n' >> "{{dir}}/stdlib/core_macros.tl"
+step display-spelled-root
+run check single.tl --target {{host-target}} --stdlib-root stdlib
+exit 1
+stderr contains --> stdlib/core_macros.tl:
+stderr contains | (define (display-root-bad) : i64 (+ 1 true))
+step rootless-entry-diagnostic
+run check bad.tl --target {{host-target}}
+exit 1
+stderr contains --> bad.tl:1:
+stderr contains | (define (main) : i64 (+ 1 true))
+
 # #8813: a rootless prelude reads its modules from the embedded stdlib, whose
 # inline tests are blanked. Testing a prelude module itself must read the named
 # file, so core-macros-api is discovered and runs in list, check, run and batch

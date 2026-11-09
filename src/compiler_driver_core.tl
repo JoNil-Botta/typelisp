@@ -5519,7 +5519,8 @@
   (compiler_diagnostic.compiler-diagnostic-source-index
     (if (string.eq path "")
       ""
-      (match (io.try-read-file path)
+      (match (io.try-read-file
+        (& (compiler_load.compiler-load-prelude-source-path path)))
         [(OkIoBytes source) (byte_buf.to-string source)]
         [(ErrIoBytes _) ""]))))
 

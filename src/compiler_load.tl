@@ -3137,6 +3137,31 @@
               (str_cat.str-cat "stdlib/" (ci.intern-str suffix-id))))]
         [(InternLookupMissing) path]))))
 
+;: The file this session read the prelude displayed at PATH from. A prelude
+;: keeps its canonical path whichever root supplied it, so source-quoting routes
+;: ask here rather than opening that spelling in the working directory. Any
+;: other path, and a prelude no root supplied, comes back unchanged.
+(define (compiler-load-prelude-source-path [path : (& path str)]) : String
+  (if (compiler-load-prelude-importer? path)
+    (match (ci.intern-lookup
+      (compiler-load-stdlib-suffix (& (compiler-load-normalize-path path))))
+      [(InternLookupFound suffix-id)
+        (let
+          [claims : sym_i64_env.SymI64Env
+            (array-ref
+              (unsafe
+                (ptr-read
+                  (ptr-addr-of
+                    compiler-load-active-session-state.embedded-stdlib-provenance.suffix-claims)))
+              0)]
+          [claim : i64
+            (sym_i64_env.sym-i64-lookup-id-or (& claims) suffix-id -1)]
+          (if (< claim 0)
+            (string.copy path)
+            (ci.intern-str claim)))]
+      [(InternLookupMissing) (string.copy path)])
+    (string.copy path)))
+
 (define (compiler-load-note-embedded-equivalent-if-matching!
   [suffix : String]
   [disk-path : (& str)]) : unit

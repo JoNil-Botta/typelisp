@@ -59,7 +59,12 @@
 
 (defenum InternMacroGlobalRole
   (Legacy)
-  (Context))
+  (Context)
+  ;; An entry-module name handed out by reflection, and a reference built from
+  ;; root authority that denotes the declaration. Only macro-time values and
+  ;; not-yet-settled output carry them; hygiene settles every reference.
+  (Reflected)
+  (ReflectedDeclaration))
 
 (defstruct InternTemplateSourceRecord
   (source-name-id i64))
@@ -862,7 +867,9 @@
 (define (intern-macro-global-role-code [role : InternMacroGlobalRole]) : i64
   (match role
     [(Legacy) 0]
-    [(Context) 1]))
+    [(Context) 1]
+    [(Reflected) 2]
+    [(ReflectedDeclaration) 3]))
 
 (define (intern-structural-session-macro-global-identity
   [handle : InternStructuralSessionHandle]
@@ -918,6 +925,18 @@
                         Context
                         definition-module-id
                         source-name-id))]
+                  [(= role 2)
+                    (Some
+                      (InternMacroGlobalRecord
+                        Reflected
+                        definition-module-id
+                        source-name-id))]
+                  [(= role 3)
+                    (Some
+                      (InternMacroGlobalRecord
+                        ReflectedDeclaration
+                        definition-module-id
+                        source-name-id))]
                   [else No]))))
           (match (intern-structural-session-record-for-raw handle raw)
             [(No) No]
@@ -935,6 +954,18 @@
                     (Some
                       (InternMacroGlobalRecord
                         Context
+                        record.middle-id
+                        record.right-id))]
+                  [(= record.left-id 2)
+                    (Some
+                      (InternMacroGlobalRecord
+                        Reflected
+                        record.middle-id
+                        record.right-id))]
+                  [(= record.left-id 3)
+                    (Some
+                      (InternMacroGlobalRecord
+                        ReflectedDeclaration
                         record.middle-id
                         record.right-id))]
                   [else No]))]))))))
@@ -1281,7 +1312,7 @@
                   record.right-id
                   fallback)]
               [(= record.kind (ci.intern-structural-kind-macro-global))
-                (if (or (= record.left-id 0) (= record.left-id 1))
+                (if (and (>= record.left-id 0) (<= record.left-id 3))
                   record.right-id
                   fallback)]
               [(= record.kind (ci.intern-structural-kind-macro-local))

@@ -38384,6 +38384,13 @@
 
 ;; The symbol-table spelling of a root-defined global. Root rows are bare.
 (define (lower-hygiene-root-source-id [ctx : tc_core.TcContext] [name-id : i64]) : i64
+  (if (< name-id (ci.intern-structural-key-base))
+    name-id
+    (lower-hygiene-root-source-structural-id ctx name-id)))
+
+(define (lower-hygiene-root-source-structural-id
+  [ctx : tc_core.TcContext]
+  [name-id : i64]) : i64
   (let
     [session : cis.InternStructuralSessionHandle
       (tc_core.tc-context-structural-session ctx)]
@@ -38404,12 +38411,23 @@
     false
     (or
       (tc_core.tc-constructor-name-id? ctx raw-name-id)
-      (tc_core.tc-constructor-name-id? ctx lookup-id))))
+      (and
+        (not (= raw-name-id lookup-id))
+        (tc_core.tc-constructor-name-id? ctx lookup-id)))))
 
 ;; A global whose definition module is the entry module keeps its structural
 ;; identity where its bare spelling would resolve to something else: in a named
 ;; module, or under a same-named local.
 (define (lower-hygiene-root-lookup-id
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [raw-name : i64]
+  [resolved-id : i64]) : i64
+  (if (< raw-name (ci.intern-structural-key-base))
+    resolved-id
+    (lower-hygiene-root-structural-lookup-id ctx env raw-name resolved-id)))
+
+(define (lower-hygiene-root-structural-lookup-id
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [raw-name : i64]

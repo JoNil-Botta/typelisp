@@ -903,6 +903,13 @@
     (compiler-comptime-host-session-source-names-value)
     (& value)))
 
+;; `expr-var`'s reading of its operand: see ctfe-value-reference-name-id.
+(define (compiler-comptime-host-value-reference-name-id
+  [value : ctfe_support.CompilerCtfeValue]) : ctfe_support.CtfeMaybeNameId
+  (ctfe_support.ctfe-value-reference-name-id
+    (compiler-comptime-host-session-source-names-value)
+    (& value)))
+
 ;; A computed struct member name: a macro template's hygiene key selects the
 ;; field by its source spelling, as in interpreted CTFE (#8749).
 (define (compiler-comptime-host-value-field-name-id
@@ -2675,7 +2682,7 @@
     session
     (if (< compiler-comptime-host-stack-len 1)
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-value-name-id
+      (match (compiler-comptime-host-value-reference-name-id
         (compiler-comptime-host-stack-value 1))
         [(Some name-id)
           (let

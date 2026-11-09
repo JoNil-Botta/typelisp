@@ -85,6 +85,14 @@
       (cis.intern-structural-session-template-source-identity
         right-session
         right-source)]
+    [invalid-role-macro-global : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-key
+          left-session
+          (ci.intern-structural-kind-macro-global)
+          4
+          9
+          left-source))]
     [malformed-template : i64
       (cis.intern-structural-key-raw
         (cis.intern-structural-session-key
@@ -182,6 +190,20 @@
         left-session
         malformed-fresh)
       "fresh-local decoder rejects a populated reserved lane")
+    (test.assert-true
+      (match (cis.intern-structural-session-macro-global-record-for-raw
+        left-session
+        invalid-role-macro-global)
+        [(No) true]
+        [(Some _) false])
+      "macro-global decoder rejects an unknown role code")
+    (test.assert-i64-eq
+      (cis.intern-structural-session-syntax-source-name-id-or
+        left-session
+        invalid-role-macro-global
+        -1)
+      -1
+      "mixed renderer rejects an unknown macro-global role code")
     (test.assert-i64-eq
       (cis.intern-structural-session-syntax-source-name-id-or
         right-session

@@ -15406,6 +15406,7 @@
     [session : cis.InternStructuralSessionHandle
       (tc-context-structural-session ctx)]
     (and
+      (>= name-id (ci.intern-structural-key-base))
       (macro-hygiene-global-id? session name-id)
       (csym.compiler-symbol-root-module-id?
         (macro-hygiene-global-module-id session name-id))
@@ -105711,9 +105712,10 @@
       name-id)
       [(No) false]
       [(Some record)
+        ;; Unsettled reflected output fails closed to its spelling.
         (match record.role
-          [(Legacy) true]
-          [(Context) false])])))
+          [(Context) false]
+          [_ true])])))
 
 ;; Does the macro-hygiene global `name-id` name a binding the macro's
 ;; definition site resolved into a module other than the runtime prelude and
@@ -105732,7 +105734,6 @@
       [(No) false]
       [(Some record)
         (match record.role
-          [(Legacy) false]
           [(Context)
             (not
               (or
@@ -105741,7 +105742,8 @@
                   cbi.compiler-builtin-id-runtime-module)
                 (=
                   record.definition-module-id
-                  cbi.compiler-builtin-id-fix-stdlib_dot_string)))])])))
+                  cbi.compiler-builtin-id-fix-stdlib_dot_string)))]
+          [_ false])])))
 
 (define (macro-hygiene-global-module-id
   [session : cis.InternStructuralSessionHandle]
@@ -106690,8 +106692,45 @@
                                     leading-id)
                                   source-name-id)]
                               [else global-id]))))))))]))
-        name-id)]
+        (macro-hygiene-settle-reflected-id env name-id))]
     result))
+
+;; Reflected references settle here, where scope is known. One built from root
+;; authority denotes the declaration. A name from `expr-var` is hygienic by name:
+;; a binder in the output or a local at the call site takes it by spelling, and
+;; otherwise it names the entry definition.
+(define (macro-hygiene-settle-reflected-id
+  [env : MacroHygieneEnv]
+  [name-id : i64]) : i64
+  (if (or
+    (not ctfe_support.ctfe-reflected-root-names-issued)
+    (< name-id (ci.intern-structural-key-base)))
+    name-id
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (macro-hygiene-env-structural-session env)]
+      (match (cis.intern-structural-session-macro-global-record-for-raw
+        session
+        name-id)
+        [(Some record)
+          (match record.role
+            [(Reflected)
+              (if (or
+                (= record.source-name-id cbi.compiler-builtin-id-fix-empty)
+                (match (macro-hygiene-env-lookup env record.source-name-id)
+                  [(Some _) true]
+                  [(No) false])
+                (macro-hygiene-use-site-local? env record.source-name-id))
+                record.source-name-id
+                (ctfe_support.ctfe-root-value-identity-id
+                  session
+                  record.source-name-id))]
+            [(ReflectedDeclaration)
+              (ctfe_support.ctfe-root-value-identity-id
+                session
+                record.source-name-id)]
+            [_ name-id])]
+        [(No) name-id]))))
 
 ;; A lexical local of the expansion's call site spells `name-id`.
 (define (macro-hygiene-use-site-local? [env : MacroHygieneEnv] [name-id : i64]) : bool
@@ -106720,7 +106759,12 @@
           (< source-name-id 0)
           (io.panic "typecheck: missing macro template binding source id"))
         (Name renamed-id (macro-hygiene-env-bind-raw env name-id renamed-id)))
-      (Name name-id env))))
+      ;; Only reflected references read this entry.
+      (Name
+        name-id
+        (if ctfe_support.ctfe-reflected-root-names-issued
+          (macro-hygiene-env-bind-raw env name-id name-id)
+          env)))))
 
 ;; A transformer appends newly constructed syntax after its bound operands and
 ;; captured source syntax. Hygiene may therefore rewrite a fresh node in place

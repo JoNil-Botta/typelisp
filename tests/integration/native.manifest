@@ -1283,3 +1283,4 @@ region_scalar_signedness|all|0,1,2|tests/integration/region_scalar_signedness.tl
 region_float_arith|all|0,1,2|tests/integration/region_float_arith.tl|42|-|-|-|-
 float_neg_mixed_f64_first|all|0,1,2|tests/integration/float_neg_mixed_f64_first.tl|42|-|-|-|-
 float_neg_mixed_f32_first|all|0,1,2|tests/integration/float_neg_mixed_f32_first.tl|42|-|-|-|-
+region_read_plain_operand|all|0,1,2|tests/integration/region_read_plain_operand.tl|42|-|-|-|-

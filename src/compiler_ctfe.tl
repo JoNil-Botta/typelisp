@@ -6636,20 +6636,16 @@
   [value : i64]
   [count : i64]) : unit
   (let
-    [left : i64 count]
-    (while (> left 0)
-      (set! left (- left 1))
-      (set!
-        writer.pending
-        (bit-or (shl writer.pending 1) (bit-and (shr value left) 1)))
-      (set! writer.used (+ writer.used 1))
-      (when
-        (= writer.used 8)
-        (byte_buf_core.byte-buf-builder-push
-          (&mut writer.out)
-          (cast writer.pending : u8))
-        (set! writer.pending 0)
-        (set! writer.used 0)))))
+    [used : i64 (+ writer.used count)]
+    [pending : i64
+      (bit-or (shl writer.pending count) (bit-and value (- (shl 1 count) 1)))]
+    (while (>= used 8)
+      (set! used (- used 8))
+      (byte_buf_core.byte-buf-builder-push
+        (&mut writer.out)
+        (cast (bit-and (shr pending used) 255) : u8)))
+    (set! writer.pending (bit-and pending (- (shl 1 used) 1)))
+    (set! writer.used used)))
 
 (define (ctfe-lzss-write-symbol!
   [writer : (&mut writer CtfeLzssBitWriter)]

@@ -10260,9 +10260,10 @@
       sink)
       [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
       [(TcSelectedResult.Ok got occurrence next)
-        (match (tc-expect
-          (tc-global-shared-view got)
-          (tc-global-shared-view want-ty)
+        (match (tc-expect-noting-shadow
+          env
+          (& got)
+          (& want-ty)
           "typecheck: annotation type mismatch")
           [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
           [(ResultTcUnit.Ok)
@@ -21470,9 +21471,10 @@
   [value-ty : ast.AstType]
   [field : i64]
   [label : String]) : ResultTcUnit
-  (match (tc-expect
-    (tc-global-shared-view value-ty)
-    (tc-global-shared-view field-ty)
+  (match (tc-expect-noting-shadow
+    env
+    (& value-ty)
+    (& field-ty)
     (if (ast.ast-tuple-set-field-id? field)
       (tc-kind-message
         (cdiag.CompilerTypecheckKind.TypeMismatch)
@@ -29587,6 +29589,7 @@
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
   [carrier : TcTypeEnvScopedCarrier]
+  [env : TcTypeEnv]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]) : bool
   (if (= value-lifetime-id target-lifetime-id)
@@ -29639,31 +29642,36 @@
               target-index
               target-lifetime-id)]
           [result : bool
-            (cond
-              ;; An invalidated brand is a signature lifetime: decided on a
-              ;; cache miss only (#9612).
-              [(and
-                  value-signature
-                  (not (= tc-invalidate-param-bind-count 0))
-                  (>=
-                    (tc-invalidated-brand-param carrier.env value-lifetime-id)
-                    -1))
-                (tc-invalidated-brand-outlives?
-                  carrier.env
-                  value-lifetime-id
-                  target-lifetime-id)]
-              [(and value-signature target-signature) false]
-              [(>= value-index 0)
-                (and (>= target-index 0) (< value-index target-index))]
-              [(>= target-index 0)
-                (tc-lifetime-visible-persistent-id?
-                  (tc-type-env-scoped-carrier-persistent carrier)
-                  value-lifetime-id)]
-              [else
-                (tc-lifetime-outlives-lifetime-persistent-id?
-                  (tc-type-env-scoped-carrier-persistent carrier)
-                  value-lifetime-id
-                  target-lifetime-id)])]
+            (and
+              (cond
+                ;; An invalidated brand is a signature lifetime: decided on a
+                ;; cache miss only (#9612).
+                [(and
+                    value-signature
+                    (not (= tc-invalidate-param-bind-count 0))
+                    (>=
+                      (tc-invalidated-brand-param carrier.env value-lifetime-id)
+                      -1))
+                  (tc-invalidated-brand-outlives?
+                    carrier.env
+                    value-lifetime-id
+                    target-lifetime-id)]
+                [(and value-signature target-signature) false]
+                [(>= value-index 0)
+                  (and (>= target-index 0) (< value-index target-index))]
+                [(>= target-index 0)
+                  (tc-lifetime-visible-persistent-id?
+                    (tc-type-env-scoped-carrier-persistent carrier)
+                    value-lifetime-id)]
+                [else
+                  (tc-lifetime-outlives-lifetime-persistent-id?
+                    (tc-type-env-scoped-carrier-persistent carrier)
+                    value-lifetime-id
+                    target-lifetime-id)])
+              (tc-lifetime-outlives-shadowed-owners-id?
+                env
+                value-lifetime-id
+                target-lifetime-id))]
           (set! cache.valid true)
           (set! cache.len slot-count)
           (set! cache.generation generation)
@@ -38233,10 +38241,15 @@
           entry.result
           (let
             [result : bool
-              (tc-lifetime-outlives-lifetime-persistent-scan-id?
-                env
-                value-lifetime-id
-                target-lifetime-id)]
+              (and
+                (tc-lifetime-outlives-lifetime-persistent-scan-id?
+                  env
+                  value-lifetime-id
+                  target-lifetime-id)
+                (tc-lifetime-outlives-shadowed-owners-id?
+                  env
+                  value-lifetime-id
+                  target-lifetime-id))]
             (set!
               (array-ref data.outlives-slots slot)
               (TcLifetimeOutlivesMemoEntry
@@ -38342,6 +38355,7 @@
         [(tc-type-env-scoped-runtime-active? env)
           (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
             (tc-type-env-scoped-runtime-current env)
+            env
             value-lifetime-id
             target-lifetime-id)]
         [else
@@ -38351,6 +38365,107 @@
               env
               value-lifetime-id
               target-lifetime-id))]))))
+
+;; Lifetime names compare by spelling, so a value binder named like an older
+;; signature lifetime, arena or arena owner captures that owner's name: a type
+;; written above the binder would be read as the younger local (#9609). Until
+;; lifetimes carry binding identity (#8890), converting into a spelling held by
+;; such a binder must also hold at every older non-value owner of the name
+;; (D-C216). The lexical environment is exact on every checking path. Both
+;; outlives caches apply this on a miss, so a repeated query does not rescan.
+(define (tc-lifetime-outlives-shadowed-owners-id?
+  [env : TcTypeEnv]
+  [value-lifetime-id : i64]
+  [target-lifetime-id : i64]) : bool
+  (when
+    (< (tc-ordinary-binding-rank-id-from env target-lifetime-id 0) 0)
+    (return true))
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session env)]
+    [cursor : TcTypeEnv env]
+    ;; A nearer value binder holds the name. A non-value owner reached first
+    ;; is the name's real owner, which the ordinary comparison already read.
+    [shadowed : bool false]
+    [holds : bool true]
+    [scanning : bool true]
+    (while scanning
+      (match (tc-type-env-view cursor)
+        [(Nil) (set! scanning false)]
+        [(Cache _ scan-through _ rest _)
+          (set! scanning scan-through)
+          (set! cursor rest)]
+        [(Bind key ty rest)
+          (when
+            (tc-env-binding-matches-lifetime-id?
+              session
+              key
+              ty
+              target-lifetime-id
+              (tc-signature-lifetime-marker-id))
+            (cond
+              [(= key target-lifetime-id) (set! shadowed true)]
+              [(not shadowed) (set! scanning false)]
+              [(not
+                (tc-lifetime-outlives-lifetime-persistent-id?
+                  cursor
+                  value-lifetime-id
+                  target-lifetime-id))
+                (set! holds false)
+                (set! scanning false)]
+              [else unit]))
+          (set! cursor rest)]))
+    holds))
+
+;; The diagnostic clause when the shadowed-owner rule alone rejects a conversion
+;; between these types, or "". Failure path only.
+(define (tc-type-lifetime-shadow-note
+  [env : TcTypeEnv]
+  [expected : (& ast.AstType)]
+  [actual : (& ast.AstType)]) : String
+  (let
+    [wanted : TcNameIdList
+      (tc-type-collect-reference-lifetimes (clone (deref expected)))]
+    [found : TcNameIdList
+      (tc-type-collect-reference-lifetimes (clone (deref actual)))]
+    (while (not
+      (or (tc-name-id-list-empty? wanted) (tc-name-id-list-empty? found)))
+      (let
+        [required : i64 (tc-name-id-list-head wanted)]
+        [source : i64 (tc-name-id-list-head found)]
+        (when
+          (and
+            (not (= required source))
+            (tc-lifetime-outlives-lifetime-persistent-scan-id?
+              env
+              source
+              required)
+            (not (tc-lifetime-outlives-shadowed-owners-id? env source required)))
+          (return
+            (str_cat.str-cat
+              "; the "
+              (tc-lifetime-diagnostic-name "enclosing" required)
+              " is shadowed by a binding of that name, and the value must also outlive it; rename the binding"))))
+      (set! wanted (tc-name-id-list-rest wanted))
+      (set! found (tc-name-id-list-rest found)))
+    ""))
+
+;; `tc-expect` for a form that reports a lifetime mismatch without detail.
+(define (tc-expect-noting-shadow
+  [env : TcTypeEnv]
+  [actual : (& ast.AstType)]
+  [expected : (& ast.AstType)]
+  [message : String]) : ResultTcUnit
+  (match (tc-expect
+    (owned_view.compiler-owned-reference-shared-view actual)
+    (owned_view.compiler-owned-reference-shared-view expected)
+    message)
+    [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+    [(ResultTcUnit.Err text)
+      (ResultTcUnit.Err
+        (str_cat.str-cat
+          text
+          (tc-type-lifetime-shadow-note env expected actual)))]))
 
 (define (tc-reference-lifetimes-outlive-lifetime-id?
   [env : TcTypeEnv]
@@ -49342,11 +49457,13 @@
         (tc-global-shared-view actual)
         (tc-global-shared-view expected)
         message)]
+    [note : String (tc-type-lifetime-shadow-note env (& expected) (& actual))]
     [detail : String (tc-type-coercion-failure-detail ctx env expected actual)]
     [text : String
       (str_cat.str-cat
         base
-        (cdiag.compiler-diagnostic-untagged-message (string.copy (& detail))))]
+        (cdiag.compiler-diagnostic-untagged-message (string.copy (& detail)))
+        note)]
     (if (and
       (not context-kind)
       (cdiag.compiler-diagnostic-typecheck-tagged? (& detail)))
@@ -86710,9 +86827,10 @@
             (tc-global-shared-view inner-ty)))]
       [_
         (try
-          (tc-expect
-            (tc-global-shared-view value-ty)
-            (tc-global-shared-view inner-ty)
+          (tc-expect-noting-shadow
+            env
+            (& value-ty)
+            (& inner-ty)
             "typecheck: box assignment type mismatch"))]
       (let
         [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
@@ -87981,7 +88099,7 @@
           (tc-global-shared-view elem-ty)))]
     [_
       (try
-        (tc-expect (tc-global-shared-view value-ty) elem-ty mismatch-message))]
+        (tc-expect-noting-shadow env (& value-ty) (& elem-ty) mismatch-message))]
     (let
       [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
       (let
@@ -88124,9 +88242,10 @@
             (tc-global-shared-view field-ty)))]
       [_
         (try
-          (tc-expect
-            (tc-global-shared-view value-ty)
-            (tc-global-shared-view field-ty)
+          (tc-expect-noting-shadow
+            env
+            (& value-ty)
+            (& field-ty)
             (if (ast.ast-tuple-set-field-id? field-id)
               (tc-kind-message
                 (TypeMismatch)
@@ -88982,9 +89101,10 @@
               (tc-global-shared-view want-ty)))]
         [_
           (try
-            (tc-expect
-              (tc-global-shared-view got)
-              (tc-global-shared-view want-ty)
+            (tc-expect-noting-shadow
+              env
+              (& got)
+              (& want-ty)
               "typecheck: annotation type mismatch"))]
         (Ok
           (if (tc-type-contains-any-region (tc-global-shared-view got))

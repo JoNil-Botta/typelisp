@@ -65628,13 +65628,6 @@
     slot-vars
     backend-state))
 
-;; RG-1 fix B. `save-regs` is the set the PROLOGUE ORIGINALLY SAVED and is what
-;; classifies (and so deletes) the save/restore movq lines and the pop-run
-;; entry; `push-regs` is the set the pass EMITS pushes and pops for. They are
-;; the same array on the ordinary call above. When fix B trims one, a register
-;; in `save-regs` but not in `push-regs` has its save/restore deleted like any
-;; other and its epilogue `popq` dropped with it, so the pass emits neither
-;; half of a pair the body had no use for.
 ;; Copy the kept source bytes [start, end) of the rebase input to `out`.
 (define (compiler-backend-rsp-rebase-copy-run!
   [out : (&mut out CompilerBackendAsmBuf)]
@@ -65705,6 +65698,13 @@
       ", %rsp\n"
       ", %rsp")))
 
+;; RG-1 fix B. `save-regs` is the set the PROLOGUE ORIGINALLY SAVED and is what
+;; classifies (and so deletes) the save/restore movq lines and the pop-run
+;; entry; `push-regs` is the set the pass EMITS pushes and pops for. They are
+;; the same array on the ordinary call above. When fix B trims one, a register
+;; in `save-regs` but not in `push-regs` has its save/restore deleted like any
+;; other and its epilogue `popq` dropped with it, so the pass emits neither
+;; half of a pair the body had no use for.
 (define (compiler-backend-rsp-rebase-full-result-with-saves
   [text : String]
   [frame : i64]

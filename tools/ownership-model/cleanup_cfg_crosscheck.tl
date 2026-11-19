@@ -20,7 +20,7 @@
 
 (define (source [block : i64] [instruction : i64]) : core.OwnershipSource
   (core.OwnershipSource
-    "cleanup-cfg-case.tl"
+    (core.ownership-body-path "cleanup-cfg-case.tl")
     (+ 1 (+ (* block 16) instruction))
     1
     "cleanup CFG point"))
@@ -352,7 +352,9 @@
           [(core.OwnershipFailureKind.Cleanup) true]
           [_ false])
         (same-point? point error.block error.instruction)
-        (string.eq error.source.path "cleanup-cfg-case.tl")
+        (string.eq
+          (core.ownership-path-text (& error.source.path) "cleanup-cfg-case.tl")
+          "cleanup-cfg-case.tl")
         (= error.source.line (+ 1 (+ (* point.block 16) point.instruction)))
         (= error.source.column 1))]))
 

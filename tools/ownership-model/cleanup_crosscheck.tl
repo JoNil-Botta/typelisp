@@ -30,7 +30,7 @@
 
 (define (source [event : i64]) : core.OwnershipSource
   (core.OwnershipSource
-    "cleanup-case.tl"
+    (core.ownership-body-path "cleanup-case.tl")
     (+ event 1)
     1
     "concrete cleanup event"))
@@ -454,7 +454,9 @@
     (= error.block 0)
     (>= error.instruction 0)
     (<= error.instruction (array-length (array-ref body.blocks 0).instructions))
-    (string.eq error.source.path "cleanup-case.tl")
+    (string.eq
+      (core.ownership-path-text (& error.source.path) "cleanup-case.tl")
+      "cleanup-case.tl")
     (= error.source.line (+ event 1))
     (= error.source.column 1)
     (= (point-event body error.block error.instruction) event)))
@@ -487,7 +489,8 @@
             (= left.place right.place)
             (= left.loan right.loan)
             (= left.conflicting-loan right.conflicting-loan)
-            (string.eq left.source.path right.source.path)
+            (= left.source.path.id right.source.path.id)
+            (= left.source.path.bytes right.source.path.bytes)
             (= left.source.line right.source.line)
             (= left.source.column right.source.column)
             (string.eq left.source.expansion right.source.expansion)

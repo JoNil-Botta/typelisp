@@ -169,7 +169,7 @@ oracle_counts() {
 check_relocations() {
     bounded "$SCALE_LIMIT_MIB" "$INVENTORY" --references "$2" > "$WORK/references.out"
     sed -n 's/^ref input=1 section=\([0-9]*\) offset=\([0-9]*\) width=\([0-9]*\) .*/\1 \2 \3/p' \
-        "$WORK/references.out" | sort -u > "$WORK/references.txt"
+        "$WORK/references.out" | LC_ALL=C sort -u > "$WORK/references.txt"
     section_rows "$1" | awk '$2 == ".rela.debug_info" { print $4, $6 }' > "$WORK/rela-sections.txt"
     readelf -r -W "$1" | awk -v sections="$WORK/rela-sections.txt" '
         function hex(text, value, i) {
@@ -194,8 +194,8 @@ check_relocations() {
         }
         current != "" && $3 ~ /^R_X86_64_/ {
             print current, hex($1), ($3 ~ /64$/) ? 8 : 4
-        }' | sort -u > "$WORK/relocations.txt"
-    missing=$(comm -23 "$WORK/relocations.txt" "$WORK/references.txt" | wc -l)
+        }' | LC_ALL=C sort -u > "$WORK/relocations.txt"
+    missing=$(LC_ALL=C comm -23 "$WORK/relocations.txt" "$WORK/references.txt" | wc -l)
     [ "$missing" -eq 0 ] ||
         fail "$(basename "$2"): $missing .debug_info relocations are not recorded references"
     wc -l < "$WORK/relocations.txt" | tr -d ' '

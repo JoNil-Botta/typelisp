@@ -48,7 +48,7 @@ concurrency:
 jobs:
   measure:
     name: Self-compile reference (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -119,7 +119,7 @@ jobs:
     name: Self-compile ledger
     needs: measure
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Usually minutes. The bound covers waiting for a pending parent and, when
     # identities differ, measuring up to four trees on this runner (the
     # commit, its parent, and the merged PR's tested base and merge).

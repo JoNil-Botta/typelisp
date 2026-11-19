@@ -356,9 +356,9 @@ for host in linux windows; do
         "$selector" --host "$host" --paths "$work/paths" > "$work/required.ids"
         has_gate "$work/required.ids" stage2-codegen-target-parity
         case "$path" in stdlib/* | tests/safety/*) has_gate "$work/required.ids" stage2-safety-corpus ;; esac
-        sort "$work/required.ids" > "$work/required.sorted"
-        sort "$work/trigger.ids" > "$work/advisory.sorted"
-        comm -23 "$work/required.sorted" "$work/advisory.sorted" > "$work/missing-advisory.ids"
+        LC_ALL=C sort "$work/required.ids" > "$work/required.sorted"
+        LC_ALL=C sort "$work/trigger.ids" > "$work/advisory.sorted"
+        LC_ALL=C comm -23 "$work/required.sorted" "$work/advisory.sorted" > "$work/missing-advisory.ids"
         [ ! -s "$work/missing-advisory.ids" ] || fail 'required tier is not included in advisory'
     done
     # Every literal corpus input in a canonical gate command has an owning

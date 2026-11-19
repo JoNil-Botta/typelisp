@@ -30353,9 +30353,7 @@
               (when
                 (and
                   track-resolution
-                  (tc-type-needs-resolution-for-state?
-                    resolution-state
-                    (tc-global-shared-view ty)))
+                  (tc-type-needs-resolution-for-state? resolution-state (& ty)))
                 (set!
                   (array-ref
                     unsafe-flags
@@ -30484,9 +30482,7 @@
               (when
                 (and
                   track-resolution
-                  (tc-type-needs-resolution-for-state?
-                    resolution-state
-                    (tc-global-shared-view ty)))
+                  (tc-type-needs-resolution-for-state? resolution-state (& ty)))
                 (set!
                   (array-ref
                     unsafe-flags
@@ -40169,7 +40165,7 @@
       (return
         (tc-type-needs-resolution-for-state?
           state
-          (ast.ast-type-segment-bases-get data.type-segment-bases ty-id))))
+          (& (ast.ast-type-segment-bases-get data.type-segment-bases ty-id)))))
     (let
       [slot : i64 (array-ref data.slots ty-id)]
       (if (= (shr slot 1) data.epoch)
@@ -40178,7 +40174,7 @@
           [answer : bool
             (tc-type-needs-resolution-for-state?
               state
-              (ast.ast-type-segment-bases-get data.type-segment-bases ty-id))]
+              (& (ast.ast-type-segment-bases-get data.type-segment-bases ty-id)))]
           (set!
             (array-ref data.slots ty-id)
             (bit-or
@@ -40190,18 +40186,13 @@
 
 (define (tc-type-needs-resolution-for-state?
   [state : TcTypeResolutionCacheState]
-  [ty : ast.AstType]) : bool
+  [ty : (& ast.AstType)]) : bool
   (match ty
     [(Func args ret)
-      (if (tc-type-list-needs-resolution-for-state?
-        state
-        (& (ast.ast-type-list-box-shared-view args)))
+      (if (tc-type-list-needs-resolution-for-state? state args)
         true
         (tc-type-needs-resolution-id-for-state? state ret))]
-    [(Tuple elems)
-      (tc-type-list-needs-resolution-for-state?
-        state
-        (& (ast.ast-type-list-box-shared-view elems)))]
+    [(Tuple elems) (tc-type-list-needs-resolution-for-state? state elems)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (CFunc elem _)
          (Ptr elem) (MutPtr elem) (Ref _ elem) (MutRef _ elem) (Region _ elem)
          (Invalidate _ elem))
@@ -40235,7 +40226,7 @@
       state
       (ast.ast-node-pool-context-type-cell-address pools)
       type-bases)
-    (tc-type-needs-resolution-for-state? state ty)))
+    (tc-type-needs-resolution-for-state? state (& ty))))
 
 (define (tc-type-needs-resolution-for-context?
   [ctx : TcContext]
@@ -40258,7 +40249,7 @@
 ;; installed reader.
 (define (tc-type-needs-resolution-for-reader-context?
   [ctx : TcContext]
-  [ty : ast.AstType]) : bool
+  [ty : (& ast.AstType)]) : bool
   (let
     [state : TcTypeResolutionCacheState
       (tc-job-state-type-resolution-cache (tc-context-job-state ctx))]
@@ -44859,9 +44850,7 @@
   ;; its segment table isolated from every other compile job.
   (let
     [needs-resolution : bool
-      (tc-type-needs-resolution-for-reader-context?
-        ctx
-        (tc-global-shared-view ty))]
+      (tc-type-needs-resolution-for-reader-context? ctx (& ty))]
     (begin
       (cfg
         compile-profile
@@ -44965,9 +44954,7 @@
     [(or (CFunc _ _) (Func _ _) (Tuple _) (Array _ _) (DynArray _) (Slice _)
          (Box _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Region _ _)
          (Invalidate _ _))
-      (if (tc-type-needs-resolution-for-reader-context?
-        ctx
-        (tc-global-shared-view ty))
+      (if (tc-type-needs-resolution-for-reader-context? ctx (& ty))
         (tc-type-rebuild-resolves-to-itself? ctx ty)
         true)]
     [(or (VarArgs _ _) (Var _)) (tc-type-rebuild-resolves-to-itself? ctx ty)]
@@ -44975,7 +44962,7 @@
 
 (define (tc-type-list-resolves-to-itself?
   [ctx : TcContext]
-  [types : ast.AstTypeList]) : bool
+  [types : (& ast.AstTypeList)]) : bool
   (let
     [pools : ast.AstNodePoolContext (tc-context-type-resolution-pools ctx)]
     (if (tc-type-list-needs-resolution-for-job-and-pools?
@@ -44984,7 +44971,7 @@
       (ast.ast-node-pool-context-type-segment-bases pools)
       types)
       (let
-        [count : i64 (ast.ast-type-list-len (& types))]
+        [count : i64 (ast.ast-type-list-len types)]
         [same : bool true]
         [index : i64 0]
         (while (and same (< index count))
@@ -44993,10 +44980,7 @@
             (tc-type-resolves-to-itself?
               ctx
               (ast.ty-node-get
-                (ast.ast-type-list-get
-                  (& types)
-                  index
-                  (ast.ast-type-id-fallback)))))
+                (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
           (+= index 1))
         same)
       true)))
@@ -45004,19 +44988,14 @@
 (define (tc-type-rebuild-resolves-to-itself?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc-global-shared-view ty)
+  (match ty
     [(Func args ret)
       (and
-        (tc-type-list-resolves-to-itself?
-          ctx
-          (ast.ast-type-list-box-shared-view args))
+        (tc-type-list-resolves-to-itself? ctx (& (deref args)))
         (tc-type-resolves-to-itself? ctx (ast.ty-node-get ret)))]
     [(CFunc signature _)
       (tc-type-resolves-to-itself? ctx (ast.ty-node-get signature))]
-    [(Tuple elems)
-      (tc-type-list-resolves-to-itself?
-        ctx
-        (ast.ast-type-list-box-shared-view elems))]
+    [(Tuple elems) (tc-type-list-resolves-to-itself? ctx (& (deref elems)))]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem))
       (tc-type-resolves-to-itself? ctx (ast.ty-node-get elem))]
@@ -45030,7 +45009,7 @@
             (tc-context-structural-session ctx)
             name)
           name
-          (ast.ast-lifetime-list-box-shared-view lifetimes))
+          (deref lifetimes))
         (tc-global-shared-view ty))]
     [(Var name)
       (ast.ast-type-eq?
@@ -45040,7 +45019,7 @@
             (tc-context-structural-session ctx)
             name)
           name)
-        (tc-global-shared-view ty))]
+        ty)]
     [_ true]))
 
 (define (tc-canonicalize-resolved-nominal-type-list-at
@@ -99907,12 +99886,9 @@
         [decls : ast.AstDeclList
           (tc-global-array-element-shared-view rows.runs (shr packed 32))]
         (match (ast.ast-decl-unwrapped
-          (&
-            (tc-global-array-element-shared-view
-              decls.slots
-              (+
-                decls.offset
-                (bit-and packed macro-segmented-clone-row-index-mask)))))
+          (ast.ast-decl-list-ref-borrowed
+            (& decls)
+            (bit-and packed macro-segmented-clone-row-index-mask)))
           [(Module next-module) (set! module-id next-module)]
           [(DefEnum _ name _ variants)
             (if (clone_support.clone-variant-list-able?

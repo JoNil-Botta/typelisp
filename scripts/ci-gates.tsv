@@ -44,7 +44,8 @@ stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CL
 stage2-compile-profile-verifier	all	stage2 compile-profile verifier	bootstrap-fixpoint,embedded-stdlib-tlci-image	stage2	2304	build-stamp,embedded-image	gate_compile_profile
 stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	7424	build-stamp,root-release	scripts/verify-selfhost-cli-build-run.sh
 embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint	stage2	6400	build-stamp,embedded-image	scripts/verify-embedded-stdlib-tlci-resources.sh
-stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh
+stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh --shard default
+stage2-native-integration-corpus-opt-levels	all	stage2 native integration corpus pinned opt levels	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh --shard opt-levels
 linux-self-compile-measurement	linux	Linux self-compile measurement	bootstrap-fixpoint	stage2	2048	instruction-count	gate_self_compile_measurement
 linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	2048	instruction-count	gate_instruction_counts
 stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint	stage2	6144	-	scripts/verify-inline-tests.sh

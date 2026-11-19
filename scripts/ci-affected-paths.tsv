@@ -50,20 +50,20 @@ tests/integration/arena_escape_owner_activation.tl	stage2-public-tool-surface	@c
 tests/integration/arena_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted arena activation and early-exit public contract.
 tests/integration/arena_tied_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted declared-result early-exit flow contract.
 tests/integration/arena_invalidate_with_owner.tl	stage2-public-tool-surface	@corpus	Primary accepted end-operator check/compile contract.
-tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
-tests/integration/macro_struct_pattern*.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Macro-produced struct patterns retain constructor ownership and binding modes across native optimization levels and targets.
-tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
-tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Raw atomic C entries and ordinary Internal bodies retain independent call and assembly coverage.
+tests/integration/*	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
+tests/integration/macro_struct_pattern*.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,stage2-codegen-target-parity	@corpus	Macro-produced struct patterns retain constructor ownership and binding modes across native optimization levels and targets.
+tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
+tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,stage2-regalloc-backend-asm-shape-gates	@corpus	Raw atomic C entries and ordinary Internal bodies retain independent call and assembly coverage.
 tests/integration/char_comparisons.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Unsigned byte comparisons are pinned through value, branch and conditional-move assembly on both targets.
-tests/integration/lambda_capture_atomic_arena_*.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Captured atomic Arena roots retain allocation and destruction behavior plus both-target capture shapes.
-tests/integration/lambda_capture_lifetime_enum*.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Lifetime enum capture keeps packed one/two-word and nested values while retaining memory snapshots.
-benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.
+tests/integration/lambda_capture_atomic_arena_*.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,stage2-regalloc-backend-asm-shape-gates	@corpus	Captured atomic Arena roots retain allocation and destruction behavior plus both-target capture shapes.
+tests/integration/lambda_capture_lifetime_enum*.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,stage2-regalloc-backend-asm-shape-gates	@corpus	Lifetime enum capture keeps packed one/two-word and nested values while retaining memory snapshots.
+benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.
 tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
 tests/safety/legacy_box_get_*_reject.tl	stage2-public-tool-surface	-	The public-check matrix directly consumes the legacy BoxGet receiver diagnostic fixtures.
-tests/safety/set_inline_array_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array value/bounds ordering also runs in the native opt0/1/2 matrix.
-tests/safety/set_inline_array_field_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array field value/bounds ordering also runs in the native opt0/1/2 matrix.
-tests/safety/set_inline_array_bounds_after_growth_trap.tl	stage2-native-integration-corpus	@corpus	Captured inner bounds after outer growth also run in the native opt0/1/2 matrix.
-tests/safety/set_inline_array_field_bounds_after_growth_trap.tl	stage2-native-integration-corpus	@corpus	Captured inner field bounds after outer growth also run in the native opt0/1/2 matrix.
+tests/safety/set_inline_array_value_before_bounds_trap.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Inner inline-array value/bounds ordering also runs in the native opt0/1/2 matrix.
+tests/safety/set_inline_array_field_value_before_bounds_trap.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Inner inline-array field value/bounds ordering also runs in the native opt0/1/2 matrix.
+tests/safety/set_inline_array_bounds_after_growth_trap.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Captured inner bounds after outer growth also run in the native opt0/1/2 matrix.
+tests/safety/set_inline_array_field_bounds_after_growth_trap.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Captured inner field bounds after outer growth also run in the native opt0/1/2 matrix.
 tests/spmd/*	stage2-spmd-simd-comparison,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-sde-fallback	@corpus	SPMD comparison data and direct source guards for its executable fixtures.
 tests/public-tools/*	stage2-public-tool-surface,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The public-tool runner consumes the LSP and REPL corpora and their source fixtures.
 tests/apps/*	stage2-app-workflow-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The application runner consumes scenario manifests, packages, case files and sources.
@@ -82,7 +82,7 @@ tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpu
 tests/codegen/asm-shape.cases	stage2-regalloc-backend-asm-shape-gates	@corpus	Exact case file named by the backend shape gate.
 tests/fixtures/direct-object-compare/*	stage2-native-link-generated-programs	@corpus	Generated compare-matrix sources the native-link cases copy and build.
 tests/codegen/native-link.cases	stage2-native-link-generated-programs	@corpus	The Linux native-link runner directly consumes this case file.
-tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus,integration-batch-observability	@corpus	Native integration executes this case file; observability exercises its real entry-helper transcript rows without a compiler build.
+tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,integration-batch-observability	@corpus	Native integration executes this case file; observability exercises its real entry-helper transcript rows without a compiler build.
 tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	The stdlib verifier directly executes the for-source macro cases.
 tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	IR observability consumes golden snapshots and their guarded source fixtures.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
@@ -124,23 +124,23 @@ CONTRIBUTING.md	stage2-docs-pages-build-path	@docs	Published contributor documen
 src/TESTING.md	stage2-docs-pages-build-path	@docs	Published testing documentation and links.
 .github/*	*	-	Workflow and action changes can alter every gate contract.
 src/tests/compile_cli_verify_ir_advisories_smoke.tl	ir-observability-golden	@compiler	Direct fixture input in verify-ir-observability.sh.
-src/tests/compiler_backend_cmp_mem_fold_smoke.tl	stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration.sh.
-src/tests/compiler_backend_runtime_fixture.tl	stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration.sh.
+src/tests/compiler_backend_cmp_mem_fold_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-integration.sh.
+src/tests/compiler_backend_runtime_fixture.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-integration.sh.
 src/tests/compiler_backend_seh_savereg_fixture.tl	win64-seh-unwind-verifier	@compiler	Direct fixture input in verify-win64-seh-unwind.sh.
-src/tests/compiler_backend_smoke.tl	stage2-compile-profile-verifier,stage2-opt1-opt2-build-invariance,stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@compiler	Direct fixture input in verify-compile-profile.sh, check-build-invariance.sh.
-src/tests/compiler_codegen_smoke_suite.tl	build-invariance-batch-reuse-self-tests,integration-manifest-validator-self-tests,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-build-invariance-batch.sh, verify-integration-manifest-validator.sh.
-src/tests/compiler_driver_pic_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
-src/tests/compiler_frontend_smoke_suite.tl	integration-manifest-validator-self-tests,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
-src/tests/compiler_lower_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/compiler_backend_smoke.tl	stage2-compile-profile-verifier,stage2-opt1-opt2-build-invariance,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels,stage2-regalloc-backend-asm-shape-gates	@compiler	Direct fixture input in verify-compile-profile.sh, check-build-invariance.sh.
+src/tests/compiler_codegen_smoke_suite.tl	build-invariance-batch-reuse-self-tests,integration-manifest-validator-self-tests,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-build-invariance-batch.sh, verify-integration-manifest-validator.sh.
+src/tests/compiler_driver_pic_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/compiler_frontend_smoke_suite.tl	integration-manifest-validator-self-tests,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
+src/tests/compiler_lower_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/compiler_object_coff_overflow_fixture.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct fixture input in verify-coff-relocation-overflow.sh.
-src/tests/compiler_symbols_smoke.tl	integration-manifest-validator-self-tests,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
+src/tests/compiler_symbols_smoke.tl	integration-manifest-validator-self-tests,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
 src/tests/compiler_typecheck_reverse_mixed_smoke.tl	integration-manifest-validator-self-tests	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
-src/tests/compiler_typecheck_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/compiler_typecheck_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/comptime_host_smoke.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
-src/tests/doc_test_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/doc_test_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/scan_storage_growth.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
 tests/cross-mode/corpus.tsv	stage2-cross-mode-semantic-abi-differential,stage2-sde-fallback	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
-tests/fixtures/backend_source_import_str_cat.tl	stage2-backend-source-import-context,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-native-integration-corpus	@corpus	Direct fixture input in verify-backend-source-import-context.sh.
+tests/fixtures/backend_source_import_str_cat.tl	stage2-backend-source-import-context,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Direct fixture input in verify-backend-source-import-context.sh.
 tests/fixtures/win64-seh/savereg-oracle.expected	win64-seh-unwind-verifier	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
 tests/fixtures/win64-seh/driver.s.in	win64-seh-unwind-verifier	@corpus	Native Windows register canaries and virtual-unwind caller for Platform bridges and Internal frames.
 tests/fixtures/win64-seh/win64_seh_unwind.tl	win64-seh-unwind-verifier,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-regalloc-backend-asm-shape-gates	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
@@ -237,7 +237,7 @@ tests/integration/winsock_capability_measure.tl	no-libc-dependency-guard	@corpus
 tests/integration/winsock_capability.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/integration/winsock_shadow_identity.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/no-libc/probe.tl	no-libc-dependency-guard,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct fixture input in verify-no-libc.sh.
-tests/safety/division_by_zero_trap.tl	stage2-windows-coff-batch-plan,stage2-native-integration-corpus	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
+tests/safety/division_by_zero_trap.tl	stage2-windows-coff-batch-plan,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
 tests/safety/vector_invalid_capability_reject.tl	stage2-compile-profile-verifier	@corpus	Direct fixture input in verify-compile-profile.sh.
 tests/shared-object/worker.tl	stage2-linux-shared-object-code-model,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh.
 tests/spmd/package_callable/*	package-native-tlci-dependency-macros	@corpus	Direct fixture input in verify-package-native-tlci.sh.
@@ -299,7 +299,7 @@ src/format_rules.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked in
 src/format_tokens.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/lex.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/linker_ar_dialect_reader.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/linker_archive_core_tests.tl	stage2-selfhost-compile-manifest,stage2-native-integration-corpus	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/linker_archive_core_tests.tl	stage2-selfhost-compile-manifest,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/linker_coff_import_reader.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/linker_elf_object_reader.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/read.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -348,64 +348,64 @@ src/compiler_clone_tests.tl	stage2-public-tool-surface	@compiler	Declared primar
 src/compiler_embedded_stdlib_tlci_payload.tl	stage0-size-ratchet	@compiler	Direct named source input to its owning verifier.
 src/compiler_package_surface_producer.tl	package-native-tlci-dependency-macros	@compiler	Direct named source input to its owning verifier.
 src/compiler_profile_summary.tl	stage2-inline-typelisp-tests	@compiler	Direct named source input to its owning verifier.
-src/tests/canonical_import_alias_first_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/canonical_import_default_first_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/cli_common_option_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_abort_sites.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ast_types_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_backend_raw_pointer_fixture.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_backend_stack_args_fixture.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_bounds_check_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_check_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ctfe_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_driver_base_transients_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ir_return_storage_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ir_types_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_liveness_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_load_decls_nil_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_load_includes.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_load_lazy_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_lower_symbol_identity_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_macro_diagnostic_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ownership_cleanup_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ownership_core_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ownership_loan_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_ownership_normalize_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_parse_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_pointer_proof_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_regalloc_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_call_lower_avx512_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_call_lower_scalar_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_imported_selection_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_package_abi_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_package_callable_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_package_mutual_recursion_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_package_recursion_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_spmd_package_validation_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_stack_traffic_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/canonical_import_alias_first_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/canonical_import_default_first_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/cli_common_option_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_abort_sites.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ast_types_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_backend_raw_pointer_fixture.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_backend_stack_args_fixture.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_bounds_check_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_check_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ctfe_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_driver_base_transients_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ir_return_storage_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ir_types_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_liveness_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_load_decls_nil_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_load_includes.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_load_lazy_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_lower_symbol_identity_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_macro_diagnostic_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_cleanup_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_core_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_loan_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_normalize_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_parse_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_pointer_proof_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_regalloc_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_call_lower_avx512_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_call_lower_scalar_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_imported_selection_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_abi_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_callable_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_mutual_recursion_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_recursion_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_validation_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_stack_traffic_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 src/tests/compiler_tlci_native_producer_smoke.tl	stage2-cli-host-action-smoke,stage2-public-tool-surface	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_tlci_native_source_owners.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_typecheck_reflection_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/compiler_typed_occurrence_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/doc_expand_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/doc_extract_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/doc_html_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/doc_render_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/format_cst_integration.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/format_rules_integration.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/lex_span_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/linker_coff_import_reader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/linker_elf_dso_reader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/linker_elf_object_reader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/lint_driver_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/lint_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/lsp_frame_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/lsp_position_edit_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/package_cache_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/read_pool_arena_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/test_cli_entry_memory_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/test_cli_entry_state_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
-src/tests/tlci_loader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_tlci_native_source_owners.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_typecheck_reflection_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_typed_occurrence_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_expand_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_extract_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_html_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_render_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/format_cst_integration.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/format_rules_integration.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lex_span_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/linker_coff_import_reader_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/linker_elf_dso_reader_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/linker_elf_object_reader_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lint_driver_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lint_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lsp_frame_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lsp_position_edit_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/package_cache_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/read_pool_arena_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/test_cli_entry_memory_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/test_cli_entry_state_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/tlci_loader_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/math.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/crypto_aes_core.tl	stage2-crypto-stack-residue,stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate,stage2-inline-typelisp-tests	@stdlib	Shared AES core changes affect both mode and public reclaim chains.
 stdlib/tests/crypto_aes_api.tl	embedded-stdlib-tlci-image,stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary installed-module and native macro identity witness for both AES constructors.
@@ -421,7 +421,7 @@ stdlib/tests/crypto_aes_raw_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-
 stdlib/tests/crypto_aes_rounds_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
 stdlib/tests/crypto_aes_variant_reject.tl	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier	@stdlib	Primary AES API rejection witness in both stdlib fixture verifiers.
 stdlib/tests/byte_buf_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
-stdlib/tests/raw_copy_api.tl	stage2-native-integration-corpus	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+stdlib/tests/raw_copy_api.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/tests/vector_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/tests/wire_byte_buf_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/alias_global_shift.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
@@ -588,13 +588,13 @@ tests/safety/arena_return_untied_struct_reject.tl	stage2-public-tool-surface	@co
 tests/safety/arena_try_untied_wrapper_reject.tl	stage2-public-tool-surface	@corpus	Primary early-exit declared-result flow contract.
 tests/safety/arena_return_lambda_late_activation_reject.tl	stage2-public-tool-surface	@corpus	Primary early-exit declared-result flow contract.
 tests/safety/scratch_body_try_array_error_exit_reject.tl	stage2-public-tool-surface	@corpus	Primary nonempty scratch residual confinement contract.
-tests/safety/borrow_temporary_call_arg_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/borrow_temporary_cleanup_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/borrowed_pattern_copy_binding_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/borrowed_pattern_copy_deferred_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/box_deref_copy_projection_reuse_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/call_lifetime_invariant_order_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/caller_lifetime_call_inference_order_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrow_temporary_call_arg_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrow_temporary_cleanup_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrowed_pattern_copy_binding_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrowed_pattern_copy_deferred_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/box_deref_copy_projection_reuse_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/call_lifetime_invariant_order_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/caller_lifetime_call_inference_order_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/dead_frame_abort_only_trap.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/decls_generated_conflicting_import_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/decls_generated_missing_import_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
@@ -602,14 +602,14 @@ tests/safety/decls_generated_missing_selected_import_reject.tl	stage2-public-too
 tests/safety/foreign_global_lambda_set_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/foreign_global_macro_write_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/foreign_global_selected_set_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/global_call_argument_local_mutation_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/global_call_match_local_shadow_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/global_call_mixed_copy_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/global_call_pure_constructor_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_argument_local_mutation_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_match_local_shadow_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_mixed_copy_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_pure_constructor_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/inline_aggregate_global_live_borrow_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/match_copy_loan_ends_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/mutable_reference_read_disjoint_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/safety/shift_count_trap.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/match_copy_loan_ends_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/mutable_reference_read_disjoint_ok.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/shift_count_trap.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/spmd_unmasked_scatter_index_reject.tl	ispc-mandelbrot-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/with_owner_destroy_use_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/with_owner_rewind_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
@@ -688,7 +688,7 @@ tests/spmd/private_uniform_call_float.tl	stage2-spmd-simd-comparison	@compiler	P
 tests/spmd/private_uniform_call_numeric.tl	stage2-spmd-simd-comparison	@compiler	Private call numeric pressure and nested call execution and codegen rows in the SPMD corpus.
 # Safety fixture owners for #8570, #8915 and #8897.
 tests/safety/composite_arg_loan_replace_old_value_bytes_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/composite_arg_loan_replace_old_value_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/composite_arg_loan_replace_old_value_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/composite_arg_loan_replace_old_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_escape_elided_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_escape_forwarded_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
@@ -698,9 +698,9 @@ tests/safety/mir_by_value_borrow_escape_macro_reject.tl	stage2-safety-corpus	@co
 tests/safety/mir_by_value_borrow_escape_nominal_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_escape_scalar_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_escape_tuple_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/mir_by_value_immediate_writeback_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/mir_by_value_read_only_result_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/mir_storage_backed_borrow_result_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_immediate_writeback_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_read_only_result_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_storage_backed_borrow_result_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_aggregate_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_elided_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_forwarded_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
@@ -710,9 +710,9 @@ tests/safety/mir_by_value_borrow_retained_phantom_reject.tl	stage2-safety-corpus
 tests/safety/mir_by_value_borrow_retained_scalar_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_signature_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/mir_by_value_borrow_retained_tuple_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/mir_by_value_borrow_distinct_lifetime_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/mir_by_value_borrow_unretained_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/mir_storage_backed_borrow_retained_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_distinct_lifetime_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_by_value_borrow_unretained_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/mir_storage_backed_borrow_retained_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_byte_alias_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_byte_direct_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_byte_unsafe_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
@@ -721,7 +721,7 @@ tests/safety/string_raw_digits_alias_reject.tl	stage2-safety-corpus	@corpus	Prim
 tests/safety/string_raw_digits_direct_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_digits_unsafe_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_digits_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
-tests/safety/string_raw_integer_writers_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
+tests/safety/string_raw_integer_writers_ok.tl	stage2-safety-corpus,stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_substring_alias_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_substring_direct_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.
 tests/safety/string_raw_substring_unsafe_value_reject.tl	stage2-safety-corpus	@corpus	Primary safety regression for returned loans, unsafe callables or call writeback.

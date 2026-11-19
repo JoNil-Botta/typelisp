@@ -126701,27 +126701,31 @@
         -1
         (tc-selected-representative-bucket (tc-global-shared-view resolved)))]
     [found : i64 -1]
-    [rep : i64 start]
-    (if (< bucket 0)
-      (while (and (< found 0) (< rep table.representative-count))
-        (when
+    ;; Both walks ascend: a bucketed one follows its chain from the bucket's
+    ;; first representative and skips the ones before `start`, whose
+    ;; comparisons rule them out; a poisoned store scans every representative
+    ;; from `start`.
+    [rep : i64
+      (if (< bucket 0)
+        (if (< start table.representative-count)
+          start
+          -1)
+        (- (array-ref table.bucket-heads bucket) 1))]
+    (while (and (< found 0) (>= rep 0))
+      (when
+        (and
+          (>= rep start)
           (tc-selected-same-type?
             (tc-global-array-element-shared-view table.representatives rep)
-            (tc-global-shared-view resolved))
-          (set! found rep))
-        (set! rep (+ rep 1)))
-      ;; Every representative outside the bucket fails to match.
-      (begin
-        (set! rep (- (array-ref table.bucket-heads bucket) 1))
-        (while (and (< found 0) (>= rep 0))
-          (when
-            (and
-              (>= rep start)
-              (tc-selected-same-type?
-                (tc-global-array-element-shared-view table.representatives rep)
-                (tc-global-shared-view resolved)))
-            (set! found rep))
-          (set! rep (- (array-ref table.representative-next rep) 1)))))
+            (tc-global-shared-view resolved)))
+        (set! found rep))
+      (set!
+        rep
+        (if (< bucket 0)
+          (if (< (+ rep 1) table.representative-count)
+            (+ rep 1)
+            -1)
+          (- (array-ref table.representative-next rep) 1))))
     found))
 
 ;; The buckets: no wrapper, each single reference or region wrapper, and two
@@ -126740,30 +126744,34 @@
 (define (tc-selected-representative-bucket [ty : ast.AstType]) : i64
   (let
     [wrapper : i64
-      (match (tc-global-shared-view ty)
+      (match ty
         [(ast.AstType.Region _ _) 1]
         [(ast.AstType.Ref _ _) 2]
         [(ast.AstType.MutRef _ _) 3]
         [_ 0])]
     (if (= wrapper 0)
-      (if (tc-poison-type? (tc-global-shared-view ty))
-        -1
-        (ast.ast-type-tag (& ty)))
+      (let
+        [tag : i64 (ast.ast-type-tag (& ty))]
+        (if (tc-poison-type? ty)
+          -1
+          tag))
       (let
         [inner : ast.AstType
-          (match (tc-global-shared-view ty)
+          (match ty
             [(ast.AstType.Region _ inner) (ast.ty-node-get inner)]
             [(ast.AstType.Ref _ inner) (ast.ty-node-get inner)]
             [(ast.AstType.MutRef _ inner) (ast.ty-node-get inner)]
             [_ ast.AstType.Never])]
-        (match (tc-global-shared-view inner)
+        (match (& inner)
           [(or (ast.AstType.Region _ _) (ast.AstType.Ref _ _)
                (ast.AstType.MutRef _ _))
             160]
           [_
-            (if (tc-poison-type? (tc-global-shared-view inner))
-              -1
-              (+ (* wrapper 40) (ast.ast-type-tag (& inner))))])))))
+            (let
+              [inner-tag : i64 (ast.ast-type-tag (& inner))]
+              (if (tc-poison-type? inner)
+                -1
+                (+ (* wrapper 40) inner-tag)))])))))
 
 ;; Files the new representative `rep` in its bucket, last.
 (define (tc-selected-representative-file!
@@ -126783,8 +126791,10 @@
           (set! (array-ref table.representative-next (- tail 1)) (+ rep 1)))
         (set! (array-ref table.bucket-tails bucket) (+ rep 1))))))
 
-(define (tc-selected-representative-hash-slot [ty : ast.AstType] [mask : i64]) : i64
-  (bit-and (* (ast.ty-node-hash-value (& ty)) 2654435761) mask))
+(define (tc-selected-representative-hash-slot
+  [ty : (& ast.AstType)]
+  [mask : i64]) : i64
+  (bit-and (* (ast.ty-node-hash-value ty) 2654435761) mask))
 
 ;; The index slot holding the entry of a type shallow-equal to `resolved`, or
 ;; the empty slot where one goes (the index is never full).
@@ -126793,10 +126803,7 @@
   [resolved : ast.AstType]) : i64
   (let
     [mask : i64 (- (array-length table.memo-slots) 1)]
-    [slot : i64
-      (tc-selected-representative-hash-slot
-        (tc-global-shared-view resolved)
-        mask)]
+    [slot : i64 (tc-selected-representative-hash-slot (& resolved) mask)]
     [done : bool false]
     (while (not done)
       (let
@@ -126829,7 +126836,7 @@
       (let
         [slot : i64
           (tc-selected-representative-hash-slot
-            (tc-global-array-element-shared-view table.memo-types index)
+            (& (array-ref table.memo-types index))
             mask)]
         (set!
           (array-ref types index)

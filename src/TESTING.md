@@ -3046,8 +3046,9 @@ When changing gate commands or primary inventories, update the reviewed path
 map and run `--self-test`. Its ownership audit follows invoked owning scripts
 and whole-directory content guards, uses the canonical case translator
 in list mode, expands manifest primaries, and checks Windows checkout bytes.
-Hosted Linux CI runs this audit unconditionally on every PR as part of
-`stage2-public-tool-surface`, before its compiler-dependent checks.
+Hosted Linux CI runs this audit unconditionally on every PR as the
+`stage2-public-tool-affected-map` gate, which names no compiler and so starts
+beside the bootstrap.
 
 New constructed primary-input lists in owning scripts must use the checked
 fixture inventory interface in `scripts/lib-fixture-inventory.sh`. Store each

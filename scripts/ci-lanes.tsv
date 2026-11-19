@@ -40,6 +40,7 @@ stage0-release-publication-verifier-self-tests	linux-2	windows-1
 stage0-latest-staged-publication-self-tests	linux-2	windows-2
 bootstrap-adaptive-control-flow	linux-2	windows-2
 bootstrap-fixpoint	linux-2+linux-1	windows-1+windows-2
+stage2-public-tool-affected-map	linux-2	-
 stage0-size-ratchet	linux-2	windows-2
 stage2-opt1-opt2-build-invariance	linux-1	-
 embedded-stdlib-tlci-image	linux-2	windows-1
@@ -62,7 +63,10 @@ large-crlf-formatter-diff	linux-2	windows-2
 typelisp-source-lint	linux-2	windows-1
 no-libc-dependency-guard	linux-2	windows-2
 stage2-inline-aggregate-scaling	linux-2	windows-1
-stage2-public-tool-surface	linux-2	windows-1
+stage2-public-tool-cli-transcripts-1	linux-2	windows-1
+stage2-public-tool-cli-transcripts-2	linux-2	windows-1
+stage2-public-tool-cli-transcripts-3	linux-2	windows-1
+stage2-public-tool-corpora	linux-2	windows-1
 stage2-app-workflow-corpus	linux-2	windows-1
 ir-observability-golden	linux-2	windows-2
 compiler-arena-debug-native-matrix	linux-2	windows-2

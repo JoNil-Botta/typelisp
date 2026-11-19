@@ -1,6 +1,6 @@
 # Public CLI command matrix: backend modes, targets, typecheck diagnostics, and
 # run/build execution including the direct (--direct) planners, native link
-# inputs and package profiles (gate stage2-public-tool-surface).
+# inputs and package profiles (gate stage2-public-tool-cli-transcripts-1).
 do none
 target -
 opt -

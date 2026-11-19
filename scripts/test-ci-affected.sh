@@ -123,7 +123,7 @@ awk -F '\t' '
 sort -u "$work/script-inputs.raw" > "$work/script-inputs.tsv"
 # Isolate both audit mechanisms from later fallback and inventory checks.
 for script in verify-package-artifact-freshness.sh verify-lsp-transcript-batch.sh; do
-    grep -Fx "stage2-public-tool-surface$TAB""scripts/$script" "$work/recursive-scripts.tsv" >/dev/null || fail "nested guard not discovered: $script"
+    grep -Fx "stage2-public-tool-corpora$TAB""scripts/$script" "$work/recursive-scripts.tsv" >/dev/null || fail "nested guard not discovered: $script"
 done
 grep -Fx "stage2-stdlib-modules-and-fixtures$TAB"'scripts/check-stdlib-concat-lint.sh' "$work/recursive-scripts.tsv" >/dev/null || fail 'nested stdlib lint not discovered'
 for gate in stage2-stdlib-documentation stage2-stdlib-modules-and-fixtures stage2-repository-doctests; do
@@ -135,7 +135,14 @@ awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$ROOT
 # lists and generic compiler-comparison suites remain advisory source classes.
 awk -F '\t' '$1 ~ /\.cases$/ {print}' "$work/script-inputs.tsv" > "$work/inventory-owners.tsv"
 awk -F '\t' '{sub(/\r$/, "")} !/^#/ && $1 != "id" {n=split($8, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.cases$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" >> "$work/inventory-owners.tsv"
-for affected_inventory in tests/cli/public-*.cases; do printf '%s\tstage2-public-tool-surface\n' "$affected_inventory"; done >> "$work/inventory-owners.tsv"
+# The public-tool family runs these transcripts and corpora together, and each
+# map row that owns one of their inputs names the whole family, so every file
+# requires every part.
+for affected_inventory in tests/cli/public-*.cases; do
+    for public_tool_gate in stage2-public-tool-affected-map stage2-public-tool-cli-transcripts-1 stage2-public-tool-cli-transcripts-2 stage2-public-tool-cli-transcripts-3 stage2-public-tool-corpora; do
+        printf '%s\t%s\n' "$affected_inventory" "$public_tool_gate"
+    done
+done >> "$work/inventory-owners.tsv"
 for affected_inventory in tests/apps/*.cases; do printf '%s\tstage2-app-workflow-corpus\n' "$affected_inventory"; done >> "$work/inventory-owners.tsv"
 inventory_inputs() {
     # Reuse the canonical DSL translator for defaults and {{each}} expansion.
@@ -398,7 +405,7 @@ for host in linux windows; do
         has_gate "$work/direct-reader.ids" "$gate"
     done < "$work/script-inputs.tsv"
     # Constructed script inputs and the reported independent source guards.
-    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'tests/safety/global_mut_borrow_deref_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_field_overlap_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_initializer_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_noncall_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_store_location_reject.tl stage2-public-tool-surface' 'tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl stage2-public-tool-surface' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'tests/safety/global_mut_borrow_deref_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_field_overlap_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_initializer_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_noncall_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_store_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl stage2-public-tool-cli-transcripts-3' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-corpora' 'src/compiler_driver_core.tl stage2-public-tool-corpora' 'src/compiler_lower.tl stage2-public-tool-corpora' 'src/lsp_frame_core.tl stage2-public-tool-corpora' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi

@@ -181,7 +181,7 @@ the exact PR head; only a push to main can publish releases.
 | Check the shared IR dependency boundary | `verify-core-ir-dependencies.sh` (canonical resolved closure, explicit module policy, source and fact-stream fixtures; bounded on both hosts) |
 | Check process-tree memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`), `verify-windows-memory-limit.ps1` (covers `run-bounded-process.ps1`) |
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog), `check-compiler-state-schema.sh` (packed compiler state stays behind its schema's typed accessors), `check-shared-view-count.sh` (the `*-shared-view` call count may only fall, against `shared-view-baseline.tsv`; it also reports, without gating, the count weighted by the call sites of the function or macro that holds each view, with thin wrappers transparent so a copy weighs the same inside an accessor or at its call sites) |
-| Check public CLI behavior | `verify-public-tools.sh`, `verify-selfhost-cli-build-run.sh`, `check-stage1-wrapper.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`) |
+| Check public CLI behavior | `verify-public-tools.sh` (`affected-map`, `cli-transcripts-1` to `cli-transcripts-3` and `corpora`, one gate per part; the transcript parts are the `tests/cli/public-*.cases` transcripts in three balanced groups), `verify-selfhost-cli-build-run.sh`, `check-stage1-wrapper.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`) |
 | Check application workflows | `verify-app-corpus.sh` (the projects and scenario manifest in `tests/apps/`; see `tests/apps/README.md`) |
 | Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-stdlib-tlci-identity-differential.sh` (all embedded identities; called by compile-profile), `verify-embedded-stdlib-tlci-resources.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh`, `verify-package-surface-tlci.sh` |
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh` (`tests/codegen/native-link.cases`), `verify-native-link-windows.sh`, `verify-win64-seh-unwind.sh` (Windows unwind rows and a virtual unwind through framed prologues, `tests/fixtures/win64-seh/`), `verify-fs-rooted-linux.sh`, `verify-process-runtime-linux.sh` |
@@ -306,6 +306,18 @@ the cross-mode differential reuses artifacts the integration corpus leaves in
 `target/integration-verify/<host>/`, so no other gate may reset that
 directory. A generated input that several gates write whole through a
 temporary file and `mv` is safe to share.
+
+The public tool surface is such a family. `verify-public-tools.sh` takes one
+part per gate: `affected-map` (the `ci-affected.sh --self-test` audit, which
+names no compiler, so it starts beside the bootstrap and runs on Linux only),
+the three `cli-transcripts-*` groups, and `corpora` (package artifact
+freshness, the LSP and REPL corpora, and the `SPEC.md` metadata examples in
+series). The transcript groups list their case files instead of globbing
+them, and every part checks that the three groups still cover each
+`tests/cli/public-*.cases` file exactly once, so a new transcript file fails
+the gate until it joins a group. No lock is needed: `verify-codegen-cases.sh`
+keeps a work directory per case file, and `corpora` still runs the
+`run-corpus.sh` modes in series as one gate.
 
 `verify-cross-mode-differential.sh` and its manifest are described under
 [Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).

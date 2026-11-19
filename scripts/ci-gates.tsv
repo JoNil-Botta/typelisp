@@ -15,6 +15,7 @@
 id	hosts	label	needs	compiler	memory	locks	command
 bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-	-	256	-	scripts/verify-bootstrap-fixpoint-control.sh
 bootstrap-fixpoint	all	bootstrap fixpoint	-	-	6400	-	gate_bootstrap_fixpoint
+stage2-public-tool-affected-map	linux	stage2 public tool affected map	-	-	256	-	scripts/verify-public-tools.sh affected-map
 tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	-	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
 x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-	-	256	-	scripts/check-x64-executable-template-registry.sh
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	256	-	scripts/verify-cross-mode-differential.sh --self-test
@@ -58,7 +59,10 @@ large-crlf-formatter-diff	all	large CRLF formatter diff	bootstrap-fixpoint	stage
 typelisp-source-lint	all	TypeLisp source lint	bootstrap-fixpoint	stage2	2048	-	scripts/check-tl-lint.sh
 no-libc-dependency-guard	all	no-libc dependency guard	bootstrap-fixpoint	stage2	256	-	scripts/verify-no-libc.sh
 stage2-inline-aggregate-scaling	all	stage2 inline aggregate scaling	bootstrap-fixpoint	stage2	768	-	scripts/verify-inline-aggregate-scaling.sh
-stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	stage2	4352	-	scripts/verify-public-tools.sh
+stage2-public-tool-cli-transcripts-1	all	stage2 public tool CLI transcripts 1	bootstrap-fixpoint	stage2	1024	-	scripts/verify-public-tools.sh cli-transcripts-1
+stage2-public-tool-cli-transcripts-2	all	stage2 public tool CLI transcripts 2	bootstrap-fixpoint	stage2	3840	-	scripts/verify-public-tools.sh cli-transcripts-2
+stage2-public-tool-cli-transcripts-3	all	stage2 public tool CLI transcripts 3	bootstrap-fixpoint	stage2	1792	-	scripts/verify-public-tools.sh cli-transcripts-3
+stage2-public-tool-corpora	all	stage2 public tool corpora	bootstrap-fixpoint	stage2	512	-	scripts/verify-public-tools.sh corpora
 stage2-app-workflow-corpus	all	stage2 application workflow corpus	bootstrap-fixpoint	stage2	512	-	scripts/verify-app-corpus.sh
 ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	2304	-	scripts/verify-ir-observability.sh
 compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint	stage2	2048	-	scripts/verify-compiler-arena-debug.sh

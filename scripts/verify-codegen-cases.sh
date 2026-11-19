@@ -1141,8 +1141,13 @@ cc_translate() {
             gsub(/-/, "_", s)
             s = "plugin_" s
             for (i = 2; i <= n; i++) s = s " \"$(cc_expand " sq(W[i]) ")\""
-            if (ncase == 0) dflt["setup"] = (("setup" in dflt) ? dflt["setup"] " && " : "") s
-            else cfg["setup"] = (("setup" in cfg) ? cfg["setup"] " && " : "") s
+            if (ncase == 0) {
+                if ("setup" in dflt) dflt["setup"] = dflt["setup"] " && " s
+                else dflt["setup"] = s
+            } else {
+                if ("setup" in cfg) cfg["setup"] = cfg["setup"] " && " s
+                else cfg["setup"] = s
+            }
             next
         }
         if (ncase == 0) die("expectation before the first case: " kw)

@@ -46,7 +46,11 @@ typelisp-source-formatting	compiler,stdlib,corpus	Consumes compiler behavior or 
 large-crlf-formatter-diff	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 typelisp-source-lint	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 no-libc-dependency-guard	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
-stage2-public-tool-surface	compiler,stdlib,corpus,docs	Also validates documented examples or renders and validates documentation pages.
+stage2-public-tool-affected-map	compiler,stdlib,corpus,docs	Audits the required-gate map, the corpora and docs inventories it follows, and the Windows checkout bytes.
+stage2-public-tool-cli-transcripts-1	compiler,stdlib,corpus	Public CLI transcript group 1 on the produced compiler.
+stage2-public-tool-cli-transcripts-2	compiler,stdlib,corpus	Public CLI transcript group 2 on the produced compiler.
+stage2-public-tool-cli-transcripts-3	compiler,stdlib,corpus	Public CLI transcript group 3 on the produced compiler.
+stage2-public-tool-corpora	compiler,stdlib,corpus,docs	Public LSP and REPL corpora, package artifact freshness, and the metadata-bearing SPEC.md examples.
 stage2-app-workflow-corpus	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 ir-observability-golden	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 compiler-arena-debug-native-matrix	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

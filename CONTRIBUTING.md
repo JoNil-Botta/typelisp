@@ -166,10 +166,10 @@ changed harness, plus focused tests. `--paths FILE` prints a plan without
 executing it; pass its IDs as a comma-separated list to
 `scripts/ci-verify.sh --gates <ids>`. Hosted CI supplies the full table.
 
-Hosted Linux CI runs `scripts/ci-affected.sh --self-test` on every PR inside
-`stage2-public-tool-surface`. When changing primary inventories, the map or
-catalog, gate commands, nested owning scripts or translators, update the map
-and run this audit locally as well.
+Hosted Linux CI runs `scripts/ci-affected.sh --self-test` on every PR as the
+`stage2-public-tool-affected-map` gate, which needs no compiler. When changing
+primary inventories, the map or catalog, gate commands, nested owning scripts
+or translators, update the map and run this audit locally as well.
 
 `scripts/ci-verify.sh --gates <id>` reruns one failing gate with the gates it
 needs (IDs from `scripts/ci-verify.sh --list-gates linux`). The result remains

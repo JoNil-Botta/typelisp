@@ -1,5 +1,5 @@
 # The inline test command, package test discovery and test backend modes
-# (gate stage2-public-tool-surface).
+# (gate stage2-public-tool-cli-transcripts-1).
 do none
 target -
 opt -

@@ -1,5 +1,5 @@
 # Package build, TLCI images and inspect, the host/target split, clean and
-# experiment clean, and package diagnostics (gate stage2-public-tool-surface).
+# experiment clean, and package diagnostics (gate stage2-public-tool-cli-transcripts-2).
 do none
 target -
 opt -

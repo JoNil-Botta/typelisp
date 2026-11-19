@@ -57113,6 +57113,7 @@
     (opt.opt-load-copy-instr-seq-rewrite!
       type-segment-bases
       hs
+      true
       (opt.opt-load-cse-state-with-caps-and-facts
         (profile_state.compiler-profile-state-metrics
           (profile_state.compiler-profile-state-new))

@@ -60520,9 +60520,13 @@
         (opt-slice-word-copy-value? hs offset))]
     [_ false]))
 
+;; `load-cse?` false skips the load-CSE step of the walk for a block on which
+;; it cannot rewrite anything (opt-block-load-cse-may-fire?); the Slice-word
+;; CSE and copy propagation still run.
 (define (opt-load-copy-instr-seq-rewrite!
   [type-segment-bases : i64]
   [hs : (& hs OptLoadHeaderSet)]
+  [load-cse? : bool]
   [state : OptLoadCseState]
   [words : (&mut words OptExprTable)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
@@ -60549,16 +60553,20 @@
               (if (opt-slice-word-copy-use? hs word-rewritten)
                 (opt-copy-subst-instr (& copy-state) word-rewritten)
                 word-rewritten)]
-            (match (opt-load-cse-dispatch
-              type-segment-bases
-              (&mut no-canon)
-              hs
-              false
-              sources
-              call-memory
-              cells
-              (compiler-opt-global-shared-view load-state)
-              load-input)
+            [load-view : OptLoadCseState
+              (compiler-opt-global-shared-view load-state)]
+            (match (if load-cse?
+              (opt-load-cse-dispatch
+                type-segment-bases
+                (&mut no-canon)
+                hs
+                false
+                sources
+                call-memory
+                cells
+                load-view
+                load-input)
+              (OptLoadCseResult.Result load-view load-input))
               [(Result next-load loaded)
                 (match (opt-copy-instr (& copy-state) (& loaded))
                   [(Result next-copy rewritten)
@@ -61107,12 +61115,69 @@
 (define (opt-block-scan-skippable?
   [scan-work : (__tl_dyn-array i64)]
   [block : (& ir.CompilerIrBlock)]) : bool
+  (= (opt-block-scan-mask scan-work block) 0))
+
+;; The pre-scan's stage mask for one block: 0 when no stage can fire, else the
+;; bits of the stages that may (see opt-block-fold-scan). Bit 1 means "unknown,
+;; run every stage": an over-long block, or a length-zero work array.
+(define (opt-block-scan-mask
+  [scan-work : (__tl_dyn-array i64)]
+  [block : (& ir.CompilerIrBlock)]) : i64
   (if (= (array-length scan-work) 0)
-    false
+    1
     (match block
       [(Block _ instrs)
         (+= opt-fold-scan-tag 1)
-        (= (opt-block-fold-scan scan-work opt-fold-scan-tag (& instrs)) 0)])))
+        (opt-block-fold-scan scan-work opt-fold-scan-tag (& instrs))])))
+
+;; Whether a stage whose fire bits are `bits` may rewrite a block of `mask`.
+;; Each bit states that stage's own fire rule on the block's input, and no
+;; earlier stage creates what a later gated stage acts on, so a stage whose
+;; bits are clear is a no-op on the block whichever other stages fire.
+(define (opt-block-scan-may-fire? [mask : i64] [bits : i64]) : bool
+  (not (= (bit-and mask (bit-or 1 bits)) 0)))
+
+;; Fold/strength/CSE fire bits: a constant seed (2) or a duplicate key (4).
+(define (opt-block-fold-cse-may-fire? [mask : i64]) : bool
+  (opt-block-scan-may-fire? mask 6))
+
+;; Load-CSE rewrites a Load (bit 16: a Load plus another Load/StorePtr/CopyBytes)
+;; or, through GSF-1, a read of a global cell behind a global `Store` in the same
+;; block. Bit 16 does not count that `Store`, so check for one. The earlier
+;; stages create neither: fold, strength and CSE rewrite an instruction into a
+;; Mov or an op over the same operands, and dead-store only deletes StorePtrs.
+(define (opt-block-load-cse-may-fire?
+  [mask : i64]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
+  (or
+    (opt-block-scan-may-fire? mask 16)
+    (let
+      [found : bool false]
+      [index : i64 0]
+      (while (and (not found) (< index instrs.len))
+        (match (& (array-ref instrs.slots index))
+          [(Store _ _ _) (set! found true)]
+          [_ unit])
+        (+= index 1))
+      found)))
+
+;; Bounds-check elimination fire bit: two or more BoundsChecks (64).
+(define (opt-block-bounds-may-fire? [mask : i64]) : bool
+  (opt-block-scan-may-fire? mask 64))
+
+;; The fold stage's store count (capped at 128, the dead-store table size) when
+;; the stage is skipped and so leaves the block as it is.
+(define (opt-block-store-count [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [count : i64 0]
+    (for [index (iterator.range 0 instrs.len)]
+      (match (& (array-ref instrs.slots index))
+        [(or (StorePtr _ _ _) (StoreOwned _ _ _))
+          (if (< count 128)
+            (+= count 1)
+            unit)]
+        [_ unit]))
+    count))
 
 (define (optimize-block-hs-full
   [profile-state : profile_state.CompilerProfileMetrics]
@@ -61123,6 +61188,7 @@
   [load-kinds : (& OptLoadPtrKinds)]
   [load-facts : (& OptAliasFacts)]
   [tables : (&mut tables OptBlockExprTables)]
+  [mask : i64]
   [block : (& ir.CompilerIrBlock)]) : ir.CompilerIrBlock
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block label instrs)
@@ -61139,12 +61205,15 @@
         ;; that sequence in place. Fold runs ONCE: it is a single forward pass
         ;; that binds every folded result into its env, so over the block it
         ;; already reaches a fixpoint and a second fold would change nothing.
+        ;; A stage the pre-scan `mask` rules out for this block is skipped.
         (set!
           store-capacity
-          (opt-fold-strength-cse-instr-seq-rewrite!
-            type-segment-bases
-            (&mut tables.exprs)
-            (compiler-opt-global-shared-view work)))
+          (if (opt-block-fold-cse-may-fire? mask)
+            (opt-fold-strength-cse-instr-seq-rewrite!
+              type-segment-bases
+              (&mut tables.exprs)
+              (compiler-opt-global-shared-view work))
+            (opt-block-store-count (& work))))
         (set!
           work
           (opt-dead-store-instr-seq-known-with-kinds
@@ -61157,6 +61226,7 @@
         (opt-load-copy-instr-seq-rewrite!
           type-segment-bases
           hs
+          (opt-block-load-cse-may-fire? mask (& work))
           (opt-load-cse-empty-state-for-size-with-kinds
             profile-state
             (ir.compiler-ir-instr-seq-count work)
@@ -61164,7 +61234,9 @@
             (owned_view.compiler-owned-reference-shared-view load-facts))
           (&mut tables.words)
           (compiler-opt-global-shared-view work))
-        (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
+        (when
+          (opt-block-bounds-may-fire? mask)
+          (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work)))
         (Block label work))]))
 
 (define (optimize-block-hs-with-kinds
@@ -61179,18 +61251,21 @@
   [scan-work : (__tl_dyn-array i64)]
   [tables : (&mut tables OptBlockExprTables)]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (if (opt-block-scan-skippable? scan-work (& block))
-    block
-    (optimize-block-hs-full
-      profile-state
-      pools
-      type-segment-bases
-      hs
-      dead-kinds
-      load-kinds
-      (& (optimize-block-entry-facts block entry-label seed-facts))
-      tables
-      (& block))))
+  (let
+    [mask : i64 (opt-block-scan-mask scan-work (& block))]
+    (if (= mask 0)
+      block
+      (optimize-block-hs-full
+        profile-state
+        pools
+        type-segment-bases
+        hs
+        dead-kinds
+        load-kinds
+        (& (optimize-block-entry-facts block entry-label seed-facts))
+        tables
+        mask
+        (& block)))))
 
 (define (optimize-block-entry-facts
   [block : (& block ir.CompilerIrBlock)]

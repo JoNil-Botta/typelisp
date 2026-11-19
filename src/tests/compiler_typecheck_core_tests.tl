@@ -11314,6 +11314,10 @@
       [table-b : i64 (ci.intern-compat-state-table-id intern-b)]
       [generation-a : i64 (ci.intern-compat-state-generation intern-a)]
       [generation-b : i64 (ci.intern-compat-state-generation intern-b)]
+      [names-a : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state (& intern-a))]
+      [names-b : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state (& intern-b))]
       [initially-lazy? : bool
         (and
           (=
@@ -11355,30 +11359,12 @@
           (arena.set! caller))
         (unsafe
           (arena.destroy scratch))
-        (tc_core.tc-agg-size-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-align-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-regwords-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-size-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
-        (tc_core.tc-agg-align-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
-        (tc_core.tc-agg-regwords-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
+        (tc_core.tc-agg-size-cache-ensure-for-state! state-a names-a)
+        (tc_core.tc-agg-align-cache-ensure-for-state! state-a names-a)
+        (tc_core.tc-agg-regwords-cache-ensure-for-state! state-a names-a)
+        (tc_core.tc-agg-size-cache-ensure-for-state! state-b names-b)
+        (tc_core.tc-agg-align-cache-ensure-for-state! state-b names-b)
+        (tc_core.tc-agg-regwords-cache-ensure-for-state! state-b names-b)
         (let
           [data-a : tc_core.TcAggScalarCacheStateData
             (tc_core.tc-agg-scalar-cache-state-data state-a)]
@@ -11407,18 +11393,9 @@
             17)
           (ci.intern-compat-state-install! decoy)
           (tc_core.tc-agg-caches-reset-for-job! job-a)
-          (tc_core.tc-agg-size-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
-          (tc_core.tc-agg-align-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
-          (tc_core.tc-agg-regwords-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
+          (tc_core.tc-agg-size-cache-ensure-for-state! state-a names-a)
+          (tc_core.tc-agg-align-cache-ensure-for-state! state-a names-a)
+          (tc_core.tc-agg-regwords-cache-ensure-for-state! state-a names-a)
           (let
             [reset-a : tc_core.TcAggScalarCacheStateData
               (tc_core.tc-agg-scalar-cache-state-data state-a)]

@@ -848,6 +848,12 @@ hold_awk='BEGIN {
 # file exists, for at most 30 s.
 hold_program='printf "%s\n" "$$" > "$1.pid"
 sed -n "s/^0:://p" /proc/self/cgroup > "$1.cgroup"
+# The overlap scenarios publish every holder before any allocation starts, so
+# the outer cap cannot end the workload while a slower nested call is still in
+# setup. Other scenarios leave allocate_gate unset.
+if [ -n "${allocate_gate:-}" ]; then
+    while [ ! -e "$allocate_gate" ]; do sleep 0.02; done
+fi
 exec awk -v mib="$2" -v ready="$1.ready" -v release="$3" "$4"'
 # hold NAME MIB: a holder in this workload.
 hold() {
@@ -879,6 +885,19 @@ ready() {
         done
     done
 }
+# published NAME...: wait up to 10 s for each holder's cgroup evidence. A
+# holder writes that evidence before it allocates, so the outer cap cannot end
+# the workload while a nested call is still in setup.
+published() {
+    for name in "$@"; do
+        n=0
+        while [ ! -e "$dir/$name.cgroup" ]; do
+            [ "$n" -lt 200 ] || return 1
+            n=$((n + 1))
+            sleep 0.05
+        done
+    done
+}
 # The nested nodes present in this workload's node.
 nodes() {
     count=0
@@ -889,14 +908,23 @@ nodes() {
 }
 case $scenario in
     overlap-library | overlap-wrapper | overlap-parallel)
+        allocate_gate=$dir/allocate
+        export allocate_gate
         if [ "$scenario" = overlap-parallel ]; then
             nest library inner-library 40 64 &
+            published inner-library || exit 90
             nest wrapper inner-wrapper 40 64 &
+            published inner-wrapper || exit 90
         else
-            hold outer 40 &
-            ready outer || exit 90
             nest "${scenario#overlap-}" inner 40 64 &
+            published inner || exit 90
+            hold outer 40 &
+            published outer || exit 90
         fi
+        # Every holder has published its cgroup and waits before allocating;
+        # release them together so the 40 MiB allocations overlap and the
+        # outer cap ends all of them.
+        : > "$allocate_gate"
         # The outer cap must end this workload long before this.
         sleep 20
         exit 91

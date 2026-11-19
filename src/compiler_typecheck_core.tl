@@ -8974,8 +8974,8 @@
                         env
                         (if (= index 0)
                           want
-                          (tc-global-shared-view merged))
-                        (tc-global-shared-view got)))]
+                          merged)
+                        (& got)))]
                   [(TcInferredTypeMatch.Mismatch _)
                     (ResultTcType.Err
                       "typecheck: match arm result type mismatch")])]
@@ -18374,7 +18374,7 @@
                                 (tc-ensure-constructor-field-can-flow-into
                                   env
                                   target
-                                  (tc-global-shared-view got))]
+                                  (clone got))]
                               [(ResultTcUnit.Err message)
                                 (ResultTcUnit.Err message)])])]
                       [selected? : bool
@@ -18391,14 +18391,7 @@
                             (match (& constructor)
                               [(ast.AstMaybeType.Some _) true]
                               [(ast.AstMaybeType.No) false])
-                            (let
-                              [joined : ast.AstType
-                                (tc-type-join-regions
-                                  env
-                                  (owned_view.compiler-owned-reference-shared-view
-                                    constructed)
-                                  (tc-global-shared-view got))]
-                              (set! (deref constructed) joined)))
+                            (tc-type-join-regions-into! env constructed (& got)))
                           (tc-infer-selected-call-args
                             ctx
                             env
@@ -18872,7 +18865,7 @@
                   [(TcSelectedResult.Ok _ callee callee-sink)
                     (let
                       [constructed : ast.AstType
-                        (tc-tag-active-region env (tc-global-shared-view ret))]
+                        (tc-tag-active-region env (clone ret))]
                       (match (tc-infer-selected-call-args
                         ctx
                         env
@@ -39925,19 +39918,17 @@
 ;; The region tags a value of type TY carries in its data, at any depth. A
 ;; function type's parameter and result tags describe its calls, not the
 ;; closure's own data, so they are not collected.
-(define (tc-type-region-tags-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
+(define (tc-type-region-tags-into
+  [ty : (& ty ast.AstType)]
+  [out : TcNameIdList]) : TcNameIdList
   (match ty
-    [(Tuple elems)
-      (tc-type-list-region-tags-into
-        (& (ast.ast-type-list-box-shared-view elems))
-        0
-        out)]
+    [(Tuple elems) (tc-type-list-region-tags-into (& (deref elems)) 0 out)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem) (Ref _ elem) (MutRef _ elem) (Invalidate _ elem))
-      (tc-type-region-tags-into (ast.ty-node-get elem) out)]
+      (tc-type-region-tags-into (& (ast.ty-node-get elem)) out)]
     [(Region region inner)
       (tc-type-region-tags-into
-        (ast.ty-node-get inner)
+        (& (ast.ty-node-get inner))
         (tc-name-id-list-add out region))]
     [_ out]))
 
@@ -39951,8 +39942,9 @@
       types
       (+ index 1)
       (tc-type-region-tags-into
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        (&
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
         out))))
 
 ;; The type of a join: BASE's shape (an expected type, or the arm or element
@@ -39964,29 +39956,34 @@
 (define (tc-type-join-regions
   [env : TcTypeEnv]
   [base : ast.AstType]
-  [from : ast.AstType]) : ast.AstType
-  (if (tc-type-contains-region-tag? (tc-global-shared-view from))
-    (let
-      ;; BASE already names a region in any form: a tag, a lifetime argument
-      ;; or a reference lifetime.
-      [present : TcNameIdList
-        (tc-type-collect-regions (tc-global-shared-view base))]
-      [cursor : TcNameIdList
-        (tc-type-region-tags-into (tc-global-shared-view from) Nil)]
-      [joined : ast.AstType base]
-      (while (not (tc-name-id-list-empty? cursor))
-        (let
-          [region : i64 (tc-name-id-list-head cursor)]
-          (when
-            (and
-              (not (tc-name-id-list-contains present region))
-              (tc-selected-arena-region? env region))
-            (let
-              [tagged : ast.AstType (ast.ast-ty-region region (& joined))]
-              (set! joined tagged))))
-        (set! cursor (tc-name-id-list-rest cursor)))
-      joined)
-    base))
+  [from : (& from ast.AstType)]) : ast.AstType
+  (let
+    [joined : ast.AstType base]
+    (tc-type-join-regions-into! env (&mut joined) from)
+    joined))
+
+;; The same, onto BASE in place. Untouched when FROM carries no region tag.
+(define (tc-type-join-regions-into!
+  [env : TcTypeEnv]
+  [base : (&mut base ast.AstType)]
+  [from : (& from ast.AstType)]) : unit
+  (let
+    [cursor : TcNameIdList (tc-type-region-tags-into from Nil)]
+    (when
+      (not (tc-name-id-list-empty? cursor))
+      (let
+        ;; BASE already names a region in any form: a tag, a lifetime argument
+        ;; or a reference lifetime.
+        [present : TcNameIdList (tc-type-collect-regions (clone (deref base)))]
+        (while (not (tc-name-id-list-empty? cursor))
+          (let
+            [region : i64 (tc-name-id-list-head cursor)]
+            (when
+              (and
+                (not (tc-name-id-list-contains present region))
+                (tc-selected-arena-region? env region))
+              (set! (deref base) (ast.ast-ty-region region (& (deref base))))))
+          (set! cursor (tc-name-id-list-rest cursor)))))))
 
 ;; Nominal aggregate types have no lifetime-argument surface yet. Until they do,
 ;; constructor results carry stored-reference lifetimes as local region facts so
@@ -40024,6 +40021,14 @@
           (tc-tag-region region projected-ty)]
         [_ projected-ty])]))
 
+;; A function type under its `Region` and `(:invalidate r T)` wrappers.
+(define (tc-type-func-shaped? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(or (ast.AstType.Region _ inner) (ast.AstType.Invalidate _ inner))
+      (tc-type-func-shaped? (& (ast.ty-node-get inner)))]
+    [(ast.AstType.Func _ _) true]
+    [_ false]))
+
 ;; A value read through a reference of lifetime LIFETIME to REFERENT-TY carries
 ;; that lifetime as a view tag (SPEC 3.9). A function value is a Copy read,
 ;; never a view, so with ENV it takes only arena provenance: the referent's
@@ -40037,15 +40042,14 @@
   [read-ty : ast.AstType]) : ast.AstType
   (match env
     [(Some type-env)
-      (match (tc-type-strip-region (tc-global-shared-view read-ty))
-        [(Func _ _)
-          (let
-            [joined : ast.AstType
-              (tc-type-join-regions type-env read-ty referent-ty)]
-            (if (tc-selected-arena-region? type-env lifetime)
-              (tc-tag-region lifetime joined)
-              joined))]
-        [_ (tc-tag-region lifetime read-ty)])]
+      (if (tc-type-func-shaped? (& read-ty))
+        (let
+          [joined : ast.AstType
+            (tc-type-join-regions type-env read-ty (& referent-ty))]
+          (if (tc-selected-arena-region? type-env lifetime)
+            (tc-tag-region lifetime joined)
+            joined))
+        (tc-tag-region lifetime read-ty))]
     [(No) (tc-tag-region lifetime read-ty)]))
 
 ;; Arena selection does not make an input lifetime younger. Retain the arena
@@ -40217,11 +40221,13 @@
       [(Nil) Ok]
       [_
         (let
+          [has-region : bool
+            (tc-type-contains-any-region (tc-global-shared-view target-ty))]
           [target-regions : TcNameIdList
-            (tc-type-collect-regions (tc-global-shared-view target-ty))]
+            (tc-type-collect-regions (clone target-ty))]
           (cond
             [(and
-                (tc-type-contains-any-region (tc-global-shared-view target-ty))
+                has-region
                 (tc-region-list-can-flow-into
                   env
                   value-regions
@@ -40232,7 +40238,7 @@
             ;; a source arena first.
             [(and
                 explicit-ends?
-                (tc-type-contains-any-region (tc-global-shared-view target-ty))
+                has-region
                 (tc-region-list-can-flow-into
                   env
                   value-regions
@@ -49855,12 +49861,12 @@
           (tc-type-collect-regions
             (tc-type-without-regions (tc-global-shared-view b)))]
         (if (tc-name-id-list-eq a-lifetimes b-lifetimes)
-          (Ok (tc-type-join-regions env a b))
+          (Ok (tc-type-join-regions env a (& b)))
           (match a-lifetimes
-            [(Nil) (Ok (tc-type-join-regions env b a))]
+            [(Nil) (Ok (tc-type-join-regions env b (& a)))]
             [_
               (match b-lifetimes
-                [(Nil) (Ok (tc-type-join-regions env a b))]
+                [(Nil) (Ok (tc-type-join-regions env a (& b)))]
                 [_
                   (Err
                     (tc-kind-message
@@ -49871,13 +49877,9 @@
         env
         (tc-global-shared-view a)
         (tc-global-shared-view b))
-      (Ok (tc-type-join-regions env a b))]
-    [(tc-type-coercible?
-        ctx
-        env
-        (tc-global-shared-view b)
-        (tc-global-shared-view a))
-      (Ok (tc-type-join-regions env b a))]
+      (Ok (tc-type-join-regions env a (& b)))]
+    [(tc-type-coercible? ctx env (tc-global-shared-view b) (clone a))
+      (Ok (tc-type-join-regions env b (& a)))]
     [else
       (Err (tc-kind-message (TypeMismatch) "typecheck: if branches must match"))]))
 
@@ -55458,7 +55460,7 @@
         exprs
         (+ index 1)
         elem-ty
-        (tc-type-join-regions env joined got)))))
+        (tc-type-join-regions env joined (& got))))))
 
 (define (tc-expr-array-with-expected-or-actual
   [ctx : TcContext]
@@ -55776,11 +55778,8 @@
                             (ResultTcType.Ok
                               (tc-type-join-regions
                                 env
-                                (tc-type-join-regions
-                                  env
-                                  want
-                                  (tc-global-shared-view then-ty))
-                                (tc-global-shared-view else-ty)))
+                                (tc-type-join-regions env want (& then-ty))
+                                (& else-ty)))
                             (tc-merge-branch-type
                               ctx
                               env
@@ -63348,8 +63347,8 @@
                                 (try
                                   (tc-ensure-constructor-field-can-flow-into
                                     env
-                                    (tc-global-shared-view target)
-                                    (tc-global-shared-view got)))]
+                                    (clone target)
+                                    (clone got)))]
                               ;; The constructed value holds the argument, so
                               ;; it carries the argument's regions too.
                               (tc-check-call-args-with-message-at
@@ -63360,7 +63359,7 @@
                                 (+ index 1)
                                 allow-region-args
                                 (ast.AstMaybeType.Some
-                                  (tc-type-join-regions env target got))
+                                  (tc-type-join-regions env target (& got)))
                                 arity-msg
                                 thread-spawn-args)))]
                         [(No)
@@ -83090,7 +83089,7 @@
                       ;; The expected type gives the shape; the arm gives
                       ;; the regions.
                       [(Compatible _)
-                        (Ok (tc-type-join-regions arm-env expected got))]
+                        (Ok (tc-type-join-regions arm-env expected (& got)))]
                       [(Mismatch actual)
                         (Err
                           (tc-type-mismatch-message-in-context
@@ -83133,7 +83132,7 @@
         env
         scrut-ty
         arms-ref
-        (tc-global-shared-view expected)
+        (clone expected)
         expected
         0))))
 
@@ -83163,7 +83162,7 @@
         scrut-ty
         arms
         expected
-        (tc-type-join-regions env joined arm-ty)
+        (tc-type-join-regions env joined (& arm-ty))
         (+ index 1)))))
 
 (define (tc-match-rest-types-at

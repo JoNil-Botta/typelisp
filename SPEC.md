@@ -1843,12 +1843,14 @@ can be created inside a region scope:
 - Tuple values
 - Fixed-size arrays whose element type is region-taggable: the array holds its
   elements inline, so it carries their allocations
-- A capturing closure: its environment is allocated in the active region
+- Function values: a capturing closure's environment is allocated in the active
+  region, so a lambda that captures, a function value read out of a tagged
+  aggregate, and a function-typed call result inside the region carry its tag
 
-Scalars (`i64`, `bool`, `char`, `f64`, etc.), other function values, and
-fixed-size arrays of scalars are **not** region-tagged by allocation, because
-they do not allocate through `tl_alloc`: a `with-arena` body never tags a
-scalar, and a scalar field or element read out of a tagged aggregate is plain. `(in r T)` may still be
+Scalars (`i64`, `bool`, `char`, `f64`, etc.) and fixed-size arrays of scalars
+are **not** region-tagged by allocation, because they do not allocate through
+`tl_alloc`: a `with-arena` body never tags a scalar, and a scalar field or
+element read out of a tagged aggregate is plain. `(in r T)` may still be
 written for such a type, in a signature or on a binding, and then means what it
 means for any other `T`. A plain scalar name or non-literal expression converts
 to `(in r T)` where that type is expected; an integer literal at a call argument
@@ -1906,7 +1908,10 @@ call's result to a name first is accepted outside an arena.
 
 **Views read through a reference.** Reading a region-taggable field through a
 reference, such as `r.items` for `r : (& r S)`, produces a value tagged with the
-reference's lifetime. A Copy value is an ordinary copy. A move-only field value
+reference's lifetime. A Copy value is an ordinary copy. A function value read
+through a reference is never a view: it carries the referent's arena tags, and
+the reference's lifetime only when that lifetime is an arena region (a borrow of
+an arena value has the arena as its lifetime). A move-only field value
 is a *view*: it shares the referent's storage, so it may be read, matched, lent
 with `(& ...)`, passed where the region rules admit it, and kept in a binding
 under the field/name rule below. An `array-ref` or `tuple-ref` element read

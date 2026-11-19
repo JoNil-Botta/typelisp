@@ -1408,6 +1408,21 @@ arena_closure_store_escape_reject|check-fail|tests/safety/arena_closure_store_es
 arena_closure_escape_poison_reject|check-fail|tests/safety/arena_closure_escape_poison_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 closure_no_arena_poison_ok|run-exit|tests/safety/closure_no_arena_poison_ok.tl|42|-
 arena_closure_called_inside_ok|run-exit|tests/safety/arena_closure_called_inside_ok.tl|42|-
+# Function types are region-taggable: a closure keeps its arena region through
+# fields, stores, match binders, `try` and call results.
+arena_closure_field_escape_reject|check-fail|tests/safety/arena_closure_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_constructor_field_escape_reject|check-fail|tests/safety/arena_closure_constructor_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_annotated_field_escape_reject|check-fail|tests/safety/arena_closure_annotated_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_box_field_escape_reject|check-fail|tests/safety/arena_closure_box_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_array_field_escape_reject|check-fail|tests/safety/arena_closure_array_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_field_store_escape_reject|check-fail|tests/safety/arena_closure_field_store_escape_reject.tl|-|cannot store region-tagged value into assignment
+arena_closure_match_binder_escape_reject|check-fail|tests/safety/arena_closure_match_binder_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_try_escape_reject|check-fail|tests/safety/arena_closure_try_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_call_result_escape_reject|check-fail|tests/safety/arena_closure_call_result_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+# A function value read through a reference takes arena provenance only: the
+# borrow of an arena value has the arena as its lifetime (a plain reference
+# lifetime, as in format_writer_capabilities, does not tag it).
+arena_closure_reference_field_store_reject|check-fail|tests/safety/arena_closure_reference_field_store_reject.tl|-|cannot store region-tagged value into assignment
 # KNOWN OPEN, pre-existing and unsafe (accepted, reads reclaimed storage):
 # tracked in #9479 / D-C47 S2. A branded `in-arena` allocates in the brand, not
 # the owner's live phase, so a rewind does not see the owner. This row must flip

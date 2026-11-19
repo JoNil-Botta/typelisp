@@ -5299,6 +5299,7 @@
                 (tc-global-shared-view source)
                 (tc-selected-place-field
                   ctx
+                  env
                   field
                   (tc-global-shared-view source)
                   (tc-selected-place-temporary
@@ -5323,6 +5324,7 @@
                 (tc-global-shared-view source)
                 (tc-selected-place-field
                   ctx
+                  env
                   field
                   (tc-global-shared-view source)
                   (tc-infer-selected-place-id
@@ -14106,6 +14108,7 @@
     [(TcSelectedResult.Ok receiver-ty occurrence next)
       (match (tc-struct-get-result-type-id
         ctx
+        (TcMaybeTypeEnv.Some env)
         (tc-global-shared-view receiver-ty)
         field)
         [(ResultTcType.Err message) (TcSelectedResult.Err message next)]
@@ -19866,6 +19869,7 @@
 ;; region-tagged view for an aggregate read through a reference.
 (define (tc-selected-place-field
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [field : i64]
   [source : ownership.OwnershipSource]
   [receiver : (TcSelectedPlaceResult store lease intern bind)]) : (TcSelectedPlaceResult
@@ -19913,6 +19917,7 @@
             [_
               (tc-struct-get-selected-id
                 ctx
+                (TcMaybeTypeEnv.Some env)
                 (tc-global-shared-view container)
                 field)])
             [(ResultTcField.Err message)
@@ -19958,6 +19963,7 @@
                     [(ast.AstMaybeType.No)
                       (match (tc-struct-get-result-type-id
                         ctx
+                        (TcMaybeTypeEnv.Some env)
                         (tc-global-shared-view base)
                         field)
                         [(ResultTcType.Ok ty) ty]
@@ -20512,6 +20518,7 @@
     [(ast.AstExpr.StructGet receiver field)
       (tc-selected-place-field
         ctx
+        env
         field
         (tc-global-shared-view source)
         (tc-infer-selected-receiver-place ctx env receiver source sink))]
@@ -20520,6 +20527,7 @@
     [(ast.AstExpr.BoxTake receiver)
       (tc-selected-place-box
         ctx
+        (TcMaybeTypeEnv.Some env)
         (tc-global-shared-view source)
         (tc-infer-selected-receiver-place ctx env receiver source sink))]
     ;; `(box-get b)` names the same contents place as `box-take`; only the
@@ -20527,6 +20535,7 @@
     [(ast.AstExpr.BoxGet receiver)
       (tc-selected-place-box
         ctx
+        (TcMaybeTypeEnv.Some env)
         (tc-global-shared-view source)
         (tc-infer-selected-receiver-place ctx env receiver source sink))]
     [_ (tc-selected-place-unrepresented (tc-expr-id ctx env id) sink)]))
@@ -20777,6 +20786,7 @@
         (if reference?
           (tc-selected-place-box
             ctx
+            TcMaybeTypeEnv.No
             (ownership.ownership-source-copy (& source))
             (tc-selected-temporary-place!
               published
@@ -20900,6 +20910,7 @@
 ;; box) stays on its contents.
 (define (tc-selected-place-box
   [ctx : TcContext]
+  [env : TcMaybeTypeEnv]
   [source : ownership.OwnershipSource]
   [receiver : (TcSelectedPlaceResult store lease intern bind)]) : (TcSelectedPlaceResult
     store
@@ -20958,7 +20969,7 @@
                   source
                   TcSelectedSink.Query)]))]
         [_
-          (match (tc-deref-result-type ctx (tc-global-shared-view type))
+          (match (tc-deref-result-type ctx env (tc-global-shared-view type))
             [(ResultTcType.Ok contents)
               ;; A reference's referent: reads and writes through it use the
               ;; reference's loan. An explicit `deref` names the referent
@@ -21049,7 +21060,7 @@
     (match (tc-expr-id ctx env receiver)
       [(ResultTcType.Err _) ResultTcUnit.Ok]
       [(ResultTcType.Ok receiver-ty)
-        (match (tc-deref-result-type ctx receiver-ty)
+        (match (tc-deref-result-type ctx (TcMaybeTypeEnv.Some env) receiver-ty)
           [(ResultTcType.Err _) ResultTcUnit.Ok]
           [(ResultTcType.Ok ty)
             (tc-opaque-by-value-ok ctx ty "cannot dereference by value the")])])))
@@ -21105,6 +21116,7 @@
               (tc-global-shared-view source)
               (tc-selected-place-box
                 ctx
+                (TcMaybeTypeEnv.Some env)
                 (tc-global-shared-view source)
                 (tc-infer-selected-place-id
                   ctx
@@ -21162,6 +21174,7 @@
               (tc-global-shared-view source)
               (tc-selected-place-box
                 ctx
+                (TcMaybeTypeEnv.Some env)
                 (tc-global-shared-view source)
                 (tc-selected-place-temporary ctx env receiver source sink))))]
         [else
@@ -21495,6 +21508,7 @@
                         receiver-place)
                       (tc-selected-place-field
                         ctx
+                        env
                         field
                         (tc-global-shared-view source)
                         receiver-place)))
@@ -39887,11 +39901,12 @@
     [_ Nil]))
 
 ;; A fixed array holds its elements inline, so it carries their allocations: it
-;; is taggable when its element type is.
+;; is taggable when its element type is. A function value may be a closure
+;; whose environment is an allocation.
 (define (tc-region-taggable-type? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
     [(or (String) (DynArray _) (Box _) (Tuple _) (Struct _) (StructArgs _ _)
-         (Enum _) (EnumArgs _ _))
+         (Enum _) (EnumArgs _ _) (Func _ _))
       true]
     [(Array elem _) (tc-region-taggable-type? (ast.ty-node-get elem))]
     [(Slice _) false]
@@ -40008,6 +40023,30 @@
         [(or (Ref region _) (MutRef region _))
           (tc-tag-region region projected-ty)]
         [_ projected-ty])]))
+
+;; A value read through a reference of lifetime LIFETIME to REFERENT-TY carries
+;; that lifetime as a view tag (SPEC 3.9). A function value is a Copy read,
+;; never a view, so with ENV it takes only arena provenance: the referent's
+;; arena tags, and the lifetime only when it is itself an arena region (a
+;; borrow of an arena value has the arena as its lifetime). Without ENV it
+;; keeps the view tag, which over-approximates.
+(define (tc-reference-read-type
+  [env : TcMaybeTypeEnv]
+  [lifetime : i64]
+  [referent-ty : ast.AstType]
+  [read-ty : ast.AstType]) : ast.AstType
+  (match env
+    [(Some type-env)
+      (match (tc-type-strip-region (tc-global-shared-view read-ty))
+        [(Func _ _)
+          (let
+            [joined : ast.AstType
+              (tc-type-join-regions type-env read-ty referent-ty)]
+            (if (tc-selected-arena-region? type-env lifetime)
+              (tc-tag-region lifetime joined)
+              joined))]
+        [_ (tc-tag-region lifetime read-ty)])]
+    [(No) (tc-tag-region lifetime read-ty)]))
 
 ;; Arena selection does not make an input lifetime younger. Retain the arena
 ;; scope proof for aggregate storage, and order an activated local home at its
@@ -50832,7 +50871,11 @@
         (match (tc-type-strip-region
           (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
           [(or (Struct _) (StructArgs _ _))
-            (tc-struct-get-result-type-id ctx receiver-ty field)]
+            (tc-struct-get-result-type-id
+              ctx
+              (TcMaybeTypeEnv.Some env)
+              receiver-ty
+              field)]
           [_
             (Err
               "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")]))]
@@ -79589,6 +79632,7 @@
 
 (define (tc-struct-get-selected-id
   [ctx : TcContext]
+  [env : TcMaybeTypeEnv]
   [receiver-ty : ast.AstType]
   [field-id : i64]) : ResultTcField
   (match (tc-type-strip-region
@@ -79616,20 +79660,34 @@
     [(ast.AstType.Ref lifetime referent-ty)
       (match (tc-struct-get-selected-id
         ctx
+        env
         (tc-context-type-get ctx referent-ty)
         field-id)
         [(ResultTcField.Ok field)
           (ResultTcField.Ok
-            (TcResolvedField (tc-tag-region lifetime field.type) field.identity))]
+            (TcResolvedField
+              (tc-reference-read-type
+                env
+                lifetime
+                (tc-context-type-get ctx referent-ty)
+                field.type)
+              field.identity))]
         [(ResultTcField.Err message) (ResultTcField.Err message)])]
     [(ast.AstType.MutRef lifetime referent-ty)
       (match (tc-struct-get-selected-id
         ctx
+        env
         (tc-context-type-get ctx referent-ty)
         field-id)
         [(ResultTcField.Ok field)
           (ResultTcField.Ok
-            (TcResolvedField (tc-tag-region lifetime field.type) field.identity))]
+            (TcResolvedField
+              (tc-reference-read-type
+                env
+                lifetime
+                (tc-context-type-get ctx referent-ty)
+                field.type)
+              field.identity))]
         [(ResultTcField.Err message) (ResultTcField.Err message)])]
     [(ast.AstType.ExprList)
       (tc-field-intrinsic-result
@@ -79686,10 +79744,12 @@
 
 (define (tc-struct-get-result-type-id
   [ctx : TcContext]
+  [env : TcMaybeTypeEnv]
   [receiver-ty : ast.AstType]
   [field-id : i64]) : ResultTcType
   (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
-    (tc-field-type-only (tc-struct-get-selected-id ctx receiver-ty field-id))
+    (tc-field-type-only
+      (tc-struct-get-selected-id ctx env receiver-ty field-id))
     (match (tc-opaque-representation-ok
       ctx
       (tc-type-strip-region
@@ -79697,7 +79757,7 @@
       "cannot access a field of the")
       [(Ok)
         (tc-field-type-only
-          (tc-struct-get-selected-id ctx receiver-ty field-id))]
+          (tc-struct-get-selected-id ctx env receiver-ty field-id))]
       [(Err message) (Err message)])))
 
 (define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
@@ -86953,7 +87013,10 @@
             (TypeMismatch)
             "typecheck: deref requires Box or reference type"))])))
 
-(define (tc-deref-result-type [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcType
+(define (tc-deref-result-type
+  [ctx : TcContext]
+  [env : TcMaybeTypeEnv]
+  [receiver-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region
     (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
     [(Box inner-ty)
@@ -86962,7 +87025,12 @@
           receiver-ty
           (ast.ty-node-get inner-ty)))]
     [(or (Ref lifetime referent-ty) (MutRef lifetime referent-ty))
-      (Ok (tc-tag-region lifetime (ast.ty-node-get referent-ty)))]
+      (Ok
+        (tc-reference-read-type
+          env
+          lifetime
+          (ast.ty-node-get referent-ty)
+          (ast.ty-node-get referent-ty)))]
     [(or (Ptr _) (MutPtr _)) (Err (tc-raw-deref-whole-message))]
     [_
       (Err
@@ -87058,7 +87126,7 @@
     [receiver-ty : ast.AstType (try (tc-expr ctx env receiver))]
     (tc-opaque-by-value-result
       ctx
-      (try (tc-deref-result-type ctx receiver-ty))
+      (try (tc-deref-result-type ctx (TcMaybeTypeEnv.Some env) receiver-ty))
       "cannot dereference by value the")))
 
 (define (tc-deref-expr-with-expected-or-actual
@@ -87075,7 +87143,8 @@
         [_
           (let
             [projected : ast.AstType
-              (try (tc-deref-result-type ctx receiver-ty))]
+              (try
+                (tc-deref-result-type ctx (TcMaybeTypeEnv.Some env) receiver-ty))]
             (tc-opaque-by-value-result
               ctx
               (if (tc-type-compatible?
@@ -87950,17 +88019,14 @@
               (ast.ast-ty-func (tc-param-type-list ctx params) (& body-ty))))]))))
 
 ;; A capturing closure's environment is allocated in the active arena, so the
-;; closure carries that region. Only the lambda is tagged: a function type is
-;; not region-taggable, as most function values allocate nothing.
+;; closure carries that region.
 (define (tc-lambda-closure-type
   [env : TcTypeEnv]
   [captures? : bool]
   [fn-ty : ast.AstType]) : ast.AstType
-  (match (if captures?
-    (tc-active-region env)
-    TcMaybeNameId.No)
-    [(Some region) (ast.ast-ty-region region (& fn-ty))]
-    [(No) fn-ty]))
+  (if captures?
+    (tc-tag-active-region env fn-ty)
+    fn-ty))
 
 (define (tc-lambda-expr-normalized-with-capture-check
   [ctx : TcContext]
@@ -88536,7 +88602,11 @@
     (match (tc-type-strip-region
       (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
       [(or (Struct _) (StructArgs _ _) (MutRef _ _))
-        (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+        (tc-struct-get-result-type-id
+          ctx
+          TcMaybeTypeEnv.No
+          receiver-ty
+          field-id)]
       [(Ref _ _)
         (Err
           (tc-kind-message
@@ -90073,7 +90143,12 @@
             (tc-match-expr ctx env scrut-ty arms No))])]
     [(StructGet receiver-box field)
       (match (tc-expr-id ctx env receiver-box)
-        [(Ok receiver-ty) (tc-struct-get-result-type-id ctx receiver-ty field)]
+        [(Ok receiver-ty)
+          (tc-struct-get-result-type-id
+            ctx
+            (TcMaybeTypeEnv.Some env)
+            receiver-ty
+            field)]
         [(Err message)
           (let
             [receiver-ty
@@ -90083,7 +90158,11 @@
                   env
                   (tc-context-expr-get ctx receiver-box)
                   message))]
-            (tc-struct-get-result-type-id ctx receiver-ty field))])]
+            (tc-struct-get-result-type-id
+              ctx
+              (TcMaybeTypeEnv.Some env)
+              receiver-ty
+              field))])]
     [(StructSet receiver-box field value-box)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
@@ -94695,7 +94774,7 @@
     [(StructGet base field)
       (match (tc-global-effect-known-type ctx collector base limit)
         [(Some ty)
-          (match (tc-struct-get-result-type-id ctx ty field)
+          (match (tc-struct-get-result-type-id ctx TcMaybeTypeEnv.No ty field)
             [(Ok result) (Some result)]
             [_ (No)])]
         [(No) (No)])]
@@ -127142,6 +127221,7 @@
                       [_ false]))
                   (match (tc-deref-result-type
                     ctx
+                    TcMaybeTypeEnv.No
                     (tc-global-shared-view resolved))
                     [(ResultTcType.Ok contents)
                       (tc-selected-type-index! ctx store lease table contents)]

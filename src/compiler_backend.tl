@@ -2847,16 +2847,8 @@
 ;; the end. Cleared at every emit-blocks entry; built on the first edge lookup.
 (define compiler-backend-function-i64-array-edge-index : i64
   9)
-
-;; Per-block predecessor counts for the cross-edge flags carry, index-aligned
-;; with that same block sequence: `[blocks address, block count, count...]`,
-;; sharing the edge index's stamp so it is rebuilt with it. Built on the first
-;; carry candidate and cleared with the function, so a function that never
-;; ends a block in a compare+branch pays nothing.
-(define compiler-backend-function-i64-array-edge-flags-preds : i64
-  10)
 (define compiler-backend-function-i64-array-count : i64
-  11)
+  10)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -3789,11 +3781,6 @@
       (compiler-backend-global-shared-view data.empty-i64-array))
     (set!
       (array-ref data.i64-arrays compiler-backend-function-i64-array-edge-index)
-      (compiler-backend-global-shared-view data.empty-i64-array))
-    (set!
-      (array-ref
-        data.i64-arrays
-        compiler-backend-function-i64-array-edge-flags-preds)
       (compiler-backend-global-shared-view data.empty-i64-array))
     (set!
       (array-ref data.assignment-indexes 0)
@@ -44675,10 +44662,12 @@
     targets.len)
   (compiler-backend-function-state-set-phi-targets! function-state targets))
 
-(define (compiler-backend-branch-needs-phi-copies?
+;; True when `label`'s entry carries phi copies: the block starts with a Phi, so
+;; `compiler-backend-leading-phi-copies-seq` builds a (possibly empty) copy list
+;; for every incoming edge and the emitter renders it on the way in.
+(define (compiler-backend-phi-target?
   [function-state : CompilerBackendFunctionState]
-  [true-label : i64]
-  [false-label : i64]) : bool
+  [label : i64]) : bool
   (if (=
     (compiler-backend-function-state-i64
       function-state
@@ -44688,9 +44677,15 @@
     (let
       [targets : BackendSymbolSeq
         (compiler-backend-function-state-phi-targets function-state)]
-      (or
-        (compiler-backend-symbol-list-contains-id? targets true-label)
-        (compiler-backend-symbol-list-contains-id? targets false-label)))))
+      (compiler-backend-symbol-list-contains-id? (& targets) label))))
+
+(define (compiler-backend-branch-needs-phi-copies?
+  [function-state : CompilerBackendFunctionState]
+  [true-label : i64]
+  [false-label : i64]) : bool
+  (or
+    (compiler-backend-phi-target? function-state true-label)
+    (compiler-backend-phi-target? function-state false-label)))
 
 (define (compiler-backend-branch-edge-label
   [current-label : i64]
@@ -60197,20 +60192,29 @@
 ;; live to the branch that reads its boolean; a `jcc` writes no EFLAGS either,
 ;; and neither does the `movq`-only text the operand staging and the emergency
 ;; restore emit around a compare. So a block that ENDS in a compare+branch
-;; fusion leaves its compare's flags live at the successor the emitted layout
-;; falls through to. When that successor has the branching block as its ONLY
-;; predecessor -- no other edge reaches its label with arbitrary flags -- and
-;; its own FIRST instruction compares the same two vars at the same width and
-;; feeds its own terminator, the `cmp` is redundant and only the `jcc` is
-;; emitted, with the condition inverted when the operands are swapped.
+;; fusion leaves its compare's flags live at the successor that branch's OWN
+;; label names. When nothing else runs on the way in -- the successor's entry
+;; carries no phi copies and the branch does not forward through another block
+;; -- and that successor's FIRST instruction compares the same two vars at the
+;; same width and feeds its own terminator, the `cmp` is redundant and only the
+;; `jcc` is emitted, with the condition inverted when the operands are swapped.
 ;;
-;; The window is closed exactly as the in-block reuse closes it. The record is
-;; written only by the fused compare+branch emission that actually ran, and it
-;; is taken only at the successor's first instruction with a block prologue
-;; that emitted no const-hoist code; every other instruction or edge effect
-;; clears it before it could be seen. Only register vars are carried: their
-;; homes are the same on both sides of the edge, so the same operands and the
-;; same flags.
+;; Every edge that would spend the carry is checked where it is spent:
+;;   * the successor has exactly ONE predecessor, from the peephole's own
+;;     predecessor counts, so no other edge reaches its label with stray flags;
+;;   * the branch's true/false label names that successor itself, not a
+;;     #jump-forward resolution of another label (which other blocks' jumps are
+;;     retargeted onto, so the IR predecessor count cannot see them);
+;;   * the successor's entry carries no phi copies, which would run on the way
+;;     in and overwrite the flags;
+;;   * the compare is not a bit-test, whose `test` flags are an AND, not a
+;;     comparison of its operands;
+;;   * the successor's block prologue emits no const-hoist code and the record
+;;     was written by the fused compare+branch emission that actually ran, so
+;;     nothing else sits between the compare and the successor's first
+;;     instruction. The record is cleared on every other path.
+;; Only register vars are carried: their homes are the same on both sides of
+;; the edge, so the same operands and the same flags.
 (define (compiler-backend-edge-flags-var-id
   [value : (& value compiler_ir_types.CompilerIrValue)]) : i64
   (match value
@@ -60225,10 +60229,12 @@
     (compiler_ir_types.compiler-ir-label-none)))
 
 ;; Record the compare a block's tail branch leaves live into `fallthrough`, or
-;; clear the record. Only a branch that actually reaches the layout-next block
-;; linearly carries flags: a phi-copy branch splits the fall-through through a
-;; synthetic edge block, and a branch whose two arms are both jumps ends the
-;; block without continuing into it.
+;; clear the record. Only a branch whose OWN label names the layout-next block
+;; carries flags: #jump-forward retargets other blocks' jumps onto that label
+;; (so the IR predecessor count cannot see every emitted edge into it), and a
+;; resolved target that merely lands there is not this block's fall-through. A
+;; successor whose entry carries phi copies is refused too -- those copies run
+;; on the way in and would overwrite the flags.
 (define (compiler-backend-edge-flags-record-tail!
   [ctx : CompilerBackendEmissionContext]
   [after : i64]
@@ -60236,6 +60242,7 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [true-label : i64]
   [false-label : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
   [operand-ty : compiler_ast_types.AstType]) : unit
@@ -60244,21 +60251,15 @@
     [rhs-id : i64 (compiler-backend-edge-flags-var-id (& rhs))]
     (if (and
       (= after instr-count)
+      (not (compiler-backend-bit-test-op? (& op)))
       (>= lhs-id 0)
       (>= rhs-id 0)
-      (or
-        (compiler-backend-jump-target-is-fallthrough?
-          (compiler-backend-jump-resolve-target
-            ctx.backend-state
-            true-label
-            fallthrough)
-          fallthrough)
-        (compiler-backend-jump-target-is-fallthrough?
-          (compiler-backend-jump-resolve-target
-            ctx.backend-state
-            false-label
-            fallthrough)
-          fallthrough)))
+      (match fallthrough
+        [(Some to)
+          (and
+            (or (= true-label to) (= false-label to))
+            (not (compiler-backend-phi-target? ctx.function-state to)))]
+        [(No) false]))
       (match fallthrough
         [(Some to)
           (compiler-backend-function-scratch-set-i64!
@@ -60280,82 +60281,6 @@
         [(No) (compiler-backend-edge-flags-clear! ctx.function-state)])
       (compiler-backend-edge-flags-clear! ctx.function-state))))
 
-;; Count one block's distinct successors in `preds`, mapping each label to its
-;; block through the edge index. The optimizer's own enumeration is the
-;; authoritative CFG (switch case and default targets included, plus the implicit
-;; layout fall-through), so no edge is missed and no edge is counted twice.
-(define (compiler-backend-edge-flags-preds-bump
-  [preds : (__tl_dyn-array i64)]
-  [index : (& index (__tl_dyn-array i64))]
-  [labels : compiler_optimize.OptLabelSet]) : unit
-  (match labels
-    [(Nil) unit]
-    [(Dense _ _)
-      (let
-        [target : i64
-          (compiler-backend-edge-index-find
-            index
-            (compiler_optimize.opt-label-ref labels 0))]
-        (when
-          (>= target 0)
-          (set!
-            (array-ref preds (+ 2 target))
-            (+ 1 (array-ref preds (+ 2 target)))))
-        (compiler-backend-edge-flags-preds-bump
-          (compiler-backend-global-shared-view preds)
-          index
-          (compiler_optimize.opt-label-tail labels)))]))
-
-(define (compiler-backend-edge-flags-preds-build
-  [index : (& index (__tl_dyn-array i64))]
-  [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]) : (__tl_dyn-array
-    i64)
-  (let
-    [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
-    [preds : (__tl_dyn-array i64) (__tl_make-array i64 (+ 2 count))]
-    [i : i64 0]
-    (set!
-      (array-ref preds 0)
-      (compiler-backend-edge-index-blocks-address blocks))
-    (set! (array-ref preds 1) count)
-    (while (< i count)
-      (compiler-backend-edge-flags-preds-bump
-        (compiler-backend-global-shared-view preds)
-        index
-        (compiler_optimize.opt-cfg-block-successors-with-next
-          (compiler_ir_types.compiler-ir-block-seq-borrow blocks i)
-          (compiler-backend-block-seq-label-or-empty blocks (+ i 1))))
-      (+= i 1))
-    preds))
-
-;; The predecessor counts for the function being emitted, rebuilt when the edge
-;; index they are built from was (the same blocks stamp, so at most once per
-;; function). One pass over the CFG, and only once a carry candidate exists.
-(define (compiler-backend-edge-flags-preds
-  [ctx : CompilerBackendEmissionContext]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array i64)
-  (let
-    [cached : (__tl_dyn-array i64)
-      (compiler-backend-function-state-i64-array
-        ctx.function-state
-        compiler-backend-function-i64-array-edge-flags-preds)]
-    (match blocks
-      [(Array seq)
-        (if (compiler-backend-edge-index-current? (& cached) (& seq))
-          cached
-          (let
-            [index : (__tl_dyn-array i64)
-              (compiler-backend-edge-index-ensure!
-                ctx.backend-state
-                (compiler-backend-global-shared-view seq))]
-            [built : (__tl_dyn-array i64)
-              (compiler-backend-edge-flags-preds-build (& index) (& seq))]
-            (compiler-backend-function-state-set-i64-array!
-              ctx.function-state
-              compiler-backend-function-i64-array-edge-flags-preds
-              (compiler-backend-global-shared-view built))
-            built))])))
-
 ;; The two cases the successor's compare can present: same operand order (1) and
 ;; swapped (2), which reads the same flags with the inverted condition. Zero is
 ;; no match. The record is cleared on every consult: the carry is a
@@ -60364,6 +60289,7 @@
 (define (compiler-backend-edge-flags-take
   [ctx : CompilerBackendEmissionContext]
   [index : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
   [operand-ty : compiler_ast_types.AstType]) : i64
@@ -60399,6 +60325,7 @@
       (if (or
         (= order 0)
         (not (= index 1))
+        (compiler-backend-bit-test-op? (& op))
         (< lhs-id 0)
         (< rhs-id 0)
         (not
@@ -60417,9 +60344,8 @@
 ;; before the instruction that spends the flags.
 (define (compiler-backend-edge-flags-enter-block!
   [ctx : CompilerBackendEmissionContext]
-  [blocks : compiler_ir_types.CompilerIrBlockList]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [block-index : i64]
+  [predcount : backend_label_i64_map.Map]
   [injected? : bool]) : unit
   (let
     [function-state : CompilerBackendFunctionState ctx.function-state]
@@ -60441,11 +60367,10 @@
               (>= (compiler-backend-edge-flags-var-id (& rhs)) 0)
               (=
                 1
-                (array-ref
-                  (compiler-backend-edge-flags-preds
-                    (compiler-backend-global-shared-view ctx)
-                    (compiler-backend-global-shared-view blocks))
-                  (+ 2 block-index))))
+                (backend_label_i64_map.get-value-or
+                  (& predcount)
+                  ctx.current-label
+                  0)))
             (compiler-backend-function-scratch-set-i64!
               function-state
               compiler-backend-scratch-i64-edge-flags-to
@@ -60706,6 +60631,7 @@
                     (compiler-backend-edge-flags-take
                       (compiler-backend-global-shared-view ctx)
                       index
+                      (compiler-backend-global-shared-view op)
                       (compiler-backend-global-shared-view lhs)
                       (compiler-backend-global-shared-view rhs)
                       (compiler-backend-global-shared-view operand-ty))]
@@ -60718,6 +60644,7 @@
                         fallthrough
                         true-label
                         false-label
+                        (compiler-backend-global-shared-view op)
                         (compiler-backend-global-shared-view lhs)
                         (compiler-backend-global-shared-view rhs)
                         (compiler-backend-global-shared-view operand-ty))
@@ -61357,7 +61284,7 @@
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [block : compiler_ir_types.CompilerIrBlock]
-  [block-index : i64]
+  [predcount : backend_label_i64_map.Map]
   [fallthrough : CompilerBackendMaybeLabel]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
@@ -61432,9 +61359,8 @@
         ;; instruction, so it closes the window.
         (compiler-backend-edge-flags-enter-block!
           (compiler-backend-global-shared-view ctx)
-          (compiler-backend-global-shared-view blocks)
           (compiler-backend-global-shared-view instrs)
-          block-index
+          (compiler-backend-global-shared-view predcount)
           (or
             (> (string.string-length pre-injection) 0)
             (> (string.string-length post-injection) 0)))
@@ -61499,54 +61425,65 @@
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
   [use-counts : (__tl_dyn-array i64)]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (for [index
-    (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count blocks))]
-    (let
-      [block (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
-      [mark : i64 (compiler-backend-asm-buf-len (& out))]
-      ;; Read the count in its own binding: the borrow ends here, before
-      ;; `block` moves into the emitter (a loop body's borrow would otherwise
-      ;; stay open to the end of the iteration for the published stage0).
-      [instr-count : i64
-        (match (& block)
-          [(Block _ instrs) instrs.len])]
-      [function-state : CompilerBackendFunctionState
-        (compiler-backend-state-function-state program-index.backend-state)]
-      (compiler-backend-function-state-set-emit-instr-post-base!
-        function-state
-        (+
-          (compiler-backend-function-state-emit-instr-post-base function-state)
-          instr-count))
+  ;; Cross-edge flags carry: one predecessor count per block, from the
+  ;; peephole's own CFG enumeration (the authoritative successor set), so the
+  ;; carry can require the successor's single predecessor without a second
+  ;; walk of its own.
+  (let
+    [predcount : backend_label_i64_map.Map
+      (compiler-backend-peephole-predcount-build-seq
+        (compiler-backend-global-shared-view blocks)
+        0
+        (backend_label_i64_map.with-capacity 64))]
+    (for [index
+      (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count blocks))]
       (let
-        [_
-          (try
-            (compiler-backend-emit-block
-              type-segment-bases
-              (compiler-backend-global-shared-view function)
-              source-function
-              (compiler-backend-global-shared-view all-blocks)
-              block
-              index
-              (compiler-backend-next-block-label-seq blocks (+ index 1))
-              assignments
-              vars
-              types
-              (compiler-backend-global-shared-view global-types)
-              (compiler-backend-global-shared-view ret-ty)
-              plan
-              (compiler-backend-global-shared-view functions)
-              (compiler-backend-global-shared-view externs)
-              program-index
-              (compiler-backend-global-shared-view spans)
-              (compiler-backend-global-shared-view span-index)
-              (compiler-backend-global-shared-view func-diag)
-              (compiler-backend-global-shared-view use-counts)
-              out))]
-        (compiler-backend-emergency-wrap-appended
-          out
-          mark
-          program-index.backend-state)
-        unit)))
+        [block (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
+        [mark : i64 (compiler-backend-asm-buf-len (& out))]
+        ;; Read the count in its own binding: the borrow ends here, before
+        ;; `block` moves into the emitter (a loop body's borrow would otherwise
+        ;; stay open to the end of the iteration for the published stage0).
+        [instr-count : i64
+          (match (& block)
+            [(Block _ instrs) instrs.len])]
+        [function-state : CompilerBackendFunctionState
+          (compiler-backend-state-function-state program-index.backend-state)]
+        (compiler-backend-function-state-set-emit-instr-post-base!
+          function-state
+          (+
+            (compiler-backend-function-state-emit-instr-post-base
+              function-state)
+            instr-count))
+        (let
+          [_
+            (try
+              (compiler-backend-emit-block
+                type-segment-bases
+                (compiler-backend-global-shared-view function)
+                source-function
+                (compiler-backend-global-shared-view all-blocks)
+                block
+                (compiler-backend-global-shared-view predcount)
+                (compiler-backend-next-block-label-seq blocks (+ index 1))
+                assignments
+                vars
+                types
+                (compiler-backend-global-shared-view global-types)
+                (compiler-backend-global-shared-view ret-ty)
+                plan
+                (compiler-backend-global-shared-view functions)
+                (compiler-backend-global-shared-view externs)
+                program-index
+                (compiler-backend-global-shared-view spans)
+                (compiler-backend-global-shared-view span-index)
+                (compiler-backend-global-shared-view func-diag)
+                (compiler-backend-global-shared-view use-counts)
+                out))]
+          (compiler-backend-emergency-wrap-appended
+            out
+            mark
+            program-index.backend-state)
+          unit))))
   (Ok ""))
 
 (define (compiler-backend-emit-blocks-into

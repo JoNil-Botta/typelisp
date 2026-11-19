@@ -6488,6 +6488,54 @@ high:
   return 1
 }")
 
+;; A bit-test's `test` flags are the AND of its operands, not a comparison, so
+;; the carry must not spend them as if the successor's `cmp` had set them.
+(define compiler-backend-flags-reuse-edge-bit-test-source : String
+  "function @edge_flags(a=%0:i64, b=%1:i64) -> i64 vars 4 {
+entry:
+  %2 = bit_test_ne %0, %1 : i64
+  branch %2, high, low
+low:
+  %3 = eq %0, %1 : i64
+  branch %3, same, less
+same:
+  return 2
+less:
+  return 3
+high:
+  return 1
+}")
+
+;; #jump-forward retargets `other`'s branch onto `s` and `entry`'s jump onto the
+;; same block, so `s` is reached with `other`'s flags as well; its IR
+;; predecessor count stays 1 (only `join` names it), so only refusing a raw
+;; label that is not `s` itself keeps the carry out of it.
+(define compiler-backend-flags-reuse-edge-forwarded-source : String
+  "function @edge_flags(a=%0:i64, b=%1:i64) -> i64 vars 8 {
+entry:
+  %2 = gt %0, %1 : i64
+  branch %2, join, less
+other:
+  %3 = eq %1, %0 : i64
+  branch %3, join, less
+s:
+  %4 = lt %0, %1 : i64
+  branch %4, same, less2
+same:
+  %5 = add %0, 2 : i64
+  return %5
+less:
+  %7 = mul %0, 3 : i64
+  return %7
+less2:
+  %6 = sub %0, 2 : i64
+  return %6
+join:
+  jump s
+}")
+
+;; The same vars compared at a different width set different flags: the carry
+;; is refused and `low` recomputes with `cmpl`.
 ;; The same vars compared at a different width set different flags: the carry
 ;; is refused and `low` recomputes with `cmpl`.
 (define compiler-backend-flags-reuse-edge-width-source : String
@@ -6574,7 +6622,27 @@ high:
       (string.copy (& compiler-backend-flags-reuse-edge-width-source))
       "    cmpl "
       1
-      "cmpl ")))
+      "cmpl ")
+    ;; The bit-test keeps its `test`, and `low` starts with its own compare
+    ;; rather than the reused `jcc`.
+    (asm-has?
+      (compiler-backend-flags-reuse-edge-asm
+        (string.copy (& compiler-backend-flags-reuse-edge-bit-test-source)))
+      "    testq "
+      "_low:\n    cmpq ")
+    (asm-lacks?
+      (compiler-backend-flags-reuse-edge-asm
+        (string.copy (& compiler-backend-flags-reuse-edge-bit-test-source)))
+      "_low:\n    j")
+    ;; `s` is entered from two places, so it keeps its own compare too.
+    (asm-has?
+      (compiler-backend-flags-reuse-edge-asm
+        (string.copy (& compiler-backend-flags-reuse-edge-forwarded-source)))
+      "_s:\n    cmpq ")
+    (asm-lacks?
+      (compiler-backend-flags-reuse-edge-asm
+        (string.copy (& compiler-backend-flags-reuse-edge-forwarded-source)))
+      "_s:\n    j")))
 
 (define (compiler-backend-shifted-loop-bound-win64-ok?) : bool
   (let

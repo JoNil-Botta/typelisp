@@ -3,7 +3,13 @@
 # Execution capability is separate from native CPUID/OS capability. Only the
 # existing AVX-512 test programs may use SDE; compiler builds and benchmarks do
 # not pass through this helper. -spr supplies the backend's F/BW/DQ/VL surface.
+#
+# The forced-SDE duplicate gates repeat a suite the ordinary gate already ran
+# natively. The policy can only move AVX-512 executions, so those gates set
+# TYPELISP_SIMD_MODE_FILTER=avx512 and the suite builds and runs only the
+# selected modes. Unset selects every mode, as the ordinary run needs.
 simd_execution_init() {
+    SIMD_MODE_FILTER=${TYPELISP_SIMD_MODE_FILTER:-}
     SIMDEX_NATIVE_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh") || return 1
     SIMDEX_NATIVE_ISAS=$(printf '%s\n' "$SIMDEX_NATIVE_ISAS" | tr -d '\r')
     SIMDEX_SDE_BIN=${TYPELISP_SDE_BIN:-}
@@ -31,6 +37,17 @@ simd_execution_init() {
                 ;;
         esac
     fi
+}
+
+# simd_mode_selected MODE
+#   0 when the current run selects MODE; without a filter every mode is
+#   selected. A mode the filter cannot classify is not selected.
+simd_mode_selected() {
+    [ -n "${SIMD_MODE_FILTER:-}" ] || return 0
+    case " $SIMD_MODE_FILTER " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
 }
 
 simd_execution_mode() {

@@ -1,4 +1,4 @@
-# Public LSP and REPL smokes (gate stage2-public-tool-surface). The LSP and
+# Public LSP and REPL smokes (gate stage2-public-tool-cli-transcripts-3). The LSP and
 # REPL corpora in tests/public-tools/ run through run-corpus.sh.
 do none
 target -

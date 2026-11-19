@@ -1,6 +1,6 @@
 # expand-integration-manifest.awk - one host's rows of tests/integration/native.manifest.
 #
-#   awk -v host=linux|windows -f scripts/expand-integration-manifest.awk tests/integration/native.manifest
+#   awk -v host=linux|windows [-v work_root=DIR] -f scripts/expand-integration-manifest.awk tests/integration/native.manifest
 #
 # Merged row:   name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
 # Emitted row:  name|source|exit|stdout|args|deps[|extra[|suite-members]]
@@ -12,7 +12,9 @@
 # in a separate batch group (extra prefixed `opt-level:N+`). A row with several
 # levels expands to `name` for `-` and `name_optN` for N; a row with one level
 # keeps its name. extra is `-` for none. `$SRC` in extra is the staged source
-# path the compiler reports: target/integration-verify/HOST/ROW/ROW.tl.
+# the compiler reports and `$CASEDIR` its staged case directory, both under
+# work_root: target/integration-verify/HOST by default, or the corpus shard's
+# own work root when scripts/verify-integration.sh runs one as its own gate.
 
 function fail(message) {
     printf "native.manifest line %d: %s\n", FNR, message > "/dev/stderr"
@@ -27,6 +29,7 @@ BEGIN {
         failed = 1
         exit 1
     }
+    if (work_root == "") work_root = "target/integration-verify/" host
 }
 
 {
@@ -46,7 +49,8 @@ BEGIN {
         if (emitted[row]++) fail("duplicate expanded row " row)
         extra = ($9 == "-") ? "" : $9
         if (level != "-") extra = "opt-level:" level "+" extra
-        gsub(/\$SRC/, "target/integration-verify/" host "/" row "/" row ".tl", extra)
+        gsub(/\$SRC/, work_root "/" row "/" row ".tl", extra)
+        gsub(/\$CASEDIR/, work_root "/" row, extra)
         line = row "|" $4 "|" $5 "|" $6 "|" $7 "|" $8
         if (NF == 10) line = line "|" extra "|" $10
         else if (extra != "") line = line "|" extra

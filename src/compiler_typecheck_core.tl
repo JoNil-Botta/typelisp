@@ -6052,24 +6052,26 @@
         ctx
         env
         expected
-        (tc-selected-publish
+        (tc-infer-selected-loop-exit
+          ctx
+          env
           (tc-loop-control-expr env "break")
           syntax
           source
           typed.TypedOperation.Break
-          (tc-selected-no-occurrences)
           sink))]
     [(ast.AstExpr.Continue)
       (tc-selected-contextual-result
         ctx
         env
         expected
-        (tc-selected-publish
+        (tc-infer-selected-loop-exit
+          ctx
+          env
           (tc-loop-control-expr env "continue")
           syntax
           source
           typed.TypedOperation.Continue
-          (tc-selected-no-occurrences)
           sink))]
     [(ast.AstExpr.Call func-id args)
       (tc-infer-selected-call
@@ -32633,40 +32635,179 @@
 
 (define (tc-in-loop-target? [env : TcTypeEnv]) : bool
   (match (tc-env-marker-type env (tc-loop-target-id))
-    [(Some (ast.AstType.Var _)) false]
     [(Some ty) (not (tc-never-type? ty))]
     [(No) false]))
 
-;; Inside the scope of `with` binder `name`, whose cleanup ends an arena, the
-;; enclosing loop is out of reach: the scope exit is an end of that arena
-;; (`tc-selected-with-cleanup-ends`) on its normal exit only, so a `break` or
-;; `continue` leaving it would end the arena unchecked. The marker records the
-;; binder (`tc-loop-control-expr`); a loop inside the scope is reachable again.
-(define (tc-block-loop-target [env : TcTypeEnv] [name : i64]) : TcTypeEnv
+;; Inside a loop, the scope of `with` binder `name`, whose cleanup ends an
+;; arena, records it with a loop-target marker naming it: a `break` or
+;; `continue` leaving the scope is an end of that arena
+;; (`tc-infer-selected-loop-exit`), as its normal exit is. The loop stays the
+;; target; a loop inside the scope pushes its own marker above.
+(define (tc-record-loop-exit-end [env : TcTypeEnv] [name : i64]) : TcTypeEnv
   (if (tc-in-loop-target? env)
     (tc-bind-runtime-marker-id env (tc-loop-target-id) (Var name) Other)
     env))
 
 (define (tc-loop-control-expr [env : TcTypeEnv] [form : String]) : ResultTcType
-  (match (tc-env-marker-type env (tc-loop-target-id))
-    [(Some (ast.AstType.Var name))
-      (Err
-        (str_cat.str-cat
-          (cdiag.compiler-diagnostic-typecheck-tag (ControlFlow))
-          "typecheck: "
-          form
-          " cannot leave the with scope of `"
-          (tc-env-key-name-text name)
-          "`, whose cleanup ends an arena; leave the loop after the with"))]
-    [_
-      (if (tc-in-loop-target? env)
-        (Ok (Never))
-        (Err
-          (str_cat.str-cat
-            (cdiag.compiler-diagnostic-typecheck-tag (ControlFlow))
-            "typecheck: "
-            form
-            " requires enclosing scalar while")))]))
+  (if (tc-in-loop-target? env)
+    (Ok (Never))
+    (Err
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag (ControlFlow))
+        "typecheck: "
+        form
+        " requires enclosing scalar while"))))
+
+;; The `with` binders a `break` or `continue` leaves whose cleanup ends an
+;; arena (`tc-record-loop-exit-end`), outermost first: the binders the
+;; loop-target markers above the enclosing loop's own marker name. -1 as the
+;; only item when the scoped stack is not active (unrepresented).
+(define (tc-loop-exit-ends [env : TcTypeEnv]) : TcNameIdList
+  (if (not (tc-type-env-scoped-runtime-active? env))
+    (match (tc-env-marker-type env (tc-loop-target-id))
+      [(Some (ast.AstType.Var _)) (tc-name-id-list-cons TcNameIdList.Nil -1)]
+      [_ TcNameIdList.Nil])
+    (let
+      [carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-runtime-current env)]
+      [index : i64
+        (-
+          (if (<
+            carrier.sidecar.stack.slot-count
+            (array-length carrier.sidecar.stack.slots))
+            carrier.sidecar.stack.slot-count
+            (array-length carrier.sidecar.stack.slots))
+          1)]
+      [ends : TcNameIdList TcNameIdList.Nil]
+      (while (>= index 0)
+        (let
+          [slot : (& carrier TcTypeEnvScopedSlot)
+            (& (array-ref carrier.sidecar.stack.slots index))]
+          (when
+            (= slot.name-id (tc-loop-target-id))
+            (match (& slot.ty)
+              [(ast.AstType.Var name)
+                (set! ends (tc-name-id-list-cons ends name))]
+              [_ (return ends)]))
+          (set! index (- index 1))))
+      ends)))
+
+;; A `break` or `continue` (`operation`, typed `checked`). Each `with` scope it
+;; leaves whose cleanup ends an arena is ended on this edge as on its normal
+;; exit (`tc-selected-with-cleanup-end`), innermost first, before the exit.
+(define (tc-infer-selected-loop-exit
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [checked : ResultTcType]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [operation : typed.TypedOperation]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [ends : TcNameIdList (tc-loop-exit-ends env)]
+    (cond
+      [(tc-name-id-list-empty? ends)
+        (tc-selected-publish
+          checked
+          syntax
+          source
+          operation
+          (tc-selected-no-occurrences)
+          sink)]
+      [(< (tc-name-id-list-head ends) 0)
+        (tc-selected-unrepresented checked sink)]
+      [else
+        (match checked
+          [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
+          [(ResultTcType.Ok exit-ty)
+            (let
+              ;; Innermost first: `ends` lists the outermost first.
+              [inner-first : TcNameIdList TcNameIdList.Nil]
+              [cursor : TcNameIdList ends]
+              [_ : unit
+                (while (not (tc-name-id-list-empty? cursor))
+                  (set!
+                    inner-first
+                    (tc-name-id-list-cons
+                      inner-first
+                      (tc-name-id-list-head cursor)))
+                  (set! cursor (tc-name-id-list-rest cursor)))]
+              [current : (TcSelectedResult store lease intern bind)
+                (tc-selected-publish
+                  (ResultTcType.Ok ast.AstType.Unit)
+                  typed.TypedSyntax.Generated
+                  (tc-global-shared-view source)
+                  (typed.TypedOperation.Literal ast.AstLiteral.Unit)
+                  (tc-selected-no-occurrences)
+                  sink)]
+              (set! cursor inner-first)
+              (while (not (tc-name-id-list-empty? cursor))
+                (let
+                  [name : i64 (tc-name-id-list-head cursor)]
+                  [binder : ast.AstExpr (ast.AstExpr.Var name)]
+                  (set!
+                    current
+                    (tc-selected-with-cleanup-end
+                      ctx
+                      env
+                      (match (tc-expr ctx env (tc-global-shared-view binder))
+                        [(ResultTcType.Ok ty)
+                          (if (tc-arena-phase-type? ctx ty)
+                            (tc-arena-safe-call-kind-rewind)
+                            (tc-arena-safe-call-kind-destroy))]
+                        [(ResultTcType.Err _) (tc-arena-safe-call-kind-destroy)])
+                      name
+                      binder
+                      typed.TypedSyntax.Generated
+                      (tc-global-shared-view source)
+                      current))
+                  (set! cursor (tc-name-id-list-rest cursor))))
+              (match current
+                [(TcSelectedResult.Err message next)
+                  (TcSelectedResult.Err message next)]
+                [(TcSelectedResult.Ok _ ended next)
+                  (match (tc-selected-publish
+                    (ResultTcType.Ok (tc-global-shared-view exit-ty))
+                    syntax
+                    (tc-global-shared-view source)
+                    operation
+                    (tc-selected-no-occurrences)
+                    next)
+                    [(TcSelectedResult.Err message after)
+                      (TcSelectedResult.Err message after)]
+                    [(TcSelectedResult.Ok _ exit after)
+                      (match ended
+                        [(TcSelectedOccurrence.Selected ended-id)
+                          (match exit
+                            [(TcSelectedOccurrence.Selected exit-id)
+                              (let
+                                [pair : (__tl_dyn-array typed.TypedOccurrenceId)
+                                  (tc-selected-no-occurrences)]
+                                (tc-selected-occurrences-push!
+                                  (&mut pair)
+                                  ended-id)
+                                (tc-selected-occurrences-push!
+                                  (&mut pair)
+                                  exit-id)
+                                (tc-selected-publish
+                                  (ResultTcType.Ok exit-ty)
+                                  typed.TypedSyntax.Generated
+                                  source
+                                  typed.TypedOperation.Sequence
+                                  pair
+                                  after))]
+                            [(TcSelectedOccurrence.Unrepresented)
+                              (tc-selected-unrepresented
+                                (ResultTcType.Ok exit-ty)
+                                after)])]
+                        [(TcSelectedOccurrence.Unrepresented)
+                          (tc-selected-unrepresented
+                            (ResultTcType.Ok exit-ty)
+                            after)])])]))])])))
 
 ;; Selected and Query loops share the same non-contextual child inference and
 ;; checks. A loop target becomes visible only after its condition was checked.
@@ -44270,7 +44411,7 @@
   [key : i64]) : i64
   (unsafe
     (let
-      [stamp : csym.CompilerSymbolsTypeMapStamp
+      [stamp : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp symbols)]
       [data : (MutPtr TcTypeHandleCacheStateData)
         (tc-type-handle-cache-state-ptr state)]
@@ -44366,7 +44507,7 @@
   (let
     [state : TcTypeHandleCacheState
       (tc-nominal-cache-type-handles nominal-state)]
-    [stamp : csym.CompilerSymbolsTypeMapStamp
+    [stamp : csym.CompilerSymbolsMapStamp
       (csym.compiler-symbols-type-map-stamp symbols)]
     [slot : i64 (tc-type-handle-cache-slot lookup-id)]
     (if (and
@@ -44420,7 +44561,7 @@
   (let
     [state : TcTypeHandleCacheState
       (tc-nominal-cache-type-handles nominal-state)]
-    [stamp : csym.CompilerSymbolsTypeMapStamp
+    [stamp : csym.CompilerSymbolsMapStamp
       (csym.compiler-symbols-type-map-stamp symbols)]
     ;; Cache the caller's exact identity. The backing symbol probe performs
     ;; nominal-name normalization on a miss; hits therefore avoid that generic
@@ -61068,63 +61209,86 @@
     [(= kind (tc-arena-safe-call-kind-destroy)) 12]
     [else 0]))
 
-(define (tc-arena-safe-call-base-kind-id [base-id : i64]) : i64
-  (cond
-    [(= base-id cbi.compiler-builtin-id-arena-phase-base)
-      (tc-arena-safe-call-kind-phase)]
-    [(= base-id cbi.compiler-builtin-id-arena-rewind-safe-base)
-      (tc-arena-safe-call-kind-rewind)]
-    [(= base-id cbi.compiler-builtin-id-arena-destroy-safe-base)
-      (tc-arena-safe-call-kind-destroy)]
-    [else (tc-arena-safe-call-kind-none)]))
+;; The symbol indices of `stdlib.arena`'s `phase`, `rewind-safe!` and
+;; `destroy-safe!` (-1 when absent), read from the value map of the stamp
+;; below (`tc-arena-safe-declarations-refresh!`).
+(define tc-arena-safe-stamp-owner : i64
+  0)
+(define tc-arena-safe-stamp-generation : i64
+  -1)
+(define tc-arena-safe-phase-index : i64
+  -1)
+(define tc-arena-safe-rewind-index : i64
+  -1)
+(define tc-arena-safe-destroy-index : i64
+  -1)
 
-;; The safe arena operation callee `name` denotes: the phase, rewind or
-;; destroy definition of `stdlib.arena`, identified by the declaration the name
-;; resolves to (`tc-selected-call-declared-function`), so a macro-hygiene name
-;; or a module alias of it is the same callee and a local or another module's
-;; definition of that name is not. Declarations are never renamed, so only a
-;; name whose base is one of those three can denote one; the base filters
-;; before resolving.
-(define (tc-arena-safe-call-kind-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : i64]) : i64
+;; The symbol index of `stdlib.arena`'s definition named `base`, or -1.
+(define (tc-arena-safe-declaration-index [ctx : TcContext] [base : i64]) : i64
   (let
-    [session : cis.InternStructuralSessionHandle
-      (tc-context-structural-session ctx)]
-    [source : i64 (macro-hygiene-global-source-name-id-or session name name)]
-    [base : i64
-      (cond
-        [(< source 0) -1]
-        [(tc-name-qualified-id? session source)
-          (tc-qualified-name-base-id source)]
-        [(>= (tc-name-first-dot-id session source) 0)
-          (ci.intern-dotted-final-id source)]
-        [else source])]
-    [kind : i64 (tc-arena-safe-call-base-kind-id base)]
-    (if (and
-      (not (= kind (tc-arena-safe-call-kind-none)))
-      (tc-arena-safe-definition? ctx env name base))
-      kind
-      (tc-arena-safe-call-kind-none))))
-
-;; Whether callee `name` resolves to the `stdlib.arena` definition named `base`.
-(define (tc-arena-safe-definition?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : i64]
-  [base : i64]) : bool
-  (let
-    [declared : i64 (tc-selected-call-declared-function ctx env name)]
     [handle : i64
       (csym.compiler-symbols-lookup-value-id-or
         (tc-context-symbols ctx)
         (tc-module-name-id-by-id cbi.compiler-builtin-id-arena-module base)
         (csym.compiler-symbols-missing-handle))]
-    (and
-      (>= declared 0)
-      (csym.compiler-symbols-handle-found? handle)
-      (= declared (csym.compiler-symbol-handle-index handle)))))
+    (if (csym.compiler-symbols-handle-found? handle)
+      (csym.compiler-symbol-handle-index handle)
+      -1)))
+
+;; Reads the safe arena operations' indices again when the context's value map
+;; is another incarnation or has grown since they were read.
+(define (tc-arena-safe-declarations-refresh! [ctx : TcContext]) : unit
+  (let
+    [stamp : csym.CompilerSymbolsMapStamp
+      (csym.compiler-symbols-value-map-stamp (tc-context-symbols ctx))]
+    (unless
+      (and
+        (= stamp.owner tc-arena-safe-stamp-owner)
+        (= stamp.generation tc-arena-safe-stamp-generation))
+      (set! tc-arena-safe-stamp-owner stamp.owner)
+      (set! tc-arena-safe-stamp-generation stamp.generation)
+      (set!
+        tc-arena-safe-phase-index
+        (tc-arena-safe-declaration-index
+          ctx
+          cbi.compiler-builtin-id-arena-phase-base))
+      (set!
+        tc-arena-safe-rewind-index
+        (tc-arena-safe-declaration-index
+          ctx
+          cbi.compiler-builtin-id-arena-rewind-safe-base))
+      (set!
+        tc-arena-safe-destroy-index
+        (tc-arena-safe-declaration-index
+          ctx
+          cbi.compiler-builtin-id-arena-destroy-safe-base)))))
+
+;; The safe arena operation callee `name` denotes: the phase, rewind or
+;; destroy definition of `stdlib.arena`, decided by the declaration the name
+;; resolves to (`tc-selected-call-declared-function`) alone, never by its
+;; spelling. A macro-hygiene name, a module alias and an item import alias
+;; (`(import stdlib.arena.destroy-safe! as kill)`) are the same callee; a
+;; local or another module's definition of that name is not.
+(define (tc-arena-safe-call-kind-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : i64
+  (tc-arena-safe-declarations-refresh! ctx)
+  (if (and
+    (< tc-arena-safe-phase-index 0)
+    (< tc-arena-safe-rewind-index 0)
+    (< tc-arena-safe-destroy-index 0))
+    (tc-arena-safe-call-kind-none)
+    (let
+      [declared : i64 (tc-selected-call-declared-function ctx env name)]
+      (cond
+        [(< declared 0) (tc-arena-safe-call-kind-none)]
+        [(= declared tc-arena-safe-phase-index) (tc-arena-safe-call-kind-phase)]
+        [(= declared tc-arena-safe-rewind-index)
+          (tc-arena-safe-call-kind-rewind)]
+        [(= declared tc-arena-safe-destroy-index)
+          (tc-arena-safe-call-kind-destroy)]
+        [else (tc-arena-safe-call-kind-none)]))))
 
 (define (tc-arena-owner-kind-none) : i64
   0)
@@ -61408,8 +61572,8 @@
 ;; (`tc-bind-arena-binder-env`), so values allocated in it carry its region
 ;; for the end at the scope exit; the marker below its slot is that arena
 ;; marker, not the cleanup-owner marker, as no value it holds is cleaned up.
-;; Inside its scope a `break` or `continue` cannot leave it
-;; (`tc-block-loop-target`).
+;; A `break` or `continue` leaving its scope is an end too
+;; (`tc-record-loop-exit-end`).
 (define (tc-bind-with-resource-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -61427,7 +61591,7 @@
     (tc-bind-id
       (tc-bind-arena-binder-env
         ctx
-        (tc-block-loop-target env name)
+        (tc-record-loop-exit-end env name)
         name
         (tc-global-shared-view ty)
         init)
@@ -68808,9 +68972,9 @@
 ;; (`tc-with-cleanup-end-check`). The end reaches the slots below the binder:
 ;; the binder and the later bindings of the scope are cleaned up before it.
 ;; The scope's result is the value the end yields, so a result holding the
-;; ended arena's values is rejected. A loop exit cannot leave the scope
-;; (`tc-block-loop-target`); a `return` leaves the function, whose result
-;; cannot hold a region of its body.
+;; ended arena's values is rejected. A loop exit leaving the scope is the same
+;; end (`tc-infer-selected-loop-exit`); a `return` leaves the function, whose
+;; result cannot hold a region of its body.
 (define (tc-selected-with-cleanup-ends
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -68881,7 +69045,19 @@
           (match occurrence
             [(TcSelectedOccurrence.Unrepresented)
               (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next)]
+            ;; A diverging body never reaches the normal exit: each of its
+            ;; exits that stays in the function is ended on its own edge
+            ;; (`tc-infer-selected-loop-exit`).
             [(TcSelectedOccurrence.Selected call)
+              (when
+                (match (& ty)
+                  [(ast.AstType.Never) true]
+                  [_ false])
+                (return
+                  (TcSelectedResult.Ok
+                    ty
+                    (TcSelectedOccurrence.Selected call)
+                    next)))
               (let
                 [destroy? : bool (= kind (tc-arena-safe-call-kind-destroy))]
                 [binder : ast.AstExpr (ast.AstExpr.Var name)]

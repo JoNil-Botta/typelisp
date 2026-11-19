@@ -1,5 +1,5 @@
-;; A loop exit out of a with whose cleanup ends an arena would end it
-;; unchecked: `break` cannot leave the scope.
+;; A `break` leaving a with whose cleanup ends an arena is an end of it, as
+;; the scope's normal exit is: `text`, allocated in it, is invalidated.
 (import stdlib.arena)
 (import stdlib.string)
 

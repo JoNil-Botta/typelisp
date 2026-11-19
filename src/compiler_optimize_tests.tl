@@ -70642,7 +70642,7 @@ return 0" true)
         (opt-licm-params)
         (I64)
         64
-        (ir.compiler-ir-global-shared-view blocks)
+        (clone blocks)
         Ordinary)]
     (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -70929,7 +70929,7 @@ return 0" true)
         (opt-licm-params)
         (I64)
         64
-        (ir.compiler-ir-global-shared-view blocks)
+        (clone blocks)
         Ordinary)]
     [after : ir.CompilerIrBlockList
       (match (opt.opt-licm-function-with-context-result-and-direct-call-clean

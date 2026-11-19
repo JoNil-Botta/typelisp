@@ -75914,6 +75914,34 @@
         [else (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
     [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))]))
 
+;; The self-loop latch's MODE -- 0 `Lt` (ascending exclusive), 1 `Ge`
+;; (descending inclusive), 2 `Gt` (descending exclusive) -- read as written, or
+;; through the compare's exact negation when the block branches to itself on its
+;; FALSE arm: `!(a lt b)` is `a ge b`, `!(a gt b)` is `a le b`, `!(a ge b)` is
+;; `a lt b`, and `!(a le b)` would need `a gt b`, which has no mode here. -1
+;; refuses, and `negated?` keeps the two spellings of one test on one table.
+(define (opt-bce-version-latch-mode
+  [op : (& ir.CompilerIrBinOp)]
+  [negated? : bool]) : i64
+  (match op
+    [(Lt)
+      (if negated?
+        1
+        0)]
+    [(Le)
+      (if negated?
+        2
+        (- 0 1))]
+    [(Ge)
+      (if negated?
+        0
+        1)]
+    [(Gt)
+      (if negated?
+        (- 0 1)
+        2)]
+    [_ (- 0 1)]))
+
 ;; The latch `inext < bound`, or ALIAS-1's two latch forms of a DESCENDING
 ;; counter, `next >= floor` and `next > floor`, all in the operand order
 ;; `counter <op> invariant`. `bound` still names the invariant the latch
@@ -75960,17 +75988,7 @@
           (if (and negated? (not (opt-bce-version-cond-signed-type? (& ty))))
             (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
             (let
-              [op : ir.CompilerIrBinOp
-                (if negated?
-                  (opt-invert-compare-op
-                    (owned_view.compiler-owned-reference-shared-view cmp-op))
-                  (owned_view.compiler-owned-reference-shared-view cmp-op))]
-              [mode : i64
-                (match op
-                  [(Lt) 0]
-                  [(Ge) 1]
-                  [(Gt) 2]
-                  [_ (- 0 1)])]
+              [mode : i64 (opt-bce-version-latch-mode (& cmp-op) negated?)]
               (if (< mode 0)
                 (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
                 (match cmp-lhs
@@ -78081,11 +78099,32 @@
   (Ascending i64)
   (Descending))
 
-(define (opt-bce-mb-counter-direction [op : (& ir.CompilerIrBinOp)]) : OptBceMbCounterDirection
+;; `negated?` reads the table through the compare's EXACT NEGATION, which is
+;; what a latch that exits where the compare holds states (see
+;; opt-bce-mb-latch-branch): `!(a lt b)` is `a ge b`, `!(a ge b)` is `a lt b`,
+;; `!(a gt b)` is `a le b`, and `!(a le b)` would need `a gt b`, the order
+;; that stays absent above. One table, read either way, so the two spellings
+;; of a test can never disagree.
+(define (opt-bce-mb-counter-direction
+  [op : (& ir.CompilerIrBinOp)]
+  [negated? : bool]) : OptBceMbCounterDirection
   (match op
-    [(Lt) (Ascending 0)]
-    [(Le) (Ascending 1)]
-    [(Ge) (Descending)]
+    [(Lt)
+      (if negated?
+        (Descending)
+        (Ascending 0))]
+    [(Le)
+      (if negated?
+        (No)
+        (Ascending 1))]
+    [(Ge)
+      (if negated?
+        (Ascending 0)
+        (Descending))]
+    [(Gt)
+      (if negated?
+        (Ascending 1)
+        (No))]
     [_ (No)]))
 
 ;; The compare of `cond-var`, dispatched on its direction. `bottom?` says which
@@ -78121,12 +78160,9 @@
           (if (and negated? (not (opt-bce-version-cond-signed-type? (& ty))))
             (No)
             (let
-              [op : ir.CompilerIrBinOp
-                (if negated?
-                  (opt-invert-compare-op
-                    (owned_view.compiler-owned-reference-shared-view cmp-op))
-                  (owned_view.compiler-owned-reference-shared-view cmp-op))]
-              (match (opt-bce-mb-counter-direction (& op))
+              [direction : OptBceMbCounterDirection
+                (opt-bce-mb-counter-direction (& cmp-op) negated?)]
+              (match direction
                 [(No) (No)]
                 [(Ascending shift)
                   (opt-bce-mb-counter-compare

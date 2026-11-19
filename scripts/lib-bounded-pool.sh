@@ -85,9 +85,13 @@ bounded_pool_read_report() {
 # per held lock) and `results/` (its exit status).
 BOUNDED_POOL_LOCK_TRIES=${BOUNDED_POOL_LOCK_TRIES:-600}
 
+# Ubuntu 26.04's uutils mkdir returns 0 to the loser of a race on the same
+# new directory (Ubuntu bug #2171333), so `mkdir "$pool/lock"` is not an
+# exclusive claim there. A noclobber redirection opens with O_EXCL in the
+# shell and admits exactly one winner under GNU and uutils coreutils.
 bounded_pool_lock() {
     _bp_lock_tries=0
-    until mkdir "$1/lock" 2>/dev/null; do
+    until (set -C; : > "$1/lock") 2>/dev/null; do
         _bp_lock_tries=$((_bp_lock_tries + 1))
         if [ "$_bp_lock_tries" -ge "$BOUNDED_POOL_LOCK_TRIES" ]; then
             echo "[$BOUNDED_POOL_LABEL] pool lock was not released: $1/lock" >&2
@@ -98,7 +102,7 @@ bounded_pool_lock() {
 }
 
 bounded_pool_unlock() {
-    rmdir "$1/lock"
+    rm -f "$1/lock"
 }
 
 bounded_pool_require_queue() {

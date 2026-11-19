@@ -273,13 +273,13 @@ reject bounded_pool_claim "$POOL"
 rm -- "${POOL:?}/abort"
 bounded_pool_require_complete "$POOL"
 # A lock that is never released is reported instead of waited on forever.
-mkdir "$POOL/lock"
+: > "$POOL/lock"
 reject bounded_pool_require_complete "$POOL"
 BOUNDED_POOL_LOCK_TRIES=2
 reject bounded_pool_claim "$POOL"
 reject bounded_pool_finish "$POOL" full-a 0
 BOUNDED_POOL_LOCK_TRIES=600
-rmdir -- "${POOL:?}/lock"
+rm -f -- "${POOL:?}/lock"
 
 # Malformed, duplicate, empty and over-budget queues never start a pool.
 for bad_queue in 'job' 'job|' 'job|0' 'job|08' 'job|4096|extra' '../job|4096' \

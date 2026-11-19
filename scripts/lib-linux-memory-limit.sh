@@ -110,9 +110,10 @@ _tlmem_status=0
 # POSIX asynchronous lists may replace fd 0 with /dev/null before applying
 # their redirections (dash does). Save stdin before starting that list.
 exec 3<&0
-# An asynchronous list also ignores INT/QUIT. Reset those in the subshell
-# before exec, while it can still change dispositions inherited by the shell.
-(trap - INT QUIT; exec "$@") <&3 3<&- &
+# An asynchronous list also ignores INT/QUIT, and dash 0.5.12 cannot reset
+# them in a non-interactive subshell (`trap -` is a no-op there). GNU and
+# uutils env reset the dispositions before exec on both dash versions.
+(exec env --default-signal=INT,QUIT -- "$@") <&3 3<&- &
 _tlmem_child=$!
 wait "$_tlmem_child" || _tlmem_status=$?
 printf "tlmem-terminal-v1 %s %s\n" "$_tlmem_owner" "$_tlmem_status" > "$_tlmem_terminal" || exit 2

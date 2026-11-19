@@ -16608,9 +16608,10 @@
         (io.print-error " ")
         (io.print-error (string.int->string (array-length body.places)))
         (io.print-error " ")
-        (io.print-error "path#")
+        ;; The path's byte count: the body's path text is not at hand here.
+        (io.print-error "path-bytes=")
         (io.print-error
-          (string.int->string (array-ref body.blocks 0).source.path.id))
+          (string.int->string (array-ref body.blocks 0).source.path.bytes))
         (io.print-error ":")
         (io.print-error
           (string.int->string (array-ref body.blocks 0).source.line))

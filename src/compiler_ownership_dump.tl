@@ -23,19 +23,22 @@
   [body-path : (& body-path str)]) : String
   ;; Length framing preserves paths and expansion traces containing newlines,
   ;; colons, or other punctuation without an ambiguous escaping convention.
-  (str_cat.str-cat
-    " @"
-    (string.int->string source.path.bytes)
-    ":"
-    (own.ownership-path-text (& source.path) body-path)
-    ":"
-    (string.int->string source.line)
-    ":"
-    (string.int->string source.column)
-    " expansion="
-    (string.int->string (string.string-length (& source.expansion)))
-    ":"
-    (string.copy (& source.expansion))))
+  ;; The frame counts the text printed, whatever path the caller names.
+  (let
+    [path : String (own.ownership-path-text (& source.path) body-path)]
+    (str_cat.str-cat
+      " @"
+      (string.int->string (string.string-length (& path)))
+      ":"
+      path
+      ":"
+      (string.int->string source.line)
+      ":"
+      (string.int->string source.column)
+      " expansion="
+      (string.int->string (string.string-length (& source.expansion)))
+      ":"
+      (string.copy (& source.expansion)))))
 
 (define (ownership-dump-place [place : (& place own.OwnershipPlaceId)]) : String
   (str_cat.str-cat "%p" (string.int->string place.index)))

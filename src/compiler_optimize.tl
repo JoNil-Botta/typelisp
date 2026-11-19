@@ -60285,6 +60285,8 @@
               (if (opt-slice-word-copy-use? hs word-rewritten)
                 (opt-copy-subst-instr (& copy-state) word-rewritten)
                 word-rewritten)]
+            [load-view : OptLoadCseState
+              (compiler-opt-global-shared-view load-state)]
             (match (if load-cse?
               (opt-load-cse-dispatch
                 type-segment-bases
@@ -60294,11 +60296,9 @@
                 sources
                 call-memory
                 cells
-                (compiler-opt-global-shared-view load-state)
+                load-view
                 load-input)
-              (OptLoadCseResult.Result
-                (compiler-opt-global-shared-view load-state)
-                load-input))
+              (OptLoadCseResult.Result load-view load-input))
               [(Result next-load loaded)
                 (match (opt-copy-instr (& copy-state) (& loaded))
                   [(Result next-copy rewritten)

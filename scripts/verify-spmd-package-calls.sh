@@ -89,7 +89,11 @@ verify_mode() {
     fi
 }
 
-verify_mode scalar yes
+# The forced-SDE duplicate run repeats only the AVX-512 route; scalar is the
+# ordinary gate's native build, link and run.
+if simd_mode_selected scalar; then
+    verify_mode scalar yes
+fi
 
 if simd_execution_mode avx512; then
     AVX512_EXECUTE=yes

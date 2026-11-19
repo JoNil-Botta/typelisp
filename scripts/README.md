@@ -121,16 +121,21 @@ execute the SPMD, lane/broadcast, package and cross-mode suites under SDE: the
 same four commands with `TYPELISP_AVX512_EXECUTION=sde`, each under its own
 8192 MiB cap and `target/sde-fallback-<suite>.memory` report. Each gate needs
 the ordinary gate(s) of its suite, so it overwrites their native observations
-only after they were consumed. The forced SPMD gate writes
-`target/spmd-simd-verify-sde`, which the forced cross-mode gate reads, so it
-runs beside the ordinary cross-mode gate without disturbing the native
-observations that gate consumes; the package gate holds `spmd-package`; the
-forced cross-mode gate also needs the forced SPMD gate because it validates
-that gate's SDE receipts. Hosts without native support already use SDE in the
-canonical gates; there each gate passes as not applicable only after proving
-that the ordinary route for AVX-512 is SDE, and a failed ISA detection fails
-it. Thus both operating systems exercise the fallback on every required run,
-while native dispatch and execution coverage is retained. A local run without
+only after they were consumed. Because the forced policy moves only AVX-512
+executions, each gate sets `TYPELISP_SIMD_MODE_FILTER=avx512`: the suite builds
+and runs only the AVX-512 cases, while every other mode's compile and run is
+left to the ordinary gate it would repeat unchanged. The forced SPMD gate
+writes `target/spmd-simd-verify-sde` with those AVX-512 observations, takes its
+scalar reference from the ordinary run's root, and the forced cross-mode gate
+reads native observations from that same ordinary root, so it runs beside the
+ordinary cross-mode gate without disturbing the native observations that gate
+consumes; the package gate holds `spmd-package`; the forced cross-mode gate
+also needs the forced SPMD gate because it validates that gate's SDE
+receipts. Hosts without native support already use SDE in the canonical gates;
+there each gate passes as not applicable only after proving that the ordinary
+route for AVX-512 is SDE, and a failed ISA detection fails it. Thus both
+operating systems exercise the fallback on every required run, while native
+dispatch and execution coverage is retained. A local run without
 `TYPELISP_SDE_BIN` reports each forced-SDE suite as unavailable, as the other
 harnesses report unavailable execution; `CI=true` requires them.
 

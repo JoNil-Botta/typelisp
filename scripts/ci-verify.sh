@@ -581,11 +581,16 @@ gate_heavy_instruction_counts() {
 # gang-width, package-call and cross-mode gates under the pinned Intel SDE. A
 # native AVX-512 host repeats each suite with SDE forced in its own gate, after
 # that suite's ordinary gates (its needs) consumed the native observations it
-# overwrites. The forced SPMD run writes target/spmd-simd-verify-sde, which the
-# forced cross-mode run reads, so it never disturbs the native observations the
-# ordinary cross-mode gate consumes. ci_sde_fallback_run holds the one route
-# decision and forced environment; as in those harnesses, CI=true requires
-# every route and local runs report an unavailable one.
+# overwrites. The forced policy moves only AVX-512 executions, so those gates
+# select only AVX-512 modes (TYPELISP_SIMD_MODE_FILTER): the non-AVX-512 work
+# would compile and execute exactly as the ordinary gates did. The forced SPMD
+# run writes target/spmd-simd-verify-sde with its AVX-512 observations, reads
+# the ordinary root's native scalar reference, and the forced cross-mode run
+# reads native observations from that same ordinary root, so neither disturbs
+# the native observations the ordinary cross-mode gate consumes.
+# ci_sde_fallback_run holds the one route decision and forced environment; as in
+# those harnesses, CI=true requires every route and local runs report an
+# unavailable one.
 ci_sde_fallback_run() {
     _ci_sde_tag=$1
     _ci_sde_report=$2
@@ -604,8 +609,10 @@ ci_sde_fallback_run() {
                 return 0
             fi
             env TYPELISP_AVX512_EXECUTION=sde TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" \
+                TYPELISP_SIMD_MODE_FILTER=avx512 \
                 TYPELISP_SPMD_SIMD_WORKDIR="$ROOT/target/spmd-simd-verify-sde" \
                 TYPELISP_SPMD_SIMD_ARTIFACT_ROOT="$ROOT/target/spmd-simd-verify-sde" \
+                TYPELISP_SPMD_SIMD_NATIVE_ROOT="$ROOT/target/spmd-simd-verify" \
                 scripts/run-memory-bounded.sh --limit-mib 8192 \
                 --report "$_ci_sde_report" -- bash -e -c "$_ci_sde_command"
             return $?

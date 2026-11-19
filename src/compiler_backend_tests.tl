@@ -6402,6 +6402,180 @@
       (= (compiler-backend-flags-reuse-guard (+ one 4) (+ one 8)) 20)
       (= (compiler-backend-flags-reuse-guard (- one 1) (- one 2)) 0))))
 
+;; Cross-edge flags reuse. The in-block tests above keep a materialized
+;; comparison's flags alive across its own `setcc`/`movzb`; the carry below
+;; crosses a block edge instead. A block that ENDS in a compare+branch fusion
+;; leaves its compare's flags live (`jcc` and the `movq`-only emergency restore
+;; write no EFLAGS), so a successor whose only predecessor is that block and
+;; whose own FIRST instruction compares the same two vars at the same width
+;; needs only its `jcc` -- with the condition inverted when the operands are
+;; swapped. The fixtures are IR text so each case names its exact layout, its
+;; predecessor count and its operand widths. `.Lf0_low:` is matched by its
+;; `_low:` suffix because the label ids are process-global.
+;;
+;; Positive: `entry` ends in `gt a, b` and branches away, leaving `low` as the
+;; fall-through successor; `low` opens with `eq a, b`.
+(define compiler-backend-flags-reuse-edge-source : String
+  "function @edge_flags(a=%0:i64, b=%1:i64) -> i64 vars 4 {
+entry:
+  %2 = gt %0, %1 : i64
+  branch %2, high, low
+low:
+  %3 = eq %0, %1 : i64
+  branch %3, same, less
+same:
+  return 2
+less:
+  return 3
+high:
+  return 1
+}")
+
+;; Swapped operands read the SAME flags with the inverted condition: `lt b, a`
+;; is `gt a, b`, so the reused `jcc` is `jg` and a recomputed `jl` never appears.
+(define compiler-backend-flags-reuse-edge-swapped-source : String
+  "function @edge_flags(a=%0:i64, b=%1:i64) -> i64 vars 4 {
+entry:
+  %2 = gt %0, %1 : i64
+  branch %2, high, low
+low:
+  %3 = lt %1, %0 : i64
+  branch %3, less, same
+same:
+  return 2
+less:
+  return 3
+high:
+  return 1
+}")
+
+;; `low` is also the target of `alt`, so its label is a merge and another edge
+;; reaches it with arbitrary flags: the carry must be refused.
+(define compiler-backend-flags-reuse-edge-two-preds-source : String
+  "function @edge_flags(a=%0:i64, b=%1:i64) -> i64 vars 4 {
+entry:
+  %2 = gt %0, %1 : i64
+  branch %2, high, low
+low:
+  %3 = eq %0, %1 : i64
+  branch %3, same, less
+same:
+  return 2
+less:
+  return 3
+high:
+  return 1
+alt:
+  jump low
+}")
+
+;; A flag-writing instruction ahead of the compare in `low` closes the window:
+;; `shlq` overwrites the flags the edge carried, so the `cmp` must come back.
+(define compiler-backend-flags-reuse-edge-flag-writer-source : String
+  "function @edge_flags(a=%0:i64, b=%1:i64) -> i64 vars 5 {
+entry:
+  %2 = gt %0, %1 : i64
+  branch %2, high, low
+low:
+  %3 = shl %0, 2 : i64
+  %4 = eq %0, %1 : i64
+  branch %4, same, less
+same:
+  return 2
+less:
+  return 3
+high:
+  return 1
+}")
+
+;; The same vars compared at a different width set different flags: the carry
+;; is refused and `low` recomputes with `cmpl`.
+(define compiler-backend-flags-reuse-edge-width-source : String
+  "function @edge_flags(a=%0:i64, b=%1:i64) -> i64 vars 4 {
+entry:
+  %2 = gt %0, %1 : i64
+  branch %2, high, low
+low:
+  %3 = eq %0, %1 : i32
+  branch %3, same, less
+same:
+  return 2
+less:
+  return 3
+high:
+  return 1
+}")
+
+(define (compiler-backend-flags-reuse-edge-asm [source : String]) : String
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (backend.compiler-backend-state-set-scalar-registers-enabled! state true)
+    (let
+      [program : ir.CompilerIrProgram (irt.program source)]
+      [spans : ir.CompilerSourceSpans (ir.compiler-source-spans-empty)]
+      (match (compiler-backend-test-emit-program-with-state
+        state
+        (backend.CompilerBackendTarget.Linux)
+        (& program)
+        (& spans)
+        false)
+        [(Ok asm) asm]
+        [(Err _) ""]))))
+
+;; `compare` is the compare mnemonic the fixture's width emits (and therefore
+;; how many compares the emitted function spends), and `site` is what follows
+;; the successor's label: the reused `jcc` when the carry applies, the
+;; recomputed compare when it does not.
+(define (compiler-backend-flags-reuse-edge-case?
+  [source : String]
+  [compare : String]
+  [compare-count : i64]
+  [site : String]) : bool
+  (let
+    [asm : String (compiler-backend-flags-reuse-edge-asm source)]
+    (and
+      (not (string.eq asm ""))
+      (= (backend.compiler-backend-string-count asm compare) compare-count)
+      (asm-has? asm (str_cat.str-cat "_low:\n    " site)))))
+
+(define (compiler-backend-flags-reuse-edge-ok?) : bool
+  (and
+    (compiler-backend-flags-reuse-edge-case?
+      (string.copy (& compiler-backend-flags-reuse-edge-source))
+      "    cmpq "
+      1
+      "jne ")
+    (compiler-backend-flags-reuse-edge-case?
+      (string.copy (& compiler-backend-flags-reuse-edge-swapped-source))
+      "    cmpq "
+      1
+      "jg ")
+    (asm-lacks?
+      (compiler-backend-flags-reuse-edge-asm
+        (string.copy (& compiler-backend-flags-reuse-edge-swapped-source)))
+      "    jl ")
+    (compiler-backend-flags-reuse-edge-case?
+      (string.copy (& compiler-backend-flags-reuse-edge-two-preds-source))
+      "    cmpq "
+      2
+      "cmpq ")
+    (compiler-backend-flags-reuse-edge-case?
+      (string.copy (& compiler-backend-flags-reuse-edge-flag-writer-source))
+      "    cmpq "
+      2
+      "movq ")
+    (asm-has?
+      (compiler-backend-flags-reuse-edge-asm
+        (string.copy (& compiler-backend-flags-reuse-edge-flag-writer-source)))
+      "    shlq $2, %rax\n    cmpq ")
+    (compiler-backend-flags-reuse-edge-case?
+      (string.copy (& compiler-backend-flags-reuse-edge-width-source))
+      "    cmpl "
+      1
+      "cmpl ")))
+
 (define (compiler-backend-shifted-loop-bound-win64-ok?) : bool
   (let
     [ok : bool
@@ -40247,6 +40421,7 @@ b_keep:
         (compiler-backend-shared-compare-duplication-ok?)
         (compiler-backend-flags-reuse-branch-ok?)
         (compiler-backend-flags-reuse-runtime-ok?)
+        (compiler-backend-flags-reuse-edge-ok?)
         (compiler-backend-tail-dispatch-no-csr-ok?)
         (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)

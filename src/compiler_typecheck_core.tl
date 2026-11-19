@@ -125881,7 +125881,17 @@
   (memo-types (__tl_dyn-array ast.AstType))
   (memo-starts (__tl_dyn-array i64))
   (memo-slots (__tl_dyn-array i64))
-  (memo-count i64))
+  (memo-count i64)
+  ;; The representatives of each bucket (`tc-selected-representative-bucket`)
+  ;; in order: its first and last (index + 1, 0 none) and, per
+  ;; representative, the next one in its bucket (index + 1, 0 none).
+  (bucket-heads (__tl_dyn-array i64))
+  (bucket-tails (__tl_dyn-array i64))
+  (representative-next (__tl_dyn-array i64))
+  ;; Whether a representative is the poison type under at most one wrapper,
+  ;; which matches every variant there: scans then visit every
+  ;; representative.
+  (poisoned? bool))
 
 (define (tc-selected-type-table-new [regions : (__tl_dyn-array i64)]) : TcSelectedTypeTable
   (let
@@ -125902,7 +125912,11 @@
       memo-types
       (tc-global-shared-view tc-chain-empty-i64-array)
       (tc-global-shared-view tc-chain-empty-i64-array)
-      0)))
+      0
+      (__tl_make-array i64 tc-selected-bucket-count)
+      (__tl_make-array i64 tc-selected-bucket-count)
+      (tc-selected-no-i64s)
+      false)))
 
 ;; The ownership graph's type for a typechecker type: arena regions are erased
 ;; (`tc-selected-arena-erase`) and a region tag on a Copy value is dropped.
@@ -126682,16 +126696,92 @@
   [resolved : ast.AstType]
   [start : i64]) : i64
   (let
+    [bucket : i64
+      (if table.poisoned?
+        -1
+        (tc-selected-representative-bucket (tc-global-shared-view resolved)))]
     [found : i64 -1]
     [rep : i64 start]
-    (while (and (< found 0) (< rep table.representative-count))
-      (when
-        (tc-selected-same-type?
-          (tc-global-array-element-shared-view table.representatives rep)
-          (tc-global-shared-view resolved))
-        (set! found rep))
-      (set! rep (+ rep 1)))
+    (if (< bucket 0)
+      (while (and (< found 0) (< rep table.representative-count))
+        (when
+          (tc-selected-same-type?
+            (tc-global-array-element-shared-view table.representatives rep)
+            (tc-global-shared-view resolved))
+          (set! found rep))
+        (set! rep (+ rep 1)))
+      ;; Every representative outside the bucket fails to match.
+      (begin
+        (set! rep (- (array-ref table.bucket-heads bucket) 1))
+        (while (and (< found 0) (>= rep 0))
+          (when
+            (and
+              (>= rep start)
+              (tc-selected-same-type?
+                (tc-global-array-element-shared-view table.representatives rep)
+                (tc-global-shared-view resolved)))
+            (set! found rep))
+          (set! rep (- (array-ref table.representative-next rep) 1)))))
     found))
+
+;; The buckets: no wrapper, each single reference or region wrapper, and two
+;; or more wrappers, times the variant (`ast.ast-type-tag`, below 40) under a
+;; wrapper or none (two or more wrappers share one bucket).
+(define tc-selected-bucket-count : i64
+  200)
+
+;; The bucket of a representative or of a type looked up among them, or -1
+;; for the poison type under at most one wrapper. `tc-selected-same-type?`
+;; matches a reference or region wrapper only with the same wrapper, and a
+;; type under none only with one of the same variant (`tc-type-eq-core`)
+;; unless one is the poison type, which `tc-type-eq` matches with any: a
+;; type's matches share its bucket. A comparison it rules out ends at the
+;; variants, so skipping it changes no state.
+(define (tc-selected-representative-bucket [ty : ast.AstType]) : i64
+  (let
+    [wrapper : i64
+      (match (tc-global-shared-view ty)
+        [(ast.AstType.Region _ _) 1]
+        [(ast.AstType.Ref _ _) 2]
+        [(ast.AstType.MutRef _ _) 3]
+        [_ 0])]
+    (if (= wrapper 0)
+      (if (tc-poison-type? (tc-global-shared-view ty))
+        -1
+        (ast.ast-type-tag (& ty)))
+      (let
+        [inner : ast.AstType
+          (match (tc-global-shared-view ty)
+            [(ast.AstType.Region _ inner) (ast.ty-node-get inner)]
+            [(ast.AstType.Ref _ inner) (ast.ty-node-get inner)]
+            [(ast.AstType.MutRef _ inner) (ast.ty-node-get inner)]
+            [_ ast.AstType.Never])]
+        (match (tc-global-shared-view inner)
+          [(or (ast.AstType.Region _ _) (ast.AstType.Ref _ _)
+               (ast.AstType.MutRef _ _))
+            160]
+          [_
+            (if (tc-poison-type? (tc-global-shared-view inner))
+              -1
+              (+ (* wrapper 40) (ast.ast-type-tag (& inner))))])))))
+
+;; Files the new representative `rep` in its bucket, last.
+(define (tc-selected-representative-file!
+  [table : (&mut table TcSelectedTypeTable)]
+  [rep : i64]) : unit
+  (let
+    [bucket : i64
+      (tc-selected-representative-bucket
+        (tc-global-array-element-shared-view table.representatives rep))]
+    (set! (array-ref table.representative-next rep) 0)
+    (if (< bucket 0)
+      (set! table.poisoned? true)
+      (let
+        [tail : i64 (array-ref table.bucket-tails bucket)]
+        (if (= tail 0)
+          (set! (array-ref table.bucket-heads bucket) (+ rep 1))
+          (set! (array-ref table.representative-next (- tail 1)) (+ rep 1)))
+        (set! (array-ref table.bucket-tails bucket) (+ rep 1))))))
 
 (define (tc-selected-representative-hash-slot [ty : ast.AstType] [mask : i64]) : i64
   (bit-and (* (ast.ty-node-hash-value (& ty)) 2654435761) mask))
@@ -126753,7 +126843,7 @@
     (set! table.memo-types types)
     (set! table.memo-starts starts)))
 
-;; Room for one more representative: the three lanes double when full (a
+;; Room for one more representative: the four lanes double when full (a
 ;; private dynamic array copies its whole backing on every push).
 (define (tc-selected-representatives-reserve!
   [table : (&mut table TcSelectedTypeTable)]) : unit
@@ -126771,11 +126861,15 @@
             ownership_normalize.OwnershipNormalizeTypeClass
             capacity)]
         [indices : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+        [next : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
         [index : i64 0]
         (while (< index count)
           (set!
             (array-ref types index)
             (replace! (array-ref table.representatives index) ast.AstType.Never))
+          (set!
+            (array-ref next index)
+            (array-ref table.representative-next index))
           (set!
             (array-ref classes index)
             (ownership_normalize.OwnershipNormalizeTypeClass
@@ -126790,7 +126884,8 @@
           (set! index (+ index 1)))
         (set! table.representatives types)
         (set! table.representative-classes classes)
-        (set! table.representative-indices indices)))))
+        (set! table.representative-indices indices)
+        (set! table.representative-next next)))))
 
 ;; The typed index of a type equal to `ty`; the store gains a record (to be
 ;; classified) only when the body has none. -1 when the store refuses it.
@@ -126843,6 +126938,9 @@
     [count : i64 (array-length table.classes)]
     ;; The store gains records only where a referent is indexed below.
     [total : i64 (tc-selected-type-record-count store lease)]
+    ;; No record is new (as when shaping products added none): the classes
+    ;; stand as they are.
+    [_unchanged : unit (when (>= count total) (return unit))]
     [cells : (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass)
       (__tl_make-array
         ownership_normalize.OwnershipNormalizeTypeClass
@@ -126936,6 +127034,7 @@
                 fresh.cleanup?))
             (set! (array-ref table.representative-indices found) index)
             (set! (array-ref table.representatives found) resolved)
+            (tc-selected-representative-file! table found)
             (set! table.representative-count (+ found 1))))
         (when
           (>= count (array-length cells))

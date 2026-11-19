@@ -331,10 +331,12 @@ run as separate gates so the scheduler gives each its own pool, and the table
 refuses a group that two shards own or none does, so a new batch group cannot
 fall out of CI. The `default` shard keeps the historical
 `target/integration-verify/<host>/` path, because the cross-mode differential
-reads the cases and the host fixture corpora publish there; the other shards
-stage under `target/integration-verify/<host><shard suffix>/`. Every shard
-validates the whole host manifest, and lists its heaviest group first so the
-batch pool's longest chunk starts on an idle worker.
+reads the cases and the host fixture corpora publish there, and it runs every
+host-level check that needs those default-level binaries (the fixture corpora
+and the Windows queued/one-shot runner differential); the other shards stage
+under `target/integration-verify/<host><shard suffix>/`. Every shard validates
+the whole host manifest, and lists its heaviest group first so the batch pool's
+longest chunk starts on an idle worker.
 
 `verify-cross-mode-differential.sh` and its manifest are described under
 [Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).

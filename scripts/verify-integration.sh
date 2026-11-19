@@ -48,9 +48,10 @@ EOF
 # The corpus runs as shards, one gate each: name|work root suffix|batch groups.
 # A shard lists its heaviest group first, so the batch pool's longest chunk
 # starts on an idle worker instead of trailing the queue. The `-` suffix marks
-# the shard whose work root later gates reuse (scripts/README.md): it keeps
-# target/integration-verify/HOST/ and also runs the host's non-manifest fixture
-# corpora, which write into that tree.
+# the canonical shard: it keeps target/integration-verify/HOST/, which later
+# gates reuse, and runs every host-level check that needs that root or an
+# already-built default-level corpus binary (the host fixture corpora, the
+# Windows runner differential).
 integration_shards() {
     cat <<'EOF'
 default|-|stage-stdlib embedded
@@ -60,7 +61,7 @@ EOF
 
 # integration_resolve_shard NAME: set INTEGRATION_BATCH_GROUPS (the groups this
 # run compiles, stages and runs), INTEGRATION_ALL_GROUPS (every group a shard
-# names), INTEGRATION_SHARD_SUFFIX and INTEGRATION_SHARD_FIXTURES. An empty
+# names), INTEGRATION_SHARD_SUFFIX and INTEGRATION_SHARD_CANONICAL. An empty
 # NAME is the whole corpus in one work root. A group named by two shards is
 # refused here and integration_select_shard refuses a manifest group that no
 # shard names, so a new batch group cannot fall out of CI.
@@ -69,7 +70,7 @@ integration_resolve_shard() {
     _shard_all=
     _shard_sel=
     _shard_suffix=
-    _shard_fixtures=0
+    _shard_canonical=0
     _shard_matched=0
     while IFS='|' read -r _shard_name _shard_root _shard_groups; do
         case "$_shard_name" in
@@ -90,7 +91,7 @@ integration_resolve_shard() {
             case "$_shard_root" in
                 -)
                     _shard_suffix=
-                    _shard_fixtures=1
+                    _shard_canonical=1
                     ;;
                 *) _shard_suffix=$_shard_root ;;
             esac
@@ -100,7 +101,7 @@ $(integration_shards)
 EOF
     if [ -z "$_shard_want" ]; then
         _shard_sel=$_shard_all
-        _shard_fixtures=1
+        _shard_canonical=1
     elif [ "$_shard_matched" -eq 0 ]; then
         echo "unknown integration shard: $_shard_want" >&2
         echo "expected one of: $(integration_shards | awk -F '|' '!/^#/ {printf "%s ", $1}')" >&2
@@ -109,7 +110,7 @@ EOF
     INTEGRATION_BATCH_GROUPS=${_shard_sel# }
     INTEGRATION_ALL_GROUPS=${_shard_all# }
     INTEGRATION_SHARD_SUFFIX=$_shard_suffix
-    INTEGRATION_SHARD_FIXTURES=$_shard_fixtures
+    INTEGRATION_SHARD_CANONICAL=$_shard_canonical
 }
 
 SELF_TEST_BATCH_OBSERVABILITY=0
@@ -4475,8 +4476,12 @@ if [ "$HOST_OS" = windows ] && [ "$WINDOWS_MANIFEST_QUEUED" -gt 0 ]; then
     if ! windows_run_manifest_queue; then
         exit 1
     fi
-    if ! windows_runner_differential_self_test; then
-        exit 1
+    # The differential compares three already-built default-level corpus
+    # binaries, so the canonical shard that stages them runs it for the host.
+    if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
+        if ! windows_runner_differential_self_test; then
+            exit 1
+        fi
     fi
     windows_assert_queued_cases
     if [ "$failed" -eq 0 ]; then
@@ -4538,7 +4543,7 @@ fi
 
 # The host fixture corpora publish into the canonical work root, which is the
 # shard other gates read, so exactly that shard runs them.
-if [ "$INTEGRATION_SHARD_FIXTURES" -eq 1 ]; then
+if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
     if [ "$HOST_OS" = linux ]; then
         run_linux_fixture_cases
     else

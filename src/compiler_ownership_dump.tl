@@ -17,22 +17,28 @@
     "."
     (string.int->string (cast (% value (cast 4294967296 : u64)) : i64))))
 
-(define (ownership-dump-source [source : (& source own.OwnershipSource)]) : String
+(define (ownership-dump-source
+  [source : (& source own.OwnershipSource)]
+  ;; The body's own path, which its path ids name (`own.ownership-path-text`).
+  [body-path : (& body-path str)]) : String
   ;; Length framing preserves paths and expansion traces containing newlines,
   ;; colons, or other punctuation without an ambiguous escaping convention.
-  (str_cat.str-cat
-    " @"
-    (string.int->string (string.string-length (& source.path)))
-    ":"
-    (string.copy (& source.path))
-    ":"
-    (string.int->string source.line)
-    ":"
-    (string.int->string source.column)
-    " expansion="
-    (string.int->string (string.string-length (& source.expansion)))
-    ":"
-    (string.copy (& source.expansion))))
+  ;; The frame counts the text printed, whatever path the caller names.
+  (let
+    [path : String (own.ownership-path-text (& source.path) body-path)]
+    (str_cat.str-cat
+      " @"
+      (string.int->string (string.string-length (& path)))
+      ":"
+      path
+      ":"
+      (string.int->string source.line)
+      ":"
+      (string.int->string source.column)
+      " expansion="
+      (string.int->string (string.string-length (& source.expansion)))
+      ":"
+      (string.copy (& source.expansion)))))
 
 (define (ownership-dump-place [place : (& place own.OwnershipPlaceId)]) : String
   (str_cat.str-cat "%p" (string.int->string place.index)))
@@ -169,7 +175,8 @@
 
 (define (ownership-dump
   [body : (& body own.OwnershipBody)]
-  [limits : own.OwnershipLimits]) : OwnershipDumpResult
+  [limits : own.OwnershipLimits]
+  [body-path : (& body-path str)]) : OwnershipDumpResult
   (match (own.ownership-validate body limits)
     [(own.OwnershipResult.Err error) (OwnershipDumpResult.Err error)]
     [(own.OwnershipResult.Ok)
@@ -228,7 +235,9 @@
                 (if (array-ref body.locals i).parameter?
                   " parameter"
                   " local")
-                (ownership-dump-source (& (array-ref body.locals i).source))
+                (ownership-dump-source
+                  (& (array-ref body.locals i).source)
+                  body-path)
                 "\n"))
             (set! i (+ i 1))))
         (set! i 0)
@@ -256,7 +265,9 @@
             (text_buf.append!
               out
               (str_cat.str-cat
-                (ownership-dump-source (& (array-ref body.places i).source))
+                (ownership-dump-source
+                  (& (array-ref body.places i).source)
+                  body-path)
                 "\n"))
             (set! i (+ i 1))))
         (set! i 0)
@@ -279,7 +290,7 @@
                     (str_cat.str-cat
                       " parent "
                       (ownership-dump-loan (& parent)))])
-                (ownership-dump-source (& loan.source))
+                (ownership-dump-source (& loan.source) body-path)
                 "\n"))
             (set! i (+ i 1))))
         (set! i 0)
@@ -318,7 +329,9 @@
                       (set! j (+ j 1)))))])
             (text_buf.append!
               out
-              (str_cat.str-cat (ownership-dump-source (& cleanup.source)) "\n"))
+              (str_cat.str-cat
+                (ownership-dump-source (& cleanup.source) body-path)
+                "\n"))
             (set! i (+ i 1))))
         (set! i 0)
         (while (< i (array-length body.obligations))
@@ -364,7 +377,9 @@
                   (set! j (+ j 1)))))
             (text_buf.append!
               out
-              (str_cat.str-cat (ownership-dump-source (& owner.source)) "\n"))
+              (str_cat.str-cat
+                (ownership-dump-source (& owner.source) body-path)
+                "\n"))
             (set! i (+ i 1))))
         (set! i 0)
         (while (< i (array-length body.blocks))
@@ -383,7 +398,8 @@
                     (ownership-dump-operation
                       (& (array-ref block.instructions j).operation))
                     (ownership-dump-source
-                      (& (array-ref block.instructions j).source))
+                      (& (array-ref block.instructions j).source)
+                      body-path)
                     "\n"))
                 (set! j (+ j 1))))
             (text_buf.append!
@@ -391,7 +407,7 @@
               (str_cat.str-cat
                 "  "
                 (ownership-dump-terminator (& block.terminator))
-                (ownership-dump-source (& block.source))
+                (ownership-dump-source (& block.source) body-path)
                 "\n"))
             (set! i (+ i 1))))
         (OwnershipDumpResult.Ok (text_buf.render out)))]))

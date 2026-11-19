@@ -6337,7 +6337,7 @@
   [provenance-id : i64]
   [macro-name-id : i64]) : ownership.OwnershipSource
   (ownership.OwnershipSource
-    (string.copy (& source.path))
+    (ownership.ownership-path-copy (& source.path))
     (tc-selected-span-line source.line span)
     (tc-selected-span-column source.column span)
     (str_cat.str-cat
@@ -7355,7 +7355,7 @@
       (match span
         [(TcMaybeAstSourceSpan.Some at)
           (ownership.OwnershipSource
-            (string.copy (& source.path))
+            (ownership.ownership-path-copy (& source.path))
             (ast.ast-source-span-start-line at)
             (ast.ast-source-span-start-col at)
             (string.copy (& source.expansion)))]
@@ -11225,7 +11225,8 @@
                                       origin-id))
                                     [(Some span)
                                       (ownership.OwnershipSource
-                                        (string.copy (& source.path))
+                                        (ownership.ownership-path-copy
+                                          (& source.path))
                                         (tc-selected-span-line source.line span)
                                         (tc-selected-span-column
                                           source.column
@@ -14351,7 +14352,7 @@
         TcMaybeAstSourceSpan.No)
         [(TcMaybeAstSourceSpan.Some at)
           (ownership.OwnershipSource
-            (string.copy (& outer.path))
+            (ownership.ownership-path-copy (& outer.path))
             (ast.ast-source-span-start-line at)
             (ast.ast-source-span-start-col at)
             (string.copy (& outer.expansion)))]
@@ -16576,7 +16577,7 @@
         (tc-context-expr-get ctx arg-id))
         [(TcMaybeAstSourceSpan.Some at)
           (ownership.OwnershipSource
-            (string.copy (& outer.path))
+            (ownership.ownership-path-copy (& outer.path))
             (ast.ast-source-span-start-line at)
             (ast.ast-source-span-start-col at)
             (string.copy (& outer.expansion)))]
@@ -22288,16 +22289,14 @@
             (typed.typed-charge!
               store
               lease
-              (+
-                (string.string-length source.path)
-                (string.string-length source.expansion))))]
+              (+ source.path.bytes (string.string-length source.expansion))))]
         [origin : typed.TypedOriginId
           (try
             (typed.typed-origin-add!
               store
               lease
               (ownership.OwnershipSource
-                (string.copy (& source.path))
+                (ownership.ownership-path-copy (& source.path))
                 source.line
                 source.column
                 (string.copy (& source.expansion)))))]
@@ -54402,7 +54401,7 @@
     right
     typed.TypedSyntax.Generated
     typed.TypedSyntax.Generated
-    (ownership.OwnershipSource "" 0 0 "")
+    (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
     TcSelectedSink.Query)
     [(TcSelectedBinOpResult.Ok types _ _ _) (ResultTcBinOpTypes.Ok types)]
     [(TcSelectedBinOpResult.Err message _) (ResultTcBinOpTypes.Err message)]))
@@ -54885,7 +54884,7 @@
       left
       right
       expected
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 (define (tc-selected-publish-binary-value
@@ -55088,7 +55087,7 @@
       op
       inner
       (ast.AstMaybeType.Some expected)
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 (define (tc-selected-publish-unary
@@ -55363,7 +55362,7 @@
       then-branch-id
       else-branch-id
       (ast.AstMaybeType.Some expected)
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 (define (tc-selected-publish-if
@@ -55705,7 +55704,7 @@
       exprs
       typed.TypedSyntax.Generated
       (ast.AstMaybeType.Some expected)
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 ;; The canonical sequence checker retains precisely the child results it just
@@ -56391,7 +56390,7 @@
               body-box
               typed.TypedSyntax.Generated
               (ast.AstMaybeType.Some expected)
-              (ownership.OwnershipSource "" 0 0 "")
+              (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
               TcSelectedSink.Query))])]
     [(WithRegion region body)
       (tc-with-region-expr-scoped ctx env region body (Some expected))]
@@ -67070,7 +67069,7 @@
       bindings
       index
       body
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 ;; Whether the lambda `init` captures a local whose selected binder is a
@@ -67667,16 +67666,14 @@
         [(typed.TypedOriginView.Err error)
           (return (TcSelectedOriginResult.Err error))]
         [(typed.TypedOriginView.Ok source)
-          (+
-            (string.string-length source.path)
-            (string.string-length source.expansion))])]
+          (+ source.path.bytes (string.string-length source.expansion))])]
     [_charged : unit (try (typed.typed-charge! store lease bytes))]
     (match (typed.typed-origin-get! store lease origin)
       [(typed.TypedOriginView.Err error) (TcSelectedOriginResult.Err error)]
       [(typed.TypedOriginView.Ok source)
         (TcSelectedOriginResult.Ok
           (ownership.OwnershipSource
-            (string.copy (& source.path))
+            (ownership.ownership-path-copy (& source.path))
             source.line
             source.column
             (string.copy (& source.expansion))))])))
@@ -69394,7 +69391,7 @@
       exprs
       typed.TypedSyntax.Generated
       ast.AstMaybeType.No
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 ;; A body checked against the context's expected type when it has one, and
@@ -78982,7 +78979,7 @@
       value
       -1
       typed.TypedSyntax.Generated
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 (define (tc-selected-return
@@ -88757,7 +88754,7 @@
       name
       value-box
       typed.TypedSyntax.Generated
-      (ownership.OwnershipSource "" 0 0 "")
+      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
       TcSelectedSink.Query)))
 
 (define (tc-set-value-ok
@@ -89252,7 +89249,7 @@
               body-box
               typed.TypedSyntax.Generated
               ast.AstMaybeType.No
-              (ownership.OwnershipSource "" 0 0 "")
+              (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
               TcSelectedSink.Query))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
@@ -89273,7 +89270,7 @@
           tuple-box
           index
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(Array exprs)
       (let
@@ -89336,7 +89333,7 @@
           index-box
           ast.AstMaybeType.No
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(ArraySet array-box index-box value-box)
       (let
@@ -89465,7 +89462,7 @@
           then-branch-box
           else-branch-box
           ast.AstMaybeType.No
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(Set name value-box)
       (if (tc-dotted-place-name-id? ctx env name)
@@ -89487,7 +89484,7 @@
           inner-box
           ty-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(Borrow mutable lifetime-id place-box)
       (let
@@ -89509,7 +89506,7 @@
           op
           (tc-context-expr-get ctx inner-box)
           ast.AstMaybeType.No
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(Binary op left-box right-box)
       (let
@@ -89530,7 +89527,7 @@
           cond-box
           body-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(Foreach fe-box)
       (match (ast.ast-foreach-box-shared-view fe-box)
@@ -89971,7 +89968,7 @@
           ctx
           ty-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(PtrNullCheck inner-box)
       (tc-selected-project
@@ -89982,7 +89979,7 @@
           inner-box
           -1
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(PtrAddrOf place-box)
       (tc-selected-project
@@ -89991,7 +89988,7 @@
           env
           place-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrRead ptr-box)
       (tc-selected-project
@@ -90000,7 +89997,7 @@
           env
           ptr-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (tc-selected-project
@@ -90010,7 +90007,7 @@
           ptr-box
           value-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (tc-selected-project
@@ -90020,7 +90017,7 @@
           ptr-box
           offset-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrCast ptr-box target-id)
       (tc-selected-project
@@ -90031,7 +90028,7 @@
           ptr-box
           target-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (tc-selected-project
@@ -90042,7 +90039,7 @@
           ptr-box
           -1
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(ast.AstExpr.IntToPtr value-box target-id)
       (tc-selected-project
@@ -90053,7 +90050,7 @@
           value-box
           target-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource "" 0 0 "")
+          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
           TcSelectedSink.Query))]
     [(StringData str-box)
       (let
@@ -127832,6 +127829,11 @@
     (let
       [state : (MutPtr TcGlobalCallEffects)
         (tc-global-call-effects-ensure! ctx)]
+      ;; The calls' paths are ids in this body's table, its own path.
+      [source-state : TcBodyStateData
+        (tc-body-state-data-value (tc-context-body-state ctx))]
+      [body-path : String
+        (tc-selected-body-path (& source-state.selected-source-path))]
       [index : i64 0]
       (while (< index (array-length deferred.callees))
         (let
@@ -127846,7 +127848,9 @@
             (Some
               (tc-selected-source-span (& (array-ref deferred.borrows index))))
             (tc-borrow-check-origin-label (tc-move-global-source-name name))
-            (string.copy (& (array-ref deferred.calls index).path))
+            (ownership.ownership-path-text
+              (& (array-ref deferred.calls index).path)
+              (& body-path))
             (string.copy (& (array-ref deferred.calls index).expansion))))
         (set! index (+ index 1))))))
 
@@ -129066,7 +129070,8 @@
       (match (tc-selected-body-maybe-span ctx (tc-global-shared-view body))
         [(TcMaybeAstSourceSpan.Some span)
           (ownership.OwnershipSource
-            (tc-selected-body-path (& source-state.selected-source-path))
+            (ownership.ownership-body-path
+              (& (tc-selected-body-path (& source-state.selected-source-path))))
             (tc-selected-position-or-start
               (ast.ast-source-span-start-line span))
             (tc-selected-position-or-start (ast.ast-source-span-start-col span))
@@ -129075,7 +129080,8 @@
         ;; parameters and unspanned forms are located at its start.
         [(TcMaybeAstSourceSpan.No)
           (ownership.OwnershipSource
-            (tc-selected-body-path (& source-state.selected-source-path))
+            (ownership.ownership-body-path
+              (& (tc-selected-body-path (& source-state.selected-source-path))))
             1
             1
             "")])]

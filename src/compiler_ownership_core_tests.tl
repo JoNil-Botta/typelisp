@@ -17,7 +17,11 @@
   (own.OwnershipBlockId (ownership-test-id) index))
 
 (define (ownership-test-source [line : i64]) : own.OwnershipSource
-  (own.OwnershipSource "ownership-fixture.tl" line 3 "fixture macro"))
+  (own.OwnershipSource
+    (own.ownership-body-path "ownership-fixture.tl")
+    line
+    3
+    "fixture macro"))
 
 ;; Two operands parse as the type/length form when the first is nominal syntax.
 (define (ownership-test-fields [first : i64] [second : i64]) : (__tl_dyn-array
@@ -531,9 +535,15 @@
   (let
     [first : own.OwnershipBody (ownership-test-branch-body 3)]
     [second : own.OwnershipBody (ownership-test-branch-body 3)]
-    (match (dump.ownership-dump (& first) (own.ownership-default-limits))
+    (match (dump.ownership-dump
+      (& first)
+      (own.ownership-default-limits)
+      "ownership-fixture.tl")
       [(dump.OwnershipDumpResult.Ok first-text)
-        (match (dump.ownership-dump (& second) (own.ownership-default-limits))
+        (match (dump.ownership-dump
+          (& second)
+          (own.ownership-default-limits)
+          "ownership-fixture.tl")
           [(dump.OwnershipDumpResult.Ok second-text)
             (and
               (string.eq (& first-text) (& second-text))
@@ -545,9 +555,12 @@
           [_ false])]
       [_ false])))
 
+(define ownership-test-shared-provenance-path : String
+  "shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/")
+
 (define (ownership-test-shared-provenance-source) : own.OwnershipSource
   (own.OwnershipSource
-    "shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/shared-provenance/"
+    (own.ownership-body-path (& ownership-test-shared-provenance-path))
     2
     3
     "shared expansion"))
@@ -585,7 +598,7 @@
         [(own.OwnershipResult.Err error)
           (= (ownership-test-kind-code (& error.kind)) 3)]
         [_ false])
-      (match (dump.ownership-dump (& body) limits)
+      (match (dump.ownership-dump (& body) limits "ownership-fixture.tl")
         [(dump.OwnershipDumpResult.Err error)
           (= (ownership-test-kind-code (& error.kind)) 3)]
         [_ false]))))
@@ -675,15 +688,21 @@
           (__tl_make-array own.OwnershipInstruction 0)
           (ownership-test-instructions1
             (own.OwnershipInstruction
-              (own.OwnershipOperation.Unsupported (string.copy (& reason.path)))
+              (own.OwnershipOperation.Unsupported
+                (own.ownership-path-text
+                  (& reason.path)
+                  (& ownership-test-shared-provenance-path)))
               (ownership-test-source 10))))
         (if terminator?
-          (own.OwnershipTerminator.Unsupported (string.copy (& reason.path)))
+          (own.OwnershipTerminator.Unsupported
+            (own.ownership-path-text
+              (& reason.path)
+              (& ownership-test-shared-provenance-path)))
           (ownership-test-return)))]
     [limits : own.OwnershipLimits (own.OwnershipLimits 1000 1000 700)]
     (and
       (ownership-test-result-resource? (own.ownership-validate (& body) limits))
-      (match (dump.ownership-dump (& body) limits)
+      (match (dump.ownership-dump (& body) limits "ownership-fixture.tl")
         [(dump.OwnershipDumpResult.Err error)
           (= (ownership-test-kind-code (& error.kind)) 3)]
         [_ false]))))
@@ -753,7 +772,10 @@
 (define (ownership-test-dump-rejects?) : bool
   (let
     [body : own.OwnershipBody (ownership-test-malformed-body 1)]
-    (match (dump.ownership-dump (& body) (own.ownership-default-limits))
+    (match (dump.ownership-dump
+      (& body)
+      (own.ownership-default-limits)
+      "ownership-fixture.tl")
       [(dump.OwnershipDumpResult.Err error)
         (= (ownership-test-kind-code (& error.kind)) 0)]
       [_ false])))
@@ -767,9 +789,10 @@
       (dump.ownership-dump-identity-component (cast 18446744073709551615 : u64))
       "4294967295.4294967295")
     (let
-      [source : own.OwnershipSource (own.OwnershipSource "a:\nb" 2 7 "x:y\nz")]
+      [source : own.OwnershipSource
+        (own.OwnershipSource (own.ownership-body-path "a:\nb") 2 7 "x:y\nz")]
       (string.eq
-        (dump.ownership-dump-source (& source))
+        (dump.ownership-dump-source (& source) "a:\nb")
         " @4:a:\nb:2:7 expansion=5:x:y\nz"))))
 
 ;; Interleaved siblings ensure the index follows projection identity rather

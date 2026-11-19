@@ -410,7 +410,10 @@
             [_ (return 413)])]))
     (let
       [body : own.OwnershipBody (loan-test-reborrow 6)]
-      (match (dump.ownership-dump (& body) (own.ownership-default-limits))
+      (match (dump.ownership-dump
+        (& body)
+        (own.ownership-default-limits)
+        "ownership-fixture.tl")
         [(dump.OwnershipDumpResult.Err _) (return 414)]
         [(dump.OwnershipDumpResult.Ok text)
           (unless

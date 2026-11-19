@@ -8683,19 +8683,17 @@
             exact
             (tc-inline-variant-layout-list-size-fallback-id variants name-id)))])))
 
-;; Serial/test compatibility adapter. Production batch prewarming supplies the
-;; CompilerDriverState-owned job explicitly.
-(define (tc-agg-size-cache-storage-ensure!) : unit
-  (tc_core.tc-agg-size-cache-storage-ensure-for-job!
-    (tc_core.tc-serial-job-state)))
-
-(define (tc-agg-align-cache-storage-ensure!) : unit
-  (tc_core.tc-agg-align-cache-storage-ensure-for-job!
-    (tc_core.tc-serial-job-state)))
-
-(define (tc-agg-regwords-cache-storage-ensure!) : unit
-  (tc_core.tc-agg-regwords-cache-storage-ensure-for-job!
-    (tc_core.tc-serial-job-state)))
+;; Prepare JOB-STATE's aggregate size, align and regwords caches for
+;; SOURCE-NAMES, as their first cached queries do.
+(define (tc-agg-scalar-caches-ensure!
+  [job-state : tc_core.TcJobState]
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
+  (let
+    [state : tc_core.TcAggScalarCacheState
+      (tc_core.tc-job-state-agg-scalar-caches job-state)]
+    (tc_core.tc-agg-size-cache-ensure-for-state! state source-names)
+    (tc_core.tc-agg-align-cache-ensure-for-state! state source-names)
+    (tc_core.tc-agg-regwords-cache-ensure-for-state! state source-names)))
 
 ;; The demand-driven CTFE base env: when metadata is demanded, the first
 ;; request builds once into the pool context's base arena, caches the env in
@@ -10871,9 +10869,11 @@
         (arena.set! scratch))]
     [_resolution : unit
       (tc_core.tc-type-needs-resolution-storage-ensure-for-job! job-state)]
-    [_size : unit (tc-agg-size-cache-storage-ensure!)]
-    [_align : unit (tc-agg-align-cache-storage-ensure!)]
-    [_regwords : unit (tc-agg-regwords-cache-storage-ensure!)]
+    [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state (& interns))]
+    [key-space : i64 (tc_core.tc-agg-scalar-cache-key-space source-names)]
+    [_scalar : unit (tc-agg-scalar-caches-ensure! job-state source-names)]
     [scalar-data : tc_core.TcAggScalarCacheStateData
       (tc_core.tc-agg-scalar-cache-state-data scalar-state)]
     [resolution-data : tc_core.TcTypeResolutionCacheStateData
@@ -10886,15 +10886,19 @@
         (=
           (array-length resolution-data.slots)
           tc_core.tc-type-resolution-cache-capacity)
+        (> key-space 0)
         (=
-          (array-length scalar-data.size-cache)
-          tc_core.tc-agg-scalar-cache-length)
+          (tc_core.tc-agg-scalar-cache-table-capacity
+            (& scalar-data.size-cache))
+          key-space)
         (=
-          (array-length scalar-data.align-cache)
-          tc_core.tc-agg-scalar-cache-length)
+          (tc_core.tc-agg-scalar-cache-table-capacity
+            (& scalar-data.align-cache))
+          key-space)
         (=
-          (array-length scalar-data.regwords-cache)
-          tc_core.tc-agg-scalar-cache-length)
+          (tc_core.tc-agg-scalar-cache-table-capacity
+            (& scalar-data.regwords-cache))
+          key-space)
         (=
           (array-length
             (__tl-project-field
@@ -11314,6 +11318,10 @@
       [table-b : i64 (ci.intern-compat-state-table-id intern-b)]
       [generation-a : i64 (ci.intern-compat-state-generation intern-a)]
       [generation-b : i64 (ci.intern-compat-state-generation intern-b)]
+      [names-a : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state (& intern-a))]
+      [names-b : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state (& intern-b))]
       [initially-lazy? : bool
         (and
           (=
@@ -11343,42 +11351,20 @@
       [scratch : arena.Arena (arena.make)]
       (unsafe
         (arena.set! scratch))
-      (tc_core.tc-agg-size-cache-storage-ensure-for-job! job-a)
-      (tc_core.tc-agg-align-cache-storage-ensure-for-job! job-a)
-      (tc_core.tc-agg-regwords-cache-storage-ensure-for-job! job-a)
-      (tc_core.tc-agg-size-cache-storage-ensure-for-job! job-b)
-      (tc_core.tc-agg-align-cache-storage-ensure-for-job! job-b)
-      (tc_core.tc-agg-regwords-cache-storage-ensure-for-job! job-b)
+      ;; The tables are allocated while an unrelated scratch arena is active,
+      ;; in each job's owner arena.
+      (tc-agg-scalar-caches-ensure! job-a names-a)
+      (tc-agg-scalar-caches-ensure! job-b names-b)
       (let
         [restored-scratch? : bool (arena.eq? (arena.current) scratch)]
+        [slots-cover? : bool
+          (and
+            (> (tc_core.tc-agg-scalar-cache-key-space names-a) 17)
+            (> (tc_core.tc-agg-scalar-cache-key-space names-b) 17))]
         (unsafe
           (arena.set! caller))
         (unsafe
           (arena.destroy scratch))
-        (tc_core.tc-agg-size-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-align-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-regwords-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-size-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
-        (tc_core.tc-agg-align-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
-        (tc_core.tc-agg-regwords-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
         (let
           [data-a : tc_core.TcAggScalarCacheStateData
             (tc_core.tc-agg-scalar-cache-state-data state-a)]
@@ -11407,18 +11393,7 @@
             17)
           (ci.intern-compat-state-install! decoy)
           (tc_core.tc-agg-caches-reset-for-job! job-a)
-          (tc_core.tc-agg-size-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
-          (tc_core.tc-agg-align-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
-          (tc_core.tc-agg-regwords-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
+          (tc-agg-scalar-caches-ensure! job-a names-a)
           (let
             [reset-a : tc_core.TcAggScalarCacheStateData
               (tc_core.tc-agg-scalar-cache-state-data state-a)]
@@ -11454,6 +11429,7 @@
               (if (and
                 initially-lazy?
                 restored-scratch?
+                slots-cover?
                 isolated?
                 b-survived?
                 (not (= table-a table-b)))

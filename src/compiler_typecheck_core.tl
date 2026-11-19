@@ -3920,6 +3920,12 @@
   (Ok ast.AstType)
   (Err String))
 
+;; A call's callee typed at most once while its selected target is chosen:
+;; every test that needs the callee's type reads this one result.
+(defstruct TcSelectedCalleeMemo
+  (ready bool)
+  (result ResultTcType))
+
 (defstruct TcSelectedBinding
   (coordinate TcScopedBindingCoordinate)
   (binder typed.TypedBinderId))
@@ -15157,8 +15163,9 @@
 (define (tc-selected-safe-spawn-call?
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [func-id : i64]) : bool
-  (match (tc-call-target-expr-id ctx env func-id)
+  [func-id : i64]
+  [callee : (&mut callee TcSelectedCalleeMemo)]) : bool
+  (match (tc-selected-callee-type ctx env func-id callee)
     [(ResultTcType.Ok fn-ty)
       (match (tc-global-shared-view fn-ty)
         [(ast.AstType.Func params-box ret)
@@ -15659,7 +15666,8 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [raw-name : i64]
-  [func-id : i64]) : bool
+  [func-id : i64]
+  [callee : (&mut callee TcSelectedCalleeMemo)]) : bool
   (and
     (not
       (macro-hygiene-global-id? (tc-context-structural-session ctx) raw-name))
@@ -15668,7 +15676,7 @@
         (tc-type-env-scoped-runtime-active? env)
         (>= (tc-type-env-scoped-runtime-lookup-index env raw-name) 0)))
     (not (tc-name-local-bound-before-module-scan-id? env raw-name))
-    (match (tc-call-target-expr-id ctx env func-id)
+    (match (tc-selected-callee-type ctx env func-id callee)
       [(ResultTcType.Ok fn-ty)
         (tc-selected-enum-variant-named?
           ctx
@@ -15689,6 +15697,13 @@
       (>= (tc-selected-variant ctx enum-name name).ordinal 0)]
     [(ast.AstType.EnumArgs enum-name _)
       (>= (tc-selected-variant ctx enum-name name).ordinal 0)]
+    [_ false]))
+
+;; Whether `ty` is a struct or enum type with lifetime arguments.
+(define (tc-selected-lifetime-args-type? [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(ast.AstType.StructArgs _ _) true]
+    [(ast.AstType.EnumArgs _ _) true]
     [_ false]))
 
 ;; A constructor's checked signature from its legacy target type. A field
@@ -15785,17 +15800,11 @@
   [env : TcTypeEnv]
   [call : ast.AstExpr]
   [func-id : i64]
-  [arg-count : i64]) : TcSelectedCallTarget
+  [arg-count : i64]
+  [callee : (&mut callee TcSelectedCalleeMemo)]) : TcSelectedCallTarget
   (let
     [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
-    ;; An arena-branded construction: every lifetime of the constructed type is
-    ;; an arena region here, so a parameter tagged with one of them holds an
-    ;; arena allocation, which the ownership graph erases (`tc-selected-arena-
-    ;; erase`; destroying the arena invalidates the result, whose type keeps
-    ;; the region).
-    [arena-branded? : bool
-      (tc-selected-arena-branded-call? ctx env (tc-global-shared-view call))]
-    (match (tc-call-target-expr-id ctx env func-id)
+    (match (tc-selected-callee-type ctx env func-id callee)
       ;; Legacy call typing resolves a constructor without typing its name as
       ;; a value (a macro's variant through its module alias): it decides
       ;; whether the call is an error.
@@ -15806,6 +15815,21 @@
             (let
               [params : ast.AstTypeList
                 (ast.ast-type-list-box-shared-view params-box)]
+              ;; An arena-branded construction: every lifetime of the
+              ;; constructed type is an arena region here, so a parameter
+              ;; tagged with one of them holds an arena allocation, which the
+              ;; ownership graph erases (`tc-selected-arena-erase`; destroying
+              ;; the arena invalidates the result, whose type keeps the
+              ;; region). Only a constructed type with lifetime arguments can
+              ;; be one, so the call is typed only for those.
+              [arena-branded? : bool
+                (and
+                  (tc-selected-lifetime-args-type?
+                    (tc-resolve-type ctx (ast.ty-node-get ret-id)))
+                  (tc-selected-arena-branded-call?
+                    ctx
+                    env
+                    (tc-global-shared-view call)))]
               [index : i64 0]
               [ok? : bool
                 (tc-selected-call-type-ok? ctx (ast.ty-node-get ret-id))]
@@ -17479,6 +17503,19 @@
         ok?)]
     [_ false]))
 
+;; The callee FUNC-ID's type (`tc-call-target-expr-id`), typed on the first
+;; request and read from CALLEE after that.
+(define (tc-selected-callee-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [callee : (&mut callee TcSelectedCalleeMemo)]) : ResultTcType
+  (unless
+    callee.ready
+    (set! callee.result (tc-call-target-expr-id ctx env func-id))
+    (set! callee.ready true))
+  (clone callee.result))
+
 (define (tc-selected-call-target
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -17494,10 +17531,23 @@
         (let
           [builtin : TcCallBuiltinName
             (tc-call-builtin-name ctx env raw-name arg-count)]
+          [callee : TcSelectedCalleeMemo
+            (TcSelectedCalleeMemo false (ResultTcType.Err ""))]
           (if (or
             (tc-selected-call-constructor? ctx env raw-name (& builtin))
-            (tc-selected-call-variant-value? ctx env raw-name func-id))
-            (tc-selected-constructor-target ctx env call func-id arg-count)
+            (tc-selected-call-variant-value?
+              ctx
+              env
+              raw-name
+              func-id
+              (&mut callee)))
+            (tc-selected-constructor-target
+              ctx
+              env
+              call
+              func-id
+              arg-count
+              (&mut callee))
             (let
               [arm : i64 builtin.arm]
               (cond
@@ -17517,7 +17567,7 @@
                 ;; `thread.spawn` adapter is an ordinary (unsafe) call.
                 [(and
                     (= arg-count 1)
-                    (tc-selected-safe-spawn-call? ctx env func-id))
+                    (tc-selected-safe-spawn-call? ctx env func-id (&mut callee)))
                   TcSelectedCallTarget.Spawn]
                 ;; The definition or extern this name denotes, looked up once
                 ;; (-1: none, a call through a value).
@@ -17531,7 +17581,11 @@
                       [(tc-selected-foreign-abi?
                           ctx
                           (tc-global-shared-view func))
-                        (match (tc-call-target-expr-id ctx env func-id)
+                        (match (tc-selected-callee-type
+                          ctx
+                          env
+                          func-id
+                          (&mut callee))
                           [(ResultTcType.Err message)
                             (TcSelectedCallTarget.Err message)]
                           [(ResultTcType.Ok declared-ty)
@@ -17575,7 +17629,11 @@
                           env
                           (tc-global-shared-view func))
                           [(TcDirectLambdaCheck.No)
-                            (match (tc-call-target-expr-id ctx env func-id)
+                            (match (tc-selected-callee-type
+                              ctx
+                              env
+                              func-id
+                              (&mut callee))
                               [(ResultTcType.Err message)
                                 (TcSelectedCallTarget.Err message)]
                               [(ResultTcType.Ok fn-ty)
@@ -77657,49 +77715,60 @@
     name-id
     Nil))
 
-;; Compile-time cache: memoize the inline-aggregate SIZE. Without it,
+;; Compile-time caches: memoize the inline-aggregate SIZE, ALIGN and
+;; register-resident word count of a bare nominal aggregate. Without them,
 ;; tc-inline-aggregate-layout-for-with-stack re-walks the whole layout on every
-;; lower-type-size query. The cache must do NO allocation during lowering
-;; (the scratch-arena hazard makes a grown map / cached field-list dangle):
-;; so it is a FIXED job-owned i64 array, allocated lazily in the owning compiler
-;; job's lifetime arena and only read/written by that job thereafter. It is keyed
+;; lowering query. The caches must do NO allocation in the current arena during
+;; lowering (the scratch-arena hazard makes a grown map / cached field-list
+;; dangle): each is a job-owned i64 array allocated in the owning compiler job's
+;; lifetime arena and only read/written by that job thereafter. A cache is keyed
 ;; by the intern id of the nominal type name: symbol handles can be reassigned
 ;; when specialization rebuilds the symbol table, while intern ids are
 ;; append-only until that owning interner is reset.
-;; A size is encoded as size+1 (0 = uncached); only fully-resolved layouts are
+;; A value is encoded as value+1 (0 = uncached); only fully-resolved layouts are
 ;; cached (Err forward-refs stay uncached until their nested types resolve).
 ;; Entries are valid only for the current program; tc-agg-caches-reset! forces
 ;; the next query to clear them at lower boundaries.
-(define tc-agg-scalar-cache-capacity : i64
-  400000)
-
-;; These scalar caches are keyed by intern id, not by symbol-handle INDEX, which
-;; is only meaningful for one snapshot of a program's symbol table. Specialization
-;; rebuilds that table after inserting generated declarations, so a cached value
-;; under an old handle index could be returned for a different type whose new
-;; handle reuses the same index. Intern ids are stable across that rebuild.
+;;
 ;; The owning source-name session's table and reset generation are the cheap
 ;; clear tokens across programs, while tc-agg-caches-reset-for-job! covers
 ;; lower/test paths that reuse cache arrays without resetting the intern table.
 ;;
-;; A scalar cache array ends with its fill log: past the `capacity` table slots,
-;; a count cell, then up to `tc-agg-scalar-cache-log-capacity` keys filled since
-;; the last clear, so a clear costs what the program cached rather than the
-;; whole table (#8520). A count above the log capacity means the log
-;; overflowed, or the array is fresh and its contents unknown: the next clear
-;; then empties the whole table.
+;; A name id is a source-name id below the session's pool capacity or a
+;; structural id of the session's structural table (a module-qualified name).
+;; A clear sizes the table to the id ranges the session has then: slot ID for
+;; a source-name id, and slot `source span + index` for structural record
+;; INDEX. An id minted after the clear falls outside both and is computed
+;; uncached until the next clear sizes the table again.
+;;
+;; Past the table, a scalar cache array holds its fill log: a count cell, then
+;; up to `tc-agg-scalar-cache-log-capacity` keys filled since the last clear,
+;; so a clear costs what the program cached rather than the whole table
+;; (#8520). A count above the log capacity means the log overflowed, or the
+;; array is fresh and its contents unknown: the next clear then empties the
+;; whole table. The array ends with its key layout: the source span, the
+;; structural key prefix and the structural span.
 (define tc-agg-scalar-cache-log-capacity : i64
   16384)
-(define tc-agg-scalar-cache-length : i64
-  (+ tc-agg-scalar-cache-capacity (+ tc-agg-scalar-cache-log-capacity 1)))
+(define tc-agg-scalar-cache-trailer-length : i64
+  (+ tc-agg-scalar-cache-log-capacity 4))
 
-(define (tc-agg-scalar-cache-new) : (__tl_dyn-array i64)
+(define (tc-agg-scalar-cache-table-capacity
+  [slots : (& slots (__tl_dyn-array i64))]) : i64
+  (- (array-length slots) tc-agg-scalar-cache-trailer-length))
+
+;; Index of the source-span cell; the structural prefix and span follow it.
+(define (tc-agg-scalar-cache-layout-slot
+  [slots : (& slots (__tl_dyn-array i64))]) : i64
+  (+
+    (tc-agg-scalar-cache-table-capacity slots)
+    (+ tc-agg-scalar-cache-log-capacity 1)))
+
+(define (tc-agg-scalar-cache-new [capacity : i64]) : (__tl_dyn-array i64)
   (let
     [slots : (__tl_dyn-array i64)
-      (__tl_make-array i64 tc-agg-scalar-cache-length)]
-    (set!
-      (array-ref slots tc-agg-scalar-cache-capacity)
-      (+ tc-agg-scalar-cache-log-capacity 1))
+      (__tl_make-array i64 (+ capacity tc-agg-scalar-cache-trailer-length))]
+    (set! (array-ref slots capacity) (+ tc-agg-scalar-cache-log-capacity 1))
     slots))
 
 ;; Log table slot KEY of SLOTS as filled.
@@ -77707,73 +77776,111 @@
   [slots : (&mut slots (__tl_dyn-array i64))]
   [key : i64]) : unit
   (let
-    [count : i64 (array-ref slots tc-agg-scalar-cache-capacity)]
+    [capacity : i64 (tc-agg-scalar-cache-table-capacity slots)]
+    [count : i64 (array-ref slots capacity)]
     (if (< count tc-agg-scalar-cache-log-capacity)
       (begin
-        (set!
-          (array-ref slots (+ tc-agg-scalar-cache-capacity (+ count 1)))
-          key)
-        (set! (array-ref slots tc-agg-scalar-cache-capacity) (+ count 1)))
-      (set!
-        (array-ref slots tc-agg-scalar-cache-capacity)
-        (+ tc-agg-scalar-cache-log-capacity 1)))))
+        (set! (array-ref slots (+ capacity (+ count 1))) key)
+        (set! (array-ref slots capacity) (+ count 1)))
+      (set! (array-ref slots capacity) (+ tc-agg-scalar-cache-log-capacity 1)))))
 
 ;; Empty every table slot filled since the last clear: the logged keys, or the
 ;; whole table when the log overflowed. The table then caches nothing.
 (define (tc-agg-scalar-cache-clear! [slots : (&mut slots (__tl_dyn-array i64))]) : unit
   (let
-    [count : i64 (array-ref slots tc-agg-scalar-cache-capacity)]
+    [capacity : i64 (tc-agg-scalar-cache-table-capacity slots)]
+    [count : i64 (array-ref slots capacity)]
     [index : i64 0]
     (if (> count tc-agg-scalar-cache-log-capacity)
-      (while (< index tc-agg-scalar-cache-capacity)
+      (while (< index capacity)
         (set! (array-ref slots index) 0)
         (+= index 1))
       (while (< index count)
-        (set!
-          (array-ref
-            slots
-            (array-ref slots (+ tc-agg-scalar-cache-capacity (+ index 1))))
-          0)
+        (set! (array-ref slots (array-ref slots (+ capacity (+ index 1)))) 0)
         (+= index 1)))
-    (set! (array-ref slots tc-agg-scalar-cache-capacity) 0)))
+    (set! (array-ref slots capacity) 0)))
 
-(define (tc-agg-size-cache-storage-ensure-for-state!
-  [state : TcAggScalarCacheState]) : unit
+;; The table slots a cache cleared now needs for SOURCE-NAMES' id ranges: its
+;; source-name ids, then its structural record indices.
+(define (tc-agg-scalar-cache-key-space
+  [source-names : ci.InternSourceNameSessionHandle]) : i64
   (let
-    [data : (MutPtr TcAggScalarCacheStateData)
-      (tc-agg-scalar-cache-state-ptr state)]
-    (unsafe
-      (if (= (array-length (deref data).size-cache) tc-agg-scalar-cache-length)
-        unit
+    [session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
+    (+
+      (array-length session.pool-slots)
+      (owned_view.compiler-owned-array-element-shared-view
+        session.structural-table-cell
+        0).len)))
+
+;; SLOTS emptied and keyed for the id ranges SOURCE-NAMES has now: SLOTS itself
+;; when its table covers them, else a fresh array in OWNER-ARENA.
+(define (tc-agg-scalar-cache-prepare
+  [slots : (__tl_dyn-array i64)]
+  [owner-arena : i64]
+  [source-names : ci.InternSourceNameSessionHandle]) : (__tl_dyn-array i64)
+  (let
+    [session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
+    [source-span : i64 (array-length session.pool-slots)]
+    [needed : i64 (tc-agg-scalar-cache-key-space source-names)]
+    [ready : (__tl_dyn-array i64)
+      (if (< (tc-agg-scalar-cache-table-capacity (& slots)) needed)
         (in-arena
           (unsafe
-            (arena.Arena (deref data).owner-arena))
-          (set! (deref data).size-cache (tc-agg-scalar-cache-new)))))))
+            (arena.Arena owner-arena))
+          (tc-agg-scalar-cache-new needed))
+        slots)]
+    [layout : i64 (tc-agg-scalar-cache-layout-slot (& ready))]
+    (tc-agg-scalar-cache-clear! (&mut ready))
+    (set! (array-ref ready layout) source-span)
+    (set!
+      (array-ref ready (+ layout 1))
+      (+
+        (ci.intern-structural-key-base)
+        (* session.structural-owner (ci.intern-structural-key-owner-stride))))
+    (set! (array-ref ready (+ layout 2)) (- needed source-span))
+    ready))
 
-(define (tc-agg-size-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
-  (tc-agg-size-cache-storage-ensure-for-state!
-    (tc-job-state-agg-scalar-caches job-state)))
+;; The table slot of NAME-ID in prepared SLOTS, or -1 outside its id ranges.
+(define (tc-agg-scalar-cache-key
+  [slots : (& slots (__tl_dyn-array i64))]
+  [name-id : i64]) : i64
+  (let
+    [layout : i64 (tc-agg-scalar-cache-layout-slot slots)]
+    [source-span : i64 (array-ref slots layout)]
+    [structural-index : i64 (- name-id (array-ref slots (+ layout 1)))]
+    (cond
+      [(and (>= name-id 0) (< name-id source-span)) name-id]
+      [(and
+          (> structural-index 0)
+          (<= structural-index (array-ref slots (+ layout 2))))
+        (+ source-span (- structural-index 1))]
+      [else -1])))
 
 (define (tc-agg-size-cache-ensure-for-state!
   [state : TcAggScalarCacheState]
-  [intern-table-id : i64]
-  [intern-generation : i64]) : unit
-  (tc-agg-size-cache-storage-ensure-for-state! state)
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
   (let
-    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-    (unless
-      (and
-        (= data.size-intern-table-id intern-table-id)
-        (= data.size-intern-generation intern-generation))
-      (tc-agg-scalar-cache-clear! (&mut data.size-cache))
-      (set! data.size-intern-table-id intern-table-id)
-      (set! data.size-intern-generation intern-generation)
-      (tc-agg-scalar-cache-state-data-set! state data))))
-
-(define (tc-agg-scalar-cache-key-id [name-id : i64]) : i64
-  (if (>= name-id tc-agg-scalar-cache-capacity)
-    (- 0 1)
-    name-id))
+    [data : (MutPtr TcAggScalarCacheStateData)
+      (tc-agg-scalar-cache-state-ptr state)]
+    [intern-table-id : i64
+      (ci.intern-source-name-session-handle-table-id source-names)]
+    [intern-generation : i64
+      (ci.intern-source-name-session-handle-reset-generation source-names)]
+    (unsafe
+      (unless
+        (and
+          (= (deref data).size-intern-table-id intern-table-id)
+          (= (deref data).size-intern-generation intern-generation))
+        (set!
+          (deref data).size-cache
+          (tc-agg-scalar-cache-prepare
+            (deref data).size-cache
+            (deref data).owner-arena
+            source-names))
+        (set! (deref data).size-intern-table-id intern-table-id)
+        (set! (deref data).size-intern-generation intern-generation)))))
 
 (define (tc-inline-aggregate-size-cached
   [ctx : TcContext]
@@ -77782,79 +77889,57 @@
   (let
     [state : TcAggScalarCacheState
       (tc-job-state-agg-scalar-caches (tc-context-job-state ctx))]
-    [source-names : ci.InternSourceNameSessionHandle
-      (tc-context-source-names ctx)]
-    (tc-agg-size-cache-ensure-for-state!
-      state
-      (ci.intern-source-name-session-handle-table-id source-names)
-      (ci.intern-source-name-session-handle-reset-generation source-names))
+    (tc-agg-size-cache-ensure-for-state! state (tc-context-source-names ctx))
     (let
-      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-      (if (< key 0)
+      [data : (Ptr TcAggScalarCacheStateData)
+        (tc-agg-scalar-cache-state-view state)]
+      [slots : (__tl_dyn-array i64)
+        (unsafe
+          (deref data).size-cache)]
+      [key : i64 (tc-agg-scalar-cache-key (& slots) name-id)]
+      (if (and (>= key 0) (> (array-ref slots key) 0))
+        (- (array-ref slots key) 1)
         (match (tc-inline-aggregate-layout-for-with-stack
           ctx
           (tc-nominal-name-id-display name-id)
           name-id
           Nil)
-          [(Ok layout) (tc-inline-aggregate-layout-size layout)]
-          [(Err _) fallback])
-        (let
-          [data : (Ptr TcAggScalarCacheStateData)
-            (tc-agg-scalar-cache-state-view state)]
-          [slots : (__tl_dyn-array i64)
-            (unsafe
-              (deref data).size-cache)]
-          [cached : i64 (array-ref slots key)]
-          (if (> cached 0)
-            (- cached 1)
-            (match (tc-inline-aggregate-layout-for-with-stack
-              ctx
-              (tc-nominal-name-id-display name-id)
-              name-id
-              Nil)
-              [(Ok layout)
-                (let
-                  [size : i64 (tc-inline-aggregate-layout-size layout)]
-                  (set! (array-ref slots key) (+ size 1))
-                  (tc-agg-scalar-cache-note-filled! (&mut slots) key)
-                  size)]
-              [(Err _) fallback])))))))
+          [(Ok layout)
+            (let
+              [size : i64 (tc-inline-aggregate-layout-size layout)]
+              (when
+                (>= key 0)
+                (set! (array-ref slots key) (+ size 1))
+                (tc-agg-scalar-cache-note-filled! (&mut slots) key))
+              size)]
+          [(Err _) fallback])))))
 
-;; Same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
-;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
+;; Same arena-safe cache for bare aggregate ALIGN queries. Lowering asks for
+;; alignment on the same hot aggregate paths as size; rebuilding the full
 ;; layout here defeats the size/regword caches.
-(define (tc-agg-align-cache-storage-ensure-for-state!
-  [state : TcAggScalarCacheState]) : unit
+(define (tc-agg-align-cache-ensure-for-state!
+  [state : TcAggScalarCacheState]
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
   (let
     [data : (MutPtr TcAggScalarCacheStateData)
       (tc-agg-scalar-cache-state-ptr state)]
+    [intern-table-id : i64
+      (ci.intern-source-name-session-handle-table-id source-names)]
+    [intern-generation : i64
+      (ci.intern-source-name-session-handle-reset-generation source-names)]
     (unsafe
-      (if (= (array-length (deref data).align-cache) tc-agg-scalar-cache-length)
-        unit
-        (in-arena
-          (unsafe
-            (arena.Arena (deref data).owner-arena))
-          (set! (deref data).align-cache (tc-agg-scalar-cache-new)))))))
-
-(define (tc-agg-align-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
-  (tc-agg-align-cache-storage-ensure-for-state!
-    (tc-job-state-agg-scalar-caches job-state)))
-
-(define (tc-agg-align-cache-ensure-for-state!
-  [state : TcAggScalarCacheState]
-  [intern-table-id : i64]
-  [intern-generation : i64]) : unit
-  (tc-agg-align-cache-storage-ensure-for-state! state)
-  (let
-    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-    (unless
-      (and
-        (= data.align-intern-table-id intern-table-id)
-        (= data.align-intern-generation intern-generation))
-      (tc-agg-scalar-cache-clear! (&mut data.align-cache))
-      (set! data.align-intern-table-id intern-table-id)
-      (set! data.align-intern-generation intern-generation)
-      (tc-agg-scalar-cache-state-data-set! state data))))
+      (unless
+        (and
+          (= (deref data).align-intern-table-id intern-table-id)
+          (= (deref data).align-intern-generation intern-generation))
+        (set!
+          (deref data).align-cache
+          (tc-agg-scalar-cache-prepare
+            (deref data).align-cache
+            (deref data).owner-arena
+            source-names))
+        (set! (deref data).align-intern-table-id intern-table-id)
+        (set! (deref data).align-intern-generation intern-generation)))))
 
 (define (tc-inline-aggregate-align-cached
   [ctx : TcContext]
@@ -77863,69 +77948,57 @@
   (let
     [state : TcAggScalarCacheState
       (tc-job-state-agg-scalar-caches (tc-context-job-state ctx))]
-    [source-names : ci.InternSourceNameSessionHandle
-      (tc-context-source-names ctx)]
-    (tc-agg-align-cache-ensure-for-state!
-      state
-      (ci.intern-source-name-session-handle-table-id source-names)
-      (ci.intern-source-name-session-handle-reset-generation source-names))
+    (tc-agg-align-cache-ensure-for-state! state (tc-context-source-names ctx))
     (let
-      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-      (if (< key 0)
+      [data : (Ptr TcAggScalarCacheStateData)
+        (tc-agg-scalar-cache-state-view state)]
+      [slots : (__tl_dyn-array i64)
+        (unsafe
+          (deref data).align-cache)]
+      [key : i64 (tc-agg-scalar-cache-key (& slots) name-id)]
+      (if (and (>= key 0) (> (array-ref slots key) 0))
+        (- (array-ref slots key) 1)
         (match (tc-inline-aggregate-layout-for-with-stack
           ctx
           (tc-nominal-name-id-display name-id)
           name-id
           Nil)
-          [(Ok layout) (tc-inline-aggregate-layout-align layout)]
-          [(Err _) fallback])
-        (let
-          [data : (Ptr TcAggScalarCacheStateData)
-            (tc-agg-scalar-cache-state-view state)]
-          [slots : (__tl_dyn-array i64)
-            (unsafe
-              (deref data).align-cache)]
-          [cached : i64 (array-ref slots key)]
-          (if (> cached 0)
-            (- cached 1)
-            (match (tc-inline-aggregate-layout-for-with-stack
-              ctx
-              (tc-nominal-name-id-display name-id)
-              name-id
-              Nil)
-              [(Ok layout)
-                (let
-                  [align : i64 (tc-inline-aggregate-layout-align layout)]
-                  (set! (array-ref slots key) (+ align 1))
-                  (tc-agg-scalar-cache-note-filled! (&mut slots) key)
-                  align)]
-              [(Err _) fallback])))))))
+          [(Ok layout)
+            (let
+              [align : i64 (tc-inline-aggregate-layout-align layout)]
+              (when
+                (>= key 0)
+                (set! (array-ref slots key) (+ align 1))
+                (tc-agg-scalar-cache-note-filled! (&mut slots) key))
+              align)]
+          [(Err _) fallback])))))
 
-;; Compile-time cache: memoize a bare aggregate's register-resident word count
-;; (0 = not register-resident, else 1 or 2). Same arena-safe intern-id keyed
-;; fixed array as the size cache; this is the hot query for every aggregate
-;; construct / struct-get / copy (lower-type-register-words). Encoded as
-;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
-;; Same per-program keying as the size cache, so it is gated on
-;; intern-generation and explicitly invalidated at lower boundaries.
-(define (tc-agg-regwords-cache-storage-ensure-for-state!
-  [state : TcAggScalarCacheState]) : unit
+;; A bare aggregate's register-resident word count (0 = not register-resident,
+;; else 1 or 2), cached like its size: this is the hot query for every
+;; aggregate construct / struct-get / copy (lower-type-register-words).
+(define (tc-agg-regwords-cache-ensure-for-state!
+  [state : TcAggScalarCacheState]
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
   (let
     [data : (MutPtr TcAggScalarCacheStateData)
       (tc-agg-scalar-cache-state-ptr state)]
+    [intern-table-id : i64
+      (ci.intern-source-name-session-handle-table-id source-names)]
+    [intern-generation : i64
+      (ci.intern-source-name-session-handle-reset-generation source-names)]
     (unsafe
-      (if (=
-        (array-length (deref data).regwords-cache)
-        tc-agg-scalar-cache-length)
-        unit
-        (in-arena
-          (unsafe
-            (arena.Arena (deref data).owner-arena))
-          (set! (deref data).regwords-cache (tc-agg-scalar-cache-new)))))))
-
-(define (tc-agg-regwords-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
-  (tc-agg-regwords-cache-storage-ensure-for-state!
-    (tc-job-state-agg-scalar-caches job-state)))
+      (unless
+        (and
+          (= (deref data).regwords-intern-table-id intern-table-id)
+          (= (deref data).regwords-intern-generation intern-generation))
+        (set!
+          (deref data).regwords-cache
+          (tc-agg-scalar-cache-prepare
+            (deref data).regwords-cache
+            (deref data).owner-arena
+            source-names))
+        (set! (deref data).regwords-intern-table-id intern-table-id)
+        (set! (deref data).regwords-intern-generation intern-generation)))))
 
 (define (tc-agg-scalar-caches-reset-for-job! [job-state : TcJobState]) : unit
   (let
@@ -77960,72 +78033,39 @@
 (define (tc-agg-caches-reset!) : unit
   (tc-agg-caches-reset-for-job! (tc-serial-job-state)))
 
-(define (tc-agg-regwords-cache-ensure-for-state!
-  [state : TcAggScalarCacheState]
-  [intern-table-id : i64]
-  [intern-generation : i64]) : unit
-  (tc-agg-regwords-cache-storage-ensure-for-state! state)
-  (let
-    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-    (unless
-      (and
-        (= data.regwords-intern-table-id intern-table-id)
-        (= data.regwords-intern-generation intern-generation))
-      (tc-agg-scalar-cache-clear! (&mut data.regwords-cache))
-      (set! data.regwords-intern-table-id intern-table-id)
-      (set! data.regwords-intern-generation intern-generation)
-      (tc-agg-scalar-cache-state-data-set! state data))))
-
-(define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name-id : i64]) : i64
-  (match (tc-inline-aggregate-layout-for-with-stack
-    ctx
-    (tc-nominal-name-id-display name-id)
-    name-id
-    Nil)
-    [(Ok layout)
-      (if (tc-inline-aggregate-layout-register-resident? layout)
-        (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
-        0)]
-    [(Err _) 0]))
-
 (define (tc-inline-aggregate-regwords-cached [ctx : TcContext] [name-id : i64]) : i64
   (let
     [state : TcAggScalarCacheState
       (tc-job-state-agg-scalar-caches (tc-context-job-state ctx))]
-    [source-names : ci.InternSourceNameSessionHandle
-      (tc-context-source-names ctx)]
     (tc-agg-regwords-cache-ensure-for-state!
       state
-      (ci.intern-source-name-session-handle-table-id source-names)
-      (ci.intern-source-name-session-handle-reset-generation source-names))
+      (tc-context-source-names ctx))
     (let
-      [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-      (if (< key 0)
-        (tc-inline-aggregate-regwords-compute ctx name-id)
-        (let
-          [data : (Ptr TcAggScalarCacheStateData)
-            (tc-agg-scalar-cache-state-view state)]
-          [slots : (__tl_dyn-array i64)
-            (unsafe
-              (deref data).regwords-cache)]
-          [cached : i64 (array-ref slots key)]
-          (if (> cached 0)
-            (- cached 1)
-            (match (tc-inline-aggregate-layout-for-with-stack
-              ctx
-              (tc-nominal-name-id-display name-id)
-              name-id
-              Nil)
-              [(Ok layout)
-                (let
-                  [words : i64
-                    (if (tc-inline-aggregate-layout-register-resident? layout)
-                      (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
-                      0)]
-                  (set! (array-ref slots key) (+ words 1))
-                  (tc-agg-scalar-cache-note-filled! (&mut slots) key)
-                  words)]
-              [(Err _) 0])))))))
+      [data : (Ptr TcAggScalarCacheStateData)
+        (tc-agg-scalar-cache-state-view state)]
+      [slots : (__tl_dyn-array i64)
+        (unsafe
+          (deref data).regwords-cache)]
+      [key : i64 (tc-agg-scalar-cache-key (& slots) name-id)]
+      (if (and (>= key 0) (> (array-ref slots key) 0))
+        (- (array-ref slots key) 1)
+        (match (tc-inline-aggregate-layout-for-with-stack
+          ctx
+          (tc-nominal-name-id-display name-id)
+          name-id
+          Nil)
+          [(Ok layout)
+            (let
+              [words : i64
+                (if (tc-inline-aggregate-layout-register-resident? layout)
+                  (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
+                  0)]
+              (when
+                (>= key 0)
+                (set! (array-ref slots key) (+ words 1))
+                (tc-agg-scalar-cache-note-filled! (&mut slots) key))
+              words)]
+          [(Err _) 0])))))
 
 ;; A struct/enum layout is "register-resident (1-word)" when it fits in a
 ;; single 8-byte machine word and is built only of word-class data. Such a value

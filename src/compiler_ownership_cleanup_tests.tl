@@ -24,7 +24,11 @@
   (own.OwnershipLoanId (cleanup-test-id) 0))
 
 (define (cleanup-test-source [index : i64]) : own.OwnershipSource
-  (own.OwnershipSource "cleanup-authored.tl" (+ index 1) 1 ""))
+  (own.OwnershipSource
+    (own.ownership-body-path "cleanup-authored.tl")
+    (+ index 1)
+    1
+    ""))
 
 (define (cleanup-test-instr [operation : own.OwnershipOperation] [index : i64]) : own.OwnershipInstruction
   (own.OwnershipInstruction operation (cleanup-test-source index)))
@@ -499,7 +503,10 @@
 (define (compiler-ownership-cleanup-dump-self-test) : i64
   (let
     [body : own.OwnershipBody (cleanup-test-retained-body true false)]
-    (match (dump.ownership-dump (& body) (own.ownership-default-limits))
+    (match (dump.ownership-dump
+      (& body)
+      (own.ownership-default-limits)
+      "cleanup-authored.tl")
       [(dump.OwnershipDumpResult.Err _) (return 741)]
       [(dump.OwnershipDumpResult.Ok text)
         (unless
@@ -515,7 +522,10 @@
           (return 742))]))
   (let
     [body : own.OwnershipBody (cleanup-test-product-body true true)]
-    (match (dump.ownership-dump (& body) (own.ownership-default-limits))
+    (match (dump.ownership-dump
+      (& body)
+      (own.ownership-default-limits)
+      "cleanup-authored.tl")
       [(dump.OwnershipDumpResult.Err _) (return 743)]
       [(dump.OwnershipDumpResult.Ok text)
         (unless

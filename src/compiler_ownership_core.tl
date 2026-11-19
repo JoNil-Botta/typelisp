@@ -39,8 +39,55 @@
   (body OwnershipBodyId)
   (index i64))
 
+;; A source path by its id in the body's path table (`ownership-path-text`):
+;; none, the body's own path, or a placeholder the checker names. Its byte
+;; length travels with it: charges and validity read no text, and copying a
+;; source copies no path.
+(defstruct OwnershipPath
+  (id i64)
+  (bytes i64))
+
+(define ownership-path-body-id : i64
+  1)
+(define ownership-path-body-placeholder-id : i64
+  2)
+(define ownership-path-cleanup-placeholder-id : i64
+  3)
+
+;; An owned copy of a path read through a reference.
+(define (ownership-path-copy [path : (& path OwnershipPath)]) : OwnershipPath
+  (OwnershipPath path.id path.bytes))
+
+;; The empty path.
+(define (ownership-path-none) : OwnershipPath
+  (OwnershipPath 0 0))
+
+;; The body's own path, `text` (none when empty).
+(define (ownership-body-path [text : (& text str)]) : OwnershipPath
+  (if (= (string.string-length text) 0)
+    (ownership-path-none)
+    (OwnershipPath ownership-path-body-id (string.string-length text))))
+
+;; A placeholder path for provenance the body does not supply.
+(define (ownership-placeholder-path [id : i64]) : OwnershipPath
+  (OwnershipPath id (string.string-length (ownership-placeholder-text id))))
+
+(define (ownership-placeholder-text [id : i64]) : String
+  (if (= id ownership-path-cleanup-placeholder-id)
+    "<ownership-cleanup>"
+    "<ownership-body>"))
+
+;; The text of `path` in the table of a body whose own path is `body-path`.
+(define (ownership-path-text
+  [path : (& path OwnershipPath)]
+  [body-path : (& body-path str)]) : String
+  (cond
+    [(= path.id 0) ""]
+    [(= path.id ownership-path-body-id) (string.copy body-path)]
+    [else (ownership-placeholder-text path.id)]))
+
 (defstruct OwnershipSource
-  (path String)
+  (path OwnershipPath)
   (line i64)
   (column i64)
   ;; An owned expansion trace; no source-pool handles survive the handoff.
@@ -261,10 +308,7 @@
     (= a.revision b.revision)))
 
 (define (ownership-source-valid? [source : (& source OwnershipSource)]) : bool
-  (and
-    (> (string.string-length (& source.path)) 0)
-    (> source.line 0)
-    (> source.column 0)))
+  (and (> source.path.bytes 0) (> source.line 0) (> source.column 0)))
 
 (define (ownership-charge! [work : (&mut work i64)] [limit : i64] [units : i64]) : bool
   (if (or (< units 0) (> units (- limit (deref work))))
@@ -284,11 +328,7 @@
   [source : (& source OwnershipSource)]) : bool
   (let
     [units : i64
-      (+
-        1
-        (+
-          (string.string-length (& source.path))
-          (string.string-length (& source.expansion))))]
+      (+ 1 (+ source.path.bytes (string.string-length (& source.expansion))))]
     (if (> units (- limit (deref work)))
       false
       (begin
@@ -320,7 +360,7 @@
       -1
       -1
       (OwnershipSource
-        (string.copy (& source.path))
+        (ownership-path-copy (& source.path))
         source.line
         source.column
         (string.copy (& source.expansion)))
@@ -704,7 +744,12 @@
     [points : i64 blocks]
     [cells : i64 0]
     [i : i64 0]
-    [fallback : OwnershipSource (OwnershipSource "<ownership-body>" 1 1 "")]
+    [fallback : OwnershipSource
+      (OwnershipSource
+        (ownership-placeholder-path ownership-path-body-placeholder-id)
+        1
+        1
+        "")]
     (when (= loans 0) (return OwnershipResult.Ok))
     (while (< i blocks)
       (unless
@@ -927,7 +972,12 @@
   [body : (& body OwnershipBody)]
   [limits : OwnershipLimits]) : OwnershipResult
   (let
-    [fallback : OwnershipSource (OwnershipSource "<ownership-body>" 1 1 "")]
+    [fallback : OwnershipSource
+      (OwnershipSource
+        (ownership-placeholder-path ownership-path-body-placeholder-id)
+        1
+        1
+        "")]
     [types : i64 (array-length body.types)]
     [locals : i64 (array-length body.locals)]
     [places : i64 (array-length body.places)]
@@ -1370,7 +1420,7 @@
           (let
             [instr : (& body OwnershipInstruction)
               (& (array-ref block.instructions j))]
-            [path : i64 (string.string-length (& instr.source.path))]
+            [path : i64 instr.source.path.bytes]
             ;; `ownership-source-charge!`
             [units : i64
               (+ 1 (+ path (string.string-length (& instr.source.expansion))))]
@@ -1926,7 +1976,7 @@
     [source : OwnershipSource
       (if (ownership-index? block (array-length body.blocks))
         (ownership-source-copy (& (array-ref body.blocks block).source))
-        (OwnershipSource "" 0 0 ""))]
+        (OwnershipSource (ownership-path-none) 0 0 ""))]
     (OwnershipFailure
       OwnershipFailureKind.Resource
       block
@@ -5030,7 +5080,12 @@
   (let
     [count : i64 (array-length body.cleanups)]
     [owners : i64 (array-length body.obligations)]
-    [fallback : OwnershipSource (OwnershipSource "<ownership-cleanup>" 1 1 "")]
+    [fallback : OwnershipSource
+      (OwnershipSource
+        (ownership-placeholder-path ownership-path-cleanup-placeholder-id)
+        1
+        1
+        "")]
     [i : i64 0]
     [canonical : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [present : (__tl_dyn-array bool) (__tl_make-array bool 0)]
@@ -5503,7 +5558,7 @@
 
 (define (ownership-source-copy [source : (& source OwnershipSource)]) : OwnershipSource
   (OwnershipSource
-    (ownership-text-copy (& source.path))
+    (ownership-path-copy (& source.path))
     source.line
     source.column
     (ownership-text-copy (& source.expansion))))

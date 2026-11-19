@@ -116,19 +116,23 @@ still report unavailable execution explicitly. CLI transcript `if-isa` checks
 and runtime-dispatch selection continue to test the actual native host,
 including the CLI's unsupported-host diagnostics.
 
-On native AVX-512 hosts, the `stage2-sde-fallback` gate (#9460) additionally
-executes the SPMD, lane/broadcast and package corpus under SDE and checks the
-cross-mode oracle against those observations: the same four commands with
-`TYPELISP_AVX512_EXECUTION=sde`, under an 8192 MiB cap whose report is
-`target/sde-fallback.memory`. It needs those suites' ordinary gates, so it
-overwrites their native observations only after they were consumed, and it
-holds the `spmd-package` lock. Hosts without native support already use SDE in
-the canonical gates; there the gate passes as not applicable only after
-proving that the ordinary route for AVX-512 is SDE, and a failed ISA detection
-fails it. Thus both operating systems exercise the fallback on every required
-run, while native dispatch and execution coverage is retained. A local run
-without `TYPELISP_SDE_BIN` reports the forced-SDE suites as unavailable, as the
-other harnesses report unavailable execution; `CI=true` requires them.
+On native AVX-512 hosts, the four `stage2-sde-fallback-*` gates (#9460)
+execute the SPMD, lane/broadcast, package and cross-mode suites under SDE: the
+same four commands with `TYPELISP_AVX512_EXECUTION=sde`, each under its own
+8192 MiB cap and `target/sde-fallback-<suite>.memory` report. Each gate needs
+the ordinary gate(s) of its suite, so it overwrites their native observations
+only after they were consumed. The forced SPMD gate writes
+`target/spmd-simd-verify-sde`, which the forced cross-mode gate reads, so it
+runs beside the ordinary cross-mode gate without disturbing the native
+observations that gate consumes; the package gate holds `spmd-package`; the
+forced cross-mode gate also needs the forced SPMD gate because it validates
+that gate's SDE receipts. Hosts without native support already use SDE in the
+canonical gates; there each gate passes as not applicable only after proving
+that the ordinary route for AVX-512 is SDE, and a failed ISA detection fails
+it. Thus both operating systems exercise the fallback on every required run,
+while native dispatch and execution coverage is retained. A local run without
+`TYPELISP_SDE_BIN` reports each forced-SDE suite as unavailable, as the other
+harnesses report unavailable execution; `CI=true` requires them.
 
 To validate the emulator route even on an AVX-512 host, run the existing corpus:
 
@@ -471,6 +475,14 @@ runners, the SFrame v3 codec scale measurement, ISPC/SPMD comparisons, LSP
 latency, and the `run-bounded-process.ps1` job-memory cap wrapper. See
 `src/TESTING.md`, `perf/README.md`, and `benchmarks/README.md` for their
 workload-specific instructions.
+
+`scripts/benchmark-compile-vs-clang.sh` is the compile lane's reference
+instrument beside the phase-level `scripts/benchmark-compile-cli.sh`. It builds
+every `benchmarks/<name>/` pair that carries both `bench.tl` and `baseline.c`
+the way the benchmark harnesses do -- TypeLisp at `--opt-level 1` and `2`,
+clang at `-O0` and `-O2` -- records the fastest of `--runs` builds and its peak
+RSS per leg in `target/compile-vs-clang/results.tsv`, and prints the geomean
+TypeLisp/clang time and peak-memory ratios for `opt1:-O0` and `opt2:-O2`.
 
 ## Moving a script
 

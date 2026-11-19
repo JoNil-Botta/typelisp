@@ -126,7 +126,10 @@ stage2-spmd-simd-comparison	linux-2	windows-1
 stage2-cross-mode-semantic-abi-differential	linux-2	windows-1
 stage2-spmd-lane-identity	linux-2	windows-1
 stage2-spmd-broadcast	linux-2	windows-1
-stage2-sde-fallback	linux-2	windows-1
+stage2-sde-fallback-spmd-simd	linux-2	windows-1
+stage2-sde-fallback-gang-width	linux-2	windows-1
+stage2-sde-fallback-package-calls	linux-2	windows-1
+stage2-sde-fallback-cross-mode-differential	linux-2	windows-1
 stage2-docs-pages-build-path	linux-2	windows-1
 stage2-cli-host-action-smoke	linux-2	-
 stage2-stdlib-documentation	linux-2	-

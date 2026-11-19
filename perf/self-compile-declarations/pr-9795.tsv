@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-21151.623	C03 front-end redundant work removed (callee typed once, constructor arena check gated on lifetime args, aggregate caches cover structural ids, leaf child lists unallocated); local same-source measurement 117,780,426,015 -> 115,289,178,896 Ir; output byte-identical

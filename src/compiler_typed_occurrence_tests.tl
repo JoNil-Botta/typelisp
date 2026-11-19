@@ -64,7 +64,11 @@
   (match (typed.typed-origin-add!
     store
     lease
-    (own.OwnershipSource "fixture.tl" 7 11 "macro expansion"))
+    (own.OwnershipSource
+      (own.ownership-body-path "fixture.tl")
+      7
+      11
+      "macro expansion"))
     [(typed.TypedOriginResult.Ok id) id]
     [(typed.TypedOriginResult.Err _)
       (io.panic "typed occurrence: fixture origin")]))
@@ -531,7 +535,7 @@
       (match (typed.typed-origin-add!
         (&mut store)
         (& lease)
-        (own.OwnershipSource "too expensive" 1 1 ""))
+        (own.OwnershipSource (own.ownership-body-path "too expensive") 1 1 ""))
         [(typed.TypedOriginResult.Err error)
           (match error
             [(typed.TypedError.Budget) true]

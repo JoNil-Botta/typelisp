@@ -318,13 +318,13 @@ jobs:
             target/embedded-stdlib-tlci-resources/*/source.s
           if-no-files-found: ignore
 
-      # The stage2-sde-fallback gate's peak (#9460), for its reservation.
+      # The stage2-sde-fallback-* gates' peaks (#9460), for their reservations.
       - name: Upload SDE fallback memory evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sde-fallback-memory-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
-          path: target/sde-fallback.memory
+          path: target/sde-fallback-*.memory
           if-no-files-found: ignore
 
       # self_compile has no checked row (#9307, perf/README.md). The

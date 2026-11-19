@@ -136,12 +136,15 @@
             [first : String
               (match (dump.ownership-dump
                 (& output.body)
-                (own.ownership-default-limits))
+                (own.ownership-default-limits)
+                "fixture.tl")
                 [(dump.OwnershipDumpResult.Ok text) text]
                 [_ (io.panic "normalize dump")])]
             ;; The normalized body owns its strings and no selected handle
             ;; is dereferenced after retirement, including diagnostic provenance.
-            (set! (array-ref store.origins 0).source.path "retired-source.tl")
+            (set!
+              (array-ref store.origins 0).source.path
+              (own.ownership-body-path "retired-source.tl"))
             (typed.typed-store-retire! (&mut store))
             (and
               ;; Primitive codes and the reserved Never slot; no value
@@ -152,7 +155,8 @@
               (= (array-ref output.body.locals 0).type.index 5)
               (match (dump.ownership-dump
                 (& output.body)
-                (own.ownership-default-limits))
+                (own.ownership-default-limits)
+                "fixture.tl")
                 [(dump.OwnershipDumpResult.Ok again) (string.eq first again)]
                 [_ false]))))]
       [(norm.OwnershipNormalizeResult.Err failure)

@@ -193,22 +193,37 @@ run_linux_manifest_program() {
 
     ci_timing_set_now_ms
     _run_started=$CI_TIMING_NOW_MS
-    sh -c '
-        _deadline=$1
-        shift
-        set +e
-        timeout --signal=KILL "$_deadline" sh -c '\''
+    # A deadline that owns the case's process group. GNU timeout returns 137
+    # and kills the group; uutils timeout 0.10 returns 124 and leaves the
+    # group's descendants, so the shell takes the deadline itself.
+    # The subshell's stderr silenced the shell's job notice when the deadline
+    # kills the background case; its case's own streams stay explicit files.
+    _rc=0
+    (
+        setsid sh -c '
             _stdout=$1
             _stderr=$2
             shift 2
-            exec "$@" > "$_stdout" 2> "$_stderr"
-        '\'' typelisp-integration-case "$@"
-        _rc=$?
-        exit "$_rc"
-    ' typelisp-integration-run \
-        "$INTEGRATION_CASE_TIMEOUT_SECONDS" "$_stdout" "$_stderr" "$_bin" "$@" \
-        2> "$_run_shell_stderr"
-    _rc=$?
+            ( exec "$@" ) > "$_stdout" 2> "$_stderr"
+        ' typelisp-integration-case "$_stdout" "$_stderr" "$_bin" "$@" \
+            2> "$_run_shell_stderr" &
+        _case_pid=$!
+        (
+            _ticks=0
+            _limit=$((INTEGRATION_CASE_TIMEOUT_SECONDS * 20))
+            while [ "$_ticks" -lt "$_limit" ]; do
+                sleep 0.05
+                _ticks=$((_ticks + 1))
+            done
+            kill -KILL "-$_case_pid" 2>/dev/null || true
+        ) &
+        _case_watchdog=$!
+        _case_status=0
+        wait "$_case_pid" || _case_status=$?
+        kill "$_case_watchdog" 2>/dev/null || true
+        wait "$_case_watchdog" 2>/dev/null || true
+        exit "$_case_status"
+    ) 2>/dev/null || _rc=$?
     ci_timing_set_now_ms
     case_timed_out=0
     if [ "$_rc" -eq 137 ] &&
@@ -3922,8 +3937,9 @@ run_preparation_failure_self_test() (
             if (seen[id]++ || $4 != ($3 == "success" ? 0 : 1)) fail("wrong status or duplicate case")
             cases++
             path = root "/" id "/stderr"
-            diagnostic = ($3 == "self-test" ? "FAIL: staging helper rejected an empty plan" :
-                ($3 == "invalid-result-plan" ? "FAIL: invalid Windows COFF result plan" : ""))
+            diagnostic = ""
+            if ($3 == "self-test") diagnostic = "FAIL: staging helper rejected an empty plan"
+            else if ($3 == "invalid-result-plan") diagnostic = "FAIL: invalid Windows COFF result plan"
             if (diagnostic != "") {
                 found = 0
                 while ((rc = (getline line < path)) > 0) if (index(line, diagnostic)) found = 1

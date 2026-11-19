@@ -188,7 +188,7 @@ the exact PR head; only a push to main can publish releases.
 | Check public CLI behavior | `verify-public-tools.sh` (`affected-map`, `cli-transcripts-1` to `cli-transcripts-3` and `corpora`, one gate per part; the transcript parts are the `tests/cli/public-*.cases` transcripts in three balanced groups), `verify-selfhost-cli-build-run.sh`, `check-stage1-wrapper.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`) |
 | Check application workflows | `verify-app-corpus.sh` (the projects and scenario manifest in `tests/apps/`; see `tests/apps/README.md`) |
 | Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-stdlib-tlci-identity-differential.sh` (all embedded identities; called by compile-profile), `verify-embedded-stdlib-tlci-resources.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh`, `verify-package-surface-tlci.sh` |
-| Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh` (`tests/codegen/native-link.cases`), `verify-native-link-windows.sh`, `verify-win64-seh-unwind.sh` (Windows unwind rows and a virtual unwind through framed prologues, `tests/fixtures/win64-seh/`), `verify-fs-rooted-linux.sh`, `verify-process-runtime-linux.sh` |
+| Check native behavior | `verify-integration.sh` (the native manifest corpus, one gate per `--shard` row; `integration_shards` in the script), `verify-native-link-linux.sh` (`tests/codegen/native-link.cases`), `verify-native-link-windows.sh`, `verify-win64-seh-unwind.sh` (Windows unwind rows and a virtual unwind through framed prologues, `tests/fixtures/win64-seh/`), `verify-fs-rooted-linux.sh`, `verify-process-runtime-linux.sh` |
 | Check codegen shape and parity | `verify-cross-mode-differential.sh` (budgeted cross-gate semantic/ABI witnesses), `verify-codegen-cases.sh` (table-driven compile/run/asm-shape cases and CLI transcripts in `tests/codegen/` and `tests/cli/`), `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
 | Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-codegen-cases.sh tests/spmd/gang-width.cases` |
 | Check ISPC corpus contracts | `verify-codegen-cases.sh tests/codegen/ispc.cases` (one gate per case) |
@@ -304,8 +304,9 @@ never run at once:
 A gate whose work files are private to it needs no lock. When one script
 serves several gates, each mode keeps its own work directory where it can:
 `verify-codegen-cases.sh --only`, `run-optimization-benchmarks.sh
---tl-opt-level`, and the `verify-integration.sh`, `check-tl-format.sh` and
-`verify-cross-mode-differential.sh` self-tests. That matters beyond collisions:
+--tl-opt-level`, the `verify-integration.sh`, `check-tl-format.sh` and
+`verify-cross-mode-differential.sh` self-tests, and the integration corpus's
+`--shard` rows (see below). That matters beyond collisions:
 the cross-mode differential reuses artifacts the integration corpus leaves in
 `target/integration-verify/<host>/`, so no other gate may reset that
 directory. A generated input that several gates write whole through a
@@ -322,6 +323,18 @@ them, and every part checks that the three groups still cover each
 the gate until it joins a group. No lock is needed: `verify-codegen-cases.sh`
 keeps a work directory per case file, and `corpora` still runs the
 `run-corpus.sh` modes in series as one gate.
+
+The native integration corpus is one gate per shard of `integration_shards` in
+`verify-integration.sh`: a shard is a list of the manifest's batch groups, and
+it compiles, stages and runs only those rows in a work root of its own. Shards
+run as separate gates so the scheduler gives each its own pool, and the table
+refuses a group that two shards own or none does, so a new batch group cannot
+fall out of CI. The `default` shard keeps the historical
+`target/integration-verify/<host>/` path, because the cross-mode differential
+reads the cases and the host fixture corpora publish there; the other shards
+stage under `target/integration-verify/<host><shard suffix>/`. Every shard
+validates the whole host manifest, and lists its heaviest group first so the
+batch pool's longest chunk starts on an idle worker.
 
 `verify-cross-mode-differential.sh` and its manifest are described under
 [Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).

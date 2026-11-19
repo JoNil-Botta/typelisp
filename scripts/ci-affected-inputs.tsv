@@ -33,6 +33,7 @@ stage2-compile-profile-verifier	compiler,stdlib,corpus	Consumes compiler behavio
 stage2-cli-build-run-and-chooser-smoke	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 embedded-stdlib-tlci-bounded-resource-report	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-native-integration-corpus	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-native-integration-corpus-opt-levels	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 linux-self-compile-measurement	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 linux-instruction-count-baseline	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 tlci-mutation-bootstrap-fixpoint	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

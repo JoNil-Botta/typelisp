@@ -49,6 +49,7 @@ stage2-compile-profile-verifier	linux-2	windows-1
 stage2-cli-build-run-and-chooser-smoke	linux-2	windows-2
 embedded-stdlib-tlci-bounded-resource-report	linux-2	windows-2
 stage2-native-integration-corpus	linux-2	windows-1
+stage2-native-integration-corpus-opt-levels	linux-2	windows-1
 linux-self-compile-measurement	linux-2	-
 linux-instruction-count-baseline	linux-2	-
 tlci-mutation-bootstrap-fixpoint	linux-2	windows-2

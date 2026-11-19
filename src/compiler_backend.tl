@@ -2718,8 +2718,15 @@
 ;; compiler-backend-shift-count-bounds). Read by compiler-backend-shift-guard-asm.
 (define compiler-backend-function-i64-shift-count-bound : i64
   22)
-(define compiler-backend-function-i64-count : i64
+
+;; Whether a frame address of the function being emitted may escape
+;; (compiler-ir-blocks-frame-may-escape? of its blocks): 0 not yet computed,
+;; 1 no, 2 yes. Cleared when emit-blocks starts a function; see
+;; compiler-backend-blocks-expose-frame-at?.
+(define compiler-backend-function-i64-frame-may-escape : i64
   23)
+(define compiler-backend-function-i64-count : i64
+  24)
 (define compiler-backend-function-bool-current-fn-win64 : i64
   0)
 (define compiler-backend-function-bool-addr-of-forwarding-enabled : i64
@@ -18151,16 +18158,17 @@
     "main"
     (str_cat.str-cat "_tl_" (compiler-backend-user-symbol-body name))))
 
+;; The text after the last `/` or `:`. Found from the end, so only the leaf is
+;; scanned rather than the whole qualified name.
 (define (compiler-backend-symbol-leaf [name : (& name str)]) : String
   (let
     [n : i64 (string.string-length name)]
-    [start : i64 0]
-    (for [i (iterator.range 0 n)]
-      (if (or
-        (= (string.string-ref name i) '/')
-        (= (string.string-ref name i) ':'))
-        (set! start (+ i 1))
-        unit))
+    [start : i64 n]
+    (while (and
+      (> start 0)
+      (not (= (string.string-ref name (- start 1)) '/'))
+      (not (= (string.string-ref name (- start 1)) ':')))
+      (-= start 1))
     (string.substring name start (- n start))))
 
 (define (compiler-backend-public-function-symbol? [name : (& name str)]) : bool
@@ -40266,14 +40274,21 @@
         0)]
     (pmove.compiler-parallel-move-decision edges edges)))
 
+;; Does some move of `moves` read a register another move of `moves` writes?
 (define (compiler-backend-arg-moves-conflict?
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [moves : CompilerBackendArgMoveSeq]
-  [all : CompilerBackendArgMoveSeq]) : bool
-  (pmove.compiler-parallel-move-seq-has-blocked?
-    (compiler-backend-arg-move-parallel-edges backend-state assignments moves 0)
-    (compiler-backend-arg-move-parallel-edges backend-state assignments all 0)))
+  [moves : CompilerBackendArgMoveSeq]) : bool
+  (let
+    [edges : pmove.CompilerParallelMoveEdgeSeq
+      (compiler-backend-arg-move-parallel-edges
+        backend-state
+        assignments
+        moves
+        0)]
+    (pmove.compiler-parallel-move-seq-has-blocked?
+      (compiler-backend-global-shared-view edges)
+      edges)))
 
 (define (compiler-backend-arg-move-list-find
   [moves : CompilerBackendArgMoveSeq]
@@ -41340,14 +41355,6 @@
             0
             prefix
             int-idx
-            position)
-          (compiler-backend-arg-moves-build-from
-            target
-            convention
-            (compiler-backend-global-shared-view args)
-            0
-            prefix
-            int-idx
             position))
         (compiler-backend-call-stack-args-register-sourced?
           backend-state
@@ -41532,7 +41539,6 @@
       (compiler-backend-arg-moves-conflict?
         backend-state
         assignments
-        (compiler-backend-scalar-arg-plan-moves args plan)
         (compiler-backend-scalar-arg-plan-moves args plan)))))
 
 ;; Is every argument one scalar: a float, or a GP-class value that is neither
@@ -41926,97 +41932,96 @@
   ;; has a real register source/dest conflict; emit those via the sound parallel
   ;; move. Every other call (including the conflict-free common case) delegates
   ;; to the byte-identical naive path.
-  (if (and
-    (= arg-index 0)
-    (compiler-backend-call-args-gp-parallel-from?
-      type-segment-bases
-      target
-      convention
-      (compiler-backend-global-shared-view args)
-      types
-      c-abi?
-      program-index
-      int-idx
-      position)
-    (compiler-backend-arg-moves-conflict?
-      backend-state
-      assignments
-      (compiler-backend-arg-moves-build-at
-        target
-        convention
-        (compiler-backend-global-shared-view args)
-        int-idx
-        position)
-      (compiler-backend-arg-moves-build-at
-        target
-        convention
-        (compiler-backend-global-shared-view args)
-        int-idx
-        position)))
-    (let
-      [moves
-        (try
-          (compiler-backend-emit-arg-move-list
-            assignments
-            (compiler-backend-arg-moves-build-at
-              target
-              convention
-              (compiler-backend-global-shared-view args)
-              int-idx
-              position)
-            backend-state))]
-      (compiler-backend-asm-append out moves)
-      (Ok ""))
-    ;; The same interception one arity up: an all-GP call that OVERFLOWS its
-    ;; argument registers and whose stack args or register prefix read a
-    ;; register. Its overflow is stored before any argument register is written
-    ;; (compiler-backend-emit-call-args-parallel-into).
+  (let
+    [parallel? : bool
+      (and
+        (= arg-index 0)
+        (compiler-backend-call-args-gp-parallel-from?
+          type-segment-bases
+          target
+          convention
+          (compiler-backend-global-shared-view args)
+          types
+          c-abi?
+          program-index
+          int-idx
+          position))]
+    ;; Built once: the conflict test and the parallel emission read the same
+    ;; moves.
+    [arg-moves : CompilerBackendArgMoveSeq
+      (if parallel?
+        (compiler-backend-arg-moves-build-at
+          target
+          convention
+          (compiler-backend-global-shared-view args)
+          int-idx
+          position)
+        (compiler-backend-arg-move-seq-with-capacity 0))]
     (if (and
-      (= arg-index 0)
-      (compiler-backend-call-args-gp-stack-first?
-        type-segment-bases
-        target
-        convention
+      parallel?
+      (compiler-backend-arg-moves-conflict?
+        backend-state
         assignments
-        (compiler-backend-global-shared-view args)
-        types
-        c-abi?
-        program-index
-        int-idx
-        position
-        backend-state))
-      (compiler-backend-emit-call-args-parallel-into
-        out
-        (OutgoingStackArgArea)
-        type-segment-bases
-        target
-        convention
-        assignments
-        (& args)
-        (& types)
-        int-idx
-        float-idx
-        position
-        stack-idx
-        backend-state)
-      (compiler-backend-emit-call-args-with-assignments-into
-        out
-        type-segment-bases
-        target
-        convention
-        assignments
-        args
-        types
-        c-abi?
-        arg-index
-        int-idx
-        float-idx
-        position
-        stack-idx
-        func-diag
-        program-index
-        vars
-        backend-state))))
+        (compiler-backend-global-shared-view arg-moves)))
+      (let
+        [moves
+          (try
+            (compiler-backend-emit-arg-move-list
+              assignments
+              arg-moves
+              backend-state))]
+        (compiler-backend-asm-append out moves)
+        (Ok ""))
+      ;; The same interception one arity up: an all-GP call that OVERFLOWS its
+      ;; argument registers and whose stack args or register prefix read a
+      ;; register. Its overflow is stored before any argument register is written
+      ;; (compiler-backend-emit-call-args-parallel-into).
+      (if (and
+        (= arg-index 0)
+        (compiler-backend-call-args-gp-stack-first?
+          type-segment-bases
+          target
+          convention
+          assignments
+          (compiler-backend-global-shared-view args)
+          types
+          c-abi?
+          program-index
+          int-idx
+          position
+          backend-state))
+        (compiler-backend-emit-call-args-parallel-into
+          out
+          (OutgoingStackArgArea)
+          type-segment-bases
+          target
+          convention
+          assignments
+          (& args)
+          (& types)
+          int-idx
+          float-idx
+          position
+          stack-idx
+          backend-state)
+        (compiler-backend-emit-call-args-with-assignments-into
+          out
+          type-segment-bases
+          target
+          convention
+          assignments
+          args
+          types
+          c-abi?
+          arg-index
+          int-idx
+          float-idx
+          position
+          stack-idx
+          func-diag
+          program-index
+          vars
+          backend-state)))))
 
 ;; String-returning shim for the call emitters that still hand their argument
 ;; block back as text: one sequence buffer for the whole marshalling block
@@ -45723,6 +45728,39 @@
     ret-ty
     program-index))
 
+;; compiler-ir-blocks-expose-frame-at? for a tail transfer in the function
+;; being emitted, whose `blocks` are fixed while emit-blocks runs. The
+;; whole-function half is computed at the first site and kept in the function
+;; state, so a function with several tail calls pays for it once.
+(define (compiler-backend-blocks-expose-frame-at?
+  [backend-state : CompilerBackendState]
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
+  [label : i64]) : bool
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [known : i64
+      (compiler-backend-function-state-i64
+        function-state
+        compiler-backend-function-i64-frame-may-escape)]
+    [may-escape? : bool
+      (if (= known 0)
+        (let
+          [computed : bool
+            (compiler_ir_types.compiler-ir-blocks-frame-may-escape? blocks)]
+          (compiler-backend-function-state-set-i64!
+            function-state
+            compiler-backend-function-i64-frame-may-escape
+            (if computed
+              2
+              1))
+          computed)
+        (= known 2))]
+    (compiler_ir_types.compiler-ir-blocks-expose-frame-at-given?
+      blocks
+      may-escape?
+      label)))
+
 (define (compiler-backend-emit-tail-call
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -45795,7 +45833,8 @@
     ;; frame address can exist here is a property of this block's paths.
     [frame-safe : bool
       (not
-        (compiler_ir_types.compiler-ir-blocks-expose-frame-at?
+        (compiler-backend-blocks-expose-frame-at?
+          backend-state
           (& blocks)
           current-label))]
     (if (and
@@ -56286,7 +56325,8 @@
         ;; Loading the closure target does not extend outgoing frame-backed
         ;; arguments' lifetime. Keep the frame for an ordinary call instead.
         (not
-          (compiler_ir_types.compiler-ir-blocks-expose-frame-at?
+          (compiler-backend-blocks-expose-frame-at?
+            backend-state
             (& blocks)
             current-label))
         (compiler-backend-indirect-tail-call-register-only?
@@ -61256,6 +61296,13 @@
         (compiler-backend-state-function-state program-index.backend-state)
         compiler-backend-function-i64-array-edge-index
         (__tl_make-array i64 0))]
+    ;; The frame-escape answer is per function too; see
+    ;; compiler-backend-blocks-expose-frame-at?.
+    [_frame-may-escape-clear : unit
+      (compiler-backend-function-state-set-i64!
+        (compiler-backend-state-function-state program-index.backend-state)
+        compiler-backend-function-i64-frame-may-escape
+        0)]
     [out : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity
         (+

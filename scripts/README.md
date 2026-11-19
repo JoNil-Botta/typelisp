@@ -472,6 +472,14 @@ latency, and the `run-bounded-process.ps1` job-memory cap wrapper. See
 `src/TESTING.md`, `perf/README.md`, and `benchmarks/README.md` for their
 workload-specific instructions.
 
+`scripts/benchmark-compile-vs-clang.sh` is the compile lane's reference
+instrument beside the phase-level `scripts/benchmark-compile-cli.sh`. It builds
+every `benchmarks/<name>/` pair that carries both `bench.tl` and `baseline.c`
+the way the benchmark harnesses do -- TypeLisp at `--opt-level 1` and `2`,
+clang at `-O0` and `-O2` -- records the fastest of `--runs` builds and its peak
+RSS per leg in `target/compile-vs-clang/results.tsv`, and prints the geomean
+TypeLisp/clang time and peak-memory ratios for `opt1:-O0` and `opt2:-O2`.
+
 ## Moving a script
 
 Before moving or deleting a script:

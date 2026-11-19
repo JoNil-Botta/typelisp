@@ -8183,46 +8183,30 @@
 ;; neither listed nor replaced. A walker keeps the arms it has rules for and
 ;; hands every other node to its list form over these ids, so each schema
 ;; expansion is compiled once here rather than once per walker.
-;; The list is sized to the node's children; a node without any shares one
-;; empty storage (a push grows a list off it), so leaves allocate nothing.
+;; A node without children shares one empty storage, so leaves allocate
+;; nothing; the first child allocates the usual four slots.
 (define ast-expr-child-ids-empty-storage : (__tl_dyn-array i64)
   (__tl_make-array i64 0))
 
-(defmacro (ast-child-count-one [_ignored : Expr ...]) : Expr
-  `(cast 1 : i64))
-
-(defmacro (ast-child-count-zero [_ignored : Expr ...]) : Expr
-  `(cast 0 : i64))
-
-(defmacro (ast-fold-sum [acc : Expr] [value : Expr]) : Expr
-  `(+ ,acc ,value))
+(define (ast-expr-child-id-push! [ids : (&mut ids AstExprList)] [child : i64]) : unit
+  (when (= (array-length ids.slots) 0) (set! ids.slots (__tl_make-array i64 4)))
+  (ast-expr-list-push ids child))
 
 (define (ast-expr-child-ids [expr : AstExpr]) : AstExprList
   (let
-    [count : i64
-      (ast-expr-fold-children
-        (ast-global-shared-view expr)
-        ast-fold-sum
-        (cast 0 : i64)
-        ast-child-count-one
-        ast-child-count-zero
-        ast-child-count-zero
-        ast-child-count-zero)]
-    (if (= count 0)
+    [ids : AstExprList
       (AstExprList
         (unsafe
           (ptr-read (ptr-addr-of ast-expr-child-ids-empty-storage)))
-        0)
-      (let
-        [ids : AstExprList (AstExprList (__tl_make-array i64 count) 0)]
-        (ast-expr-for-each-child
-          expr
-          ast-expr-list-push
-          ast-child-unit
-          ast-child-unit
-          ast-child-unit
-          (&mut ids))
-        ids))))
+        0)]
+    (ast-expr-for-each-child
+      expr
+      ast-expr-child-id-push!
+      ast-child-unit
+      ast-child-unit
+      ast-child-unit
+      (&mut ids))
+    ids))
 
 (defmacro (ast-expr-take-child-id [ids : Expr] [next : Expr] [_replaced : Expr]) : Expr
   `(begin

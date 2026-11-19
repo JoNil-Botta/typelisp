@@ -6,12 +6,11 @@
       (match (transcript.new (transcript.default-limits))
         [(TlsTranscriptNewOk value) value]
         [_ (init : transcript.TlsTranscript)])]
+    ;; Built outside the arena: a value made inside it carries its region.
+    [boundary : transcript.TlsTranscriptBoundary
+      (transcript.ThroughServerHello)]
     [escaped : transcript.TlsTranscriptHashResult
-      (with-arena
-        scratch
-        (transcript.snapshot-boundary
-          (& state)
-          (clone (transcript.ThroughServerHello))))]
+      (with-arena scratch (transcript.snapshot-boundary (& state) boundary))]
     (match escaped
       [(TlsTranscriptHashOk value)
         (match (transcript.boundary-digest

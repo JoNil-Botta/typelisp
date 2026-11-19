@@ -409,7 +409,10 @@ cica_key_json() (
       .source_set_sha256,.output_kind] |
       if all(.[]; type=="string" and length>0 and (test("[\\x00-\\x1f\\x7f]")|not))
       then .[] else error("unsafe provenance fields") end' "$_f" > "$CICA_SCRATCH/key-fields" || cica_fail 'unsafe provenance fields'
-    { printf 'schema=1\n'; paste -d= - "$CICA_SCRATCH/key-fields" <<'FIELDS'
+    # The delimiter is its own argument. uutils coreutils (Ubuntu 26.04)
+    # parses the attached `-d=` as an empty delimiter list, while GNU paste
+    # reads the `=` as the delimiter; `-d '='` frames the same bytes under both.
+    { printf 'schema=1\n'; paste -d '=' - "$CICA_SCRATCH/key-fields" <<'FIELDS'
 producer_sha256
 producer_identity
 host

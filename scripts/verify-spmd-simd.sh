@@ -113,7 +113,7 @@ verify_spmd_short_tail_benchmark_shape() {
 
 verify_spmd_short_tail_benchmark_shape
 
-WORKDIR="$ROOT/target/spmd-simd-verify"
+WORKDIR=${TYPELISP_SPMD_SIMD_WORKDIR:-$ROOT/target/spmd-simd-verify}
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 

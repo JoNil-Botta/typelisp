@@ -12,6 +12,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 MANIFEST="$ROOT/tests/cross-mode/corpus.tsv"
+SPMD_SIMD_ROOT=${TYPELISP_SPMD_SIMD_ARTIFACT_ROOT:-$ROOT/target/spmd-simd-verify}
 WORKDIR="$ROOT/target/cross-mode-differential"
 SELF_TEST=0
 CASE_FILTER=
@@ -375,7 +376,7 @@ resolve_spmd_observation() {
     _cm_spmd_dir=$2
     _cm_spmd_tag=${_cm_spmd_spec%%:*}
     _cm_spmd_mode=${_cm_spmd_spec#*:}
-    _cm_spmd_base="$ROOT/target/spmd-simd-verify/$_cm_spmd_tag.$_cm_spmd_mode"
+    _cm_spmd_base="$SPMD_SIMD_ROOT/$_cm_spmd_tag.$_cm_spmd_mode"
     [ -f "$_cm_spmd_base.exit" ] ||
         fail "SPMD exit observation is missing: $_cm_spmd_base.exit"
     [ -f "$_cm_spmd_base.err" ] ||

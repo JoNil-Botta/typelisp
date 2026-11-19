@@ -1545,13 +1545,17 @@ arena_end_lambda_captured_field_reject|check-fail|tests/safety/arena_end_lambda_
 # formal that does not name it (#9537).
 arena_invalidate_independent_ref_reject|check-fail|tests/safety/arena_invalidate_independent_ref_reject.tl|-|an :invalidate call cannot pass a value tied to the arena it destroys
 arena_invalidate_independent_ref_other_defined|run-exit|tests/safety/arena_invalidate_independent_ref_other_defined.tl|42|-
-# A call result that can hold a handle copied from an owner passed to a bare
-# `arena.Arena` parameter ends with the owner; a function result is rejected
-# (#8173).
+# A call result that can hold a handle copied from an owner, or from a handle
+# or reference to one, passed to a parameter reaching a bare `arena.Arena` ends
+# with the owner; a function or fixed-array result is rejected (#8173).
 arena_bare_handle_return_reject|check-fail|tests/safety/arena_bare_handle_return_reject.tl|-|use of moved value `t`
 arena_bare_handle_struct_reject|check-fail|tests/safety/arena_bare_handle_struct_reject.tl|-|use of moved value `h`
-arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|cannot reach a function result
+arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|this call's result type cannot carry the region of the arena owner passed to it
+arena_bare_handle_array_reject|check-fail|tests/safety/arena_bare_handle_array_reject.tl|-|this call's result type cannot carry the region of the arena owner passed to it
+arena_bare_handle_ref_reject|check-fail|tests/safety/arena_bare_handle_ref_reject.tl|-|use of moved value `t`
+arena_bare_handle_chain_reject|check-fail|tests/safety/arena_bare_handle_chain_reject.tl|-|use of moved value `u`
 arena_bare_handle_return_defined|run-exit|tests/safety/arena_bare_handle_return_defined.tl|42|-
+arena_bare_handle_chain_defined|run-exit|tests/safety/arena_bare_handle_chain_defined.tl|42|-
 function_lifetime_elision_ambiguous_return_reject|check-fail|tests/safety/function_lifetime_elision_ambiguous_return_reject.tl|-|typecheck: elided reference return is ambiguous; write an explicit lifetime
 function_lifetime_elision_field_reject|check-fail|tests/safety/function_lifetime_elision_field_reject.tl|-|typecheck: elided reference lifetime is only allowed in function signatures; write an explicit lifetime
 function_lifetime_elision_global_reject|check-fail|tests/safety/function_lifetime_elision_global_reject.tl|-|typecheck: elided reference lifetime is only allowed in function signatures; write an explicit lifetime

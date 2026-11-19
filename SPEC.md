@@ -7068,12 +7068,18 @@ original reports "use of moved value".
 
 Two cases do not move the owner:
 
-- Passing it as a call argument to a bare `arena.Arena` parameter is a
-  non-consuming borrow. The callee may return a copy of the handle, so a
-  result whose type can hold an `arena.Arena` handle (the handle, a struct,
-  enum, tuple or container holding one) carries the owner's brand, or the
-  bare-annotated owner itself, and ends with the owner. A function result
-  cannot carry it, so such a call returning a function is rejected.
+- Passing it as a call argument to a bare `arena.Arena` parameter, or to a
+  parameter that reaches one (a reference to it, or a value that can hold one),
+  is a non-consuming borrow. The callee may return a copy of the handle, so a
+  result whose type can hold an `arena.Arena` handle (the handle, a function,
+  a struct, enum, tuple or container holding one) carries the owner's brand, or
+  the bare-annotated owner itself, and ends with the owner. A handle so
+  tagged can be passed on to a bare `arena.Arena` parameter, the same borrow,
+  and that call's result is tagged again. Any other region-tagged argument,
+  such as a struct holding the tagged handle, stays rejected at a parameter
+  that does not carry a region (the general region-escape rule). A result type
+  that cannot carry the tag rejects the call: a function, and a fixed array
+  until arrays carry region tags.
 - A closure that captures an atomic owner becomes one of the owner's
   checker-visible users, which its destroy or rewind must see joined or
   released.

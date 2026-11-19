@@ -373,9 +373,11 @@
   ;; path to scalar loads. The arena retains all three allocations for the job.
   (keys-address i64)
   (handles-address i64)
-  ;; Top-level move kind of the slot's declaration: 0 unknown, 1 Copyable,
-  ;; 2 MoveOnly. Every store of a key into a slot resets its kind, so a kind is
-  ;; only ever read beside the key and stamp it was classified under.
+  ;; Facts about the slot's declaration. Bits 0-1, its top-level move kind:
+  ;; 0 unknown, 1 Copyable, 2 MoveOnly. Bits 2-3, whether a value of it can
+  ;; hold a bare arena handle (`tc-nominal-can-hold-arena-handle?`): 0 unknown,
+  ;; 4 yes, 8 no. Every store of a key into a slot resets its facts, so a fact
+  ;; is only ever read beside the key and stamp it was classified under.
   (move-kinds-address i64)
   (symbols-owner i64)
   (symbols-generation i64))
@@ -18585,7 +18587,12 @@
                     (not
                       (tc-type-regions-all-scratch? (tc-global-shared-view got)))
                     (not
-                      (tc-type-contains-reference? (tc-global-shared-view got))))
+                      (tc-type-contains-reference? (tc-global-shared-view got)))
+                    (not
+                      (tc-tagged-arena-handle-borrow?
+                        ctx
+                        (tc-global-shared-view got)
+                        (tc-global-shared-view want))))
                     (TcSelectedArgsResult.Err
                       (tc-region-call-arg-error
                         (tc-context-expr-bases ctx)
@@ -27738,6 +27745,24 @@
             (No))]
         [_ (No)])]
     [_ (No)]))
+
+;; A region-tagged bare `arena.Arena` handle (a copy a call tied to its owner,
+;; `tc-call-erased-owner-result`) passed to a bare `arena.Arena` formal: the
+;; same non-consuming borrow as passing the owner, whose call result is tied to
+;; the owner again.
+(define (tc-tagged-arena-handle-borrow?
+  [ctx : TcContext]
+  [got : ast.AstType]
+  [want : ast.AstType]) : bool
+  (and
+    (tc-arena-type? ctx (tc-global-shared-view got))
+    (tc-arena-type? ctx (tc-global-shared-view want))
+    (match (tc-arena-branded-region ctx (tc-global-shared-view got))
+      [(Some _) false]
+      [(No) true])
+    (match (tc-arena-branded-region ctx (tc-global-shared-view want))
+      [(Some _) false]
+      [(No) true])))
 
 ;; A direct array read through a reference rvalue can produce a region-tagged
 ;; move-only aggregate. Keep the sound confinement rejection, but make this
@@ -44760,8 +44785,10 @@
       (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
     (if (= address (cast 0 : u64))
       0
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr i64)))))))
+      (bit-and
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        3))))
 
 (define (tc-type-handle-cache-move-kind-set!
   [nominal-state : TcNominalCacheState]
@@ -44774,7 +44801,40 @@
     (if (= address (cast 0 : u64))
       unit
       (unsafe
-        (ptr-write! (int->ptr address : (MutPtr i64)) kind)))))
+        (ptr-write!
+          (int->ptr address : (MutPtr i64))
+          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 12) kind))))))
+
+;; The arena-handle fact of LOOKUP-ID's slot (4 yes, 8 no, 0 unknown), in the
+;; move-kind lane's bits 2-3.
+(define (tc-type-handle-cache-arena-handle
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : i64
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      0
+      (bit-and
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        12))))
+
+(define (tc-type-handle-cache-arena-handle-set!
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]
+  [fact : i64]) : unit
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      unit
+      (unsafe
+        (ptr-write!
+          (int->ptr address : (MutPtr i64))
+          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 3) fact))))))
 
 (define (tc-type-handle-cache-lookup-id
   [nominal-state : TcNominalCacheState]
@@ -50918,6 +50978,42 @@
   [name-id : i64]
   [stack : TcNameIdList]) : bool
   (let
+    [nominal-state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
+    [cached : i64
+      (tc-type-handle-cache-arena-handle
+        nominal-state
+        (tc-context-symbols-ref (& ctx))
+        name-id)]
+    (cond
+      [(= cached 4) true]
+      [(= cached 8) false]
+      [else
+        (let
+          [answer : bool
+            (tc-nominal-can-hold-arena-handle-walk ctx name-id stack)]
+          ;; A yes holds on every path; a no is final only for a walk from no
+          ;; enclosing nominal, since one cut off by `stack` is partial.
+          (when
+            (or
+              answer
+              (match stack
+                [(Nil) true]
+                [_ false]))
+            (tc-type-handle-cache-arena-handle-set!
+              nominal-state
+              (tc-context-symbols-ref (& ctx))
+              name-id
+              (if answer
+                4
+                8)))
+          answer)])))
+
+(define (tc-nominal-can-hold-arena-handle-walk
+  [ctx : TcContext]
+  [name-id : i64]
+  [stack : TcNameIdList]) : bool
+  (let
     [handle : i64
       (tc-type-handle-lookup-id
         (tc-job-state-nominal-cache (tc-context-job-state ctx))
@@ -50968,87 +51064,144 @@
               [_ false])]
           [(Err _) false])))))
 
-;; A call passing an arena owner (a branded `(arena.Arena r)`, or a tracked
-;; bare owner local) to a bare `arena.Arena` parameter, which does not consume
-;; it, and whose result `ty` can hold a handle
-;; (`tc-type-can-hold-arena-handle?`) may return a copy of the owner's handle
-;; (#8173): the result carries the owner's region (`r`, or the local) and ends
-;; with it. A result that cannot carry a region tag (a function) is rejected
-;; instead.
+;; A formal of type `ty` reaches a bare `arena.Arena` handle: the handle, a
+;; reference to one, or a value that can hold one
+;; (`tc-type-can-hold-arena-handle?`). A branded or `:invalidate` formal ties
+;; the call through its lifetime instead, and a function formal is a callback.
+(define (tc-formal-reaches-bare-arena? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx (tc-global-shared-view ty)))
+    [(or (Ref _ inner) (MutRef _ inner))
+      (tc-formal-reaches-bare-arena? ctx (tc-context-type-get ctx inner))]
+    [(or (Invalidate _ _) (Func _ _)) false]
+    [(or (Struct name) (StructArgs name _))
+      (if (tc-arena-nominal-name-id? name)
+        (match (tc-arena-branded-region ctx ty)
+          [(Some _) false]
+          [(No) true])
+        (tc-type-can-hold-arena-handle? ctx ty Nil))]
+    [_ (tc-type-can-hold-arena-handle? ctx ty Nil)]))
+
+;; The arena identities argument `arg` (of type `actual`) carries: the arena
+;; regions of its type (a branded owner's brand, a handle tagged by an earlier
+;; call), and the owner local its place is rooted at, through a borrow.
+(define (tc-call-arg-arena-identities
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [actual : ast.AstType]) : TcNameIdList
+  (let
+    [cursor : TcNameIdList (tc-type-collect-regions actual)]
+    [out : TcNameIdList Nil]
+    [place-id : i64
+      (match (ast.ast-expr-unspan (& (tc-context-expr-get ctx arg-id)))
+        [(ast.AstExpr.Borrow _ _ place) place]
+        [_ arg-id])]
+    [root : i64 (tc-selected-place-root-name ctx place-id)]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [region : i64 (tc-name-id-list-head cursor)]
+        (when
+          (and
+            (tc-selected-arena-region? env region)
+            (not (tc-name-id-list-contains out region)))
+          (set! out (tc-name-id-list-add out region)))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    (if (and
+      (>= root 0)
+      (or
+        (tc-ordinary-arena-owner-active-id? env root)
+        (tc-atomic-arena-owner-active-id? env root)))
+      (let
+        [identity : i64 (tc-arena-owner-identity ctx env root)]
+        (if (tc-name-id-list-contains out identity)
+          out
+          (tc-name-id-list-add out identity)))
+      out)))
+
+;; A call passing an arena owner or a handle copied from one (a branded owner,
+;; a tracked bare owner local, a handle a call tagged, or a reference to any of
+;; them) to a formal that reaches a bare `arena.Arena` handle
+;; (`tc-formal-reaches-bare-arena?`) does not consume it. The callee may return
+;; a copy of the handle (#8173), so a result `ty` that can hold one
+;; (`tc-type-can-hold-arena-handle?`) carries the owner's region and ends with
+;; it. A result type that cannot carry a region tag (a function, a fixed array)
+;; is rejected instead.
 (define (tc-call-erased-owner-result
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [ty : ast.AstType]) : ResultTcType
+  ;; Most results cannot hold a handle: one walk, before any formal's.
+  (unless
+    (tc-type-can-hold-arena-handle? ctx (tc-global-shared-view ty) Nil)
+    (return (Ok ty)))
   (let
     [index : i64 0]
-    [bare? : bool false]
-    [brands : TcNameIdList Nil]
+    [reaches? : bool false]
+    [regions : TcNameIdList Nil]
     (while (and
-      (not bare?)
+      (not reaches?)
       (< index (ast.ast-type-list-len (& params)))
       (< index args.len))
-      (let
-        [formal : ast.AstType
+      (when
+        (tc-formal-reaches-bare-arena?
+          ctx
           (tc-context-type-get
             ctx
-            (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback)))]
-        (when
-          (and
-            (tc-arena-type? ctx (tc-global-shared-view formal))
-            (match (tc-arena-branded-region ctx (tc-global-shared-view formal))
-              [(Some _) false]
-              [(No) true]))
-          (set! bare? true)))
+            (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback))))
+        (set! reaches? true))
       (set! index (+ index 1)))
-    (unless
-      (and
-        bare?
-        (tc-type-can-hold-arena-handle? ctx (tc-global-shared-view ty) Nil))
-      (return (Ok ty)))
+    (unless reaches? (return (Ok ty)))
     (set! index 0)
     (while (and (< index (ast.ast-type-list-len (& params))) (< index args.len))
       (let
-        [formal : ast.AstType
-          (tc-context-type-get
-            ctx
-            (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback)))]
-        [arg : ast.AstExpr
-          (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) index 0))]
+        [arg-id : i64 (ast.ast-expr-list-get (& args) index 0)]
         (when
-          (and
-            (tc-arena-type? ctx (tc-global-shared-view formal))
-            (match (tc-arena-branded-region ctx (tc-global-shared-view formal))
-              [(Some _) false]
-              [(No) true]))
-          (match (tc-expr ctx env (tc-global-shared-view arg))
+          (tc-formal-reaches-bare-arena?
+            ctx
+            (tc-context-type-get
+              ctx
+              (ast.ast-type-list-get
+                (& params)
+                index
+                (ast.ast-type-id-fallback))))
+          (match (tc-expr-id ctx env arg-id)
             [(Ok actual)
-              (match (match (tc-arena-branded-region
-                ctx
-                (tc-global-shared-view actual))
-                [(Some brand) (TcMaybeNameId.Some brand)]
-                [(No)
-                  (tc-in-arena-owner
-                    (tc-context-expr-segment-bases ctx)
+              (let
+                [found : TcNameIdList
+                  (tc-call-arg-arena-identities
+                    ctx
                     env
-                    (tc-global-shared-view arg))])
-                [(Some brand)
+                    arg-id
+                    (tc-global-shared-view actual))]
+                (when
+                  (and
+                    (not (tc-name-id-list-empty? found))
+                    (not (tc-region-taggable-type? (tc-global-shared-view ty))))
+                  (return
+                    (Err
+                      (tc-locate-error-at-expr
+                        (tc-context-expr-bases ctx)
+                        (tc-context-expr-get ctx arg-id)
+                        (tc-kind-message
+                          (ArenaOwnership)
+                          "typecheck: this call's result type cannot carry the region of the arena owner passed to it (a function or fixed-array result cannot), so a copy of the owner's handle could outlive the owner's end; take the parameter as `(arena.Arena r)`")))))
+                (while (not (tc-name-id-list-empty? found))
                   (unless
-                    (tc-region-taggable-type? (tc-global-shared-view ty))
-                    (return
-                      (Err
-                        (tc-locate-error-at-expr
-                          (tc-context-expr-bases ctx)
-                          arg
-                          (tc-kind-message
-                            (ArenaOwnership)
-                            "typecheck: an arena owner passed to a bare `arena.Arena` parameter cannot reach a function result, which could keep its handle past the owner's end; take the parameter as `(arena.Arena r)`")))))
-                  (set! brands (tc-name-id-list-add brands brand))]
-                [(No) unit])]
+                    (tc-name-id-list-contains
+                      regions
+                      (tc-name-id-list-head found))
+                    (set!
+                      regions
+                      (tc-name-id-list-add regions (tc-name-id-list-head found))))
+                  (set! found (tc-name-id-list-rest found))))]
             [(Err _) unit])))
       (set! index (+ index 1)))
-    (Ok (tc-tag-regions brands ty))))
+    ;; A region the result already carries is not tagged twice.
+    (let
+      [held : TcNameIdList (tc-type-outer-regions (tc-global-shared-view ty))]
+      (Ok (tc-tag-regions (tc-name-id-list-difference regions held) ty)))))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
@@ -64126,7 +64279,12 @@
                           (tc-global-shared-view got)))
                       (not
                         (tc-type-contains-reference?
-                          (tc-global-shared-view got))))
+                          (tc-global-shared-view got)))
+                      (not
+                        (tc-tagged-arena-handle-borrow?
+                          ctx
+                          (tc-global-shared-view got)
+                          (tc-global-shared-view want))))
                       (Err
                         (tc-region-call-arg-error
                           (tc-context-expr-bases ctx)

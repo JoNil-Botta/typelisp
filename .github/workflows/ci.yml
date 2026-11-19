@@ -44,11 +44,11 @@ jobs:
         # runs the host-wide source and editor checks once per host.
         include:
           - lane: linux-1
-            os: ubuntu-latest
+            os: ubuntu-24.04
             timeout_minutes: 150
             host_checks: true
           - lane: linux-2
-            os: ubuntu-latest
+            os: ubuntu-24.04
             timeout_minutes: 150
             host_checks: false
           - lane: windows-1
@@ -376,7 +376,7 @@ jobs:
           - name: Test + Integration
             host: Linux
             host_id: linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - name: Test + Integration (windows-latest)
             host: Windows
             host_id: windows

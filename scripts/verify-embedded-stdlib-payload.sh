@@ -57,7 +57,7 @@ if grep -n -v '^[A-Za-z0-9_][A-Za-z0-9_/]*\.tl$' "$NORMALIZED_MANIFEST" \
     sed 's/^/  /' "$WORKDIR/invalid-manifest-lines.txt" >&2
     exit 1
 fi
-sort "$NORMALIZED_MANIFEST" | uniq -d > "$WORKDIR/duplicate-manifest-lines.txt"
+LC_ALL=C sort "$NORMALIZED_MANIFEST" | uniq -d > "$WORKDIR/duplicate-manifest-lines.txt"
 if [ -s "$WORKDIR/duplicate-manifest-lines.txt" ]; then
     echo "embedded stdlib payload manifest has duplicate modules" >&2
     sed 's/^/  /' "$WORKDIR/duplicate-manifest-lines.txt" >&2
@@ -73,7 +73,7 @@ done < "$NORMALIZED_MANIFEST"
 SORTED_MANIFEST="$WORKDIR/modules-sorted.txt"
 IMPORTED_MODULES="$WORKDIR/imported-modules.txt"
 MISSING_IMPORTS="$WORKDIR/missing-imports.txt"
-sort -u "$NORMALIZED_MANIFEST" > "$SORTED_MANIFEST"
+LC_ALL=C sort -u "$NORMALIZED_MANIFEST" > "$SORTED_MANIFEST"
 : > "$IMPORTED_MODULES"
 while IFS= read -r suffix; do
     sed '/^[[:space:]]*;/d' "stdlib/$suffix" |
@@ -83,8 +83,8 @@ done < "$NORMALIZED_MANIFEST"
 sed 's/.*stdlib\.//' "$IMPORTED_MODULES" |
     tr '.' '/' |
     sed 's/$/.tl/' |
-    sort -u > "$IMPORTED_MODULES.sorted"
-comm -23 "$IMPORTED_MODULES.sorted" "$SORTED_MANIFEST" > "$MISSING_IMPORTS"
+    LC_ALL=C sort -u > "$IMPORTED_MODULES.sorted"
+LC_ALL=C comm -23 "$IMPORTED_MODULES.sorted" "$SORTED_MANIFEST" > "$MISSING_IMPORTS"
 if [ -s "$MISSING_IMPORTS" ]; then
     echo "embedded stdlib payload is missing imported modules:" >&2
     sed 's/^/  stdlib\//' "$MISSING_IMPORTS" >&2

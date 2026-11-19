@@ -2140,13 +2140,13 @@
 ;; without a whole CompilerIrFunction (the backend's stack-slot colorer runs on
 ;; the final rewritten blocks) enter here directly.
 (define (compiler-live-block-graph-edge-precise
-  [seq : ir.CompilerIrBlockSeq]
+  [seq : (& seq ir.CompilerIrBlockSeq)]
   [vars : i64]) : CompilerLiveBlockGraph
   (let
     [word-count : i64 (compiler-live-var-word-count vars)]
     [build : CompilerLiveFunctionGraphBuild
       (compiler-live-function-graph-build
-        (compiler-live-shared-view seq)
+        (owned_view.compiler-owned-reference-shared-view seq)
         (& (compiler-live-build-block-array-nophi seq vars)))]
     [graph0 : CompilerLiveBlockGraph build.graph]
     [phi-out : (__tl_dyn-array CompilerLiveI64Set)
@@ -2167,9 +2167,7 @@
   (let
     [seq : ir.CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
     [graph : CompilerLiveBlockGraph
-      (compiler-live-block-graph-edge-precise
-        (compiler-live-shared-view seq)
-        vars)]
+      (compiler-live-block-graph-edge-precise (& seq) vars)]
     (compiler-live-fill-instr-after-graph-seq!
       seq
       (compiler-live-shared-view graph.blocks)
@@ -2184,10 +2182,9 @@
   [blocks : (& ir.CompilerIrBlockList)]
   [vars : i64]) : CompilerFunctionLiveness
   (let
+    [seq : ir.CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
     [graph : CompilerLiveBlockGraph
-      (compiler-live-block-graph-edge-precise
-        (compiler-live-ir-block-list-to-seq blocks)
-        vars)]
+      (compiler-live-block-graph-edge-precise (& seq) vars)]
     (Liveness graph.ids graph.blocks)))
 
 (define (compiler-live-analyze-function-edge-precise

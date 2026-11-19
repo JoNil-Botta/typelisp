@@ -28172,17 +28172,18 @@
   [types : (& types OptSsaVarTypes)]
   [vars : i64]) : unit
   (let
-    [current : OptLicmPressureScratch
-      (compiler-opt-global-array-element-shared-view
-        (owned_view.compiler-owned-reference-shared-view memo)
-        0)]
-    [have : i64 (array-length current.int?)]
+    [have : i64
+      (let
+        [current (& (array-ref memo 0))]
+        (array-length current.int?))]
     (when
       (< have vars)
       (let
         [int? : (__tl_dyn-array bool) (__tl_make-array bool vars)]
-        (for [var (iterator.range 0 have)]
-          (set! (array-ref int? var) (array-ref current.int? var)))
+        (let
+          [current (& (array-ref memo 0))]
+          (for [var (iterator.range 0 have)]
+            (set! (array-ref int? var) (array-ref current.int? var))))
         (for [var (iterator.range have vars)]
           (set! (array-ref int? var) (opt-licm-int-pressure-var? types var)))
         (set!
@@ -28194,56 +28195,58 @@
 
 ;; Mark `var` live; answers the live count after.
 (define (opt-licm-pressure-add!
-  [live : (&mut live (__tl_dyn-array bool))]
-  [touched : (&mut touched (__tl_dyn-array i64))]
-  [int? : (& int? (__tl_dyn-array bool))]
+  [scratch : (&mut scratch OptLicmPressureScratch)]
   [count : i64]
   [var : i64]) : i64
   (if (or
     (< var 0)
-    (>= var (array-length live))
-    (not (array-ref int? var))
-    (array-ref live var))
+    (>= var (array-length scratch.live))
+    (not (array-ref scratch.int? var))
+    (array-ref scratch.live var))
     count
     (let
-      [slot : i64 (+ (array-ref touched 0) 1)]
-      (set! (array-ref live var) true)
-      (set! (array-ref touched 0) slot)
-      (when (< slot (array-length touched)) (set! (array-ref touched slot) var))
+      [slot : i64 (+ (array-ref scratch.touched 0) 1)]
+      (set! (array-ref scratch.live var) true)
+      (set! (array-ref scratch.touched 0) slot)
+      (when
+        (< slot (array-length scratch.touched))
+        (set! (array-ref scratch.touched slot) var))
       (+ count 1))))
 
 ;; Clear what the block's walk set. A walk that set more vars than `touched`
 ;; holds (an SSA body sets each var at most once) clears them all.
 (define (opt-licm-pressure-clear!
-  [live : (&mut live (__tl_dyn-array bool))]
-  [touched : (&mut touched (__tl_dyn-array i64))]) : unit
+  [scratch : (&mut scratch OptLicmPressureScratch)]) : unit
   (let
-    [count : i64 (array-ref touched 0)]
-    (if (< count (array-length touched))
+    [count : i64 (array-ref scratch.touched 0)]
+    (if (< count (array-length scratch.touched))
       (for [slot (iterator.range 1 (+ count 1))]
-        (set! (array-ref live (array-ref touched slot)) false))
-      (for [var (iterator.range 0 (array-length live))]
-        (set! (array-ref live var) false)))
-    (set! (array-ref touched 0) 0)))
+        (set! (array-ref scratch.live (array-ref scratch.touched slot)) false))
+      (for [var (iterator.range 0 (array-length scratch.live))]
+        (set! (array-ref scratch.live var) false)))
+    (set! (array-ref scratch.touched 0) 0)))
 
 (define (opt-licm-pressure-remove!
-  [live : (&mut live (__tl_dyn-array bool))]
+  [scratch : (&mut scratch OptLicmPressureScratch)]
   [count : i64]
   [var : i64]) : i64
-  (if (or (< var 0) (>= var (array-length live)) (not (array-ref live var)))
+  (if (or
+    (< var 0)
+    (>= var (array-length scratch.live))
+    (not (array-ref scratch.live var)))
     count
     (begin
-      (set! (array-ref live var) false)
+      (set! (array-ref scratch.live var) false)
       (- count 1))))
 
-;; Seed `live` from a block's live-out set, one bitset word at a time.
-(define (opt-licm-pressure-seed!
-  [live : (&mut live (__tl_dyn-array bool))]
-  [touched : (&mut touched (__tl_dyn-array i64))]
-  [int? : (& int? (__tl_dyn-array bool))]
+;; Mark every var of `set` live, one bitset word at a time; answers the count
+;; after, starting from `count`.
+(define (opt-licm-pressure-add-set!
+  [scratch : (&mut scratch OptLicmPressureScratch)]
+  [count : i64]
   [set : (& set opt_liveness.CompilerLiveI64Set)]) : i64
   (let
-    [count : i64 0]
+    [total : i64 count]
     (for [word-index
       (iterator.range 0 (opt_liveness.compiler-live-set-word-count set))]
       (let
@@ -28255,14 +28258,9 @@
             (when
               (not (= (bit-and word (shl 1 bit)) 0))
               (set!
-                count
-                (opt-licm-pressure-add!
-                  live
-                  touched
-                  int?
-                  count
-                  (+ (* word-index 64) bit))))))))
-    count))
+                total
+                (opt-licm-pressure-add! scratch total (+ (* word-index 64) bit))))))))
+    total))
 
 ;; Walk one block bottom-up from its live-out set and answer the largest live
 ;; count at any point. A def leaves the set above its instruction and the
@@ -28270,13 +28268,11 @@
 ;; of their own predecessors, which is what edge-precise liveness says). The
 ;; set is cleared on the way out, so the scratch array is all-false again.
 (define (opt-licm-pressure-block-peak
-  [live : (&mut live (__tl_dyn-array bool))]
-  [touched : (&mut touched (__tl_dyn-array i64))]
-  [int? : (& int? (__tl_dyn-array bool))]
+  [scratch : (&mut scratch OptLicmPressureScratch)]
   [live-out : (& live-out opt_liveness.CompilerLiveI64Set)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
   (let
-    [count : i64 (opt-licm-pressure-seed! live touched int? live-out)]
+    [count : i64 (opt-licm-pressure-add-set! scratch 0 live-out)]
     [peak : i64 count]
     [index : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
     (while (>= index 0)
@@ -28287,12 +28283,12 @@
         (when
           (and
             (>= dst 0)
-            (< dst (array-length live))
-            (array-ref int? dst)
-            (not (array-ref live dst))
+            (< dst (array-length scratch.live))
+            (array-ref scratch.int? dst)
+            (not (array-ref scratch.live dst))
             (>= count peak))
           (set! peak (+ count 1)))
-        (set! count (opt-licm-pressure-remove! live count dst))
+        (set! count (opt-licm-pressure-remove! scratch count dst))
         (let
           [id-count : i64
             (opt_liveness.compiler-live-instr-use-ids-nophi! (& instr))]
@@ -28300,41 +28296,17 @@
             (let
               [uses : opt_liveness.CompilerLiveI64Set
                 (opt_liveness.compiler-live-instr-uses-nophi (& instr))]
-              (for [word-index
-                (iterator.range
-                  0
-                  (opt_liveness.compiler-live-set-word-count (& uses)))]
-                (let
-                  [word : i64
-                    (opt_liveness.compiler-live-set-word-at-bounded
-                      (& uses)
-                      word-index)]
-                  (for [bit (iterator.range 0 64)]
-                    (when
-                      (not (= (bit-and word (shl 1 bit)) 0))
-                      (set!
-                        count
-                        (opt-licm-pressure-add!
-                          live
-                          touched
-                          int?
-                          count
-                          (+ (* word-index 64) bit))))))))
+              (set! count (opt-licm-pressure-add-set! scratch count (& uses))))
             (let
               [ids : (__tl_dyn-array i64)
                 (opt_liveness.compiler-live-instr-ids)]
               (for [k (iterator.range 0 id-count)]
                 (set!
                   count
-                  (opt-licm-pressure-add!
-                    live
-                    touched
-                    int?
-                    count
-                    (array-ref ids k)))))))
+                  (opt-licm-pressure-add! scratch count (array-ref ids k)))))))
         (when (> count peak) (set! peak count))
         (-= index 1)))
-    (opt-licm-pressure-clear! live touched)
+    (opt-licm-pressure-clear! scratch)
     peak))
 
 ;; The loop's integer register pressure: the most integer-register values live
@@ -28358,28 +28330,34 @@
   [index : (& index opt_i64_i64_map.Map)]
   [cell-writes : i64]
   [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(or (Mov _ src _) (Cast _ src _ _) (Bitcast _ src _ _) (Word _ src _ _)
          (UnOp _ _ src _) (Splat _ src _ _))
-      (opt-licm-cell-operand-free? index cell-writes (& src))]
+      (opt-licm-cell-operand-free? index cell-writes src)]
     [(BinOp _ _ lhs rhs _)
       (or
-        (opt-licm-cell-operand-free? index cell-writes (& lhs))
-        (opt-licm-cell-operand-free? index cell-writes (& rhs)))]
+        (opt-licm-cell-operand-free? index cell-writes lhs)
+        (opt-licm-cell-operand-free? index cell-writes rhs))]
     [(VectorBinOp payload-box)
-      (let
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        (or
-          (opt-licm-cell-operand-free? index cell-writes (& lhs))
-          (opt-licm-cell-operand-free? index cell-writes (& rhs))))]
+      (or
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).lhs))
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).rhs)))]
     [(VectorCompare payload-box)
-      (let
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        (or
-          (opt-licm-cell-operand-free? index cell-writes (& lhs))
-          (opt-licm-cell-operand-free? index cell-writes (& rhs))))]
+      (or
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).lhs))
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).rhs)))]
     [_ false]))
 
 (define (opt-licm-cell-arith-body?
@@ -28411,13 +28389,7 @@
   [vars : i64]) : i64
   (let
     [_ready : unit (opt-licm-pressure-scratch-ready! memo types vars)]
-    [scratch : OptLicmPressureScratch
-      (compiler-opt-global-array-element-shared-view
-        (owned_view.compiler-owned-reference-shared-view memo)
-        0)]
-    [int? : (__tl_dyn-array bool) scratch.int?]
-    [live : (__tl_dyn-array bool) scratch.live]
-    [touched : (__tl_dyn-array i64) scratch.touched]
+    [scratch (&mut (array-ref memo 0))]
     [liveness : opt_liveness.CompilerFunctionLiveness
       (opt_liveness.compiler-live-analyze-block-bounds-edge-precise blocks vars)]
     [peak : i64 0]
@@ -28433,9 +28405,7 @@
                   (let
                     [block-peak : i64
                       (opt-licm-pressure-block-peak
-                        (&mut live)
-                        (&mut touched)
-                        (& int?)
+                        scratch
                         (& block.live-out)
                         (& instrs))]
                     (when (> block-peak peak) (set! peak block-peak)))]

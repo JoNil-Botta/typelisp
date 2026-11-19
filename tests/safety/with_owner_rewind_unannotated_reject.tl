@@ -1,8 +1,6 @@
-;; KNOWN OPEN, pre-existing and unsafe: this program is accepted and reads
-;; reclaimed storage. Tracked in #9479 / D-C47 S2. A branded `in-arena` allocates
-;; in the brand, not in the owner's live phase, so rewinding a phase taken
-;; before the `with` owner was allocated does not see the owner. Its row must
-;; flip to a rejection when S2 lands.
+;; #9479: a branded `in-arena` allocates in the owner's live phase, so
+;; rewinding a phase taken before the `with` owner was allocated reaches the
+;; owner, whose cleanup still runs when its scope ends.
 (import stdlib.arena)
 (import stdlib.string)
 

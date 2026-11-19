@@ -111,11 +111,15 @@
 ;; source-name ids. Each variant names both the role and the components that
 ;; participate in canonicalization, so consumers cannot accidentally decode a
 ;; marker as a region merely because its raw handle occupies a numeric lane.
+;; A phase taken while another phase of its owner is current has the region
+;; `(Region owner nested)`, where `nested` is `(Nested parent token)`: a rewind
+;; of the parent's phase ends it too.
 (defenum InternArenaPhaseRecord
   (Region i64 i64)
   (CurrentRegionMarker i64)
   (TokenOwnerMarker i64)
-  (TokenRegionMarker i64))
+  (TokenRegionMarker i64)
+  (Nested i64 i64))
 
 (defstruct InternArenaPhaseIdentity
   (value i64))
@@ -1413,7 +1417,13 @@
         handle
         3
         token-id
-        0)]))
+        0)]
+    [(Nested parent-id token-id)
+      (intern-structural-session-arena-phase-identity-for-components
+        handle
+        4
+        parent-id
+        token-id)]))
 
 (define (intern-structural-session-arena-phase-record
   [handle : InternStructuralSessionHandle]
@@ -1442,6 +1452,7 @@
             [(= role 1) (Some (CurrentRegionMarker first-id))]
             [(= role 2) (Some (TokenOwnerMarker first-id))]
             [(= role 3) (Some (TokenRegionMarker first-id))]
+            [(= role 4) (Some (Nested first-id second-id))]
             [else No]))))))
 
 (define (intern-structural-session-arena-phase-record-for-raw

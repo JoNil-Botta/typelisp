@@ -75,8 +75,8 @@ mkdir -p \
     "$EXPLICIT_CWD" "$MODIFIED_ROOT/stdlib" \
     "$DEFAULT_DIR" "$EXPLICIT_DIR" "$SOURCE_DIR"
 
-awk -F '\t' '!/^#/ && NF { print $1 }' "$MANIFEST" | sort > "$EXPECTED"
-awk -F '\t' '!/^#/ && NF { print $1 "\t" $4 }' "$MANIFEST" | sort \
+awk -F '\t' '!/^#/ && NF { print $1 }' "$MANIFEST" | LC_ALL=C sort > "$EXPECTED"
+awk -F '\t' '!/^#/ && NF { print $1 "\t" $4 }' "$MANIFEST" | LC_ALL=C sort \
     > "$EXPECTED_KINDS"
 awk -F '\t' '!/^#/ && NF && !seen[$5]++ { print $5 }' "$MANIFEST" \
     > "$FIXTURES"
@@ -175,7 +175,7 @@ route_identities() {
             if (slash > 0 && $5 == substr($4, 1, slash - 1)) print $4
         }
     ' \
-        "$_input" | sort -u
+        "$_input" | LC_ALL=C sort -u
 }
 
 route_kinds() {
@@ -189,7 +189,7 @@ route_kinds() {
                 print $4 "\t" $3
         }
     ' \
-        "$_input" | sort -u
+        "$_input" | LC_ALL=C sort -u
 }
 
 verify_fixture_routes() {
@@ -263,7 +263,7 @@ if route_identities native "$WORKDIR/source.stderr" | grep . >/dev/null; then
     fail "modified root unexpectedly dispatched a native catalog identity"
 fi
 route_identities source "$WORKDIR/source.stderr" > "$WORKDIR/source-identities.txt"
-comm -12 "$EXPECTED" "$WORKDIR/source-identities.txt" \
+LC_ALL=C comm -12 "$EXPECTED" "$WORKDIR/source-identities.txt" \
     > "$WORKDIR/source-catalog-identities.txt"
 cmp -s "$EXPECTED" "$WORKDIR/source-catalog-identities.txt" ||
     fail "forced-source identity set is not inventory-exact"

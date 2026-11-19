@@ -543,11 +543,12 @@ declaration is stale, when a host has more than two lanes, or when
 `SC_CI_JOB_NAME` (`lib-self-compile.sh`) does not name the lane that runs
 `linux-self-compile-measurement`. Every lane and aggregator runs it, so a new
 `ci-gates.tsv` row needs a lane before CI can pass. `ci-lane.sh setup LANE`
-gives the workflow a lane's gates and needs. Lane `linux-1` holds only
-build-invariance, its bootstrap and the opt2-CLI regression that needs it, so
-no other gate can run beside the build-invariance pool there: in that hosted
-lane only, `TYPELISP_BUILD_INVARIANCE_WORKERS=3` (per-chunk caps and the pool
-budget unchanged). Local runs keep their own worker settings.
+gives the workflow a lane's gates and needs. `ci-lane.sh setup` grants the
+three-worker build-invariance pool only to a lane that holds nothing else;
+under this layout lane `linux-1` also carries the gates the replay moved
+beside it, so build-invariance runs at the default two workers (per-chunk
+caps and the pool budget unchanged). Local runs keep their own worker
+settings.
 
 Each lane seals a receipt into its compiler stage envelope: its plan, its
 `--gates` request, every planned gate's result (`ci-verify.sh` writes

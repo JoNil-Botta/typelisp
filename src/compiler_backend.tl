@@ -65657,6 +65657,41 @@
     (+ end 1)
     end))
 
+;; `NOFF(%rsp)`, the rewritten spelling of one frame reference. Almost every
+;; displacement is a small non-negative number, so that case reserves once and
+;; writes its digits and the base in place; any other value takes the general
+;; decimal writer. Both spell `NOFF` exactly as `string.int->string` does.
+(define (compiler-backend-rsp-rebase-rsp-ref!
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [noff : i64]) : unit
+  (if (or (< noff 0) (>= noff 10000))
+    (begin
+      (compiler-backend-asm-append-decimal! out noff)
+      (compiler-backend-asm-append out "(%rsp)"))
+    (let
+      [digits : i64
+        (cond [(< noff 10) 1] [(< noff 100) 2] [(< noff 1000) 3] [else 4])]
+      [off : i64 out.len]
+      [base : i64 (+ off digits)]
+      (compiler-backend-asm-buf-reserve! out (+ base 6))
+      (let
+        [dst : (MutPtr u8) out.data]
+        [rest : i64 noff]
+        [pos : i64 (- base 1)]
+        (while (>= pos off)
+          (unsafe
+            (ptr-write! (ptr-offset dst pos) (cast (+ 48 (% rest 10)) : u8)))
+          (set! rest (/ rest 10))
+          (-= pos 1))
+        (unsafe
+          (ptr-write! (ptr-offset dst base) (cast 40 : u8))
+          (ptr-write! (ptr-offset dst (+ base 1)) (cast 37 : u8))
+          (ptr-write! (ptr-offset dst (+ base 2)) (cast 114 : u8))
+          (ptr-write! (ptr-offset dst (+ base 3)) (cast 115 : u8))
+          (ptr-write! (ptr-offset dst (+ base 4)) (cast 112 : u8))
+          (ptr-write! (ptr-offset dst (+ base 5)) (cast 41 : u8))))
+      (set! out.len (+ base 6)))))
+
 ;; `    addq $AMOUNT, %rsp`, newline-terminated when `newline`.
 (define (compiler-backend-rsp-rebase-addq-line!
   [out : (&mut out CompilerBackendAsmBuf)]
@@ -66127,12 +66162,9 @@
                                                     data
                                                     run
                                                     ks)
-                                                  (compiler-backend-asm-append-decimal!
+                                                  (compiler-backend-rsp-rebase-rsp-ref!
                                                     (&mut out)
                                                     noff)
-                                                  (compiler-backend-asm-append
-                                                    (&mut out)
-                                                    "(%rsp)")
                                                   (set! last-noff noff)
                                                   (+= ref-count 1)
                                                   (set! run (+ p 6))))))))))

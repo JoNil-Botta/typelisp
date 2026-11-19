@@ -77734,41 +77734,39 @@
 ;; clear tokens across programs, while tc-agg-caches-reset-for-job! covers
 ;; lower/test paths that reuse cache arrays without resetting the intern table.
 ;;
-;; A name id is a source-name id below the session's pool capacity or a
-;; structural id of the session's structural table (a module-qualified name).
-;; A clear sizes the table to the id ranges the session has then: slot ID for
-;; a source-name id, and slot `source span + index` for structural record
-;; INDEX. An id minted after the clear falls outside both and is computed
-;; uncached until the next clear sizes the table again.
+;; A name id is a source-name id, below `ci.intern-capacity`, or a structural
+;; id of the owning session's structural table (a module-qualified name). Slot
+;; ID of a table holds a source-name id; slot `ci.intern-capacity + INDEX`
+;; holds structural record INDEX of the session prepared at the last clear,
+;; for INDEX in the fixed structural window. A structural id past the window
+;; is computed uncached. The table never grows, so a batch prewarms it once
+;; before its first entry (`tc-agg-*-cache-storage-ensure-for-job!`).
 ;;
 ;; Past the table, a scalar cache array holds its fill log: a count cell, then
 ;; up to `tc-agg-scalar-cache-log-capacity` keys filled since the last clear,
 ;; so a clear costs what the program cached rather than the whole table
 ;; (#8520). A count above the log capacity means the log overflowed, or the
 ;; array is fresh and its contents unknown: the next clear then empties the
-;; whole table. The array ends with its key layout: the source span, the
-;; structural key prefix and the structural span.
+;; whole table. The last cell holds the prepared session's structural key
+;; prefix.
+(define tc-agg-scalar-cache-structural-window : i64
+  (ci.intern-capacity))
+(define tc-agg-scalar-cache-capacity : i64
+  (+ (ci.intern-capacity) tc-agg-scalar-cache-structural-window))
 (define tc-agg-scalar-cache-log-capacity : i64
   16384)
-(define tc-agg-scalar-cache-trailer-length : i64
-  (+ tc-agg-scalar-cache-log-capacity 4))
+(define tc-agg-scalar-cache-prefix-slot : i64
+  (+ tc-agg-scalar-cache-capacity (+ tc-agg-scalar-cache-log-capacity 1)))
+(define tc-agg-scalar-cache-length : i64
+  (+ tc-agg-scalar-cache-prefix-slot 1))
 
-(define (tc-agg-scalar-cache-table-capacity
-  [slots : (& slots (__tl_dyn-array i64))]) : i64
-  (- (array-length slots) tc-agg-scalar-cache-trailer-length))
-
-;; Index of the source-span cell; the structural prefix and span follow it.
-(define (tc-agg-scalar-cache-layout-slot
-  [slots : (& slots (__tl_dyn-array i64))]) : i64
-  (+
-    (tc-agg-scalar-cache-table-capacity slots)
-    (+ tc-agg-scalar-cache-log-capacity 1)))
-
-(define (tc-agg-scalar-cache-new [capacity : i64]) : (__tl_dyn-array i64)
+(define (tc-agg-scalar-cache-new) : (__tl_dyn-array i64)
   (let
     [slots : (__tl_dyn-array i64)
-      (__tl_make-array i64 (+ capacity tc-agg-scalar-cache-trailer-length))]
-    (set! (array-ref slots capacity) (+ tc-agg-scalar-cache-log-capacity 1))
+      (__tl_make-array i64 tc-agg-scalar-cache-length)]
+    (set!
+      (array-ref slots tc-agg-scalar-cache-capacity)
+      (+ tc-agg-scalar-cache-log-capacity 1))
     slots))
 
 ;; Log table slot KEY of SLOTS as filled.
@@ -77776,87 +77774,115 @@
   [slots : (&mut slots (__tl_dyn-array i64))]
   [key : i64]) : unit
   (let
-    [capacity : i64 (tc-agg-scalar-cache-table-capacity slots)]
-    [count : i64 (array-ref slots capacity)]
+    [count : i64 (array-ref slots tc-agg-scalar-cache-capacity)]
     (if (< count tc-agg-scalar-cache-log-capacity)
       (begin
-        (set! (array-ref slots (+ capacity (+ count 1))) key)
-        (set! (array-ref slots capacity) (+ count 1)))
-      (set! (array-ref slots capacity) (+ tc-agg-scalar-cache-log-capacity 1)))))
+        (set!
+          (array-ref slots (+ tc-agg-scalar-cache-capacity (+ count 1)))
+          key)
+        (set! (array-ref slots tc-agg-scalar-cache-capacity) (+ count 1)))
+      (set!
+        (array-ref slots tc-agg-scalar-cache-capacity)
+        (+ tc-agg-scalar-cache-log-capacity 1)))))
 
 ;; Empty every table slot filled since the last clear: the logged keys, or the
 ;; whole table when the log overflowed. The table then caches nothing.
 (define (tc-agg-scalar-cache-clear! [slots : (&mut slots (__tl_dyn-array i64))]) : unit
   (let
-    [capacity : i64 (tc-agg-scalar-cache-table-capacity slots)]
-    [count : i64 (array-ref slots capacity)]
+    [count : i64 (array-ref slots tc-agg-scalar-cache-capacity)]
     [index : i64 0]
     (if (> count tc-agg-scalar-cache-log-capacity)
-      (while (< index capacity)
+      (while (< index tc-agg-scalar-cache-capacity)
         (set! (array-ref slots index) 0)
         (+= index 1))
       (while (< index count)
-        (set! (array-ref slots (array-ref slots (+ capacity (+ index 1)))) 0)
+        (set!
+          (array-ref
+            slots
+            (array-ref slots (+ tc-agg-scalar-cache-capacity (+ index 1))))
+          0)
         (+= index 1)))
-    (set! (array-ref slots capacity) 0)))
+    (set! (array-ref slots tc-agg-scalar-cache-capacity) 0)))
 
-;; The table slots a cache cleared now needs for SOURCE-NAMES' id ranges: its
-;; source-name ids, then its structural record indices.
-(define (tc-agg-scalar-cache-key-space
-  [source-names : ci.InternSourceNameSessionHandle]) : i64
-  (let
-    [session : ci.InternSourceNameSession
-      (ci.intern-source-name-session-handle-session source-names)]
-    (+
-      (array-length session.pool-slots)
-      (owned_view.compiler-owned-array-element-shared-view
-        session.structural-table-cell
-        0).len)))
-
-;; SLOTS emptied and keyed for the id ranges SOURCE-NAMES has now: SLOTS itself
-;; when its table covers them, else a fresh array in OWNER-ARENA.
-(define (tc-agg-scalar-cache-prepare
-  [slots : (__tl_dyn-array i64)]
-  [owner-arena : i64]
-  [source-names : ci.InternSourceNameSessionHandle]) : (__tl_dyn-array i64)
-  (let
-    [session : ci.InternSourceNameSession
-      (ci.intern-source-name-session-handle-session source-names)]
-    [source-span : i64 (array-length session.pool-slots)]
-    [needed : i64 (tc-agg-scalar-cache-key-space source-names)]
-    [ready : (__tl_dyn-array i64)
-      (if (< (tc-agg-scalar-cache-table-capacity (& slots)) needed)
-        (in-arena
-          (unsafe
-            (arena.Arena owner-arena))
-          (tc-agg-scalar-cache-new needed))
-        slots)]
-    [layout : i64 (tc-agg-scalar-cache-layout-slot (& ready))]
-    (tc-agg-scalar-cache-clear! (&mut ready))
-    (set! (array-ref ready layout) source-span)
+;; Allocate SLOTS (in OWNER-ARENA) unless a prewarm already did.
+(define (tc-agg-scalar-cache-storage-ensure!
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [owner-arena : i64]) : unit
+  (unless
+    (= (array-length (deref slots)) tc-agg-scalar-cache-length)
     (set!
-      (array-ref ready (+ layout 1))
+      (deref slots)
+      (in-arena
+        (unsafe
+          (arena.Arena owner-arena))
+        (tc-agg-scalar-cache-new)))))
+
+;; Empty SLOTS and key it for SOURCE-NAMES' structural records.
+(define (tc-agg-scalar-cache-prepare!
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [source-names : ci.InternSourceNameSessionHandle]) : unit
+  (let
+    [session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
+    (tc-agg-scalar-cache-clear! slots)
+    (set!
+      (array-ref slots tc-agg-scalar-cache-prefix-slot)
       (+
         (ci.intern-structural-key-base)
-        (* session.structural-owner (ci.intern-structural-key-owner-stride))))
-    (set! (array-ref ready (+ layout 2)) (- needed source-span))
-    ready))
+        (* session.structural-owner (ci.intern-structural-key-owner-stride))))))
 
 ;; The table slot of NAME-ID in prepared SLOTS, or -1 outside its id ranges.
 (define (tc-agg-scalar-cache-key
   [slots : (& slots (__tl_dyn-array i64))]
   [name-id : i64]) : i64
   (let
-    [layout : i64 (tc-agg-scalar-cache-layout-slot slots)]
-    [source-span : i64 (array-ref slots layout)]
-    [structural-index : i64 (- name-id (array-ref slots (+ layout 1)))]
+    [structural-index : i64
+      (- name-id (array-ref slots tc-agg-scalar-cache-prefix-slot))]
     (cond
-      [(and (>= name-id 0) (< name-id source-span)) name-id]
+      [(and (>= name-id 0) (< name-id (ci.intern-capacity))) name-id]
       [(and
           (> structural-index 0)
-          (<= structural-index (array-ref slots (+ layout 2))))
-        (+ source-span (- structural-index 1))]
+          (<= structural-index tc-agg-scalar-cache-structural-window))
+        (+ (ci.intern-capacity) (- structural-index 1))]
       [else -1])))
+
+;; Batch prewarm: allocate a job's three scalar cache tables before its first
+;; entry, so the fixed tables are part of the batch's baseline.
+(define (tc-agg-size-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
+  (let
+    [data : (MutPtr TcAggScalarCacheStateData)
+      (tc-agg-scalar-cache-state-ptr (tc-job-state-agg-scalar-caches job-state))]
+    (unsafe
+      (let
+        [slots : (__tl_dyn-array i64) (deref data).size-cache]
+        (tc-agg-scalar-cache-storage-ensure!
+          (&mut slots)
+          (deref data).owner-arena)
+        (set! (deref data).size-cache slots)))))
+
+(define (tc-agg-align-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
+  (let
+    [data : (MutPtr TcAggScalarCacheStateData)
+      (tc-agg-scalar-cache-state-ptr (tc-job-state-agg-scalar-caches job-state))]
+    (unsafe
+      (let
+        [slots : (__tl_dyn-array i64) (deref data).align-cache]
+        (tc-agg-scalar-cache-storage-ensure!
+          (&mut slots)
+          (deref data).owner-arena)
+        (set! (deref data).align-cache slots)))))
+
+(define (tc-agg-regwords-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
+  (let
+    [data : (MutPtr TcAggScalarCacheStateData)
+      (tc-agg-scalar-cache-state-ptr (tc-job-state-agg-scalar-caches job-state))]
+    (unsafe
+      (let
+        [slots : (__tl_dyn-array i64) (deref data).regwords-cache]
+        (tc-agg-scalar-cache-storage-ensure!
+          (&mut slots)
+          (deref data).owner-arena)
+        (set! (deref data).regwords-cache slots)))))
 
 (define (tc-agg-size-cache-ensure-for-state!
   [state : TcAggScalarCacheState]
@@ -77873,12 +77899,13 @@
         (and
           (= (deref data).size-intern-table-id intern-table-id)
           (= (deref data).size-intern-generation intern-generation))
-        (set!
-          (deref data).size-cache
-          (tc-agg-scalar-cache-prepare
-            (deref data).size-cache
-            (deref data).owner-arena
-            source-names))
+        (let
+          [slots : (__tl_dyn-array i64) (deref data).size-cache]
+          (tc-agg-scalar-cache-storage-ensure!
+            (&mut slots)
+            (deref data).owner-arena)
+          (tc-agg-scalar-cache-prepare! (&mut slots) source-names)
+          (set! (deref data).size-cache slots))
         (set! (deref data).size-intern-table-id intern-table-id)
         (set! (deref data).size-intern-generation intern-generation)))))
 
@@ -77932,12 +77959,13 @@
         (and
           (= (deref data).align-intern-table-id intern-table-id)
           (= (deref data).align-intern-generation intern-generation))
-        (set!
-          (deref data).align-cache
-          (tc-agg-scalar-cache-prepare
-            (deref data).align-cache
-            (deref data).owner-arena
-            source-names))
+        (let
+          [slots : (__tl_dyn-array i64) (deref data).align-cache]
+          (tc-agg-scalar-cache-storage-ensure!
+            (&mut slots)
+            (deref data).owner-arena)
+          (tc-agg-scalar-cache-prepare! (&mut slots) source-names)
+          (set! (deref data).align-cache slots))
         (set! (deref data).align-intern-table-id intern-table-id)
         (set! (deref data).align-intern-generation intern-generation)))))
 
@@ -77991,12 +78019,13 @@
         (and
           (= (deref data).regwords-intern-table-id intern-table-id)
           (= (deref data).regwords-intern-generation intern-generation))
-        (set!
-          (deref data).regwords-cache
-          (tc-agg-scalar-cache-prepare
-            (deref data).regwords-cache
-            (deref data).owner-arena
-            source-names))
+        (let
+          [slots : (__tl_dyn-array i64) (deref data).regwords-cache]
+          (tc-agg-scalar-cache-storage-ensure!
+            (&mut slots)
+            (deref data).owner-arena)
+          (tc-agg-scalar-cache-prepare! (&mut slots) source-names)
+          (set! (deref data).regwords-cache slots))
         (set! (deref data).regwords-intern-table-id intern-table-id)
         (set! (deref data).regwords-intern-generation intern-generation)))))
 

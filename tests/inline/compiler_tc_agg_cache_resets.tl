@@ -7,10 +7,9 @@
 
 (define (scalar-table-empty? [slots : (& slots (__tl_dyn-array i64))]) : bool
   (let
-    [capacity : i64 (tc_core.tc-agg-scalar-cache-table-capacity slots)]
-    [empty : bool (= (array-ref slots capacity) 0)]
+    [empty : bool (= (array-ref slots tc_core.tc-agg-scalar-cache-capacity) 0)]
     [index : i64 0]
-    (while (and empty (< index capacity))
+    (while (and empty (< index tc_core.tc-agg-scalar-cache-capacity))
       (unless (= (array-ref slots index) 0) (set! empty false))
       (set! index (+ index 1)))
     empty))
@@ -22,11 +21,11 @@
   [count : i64]
   [stride : i64]) : unit
   (let
-    [capacity : i64 (tc_core.tc-agg-scalar-cache-table-capacity slots)]
     [index : i64 0]
     (while (< index count)
       (let
-        [key : i64 (% (+ first (* index stride)) capacity)]
+        [key : i64
+          (% (+ first (* index stride)) tc_core.tc-agg-scalar-cache-capacity)]
         (set! (array-ref slots key) (+ index 1))
         (tc_core.tc-agg-scalar-cache-note-filled! slots key))
       (set! index (+ index 1)))))
@@ -34,8 +33,8 @@
 (test
   tc-agg-scalar-cache-logged-clear
   (let
-    [slots : (__tl_dyn-array i64) (tc_core.tc-agg-scalar-cache-new 400000)]
-    [last : i64 (- (tc_core.tc-agg-scalar-cache-table-capacity (& slots)) 1)]
+    [slots : (__tl_dyn-array i64) (tc_core.tc-agg-scalar-cache-new)]
+    [last : i64 (- tc_core.tc-agg-scalar-cache-capacity 1)]
     ;; A fresh array's contents are unknown, so its first clear is full.
     (set! (array-ref slots 7) 3)
     (set! (array-ref slots last) 5)

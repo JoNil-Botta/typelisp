@@ -71097,6 +71097,356 @@ return 0" true)
     42
     "the clause the versioner records for `--trace-passes` names the decision: `ok` for a versioned loop, `guard:derived-zero` for a body whose derivation proves nothing, `shape:not-a-counter` for a loop test the recovery cannot read, `shape:no-check` for a body with nothing to remove, `shape:step-not-unit` for a descending counter of magnitude two, `guard:floor` for a call-carrying clone that owes more removals than it has, and `shape:already-versioned` for the fast clone a versioning leaves behind"))
 
+;; --- latch polarity ------------------------------------------------------------
+;;
+;; The loop test may close the back edge from either arm. `branch c, <loop>,
+;; done` continues where `c` holds, so the compare is read as written; `branch c,
+;; done, <loop>` continues where it FAILS, so the counter is read from its exact
+;; negation (ge reads lt, le reads gt, lt reads ge) and `gt` -- whose negation
+;; would be `le`, which neither versioner admits -- is refused. An unsigned
+;; compare is refused whatever the op: its negation is exact as a predicate, but
+;; every range the recovery derives is signed i64 arithmetic.
+;;
+;; The negation decides the DIRECTION, and the direction must be the one the
+;; step walks: a self-loop latch read as ascending needs an increment, and one
+;; read as descending a decrement. A counter that walks away from the end its
+;; latch tests never reaches it, so it has no trip range and no clone.
+;;
+;; The fixtures below state only what each case is about: the latch line
+;; (`op counter, bound : ty`), the optional in-loop definition of the bound, and
+;; the branch's arm order.
+(define (opt-bce-lp-branch-text [loop-label : String] [flipped? : bool]) : String
+  (if flipped?
+    (str_cat.str-cat "  branch %7, done, " loop-label)
+    (str_cat.str-cat "  branch %7, " loop-label ", done")))
+
+(define (opt-bce-lp-latch-text [op : String] [ty : String] [bound : String]) : String
+  (str_cat.str-cat "  %7 = " op " %5, " bound " : " ty))
+
+;; A single-block counted self-loop: one counter phi, one check on it, the
+;; increment, the latch compare and the self-branch. The exit reads the counter
+;; through a one-input phi.
+(define (opt-bce-lp-sb-function
+  [op : String]
+  [latch-ty : String]
+  [bound : String]
+  [extra : String]
+  [flipped? : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @lp(a=%0:i64, n=%1:i64) -> i64 vars 12 {\nentry:\n  jump loop\nloop:\n  %3 = phi [0, entry], [%5, loop] : i64\n  bounds_check %3, %1 message \"lp_ok0\"\n  %5 = add %3, 1 : i64\n"
+      extra
+      (str_cat.str-cat (opt-bce-lp-latch-text op latch-ty bound) "\n")
+      (opt-bce-lp-branch-text "loop" flipped?)
+      "\ndone:\n  %8 = phi [%3, loop] : i64\n  return %8\n}\n")))
+
+;; The DESCENDING mirror of it: the counter walks down from a parameter to
+;; `floor` on a `ge` latch over the TRUE arm, the direction its step walks. It
+;; reads two arrays, because a descending counter keeps the guard's two-check
+;; floor (ALIAS-1): its bound is the synthesized `seed + 1`, which no dominating
+;; branch has decided, so one removal does not repay the guard.
+(define (opt-bce-lp-sb-down-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @lpd(a=%0:i64, n=%1:i64, floor=%2:i64, m=%4:i64) -> i64 vars 12 {
+entry:
+  jump loop
+loop:
+  %3 = phi [%0, entry], [%5, loop] : i64
+  bounds_check %3, %1 message \"lp_ok0\"
+  bounds_check %3, %4 message \"lp_ok1\"
+  %5 = sub %3, 1 : i64
+  %7 = ge %5, %2 : i64
+  branch %7, loop, done
+done:
+  %8 = phi [%3, loop] : i64
+  return %8
+}
+"))
+
+;; The same loop over two blocks: the header holds the phi and the check and the
+;; latch holds the increment, the compare and the branch.
+(define (opt-bce-lp-mb-function
+  [op : String]
+  [latch-ty : String]
+  [bound : String]
+  [extra : String]
+  [flipped? : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @lp(a=%0:i64, n=%1:i64) -> i64 vars 12 {\nentry:\n  jump body\nbody:\n  %3 = phi [0, entry], [%5, latch] : i64\n  bounds_check %3, %1 message \"lp_ok0\"\n  jump latch\nlatch:\n  %5 = add %3, 1 : i64\n"
+      extra
+      (str_cat.str-cat (opt-bce-lp-latch-text op latch-ty bound) "\n")
+      (opt-bce-lp-branch-text "body" flipped?)
+      "\ndone:\n  %8 = phi [%3, latch] : i64\n  return %8\n}\n")))
+
+;; The DESCENDING mirror of the multi-block fixture.
+(define (opt-bce-lp-mb-down-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @lpd(a=%0:i64, n=%1:i64, floor=%2:i64) -> i64 vars 12 {
+entry:
+  jump body
+body:
+  %3 = phi [%0, entry], [%5, latch] : i64
+  bounds_check %3, %1 message \"lp_ok0\"
+  jump latch
+latch:
+  %5 = sub %3, 1 : i64
+  %7 = lt %5, %2 : i64
+  branch %7, done, body
+done:
+  %8 = phi [%3, latch] : i64
+  return %8
+}
+"))
+
+(define (opt-bce-lp-reason [func : (& ir.CompilerIrFunction)]) : i64
+  (opt.opt-bce-version-reason-probe (- 0 1) func))
+
+(define (opt-bce-lp-versioned [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrBlockList
+  (let
+    [versioned : ir.CompilerIrFunction (opt.opt-bce-version-function func)]
+    (opt.opt-function-blocks (& versioned))))
+
+;; The checks the versioning left in `fast-label`'s clone, or -1 when the
+;; versioning did not apply.
+(define (opt-bce-lp-fast-checks
+  [func : (& func ir.CompilerIrFunction)]
+  [fast-label : String]) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-bce-lp-versioned func)]
+    (opt-bce-version-test-block-checks
+      (& blocks)
+      (ir.compiler-ir-label fast-label))))
+
+;; Does `label-text`'s block end in a branch to exactly these two arms? The fast
+;; clone's own branch must keep the ORIGINAL'S polarity: which arm continues the
+;; loop decides where the clone's exit goes.
+(define (opt-bce-lp-branch-is?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label-text : String]
+  [then-text : String]
+  [else-text : String]) : bool
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label-text))
+    [(No) false]
+    [(Some block)
+      (match block
+        [(Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              false
+              (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
+                [(Branch _ then-label else-label)
+                  (and
+                    (= then-label (ir.compiler-ir-label then-text))
+                    (= else-label (ir.compiler-ir-label else-text)))]
+                [_ false])))])]))
+
+(define (compiler-optimize-bce-latch-polarity-self-test) : i64
+  (let
+    [sb-flip : ir.CompilerIrBlockList
+      (opt-bce-lp-versioned
+        (& (opt-bce-lp-sb-function "ge" "i64" "%0" "" true)))]
+    [sb-up : ir.CompilerIrBlockList
+      (opt-bce-lp-versioned
+        (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" false)))]
+    [sb-down : ir.CompilerIrBlockList
+      (opt-bce-lp-versioned (& (opt-bce-lp-sb-down-function)))]
+    (cond
+      ;; A flipped latch whose negation is ASCENDING (ge -> lt) walks the way
+      ;; the increment does, so it versions.
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "ge" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-ok)))
+        1]
+      [(not
+          (=
+            (opt-bce-lp-fast-checks
+              (& (opt-bce-lp-sb-function "ge" "i64" "%0" "" true))
+              "loop__bce_fast")
+            0))
+        2]
+      ;; ...and its clone continues on the arm the ORIGINAL continued on: `done`
+      ;; is the TRUE arm here, so the clone's own branch is `c, done, fast`. The
+      ;; other order would run one trip and then leave, or never leave at all.
+      [(not
+          (opt-bce-lp-branch-is?
+            (& sb-flip)
+            "loop__bce_fast"
+            "done"
+            "loop__bce_fast"))
+        3]
+      ;; The TRUE-arm control is read as written and keeps its own arms.
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" false)))
+            (opt.opt-bce-reason-ok)))
+        4]
+      [(not
+          (opt-bce-lp-branch-is?
+            (& sb-up)
+            "loop__bce_fast"
+            "loop__bce_fast"
+            "done"))
+        5]
+      ;; A flipped `lt` negates to `ge`: a DESCENDING direction the increment
+      ;; cannot walk, so no clone is built at all.
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-step)))
+        6]
+      [(not
+          (=
+            (opt-bce-lp-fast-checks
+              (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" true))
+              "loop__bce_fast")
+            (- 0 1)))
+        7]
+      ;; ...as `le` (negation `gt`), the other descending direction
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "le" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-step)))
+        8]
+      ;; a flipped `gt` would need `le`, which has no direction here
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "gt" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-latch-form)))
+        9]
+      ;; an unsigned compare's negation is not the signed predicate
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "ge" "u64" "%0" "" true)))
+            (opt.opt-bce-reason-latch-form)))
+        10]
+      ;; the DESCENDING self-loop: a `ge` latch over a decrement, which is the
+      ;; direction that step walks
+      [(not
+          (=
+            (opt-bce-lp-reason (& (opt-bce-lp-sb-down-function)))
+            (opt.opt-bce-reason-ok)))
+        11]
+      [(not
+          (opt-bce-lp-branch-is?
+            (& sb-down)
+            "loop__bce_fast"
+            "loop__bce_fast"
+            "done"))
+        12]
+      ;; a bound COPIED in the loop from a value the loop does not define
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-sb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %0 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-ok)))
+        13]
+      ;; ...but not one copied from a value the loop DOES define
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-sb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %5 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-bound-not-invariant)))
+        14]
+      ;; the multi-block scan reads the same negations
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "ge" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-ok)))
+        15]
+      [(not
+          (=
+            (opt-bce-lp-fast-checks
+              (& (opt-bce-lp-mb-function "ge" "i64" "%0" "" true))
+              "body__bce_fast")
+            0))
+        16]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "lt" "i64" "%0" "" false)))
+            (opt.opt-bce-reason-ok)))
+        17]
+      ;; a flipped `lt` asks the multi-block recovery for `ge`, a DESCENDING
+      ;; direction the increment cannot walk
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "lt" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        18]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "le" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        19]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "ge" "u64" "%0" "" true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        20]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-mb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %0 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-ok)))
+        21]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-mb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %5 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        22]
+      ;; the DESCENDING multi-block mirror: a flipped `lt` over a decrement
+      [(not
+          (=
+            (opt-bce-lp-reason (& (opt-bce-lp-mb-down-function)))
+            (opt.opt-bce-reason-ok)))
+        23]
+      [else 42])))
+
+(test
+  bce-version-latch-polarity
+  (test.assert-i64-eq
+    (compiler-optimize-bce-latch-polarity-self-test)
+    42
+    "a latch that closes the back edge from its FALSE arm versions off the compare's exact negation -- `ge` as `lt`, `le` as `gt`, `lt` as `ge` -- in the self-loop and multi-block scans alike, and the TRUE-arm spelling is unchanged; `gt`, whose negation `le` neither scan admits, and every unsigned compare, whose negation is not the signed predicate the trip range is stated in, are refused; and a bound COPIED in the loop counts as invariant only when the copy reads a value the loop does not define"))
+
 (test
   len-eq-static-length-equality-families
   (test.assert-i64-eq

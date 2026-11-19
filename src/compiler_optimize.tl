@@ -75585,7 +75585,19 @@
             (or counter.sub? (> counter.step 0))
             ;; I64 only: the guard reasons in SIGNED 64-bit arithmetic, so
             ;; narrow (wrapping) and unsigned counters are out of scope.
-            (opt-induction-i64-type? counter.ity))
+            (opt-induction-i64-type? counter.ity)
+            ;; The step's SIGN must be the direction the latch states. Mode 0 is
+            ;; the ascending `inext < bound`, modes 1 and 2 the descending
+            ;; `inext >= floor` and `inext > floor`
+            ;; (opt-bce-version-shape-counter), and the derivations below are
+            ;; handed the executed values as the interval [seed, bound) or
+            ;; [bound, seed] accordingly. A counter that walks away from the end
+            ;; its latch tests never reaches it: the interval would be the wrong
+            ;; half of the number line, so the loop has no trip range and is not
+            ;; a counter here.
+            (if (= mode 0)
+              (not counter.sub?)
+              counter.sub?))
           (opt-bce-version-shape-phi
             blocks
             label
@@ -75614,6 +75626,22 @@
 ;; `Gt` is admitted with the SAME interval as `Ge`: it executes at
 ;; [bound + 1, seed], a subset, so a guard derived over [bound, seed] is
 ;; stronger than necessary and never weaker.
+;;
+;; `negated?` is the latch branch's polarity (opt-bce-version-block-shape): the
+;; block branches to itself on its FALSE arm, so the loop continues where the
+;; compare FAILS and the direction is the one its exact negation reads --
+;; `!(a ge b)` is `a lt b`, `!(a le b)` is `a gt b`, `!(a lt b)` is `a ge b`.
+;; `!(a gt b)` would need `a le b`, which has no direction below, exactly as
+;; `(Le)` has none of its own. An UNSIGNED compare negates just as exactly, but
+;; every range here is signed 64-bit arithmetic, so its negation is not the
+;; predicate this recovery would then derive from; float compares have no exact
+;; negation at all (NaN). The positive spelling needs no such test: the counter
+;; phi is I64, and the compare's operands are the phi's type.
+;;
+;; The bound is read as the loop-INVARIANT value it names, through in-loop
+;; copies of a value the loop does not define (`%t = mov %n` with `%n` outside),
+;; which is opt-bce-version-invariant-operand -- the resolution the offset
+;; recovery below uses, and the value the guard, running before the loop, names.
 (define (opt-bce-version-shape-counter
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : i64]
@@ -75621,7 +75649,8 @@
   [phi-count : i64]
   [last : i64]
   [cond-var : i64]
-  [defs : (& opt_i64_i64_map.Map)]) : OptUnrollMaybeShape
+  [defs : (& opt_i64_i64_map.Map)]
+  [negated? : bool]) : OptUnrollMaybeShape
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
@@ -75629,33 +75658,52 @@
     (if (< cond-index 0)
       (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
       (match (ir.compiler-ir-instr-seq-borrow instrs cond-index)
-        [(BinOp _ cmp-op cmp-lhs cmp-rhs _)
-          (let
-            [mode : i64
-              (match cmp-op
-                [(Lt) 0]
-                [(Ge) 1]
-                [(Gt) 2]
-                [_ (- 0 1)])]
-            (if (< mode 0)
-              (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
-              (match cmp-lhs
-                [(Var cmp-src)
-                  (if (opt-unroll-invariant-bound? defs cmp-rhs)
-                    (opt-bce-version-shape-step
-                      blocks
-                      label
+        [(BinOp _ cmp-op cmp-lhs cmp-rhs ty)
+          (if (and negated? (not (opt-bce-version-cond-signed-type? (& ty))))
+            (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
+            (let
+              [op : ir.CompilerIrBinOp
+                (if negated?
+                  (opt-invert-compare-op
+                    (owned_view.compiler-owned-reference-shared-view cmp-op))
+                  (owned_view.compiler-owned-reference-shared-view cmp-op))]
+              [mode : i64
+                (match op
+                  [(Lt) 0]
+                  [(Ge) 1]
+                  [(Gt) 2]
+                  [_ (- 0 1)])]
+              (if (< mode 0)
+                (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
+                (match cmp-lhs
+                  [(Var cmp-src)
+                    (match (opt-bce-version-invariant-operand
                       instrs
                       phi-count
                       last
-                      cond-var
-                      cond-index
-                      (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
-                      (& cmp-rhs)
-                      mode)
-                    (opt-bce-trace-refuse-shape
-                      (opt-bce-reason-bound-not-invariant)))]
-                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])))]
+                      defs
+                      (& cmp-rhs))
+                      [(No)
+                        (opt-bce-trace-refuse-shape
+                          (opt-bce-reason-bound-not-invariant))]
+                      [(Some bound)
+                        (opt-bce-version-shape-step
+                          blocks
+                          label
+                          instrs
+                          phi-count
+                          last
+                          cond-var
+                          cond-index
+                          (opt-unroll-resolve-copy
+                            instrs
+                            phi-count
+                            last
+                            cmp-src
+                            16)
+                          (& bound)
+                          mode)])]
+                  [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))]))))]
         [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))]))))
 
 ;; The body clauses of the single-block shape, as the code of the FIRST one
@@ -75697,12 +75745,18 @@
             [(Branch cond then-label else-label)
               (match cond
                 [(Var cond-var)
-                  (if (and (= then-label label) (not (= else-label label)))
+                  (if (or
+                    (and (= then-label label) (not (= else-label label)))
+                    (and (= else-label label) (not (= then-label label))))
                     ;; A self-branching block on a Var condition IS the loop
                     ;; this scan examines; every verdict from here on is a
-                    ;; decision about it and earns a trace line. The size test
-                    ;; is the body reason's, so a three-instruction self-loop
-                    ;; is reported rather than silently skipped.
+                    ;; decision about it and earns a trace line. Either arm may
+                    ;; close the back edge and the OTHER one leaves the loop;
+                    ;; which arm leaves it decides whether the compare is read
+                    ;; as written or through its exact negation
+                    ;; (opt-bce-version-shape-counter). The size test is the
+                    ;; body reason's, so a three-instruction self-loop is
+                    ;; reported rather than silently skipped.
                     (let
                       [_examined : unit (opt-bce-trace-examined!)]
                       [last : i64 (- count 1)]
@@ -75727,7 +75781,8 @@
                               (& instrs.slots)
                               0
                               (+ last 1)
-                              (opt_i64_i64_map.with-capacity 32))))
+                              (opt_i64_i64_map.with-capacity 32)))
+                          (= else-label label))
                         (opt-bce-trace-refuse-shape reason)))
                     (No))]
                 [_ (No)])]
@@ -75939,10 +75994,25 @@
         [others : OptUnrollPhiList shape.others]
         [pred-label : i64 shape.pred-label]
         [cond-var : i64 shape.cond-var]
-        [exit-label : i64
+        [then-label
+          : i64
+          ;; The shape's branch may close the back edge from either one of its
+          ;; arms (opt-bce-version-shape-counter). Everything below -- the exit
+          ;; label and the fast clone's OWN branch -- reads the same arm the
+          ;; original does: a clone that swapped them would exit where the
+          ;; original loops and loop where it exits.
+          (match (ir.compiler-ir-instr-seq-borrow instrs last)
+            [(Branch _ then-label _) then-label]
+            [_ label])]
+        [else-label : i64
           (match (ir.compiler-ir-instr-seq-borrow instrs last)
             [(Branch _ _ else-label) else-label]
             [_ label])]
+        [continues-on-true? : bool (= then-label label)]
+        [exit-label : i64
+          (if continues-on-true?
+            else-label
+            then-label)]
         [guard-label : i64
           (ir.compiler-ir-label
             (&
@@ -76105,8 +76175,12 @@
                     (&mut fast-builder)
                     (ir.CompilerIrInstr.Branch
                       (opt-unroll-subst-value (& remap) (Var cond-var))
-                      fast-label
-                      exit-label))]
+                      (if continues-on-true?
+                        fast-label
+                        exit-label)
+                      (if continues-on-true?
+                        exit-label
+                        fast-label)))]
                 [fast-block : ir.CompilerIrBlock
                   (Block
                     fast-label
@@ -76274,7 +76348,7 @@
             frame)])]))
 
 ;; Cheap prescan: a candidate is a self-loop block that starts with a Phi,
-;; ends with a self-branch, and contains a BoundsCheck.
+;; ends with a branch on either arm back to itself, and contains a BoundsCheck.
 (define (opt-bce-version-block-candidate? [block : (& ir.CompilerIrBlock)]) : bool
   (match block
     [(Block label instrs)
@@ -76285,9 +76359,9 @@
           (match (ir.compiler-ir-instr-seq-borrow instrs 0)
             [(Phi _ _ _)
               (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
-                [(Branch _ true-label _)
+                [(Branch _ true-label false-label)
                   (and
-                    (= true-label label)
+                    (or (= true-label label) (= false-label label))
                     (>= (opt-bce-version-check-count instrs 0 (- count 1) 0) 1))]
                 [_ false])]
             [_ false])))]))
@@ -76422,10 +76496,11 @@
 ;; and the scan offers flat loops before nests so an inner loop that can
 ;; version on its own always gets the slot first.
 ;;
-;; cond-var, exit-label of a latch branch.
+;; cond-var, exit-label and whether the loop continues on the branch's FALSE
+;; arm, of a latch branch.
 (defenum OptBceMbMaybeLatch
   (No)
-  (Some i64 i64))
+  (Some i64 i64 bool))
 
 ;; iphi, seed, inext, bound, step (the counter's literal step), delta and
 ;; wrap-step (the shifted-limit pair documented at opt-bce-mb-counter-k-max's
@@ -76903,11 +76978,24 @@
               acc)]))]))
 
 ;; --- shape scan ---------------------------------------------------------------
-;; The latch must end `Branch c header exit` with the exit outside the loop.
+;;
+;; The latch ends on the loop test, so it closes the back edge from one arm and
+;; leaves the loop from the other, `Branch c header exit` or `Branch c exit
+;; header`. The second spelling is a real shape and not a different one: a
+;; rotation or a flag exit that swaps the arms leaves the very same test, and
+;; reading it needs the compare's NEGATION (`c` holds where the loop exits, so
+;; the loop continues where `c` fails). `flipped-ok?` decides whether the caller
+;; reads that spelling; `negated?` reports which one was found, and the counter
+;; recovery below reads the compare accordingly.
+;;
+;; The readers written for `Branch c header exit` alone -- the unroller, the hoist
+;; and the bound tightening all read `inext <op> bound` as the CONTINUING test --
+;; pass false and keep the arm they were written for.
 (define (opt-bce-mb-latch-branch
   [block : (& block ir.CompilerIrBlock)]
   [header : i64]
-  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
+  [body-labels : OptLabelSet]
+  [flipped-ok? : bool]) : OptBceMbMaybeLatch
   (match block
     [(Block _ instrs)
       (let
@@ -76918,11 +77006,17 @@
             [(Branch cond then-label else-label)
               (match cond
                 [(Var cond-var)
-                  (if (and
-                    (= then-label header)
-                    (not (opt-label-contains body-labels else-label)))
-                    (Some cond-var else-label)
-                    (No))]
+                  (cond
+                    [(and
+                        (= then-label header)
+                        (not (opt-label-contains body-labels else-label)))
+                      (Some cond-var else-label false)]
+                    [(and
+                        flipped-ok?
+                        (= else-label header)
+                        (not (opt-label-contains body-labels then-label)))
+                      (Some cond-var then-label true)]
+                    [else (No)])]
                 [_ (No)])]
             [_ (No)])))]))
 
@@ -77025,9 +77119,10 @@
                       next-chain)]
                   [_ (No)])))])])))
 
-;; The branch step: take this block as the compare when exactly its TRUE arm
-;; continues the loop and the condition recovers the counter; otherwise keep
-;; walking whichever single arm stays inside.
+;; The branch step: take this block as the compare when exactly ONE arm
+;; continues the loop and the condition recovers the counter in that arm's
+;; reading -- the TRUE arm's compare as written, the FALSE arm's as its exact
+;; negation; otherwise keep walking whichever single arm stays inside.
 (define (opt-bce-mb-chain-branch
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
@@ -77052,7 +77147,8 @@
               defs
               latch
               preheader
-              cond-var)
+              cond-var
+              false)
               [(Some iphi seed inext bound step delta wrap offset interval?)
                 ;; the compare's continuing successor must lead OUT of the
                 ;; chain, or it does not start the covered region
@@ -77092,20 +77188,58 @@
               then-label
               fuel
               chain)])]
-      ;; an exiting branch whose FALSE arm continues cannot be the `iphi <
-      ;; bound` test (the recovery reads the true arm as the continuing one),
-      ;; so it is just another guard on the way in
+      ;; an exiting branch whose FALSE arm continues is the same test with its
+      ;; arms exchanged (`Branch c exit body`), so its counter is recovered from
+      ;; the compare's exact NEGATION. A condition that is not a counter (a flag
+      ;; test, an equality) recovers nothing, and the branch is then just
+      ;; another guard on the way in, exactly as before.
       [(and else-in? (not then-in?))
-        (opt-bce-mb-chain-walk
-          blocks
-          body-blocks
-          defs
-          body-labels
-          latch
-          preheader
-          else-label
-          fuel
-          chain)]
+        (match cond
+          [(Var cond-var)
+            (match (opt-bce-mb-counter-top
+              body-blocks
+              defs
+              latch
+              preheader
+              cond-var
+              true)
+              [(Some iphi seed inext bound step delta wrap offset interval?)
+                (if (opt-label-contains chain else-label)
+                  (No)
+                  (Some
+                    (Some
+                      iphi
+                      seed
+                      inext
+                      bound
+                      step
+                      delta
+                      wrap
+                      offset
+                      interval?)
+                    chain))]
+              [(No)
+                (opt-bce-mb-chain-walk
+                  blocks
+                  body-blocks
+                  defs
+                  body-labels
+                  latch
+                  preheader
+                  else-label
+                  fuel
+                  chain)])]
+          [_
+            (opt-bce-mb-chain-walk
+              blocks
+              body-blocks
+              defs
+              body-labels
+              latch
+              preheader
+              else-label
+              fuel
+              chain)])]
       [else (No)])))
 
 ;; The latch of the top-tested family closes the back edge and nothing else:
@@ -77442,6 +77576,13 @@
 ;; one every index recovery uses -- walking through the increment is exactly
 ;; what makes the do-while's `inext + k` and the top-tested `iphi + k` one
 ;; statement -- and it stops at the phi, which is not a literal-addend link.
+;;
+;; The bound is read as the loop-INVARIANT value it names, through in-loop
+;; copies of a value the loop does not define (`%t = mov %n` with `%n` outside):
+;; the copy writes `%n` on every trip, so every reading of `%t` is a reading of
+;; `%n`, and `%n` is what the guard -- which runs before the loop -- can name.
+;; opt-bce-mb-invariant-operand is that resolution, shared with the offset
+;; recovery below.
 (define (opt-bce-mb-counter-compare
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
@@ -77452,37 +77593,38 @@
   [descending? : bool]
   [shift : i64]
   [bottom? : bool]) : OptBceMbMaybeCounter
-  (if (not (opt-unroll-invariant-bound? defs cmp-rhs))
-    (No)
-    (match (opt-bce-mb-strided-peel body-blocks cmp-lhs 0 8)
-      [(No) (No)]
-      [(Some core k)
-        (match (opt-bce-mb-counter-from-phi
-          body-blocks
-          latch
-          preheader
-          core
-          cmp-rhs
-          descending?
-          shift
-          k
-          bottom?
-          (& (I64 0)))
-          [(Some iphi seed inext bound step delta wrap offset interval?)
-            (Some iphi seed inext bound step delta wrap offset interval?)]
-          ;; VT-1: the same test written over `offset + i`.
-          [(No)
-            (opt-bce-mb-counter-offset-compare
-              body-blocks
-              defs
-              latch
-              preheader
-              core
-              cmp-rhs
-              descending?
-              shift
-              k
-              bottom?)])])))
+  (match (opt-bce-mb-invariant-operand body-blocks defs cmp-rhs)
+    [(No) (No)]
+    [(Some bound)
+      (match (opt-bce-mb-strided-peel body-blocks cmp-lhs 0 8)
+        [(No) (No)]
+        [(Some core k)
+          (match (opt-bce-mb-counter-from-phi
+            body-blocks
+            latch
+            preheader
+            core
+            (& bound)
+            descending?
+            shift
+            k
+            bottom?
+            (& (I64 0)))
+            [(Some iphi seed inext bound step delta wrap offset interval?)
+              (Some iphi seed inext bound step delta wrap offset interval?)]
+            ;; VT-1: the same test written over `offset + i`.
+            [(No)
+              (opt-bce-mb-counter-offset-compare
+                body-blocks
+                defs
+                latch
+                preheader
+                core
+                (& bound)
+                descending?
+                shift
+                k
+                bottom?)])])]))
 
 ;; --- the loop test written over an offset counter -------------------------------
 ;;
@@ -77650,69 +77792,97 @@
 
 ;; The compare of `cond-var`, dispatched on its direction. `bottom?` says which
 ;; form the caller found it in: the latch branch of a do-while, or the entry
-;; guard chain of a top-tested loop.
+;; guard chain of a top-tested loop. `negated?` says the branch exits where
+;; this compare holds (see opt-bce-mb-latch-branch), so the direction is the one
+;; its EXACT NEGATION reads: `!(a ge b)` is `a lt b`, `!(a gt b)` is `a le b`,
+;; `!(a lt b)` is `a ge b`, and `!(a le b)` would need `a gt b`, which has no
+;; direction above -- exactly as `(le)` has none of its own.
+;;
+;; The compare's operand type must be the SIGNED i64 the trip range is stated
+;; in. Unsigned order negates just as exactly, but the range, the limit and the
+;; no-wrap conjunct around it are all signed arithmetic, so an unsigned compare's
+;; negation is not the predicate this recovery would then derive from; float
+;; compares have no exact negation at all (NaN). The positive spellings never
+;; needed the test -- the counter phi is I64, and the compare's operands are the
+;; phi's type -- and it stays off that path unchanged.
 (define (opt-bce-mb-counter-of-cond
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
   [cond-var : i64]
-  [bottom? : bool]) : OptBceMbMaybeCounter
+  [bottom? : bool]
+  [negated? : bool]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-find-def
     (ir.compiler-ir-block-list-view body-blocks)
     cond-var)
     [(No) (No)]
     [(Some instr)
       (match instr
-        [(BinOp _ cmp-op cmp-lhs cmp-rhs _)
-          (match (opt-bce-mb-counter-direction (& cmp-op))
-            [(No) (No)]
-            [(Ascending shift)
-              (opt-bce-mb-counter-compare
-                body-blocks
-                defs
-                latch
-                preheader
-                (& cmp-lhs)
-                (& cmp-rhs)
-                false
-                shift
-                bottom?)]
-            [(Descending)
-              (opt-bce-mb-counter-compare
-                body-blocks
-                defs
-                latch
-                preheader
-                (& cmp-lhs)
-                (& cmp-rhs)
-                true
-                0
-                bottom?)])]
+        [(BinOp _ cmp-op cmp-lhs cmp-rhs ty)
+          (if (and negated? (not (opt-bce-version-cond-signed-type? (& ty))))
+            (No)
+            (let
+              [op : ir.CompilerIrBinOp
+                (if negated?
+                  (opt-invert-compare-op
+                    (owned_view.compiler-owned-reference-shared-view cmp-op))
+                  (owned_view.compiler-owned-reference-shared-view cmp-op))]
+              (match (opt-bce-mb-counter-direction (& op))
+                [(No) (No)]
+                [(Ascending shift)
+                  (opt-bce-mb-counter-compare
+                    body-blocks
+                    defs
+                    latch
+                    preheader
+                    (& cmp-lhs)
+                    (& cmp-rhs)
+                    false
+                    shift
+                    bottom?)]
+                [(Descending)
+                  (opt-bce-mb-counter-compare
+                    body-blocks
+                    defs
+                    latch
+                    preheader
+                    (& cmp-lhs)
+                    (& cmp-rhs)
+                    true
+                    0
+                    bottom?)])))]
         [_ (No)])]))
 
-;; The latch compare of a do-while loop.
+;; The latch compare of a do-while loop. `negated?` is the latch branch's
+;; polarity (opt-bce-mb-latch-branch).
 (define (opt-bce-mb-counter-step
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
-  [cond-var : i64]) : OptBceMbMaybeCounter
+  [cond-var : i64]
+  [negated? : bool]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-counter-of-cond
     body-blocks
     defs
     latch
     preheader
     cond-var
-    true)
+    true
+    negated?)
     [(No)
-      (opt-bce-mb-interval-counter
-        body-blocks
-        defs
-        latch
-        preheader
-        cond-var
-        true)]
+      ;; The interval recovery reads the compare as the CONTINUING test, so a
+      ;; flipped latch is not its shape.
+      (if negated?
+        (No)
+        (opt-bce-mb-interval-counter
+          body-blocks
+          defs
+          latch
+          preheader
+          cond-var
+          true))]
     [(Some iphi seed inext bound step delta wrap offset interval?)
       (Some iphi seed inext bound step delta wrap offset interval?)]))
 
@@ -77723,22 +77893,26 @@
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
-  [cond-var : i64]) : OptBceMbMaybeCounter
+  [cond-var : i64]
+  [negated? : bool]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-counter-of-cond
     body-blocks
     defs
     latch
     preheader
     cond-var
-    false)
+    false
+    negated?)
     [(No)
-      (opt-bce-mb-interval-counter
-        body-blocks
-        defs
-        latch
-        preheader
-        cond-var
-        false)]
+      (if negated?
+        (No)
+        (opt-bce-mb-interval-counter
+          body-blocks
+          defs
+          latch
+          preheader
+          cond-var
+          false))]
     [(Some iphi seed inext bound step delta wrap offset interval?)
       (if (< step 0)
         (No)
@@ -78527,7 +78701,11 @@
                 (opt-bce-mb-collect-defs
                   (ir.compiler-ir-block-list-view body-blocks)
                   (opt_i64_i64_map.with-capacity 64))]
-              (match (opt-bce-mb-latch-branch latch-block header body-labels)
+              (match (opt-bce-mb-latch-branch
+                latch-block
+                header
+                body-labels
+                true)
                 [(No)
                   (opt-bce-mb-loop-shape-top
                     blocks
@@ -78541,7 +78719,7 @@
                     inner
                     region?
                     nested-entry?)]
-                [(Some cond-var _)
+                [(Some cond-var _ negated?)
                   (match (opt-bce-mb-loop-shape-finish
                     blocks
                     header
@@ -78560,7 +78738,8 @@
                       defs
                       latch
                       pred
-                      cond-var))
+                      cond-var
+                      negated?))
                     [(Some shape) (Some shape)]
                     ;; a latch branch that closes the back edge but does NOT
                     ;; carry the counter compare (a bottom-tested flag test) is
@@ -85785,9 +85964,9 @@
   (match (opt-cfg-find-block blocks latch)
     [(No) (- 0 1)]
     [(Some latch-block)
-      (match (opt-bce-mb-latch-branch latch-block header body-labels)
+      (match (opt-bce-mb-latch-branch latch-block header body-labels false)
         [(No) (- 0 1)]
-        [(Some cond-var _) cond-var])]))
+        [(Some cond-var _ _) cond-var])]))
 
 (defenum OptBceHoistResult
   (No)
@@ -85964,7 +86143,13 @@
   [latch : i64]
   [preheader : i64]
   [cond-var : i64]) : OptBceTightenCounter
-  (match (opt-bce-mb-counter-step body-blocks defs latch preheader cond-var)
+  (match (opt-bce-mb-counter-step
+    body-blocks
+    defs
+    latch
+    preheader
+    cond-var
+    false)
     [(Some iphi seed _ _ step delta _ offset interval?)
       (if (and
         (not interval?)
@@ -86499,7 +86684,7 @@
   (match (opt-cfg-find-block blocks latch)
     [(No) (No)]
     [(Some latch-block)
-      (opt-bce-mb-latch-branch latch-block header body-labels)]))
+      (opt-bce-mb-latch-branch latch-block header body-labels false)]))
 
 ;; ADMISSION: a counted loop that CONTAINS ANOTHER LOOP and CALLS OUT of its
 ;; body, which is the only class the trade pays in.
@@ -86563,7 +86748,7 @@
                   latch
                   body-labels)
                   [(No) (No)]
-                  [(Some cond-var exit-label)
+                  [(Some cond-var exit-label _)
                     (match (opt-cfg-find-block blocks header)
                       [(No) (No)]
                       [(Some header-block)
@@ -87650,9 +87835,10 @@
                   (match (opt-bce-mb-latch-branch
                     latch-block
                     header
-                    body-labels)
+                    body-labels
+                    false)
                     [(No) (No)]
-                    [(Some cond-var exit-label)
+                    [(Some cond-var exit-label _)
                       (let
                         [defs : opt_i64_i64_map.Map
                           (opt-bce-mb-collect-defs
@@ -87670,7 +87856,8 @@
                             defs
                             latch
                             pred
-                            cond-var)
+                            cond-var
+                            false)
                           cond-var
                           exit-label))])])))])]))
 

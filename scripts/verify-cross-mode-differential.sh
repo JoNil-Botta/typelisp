@@ -13,6 +13,9 @@ cd "$ROOT"
 
 MANIFEST="$ROOT/tests/cross-mode/corpus.tsv"
 SPMD_SIMD_ROOT=${TYPELISP_SPMD_SIMD_ARTIFACT_ROOT:-$ROOT/target/spmd-simd-verify}
+# A forced-SDE duplicate run builds and executes only the AVX-512 route, so the
+# native observations stay in the ordinary run's root.
+SPMD_SIMD_NATIVE_ROOT=${TYPELISP_SPMD_SIMD_NATIVE_ROOT:-$ROOT/target/spmd-simd-verify}
 WORKDIR="$ROOT/target/cross-mode-differential"
 SELF_TEST=0
 CASE_FILTER=
@@ -376,7 +379,10 @@ resolve_spmd_observation() {
     _cm_spmd_dir=$2
     _cm_spmd_tag=${_cm_spmd_spec%%:*}
     _cm_spmd_mode=${_cm_spmd_spec#*:}
-    _cm_spmd_base="$SPMD_SIMD_ROOT/$_cm_spmd_tag.$_cm_spmd_mode"
+    simd_execution_mode "$_cm_spmd_mode" || fail "SPMD execution route is unavailable"
+    _cm_spmd_root=$SPMD_SIMD_ROOT
+    [ "$SIMDEX_MODE" = sde ] || _cm_spmd_root=$SPMD_SIMD_NATIVE_ROOT
+    _cm_spmd_base="$_cm_spmd_root/$_cm_spmd_tag.$_cm_spmd_mode"
     [ -f "$_cm_spmd_base.exit" ] ||
         fail "SPMD exit observation is missing: $_cm_spmd_base.exit"
     [ -f "$_cm_spmd_base.err" ] ||
@@ -384,7 +390,6 @@ resolve_spmd_observation() {
     tr -d '\r\n' < "$_cm_spmd_base.exit" > "$_cm_spmd_dir/exit"
     printf '\n' >> "$_cm_spmd_dir/exit"
     cp "$_cm_spmd_base.err" "$_cm_spmd_dir/stderr"
-    simd_execution_mode "$_cm_spmd_mode" || fail "SPMD execution route is unavailable"
     [ -f "$_cm_spmd_base.execution" ] &&
         [ "$(cat "$_cm_spmd_base.execution")" = "$SIMDEX_MODE" ] ||
         fail "SPMD execution receipt is missing or differs from the selected route"

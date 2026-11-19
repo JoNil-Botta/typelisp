@@ -30352,9 +30352,7 @@
               (when
                 (and
                   track-resolution
-                  (tc-type-needs-resolution-for-state?
-                    resolution-state
-                    (tc-global-shared-view ty)))
+                  (tc-type-needs-resolution-for-state? resolution-state (& ty)))
                 (set!
                   (array-ref
                     unsafe-flags
@@ -30483,9 +30481,7 @@
               (when
                 (and
                   track-resolution
-                  (tc-type-needs-resolution-for-state?
-                    resolution-state
-                    (tc-global-shared-view ty)))
+                  (tc-type-needs-resolution-for-state? resolution-state (& ty)))
                 (set!
                   (array-ref
                     unsafe-flags
@@ -40168,7 +40164,7 @@
       (return
         (tc-type-needs-resolution-for-state?
           state
-          (ast.ast-type-segment-bases-get data.type-segment-bases ty-id))))
+          (& (ast.ast-type-segment-bases-get data.type-segment-bases ty-id)))))
     (let
       [slot : i64 (array-ref data.slots ty-id)]
       (if (= (shr slot 1) data.epoch)
@@ -40177,7 +40173,7 @@
           [answer : bool
             (tc-type-needs-resolution-for-state?
               state
-              (ast.ast-type-segment-bases-get data.type-segment-bases ty-id))]
+              (& (ast.ast-type-segment-bases-get data.type-segment-bases ty-id)))]
           (set!
             (array-ref data.slots ty-id)
             (bit-or
@@ -40189,18 +40185,13 @@
 
 (define (tc-type-needs-resolution-for-state?
   [state : TcTypeResolutionCacheState]
-  [ty : ast.AstType]) : bool
+  [ty : (& ast.AstType)]) : bool
   (match ty
     [(Func args ret)
-      (if (tc-type-list-needs-resolution-for-state?
-        state
-        (& (ast.ast-type-list-box-shared-view args)))
+      (if (tc-type-list-needs-resolution-for-state? state args)
         true
         (tc-type-needs-resolution-id-for-state? state ret))]
-    [(Tuple elems)
-      (tc-type-list-needs-resolution-for-state?
-        state
-        (& (ast.ast-type-list-box-shared-view elems)))]
+    [(Tuple elems) (tc-type-list-needs-resolution-for-state? state elems)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (CFunc elem _)
          (Ptr elem) (MutPtr elem) (Ref _ elem) (MutRef _ elem) (Region _ elem)
          (Invalidate _ elem))
@@ -40234,7 +40225,7 @@
       state
       (ast.ast-node-pool-context-type-cell-address pools)
       type-bases)
-    (tc-type-needs-resolution-for-state? state ty)))
+    (tc-type-needs-resolution-for-state? state (& ty))))
 
 (define (tc-type-needs-resolution-for-context?
   [ctx : TcContext]
@@ -40257,7 +40248,7 @@
 ;; installed reader.
 (define (tc-type-needs-resolution-for-reader-context?
   [ctx : TcContext]
-  [ty : ast.AstType]) : bool
+  [ty : (& ast.AstType)]) : bool
   (let
     [state : TcTypeResolutionCacheState
       (tc-job-state-type-resolution-cache (tc-context-job-state ctx))]
@@ -44858,9 +44849,7 @@
   ;; its segment table isolated from every other compile job.
   (let
     [needs-resolution : bool
-      (tc-type-needs-resolution-for-reader-context?
-        ctx
-        (tc-global-shared-view ty))]
+      (tc-type-needs-resolution-for-reader-context? ctx (& ty))]
     (begin
       (cfg
         compile-profile
@@ -44952,6 +44941,85 @@
             name)]
         (tc-resolve-type-name ctx name-text name))]
     [_ ty]))
+
+;; True when `tc-resolve-type` would give back a type equal to `ty` in the
+;; current state. The walk follows tc-resolve-type-rebuild exactly -- the same
+;; children in the same order, the same resolution predicate, and the same
+;; name lookup at every Var/VarArgs leaf -- but builds nothing: when every leaf
+;; resolves to itself the rebuilt type is the hash-consed type it started from.
+;; It stops at the first leaf that resolves to something else.
+(define (tc-type-resolves-to-itself? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match (& ty)
+    [(or (CFunc _ _) (Func _ _) (Tuple _) (Array _ _) (DynArray _) (Slice _)
+         (Box _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Region _ _)
+         (Invalidate _ _))
+      (if (tc-type-needs-resolution-for-reader-context? ctx (& ty))
+        (tc-type-rebuild-resolves-to-itself? ctx ty)
+        true)]
+    [(or (VarArgs _ _) (Var _)) (tc-type-rebuild-resolves-to-itself? ctx ty)]
+    [_ true]))
+
+(define (tc-type-list-resolves-to-itself?
+  [ctx : TcContext]
+  [types : (& ast.AstTypeList)]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (tc-context-type-resolution-pools ctx)]
+    (if (tc-type-list-needs-resolution-for-job-and-pools?
+      (tc-context-job-state ctx)
+      pools
+      (ast.ast-node-pool-context-type-segment-bases pools)
+      types)
+      (let
+        [count : i64 (ast.ast-type-list-len types)]
+        [same : bool true]
+        [index : i64 0]
+        (while (and same (< index count))
+          (set!
+            same
+            (tc-type-resolves-to-itself?
+              ctx
+              (ast.ty-node-get
+                (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+          (+= index 1))
+        same)
+      true)))
+
+(define (tc-type-rebuild-resolves-to-itself?
+  [ctx : TcContext]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(Func args ret)
+      (and
+        (tc-type-list-resolves-to-itself? ctx (& (deref args)))
+        (tc-type-resolves-to-itself? ctx (ast.ty-node-get ret)))]
+    [(CFunc signature _)
+      (tc-type-resolves-to-itself? ctx (ast.ty-node-get signature))]
+    [(Tuple elems) (tc-type-list-resolves-to-itself? ctx (& (deref elems)))]
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
+         (MutPtr elem))
+      (tc-type-resolves-to-itself? ctx (ast.ty-node-get elem))]
+    [(or (Ref _ inner) (MutRef _ inner) (Region _ inner) (Invalidate _ inner))
+      (tc-type-resolves-to-itself? ctx (ast.ty-node-get inner))]
+    [(VarArgs name lifetimes)
+      (ast.ast-type-eq?
+        (tc-resolve-type-name-with-args
+          ctx
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)
+          name
+          (deref lifetimes))
+        (tc-global-shared-view ty))]
+    [(Var name)
+      (ast.ast-type-eq?
+        (tc-resolve-type-name
+          ctx
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)
+          name)
+        ty)]
+    [_ true]))
 
 (define (tc-canonicalize-resolved-nominal-type-list-at
   [ctx : TcContext]
@@ -99687,40 +99755,121 @@
         (clone_support.clone-name-key-id-in-module module-id name))]
     [_ names]))
 
-(define (macro-segmented-clone-name-set-for-program [state : TcJobState]) : clone_support.CloneNameSet
+;; The rows the clone-able fixpoint reads -- module markers and type
+;; definitions -- in program order, recorded by the one walk that seeds the
+;; fixpoint. Each step then visits only these rows instead of walking every
+;; declaration of the segmented program again. A row is kept as its segment's
+;; declaration list (`runs`) and the index inside it, packed run-high.
+(defstruct MacroSegmentedCloneRows
+  (runs (__tl_dyn-array ast.AstDeclList))
+  (run-count i64)
+  (rows (__tl_dyn-array i64))
+  (row-count i64))
+
+;; Both columns live in the clone cache's long-lived arena and are rebuilt for
+;; every clone set, so they grow by doubling: `__tl_array-push!` would copy the
+;; whole column on every row and leave each copy behind.
+(define (macro-segmented-clone-rows-add-run!
+  [rows : (&mut rows MacroSegmentedCloneRows)]
+  [decls : ast.AstDeclList]) : unit
+  (when
+    (= rows.run-count (array-length rows.runs))
+    (let
+      [bigger : (__tl_dyn-array ast.AstDeclList)
+        (__tl_make-array ast.AstDeclList (* 2 (array-length rows.runs)))]
+      (for [index (iterator.range 0 rows.run-count)]
+        (set!
+          (array-ref bigger index)
+          (tc-global-array-element-shared-view rows.runs index)))
+      (set! rows.runs bigger)))
+  (set! (array-ref rows.runs rows.run-count) decls)
+  (+= rows.run-count 1))
+
+(define (macro-segmented-clone-rows-add-row!
+  [rows : (&mut rows MacroSegmentedCloneRows)]
+  [index : i64]) : unit
+  (when
+    (= rows.row-count (array-length rows.rows))
+    (let
+      [bigger : (__tl_dyn-array i64)
+        (__tl_make-array i64 (* 2 (array-length rows.rows)))]
+      (for [cursor (iterator.range 0 rows.row-count)]
+        (set! (array-ref bigger cursor) (array-ref rows.rows cursor)))
+      (set! rows.rows bigger)))
+  (set!
+    (array-ref rows.rows rows.row-count)
+    (bit-or (shl (- rows.run-count 1) 32) index))
+  (+= rows.row-count 1))
+
+(defstruct MacroSegmentedCloneSeed
+  (names clone_support.CloneNameSet)
+  (rows MacroSegmentedCloneRows))
+
+(define macro-segmented-clone-row-index-mask : i64
+  4294967295)
+
+(define (macro-segmented-clone-seed-for-program [state : TcJobState]) : MacroSegmentedCloneSeed
   (let
     [empty : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
     [names : clone_support.CloneNameSet
       (clone_support.clone-name-set-with-capacity
         (macro-segmented-program-decl-count state)
         empty.aliases)]
+    [rows : MacroSegmentedCloneRows
+      (MacroSegmentedCloneRows
+        (__tl_make-array ast.AstDeclList 16)
+        0
+        (__tl_make-array i64 256)
+        0)]
+    ;; The reversed prefix is one run; every segment node is another.
+    [run-key : i64 -2]
     [module-id : i64 (clone_support.clone-root-module-id)]
     [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
     (while iter.has-current
-      (if (or
-        (ast.ast-decl-list-unwrapped-module-or-import-at?
-          (& iter.decls)
-          iter.index)
-        (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-          (& iter.decls)
-          iter.index))
-        (let
-          [decl : ast.AstDecl
-            (ast.ast-decl-unwrapped
-              (& (macro-segmented-program-iter-current-decl (& iter))))]
-          (match (tc-global-shared-view decl)
-            [(Module next-module) (set! module-id next-module)]
-            [_
-              (set!
-                names
-                (macro-segmented-clone-name-set-note-decl names module-id decl))]))
-        unit)
+      (let
+        [type-row? : bool
+          (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+            (& iter.decls)
+            iter.index)]
+        (when
+          type-row?
+          (let
+            [key : i64
+              (if (>= iter.prefix-index 0)
+                -1
+                iter.node-address)]
+            (unless
+              (= key run-key)
+              (macro-segmented-clone-rows-add-run!
+                (&mut rows)
+                (tc-global-shared-view iter.decls))
+              (set! run-key key))
+            (macro-segmented-clone-rows-add-row! (&mut rows) iter.index)))
+        (if (or
+          type-row?
+          (ast.ast-decl-list-unwrapped-module-or-import-at?
+            (& iter.decls)
+            iter.index))
+          (let
+            [decl : ast.AstDecl
+              (ast.ast-decl-unwrapped
+                (& (macro-segmented-program-iter-current-decl (& iter))))]
+            (match (tc-global-shared-view decl)
+              [(Module next-module) (set! module-id next-module)]
+              [_
+                (set!
+                  names
+                  (macro-segmented-clone-name-set-note-decl
+                    names
+                    module-id
+                    decl))]))
+          unit))
       (macro-segmented-program-iter-advance! (&mut iter)))
-    names))
+    (MacroSegmentedCloneSeed names rows)))
 
 (define (macro-segmented-clone-fixpoint-step
-  [state : TcJobState]
   [pools : ast.AstNodePoolContext]
+  [rows : (& rows MacroSegmentedCloneRows)]
   [names : (& names clone_support.CloneNameSet)]) : clone_support.CloneNameSet
   (let
     [out : clone_support.CloneNameSet
@@ -99728,13 +99877,15 @@
         (clone_support.clone-name-set-capacity names)
         (clone names.aliases))]
     [module-id : i64 (clone_support.clone-root-module-id)]
-    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
-    (while iter.has-current
-      (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-        (& iter.decls)
-        iter.index)
+    (for [cursor (iterator.range 0 rows.row-count)]
+      (let
+        [packed : i64 (array-ref rows.rows cursor)]
+        [decls : ast.AstDeclList
+          (tc-global-array-element-shared-view rows.runs (shr packed 32))]
         (match (ast.ast-decl-unwrapped
-          (& (macro-segmented-program-iter-current-decl (& iter))))
+          (ast.ast-decl-list-ref-borrowed
+            (& decls)
+            (bit-and packed macro-segmented-clone-row-index-mask)))
           [(Module next-module) (set! module-id next-module)]
           [(DefEnum _ name _ variants)
             (if (clone_support.clone-variant-list-able?
@@ -99760,22 +99911,21 @@
                   out
                   (clone_support.clone-name-key-id-in-module module-id name)))
               unit)]
-          [_ unit])
-        unit)
-      (macro-segmented-program-iter-advance! (&mut iter)))
+          [_ unit])))
     out))
 
 (define (macro-segmented-clone-able-set-build
   [state : TcJobState]
   [pools : ast.AstNodePoolContext]) : clone_support.CloneNameSet
   (let
-    [names : clone_support.CloneNameSet
-      (macro-segmented-clone-name-set-for-program state)]
+    [seed : MacroSegmentedCloneSeed
+      (macro-segmented-clone-seed-for-program state)]
+    [names : clone_support.CloneNameSet seed.names]
     [done : bool false]
     (while (not done)
       (let
         [next : clone_support.CloneNameSet
-          (macro-segmented-clone-fixpoint-step state pools names)]
+          (macro-segmented-clone-fixpoint-step pools (& seed.rows) (& names))]
         (if (=
           (clone_support.clone-name-set-len next)
           (clone_support.clone-name-set-len names))
@@ -121465,33 +121615,57 @@
               (let
                 [binding-ctx : TcContext
                   (tc-top-env-binding-context ctx name-id)]
-                [after : ast.AstType
-                  (tc-resolve-type binding-ctx (tc-global-shared-view before))]
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-macro-profile-metric-add!
-                      (tc-context-macro-state ctx)
-                      tc-profile-splice-env-reresolve-candidates
-                      1))
-                  (if (ast.ast-type-eq? before (tc-global-shared-view after))
-                    unit
+                ;; Nearly every candidate is still waiting for a later
+                ;; import or splice: each of its names fails the lookup
+                ;; again, so resolving it would rebuild the type it already
+                ;; is. Ask that cheaper question first; such an entry stays a
+                ;; candidate exactly as an unchanged re-resolution keeps it.
+                (if (tc-type-resolves-to-itself?
+                  binding-ctx
+                  (tc-global-shared-view before))
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-metric-add!
+                        (tc-context-macro-state ctx)
+                        tc-profile-splice-env-reresolve-candidates
+                        1))
+                    (set!
+                      (array-ref sidecar (+ capacity 1 write-index))
+                      name-id)
+                    (set! write-index (+ write-index 1)))
+                  (let
+                    [after : ast.AstType
+                      (tc-resolve-type
+                        binding-ctx
+                        (tc-global-shared-view before))]
                     (begin
-                      (set!
-                        (array-ref values value-slot)
-                        (tc-global-shared-view after))
                       (cfg
                         compile-profile
                         (compiler-tc-macro-profile-metric-add!
                           (tc-context-macro-state ctx)
-                          tc-profile-splice-env-reresolve-updates
-                          1))))
-                  (when
-                    (tc-type-needs-resolution-for-context? ctx after)
-                    (set!
-                      (array-ref sidecar (+ capacity 1 write-index))
-                      name-id)
-                    (set! write-index (+ write-index 1)))))
+                          tc-profile-splice-env-reresolve-candidates
+                          1))
+                      (if (ast.ast-type-eq?
+                        before
+                        (tc-global-shared-view after))
+                        unit
+                        (begin
+                          (set!
+                            (array-ref values value-slot)
+                            (tc-global-shared-view after))
+                          (cfg
+                            compile-profile
+                            (compiler-tc-macro-profile-metric-add!
+                              (tc-context-macro-state ctx)
+                              tc-profile-splice-env-reresolve-updates
+                              1))))
+                      (when
+                        (tc-type-needs-resolution-for-context? ctx after)
+                        (set!
+                          (array-ref sidecar (+ capacity 1 write-index))
+                          name-id)
+                        (set! write-index (+ write-index 1)))))))
               unit))
           (io.panic
             (str_cat.str-cat

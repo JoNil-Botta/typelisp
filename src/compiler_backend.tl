@@ -814,6 +814,34 @@
       (compiler-backend-asm-copy-part! dst oe e ne))
     (set! buf.len (+ off total))))
 
+;; Append the decimal spelling `string.int->string` gives `value`, written in
+;; place instead of through a fresh String.
+(define (compiler-backend-asm-append-decimal!
+  [buf : (&mut buf CompilerBackendAsmBuf)]
+  [value : i64]) : unit
+  (let
+    [negative : bool (< value 0)]
+    [magnitude : i64
+      (if negative
+        value
+        (- 0 value))]
+    [digits : i64 (string.int->string-negative-digit-count magnitude)]
+    [sign : i64
+      (if negative
+        1
+        0)]
+    [off : i64 buf.len]
+    [total : i64 (+ sign digits)]
+    (compiler-backend-asm-buf-reserve! buf (+ off total))
+    (unsafe
+      (when negative (string.int->string-write-byte! buf.data off 45))
+      (string.int->string-write-negative-digits!
+        buf.data
+        (+ off sign)
+        magnitude
+        digits))
+    (set! buf.len (+ off total))))
+
 (define (compiler-backend-asm-buf-len [buf : (& buf CompilerBackendAsmBuf)]) : i64
   buf.len)
 
@@ -4757,8 +4785,10 @@
     (& instr))
     [(Some span)
       (compiler_diagnostic.compiler-diagnostic-from-ast-span "" span "")]
-    [(No)
-      (compiler_diagnostic.compiler-diagnostic-with-message (& fallback) "")]))
+    ;; The function diagnostic already carries the empty message (see
+    ;; compiler-backend-function-diagnostic-index), so it is the answer as it
+    ;; stands; restating it with "" would copy it for every instruction.
+    [(No) fallback]))
 
 ;; Instruction spans use the destination variable as their provenance key.
 ;; Stack-slot coloring may renumber that variable, so keep every keyed value
@@ -65645,6 +65675,76 @@
     slot-vars
     backend-state))
 
+;; Copy the kept source bytes [start, end) of the rebase input to `out`.
+(define (compiler-backend-rsp-rebase-copy-run!
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : unit
+  (when
+    (> end start)
+    (let
+      [off : i64 out.len]
+      [count : i64 (- end start)]
+      (compiler-backend-asm-buf-reserve! out (+ off count))
+      (unsafe
+        (string.str-copy-bytes-into (ptr-offset data start) out.data off count))
+      (set! out.len (+ off count)))))
+
+;; Start of the line after the one ending at `end` in a text of `n` bytes.
+(define (compiler-backend-rsp-rebase-next-line [end : i64] [n : i64]) : i64
+  (if (< end n)
+    (+ end 1)
+    end))
+
+;; `NOFF(%rsp)`, the rewritten spelling of one frame reference. Almost every
+;; displacement is a small non-negative number, so that case reserves once and
+;; writes its digits and the base in place; any other value takes the general
+;; decimal writer. Both spell `NOFF` exactly as `string.int->string` does.
+(define (compiler-backend-rsp-rebase-rsp-ref!
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [noff : i64]) : unit
+  (if (or (< noff 0) (>= noff 10000))
+    (begin
+      (compiler-backend-asm-append-decimal! out noff)
+      (compiler-backend-asm-append out "(%rsp)"))
+    (let
+      [digits : i64
+        (cond [(< noff 10) 1] [(< noff 100) 2] [(< noff 1000) 3] [else 4])]
+      [off : i64 out.len]
+      [base : i64 (+ off digits)]
+      (compiler-backend-asm-buf-reserve! out (+ base 6))
+      (let
+        [dst : (MutPtr u8) out.data]
+        [rest : i64 noff]
+        [pos : i64 (- base 1)]
+        (while (>= pos off)
+          (unsafe
+            (ptr-write! (ptr-offset dst pos) (cast (+ 48 (% rest 10)) : u8)))
+          (set! rest (/ rest 10))
+          (-= pos 1))
+        (unsafe
+          (ptr-write! (ptr-offset dst base) (cast 40 : u8))
+          (ptr-write! (ptr-offset dst (+ base 1)) (cast 37 : u8))
+          (ptr-write! (ptr-offset dst (+ base 2)) (cast 114 : u8))
+          (ptr-write! (ptr-offset dst (+ base 3)) (cast 115 : u8))
+          (ptr-write! (ptr-offset dst (+ base 4)) (cast 112 : u8))
+          (ptr-write! (ptr-offset dst (+ base 5)) (cast 41 : u8))))
+      (set! out.len (+ base 6)))))
+
+;; `    addq $AMOUNT, %rsp`, newline-terminated when `newline`.
+(define (compiler-backend-rsp-rebase-addq-line!
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [amount : i64]
+  [newline : bool]) : unit
+  (compiler-backend-asm-append out "    addq $")
+  (compiler-backend-asm-append-decimal! out amount)
+  (compiler-backend-asm-append
+    out
+    (if newline
+      ", %rsp\n"
+      ", %rsp")))
+
 ;; RG-1 fix B. `save-regs` is the set the PROLOGUE ORIGINALLY SAVED and is what
 ;; classifies (and so deletes) the save/restore movq lines and the pop-run
 ;; entry; `push-regs` is the set the pass EMITS pushes and pops for. They are
@@ -65667,8 +65767,14 @@
     [data : (Ptr u8)
       (unsafe
         (string-data text))]
-    [buf : (text_buf_borrowed.TextBufBorrowed text)
-      (text_buf_borrowed.empty-like (& text))]
+    ;; The rebased text goes straight into a byte buffer. A kept line is not
+    ;; copied on its own: `run` is the start of the kept source bytes not yet
+    ;; copied, which always reach up to the current line, and they are copied
+    ;; in one piece when a line is dropped or replaced or has a frame reference
+    ;; rewritten.
+    [out : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity (+ n (+ (/ n 8) 64)))]
+    [run : i64 0]
     [i : i64 0]
     [delta : i64 0]
     [valid : bool true]
@@ -65727,10 +65833,8 @@
         (while (and (< m end) (= (compiler-backend-peephole-byte-at data m) 32))
           (+= m 1))
         (if (>= m end)
-          ;; blank line
-          (set!
-            buf
-            (compiler-backend-peephole-append-line-range buf text i end nl))
+          ;; blank line: kept
+          unit
           (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
             ;; a label: only reachable at delta 0 (dip windows are
             ;; straight-line); it also re-establishes rsp validity after an
@@ -65741,10 +65845,7 @@
                 unit)
               (set! delta 0)
               (set! valid true)
-              (set! tail false)
-              (set!
-                buf
-                (compiler-backend-peephole-append-line-range buf text i end nl)))
+              (set! tail false))
             (let
               [tok : i64
                 (- (compiler-backend-peephole-scan-byte-range data m end 32) m)]
@@ -65858,7 +65959,9 @@
               (if (or (= csr-kind 1) drop-pop?)
                 ;; CSR save/restore movq, or a trimmed register's pop:
                 ;; drop the line.
-                unit
+                (begin
+                  (compiler-backend-rsp-rebase-copy-run! (&mut out) data run i)
+                  (set! run (compiler-backend-rsp-rebase-next-line end n)))
                 (if (= csr-kind 2)
                   ;; pop-run entry: point rsp at the pushed area
                   ;; (entry_rsp - 8n = rsp_f + sub-s); the following
@@ -65867,6 +65970,12 @@
                   (if tail
                     (set! ok false)
                     (begin
+                      (compiler-backend-rsp-rebase-copy-run!
+                        (&mut out)
+                        data
+                        run
+                        i)
+                      (set! run (compiler-backend-rsp-rebase-next-line end n))
                       ;; `addq $0` would point rsp where it already is:
                       ;; with a dead slot region the pushed area starts at
                       ;; the current rsp, so the pop run needs no rebase
@@ -65875,15 +65984,10 @@
                       ;; dropping the line cannot lose a live flag.)
                       (if (= (+ sub-s delta) 0)
                         unit
-                        (set!
-                          buf
-                          (compiler-backend-peephole-append-line
-                            buf
-                            (str_cat.str-cat
-                              "    addq $"
-                              (string.int->string (+ sub-s delta))
-                              ", %rsp")
-                            nl)))
+                        (compiler-backend-rsp-rebase-addq-line!
+                          (&mut out)
+                          (+ sub-s delta)
+                          nl))
                       (set! tail true)
                       (set! delta (- 0 sub-s))))
                   (if (= csr-kind 3)
@@ -65906,6 +66010,14 @@
                         ;; 8n+sub-s; a negative delta folds the pop-restore
                         ;; epilogue tail when present).
                         (begin
+                          (compiler-backend-rsp-rebase-copy-run!
+                            (&mut out)
+                            data
+                            run
+                            i)
+                          (set!
+                            run
+                            (compiler-backend-rsp-rebase-next-line end n))
                           ;; lint-allow: nested-if-ladder
                           (if (not valid)
                             (set! ok false)
@@ -65925,22 +66037,23 @@
                                   [amount : i64 (+ sub-s delta)]
                                   (if (< amount 0)
                                     (set! ok false)
-                                    (set!
-                                      buf
-                                      (compiler-backend-peephole-append-line
-                                        buf
-                                        (str_cat.str-cat
-                                          (if (= amount 0)
-                                            ""
-                                            (str_cat.str-cat
-                                              "    addq $"
-                                              (string.int->string amount)
-                                              ", %rsp\n"))
-                                          (compiler-backend-rsp-rebase-pop-run
-                                            (compiler-backend-global-shared-view
-                                              push-regs))
-                                          "")
-                                        nl))))
+                                    (begin
+                                      (unless
+                                        (= amount 0)
+                                        (compiler-backend-rsp-rebase-addq-line!
+                                          (&mut out)
+                                          amount
+                                          true))
+                                      (compiler-backend-asm-append
+                                        (&mut out)
+                                        (compiler-backend-rsp-rebase-pop-run
+                                          (compiler-backend-global-shared-view
+                                            push-regs)))
+                                      (when
+                                        nl
+                                        (compiler-backend-asm-append
+                                          (&mut out)
+                                          "\n")))))
                                 (let
                                   ;; `sub-s` IS the emitted no-push
                                   ;; prologue adjustment -- `frame + 8`
@@ -65953,15 +66066,10 @@
                                     (set! ok false)
                                     (if (= amount 0)
                                       unit
-                                      (set!
-                                        buf
-                                        (compiler-backend-peephole-append-line
-                                          buf
-                                          (str_cat.str-cat
-                                            "    addq $"
-                                            (string.int->string amount)
-                                            ", %rsp")
-                                          nl))))))))
+                                      (compiler-backend-rsp-rebase-addq-line!
+                                        (&mut out)
+                                        amount
+                                        nl)))))))
                           (set! valid false)
                           (set! tail false))
                         (begin
@@ -66006,179 +66114,149 @@
                                     (+ first-paren 1)
                                     end)))]
                             (if (< p 0)
-                              (set!
-                                buf
-                                (compiler-backend-peephole-append-line-range
-                                  buf
-                                  text
-                                  i
-                                  end
-                                  nl))
+                              unit
                               (if (not valid)
                                 (set! ok false)
-                                (let
-                                  [cursor : i64 i]
-                                  (while (and ok (>= p 0))
-                                    (if (or
-                                      (>= (+ p 5) end)
-                                      (not
-                                        (=
-                                          (compiler-backend-peephole-byte-at
-                                            data
-                                            (+ p 5))
-                                          41)))
-                                      ;; "(%rbp," indexed or truncated.
-                                      ;; BE-4: in an rbp-planned
-                                      ;; function an INDEXED form is a
-                                      ;; pool base with a SIB index --
-                                      ;; the emitter never spells a
-                                      ;; frame slot with an index (a
-                                      ;; stack array is addressed
-                                      ;; through a leaq of its slot) --
-                                      ;; so the audit steps over it and
-                                      ;; leaves the text as it is.
-                                      ;; Anywhere else it refuses as
-                                      ;; before.
-                                      (if (and
-                                        compiler_regalloc.compiler-reg-rbp-pool-enabled
-                                        (< (+ p 5) end)
-                                        (=
-                                          (compiler-backend-peephole-byte-at
-                                            data
-                                            (+ p 5))
-                                          44))
-                                        unit
-                                        (set! ok false))
-                                      (let
-                                        [ks : i64
-                                          (compiler-backend-rsp-rebase-int-start
-                                            data
-                                            i
-                                            p)]
-                                        (if (< ks 0)
-                                          ;; bare "(%rbp)"
-                                          (set! ok false)
-                                          (let
-                                            [k : i64
-                                              (compiler-backend-rsp-rebase-parse-int
-                                                data
-                                                ks
-                                                p)]
-                                            (if (and (>= k 0) (not fpo))
-                                              ;; incoming stack-arg slot: keep
-                                              ;; rbp (stage 1 -- %rbp is live).
-                                              ;; In FPO mode positive offsets
-                                              ;; rebase with the SAME formula
-                                              ;; (virtual rbp = rsp+frame).
-                                              unit
-                                              (let
-                                                ;; GAP1 push mode: negative
-                                                ;; (local) offsets shift down by
-                                                ;; the pushed bytes (bias sub-s);
-                                                ;; positive (incoming-arg)
-                                                ;; offsets keep their absolute
-                                                ;; caller-side addresses (bias
-                                                ;; sub-s+8n-8). Both equal
-                                                ;; `frame` when push-count = 0.
-                                                [noff : i64
-                                                  (+
-                                                    (+
-                                                      (if (>= k 0)
-                                                        bias-pos
-                                                        bias-neg)
-                                                      delta)
-                                                    k)]
-                                                ;; A negative
-                                                ;; displacement is a
-                                                ;; RED-ZONE slot and
-                                                ;; is legal only
-                                                ;; there, and only
-                                                ;; inside the 128
-                                                ;; bytes the ABI
-                                                ;; reserves.
-                                                (if (or
-                                                  (and (< noff 0) (not rz))
-                                                  (<
-                                                    noff
-                                                    (-
-                                                      0
-                                                      compiler-backend-red-zone-limit)))
-                                                  (set! ok false)
-                                                  (begin
-                                                    (set!
-                                                      buf
-                                                      (compiler-backend-peephole-append-line-range
-                                                        buf
-                                                        text
-                                                        cursor
-                                                        ks
-                                                        false))
-                                                    (set!
-                                                      buf
-                                                      (text_buf_borrowed.append-owned
-                                                        buf
-                                                        (string.int->string
-                                                          noff)))
-                                                    (set!
-                                                      buf
-                                                      (text_buf_borrowed.append-owned
-                                                        buf
-                                                        "(%rsp)"))
-                                                    (set! last-noff noff)
-                                                    (+= ref-count 1)
-                                                    (set! cursor (+ p 6))))))))))
-                                    (set!
-                                      p
-                                      (if ok
+                                (while (and ok (>= p 0))
+                                  (if (or
+                                    (>= (+ p 5) end)
+                                    (not
+                                      (=
+                                        (compiler-backend-peephole-byte-at
+                                          data
+                                          (+ p 5))
+                                        41)))
+                                    ;; "(%rbp," indexed or truncated.
+                                    ;; BE-4: in an rbp-planned
+                                    ;; function an INDEXED form is a
+                                    ;; pool base with a SIB index --
+                                    ;; the emitter never spells a
+                                    ;; frame slot with an index (a
+                                    ;; stack array is addressed
+                                    ;; through a leaq of its slot) --
+                                    ;; so the audit steps over it and
+                                    ;; leaves the text as it is.
+                                    ;; Anywhere else it refuses as
+                                    ;; before.
+                                    (if (and
+                                      compiler_regalloc.compiler-reg-rbp-pool-enabled
+                                      (< (+ p 5) end)
+                                      (=
+                                        (compiler-backend-peephole-byte-at
+                                          data
+                                          (+ p 5))
+                                        44))
+                                      unit
+                                      (set! ok false))
+                                    (let
+                                      [ks : i64
+                                        (compiler-backend-rsp-rebase-int-start
+                                          data
+                                          i
+                                          p)]
+                                      (if (< ks 0)
+                                        ;; bare "(%rbp)"
+                                        (set! ok false)
                                         (let
-                                          [next-start : i64 (+ p 6)]
-                                          [next-paren : i64
-                                            (if (<= (+ next-start 5) end)
-                                              (compiler-backend-peephole-scan-byte-range
+                                          [k : i64
+                                            (compiler-backend-rsp-rebase-parse-int
+                                              data
+                                              ks
+                                              p)]
+                                          (if (and (>= k 0) (not fpo))
+                                            ;; incoming stack-arg slot: keep
+                                            ;; rbp (stage 1 -- %rbp is live).
+                                            ;; In FPO mode positive offsets
+                                            ;; rebase with the SAME formula
+                                            ;; (virtual rbp = rsp+frame).
+                                            unit
+                                            (let
+                                              ;; GAP1 push mode: negative
+                                              ;; (local) offsets shift down by
+                                              ;; the pushed bytes (bias sub-s);
+                                              ;; positive (incoming-arg)
+                                              ;; offsets keep their absolute
+                                              ;; caller-side addresses (bias
+                                              ;; sub-s+8n-8). Both equal
+                                              ;; `frame` when push-count = 0.
+                                              [noff : i64
+                                                (+
+                                                  (+
+                                                    (if (>= k 0)
+                                                      bias-pos
+                                                      bias-neg)
+                                                    delta)
+                                                  k)]
+                                              ;; A negative
+                                              ;; displacement is a
+                                              ;; RED-ZONE slot and
+                                              ;; is legal only
+                                              ;; there, and only
+                                              ;; inside the 128
+                                              ;; bytes the ABI
+                                              ;; reserves.
+                                              (if (or
+                                                (and (< noff 0) (not rz))
+                                                (<
+                                                  noff
+                                                  (-
+                                                    0
+                                                    compiler-backend-red-zone-limit)))
+                                                (set! ok false)
+                                                (begin
+                                                  (compiler-backend-rsp-rebase-copy-run!
+                                                    (&mut out)
+                                                    data
+                                                    run
+                                                    ks)
+                                                  (compiler-backend-rsp-rebase-rsp-ref!
+                                                    (&mut out)
+                                                    noff)
+                                                  (set! last-noff noff)
+                                                  (+= ref-count 1)
+                                                  (set! run (+ p 6))))))))))
+                                  (set!
+                                    p
+                                    (if ok
+                                      (let
+                                        [next-start : i64 (+ p 6)]
+                                        [next-paren : i64
+                                          (if (<= (+ next-start 5) end)
+                                            (compiler-backend-peephole-scan-byte-range
+                                              data
+                                              next-start
+                                              rbp-stop
+                                              40)
+                                            rbp-stop)]
+                                        (if (>= next-paren rbp-stop)
+                                          -1
+                                          (if (and
+                                            (=
+                                              (compiler-backend-peephole-byte-at
                                                 data
-                                                next-start
-                                                rbp-stop
-                                                40)
-                                              rbp-stop)]
-                                          (if (>= next-paren rbp-stop)
-                                            -1
-                                            (if (and
-                                              (=
-                                                (compiler-backend-peephole-byte-at
-                                                  data
-                                                  (+ next-paren 1))
-                                                37)
-                                              (=
-                                                (compiler-backend-peephole-byte-at
-                                                  data
-                                                  (+ next-paren 2))
-                                                114)
-                                              (=
-                                                (compiler-backend-peephole-byte-at
-                                                  data
-                                                  (+ next-paren 3))
-                                                98)
-                                              (=
-                                                (compiler-backend-peephole-byte-at
-                                                  data
-                                                  (+ next-paren 4))
-                                                112))
-                                              next-paren
-                                              (compiler-backend-rsp-rebase-find-rbp
+                                                (+ next-paren 1))
+                                              37)
+                                            (=
+                                              (compiler-backend-peephole-byte-at
                                                 data
-                                                (+ next-paren 1)
-                                                end))))
-                                        -1)))
-                                  (if ok
-                                    (set!
-                                      buf
-                                      (compiler-backend-peephole-append-line-range
-                                        buf
-                                        text
-                                        cursor
-                                        end
-                                        nl))
-                                    unit)))))
+                                                (+ next-paren 2))
+                                              114)
+                                            (=
+                                              (compiler-backend-peephole-byte-at
+                                                data
+                                                (+ next-paren 3))
+                                              98)
+                                            (=
+                                              (compiler-backend-peephole-byte-at
+                                                data
+                                                (+ next-paren 4))
+                                              112))
+                                            next-paren
+                                            (compiler-backend-rsp-rebase-find-rbp
+                                              data
+                                              (+ next-paren 1)
+                                              end))))
+                                      -1))))))
                           ;; pushq MEM computes its address BEFORE the rsp decrement.
                           (if (and valid push?)
                             (+= delta 8)
@@ -66270,7 +66348,9 @@
               1))
           unit)
         (CompilerBackendRspRebaseResult
-          (text_buf_borrowed.render buf)
+          (begin
+            (compiler-backend-rsp-rebase-copy-run! (&mut out) data run n)
+            (compiler-backend-asm-buf-finish (& out)))
           true
           csr-mask))
       (begin
@@ -83739,6 +83819,11 @@ tl_shared_object_init:
     (compiler-backend-peephole-owner-key-base left)
     (compiler-backend-peephole-owner-key-base right)))
 
+;; `owner-key-eq?` against a key whose base the caller has already taken, for
+;; the scans that compare one location against all fourteen registers.
+(define (compiler-backend-peephole-owner-key-base-eq? [key : i64] [base : i64]) : bool
+  (= (compiler-backend-peephole-owner-key-base key) base))
+
 (define compiler-backend-peephole-owner-global-initial-capacity : i64
   64)
 (define compiler-backend-peephole-owner-global-capacity : i64
@@ -84344,62 +84429,63 @@ tl_shared_object_init:
     ""
     (let
       [ex : i64 exclude]
+      [base : i64 (compiler-backend-peephole-owner-key-base slot)]
       (cond
         [(and
             (not (= ex 0))
-            (compiler-backend-peephole-owner-key-eq? owners.rax slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.rax base))
           "%rax"]
         [(and
             (not (= ex 1))
-            (compiler-backend-peephole-owner-key-eq? owners.rcx slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.rcx base))
           "%rcx"]
         [(and
             (not (= ex 2))
-            (compiler-backend-peephole-owner-key-eq? owners.rdx slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.rdx base))
           "%rdx"]
         [(and
             (not (= ex 3))
-            (compiler-backend-peephole-owner-key-eq? owners.rbx slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.rbx base))
           "%rbx"]
         [(and
             (not (= ex 4))
-            (compiler-backend-peephole-owner-key-eq? owners.rsi slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.rsi base))
           "%rsi"]
         [(and
             (not (= ex 5))
-            (compiler-backend-peephole-owner-key-eq? owners.rdi slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.rdi base))
           "%rdi"]
         [(and
             (not (= ex 6))
-            (compiler-backend-peephole-owner-key-eq? owners.r8 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r8 base))
           "%r8"]
         [(and
             (not (= ex 7))
-            (compiler-backend-peephole-owner-key-eq? owners.r9 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r9 base))
           "%r9"]
         [(and
             (not (= ex 8))
-            (compiler-backend-peephole-owner-key-eq? owners.r10 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r10 base))
           "%r10"]
         [(and
             (not (= ex 9))
-            (compiler-backend-peephole-owner-key-eq? owners.r11 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r11 base))
           "%r11"]
         [(and
             (not (= ex 10))
-            (compiler-backend-peephole-owner-key-eq? owners.r12 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r12 base))
           "%r12"]
         [(and
             (not (= ex 11))
-            (compiler-backend-peephole-owner-key-eq? owners.r13 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r13 base))
           "%r13"]
         [(and
             (not (= ex 12))
-            (compiler-backend-peephole-owner-key-eq? owners.r14 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r14 base))
           "%r14"]
         [(and
             (not (= ex 13))
-            (compiler-backend-peephole-owner-key-eq? owners.r15 slot))
+            (compiler-backend-peephole-owner-key-base-eq? owners.r15 base))
           "%r15"]
         [else ""]))))
 
@@ -84458,49 +84544,51 @@ tl_shared_object_init:
 (define (compiler-backend-peephole-owners-clear-slot
   [owners : CompilerBackendPeepholeOwners]
   [slot : i64]) : CompilerBackendPeepholeOwners
-  (CompilerBackendPeepholeOwners
-    (if (compiler-backend-peephole-owner-key-eq? owners.rax slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.rax)
-    (if (compiler-backend-peephole-owner-key-eq? owners.rcx slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.rcx)
-    (if (compiler-backend-peephole-owner-key-eq? owners.rdx slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.rdx)
-    (if (compiler-backend-peephole-owner-key-eq? owners.rbx slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.rbx)
-    (if (compiler-backend-peephole-owner-key-eq? owners.rsi slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.rsi)
-    (if (compiler-backend-peephole-owner-key-eq? owners.rdi slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.rdi)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r8 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r8)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r9 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r9)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r10 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r10)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r11 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r11)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r12 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r12)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r13 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r13)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r14 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r14)
-    (if (compiler-backend-peephole-owner-key-eq? owners.r15 slot)
-      (compiler-backend-peephole-owner-key-unknown)
-      owners.r15)))
+  (let
+    [base : i64 (compiler-backend-peephole-owner-key-base slot)]
+    (CompilerBackendPeepholeOwners
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.rax base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.rax)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.rcx base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.rcx)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.rdx base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.rdx)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.rbx base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.rbx)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.rsi base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.rsi)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.rdi base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.rdi)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r8 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r8)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r9 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r9)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r10 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r10)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r11 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r11)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r12 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r12)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r13 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r13)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r14 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r14)
+      (if (compiler-backend-peephole-owner-key-base-eq? owners.r15 base)
+        (compiler-backend-peephole-owner-key-unknown)
+        owners.r15))))
 
 ;; Owner key that can survive a normal call. Calls may mutate globals, so a
 ;; callee-saved register keeps only stack-slot ownership across the boundary --
@@ -86855,20 +86943,37 @@ tl_shared_object_init:
 ;; keeps the branch, respelled when it must be.
 (define (compiler-backend-peephole-flags-writer-desc?
   [line : (& line CompilerBackendPeepholeLine)]) : bool
+  ;; The mnemonic's bytes read as one little-endian word, compared against the
+  ;; packed spellings, the way compiler-backend-control-mnemonic-kind does:
+  ;; subq addq andq xorq incq decq negq, and orq.
   (let
     [ml : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
-    (cond
-      [(= ml 4)
-        (or
-          (compiler-backend-peephole-line-mnemonic-eq? line "subq")
-          (compiler-backend-peephole-line-mnemonic-eq? line "addq")
-          (compiler-backend-peephole-line-mnemonic-eq? line "andq")
-          (compiler-backend-peephole-line-mnemonic-eq? line "xorq")
-          (compiler-backend-peephole-line-mnemonic-eq? line "incq")
-          (compiler-backend-peephole-line-mnemonic-eq? line "decq")
-          (compiler-backend-peephole-line-mnemonic-eq? line "negq"))]
-      [(= ml 3) (compiler-backend-peephole-line-mnemonic-eq? line "orq")]
-      [else false])))
+    [data : (Ptr u8) line.data]
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    (if (or (< ml 3) (> ml 4))
+      false
+      (let
+        [key3 : i64
+          (+
+            (compiler-backend-peephole-byte-at data ms)
+            (+
+              (* (compiler-backend-peephole-byte-at data (+ ms 1)) 256)
+              (* (compiler-backend-peephole-byte-at data (+ ms 2)) 65536)))]
+        (if (= ml 3)
+          (= key3 7434863)
+          (let
+            [key4 : i64
+              (+
+                key3
+                (* (compiler-backend-peephole-byte-at data (+ ms 3)) 16777216))]
+            (or
+              (= key4 1902278003)
+              (= key4 1902404705)
+              (= key4 1902407265)
+              (= key4 1903325048)
+              (= key4 1902341737)
+              (= key4 1902339428)
+              (= key4 1902601582))))))))
 
 ;; The register `line` leaves ZF/SF for, or -1.
 (define (compiler-backend-peephole-flags-next-desc

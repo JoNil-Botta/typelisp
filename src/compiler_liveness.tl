@@ -1478,73 +1478,68 @@
 
 ;; Sparse form of `compiler-live-block-use-def-seq-with-scratch` with
 ;; conservative phi uses, for consumers whose per-block cost must not grow with
-;; the function's var count (#8417). Appends block `block`'s upward-exposed uses
-;; to `use-out` and its defs to `def-out`, each id once: the same bits the dense
-;; form freezes, under the same rules (a use counts unless an EARLIER
-;; instruction of the block defines it, and leading phis record every use
-;; before any def). `use-at` and `def-at` hold, per var, the last block that
-;; recorded it as a use or a def; no entry equals `block` on entry.
-(define (compiler-live-block-use-def-ids!
-  [instrs : ir.CompilerIrInstrSeq]
+;; the function's var count (#8417), one instruction at a time: the caller walks
+;; block `block`'s instructions in order. Appends the instruction's contribution
+;; to the block's upward-exposed uses in `use-out` and its defs in `def-out`,
+;; each id once per block: the same bits the dense form freezes, under the same
+;; rules (a use counts unless an EARLIER instruction of the block defines it,
+;; and leading phis record every use before any def). `phi-end` is the block's
+;; compiler-live-leading-phi-count, and `id-count` is what
+;; compiler-live-instr-use-ids! returned for this instruction, whose ids are in
+;; compiler-live-instr-ids. `use-at` and `def-at` hold, per var, the last block
+;; that recorded it as a use or a def; no entry equals `block` when the block's
+;; first instruction is passed.
+(define (compiler-live-instr-use-def-ids!
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [phi-end : i64]
+  [id-count : i64]
   [block : i64]
   [use-at : (&mut use-at (__tl_dyn-array i64))]
   [def-at : (&mut def-at (__tl_dyn-array i64))]
   [use-out : (&mut use-out live_ids.Vec)]
   [def-out : (&mut def-out live_ids.Vec)]) : unit
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [phi-end : i64
-      (compiler-live-leading-phi-count (compiler-live-shared-view instrs))]
-    (for [index (iterator.range 0 count)]
+    [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+    [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
+    [id : i64 0]
+    (if (< id-count 0)
+      ;; Wider than the extraction buffer: walk the bitset instead.
       (let
-        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-        [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
-        [id-count : i64 (compiler-live-instr-use-ids! (& instr))]
-        [id : i64 0]
-        (if (< id-count 0)
-          ;; Wider than the extraction buffer: walk the bitset instead.
+        [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
+        [bits : i64
+          (* (compiler-live-set-word-count uses) (compiler-live-set-word-bits))]
+        (while (< id bits)
+          (when
+            (!=
+              (bit-and
+                (compiler-live-set-word-at-bounded
+                  uses
+                  (compiler-live-set-word-index id))
+                (compiler-live-set-bit-mask id))
+              0)
+            (compiler-live-use-id! use-at def-at block id use-out))
+          (+= id 1)))
+      (while (< id id-count)
+        (compiler-live-use-id! use-at def-at block (array-ref ids id) use-out)
+        (+= id 1)))
+    (cond
+      [(< (+ index 1) phi-end) unit]
+      [(= (+ index 1) phi-end)
+        (for [phi (iterator.range 0 phi-end)]
           (let
-            [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
-            [bits : i64
-              (*
-                (compiler-live-set-word-count uses)
-                (compiler-live-set-word-bits))]
-            (while (< id bits)
-              (when
-                (!=
-                  (bit-and
-                    (compiler-live-set-word-at-bounded
-                      uses
-                      (compiler-live-set-word-index id))
-                    (compiler-live-set-bit-mask id))
-                  0)
-                (compiler-live-use-id! use-at def-at block id use-out))
-              (+= id 1)))
-          (while (< id id-count)
-            (compiler-live-use-id!
-              use-at
-              def-at
-              block
-              (array-ref ids id)
-              use-out)
-            (+= id 1)))
-        (cond
-          [(< (+ index 1) phi-end) unit]
-          [(= (+ index 1) phi-end)
-            (for [phi (iterator.range 0 phi-end)]
-              (let
-                [phi-instr (ir.compiler-ir-instr-seq-borrow instrs phi)]
-                (compiler-live-def-id!
-                  def-at
-                  block
-                  (ir.compiler-ir-instr-dst phi-instr)
-                  def-out)))]
-          [else
+            [phi-instr (ir.compiler-ir-instr-seq-borrow instrs phi)]
             (compiler-live-def-id!
               def-at
               block
-              (ir.compiler-ir-instr-dst instr)
-              def-out)])))))
+              (ir.compiler-ir-instr-dst phi-instr)
+              def-out)))]
+      [else
+        (compiler-live-def-id!
+          def-at
+          block
+          (ir.compiler-ir-instr-dst instr)
+          def-out)])))
 
 ;; Ids outside the stamp rows are not the function's vars and are skipped.
 (define (compiler-live-use-id!

@@ -4795,7 +4795,7 @@
     [(Done) false]
     [(Cache rest-env) (lower-type-env-contains-reference? rest-env)]
     [(Bind _ ty rest-env)
-      (if (tc_core.tc-type-contains-reference? ty)
+      (if (tc_core.tc-type-contains-reference? (& ty))
         true
         (lower-type-env-contains-reference? rest-env))]))
 
@@ -19417,7 +19417,7 @@
     [(DynArray elem-ty)
       (not
         (tc_core.tc-type-contains-reference?
-          (tc_core.tc-context-type-get ctx elem-ty)))]
+          (& (tc_core.tc-context-type-get ctx elem-ty))))]
     [(Struct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
@@ -19718,7 +19718,7 @@
       [_
         (if (not
           (tc_core.tc-type-contains-reference?
-            (lower-global-shared-view resolved)))
+            (& (lower-global-shared-view resolved))))
           true
           (match resolved
             [(or (Ref _ inner) (MutRef _ inner))
@@ -19958,7 +19958,7 @@
         [_
           (if (and
             (tc_core.tc-type-contains-reference?
-              (lower-global-shared-view place-ty))
+              (& (lower-global-shared-view place-ty)))
             (not
               (lower-supported-reference-type?
                 ctx
@@ -28251,7 +28251,7 @@
             [_ false])
           (and
             (tc_core.tc-type-contains-reference?
-              (lower-global-shared-view place-ty))
+              (& (lower-global-shared-view place-ty)))
             (not (lower-supported-reference-type? ctx place-ty)))
           (lower-borrow-place-value-reference? ctx referent-ty))
           (lower-call-arg-normal-as
@@ -78094,7 +78094,7 @@
                   (if (and
                     c-abi?
                     (tc_core.tc-type-contains-reference?
-                      (lower-global-shared-view resolved-ty))
+                      (& (lower-global-shared-view resolved-ty)))
                     (not
                       (lower-supported-reference-extern?
                         decl-ctx

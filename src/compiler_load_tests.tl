@@ -2187,7 +2187,10 @@
       (with-scratch
         (let
           [name : String (str_cat.str-cat "cache.floor." "transient")]
-          [interned : i64 (ci.intern name)]
+          [interned : i64
+            (unsafe
+              ;; unsafe: interned names live in the persistent intern arena, not this one
+              (ci.intern name))]
           (load.compiler-load-session-note-persistent!)
           interned))]
     (load.compiler-load-session-reset-interns!)

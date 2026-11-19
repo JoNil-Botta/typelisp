@@ -2208,24 +2208,35 @@
     [home : arena.Arena (arena.current)]
     (with-scratch
       (tltest-inline-clear-load-only-caches!)
-      (driver.compiler-driver-reset-file-state!)
+      (unsafe
+        ;; unsafe: installs the global load session; replaced before this arena ends
+        (driver.compiler-driver-reset-file-state!))
       (compiler_load.compiler-load-session-state-dependency-surfaces-release!
         (compiler_load.compiler-load-active-session-state-shared-view))
-      (ci.intern-persistent-arena-reset!)
-      (compiler_load.compiler-load-transfer-frontend-handoff!)
+      (unsafe
+        ;; unsafe: resets the global persistent intern arena
+        (ci.intern-persistent-arena-reset!))
+      (unsafe
+        ;; unsafe: releases the global token buffers; they keep no allocation of this arena
+        (compiler_load.compiler-load-transfer-frontend-handoff!))
       (let
         [pools : ast.AstNodePoolContext
           (driver.compiler-driver-state-new-checked-lower-pools)]
-        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [_install : unit
+          (unsafe
+            ;; unsafe: installs global AST pool state; replaced before this arena ends
+            (ast.ast-node-pool-context-install! pools))]
         [status : i64
-          (tltest-inline-typecheck-package-source-with-cfg
-            source
-            roots
-            manifest-dir
-            package-owner
-            deps
-            (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
-            cache-scope-prefix)]
+          (unsafe
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (tltest-inline-typecheck-package-source-with-cfg
+              source
+              roots
+              manifest-dir
+              package-owner
+              deps
+              (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
+              cache-scope-prefix))]
         [retired : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         ;; Retire all references before returning pool storage. Replacement
@@ -2233,12 +2244,20 @@
         (in-arena
           home
           (tltest-inline-clear-load-only-caches!)
-          (driver.compiler-driver-reset-file-state!)
+          (unsafe
+            ;; unsafe: installs the global load session; replaced before this arena ends
+            (driver.compiler-driver-reset-file-state!))
           (compiler_load.compiler-load-session-state-dependency-surfaces-release!
             (compiler_load.compiler-load-active-session-state-shared-view))
-          (driver.compiler-driver-state-destroy-uncommitted-pools! retired)
-          (ci.intern-persistent-arena-reset!)
-          (compiler_load.compiler-load-transfer-frontend-handoff!))
+          (unsafe
+            ;; unsafe: installs global AST pool state; replaced before this arena ends
+            (driver.compiler-driver-state-destroy-uncommitted-pools! retired))
+          (unsafe
+            ;; unsafe: resets the global persistent intern arena
+            (ci.intern-persistent-arena-reset!))
+          (unsafe
+            ;; unsafe: releases the global token buffers; they keep no allocation of this arena
+            (compiler_load.compiler-load-transfer-frontend-handoff!)))
         status))))
 
 (define (tltest-inline-typecheck-package-sources-from

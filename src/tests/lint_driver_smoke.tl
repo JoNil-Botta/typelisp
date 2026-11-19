@@ -1094,11 +1094,13 @@
     request
     (let
       [findings : lint_core.LintFindings
-        (driver_tests.selfhost-lint-source-with-roots-and-options
-          "target/lint_unsafe_surface/direct_safe.tl"
-          source
-          stdlib-roots
-          false)]
+        (unsafe
+          ;; unsafe: resets the global lint caches; they keep no allocation of this arena
+          (driver_tests.selfhost-lint-source-with-roots-and-options
+            "target/lint_unsafe_surface/direct_safe.tl"
+            source
+            stdlib-roots
+            false))]
       findings.len)))
 
 (define (lint-driver-smoke-unsafe-surface-self-test) : i64

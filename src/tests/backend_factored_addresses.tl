@@ -258,6 +258,10 @@
         [scope (arena.make)]
         (in-arena
           scope
-          (check-case factor mode false)
-          (check-case factor mode true))
+          (unsafe
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (check-case factor mode false))
+          (unsafe
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (check-case factor mode true)))
         (arena.destroy-safe! scope)))))

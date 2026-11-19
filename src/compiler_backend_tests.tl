@@ -41189,8 +41189,14 @@ b_keep:
                 stream
                 (backend.compiler-backend-global-shared-view state))
               (owned_view.compiler-owned-shared-view state))]
+          ;; unsafe: the group text lives in group-arena, which the caller keeps
+          ;; for the whole flush; a bare arena parameter's allocation cannot
+          ;; otherwise leave the call.
           [group : text_buf.TextBuf
-            (in-arena group-arena (text_buf.append at-boundary.group chunk))]
+            (unsafe
+              (in-arena
+                (arena.Arena (arena.raw-handle group-arena))
+                (text_buf.append at-boundary.group chunk)))]
           (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))))
       (let
         [flushed : CompilerBackendPeepholeChunkState

@@ -117920,15 +117920,17 @@
         [phase : arena.ArenaPhase (arena.phase scratch)]
         (match (in-arena
           scratch
-          (opt-inline-function-with-spans
-            type-segment-bases
-            (& (array-ref values slot))
-            (& index)
-            census
-            (& scc-result)
-            caller-scc
-            (& current-spans)
-            (compiler-opt-global-shared-view current-spans)))
+          (unsafe
+            ;; unsafe: per-walk caller globals are unpublished before the scratch rewind
+            (opt-inline-function-with-spans
+              type-segment-bases
+              (& (array-ref values slot))
+              (& index)
+              census
+              (& scc-result)
+              caller-scc
+              (& current-spans)
+              (compiler-opt-global-shared-view current-spans))))
           [(Program one next-spans)
             (set!
               (array-ref values slot)

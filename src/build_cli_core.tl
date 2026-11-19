@@ -3504,13 +3504,15 @@
   (let
     [home : arena.Arena (arena.current)]
     (with-scratch
-      (match (build-package-tlci-collect-exports
-        context
-        manifest
-        mode
-        decls
-        paths
-        source-set)
+      (match (unsafe
+        ;; unsafe: the native report strings are read before this arena ends
+        (build-package-tlci-collect-exports
+          context
+          manifest
+          mode
+          decls
+          paths
+          source-set))
         [(Err message) (in-arena home (Err (string.copy message)))]
         [(Ok metadata names native-source)
           (in-arena
@@ -5417,34 +5419,41 @@
       (with-scratch
         (let
           [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope
-            (compiler_driver_core.compiler-driver-package-runtime-scope-new
-              home)]
+            (unsafe
+              ;; unsafe: installs the global load session; replaced before this arena ends
+              (compiler_driver_core.compiler-driver-package-runtime-scope-new
+                home))]
           [status : i64
             (in-arena
               home
-              (build-package-emit-one-in-runtime-scope
-                (owned_view.compiler-owned-shared-view scope)
-                manifest-path
-                manifest
-                target
-                opt-level
-                profile
-                mode
-                stdlib-roots
-                producer-identity
-                entry-path
-                manifest-dir
-                kind
-                asm-path
-                obj-path
-                artifact-path
-                tlci-path
-                manifest-link-inputs
-                dep-link-inputs
-                emit-entry
-                (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
-                announce))]
-          (build-package-runtime-scope-release! scope)
+              (unsafe
+                ;; unsafe: installs the global surface capture; released before this arena ends
+                ;; unsafe: interned names live in the persistent intern arena, not this one
+                (build-package-emit-one-in-runtime-scope
+                  (owned_view.compiler-owned-shared-view scope)
+                  manifest-path
+                  manifest
+                  target
+                  opt-level
+                  profile
+                  mode
+                  stdlib-roots
+                  producer-identity
+                  entry-path
+                  manifest-dir
+                  kind
+                  asm-path
+                  obj-path
+                  artifact-path
+                  tlci-path
+                  manifest-link-inputs
+                  dep-link-inputs
+                  emit-entry
+                  (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
+                  announce)))]
+          (unsafe
+            ;; unsafe: installs the global load session; replaced before this arena ends
+            (build-package-runtime-scope-release! scope))
           status)))))
 
 (cfg

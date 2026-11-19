@@ -522,8 +522,12 @@
     (lexer.spanned-token-buffer-ensure! 1 0)
     (in-arena
       scratch
-      (lexer.spanned-token-buffer-set! 0 witness)
-      (lexer.spanned-token-buffer-grow-to! required 1))
+      (unsafe
+        ;; unsafe: fills the global token buffer in this arena; reset before it is destroyed
+        (lexer.spanned-token-buffer-set! 0 witness))
+      (unsafe
+        ;; unsafe: grows the global token buffer in this arena; reset before it is destroyed
+        (lexer.spanned-token-buffer-grow-to! required 1)))
     (arena.destroy-safe! scratch)
     (and
       (>= (array-length lexer.lex-spanned-token-buffer) required)

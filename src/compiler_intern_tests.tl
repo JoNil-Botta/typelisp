@@ -120,7 +120,9 @@
       (with-scratch
         (let
           [temporary : String (ci.intern-substring "xxhygiene/localyy" 2 13)]
-          (ci.intern-generated-name (& temporary))))]
+          (unsafe
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (ci.intern-generated-name (& temporary)))))]
     [opaque-again-id : i64 (ci.intern-generated-name "hygiene/local")]
     [duplicate-display-id : i64
       (ci.intern-generated-name
@@ -314,7 +316,9 @@
       (with-scratch
         (let
           [name : String (ci.intern-substring "persist/entry" 0 13)]
-          (ci.intern name)))]
+          (unsafe
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (ci.intern name))))]
     [again : i64 (ci.intern "persist/entry")]
     [ok : bool
       (and

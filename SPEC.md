@@ -1841,11 +1841,14 @@ can be created inside a region scope:
 - `(__tl_dyn-array T)` - private runtime-sized dynamic buffer storage
 - Enum and struct values returned from functions inside the region
 - Tuple values
+- Fixed-size arrays whose element type is region-taggable: the array holds its
+  elements inline, so it carries their allocations
+- A capturing closure: its environment is allocated in the active region
 
-Scalars (`i64`, `bool`, `char`, `f64`, etc.), function values, and fixed-size
-arrays are **not** region-tagged by allocation, because they do not allocate
-through `tl_alloc`: a `with-arena` body never tags a scalar, and a scalar field
-or element read out of a tagged aggregate is plain. `(in r T)` may still be
+Scalars (`i64`, `bool`, `char`, `f64`, etc.), other function values, and
+fixed-size arrays of scalars are **not** region-tagged by allocation, because
+they do not allocate through `tl_alloc`: a `with-arena` body never tags a
+scalar, and a scalar field or element read out of a tagged aggregate is plain. `(in r T)` may still be
 written for such a type, in a signature or on a binding, and then means what it
 means for any other `T`. A plain scalar name or non-literal expression converts
 to `(in r T)` where that type is expected; an integer literal at a call argument
@@ -1872,12 +1875,27 @@ yields its target type and applies to numeric scalars only (section 5.12).
 Whether a read of a Copy value through a reference carries a tag is not
 specified here (#8585).
 
+**Arena provenance is never dropped.** A value derived from an arena region
+keeps a type naming it. An `if` or `match`, the elements of an array literal,
+the fields of a constructor, and an expected or annotated type all join: the
+result has the shape of the expected type (or of the other inputs) and every
+arena region of its inputs, scalars included. `(clone x)` inside an arena is
+allocated there and carries the active region, not `x`'s. Only the explicit
+clone-out forms, `with-escape` and `with-scratch`, remove a tag. A reference's
+lifetime on a view (see below) is not arena provenance: the borrow it records is
+checked as a loan, and a Copy value read through it may be joined at its plain
+type.
+
+A value from an arena that an explicit end can reclaim (an `arena.make` owner's
+brand or phase) may be stored only into storage whose type names that arena:
+outliving the target lexically is not enough, since a safe destroy, rewind or
+`:invalidate` call can end the arena first. Such a store is rejected with
+`E0205` even when the program never ends the arena early.
+
 **Implementation note (non-normative).** The current checker can give a plain
-type to a *scalar* of type `(in r T)` when it is the result of an `if` or `match`
-checked against a plain expected type, or an operand of `+` or `-` whose left
-operand is plain. This is a checker gap that programs must not rely on. This
-note does not describe aggregates of any kind on these routes. Related: #9061;
-tracked in #9768.
+type to a *scalar* of type `(in r T)` when it is an operand of `+` or `-` whose
+left operand is plain. This is a checker gap that programs must not rely on.
+Tracked in #9768.
 
 **Implementation note (non-normative).** Three shapes are not yet accepted.
 Inside `with-arena`, `io.print-format` is rejected for every operand (#8475).

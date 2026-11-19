@@ -8964,7 +8964,16 @@
                   arm-env
                   (tc-global-shared-view got)
                   (tc-global-shared-view want))
-                  [(TcInferredTypeMatch.Compatible _) (ResultTcType.Ok want)]
+                  ;; The expected type gives the shape; the arms give the
+                  ;; regions.
+                  [(TcInferredTypeMatch.Compatible _)
+                    (ResultTcType.Ok
+                      (tc-type-join-regions
+                        env
+                        (if (= index 0)
+                          want
+                          (tc-global-shared-view merged))
+                        (tc-global-shared-view got)))]
                   [(TcInferredTypeMatch.Mismatch _)
                     (ResultTcType.Err
                       "typecheck: match arm result type mismatch")])]
@@ -13385,8 +13394,10 @@
         [(ast.AstLambda.Lambda params _ body-id)
           (let
             [body : ast.AstExpr (tc-context-expr-get ctx body-id)]
+            ;; A capturing closure's type carries the active region.
             [ret : ast.AstType
-              (match (tc-resolve-type ctx (tc-global-shared-view ty))
+              (match (tc-type-strip-region
+                (tc-resolve-type ctx (tc-global-shared-view ty)))
                 [(ast.AstType.Func _ result) (ast.ty-node-get result)]
                 [_ ast.AstType.Never])]
             (match (tc-selected-lambda-captures
@@ -17802,7 +17813,10 @@
                       [_ -1]))
                     (TcSelectedCallTarget.ForeignValue signature)
                     TcSelectedCallTarget.Legacy))]
-              [(ast.AstMaybeType.No) (ResultTcType.Ok callee-ty)])]
+              ;; A capturing closure's region tags the closure value, which
+              ;; the call only reads.
+              [(ast.AstMaybeType.No)
+                (ResultTcType.Ok (tc-type-strip-region callee-ty))])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])
           [(ResultTcType.Err _) TcSelectedCallTarget.Legacy]
           [(ResultTcType.Ok fn-ty)
@@ -18080,8 +18094,8 @@
         (tc-lifetime-subst-type-list subst params)
         allow-region-args
         ast.AstMaybeType.No)
-        [(ResultTcUnit.Err checked) checked]
-        [(ResultTcUnit.Ok) message])]))
+        [(ResultTcType.Err checked) checked]
+        [(ResultTcType.Ok _) message])]))
 
 (define (tc-infer-selected-call-args
   [ctx : TcContext]
@@ -18095,6 +18109,9 @@
   [allow-region-args : bool]
   ;; A constructor's result: its arguments are stored into it.
   [constructor : ast.AstMaybeType]
+  ;; The call's result type; a constructor's joins each argument's regions
+  ;; (`tc-type-join-regions`), as the constructed value holds them.
+  [constructed : (&mut constructed ast.AstType)]
   [arity-msg : TcArityMessage]
   [index : i64]
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
@@ -18351,11 +18368,10 @@
                               env
                               (tc-global-shared-view effective-arg))
                               [(ResultTcUnit.Ok)
-                                (tc-ensure-region-value-can-flow-into
+                                (tc-ensure-constructor-field-can-flow-into
                                   env
                                   target
-                                  (tc-global-shared-view got)
-                                  "constructor result")]
+                                  (tc-global-shared-view got))]
                               [(ResultTcUnit.Err message)
                                 (ResultTcUnit.Err message)])])]
                       [selected? : bool
@@ -18368,6 +18384,18 @@
                         [(ResultTcUnit.Err message)
                           (TcSelectedArgsResult.Err message next)]
                         [(ResultTcUnit.Ok)
+                          (when
+                            (match (& constructor)
+                              [(ast.AstMaybeType.Some _) true]
+                              [(ast.AstMaybeType.No) false])
+                            (let
+                              [joined : ast.AstType
+                                (tc-type-join-regions
+                                  env
+                                  (owned_view.compiler-owned-reference-shared-view
+                                    constructed)
+                                  (tc-global-shared-view got))]
+                              (set! (deref constructed) joined)))
                           (tc-infer-selected-call-args
                             ctx
                             env
@@ -18377,6 +18405,7 @@
                             branded
                             allow-region-args
                             constructor
+                            constructed
                             arity-msg
                             (+ index 1)
                             children
@@ -18838,141 +18867,148 @@
                   [(TcSelectedResult.Err message after)
                     (TcSelectedResult.Err message after)]
                   [(TcSelectedResult.Ok _ callee callee-sink)
-                    (match (tc-infer-selected-call-args
-                      ctx
-                      env
-                      (tc-global-shared-view func)
-                      (& args)
-                      (& params)
-                      (& branded)
-                      allow-region-args
-                      (if (= key -1)
-                        (ast.AstMaybeType.Some
-                          (tc-constructor-target-type
-                            env
-                            (tc-global-shared-view params)
-                            (tc-global-shared-view ret)))
-                        ast.AstMaybeType.No)
-                      (TcArityMessage.Detailed
+                    (let
+                      [constructed : ast.AstType
+                        (tc-tag-active-region env (tc-global-shared-view ret))]
+                      (match (tc-infer-selected-call-args
+                        ctx
+                        env
                         (tc-global-shared-view func)
-                        (tc-global-shared-view args)
-                        (tc-global-shared-view params))
-                      0
-                      children
-                      true
-                      (tc-global-shared-view source)
-                      callee-sink)
-                      [(TcSelectedArgsResult.Err message next)
-                        (TcSelectedResult.Err
-                          (if call-scoped?
-                            (tc-selected-call-scoped-diagnostic
-                              ctx
+                        (& args)
+                        (& params)
+                        (& branded)
+                        allow-region-args
+                        (if (= key -1)
+                          (ast.AstMaybeType.Some
+                            (tc-constructor-target-type
                               env
-                              (tc-global-shared-view func)
-                              (tc-global-shared-view args)
-                              declared-view
-                              (tc-global-shared-view lifetimes)
-                              allow-region-args
-                              message)
-                            message)
-                          next)]
-                      [(TcSelectedArgsResult.Ok selected represented? next)
-                        (match (match (tc-check-thread-channel-send-call
-                          ctx
-                          env
+                              (tc-global-shared-view params)
+                              (tc-global-shared-view ret)))
+                          ast.AstMaybeType.No)
+                        (&mut constructed)
+                        (TcArityMessage.Detailed
                           (tc-global-shared-view func)
                           (tc-global-shared-view args)
-                          (tc-global-shared-view params)
-                          (tc-global-shared-view ret))
-                          [(ResultTcUnit.Err message)
-                            (ResultTcUnit.Err message)]
-                          [(ResultTcUnit.Ok)
-                            (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                              ResultTcUnit.Ok
-                              (tc-check-invalidate-call
+                          (tc-global-shared-view params))
+                        0
+                        children
+                        true
+                        (tc-global-shared-view source)
+                        callee-sink)
+                        [(TcSelectedArgsResult.Err message next)
+                          (TcSelectedResult.Err
+                            (if call-scoped?
+                              (tc-selected-call-scoped-diagnostic
                                 ctx
                                 env
+                                (tc-global-shared-view func)
                                 (tc-global-shared-view args)
-                                (tc-global-shared-view params)
-                                (tc-global-shared-view ret)))])
-                          [(ResultTcUnit.Err message)
-                            (TcSelectedResult.Err message next)]
-                          [(ResultTcUnit.Ok)
-                            (let
-                              [ended : TcSelectedBrands
-                                (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                                  (TcSelectedBrands
-                                    TcNameIdList.Nil
-                                    TcNameIdList.Nil)
-                                  (tc-selected-invalidate-call-brands
-                                    ctx
-                                    env
-                                    (& args)
-                                    (& params)))]
-                              (tc-selected-contextual-result
-                                ctx
-                                env
-                                expected
-                                (tc-selected-with-thread-users
+                                declared-view
+                                (tc-global-shared-view lifetimes)
+                                allow-region-args
+                                message)
+                              message)
+                            next)]
+                        [(TcSelectedArgsResult.Ok selected represented? next)
+                          (match (match (tc-check-thread-channel-send-call
+                            ctx
+                            env
+                            (tc-global-shared-view func)
+                            (tc-global-shared-view args)
+                            (tc-global-shared-view params)
+                            (tc-global-shared-view ret))
+                            [(ResultTcUnit.Err message)
+                              (ResultTcUnit.Err message)]
+                            [(ResultTcUnit.Ok)
+                              (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                                ResultTcUnit.Ok
+                                (tc-check-invalidate-call
+                                  ctx
                                   env
-                                  (tc-selected-sent-owners
-                                    ctx
+                                  (tc-global-shared-view args)
+                                  (tc-global-shared-view params)
+                                  (tc-global-shared-view ret)))])
+                            [(ResultTcUnit.Err message)
+                              (TcSelectedResult.Err message next)]
+                            [(ResultTcUnit.Ok)
+                              (let
+                                [ended : TcSelectedBrands
+                                  (if (ast.ast-lifetime-list-empty?
+                                    (& lifetimes))
+                                    (TcSelectedBrands
+                                      TcNameIdList.Nil
+                                      TcNameIdList.Nil)
+                                    (tc-selected-invalidate-call-brands
+                                      ctx
+                                      env
+                                      (& args)
+                                      (& params)))]
+                                (tc-selected-contextual-result
+                                  ctx
+                                  env
+                                  expected
+                                  (tc-selected-with-thread-users
                                     env
-                                    (tc-global-shared-view func)
-                                    (& args))
-                                  syntax
-                                  (ownership.ownership-source-copy (& source))
-                                  (tc-selected-with-release-checks
-                                    ctx
-                                    env
-                                    ended.brands
+                                    (tc-selected-sent-owners
+                                      ctx
+                                      env
+                                      (tc-global-shared-view func)
+                                      (& args))
                                     syntax
                                     (ownership.ownership-source-copy (& source))
-                                    (tc-selected-with-region-ends
+                                    (tc-selected-with-release-checks
                                       ctx
                                       env
                                       ended.brands
-                                      ended.args
                                       syntax
-                                      (tc-global-shared-view source)
-                                      (tc-selected-publish-call
-                                        (ResultTcType.Ok
-                                          (tc-tag-active-region env ret))
-                                        ;; Key -1 names a constructor (no declaration),
-                                        ;; -2 a call through a function value.
-                                        (cond
-                                          [(= key -1)
-                                            typed.TypedCallKind.Construct]
-                                          [(= key -2)
-                                            (typed.TypedCallKind.Indirect
-                                              (tc-selected-effect-callee-id
-                                                ctx
-                                                env
-                                                func-id))]
-                                          [(tc-selected-discharge-call?
-                                              ctx
-                                              (tc-global-shared-view func)
-                                              (& params))
-                                            (typed.TypedCallKind.Discharge key)]
-                                          [else
-                                            (typed.TypedCallKind.Declared key)])
-                                        (tc-call-published-signature
-                                          shadow
-                                          (tc-global-shared-view fn-ty))
+                                      (ownership.ownership-source-copy
+                                        (& source))
+                                      (tc-selected-with-region-ends
+                                        ctx
+                                        env
+                                        ended.brands
+                                        ended.args
                                         syntax
-                                        source
-                                        (tc-selected-with-callee
-                                          selected
-                                          (& callee))
-                                        (and
-                                          represented?
-                                          (or
-                                            (!= key -2)
-                                            (match (& callee)
-                                              [(TcSelectedOccurrence.Selected _)
-                                                true]
-                                              [_ false])))
-                                        next))))))])])]))]
+                                        (tc-global-shared-view source)
+                                        (tc-selected-publish-call
+                                          (ResultTcType.Ok constructed)
+                                          ;; Key -1 names a constructor (no declaration),
+                                          ;; -2 a call through a function value.
+                                          (cond
+                                            [(= key -1)
+                                              typed.TypedCallKind.Construct]
+                                            [(= key -2)
+                                              (typed.TypedCallKind.Indirect
+                                                (tc-selected-effect-callee-id
+                                                  ctx
+                                                  env
+                                                  func-id))]
+                                            [(tc-selected-discharge-call?
+                                                ctx
+                                                (tc-global-shared-view func)
+                                                (& params))
+                                              (typed.TypedCallKind.Discharge
+                                                key)]
+                                            [else
+                                              (typed.TypedCallKind.Declared key)])
+                                          (tc-call-published-signature
+                                            shadow
+                                            (tc-global-shared-view fn-ty))
+                                          syntax
+                                          source
+                                          (tc-selected-with-callee
+                                            selected
+                                            (& callee))
+                                          (and
+                                            represented?
+                                            (or
+                                              (!= key -2)
+                                              (match (& callee)
+                                                [(TcSelectedOccurrence.Selected
+                                                    _)
+                                                  true]
+                                                [_ false])))
+                                          next))))))])]))]))]
             [_
               (TcSelectedResult.Err
                 "typecheck: call target is not a function"
@@ -39850,11 +39886,14 @@
         region)]
     [_ Nil]))
 
+;; A fixed array holds its elements inline, so it carries their allocations: it
+;; is taggable when its element type is.
 (define (tc-region-taggable-type? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
     [(or (String) (DynArray _) (Box _) (Tuple _) (Struct _) (StructArgs _ _)
          (Enum _) (EnumArgs _ _))
       true]
+    [(Array elem _) (tc-region-taggable-type? (ast.ty-node-get elem))]
     [(Slice _) false]
     [_ false]))
 
@@ -39867,6 +39906,72 @@
   (match (tc-active-region env)
     [(Some region) (tc-tag-region region ty)]
     [(No) ty]))
+
+;; The region tags a value of type TY carries in its data, at any depth. A
+;; function type's parameter and result tags describe its calls, not the
+;; closure's own data, so they are not collected.
+(define (tc-type-region-tags-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
+  (match ty
+    [(Tuple elems)
+      (tc-type-list-region-tags-into
+        (& (ast.ast-type-list-box-shared-view elems))
+        0
+        out)]
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
+         (MutPtr elem) (Ref _ elem) (MutRef _ elem) (Invalidate _ elem))
+      (tc-type-region-tags-into (ast.ty-node-get elem) out)]
+    [(Region region inner)
+      (tc-type-region-tags-into
+        (ast.ty-node-get inner)
+        (tc-name-id-list-add out region))]
+    [_ out]))
+
+(define (tc-type-list-region-tags-into
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [out : TcNameIdList]) : TcNameIdList
+  (if (>= index (ast.ast-type-list-len types))
+    out
+    (tc-type-list-region-tags-into
+      types
+      (+ index 1)
+      (tc-type-region-tags-into
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        out))))
+
+;; The type of a join: BASE's shape (an expected type, or the arm or element
+;; it was joined with), tagged with every arena region of FROM that BASE does
+;; not already name. A join never drops arena provenance (SPEC 3.9): a value
+;; derived from arena region `r` keeps a type naming `r`, even on a type
+;; `tc-region-taggable-type?` would not tag. A reference lifetime's view tag is
+;; not provenance (the loan checker tracks the borrow) and is not carried.
+(define (tc-type-join-regions
+  [env : TcTypeEnv]
+  [base : ast.AstType]
+  [from : ast.AstType]) : ast.AstType
+  (if (tc-type-contains-region-tag? (tc-global-shared-view from))
+    (let
+      ;; BASE already names a region in any form: a tag, a lifetime argument
+      ;; or a reference lifetime.
+      [present : TcNameIdList
+        (tc-type-collect-regions (tc-global-shared-view base))]
+      [cursor : TcNameIdList
+        (tc-type-region-tags-into (tc-global-shared-view from) Nil)]
+      [joined : ast.AstType base]
+      (while (not (tc-name-id-list-empty? cursor))
+        (let
+          [region : i64 (tc-name-id-list-head cursor)]
+          (when
+            (and
+              (not (tc-name-id-list-contains present region))
+              (tc-selected-arena-region? env region))
+            (let
+              [tagged : ast.AstType (ast.ast-ty-region region (& joined))]
+              (set! joined tagged))))
+        (set! cursor (tc-name-id-list-rest cursor)))
+      joined)
+    base))
 
 ;; Nominal aggregate types have no lifetime-argument surface yet. Until they do,
 ;; constructor results carry stored-reference lifetimes as local region facts so
@@ -39971,7 +40076,36 @@
               value-region
               target-region)]))]))
 
+;; A region an explicit end (a safe destroy, a rewind, an `:invalidate` call)
+;; can reclaim while storage that outlives it is live: an arena owner's brand or
+;; phase. Outliving a target region does not keep such a region alive.
+(define (tc-region-explicitly-endable? [env : TcTypeEnv] [region : i64]) : bool
+  (or
+    (tc-generated-arena-brand-id? region)
+    (tc-ordinary-arena-owner-active-id? env region)
+    (tc-atomic-arena-owner-active-id? env region)
+    (match (cis.intern-structural-session-arena-phase-record-for-raw
+      (tc-type-env-structural-session env)
+      region)
+      [(cis.InternMaybeArenaPhaseRecord.Some
+          (cis.InternArenaPhaseRecord.Region _ _))
+        true]
+      [_ false])))
+
+;; A stored value keeps its regions: one an explicit end can reclaim flows only
+;; into storage whose type names it, so the end sees that storage (#9445).
+;; Without EXPLICIT-ENDS? (a constructor field, whose result joins the field's
+;; regions) outliving a target region is enough.
 (define (tc-region-can-flow-into-any
+  [env : TcTypeEnv]
+  [value-region : i64]
+  [target-regions : TcNameIdList]
+  [explicit-ends? : bool]) : bool
+  (if (and explicit-ends? (tc-region-explicitly-endable? env value-region))
+    (tc-name-id-list-contains target-regions value-region)
+    (tc-region-outlives-or-matches-any env value-region target-regions)))
+
+(define (tc-region-outlives-or-matches-any
   [env : TcTypeEnv]
   [value-region : i64]
   [target-regions : TcNameIdList]) : bool
@@ -39991,7 +40125,8 @@
 (define (tc-region-list-can-flow-into
   [env : TcTypeEnv]
   [value-regions : TcNameIdList]
-  [target-regions : TcNameIdList]) : bool
+  [target-regions : TcNameIdList]
+  [explicit-ends? : bool]) : bool
   (let
     [cursor : TcNameIdList value-regions]
     [can-flow : bool true]
@@ -39999,7 +40134,8 @@
       (if (tc-region-can-flow-into-any
         env
         (tc-name-id-list-head cursor)
-        target-regions)
+        target-regions
+        explicit-ends?)
         unit
         (set! can-flow false))
       (set! cursor (tc-name-id-list-rest cursor)))
@@ -40014,13 +40150,27 @@
     env
     target-ty
     (tc-type-collect-regions value-ty)
-    context))
+    context
+    true))
+
+;; A constructor field (see `tc-region-can-flow-into-any`).
+(define (tc-ensure-constructor-field-can-flow-into
+  [env : TcTypeEnv]
+  [target-ty : ast.AstType]
+  [value-ty : ast.AstType]) : ResultTcUnit
+  (tc-ensure-regions-can-flow-into
+    env
+    target-ty
+    (tc-type-collect-regions value-ty)
+    "constructor result"
+    false))
 
 (define (tc-ensure-regions-can-flow-into
   [env : TcTypeEnv]
   [target-ty : ast.AstType]
   [regions : TcNameIdList]
-  [context : String]) : ResultTcUnit
+  [context : String]
+  [explicit-ends? : bool]) : ResultTcUnit
   (let
     ;; `program` outlives every target, so only shorter regions can escape.
     [value-regions : TcNameIdList (tc-name-id-list-without-program regions)]
@@ -40030,11 +40180,34 @@
         (let
           [target-regions : TcNameIdList
             (tc-type-collect-regions (tc-global-shared-view target-ty))]
-          (if (and
-            (tc-type-contains-any-region target-ty)
-            (tc-region-list-can-flow-into env value-regions target-regions))
-            Ok
-            (Err (tc-region-store-escape-error context))))])))
+          (cond
+            [(and
+                (tc-type-contains-any-region (tc-global-shared-view target-ty))
+                (tc-region-list-can-flow-into
+                  env
+                  value-regions
+                  target-regions
+                  explicit-ends?))
+              Ok]
+            ;; It flows by lexical outliving, but an explicit end can reclaim
+            ;; a source arena first.
+            [(and
+                explicit-ends?
+                (tc-type-contains-any-region (tc-global-shared-view target-ty))
+                (tc-region-list-can-flow-into
+                  env
+                  value-regions
+                  target-regions
+                  false))
+              (Err (tc-region-store-endable-error context))]
+            [else (Err (tc-region-store-escape-error context))]))])))
+
+(define (tc-region-store-endable-error [context : String]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    "typecheck: cannot store region-tagged value into "
+    context
+    "; its source arena can be destroyed before the target, whose type does not name that arena"))
 
 (define (tc-region-store-escape-error [context : String]) : String
   (str_cat.str-cat
@@ -49632,19 +49805,23 @@
   (cond
     [(tc-never-type? (tc-global-shared-view a)) (Ok b)]
     [(tc-never-type? (tc-global-shared-view b)) (Ok a)]
+    ;; The arms' region tags join; distinct lifetimes (such as two arenas'
+    ;; brands) do not.
     [(tc-type-eq (tc-global-shared-view a) (tc-global-shared-view b))
       (let
-        [a-regions : TcNameIdList
-          (tc-type-collect-regions (tc-global-shared-view a))]
-        [b-regions : TcNameIdList
-          (tc-type-collect-regions (tc-global-shared-view b))]
-        (if (tc-name-id-list-eq a-regions b-regions)
-          (Ok a)
-          (match a-regions
-            [(Nil) (Ok b)]
+        [a-lifetimes : TcNameIdList
+          (tc-type-collect-regions
+            (tc-type-without-regions (tc-global-shared-view a)))]
+        [b-lifetimes : TcNameIdList
+          (tc-type-collect-regions
+            (tc-type-without-regions (tc-global-shared-view b)))]
+        (if (tc-name-id-list-eq a-lifetimes b-lifetimes)
+          (Ok (tc-type-join-regions env a b))
+          (match a-lifetimes
+            [(Nil) (Ok (tc-type-join-regions env b a))]
             [_
-              (match b-regions
-                [(Nil) (Ok a)]
+              (match b-lifetimes
+                [(Nil) (Ok (tc-type-join-regions env a b))]
                 [_
                   (Err
                     (tc-kind-message
@@ -49655,8 +49832,13 @@
         env
         (tc-global-shared-view a)
         (tc-global-shared-view b))
-      (Ok a)]
-    [(tc-type-coercible? ctx env (tc-global-shared-view b) a) (Ok b)]
+      (Ok (tc-type-join-regions env a b))]
+    [(tc-type-coercible?
+        ctx
+        env
+        (tc-global-shared-view b)
+        (tc-global-shared-view a))
+      (Ok (tc-type-join-regions env b a))]
     [else
       (Err (tc-kind-message (TypeMismatch) "typecheck: if branches must match"))]))
 
@@ -51391,37 +51573,6 @@
       [ty (try (tc-expr-id ctx env (ast.ast-expr-list-get exprs index 0)))]
       (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))
       (tc-expr-list-types-into-at ctx env exprs (+ index 1) out))))
-
-(define (tc-check-array-rest
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [elem-ty : ast.AstType]) : ResultTcUnit
-  (tc-check-array-rest-at ctx env (& exprs) 0 elem-ty))
-
-(define (tc-check-array-rest-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
-  [elem-ty : ast.AstType]) : ResultTcUnit
-  (if (>= index exprs.len)
-    Ok
-    (let
-      [ty
-        (try
-          (tc-expr-with-expected-or-actual-id
-            ctx
-            env
-            (ast.ast-expr-list-get exprs index 0)
-            (tc-global-shared-view elem-ty)))]
-      [_
-        (try
-          (tc-expect
-            ty
-            (tc-global-shared-view elem-ty)
-            "typecheck: array elements must have same type"))]
-      (tc-check-array-rest-at ctx env exprs (+ index 1) elem-ty))))
 
 (define (tc-signature-lifetime-type-list-collect-into
   [types : ast.AstTypeList]
@@ -55224,17 +55375,26 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]
-  [elem-ty : ast.AstType]) : ResultTcUnit
-  (tc-expr-list-with-expected-elements-at ctx env (& exprs) 0 elem-ty))
+  [elem-ty : ast.AstType]) : ResultTcType
+  (tc-expr-list-with-expected-elements-at
+    ctx
+    env
+    (& exprs)
+    0
+    (tc-global-shared-view elem-ty)
+    elem-ty))
 
+;; Checks each element against ELEM-TY. The result is the element type of the
+;; literal: ELEM-TY joined with every element's regions (`tc-type-join-regions`).
 (define (tc-expr-list-with-expected-elements-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
-  [elem-ty : ast.AstType]) : ResultTcUnit
+  [elem-ty : ast.AstType]
+  [joined : ast.AstType]) : ResultTcType
   (if (>= index exprs.len)
-    Ok
+    (Ok joined)
     (let
       [got
         (try
@@ -55246,10 +55406,16 @@
       [_
         (try
           (tc-expect
-            got
+            (tc-global-shared-view got)
             (tc-global-shared-view elem-ty)
             "typecheck: array elements must have same type"))]
-      (tc-expr-list-with-expected-elements-at ctx env exprs (+ index 1) elem-ty))))
+      (tc-expr-list-with-expected-elements-at
+        ctx
+        env
+        exprs
+        (+ index 1)
+        elem-ty
+        (tc-type-join-regions env joined got)))))
 
 (define (tc-expr-array-with-expected-or-actual
   [ctx : TcContext]
@@ -55260,15 +55426,14 @@
   (if (= (tc-expr-list-len (tc-global-shared-view exprs)) expected-len)
     (let
       [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-      (let
-        [_
-          (try
-            (tc-expr-list-with-expected-elements
-              ctx
-              env
-              exprs
-              (tc-global-shared-view elem-ty)))]
-        (Ok (ast.ast-ty-array (& elem-ty) expected-len))))
+      [joined-elem
+        (try
+          (tc-expr-list-with-expected-elements
+            ctx
+            env
+            exprs
+            (tc-global-shared-view elem-ty)))]
+      (Ok (ast.ast-ty-array (& joined-elem) expected-len)))
     (tc-expr ctx env (Array exprs))))
 
 (define (tc-dyn-array-literal-element-supported
@@ -55289,21 +55454,19 @@
   (let
     [resolved-elem : ast.AstType (tc-resolve-type ctx elem-ty)]
     [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-    (let
-      [_
-        (try
-          (tc-dyn-array-literal-element-supported
-            env
-            (tc-global-shared-view resolved-elem)))]
-      (let
-        [_
-          (try
-            (tc-expr-list-with-expected-elements
-              ctx
-              env
-              exprs
-              (tc-global-shared-view resolved-elem)))]
-        (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& resolved-elem))))))))
+    [_
+      (try
+        (tc-dyn-array-literal-element-supported
+          env
+          (tc-global-shared-view resolved-elem)))]
+    [joined-elem
+      (try
+        (tc-expr-list-with-expected-elements
+          ctx
+          env
+          exprs
+          (tc-global-shared-view resolved-elem)))]
+    (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& joined-elem))))))
 
 (define (tc-expr-dyn-array-literal-infer
   [ctx : TcContext]
@@ -55323,15 +55486,9 @@
             (tc-dyn-array-literal-element-supported
               env
               (tc-global-shared-view first-ty)))]
-        (let
-          [_
-            (try
-              (tc-check-array-rest
-                ctx
-                env
-                rest
-                (tc-global-shared-view first-ty)))]
-          (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& first-ty)))))))))
+        [elem-ty
+          (try (tc-expr-list-with-expected-elements ctx env rest first-ty))]
+        (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem-ty))))))))
 
 (define (tc-expr-dyn-array-literal-with-expected-or-actual
   [ctx : TcContext]
@@ -55571,7 +55728,16 @@
                               env
                               (tc-global-shared-view want)
                               (tc-global-shared-view else-ty)))
-                            (ResultTcType.Ok want)
+                            ;; The expected type gives the shape; the
+                            ;; branches give the regions.
+                            (ResultTcType.Ok
+                              (tc-type-join-regions
+                                env
+                                (tc-type-join-regions
+                                  env
+                                  want
+                                  (tc-global-shared-view then-ty))
+                                (tc-global-shared-view else-ty)))
                             (tc-merge-branch-type
                               ctx
                               env
@@ -60403,16 +60569,14 @@
                 (tc-lifetime-subst-type-list
                   subst
                   (tc-global-shared-view params))]
-              (match (tc-check-call-args
+              (tc-check-call-args
                 ctx
                 env
                 func
                 (tc-global-shared-view args)
                 resolved-params
                 allow-region-args
-                (Some (tc-global-shared-view target)))
-                [(Ok) (Ok target)]
-                [(Err message) (Err message)]))]
+                (Some target)))]
           [(Err message) (Err message)]))]
     (if tc-call-temporary-borrow-typed
       (tc-call-temporary-borrow-scope-exit
@@ -60524,7 +60688,7 @@
       (tc-global-shared-view resolved-params)
       allow-region-args
       (No))
-      [(Ok)
+      [(Ok _)
         (match (tc-check-by-value-borrow-escape
           ctx
           env
@@ -62846,20 +63010,14 @@
             (tc-global-shared-view ret))]
         (match (& constructor-target)
           [(Some _)
-            (let
-              [_
-                (try
-                  (tc-check-call-args
-                    ctx
-                    env
-                    func
-                    args
-                    params
-                    allow-region-args
-                    (tc-global-shared-view constructor-target)))]
-              (match constructor-target
-                [(Some target) (Ok target)]
-                [(No) (Ok (tc-tag-active-region env ret))]))]
+            (tc-check-call-args
+              ctx
+              env
+              func
+              args
+              params
+              allow-region-args
+              (tc-global-shared-view constructor-target))]
           [(No)
             (let
               [lifetimes : ast.AstLifetimeList
@@ -62950,7 +63108,7 @@
   [params : ast.AstTypeList]
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]) : ResultTcUnit
+  [arity-msg : TcArityMessage]) : ResultTcType
   (let
     [_ (try (tc-normalize-dotted-local-field-expr-list! ctx env args))]
     (tc-check-call-args-with-message-at
@@ -62971,7 +63129,7 @@
   [params : (& params ast.AstTypeList)]
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]) : ResultTcUnit
+  [arity-msg : TcArityMessage]) : ResultTcType
   (let
     [_ (try (tc-normalize-dotted-local-field-expr-list! ctx env args))]
     (tc-check-call-args-with-message-at
@@ -63014,6 +63172,9 @@
         (Compatible actual)
         (Mismatch mismatched))]))
 
+;; Checks call arguments against PARAMS. The result is CONSTRUCTOR-TARGET
+;; joined with every argument's regions (the constructed value holds them), or
+;; `unit` for a call that constructs nothing.
 (define (tc-check-call-args-with-message-at
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -63023,10 +63184,12 @@
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]
-  [thread-spawn-args : bool]) : ResultTcUnit
+  [thread-spawn-args : bool]) : ResultTcType
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
-      Ok
+      (match constructor-target
+        [(Some target) (Ok target)]
+        [(No) (Ok ast.AstType.Unit)])
       (Err
         (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg)))
     (if (>= index (ast.ast-type-list-len params))
@@ -63140,11 +63303,12 @@
                             (let
                               [_
                                 (try
-                                  (tc-ensure-region-value-can-flow-into
+                                  (tc-ensure-constructor-field-can-flow-into
                                     env
-                                    target
-                                    got
-                                    "constructor result"))]
+                                    (tc-global-shared-view target)
+                                    (tc-global-shared-view got)))]
+                              ;; The constructed value holds the argument, so
+                              ;; it carries the argument's regions too.
                               (tc-check-call-args-with-message-at
                                 ctx
                                 env
@@ -63152,7 +63316,8 @@
                                 params
                                 (+ index 1)
                                 allow-region-args
-                                constructor-target
+                                (ast.AstMaybeType.Some
+                                  (tc-type-join-regions env target got))
                                 arity-msg
                                 thread-spawn-args)))]
                         [(No)
@@ -63199,7 +63364,7 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [allow-region-args : bool]
-  [constructor-target : ast.AstMaybeType]) : ResultTcUnit
+  [constructor-target : ast.AstMaybeType]) : ResultTcType
   (tc-check-call-args-with-message
     ctx
     env
@@ -63230,7 +63395,9 @@
             params
             maybe-ret
             (tc-context-expr-get ctx body-box))
-            [(Ok fn-ty) (Ok fn-ty)]
+            ;; The call only reads the closure, so its arena region (it tags
+            ;; the closure value) is not the callee's.
+            [(Ok fn-ty) (Ok (tc-type-strip-region fn-ty))]
             [(Err message) (Err message)])])]
     [_ (No)]))
 
@@ -65246,7 +65413,9 @@
       (if (tc-clone-able-type? ctx (tc-global-shared-view clone-ty))
         (begin
           (tc-clone-root-collection-note! ctx (tc-global-shared-view clone-ty))
-          (Ok clone-ty))
+          ;; The copy is allocated in the active arena (SPEC 3.4.1): it
+          ;; carries that region, not the source's.
+          (Ok (tc-tag-active-region env clone-ty)))
         (Err
           (str_cat.str-cat
             (cdiag.compiler-diagnostic-typecheck-tag (TypeMismatch))
@@ -78815,7 +78984,7 @@
             (let
               [region : i64 (tc-name-id-list-head cursor)]
               [flows? : bool
-                (tc-region-can-flow-into-any env region target-regions)]
+                (tc-region-can-flow-into-any env region target-regions true)]
               (unless flows? (set! blocked? true))
               (tc-selected-i64s-push! (&mut entries) region)
               (tc-selected-i64s-push!
@@ -82856,9 +83025,12 @@
                     (match (tc-match-inferred-type-for-expected
                       ctx
                       arm-env
-                      got
+                      (tc-global-shared-view got)
                       (tc-global-shared-view expected))
-                      [(Compatible _) (Ok expected)]
+                      ;; The expected type gives the shape; the arm gives
+                      ;; the regions.
+                      [(Compatible _)
+                        (Ok (tc-type-join-regions arm-env expected got))]
                       [(Mismatch actual)
                         (Err
                           (tc-type-mismatch-message-in-context
@@ -82901,6 +83073,7 @@
         env
         scrut-ty
         arms-ref
+        (tc-global-shared-view expected)
         expected
         0))))
 
@@ -82910,11 +83083,13 @@
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [expected : ast.AstType]
+  ;; EXPECTED joined with the regions of the arms checked so far.
+  [joined : ast.AstType]
   [index : i64]) : ResultTcType
   (if (>= index arms.len)
-    (Ok expected)
+    (Ok joined)
     (let
-      [_
+      [arm-ty
         (try
           (tc-match-arm-type-with-expected
             ctx
@@ -82928,6 +83103,7 @@
         scrut-ty
         arms
         expected
+        (tc-type-join-regions env joined arm-ty)
         (+ index 1)))))
 
 (define (tc-match-rest-types-at
@@ -82948,7 +83124,8 @@
         (tc-global-shared-view scrut-ty)
         (tc-global-shared-view arm)
         (tc-global-shared-view want))
-        [(Ok _) (tc-match-rest-types-at ctx env scrut-ty arms (+ index 1) want)]
+        [(Ok joined)
+          (tc-match-rest-types-at ctx env scrut-ty arms (+ index 1) joined)]
         [(Err _)
           (let
             [got
@@ -83004,14 +83181,14 @@
             (tc-global-shared-view scrut-ty)
             first-arm
             (tc-global-shared-view second-ty))
-            [(Ok _)
+            [(Ok joined)
               (tc-match-rest-types-at
                 ctx
                 env
                 scrut-ty
                 rest
                 remaining-index
-                second-ty)]
+                joined)]
             [(Err _)
               (match (tc-match-arm-type-with-expected
                 ctx
@@ -83019,14 +83196,14 @@
                 (tc-global-shared-view scrut-ty)
                 second-arm
                 (tc-global-shared-view first-ty))
-                [(Ok _)
+                [(Ok joined)
                   (tc-match-rest-types-at
                     ctx
                     env
                     scrut-ty
                     rest
                     remaining-index
-                    first-ty)]
+                    joined)]
                 [(Err _) (Err (tc-match-arm-merge-message first-ty second-ty))])])]))))
 
 (define (tc-check-match-arm-types
@@ -86719,11 +86896,9 @@
               env
               inner
               (tc-global-shared-view expected-inner-ty)))]
-        (Ok
-          (tc-tag-active-region
-            env
-            (ast.ast-ty-box
-              (& (tc-contextual-result-type expected-inner-ty inner-ty))))))]
+        ;; The checked element type, not the expected one: an unchecked
+        ;; element keeps its own type for the caller's check to reject.
+        (Ok (tc-tag-active-region env (ast.ast-ty-box (& inner-ty)))))]
     [_ (tc-box-expr ctx env inner)]))
 
 (define (tc-box-get-expr
@@ -87689,6 +87864,12 @@
   [body : ast.AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcType
   (let
+    [captures? : bool
+      (tc-lambda-captures-local?
+        ctx
+        env
+        (tc-global-shared-view params)
+        (tc-global-shared-view body))]
     [_
       (try
         (if allow-immutable-reference-captures
@@ -87755,11 +87936,31 @@
                   (tc-resolve-type ctx (tc-global-shared-view ret))
                   "typecheck: lambda return type mismatch"))]
             (Ok
-              (ast.ast-ty-func
-                (tc-param-type-list ctx params)
-                (& (tc-resolve-type ctx ret)))))]
+              (tc-lambda-closure-type
+                env
+                captures?
+                (ast.ast-ty-func
+                  (tc-param-type-list ctx params)
+                  (& (tc-resolve-type ctx ret))))))]
         [(No)
-          (Ok (ast.ast-ty-func (tc-param-type-list ctx params) (& body-ty)))]))))
+          (Ok
+            (tc-lambda-closure-type
+              env
+              captures?
+              (ast.ast-ty-func (tc-param-type-list ctx params) (& body-ty))))]))))
+
+;; A capturing closure's environment is allocated in the active arena, so the
+;; closure carries that region. Only the lambda is tagged: a function type is
+;; not region-taggable, as most function values allocate nothing.
+(define (tc-lambda-closure-type
+  [env : TcTypeEnv]
+  [captures? : bool]
+  [fn-ty : ast.AstType]) : ast.AstType
+  (match (if captures?
+    (tc-active-region env)
+    TcMaybeNameId.No)
+    [(Some region) (ast.ast-ty-region region (& fn-ty))]
+    [(No) fn-ty]))
 
 (define (tc-lambda-expr-normalized-with-capture-check
   [ctx : TcContext]
@@ -89285,14 +89486,9 @@
             [rest : ast.AstExprList
               (ast.ast-expr-list-tail-from-ref (& exprs) 1)]
             [first-ty (try (tc-expr-id ctx env first))]
-            [_
-              (try
-                (tc-check-array-rest
-                  ctx
-                  env
-                  rest
-                  (tc-global-shared-view first-ty)))]
-            (Ok (ast.ast-ty-array (& first-ty) (tc-expr-list-len exprs))))))]
+            [elem-ty
+              (try (tc-expr-list-with-expected-elements ctx env rest first-ty))]
+            (Ok (ast.ast-ty-array (& elem-ty) (tc-expr-list-len exprs))))))]
     [(DynArray exprs) (tc-expr-dyn-array-literal-infer ctx env exprs)]
     [(FixedMakeArray elem-ty-id len-box)
       (tc-fixed-make-array-expr
@@ -93830,20 +94026,28 @@
 (define (tc-closure-call-capability-once) : i64
   2)
 
-;; Whether some binding the lambda captures has a move-only type. Bindings
-;; are visited innermost first up to the default boundary; a shadowed binding
-;; is skipped.
+;; Whether the lambda captures a binding (when MOVE-ONLY?, one of a move-only
+;; type). Bindings are visited innermost first up to the default boundary; a
+;; shadowed binding is skipped.
 (define (tc-lambda-capture-scan?
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : ast.AstExpr]
+  [move-only? : bool]
   [seen : TcStringList]) : bool
   (match (tc-type-env-marker-step env)
     [(Done) false]
     [(Cache rest-env)
-      (tc-lambda-capture-scan? ctx expr-bases rest-env bound body seen)]
+      (tc-lambda-capture-scan?
+        ctx
+        expr-bases
+        rest-env
+        bound
+        body
+        move-only?
+        seen)]
     [(Bind key ty rest-env)
       (let
         [name : String (tc-env-key-name-text key)]
@@ -93861,14 +94065,21 @@
               (tc-string-list-contains
                 (tc-global-shared-view seen)
                 (tc-global-shared-view name)))
-            (tc-lambda-capture-scan? ctx expr-bases rest-env bound body seen)]
+            (tc-lambda-capture-scan?
+              ctx
+              expr-bases
+              rest-env
+              bound
+              body
+              move-only?
+              seen)]
           [(and
               (tc-expr-uses-free-name?
                 expr-bases
                 (tc-global-shared-view body)
                 (tc-global-shared-view name)
                 (tc-global-shared-view bound))
-              (tc-type-move-only? ctx ty))
+              (or (not move-only?) (tc-type-move-only? ctx ty)))
             true]
           [else
             (tc-lambda-capture-scan?
@@ -93877,6 +94088,7 @@
               rest-env
               bound
               body
+              move-only?
               (tc-string-list-add seen name))]))]))
 
 (define (tc-lambda-capture-has-move-only?
@@ -93891,6 +94103,21 @@
     (tc-type-env-marker-start env)
     (tc-param-bound-names params)
     body
+    true
+    Nil))
+
+(define (tc-lambda-captures-local?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : ast.AstParamList]
+  [body : ast.AstExpr]) : bool
+  (tc-lambda-capture-scan?
+    ctx
+    (tc-context-expr-bases ctx)
+    (tc-type-env-marker-start env)
+    (tc-param-bound-names params)
+    body
+    false
     Nil))
 
 (define (tc-borrow-check-move-message [path : String]) : String

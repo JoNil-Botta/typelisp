@@ -47,6 +47,12 @@
 ;; only -- so this is a read-only dependency on the allocator's own facts, not a
 ;; layering inversion in the pipeline.
 (import compiler_regalloc as reg)
+
+;; LICM's loop pressure estimate (opt-licm-loop-int-pressure) reads the
+;; allocator's own edge-precise liveness and the ABI's register counts, so the
+;; peak it prices is the one the allocator will see.
+(import compiler_liveness as opt_liveness)
+(import compiler_abi as cabi)
 (import compiler_float as cfloat)
 (import stdlib.arena)
 (import stdlib.hash)
@@ -22338,7 +22344,11 @@
   ;; LICM-PART: WHICH globals it may take a handle out for -- every eligible
   ;; one when the whole set fits the budget, the most-referenced ones that do
   ;; when it does not (opt-licm-global-header-admit).
-  (header-admit opt_i64_i64_map.Map))
+  (header-admit opt_i64_i64_map.Map)
+  ;; Whether the loop has room in the integer register pool for one more
+  ;; loop-spanning value: the price a `Global` operand of a scalar arm pays
+  ;; under the per-global answer (opt-licm-global-value-invariant?).
+  (cell-room? bool))
 
 (define (opt-licm-global-facts
   [clean? : bool]
@@ -22346,7 +22356,8 @@
   [mask : i64]
   [obj-mask : i64]
   [header-hoist? : bool]
-  [header-admit : opt_i64_i64_map.Map]) : OptLicmGlobalFacts
+  [header-admit : opt_i64_i64_map.Map]
+  [cell-room? : bool]) : OptLicmGlobalFacts
   (let
     [mod-ref : OptGlobalModRef cells.mod-ref]
     [obj : OptGlobalModRef cells.obj-mod-ref]
@@ -22357,7 +22368,8 @@
       obj.index
       obj-mask
       header-hoist?
-      header-admit)))
+      header-admit
+      cell-room?)))
 
 ;; LICM-PART: is `name` one of the globals this loop takes a handle out for?
 (define (opt-licm-global-header-admitted?
@@ -22389,7 +22401,10 @@
       (or
         (not (opt-used-contains loop-defs var))
         (opt-used-contains hoisted var))]
-    [(Global name) (opt-licm-global-facts-invariant? facts name)]
+    [(Global name)
+      (or
+        facts.clean?
+        (and facts.cell-room? (opt-licm-global-facts-invariant? facts name)))]
     [_ true]))
 
 (define (opt-licm-global-values-invariant?
@@ -23458,19 +23473,16 @@
 ;; trade, and it is priced HERE by the gate IAG-2 already owns rather than by a
 ;; second one. `opt-licm-global-header-value?` is the predicate the Gep arm's
 ;; IAG-2 disjunct asks of this very operand: the loop writes neither g's cell
-;; nor g's storage (the per-global rows), and `header-hoist?` -- the live-in
-;; budget of opt-licm-global-header-hoist? -- has admitted this loop for taking
-;; a handle out.
+;; nor g's storage (the per-global rows), and `header-hoist?` -- the
+;; admission of opt-licm-global-header-hoist?, capped at the register pool --
+;; has admitted this loop for taking a handle out.
 ;;
-;; Two wider readings are losses:
-;;
-;;   * accepting EVERY class opt-licm-header-slot-ptr-kind? names -- which adds
-;;     P16's `LocalObject`/`LocalSlot` frame words -- lets locally allocated
-;;     Vec chains all leave their loops at once, and the function spills what
-;;     it was holding in registers. Only the global head is admitted here; a
-;;     frame object's field keeps its classification;
-;;   * admitting the global head with NO pressure gate costs spills that the
-;;     `header-hoist?` question removes.
+;; One wider reading is a loss: accepting EVERY class
+;; opt-licm-header-slot-ptr-kind? names -- which adds P16's
+;; `LocalObject`/`LocalSlot` frame words -- lets locally allocated Vec chains
+;; all leave their loops at once, and the function spills what it was holding
+;; in registers. Only the global head is admitted here; a frame object's field
+;; keeps its classification.
 ;;
 ;; The gate still lets out a few chains that are net losses, accepted against
 ;; the larger wins. Pricing the arm at the chain's three words instead of the
@@ -28072,7 +28084,7 @@
 (define (opt-licm-chain-live-in-budget) : i64
   12)
 
-;; --- IAG-2 PRESSURE GATE ------------------------------------------------------
+;; --- IAG-2 HANDLE ADMISSION ---------------------------------------------------
 ;;
 ;; WHAT THIS GATE PRICES, and what it does NOT. It admits ONE value per global:
 ;; the descriptor handle `load (gep @g, 0)` reads out of the cell. Whether that
@@ -28082,7 +28094,7 @@
 ;; the loop's callees that this per-global proof neither answers nor replaces.
 ;; So an unknown callee splits the chain by itself (the handle leaves, the
 ;; length stays), and an element-only callee lets the whole chain out. The
-;; budget therefore charges one word.
+;; pool cap therefore counts one word per handle.
 ;;
 ;; WHY NOT THREE, AND WHY THE SPLIT IS NOT ENFORCED. Enforcing the split --
 ;; hoist the handle, hold the length and data loads in the loop whatever the
@@ -28096,11 +28108,18 @@
 ;; link-time address, so the chain is one load shorter than the one P18
 ;; priced.
 ;;
-;; WHY TWELVE. The budget is the shared chain budget, for the same
-;; reason (opt-licm-chain-live-in-budget): a value live across a call
-;; can only live in the callee-saved GP file, and twelve is where that file
-;; plus the frame staging the register allocator now keeps in registers stops
-;; paying.
+;; WHY NO PRESSURE PRICE. A hoisted handle is one more value live across the
+;; loop, but it is a LOAD: if the allocator spills it, each use reloads it from
+;; the frame where the loop used to reload it from the cell, so even a loop
+;; whose integer peak already exceeds the register pool pays about what it paid
+;; before. Pricing the handle against the loop's peak (opt-licm-loop-int-pressure
+;; against opt-licm-int-register-pool) refuses exactly the loops whose hoists
+;; pay most -- graph walks over several global Vecs, peaking at 15 to 20 live
+;; integer values. What IS priced is a hoist that removes no load: arithmetic
+;; over a cell the loop does not write (opt-licm-global-value-invariant?,
+;; against the loop's peak).
+;; The one cap left is the pool itself: a loop never takes out more handles
+;; than there are integer registers, the most-referenced first.
 ;;
 ;; Two further conditions. `late?` keeps the
 ;; hoist out of the pre-BCE run, where moving a descriptor address can hide the
@@ -28110,8 +28129,318 @@
 (define (opt-licm-global-header-words) : i64
   1)
 
-(define (opt-licm-global-header-live-in-budget) : i64
-  (opt-licm-chain-live-in-budget))
+;; The integer registers the allocator homes values in on the fixed Linux ABI
+;; it plans against: the caller-saved and the callee-saved GP files (9 + 5).
+;; %rsp is the stack and %rbp is left out, as it is the frame pointer whenever
+;; a frame is kept.
+(define (opt-licm-int-register-pool) : i64
+  (+
+    (cabi.compiler-abi-caller-saved-gp-register-count (Linux) (Internal))
+    (cabi.compiler-abi-callee-saved-gp-register-count (Linux) (Internal))))
+
+;; Does `var` compete for an integer register? The allocator's own
+;; register-eligibility rule with floats excluded; a var with no recorded type
+;; is counted.
+(define (opt-licm-int-pressure-var?
+  [types : (& types OptSsaVarTypes)]
+  [var : i64]) : bool
+  (match (opt-ssa-var-types-lookup types var)
+    [(Some ty)
+      (and
+        (reg.compiler-reg-register-eligible-type? (& ty))
+        (not (reg.compiler-reg-float-type? (& ty))))]
+    [(No) true]))
+
+;; One LICM run's pressure scratch for one function, built on the first loop
+;; that needs an estimate and grown only when loop-scope promotion has minted
+;; vars past it: `int?` is opt-licm-int-pressure-var? per var, `live` the walk's
+;; set, and `touched` the vars the current block's walk set (slot 0 holds the
+;; count), so a block clears what it set instead of every var.
+(defstruct OptLicmPressureScratch
+  (int? (__tl_dyn-array bool))
+  (live (__tl_dyn-array bool))
+  (touched (__tl_dyn-array i64)))
+
+(define (opt-licm-pressure-scratch-empty) : OptLicmPressureScratch
+  (OptLicmPressureScratch
+    (__tl_make-array bool 0)
+    (__tl_make-array bool 0)
+    (__tl_make-array i64 1)))
+
+(define (opt-licm-pressure-scratch-ready!
+  [memo : (&mut memo (__tl_dyn-array OptLicmPressureScratch))]
+  [types : (& types OptSsaVarTypes)]
+  [vars : i64]) : unit
+  (let
+    [current : OptLicmPressureScratch
+      (compiler-opt-global-array-element-shared-view
+        (owned_view.compiler-owned-reference-shared-view memo)
+        0)]
+    [have : i64 (array-length current.int?)]
+    (when
+      (< have vars)
+      (let
+        [int? : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+        (for [var (iterator.range 0 have)]
+          (set! (array-ref int? var) (array-ref current.int? var)))
+        (for [var (iterator.range have vars)]
+          (set! (array-ref int? var) (opt-licm-int-pressure-var? types var)))
+        (set!
+          (array-ref memo 0)
+          (OptLicmPressureScratch
+            int?
+            (__tl_make-array bool vars)
+            (__tl_make-array i64 (+ vars 1))))))))
+
+;; Mark `var` live; answers the live count after.
+(define (opt-licm-pressure-add!
+  [live : (&mut live (__tl_dyn-array bool))]
+  [touched : (&mut touched (__tl_dyn-array i64))]
+  [int? : (& int? (__tl_dyn-array bool))]
+  [count : i64]
+  [var : i64]) : i64
+  (if (or
+    (< var 0)
+    (>= var (array-length live))
+    (not (array-ref int? var))
+    (array-ref live var))
+    count
+    (let
+      [slot : i64 (+ (array-ref touched 0) 1)]
+      (set! (array-ref live var) true)
+      (set! (array-ref touched 0) slot)
+      (when (< slot (array-length touched)) (set! (array-ref touched slot) var))
+      (+ count 1))))
+
+;; Clear what the block's walk set. A walk that set more vars than `touched`
+;; holds (an SSA body sets each var at most once) clears them all.
+(define (opt-licm-pressure-clear!
+  [live : (&mut live (__tl_dyn-array bool))]
+  [touched : (&mut touched (__tl_dyn-array i64))]) : unit
+  (let
+    [count : i64 (array-ref touched 0)]
+    (if (< count (array-length touched))
+      (for [slot (iterator.range 1 (+ count 1))]
+        (set! (array-ref live (array-ref touched slot)) false))
+      (for [var (iterator.range 0 (array-length live))]
+        (set! (array-ref live var) false)))
+    (set! (array-ref touched 0) 0)))
+
+(define (opt-licm-pressure-remove!
+  [live : (&mut live (__tl_dyn-array bool))]
+  [count : i64]
+  [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length live)) (not (array-ref live var)))
+    count
+    (begin
+      (set! (array-ref live var) false)
+      (- count 1))))
+
+;; Seed `live` from a block's live-out set, one bitset word at a time.
+(define (opt-licm-pressure-seed!
+  [live : (&mut live (__tl_dyn-array bool))]
+  [touched : (&mut touched (__tl_dyn-array i64))]
+  [int? : (& int? (__tl_dyn-array bool))]
+  [set : (& set opt_liveness.CompilerLiveI64Set)]) : i64
+  (let
+    [count : i64 0]
+    (for [word-index
+      (iterator.range 0 (opt_liveness.compiler-live-set-word-count set))]
+      (let
+        [word : i64
+          (opt_liveness.compiler-live-set-word-at-bounded set word-index)]
+        (when
+          (not (= word 0))
+          (for [bit (iterator.range 0 64)]
+            (when
+              (not (= (bit-and word (shl 1 bit)) 0))
+              (set!
+                count
+                (opt-licm-pressure-add!
+                  live
+                  touched
+                  int?
+                  count
+                  (+ (* word-index 64) bit))))))))
+    count))
+
+;; Walk one block bottom-up from its live-out set and answer the largest live
+;; count at any point. A def leaves the set above its instruction and the
+;; instruction's uses join it; phi inputs are not uses here (they are live out
+;; of their own predecessors, which is what edge-precise liveness says). The
+;; set is cleared on the way out, so the scratch array is all-false again.
+(define (opt-licm-pressure-block-peak
+  [live : (&mut live (__tl_dyn-array bool))]
+  [touched : (&mut touched (__tl_dyn-array i64))]
+  [int? : (& int? (__tl_dyn-array bool))]
+  [live-out : (& live-out opt_liveness.CompilerLiveI64Set)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [count : i64 (opt-licm-pressure-seed! live touched int? live-out)]
+    [peak : i64 count]
+    [index : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+    (while (>= index 0)
+      (let
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+        [dst : i64 (ir.compiler-ir-instr-dst (& instr))]
+        ;; A def nobody reads still takes a register at its own instruction.
+        (when
+          (and
+            (>= dst 0)
+            (< dst (array-length live))
+            (array-ref int? dst)
+            (not (array-ref live dst))
+            (>= count peak))
+          (set! peak (+ count 1)))
+        (set! count (opt-licm-pressure-remove! live count dst))
+        (let
+          [id-count : i64
+            (opt_liveness.compiler-live-instr-use-ids-nophi! (& instr))]
+          (if (< id-count 0)
+            (let
+              [uses : opt_liveness.CompilerLiveI64Set
+                (opt_liveness.compiler-live-instr-uses-nophi (& instr))]
+              (for [word-index
+                (iterator.range
+                  0
+                  (opt_liveness.compiler-live-set-word-count (& uses)))]
+                (let
+                  [word : i64
+                    (opt_liveness.compiler-live-set-word-at-bounded
+                      (& uses)
+                      word-index)]
+                  (for [bit (iterator.range 0 64)]
+                    (when
+                      (not (= (bit-and word (shl 1 bit)) 0))
+                      (set!
+                        count
+                        (opt-licm-pressure-add!
+                          live
+                          touched
+                          int?
+                          count
+                          (+ (* word-index 64) bit))))))))
+            (let
+              [ids : (__tl_dyn-array i64)
+                (opt_liveness.compiler-live-instr-ids)]
+              (for [k (iterator.range 0 id-count)]
+                (set!
+                  count
+                  (opt-licm-pressure-add!
+                    live
+                    touched
+                    int?
+                    count
+                    (array-ref ids k)))))))
+        (when (> count peak) (set! peak count))
+        (-= index 1)))
+    (opt-licm-pressure-clear! live touched)
+    peak))
+
+;; The loop's integer register pressure: the most integer-register values live
+;; at once at any instruction of the body, over the function's edge-precise
+;; liveness (the analysis the scalar allocator itself runs). `vars` bounds the
+;; function's var ids.
+;; Would the cell-arithmetic price be asked at all? Only a scalar arm of
+;; opt-licm-candidate? reads `cell-room?`, and only for a `Global` operand the
+;; loop's cell-write row leaves out; a body with no such operand never asks,
+;; so its loop skips the estimate.
+(define (opt-licm-cell-operand-free?
+  [index : (& index opt_i64_i64_map.Map)]
+  [cell-writes : i64]
+  [value : (& value ir.CompilerIrValue)]) : bool
+  (match value
+    [(Global name)
+      (not (opt-global-mod-ref-mask-may-write? index cell-writes name))]
+    [_ false]))
+
+(define (opt-licm-cell-arith-instr?
+  [index : (& index opt_i64_i64_map.Map)]
+  [cell-writes : i64]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view instr)
+    [(or (Mov _ src _) (Cast _ src _ _) (Bitcast _ src _ _) (Word _ src _ _)
+         (UnOp _ _ src _) (Splat _ src _ _))
+      (opt-licm-cell-operand-free? index cell-writes (& src))]
+    [(BinOp _ _ lhs rhs _)
+      (or
+        (opt-licm-cell-operand-free? index cell-writes (& lhs))
+        (opt-licm-cell-operand-free? index cell-writes (& rhs)))]
+    [(VectorBinOp payload-box)
+      (let
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (or
+          (opt-licm-cell-operand-free? index cell-writes (& lhs))
+          (opt-licm-cell-operand-free? index cell-writes (& rhs))))]
+    [(VectorCompare payload-box)
+      (let
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (or
+          (opt-licm-cell-operand-free? index cell-writes (& lhs))
+          (opt-licm-cell-operand-free? index cell-writes (& rhs))))]
+    [_ false]))
+
+(define (opt-licm-cell-arith-body?
+  [cells : (& cells OptGlobalCellSummary)]
+  [cell-writes : i64]
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : bool
+  (let
+    [mod-ref (& cells.mod-ref)]
+    (match body-blocks
+      [(Array seq)
+        (for [position (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq position)
+            [(Block _ instrs)
+              (for [at
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (when
+                  (opt-licm-cell-arith-instr?
+                    (& mod-ref.index)
+                    cell-writes
+                    (ir.compiler-ir-instr-seq-borrow instrs at))
+                  (return true)))]))
+        false])))
+
+(define (opt-licm-loop-int-pressure
+  [memo : (&mut memo (__tl_dyn-array OptLicmPressureScratch))]
+  [types : (& types OptSsaVarTypes)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
+  [vars : i64]) : i64
+  (let
+    [_ready : unit (opt-licm-pressure-scratch-ready! memo types vars)]
+    [scratch : OptLicmPressureScratch
+      (compiler-opt-global-array-element-shared-view
+        (owned_view.compiler-owned-reference-shared-view memo)
+        0)]
+    [int? : (__tl_dyn-array bool) scratch.int?]
+    [live : (__tl_dyn-array bool) scratch.live]
+    [touched : (__tl_dyn-array i64) scratch.touched]
+    [liveness : opt_liveness.CompilerFunctionLiveness
+      (opt_liveness.compiler-live-analyze-block-bounds-edge-precise blocks vars)]
+    [peak : i64 0]
+    (match body-blocks
+      [(Array seq)
+        (for [position (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq position)
+            [(Block label instrs)
+              (match (opt_liveness.compiler-live-function-find-block
+                (& liveness)
+                label)
+                [(Some block)
+                  (let
+                    [block-peak : i64
+                      (opt-licm-pressure-block-peak
+                        (&mut live)
+                        (&mut touched)
+                        (& int?)
+                        (& block.live-out)
+                        (& instrs))]
+                    (when (> block-peak peak) (set! peak block-peak)))]
+                [(No) unit])]))])
+    peak))
 
 ;; How many distinct globals this loop would take a handle out for: those the
 ;; two rows prove it writes no storage of.
@@ -28146,16 +28475,12 @@
             count
             (+ count 1))))]))
 
-;; The globals the budget is charged for: those that actually HEAD a chain
-;; here, i.e. appear as the base of a literal-offset `Gep`. A global that only
-;; rides a call's argument list -- `f(.., @g, ..)` -- creates no preheader
-;; value and must not be charged for one; charging it would push a loop that
-;; passes globals to calls over the budget and refuse the hoist outright.
-;;
-;; The walk spans the loop BODY and its PREHEADER, so the gate keeps giving the
-;; same answer once it has fired: after the first round the `gep @g, 0` that
-;; names g has MOVED to the preheader, and a count that stopped seeing it there
-;; would price a loop whose handles are already out as if it had none.
+;; The globals the hoist could take a handle out for: those that actually HEAD a
+;; chain here, i.e. appear as the base of a literal-offset `Gep` in the loop
+;; BODY -- the same set opt-licm-global-header-admit chooses from. A global that
+;; only rides a call's argument list -- `f(.., @g, ..)` -- creates no preheader
+;; value and is not counted, and neither is a handle an earlier round already
+;; moved to the preheader: it has nothing left to admit.
 (define (opt-licm-global-header-refs-instr
   [scan : OptGlobalCellScan]
   [instr : (& ir.CompilerIrInstr)]) : OptGlobalCellScan
@@ -28198,32 +28523,21 @@
         rest)]))
 
 (define (opt-licm-global-header-refs
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [preheader : i64]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : OptLabelSet
   (let
     [body-scan : OptGlobalCellScan
       (opt-licm-global-header-refs-blocks
         (opt-global-cell-scan-new)
         (ir.compiler-ir-block-list-view body-blocks))]
-    (match (opt-cfg-find-block blocks preheader)
-      [(No) body-scan.ref-list]
-      [(Some block)
-        (match block
-          [(Block _ instrs)
-            (opt-licm-global-header-refs-seq
-              body-scan
-              instrs
-              0
-              (ir.compiler-ir-instr-seq-count instrs)).ref-list])])))
+    body-scan.ref-list))
 
-;; Developer-only observability for the header hoist's budget arithmetic, one
+;; Developer-only observability for the header hoist's admission, one
 ;; line per loop, on the same flag `--trace-passes` sets and suppressed in the
 ;; inliner's throwaway measurement runs exactly as the pass tracer is. Ordinary
 ;; compilation never reaches the print.
 (define (opt-licm-global-header-trace!
   [header : i64]
-  [live-in : i64]
+  [refs : i64]
   [count : i64]
   [admitted? : bool]) : unit
   (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
@@ -28231,12 +28545,12 @@
       (str_cat.str-cat
         "optimizer-iag2|"
         (ir.compiler-ir-label-text header)
-        "|live-in="
-        (string.int->string live-in)
         "|globals="
+        (string.int->string refs)
+        "|taken="
         (string.int->string count)
-        "|budget="
-        (string.int->string (opt-licm-global-header-live-in-budget))
+        "|pool="
+        (string.int->string (opt-licm-int-register-pool))
         (if admitted?
           "|admitted\n"
           "|refused\n")))
@@ -28248,11 +28562,9 @@
 ;; preconditions byte- and allocation-identical.
 (define (opt-licm-global-header-count
   [cells : (& cells OptGlobalCellSummary)]
-  [preheader : i64]
   [clean? : bool]
   [cell-writes : i64]
   [obj-writes : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : i64
   (if (opt-global-mod-ref-any? obj-writes)
     0
@@ -28261,19 +28573,15 @@
       clean?
       cell-writes
       obj-writes
-      (opt-licm-global-header-refs blocks preheader body-blocks)
+      (opt-licm-global-header-refs body-blocks)
       0)))
 
-;; LICM-PART: the globals this loop takes a handle out for, chosen under the
-;; budget instead of refused as a block. The gate above admitted the WHOLE
-;; eligible set or none of it; a loop whose live-ins already sit near the
-;; budget therefore kept every rip-relative handle reload it had, however
-;; hot, because the count of everything referenced did not fit. What fits is
-;; taken: every eligible global when `live-in + n` is within the budget, else
-;; the `budget - live-in` most-referenced ones (ties to the lower symbol id),
-;; none when the loop's own live-ins already fill it. Reference counts are the
-;; literal-offset geps off the global in the body and the preheader -- the
-;; preheader so the answer stays stable once a handle has moved out.
+;; LICM-PART: the globals this loop takes a handle out for: every eligible
+;; global the body references when they fit the register pool, else the
+;; pool's worth of most-referenced ones (ties to the lower symbol id).
+;; Reference counts are the literal-offset geps off the global in the body; a
+;; handle an earlier round already moved has no body reference left and needs
+;; no admission.
 (defstruct OptLicmHeaderAdmitScan
   (counts opt_i64_i64_map.Map)
   (ids OptLabelSet))
@@ -28448,32 +28756,17 @@
 
 (define (opt-licm-global-header-admit
   [cells : (& cells OptGlobalCellSummary)]
-  [preheader : i64]
   [clean? : bool]
   [cell-writes : i64]
   [obj-writes : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
-  [live-in : i64]
-  [budget : i64]) : opt_i64_i64_map.Map
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : opt_i64_i64_map.Map
   (if (opt-global-mod-ref-any? obj-writes)
     (opt_i64_i64_map.with-capacity 1)
     (let
-      [body-scan : OptLicmHeaderAdmitScan
+      [scan : OptLicmHeaderAdmitScan
         (opt-licm-header-admit-scan-blocks
           (OptLicmHeaderAdmitScan (opt_i64_i64_map.with-capacity 8) (Nil))
           (ir.compiler-ir-block-list-view body-blocks))]
-      [scan : OptLicmHeaderAdmitScan
-        (match (opt-cfg-find-block blocks preheader)
-          [(No) body-scan]
-          [(Some block)
-            (match block
-              [(Block _ instrs)
-                (opt-licm-header-admit-scan-seq
-                  body-scan
-                  instrs
-                  0
-                  (ir.compiler-ir-instr-seq-count instrs))])])]
       [eligible : OptLabelSet
         (opt-licm-header-admit-eligible
           cells
@@ -28483,30 +28776,24 @@
           scan.ids
           (Nil))]
       [n : i64 (opt-licm-header-admit-len eligible 0)]
-      [room : i64 (- budget live-in)]
-      (if (<= (+ live-in (* n (opt-licm-global-header-words))) budget)
+      [pool : i64 (opt-licm-int-register-pool)]
+      (if (<= (* n (opt-licm-global-header-words)) pool)
         (opt-licm-header-admit-all eligible (opt_i64_i64_map.with-capacity 8))
         (opt-licm-header-admit-pick
           scan.counts
           eligible
-          (/ room (opt-licm-global-header-words))
+          (/ pool (opt-licm-global-header-words))
           (opt_i64_i64_map.with-capacity 8))))))
 
 (define (opt-licm-global-header-hoist?
   [header : i64]
   [side-exit-kind : i64]
-  [count : i64]
-  [live-in : i64]) : bool
+  [header-count : i64]
+  [count : i64]) : bool
   (let
-    [admitted? : bool
-      (and
-        (not (= side-exit-kind 1))
-        (> count 0)
-        (<=
-          (+ live-in (* count (opt-licm-global-header-words)))
-          (opt-licm-global-header-live-in-budget)))]
-    (if (> count 0)
-      (opt-licm-global-header-trace! header live-in count admitted?)
+    [admitted? : bool (and (not (= side-exit-kind 1)) (> count 0))]
+    (if (> header-count 0)
+      (opt-licm-global-header-trace! header header-count count admitted?)
       unit)
     admitted?))
 
@@ -28565,9 +28852,10 @@
 ;;                                        which the header hoist declines.
 ;;   iag2:no-refs                         the loop references no global whose storage
 ;;                                        the two rows prove it does not write.
-;;   iag2:live-in-budget:<live-in>+<n>    opt-licm-global-header-hoist?'s budget
-;;                                        refused (live-in plus one word per global
-;;                                        against opt-licm-global-header-live-in-budget).
+;;   iag2:pool:<n>                        the loop references more eligible globals
+;;                                        than opt-licm-int-register-pool, and this
+;;                                        one is not among the most-referenced that
+;;                                        the hoist takes (opt-licm-global-header-admit).
 ;;   header-load-safe:call:<blame>        opt-licm-store-summary-header-load-safe? is
 ;;                                        false because of a call.
 ;;   header-load-safe:store:<blame>       ... because of a header-or-unknown store.
@@ -28809,9 +29097,9 @@
                 rest)))])]))
 
 ;; The context one loop hands the walk. It is the same set of facts
-;; opt-licm-candidate? is called with, plus the three loop-site numbers whose
-;; arithmetic the reasons quote (side-exit kind, live-in count, header-ref
-;; count); bundling them keeps the walk's own arity at the traversal state.
+;; opt-licm-candidate? is called with, plus the two loop-site numbers the
+;; reasons quote (side-exit kind, header-ref count); bundling them keeps the
+;; walk's own arity at the traversal state.
 (defstruct OptLicmRefuseCtx
   (type-segment-bases i64)
   (types OptSsaVarTypes)
@@ -28835,7 +29123,6 @@
   (mem-clean-call? bool)
   (any-call? bool)
   (side-exit-kind i64)
-  (live-in i64)
   (header-count i64)
   (header i64)
   ;; #7992/#8085: a load is also kept when its word may not be readable at the
@@ -28912,13 +29199,7 @@
       [(= ctx.side-exit-kind 1) "iag2:side-exit-return"]
       [(= ctx.header-count 0) "iag2:no-refs"]
       [else
-        (str_cat.str-cat
-          (str_cat.str-cat
-            (str_cat.str-cat
-              "iag2:live-in-budget:"
-              (string.int->string ctx.live-in))
-            "+")
-          (string.int->string ctx.header-count))])))
+        (str_cat.str-cat "iag2:pool:" (string.int->string ctx.header-count))])))
 
 ;; Does the program carry IAG-2's storage table at all? A program that does not
 ;; seeds every loop at "may write any storage", so no per-global answer exists
@@ -29247,7 +29528,6 @@
   [mem-clean-call? : bool]
   [any-call? : bool]
   [side-exit-kind : i64]
-  [live-in : i64]
   [header-count : i64]
   [header : i64]
   [map-capacity : i64]
@@ -29272,7 +29552,6 @@
           mem-clean-call?
           any-call?
           side-exit-kind
-          live-in
           header-count
           header
           deref-site))
@@ -29297,6 +29576,8 @@
   [direct-call-clean : (& opt_i64_i64_map.Map)]
   [global-cells : (& OptGlobalCellSummary)]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
+  ;; The function's pressure scratch (OptLicmPressureScratch).
+  [pressure : (&mut pressure (__tl_dyn-array OptLicmPressureScratch))]
   [late? : bool]
   ;; #7992: the function's element-bound facts (opt-licm-deref-facts).
   [deref-facts : OptLicmDerefFacts]
@@ -29428,24 +29709,35 @@
         [header-count : i64
           (opt-licm-global-header-count
             global-cells
-            preheader
             globals-clean?
             cell-writes
             obj-writes
-            blocks
             body-blocks)]
-        ;; LICM-PART: the handles this loop takes out under the budget.
+        ;; The loop's integer peak, the price of moving arithmetic over a cell
+        ;; that only the per-global answer proves invariant
+        ;; (opt-licm-global-value-invariant?). Measured only for a loop that
+        ;; answer applies to: not globals-clean, and a cell-write row that does
+        ;; not name every cell.
+        [cell-pressure : i64
+          (if (and
+            (not globals-clean?)
+            (not (opt-global-mod-ref-any? cell-writes))
+            (opt-licm-cell-arith-body? global-cells cell-writes (& body-blocks)))
+            (opt-licm-loop-int-pressure
+              pressure
+              types
+              (& blocks)
+              (& body-blocks)
+              (array-ref frame-cell 0))
+            0)]
+        ;; LICM-PART: the handles this loop takes out under the pool.
         [header-admit : opt_i64_i64_map.Map
           (opt-licm-global-header-admit
             global-cells
-            preheader
             globals-clean?
             cell-writes
             obj-writes
-            blocks
-            body-blocks
-            loop-live-in
-            (opt-licm-global-header-live-in-budget))]
+            body-blocks)]
         [globals : OptLicmGlobalFacts
           (opt-licm-global-facts
             globals-clean?
@@ -29455,9 +29747,10 @@
             (opt-licm-global-header-hoist?
               (opt-natural-loop-header loop)
               side-exit-kind
-              (opt_i64_i64_map.len (& header-admit))
-              loop-live-in)
-            header-admit)]
+              header-count
+              (opt_i64_i64_map.len (& header-admit)))
+            header-admit
+            (< cell-pressure (opt-licm-int-register-pool)))]
         [globals-promote-clean? : bool
           (and
             globals-clean-relaxed?
@@ -29569,7 +29862,6 @@
                   store-state.mem-clean-call?
                   any-call?
                   side-exit-kind
-                  loop-live-in
                   header-count
                   (opt-natural-loop-header loop)
                   map-capacity
@@ -29737,6 +30029,7 @@
   [direct-call-clean : (& opt_i64_i64_map.Map)]
   [global-cells : (& OptGlobalCellSummary)]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
+  [pressure : (&mut pressure (__tl_dyn-array OptLicmPressureScratch))]
   [late? : bool]
   [deref-facts : (& OptLicmDerefFacts)]
   [guard-plans : (& (__tl_dyn-array opt_licm_guard_plan_vec.Vec))]
@@ -29759,6 +30052,7 @@
           direct-call-clean
           global-cells
           frame-cell
+          pressure
           late?
           (owned_view.compiler-owned-reference-shared-view deref-facts)
           guard-plans
@@ -29775,6 +30069,7 @@
             direct-call-clean
             global-cells
             frame-cell
+            pressure
             late?
             deref-facts
             guard-plans
@@ -29979,6 +30274,8 @@
               [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
               [guard-plans : (__tl_dyn-array opt_licm_guard_plan_vec.Vec)
                 (__tl_make-array (opt_licm_guard_plan_vec.with-capacity 0))]
+              [pressure : (__tl_dyn-array OptLicmPressureScratch)
+                (__tl_make-array (opt-licm-pressure-scratch-empty))]
               (match (opt-licm-apply-loops
                 type-segment-bases
                 sources
@@ -29987,6 +30284,7 @@
                 direct-call-clean
                 global-cells
                 (&mut frame-cell)
+                (&mut pressure)
                 late?
                 (& deref-facts)
                 (& guard-plans)
@@ -95918,14 +96216,51 @@
       [(and (= true-bit 0) (= false-bit 1)) 2]
       [else 0])))
 
+;; The reversed pair spells `not c`. When `c` is the comparison the source
+;; branched on -- the instruction directly above the retired branch, read by
+;; nothing else -- the negation is free: flip the predicate and emit the
+;; forwarded pair's single cast. That costs `cmp; setcc; movzbq` against
+;; `cmp; setcc; movzbq; xor $1` on the same operands, one instruction per
+;; execution of the source block, and it needs no widened temp var.
+;;
+;; A comparison with any other reader keeps its predicate: flipping it in place
+;; would change what that reader sees, so those joins keep the `xor $1`. Float
+;; predicates never flip either (`not (a < b)` is not `a >= b` under NaN).
+(defenum OptIfConvertNegation
+  (Keep)
+  (Flip ir.CompilerIrInstr))
+
+(define (opt-if-convert-negation
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [count : i64]
+  [uses : (& uses (__tl_dyn-array i64))]
+  [condition-var : i64]) : OptIfConvertNegation
+  (if (or
+    (< count 2)
+    (< condition-var 0)
+    (>= condition-var (array-length uses))
+    (not (= (array-ref uses condition-var) 1)))
+    (Keep)
+    (match (ir.compiler-ir-instr-seq-ref instrs (- count 2))
+      [(BinOp dst op lhs rhs ty)
+        (if (and
+          (= dst condition-var)
+          (opt-invertible-compare-op? (& op))
+          (not (opt-float-type? ty)))
+          (Flip
+            (ir.CompilerIrInstr.BinOp dst (opt-invert-compare-op op) lhs rhs ty))
+          (Keep))]
+      [_ (Keep)])))
+
 ;; The instruction (or pair) that reproduces `phi [on-true, taken],
 ;; [on-false, untaken]` at the end of the source block. The constant forms are
 ;; the point of the pass: a bool home is a full register holding 0 or 1 (the
 ;; backend materialises every compare as `setcc; movzbq`), so `cast %c : bool ->
 ;; i64` IS the value the diamond was branching to build, and it lowers to a
-;; single `movzbq`. The negated pair costs one extra `xor $1` over a fresh var
-;; -- still two instructions against the diamond's compare, branch, move and
-;; jump. Everything else falls back to the Select the pass has always emitted.
+;; single `movzbq`. The negated pair reaches here as form 1 too when
+;; `opt-if-convert-negation` flipped the source's predicate; only a comparison
+;; the pass cannot flip pays the `xor $1` over a fresh var. Everything else
+;; falls back to the Select the pass has always emitted.
 (define (opt-if-convert-emit!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
@@ -95982,6 +96317,7 @@
   [index : (& index OptCfgIndex)]
   [blocks : ir.CompilerIrBlockSeq]
   [facts : (__tl_dyn-array OptIfConvertBlockFact)]
+  [uses : (& uses (__tl_dyn-array i64))]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
   [id : i64]) : bool
   (let
@@ -96094,6 +96430,27 @@
                                             condition-var))))
                                     (return false))
                                   (let
+                                    [negation : OptIfConvertNegation
+                                      (if (= form 2)
+                                        (opt-if-convert-negation
+                                          source-instrs
+                                          source.count
+                                          uses
+                                          condition-var)
+                                        (Keep))]
+                                    ;; A flipped predicate IS the branch's own
+                                    ;; comparison, so the builder takes the
+                                    ;; block up to it and the rewritten compare
+                                    ;; takes its place; the join is then the
+                                    ;; forwarded pair's single cast.
+                                    [kept : i64
+                                      (match negation
+                                        [(Flip _) (- source.count 2)]
+                                        [(Keep) (- source.count 1)])]
+                                    [join-form : i64
+                                      (match negation
+                                        [(Flip _) 1]
+                                        [(Keep) form])]
                                     [source-builder : ir.CompilerIrInstrBuilder
                                       (ir.compiler-ir-instr-builder-with-capacity
                                         (+ source.count 2))]
@@ -96104,11 +96461,17 @@
                                       (&mut source-builder)
                                       source-instrs
                                       0
-                                      (- source.count 1))
+                                      kept)
+                                    (match negation
+                                      [(Flip instr)
+                                        (ir.compiler-ir-instr-builder-push!
+                                          (&mut source-builder)
+                                          instr)]
+                                      [(Keep) unit])
                                     (opt-if-convert-emit!
                                       (&mut source-builder)
                                       frame-cell
-                                      form
+                                      join-form
                                       dst
                                       condition-var
                                       (& on-true)
@@ -96203,6 +96566,11 @@
                   ;; same merge as one at the end of the function. The index also
                   ;; carries the predecessor rows the arm rail needs.
                   [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
+                  ;; Flipping a negated pair's predicate is only sound while the
+                  ;; comparison has no other reader, so the pass carries one
+                  ;; function-wide use count for it.
+                  [uses : (__tl_dyn-array i64)
+                    (opt-collect-blocks-uses-array frame (& blocks))]
                   ;; A negated constant join mints one var for the zero-extended
                   ;; condition, so the frame counter is carried in a cell and
                   ;; written back into the rewritten function.
@@ -96221,6 +96589,7 @@
                           index
                           (compiler-opt-global-shared-view seq)
                           (compiler-opt-global-shared-view facts)
+                          (& uses)
                           (&mut frame-cell)
                           read)
                           (set! changed true)

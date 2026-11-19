@@ -68103,7 +68103,7 @@ return 0" true)
       [(not (= (opt-fz-preheader-loads hoisted) 1)) 1]
       [(not (= (opt-fz-body-loads hoisted) 1)) 2]
       ;; with the element-only tier open the length load follows it out (see
-      ;; the IAG-2 PRESSURE GATE note)
+      ;; the IAG-2 HANDLE ADMISSION note)
       [(not (= (opt-fz-preheader-loads followed) 2)) 3]
       [(not (= (opt-fz-body-loads followed) 0)) 4]
       ;; a callee that writes the global's storage refuses the whole chain
@@ -70585,6 +70585,120 @@ return 0" true)
     42
     "a callee the call-memory fixpoint proves writes no global storage stops blocking cell promotion, and a memory-clean one is admitted under the live-in budget; an unresolved callee, a GlobalAddr argument, and a memory-clean callee in an over-budget loop each still refuse"))
 
+;; --- the cell-arithmetic pressure gate ---------------------------------------
+;;
+;; `%8 = add %1, @mr_b` in a loop that calls `mr_write_a` every trip: mr_b is
+;; outside the callee's cell-write row, so the add is invariant by the
+;; per-global answer alone, and moving it makes one more value live across the
+;; whole loop. In a quiet loop it leaves. With twelve more values defined
+;; before the loop and read on every trip (the opt-lp-pressure builders), the
+;; loop's integer peak already fills the register pool, so the copy would only
+;; spill and the add stays (opt-licm-global-value-invariant?).
+(define (opt-lpc-tail-instrs [symbols : OptMrTestSymbols]) : ir.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (BinOp 8 (Add) (Var 1) (Global symbols.b) (I64))
+    (opt-test-instr-seq-prepend
+      (Call 11 symbols.write-a Nil (I64))
+      (opt-test-instr-seq-prepend
+        (BinOp 9 (Add) (Var 8) (Var 4) (I64))
+        (opt-licm-loop-finish-instrs)))))
+
+(define (opt-lpc-blocks [symbols : OptMrTestSymbols] [pressured? : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "body:
+           jump loop
+         exit:
+           return %9")
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (if pressured?
+        (opt-test-instrs-with-tail
+          (opt-lp-pressure-entry-defs
+            (opt-lp-pressure-live-in-floor)
+            (opt-lp-pressure-live-in-ceiling))
+          (ir.CompilerIrInstr.Mov 3 (I64 0) (I64)))
+        (irt.instrs "%3 = mov 0 : i64
+           jump loop")))
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "loop")
+      (opt-test-instrs-with-tail
+        (if pressured?
+          (opt-lp-pressure-body-uses
+            (opt-lp-pressure-live-in-floor)
+            (opt-lp-pressure-live-in-ceiling)
+            4
+            (opt-lpc-tail-instrs symbols))
+          (opt-lpc-tail-instrs symbols))
+        (irt.instr "%4 = phi [%3, entry], [%5, body] : i64")))))
+
+(define (opt-lpc-licm
+  [cells : (& cells opt.OptGlobalCellSummary)]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "licm_pressure")
+        (opt-licm-params)
+        (I64)
+        64
+        (ir.compiler-ir-global-shared-view blocks)
+        Ordinary)]
+    (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& (opt.opt-cfg-context-build blocks))
+      false
+      (& (opt_i64_i64_map.with-capacity 1))
+      (& (opt_i64_i64_map.with-capacity 1))
+      cells
+      false
+      (& func))
+      [(Result next _) (opt.opt-function-blocks next)])))
+
+;; Does block `label` hold the instruction defining `dst`?
+(define (opt-lpc-defines?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]
+  [dst : i64]) : bool
+  (match (opt.opt-cfg-find-block blocks label)
+    [(Some block)
+      (match block
+        [(Block _ instrs)
+          (let
+            [found : bool false]
+            (for [index
+              (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+              (when
+                (=
+                  (ir.compiler-ir-instr-dst
+                    (ir.compiler-ir-instr-seq-borrow instrs index))
+                  dst)
+                (set! found true)))
+            found)])]
+    [(No) false]))
+
+(define (compiler-optimize-licm-cell-arith-pressure-self-test) : i64
+  (let
+    [symbols : OptMrTestSymbols (opt-mr-test-symbols)]
+    [cells : opt.OptGlobalCellSummary (opt-mr-test-cells symbols)]
+    [quiet : ir.CompilerIrBlockList
+      (opt-lpc-licm (& cells) (opt-lpc-blocks symbols false))]
+    [pressured : ir.CompilerIrBlockList
+      (opt-lpc-licm (& cells) (opt-lpc-blocks symbols true))]
+    (cond
+      [(not (opt-lpc-defines? (& quiet) (ir.compiler-ir-label "entry") 8)) 1]
+      [(opt-lpc-defines? (& quiet) (ir.compiler-ir-label "loop") 8) 2]
+      [(opt-lpc-defines? (& pressured) (ir.compiler-ir-label "entry") 8) 3]
+      [(not (opt-lpc-defines? (& pressured) (ir.compiler-ir-label "loop") 8)) 4]
+      [else 42])))
+
+(test
+  licm-cell-arith-pressure
+  (test.assert-i64-eq
+    (compiler-optimize-licm-cell-arith-pressure-self-test)
+    42
+    "an add whose global operand is invariant only by the per-global cell-write answer leaves a quiet loop, and stays in the same loop once twelve more values live across it fill the integer register pool"))
+
 (test
   licm-global-cell-mod-ref
   (test.assert-i64-eq
@@ -70606,15 +70720,15 @@ return 0" true)
     42
     "the descriptor HANDLE a global's inline cell holds leaves a loop that calls an unknown callee every trip, and the length load behind it stays inside because the descriptor proofs still refuse that callee -- while an element-only callee lets the length load follow it out; a callee that writes that global's storage through a mutable reference parameter refuses the chain, the same callee leaves a different global's chain hoistable, and an indirect call or an absent storage table refuses it"))
 
-;; --- LICM-PART: the header hoist under the budget -----------------------------
+;; --- LICM-PART: the header hoist is not priced by the loop's live values ------
 ;;
 ;; Three chains (`gep @g, 0` / handle / `gep, 1` / length, as opt-og-loop-blocks
 ;; spells one) off `og_a`, `og_b` and `og_c`, with `og_a` named by two more
 ;; literal-offset geps and `og_b` by one more, in a loop that calls `plain`
-;; every trip and reads `live` parameters besides. The gate priced the whole
-;; set: live-in + 3 against twelve. With ten live-ins nothing fit and every
-;; handle stayed; the budget now takes the two most-referenced handles out and
-;; leaves `og_c`'s where it was. With three live-ins all three fit, as before.
+;; every trip and reads `live` parameters besides. A hoisted handle that spills
+;; is reloaded where the loop loaded it before, so the loop's own pressure does
+;; not price it (opt-licm-global-header-admit): all three handles leave at ten
+;; live values, at eleven and at five alike.
 (define (opt-lpa-params [live : i64]) : ir.CompilerIrParamSeq
   (opt-lpa-params-from live (irt.params "cond=%0:bool")))
 
@@ -70710,25 +70824,20 @@ return 0" true)
     [symbols : OptOgTestSymbols (opt-og-test-symbols)]
     [cells : opt.OptGlobalCellSummary
       (opt-og-cells symbols (opt-og-base-functions symbols))]
-    ;; ten live-ins (eight parameters, the branch flag and the counter) leave
-    ;; room for two under the twelve-word budget
-    [partial : ir.CompilerIrBlockList
+    ;; ten live values (eight parameters, the branch flag and the counter)
+    [ten : ir.CompilerIrBlockList
       (opt-lpa-licm-late symbols 8 (opt.compiler-opt-global-shared-view cells))]
-    ;; eleven leave room for one: the most-referenced, og_a
-    [one : ir.CompilerIrBlockList
+    [eleven : ir.CompilerIrBlockList
       (opt-lpa-licm-late symbols 9 (opt.compiler-opt-global-shared-view cells))]
-    ;; five leave room for all three
-    [whole : ir.CompilerIrBlockList (opt-lpa-licm-late symbols 3 cells)]
+    [five : ir.CompilerIrBlockList (opt-lpa-licm-late symbols 3 cells)]
     (cond
-      ;; og_a's and og_b's handles leave; og_c's stays with every length load
-      [(not (= (opt-fz-preheader-loads partial) 2)) 1]
-      [(not (= (opt-fz-body-loads partial) 4)) 2]
-      ;; room for one: og_a's handle alone
-      [(not (= (opt-fz-preheader-loads one) 1)) 3]
-      [(not (= (opt-fz-body-loads one) 5)) 4]
-      ;; the whole set fits: all three handles leave
-      [(not (= (opt-fz-preheader-loads whole) 3)) 5]
-      [(not (= (opt-fz-body-loads whole) 3)) 6]
+      ;; every handle leaves and every length load stays, whatever the count
+      [(not (= (opt-fz-preheader-loads ten) 3)) 1]
+      [(not (= (opt-fz-body-loads ten) 3)) 2]
+      [(not (= (opt-fz-preheader-loads eleven) 3)) 3]
+      [(not (= (opt-fz-body-loads eleven) 3)) 4]
+      [(not (= (opt-fz-preheader-loads five) 3)) 5]
+      [(not (= (opt-fz-body-loads five) 3)) 6]
       [else 42])))
 
 (test
@@ -70736,7 +70845,116 @@ return 0" true)
   (test.assert-i64-eq
     (compiler-optimize-licm-global-header-partial-self-test)
     42
-    "a loop whose live-ins leave the header-hoist budget room for two of its three global handles takes the two most-referenced ones out and keeps the third's chain inside, where the whole set was refused before; with room for one the most-referenced handle alone leaves, and with room for all three every handle does"))
+    "a loop takes all three of its global descriptor handles out whether ten, eleven or five values are live in it: a hoisted handle that spills is reloaded where the loop loaded it, so the loop's pressure does not price it"))
+
+;; --- LICM-PART: more eligible handles than the register pool ----------------
+;;
+;; Sixteen Vec globals `pk_0` .. `pk_15`, one handle load each, in a loop that
+;; calls `pk_plain` every trip, with `pk_0` named by two more literal-offset
+;; geps. Sixteen handles do not fit the fourteen-register pool, so the loop
+;; takes out fourteen, the most-referenced first: pk_0 leaves, and two handle
+;; loads stay.
+(define (opt-pk-symbol [at : i64]) : i64
+  (opt-test-symbol (str_cat.str-cat "pk_" (string.int->string at))))
+
+(define (opt-pk-globals [count : i64]) : ir.CompilerIrGlobalSeq
+  (let
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity count)]
+    (for [at (iterator.range 0 count)]
+      (opt-test-global-builder-push!
+        (&mut builder)
+        (opt-pk-symbol at)
+        (DynArray 0)
+        (I64 at)))
+    (ir.compiler-ir-global-builder-to-seq builder)))
+
+(define (opt-pk-functions) : ir.CompilerIrFunctionSeq
+  (ir.compiler-ir-function-seq-prepend
+    (&
+      (opt-mr-one-block-function
+        (opt-test-symbol "pk_plain")
+        (opt-mr-return-zero)))
+    (& (ir.compiler-ir-function-seq-empty))))
+
+;; One `gep @pk_<at>, 0` / handle load pair per global, from var `first` on.
+(define (opt-pk-chains
+  [at : i64]
+  [count : i64]
+  [first : i64]
+  [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (if (>= at count)
+    tail
+    (opt-test-instr-seq-prepend
+      (Gep first (Global (opt-pk-symbol at)) (I64 0) (U8))
+      (opt-test-instr-seq-prepend
+        (Load (+ first 1) (Var first) (DynArray 0))
+        (opt-pk-chains (+ at 1) count (+ first 2) tail)))))
+
+(define (opt-pk-loop-blocks [count : i64]) : ir.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-pk-chains
+      0
+      count
+      6
+      (opt-lpa-extra-gep
+        50
+        (opt-pk-symbol 0)
+        (opt-lpa-extra-gep
+          51
+          (opt-pk-symbol 0)
+          (opt-test-instr-seq-prepend
+            (opt-fz-call-instr 52 (opt-test-symbol "pk_plain"))
+            (opt-licm-loop-finish-instrs)))))
+    52))
+
+(define (compiler-optimize-licm-global-header-pool-self-test) : i64
+  (let
+    [count : i64 16]
+    [globals : ir.CompilerIrGlobalSeq (opt-pk-globals count)]
+    [functions : ir.CompilerIrFunctionSeq (opt-pk-functions)]
+    [cells : opt.OptGlobalCellSummary
+      (opt-test-global-obj-attach
+        (opt-pk-globals count)
+        (& functions)
+        64
+        (opt.opt-global-cell-summary-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& globals)
+          (& functions)))]
+    [blocks : ir.CompilerIrBlockList (opt-pk-loop-blocks count)]
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "licm_pool")
+        (opt-licm-params)
+        (I64)
+        64
+        (ir.compiler-ir-global-shared-view blocks)
+        Ordinary)]
+    [after : ir.CompilerIrBlockList
+      (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt.opt-cfg-context-build blocks))
+        false
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& cells)
+        true
+        (& func))
+        [(Result next _) (opt.opt-function-blocks next)])]
+    (cond
+      [(not (= (opt-fz-preheader-loads (& after)) 14)) 1]
+      [(not (= (opt-fz-body-loads (clone after)) 2)) 2]
+      ;; the most-referenced global is among the fourteen
+      [(not (opt-lpc-defines? (& after) (ir.compiler-ir-label "entry") 7)) 3]
+      [else 42])))
+
+(test
+  licm-global-header-pool-cap
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-header-pool-self-test)
+    42
+    "a loop that references sixteen hoistable global descriptor handles takes out the register pool's worth, fourteen, most-referenced first, and leaves two handle loads inside"))
 
 ;; --- LICM-GDP: an element store through a global array's data pointer ---------
 ;;
@@ -77638,9 +77856,12 @@ done:
 ;; What the join becomes depends on the two values. A bool home is a full
 ;; register holding 0 or 1 (every compare is materialised `setcc; movzbq`), so
 ;; `phi [1, taken], [0, untaken]` IS the condition zero-extended and lowers to a
-;; single `movzbq`; the reversed pair is that cast with an `xor $1` over it.
-;; Anything else stays a `Select`. Arms holding INSTRUCTIONS are still refused:
-;; the pass never moves work above the branch, so it never speculates.
+;; single `movzbq`. The reversed pair spells `not c`: when `c` is the comparison
+;; the source branched on, read by nothing else, the pass flips its predicate
+;; and emits that same cast, so the negation costs one `setcc` instead of a
+;; materialised bool plus `xor $1`. Anything else stays a `Select`. Arms holding
+;; INSTRUCTIONS are still refused: the pass never moves work above the branch,
+;; so it never speculates.
 (define (opt-ifc-instr-kind [instr : (& ir.CompilerIrInstr)]) : i64
   (match instr
     [(Cast _ _ _ _) 1]
@@ -77649,6 +77870,8 @@ done:
     [(BinOp _ op _ _ _)
       (match op
         [(BitXor) 4]
+        [(Lt) 6]
+        [(Ge) 7]
         [_ 0])]
     [(Mov _ _ _) 5]
     [_ 0]))
@@ -77720,7 +77943,7 @@ done:
   (I64 value))
 
 ;; (a) The four-block diamond with literal arms. `flip` reverses the pair, so
-;; `(if c 1 0)` becomes `(if c 0 1)` and the cast picks up its `xor $1`.
+;; `(if c 1 0)` becomes `(if c 0 1)`: the negation the inverted predicate spells.
 (define (opt-ifc-diamond-blocks [flip : bool]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks
     (opt-nn-block
@@ -77836,6 +78059,25 @@ done:
        %11 = phi [%23, then], [%1, else] : i64
        return %11"))
 
+;; (g) The reversed pair whose comparison the join READS as well. The predicate
+;; flips only while the comparison has no other reader -- an in-place flip would
+;; change the value that reader sees -- so this join keeps the materialised bool
+;; and its `xor $1`.
+(define (opt-ifc-read-again-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %10 = lt %0, %1 : i64
+       branch %10, then, else
+     then:
+       jump merge
+     else:
+       jump merge
+     merge:
+       %11 = phi [0, then], [1, else] : i64
+       %12 = cast %10 : bool to i64
+       %13 = add %11, %12 : i64
+       return %13"))
+
 ;; Returns 42 only when every conversion and every refusal holds.
 (define (compiler-optimize-if-convert-self-test) : i64
   (let
@@ -77848,49 +78090,64 @@ done:
       (opt-ifc-run (opt-ifc-working-arm-blocks))]
     [vars : ir.CompilerIrBlockList (opt-ifc-run (opt-ifc-var-arms-blocks))]
     [legacy : ir.CompilerIrBlockList (opt-ifc-run (opt-ifc-legacy-blocks))]
+    [read-again : ir.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-read-again-blocks))]
     (cond
       ;; (a) `phi [1, then], [0, else]` is the condition itself: one cast, no
-      ;; select, no phi, and no negation over it.
+      ;; select, no phi, no negation, and the predicate untouched.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 1) 1)) 1]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 3) 0)) 2]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 2) 0)) 3]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 4) 0)) 4]
-      ;; ... and the reversed pair is that cast with one `xor $1` over it.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 1) 1)) 5]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 4) 1)) 6]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 3) 0)) 7]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 2) 0)) 8]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 6) 1)) 5]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 7) 0)) 6]
+      ;; ... and the reversed pair is that cast over the inverted predicate.
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 1) 1)) 7]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 4) 0)) 8]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 3) 0)) 9]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 2) 0)) 10]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 7) 1)) 11]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 6) 0)) 12]
       ;; (b) the triangle: one arm block, the other edge the source's own.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 1) 1))
-        9]
+        13]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 3) 0))
-        10]
+        14]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 2) 0))
-        11]
+        15]
       ;; (c) the merge laid out between the arms converts identically.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view scattered) 1) 1))
-        12]
+        16]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view scattered) 3) 0))
-        13]
+        17]
       ;; (d) an arm holding an instruction is refused outright: the phi, and
       ;; the branch that feeds it, are still there.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 3) 1))
-        14]
+        18]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 1) 0))
-        15]
+        19]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 2) 0))
-        16]
+        20]
       ;; (e) the pre-packet shape still converts, and still to a select. The
       ;; outer diamond's arms compute, so only the inner join folds: one select
       ;; and the outer phi are what remain.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 2) 1)) 17]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 3) 1)) 18]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 1) 0)) 19]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 2) 1)) 21]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 3) 1)) 22]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 1) 0)) 23]
       ;; (f) the same two computed vars on a newly visible join stay a branch:
       ;; the select is not widened past the shapes it already covered.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 2) 0)) 20]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 1) 0)) 21]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 3) 1)) 22]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 2) 0)) 24]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 1) 0)) 25]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 3) 1)) 26]
+      ;; (g) a comparison the join also reads keeps its predicate: the
+      ;; materialised bool and its `xor $1` are still there, and the source's
+      ;; own comparison is still the untouched `lt`.
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 4) 1))
+        27]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 6) 1))
+        28]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 7) 0))
+        29]
       [else 42])))
 
 (test
@@ -77898,7 +78155,7 @@ done:
   (test.assert-i64-eq
     (compiler-optimize-if-convert-self-test)
     42
-    "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension (0/1 as that cast under an xor); computed vars still fold to a select and an arm holding an instruction is still refused"))
+    "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension, with the reversed pair flipping a single-use comparison's predicate instead of paying an xor; computed vars still fold to a select, a comparison the join also reads is never flipped, and an arm holding an instruction is still refused"))
 
 ;; --- T2-2: load-CSE precision (MF-1 keys, MF-4 call filtering, MF-5 cells) ---
 ;;

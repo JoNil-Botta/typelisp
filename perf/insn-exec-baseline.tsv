@@ -41,7 +41,7 @@ benchmark/typelisp/ssa_construct	637613677
 benchmark/c-scalar/ssa_construct	448154598
 benchmark/typelisp/sccp_lattice	548613584
 benchmark/c-scalar/sccp_lattice	400603743
-benchmark/typelisp/regalloc_greedy	567660847
+benchmark/typelisp/regalloc_greedy	566100694
 benchmark/c-scalar/regalloc_greedy	404020976
 benchmark/typelisp/asm_render	658212726
 benchmark/c-scalar/asm_render	644231941

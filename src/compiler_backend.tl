@@ -2591,8 +2591,21 @@
   17)
 (define compiler-backend-scratch-i64-simd-scratch-used-bytes : i64
   18)
-(define compiler-backend-scratch-i64-count : i64
+
+;; Cross-edge flags carry: the compare a block's tail branch fell through with,
+;; still live at the next block's entry. `to` is that successor's label (-1 when
+;; there is none) and the other three lanes are the compare's two var operands
+;; and the width of its `cmp` operands.
+(define compiler-backend-scratch-i64-edge-flags-to : i64
   19)
+(define compiler-backend-scratch-i64-edge-flags-lhs : i64
+  20)
+(define compiler-backend-scratch-i64-edge-flags-rhs : i64
+  21)
+(define compiler-backend-scratch-i64-edge-flags-width : i64
+  22)
+(define compiler-backend-scratch-i64-count : i64
+  23)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -3392,6 +3405,9 @@
         scratch-i64s
         compiler-backend-scratch-i64-cycle-temp-base-offset)
       -512)
+    (set!
+      (array-ref scratch-i64s compiler-backend-scratch-i64-edge-flags-to)
+      (compiler_ir_types.compiler-ir-label-none))
     (while (< scratch-index (array-length scratch-i64-arrays))
       (set!
         (array-ref scratch-i64-arrays scratch-index)
@@ -3684,6 +3700,9 @@
     (set!
       (array-ref i64s compiler-backend-scratch-i64-cycle-temp-base-offset)
       -512)
+    (set!
+      (array-ref i64s compiler-backend-scratch-i64-edge-flags-to)
+      (compiler_ir_types.compiler-ir-label-none))
     (set! index 0)
     (while (< index (array-length bools))
       (set! (array-ref bools index) false)
@@ -44678,10 +44697,12 @@
     targets.len)
   (compiler-backend-function-state-set-phi-targets! function-state targets))
 
-(define (compiler-backend-branch-needs-phi-copies?
+;; True when `label`'s entry carries phi copies: the block starts with a Phi, so
+;; `compiler-backend-leading-phi-copies-seq` builds a (possibly empty) copy list
+;; for every incoming edge and the emitter renders it on the way in.
+(define (compiler-backend-phi-target?
   [function-state : CompilerBackendFunctionState]
-  [true-label : i64]
-  [false-label : i64]) : bool
+  [label : i64]) : bool
   (if (=
     (compiler-backend-function-state-i64
       function-state
@@ -44691,9 +44712,15 @@
     (let
       [targets : BackendSymbolSeq
         (compiler-backend-function-state-phi-targets function-state)]
-      (or
-        (compiler-backend-symbol-list-contains-id? targets true-label)
-        (compiler-backend-symbol-list-contains-id? targets false-label)))))
+      (compiler-backend-symbol-list-contains-id? (& targets) label))))
+
+(define (compiler-backend-branch-needs-phi-copies?
+  [function-state : CompilerBackendFunctionState]
+  [true-label : i64]
+  [false-label : i64]) : bool
+  (or
+    (compiler-backend-phi-target? function-state true-label)
+    (compiler-backend-phi-target? function-state false-label)))
 
 (define (compiler-backend-branch-edge-label
   [current-label : i64]
@@ -51887,45 +51914,103 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-compare-branch-with-phi-copies
-    ctx.type-segment-bases
-    ctx.assignments
-    (compiler-backend-global-shared-view ctx.function)
-    (compiler-backend-global-shared-view ctx.blocks)
-    ctx.current-label
-    (compiler-backend-global-shared-view op)
-    (compiler-backend-global-shared-view lhs)
-    (compiler-backend-global-shared-view rhs)
-    (compiler-backend-binop-operand-ty
-      ctx.types
-      (compiler-backend-global-shared-view ctx.global-types)
-      (compiler-backend-global-shared-view op)
-      (compiler-backend-global-shared-view lhs)
-      (compiler-backend-global-shared-view rhs)
-      (compiler-backend-global-shared-view ty))
-    true-label
-    false-label
-    (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
-    ctx.program-index
-    ctx.vars)
-    [(Ok head)
-      (compiler-backend-asm-append
-        out
-        (compiler-backend-emergency-wrap head ctx.backend-state))
-      (compiler-backend-emit-instrs
-        (compiler-backend-global-shared-view ctx)
-        fallthrough
-        instrs
-        index
-        out)]
-    [(Err message)
-      (compiler-backend-instr-error-from
-        (compiler-backend-instr-diagnostic
-          ctx.spans
-          ctx.source-function
-          (BinOp dst op lhs rhs ty)
-          ctx.func-diag)
-        message)]))
+  (let
+    [operand-ty : compiler_ast_types.AstType
+      (compiler-backend-binop-operand-ty
+        ctx.types
+        (compiler-backend-global-shared-view ctx.global-types)
+        (compiler-backend-global-shared-view op)
+        (compiler-backend-global-shared-view lhs)
+        (compiler-backend-global-shared-view rhs)
+        (compiler-backend-global-shared-view ty))]
+    ;; Cross-edge flags carry: this comparison, the block's own first
+    ;; instruction when `index` is 2, either spends the flags the
+    ;; layout-previous block's tail branch left live or records its own for the
+    ;; block that follows. The operand type is already here, so the decision
+    ;; costs no extra aliasing.
+    [carry : i64
+      (compiler-backend-edge-flags-take
+        ctx.function-state
+        ctx.type-segment-bases
+        ctx.current-label
+        (- index 1)
+        (& op)
+        (& lhs)
+        (& rhs)
+        (& operand-ty))]
+    (if (= carry 0)
+      (begin
+        (compiler-backend-edge-flags-record-tail!
+          ctx.function-state
+          ctx.type-segment-bases
+          index
+          instrs.len
+          fallthrough
+          true-label
+          false-label
+          (& op)
+          (& lhs)
+          (& rhs)
+          (& operand-ty))
+        (match (compiler-backend-emit-compare-branch-with-phi-copies
+          ctx.type-segment-bases
+          ctx.assignments
+          (compiler-backend-global-shared-view ctx.function)
+          (compiler-backend-global-shared-view ctx.blocks)
+          ctx.current-label
+          (compiler-backend-global-shared-view op)
+          (compiler-backend-global-shared-view lhs)
+          (compiler-backend-global-shared-view rhs)
+          operand-ty
+          true-label
+          false-label
+          (compiler-backend-fused-compare-fallthrough instrs index fallthrough)
+          ctx.program-index
+          ctx.vars)
+          [(Ok head)
+            (compiler-backend-asm-append
+              out
+              (compiler-backend-emergency-wrap head ctx.backend-state))
+            (compiler-backend-emit-instrs
+              (compiler-backend-global-shared-view ctx)
+              fallthrough
+              instrs
+              index
+              out)]
+          [(Err message)
+            (compiler-backend-instr-error-from
+              (compiler-backend-instr-diagnostic
+                ctx.spans
+                ctx.source-function
+                (BinOp dst op lhs rhs ty)
+                ctx.func-diag)
+              message)]))
+      (let
+        [carry-op : compiler_ir_types.CompilerIrBinOp
+          (if (= carry 2)
+            (compiler-backend-compare-swapped-op op)
+            op)]
+        [true-jcc : String
+          (compiler-backend-compare-true-jcc
+            ctx.type-segment-bases
+            (& carry-op)
+            (& operand-ty))]
+        [false-jcc : String
+          (compiler-backend-compare-false-jcc
+            ctx.type-segment-bases
+            (& carry-op)
+            (& operand-ty))]
+        (compiler-backend-emit-flags-reuse-branch-rest
+          ctx
+          fallthrough
+          (Var dst)
+          true-label
+          false-label
+          true-jcc
+          false-jcc
+          instrs
+          index
+          out)))))
 
 (define (compiler-backend-emit-fused-load-compare-branch-rest
   [ctx : CompilerBackendEmissionContext]
@@ -60231,6 +60316,192 @@
       (compiler-backend-emergency-wrap head ctx.backend-state))
     (compiler-backend-emit-instrs ctx fallthrough instrs index out)))
 
+;; Cross-edge flags carry. The in-block reuse above keeps a comparison's flags
+;; live to the branch that reads its boolean; a `jcc` writes no EFLAGS either,
+;; and neither does the `movq`-only text the operand staging and the emergency
+;; restore emit around a compare. So a block that ENDS in a compare+branch
+;; fusion leaves its compare's flags live at the successor that branch's OWN
+;; label names. When nothing else runs on the way in -- the successor's entry
+;; carries no phi copies and the branch does not forward through another block
+;; -- and that successor's FIRST instruction compares the same two vars at the
+;; same width and feeds its own terminator, the `cmp` is redundant and only the
+;; `jcc` is emitted, with the condition inverted when the operands are swapped.
+;;
+;; Every edge that would spend the carry is checked where it is spent:
+;;   * the successor has exactly ONE predecessor, from the peephole's own
+;;     predecessor counts, so no other edge reaches its label with stray flags;
+;;   * the branch's true/false label names that successor itself, not a
+;;     #jump-forward resolution of another label (which other blocks' jumps are
+;;     retargeted onto, so the IR predecessor count cannot see them);
+;;   * the successor's entry carries no phi copies, which would run on the way
+;;     in and overwrite the flags;
+;;   * the compare is not a bit-test, whose `test` flags are an AND, not a
+;;     comparison of its operands;
+;;   * the successor's block prologue emits no const-hoist code and the record
+;;     was written by the fused compare+branch emission that actually ran, so
+;;     nothing else sits between the compare and the successor's first
+;;     instruction. The record is cleared on every other path.
+;; Only register vars are carried: their homes are the same on both sides of
+;; the edge, so the same operands and the same flags.
+(define (compiler-backend-edge-flags-var-id
+  [value : (& value compiler_ir_types.CompilerIrValue)]) : i64
+  (match value
+    [(Var id) id]
+    [_ -1]))
+
+(define (compiler-backend-edge-flags-clear!
+  [function-state : CompilerBackendFunctionState]) : unit
+  (compiler-backend-function-scratch-set-i64!
+    function-state
+    compiler-backend-scratch-i64-edge-flags-to
+    (compiler_ir_types.compiler-ir-label-none)))
+
+;; Record the compare a block's tail branch leaves live into `fallthrough`, or
+;; clear the record. Only a branch whose OWN label names the layout-next block
+;; carries flags: #jump-forward retargets other blocks' jumps onto that label
+;; (so the IR predecessor count cannot see every emitted edge into it), and a
+;; resolved target that merely lands there is not this block's fall-through. A
+;; successor whose entry carries phi copies is refused too -- those copies run
+;; on the way in and would overwrite the flags.
+(define (compiler-backend-edge-flags-record-tail!
+  [function-state : CompilerBackendFunctionState]
+  [type-segment-bases : i64]
+  [after : i64]
+  [instr-count : i64]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [true-label : i64]
+  [false-label : i64]
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [lhs : (& lhs compiler_ir_types.CompilerIrValue)]
+  [rhs : (& rhs compiler_ir_types.CompilerIrValue)]
+  [operand-ty : (& operand-ty compiler_ast_types.AstType)]) : unit
+  (let
+    [lhs-id : i64 (compiler-backend-edge-flags-var-id lhs)]
+    [rhs-id : i64 (compiler-backend-edge-flags-var-id rhs)]
+    (if (and
+      (= after instr-count)
+      (not (compiler-backend-bit-test-op? op))
+      (>= lhs-id 0)
+      (>= rhs-id 0)
+      (match fallthrough
+        [(Some to)
+          (and
+            (or (= true-label to) (= false-label to))
+            (not (compiler-backend-phi-target? function-state to)))]
+        [(No) false]))
+      (match fallthrough
+        [(Some to)
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-edge-flags-to
+            to)
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-edge-flags-lhs
+            lhs-id)
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-edge-flags-rhs
+            rhs-id)
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-edge-flags-width
+            (compiler-backend-type-size type-segment-bases operand-ty))]
+        [(No) (compiler-backend-edge-flags-clear! function-state)])
+      (compiler-backend-edge-flags-clear! function-state))))
+
+;; The two cases the successor's compare can present: same operand order (1) and
+;; swapped (2), which reads the same flags with the inverted condition. Zero is
+;; no match. The record is cleared on every consult: the carry is a
+;; one-instruction window, so the successor's first instruction either spends it
+;; here or loses it.
+(define (compiler-backend-edge-flags-take
+  [function-state : CompilerBackendFunctionState]
+  [type-segment-bases : i64]
+  [label : i64]
+  [index : i64]
+  [op : (& op compiler_ir_types.CompilerIrBinOp)]
+  [lhs : (& lhs compiler_ir_types.CompilerIrValue)]
+  [rhs : (& rhs compiler_ir_types.CompilerIrValue)]
+  [operand-ty : (& operand-ty compiler_ast_types.AstType)]) : i64
+  (let
+    [to : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-edge-flags-to)]
+    [recorded-lhs : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-edge-flags-lhs)]
+    [recorded-rhs : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-edge-flags-rhs)]
+    [recorded-width : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-edge-flags-width)]
+    [lhs-id : i64 (compiler-backend-edge-flags-var-id lhs)]
+    [rhs-id : i64 (compiler-backend-edge-flags-var-id rhs)]
+    [order : i64
+      (if (= to label)
+        (if (and (= lhs-id recorded-lhs) (= rhs-id recorded-rhs))
+          1
+          (if (and (= lhs-id recorded-rhs) (= rhs-id recorded-lhs))
+            2
+            0))
+        0)]
+    [taken : i64
+      (if (or
+        (= order 0)
+        (not (= index 1))
+        (compiler-backend-bit-test-op? op)
+        (< lhs-id 0)
+        (< rhs-id 0)
+        (not
+          (=
+            (compiler-backend-type-size type-segment-bases operand-ty)
+            recorded-width)))
+        0
+        order)]
+    (compiler-backend-edge-flags-clear! function-state)
+    taken))
+
+;; Take the cross-edge carry for the block about to be emitted, or clear it.
+;; `injected?` reports a non-empty const-hoist injection, which is code between
+;; the branching block's `jcc` and this block's first instruction and so closes
+;; the window. The block must start with the compare: then nothing else can run
+;; before the instruction that spends the flags.
+(define (compiler-backend-edge-flags-enter-block!
+  [function-state : CompilerBackendFunctionState]
+  [label : i64]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [predcount : (& predcount backend_label_i64_map.Map)]
+  [injected? : bool]) : unit
+  (let
+    [to : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-edge-flags-to)]
+    [pending : bool (= to label)]
+    (compiler-backend-edge-flags-clear! function-state)
+    (when
+      (and pending (not injected?) (> instrs.len 0))
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs 0)
+        [(BinOp _ op lhs rhs _)
+          (when
+            (and
+              (compiler-backend-compare-op? op)
+              (not (compiler-backend-bit-test-op? op))
+              (>= (compiler-backend-edge-flags-var-id lhs) 0)
+              (>= (compiler-backend-edge-flags-var-id rhs) 0)
+              (= 1 (backend_label_i64_map.get-value-or predcount label 0)))
+            (compiler-backend-function-scratch-set-i64!
+              function-state
+              compiler-backend-scratch-i64-edge-flags-to
+              label))]
+        [_ unit]))))
+
 ;; Flags reuse for a comparison that MUST materialize. The fused paths above
 ;; fire only when the boolean is never needed as a value; with a stored bool or
 ;; a phi input among its readers the setcc/movzb stay, and the adjacent branch
@@ -61072,6 +61343,7 @@
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [block : compiler_ir_types.CompilerIrBlock]
+  [predcount : (& predcount backend_label_i64_map.Map)]
   [fallthrough : CompilerBackendMaybeLabel]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
@@ -61106,54 +61378,63 @@
       ;; `compiler-backend-asm-label` is spelled out here so the label's four
       ;; parts land in the body buffer directly instead of through a fresh
       ;; per-block label String.
-      (compiler-backend-asm-append
-        out
-        (compiler-backend-const-hoist-injection-for
-          (compiler-backend-state-function-state program-index.backend-state)
+      (let
+        [function-state : CompilerBackendFunctionState
+          (compiler-backend-state-function-state program-index.backend-state)]
+        [pre-injection : String
+          (compiler-backend-const-hoist-injection-for function-state label true)]
+        [post-injection : String
+          (compiler-backend-const-hoist-injection-for
+            function-state
+            label
+            false)]
+        [ctx : CompilerBackendEmissionContext
+          (CompilerBackendEmissionContext
+            type-segment-bases
+            (compiler-backend-state-emission-target-policy
+              program-index.backend-state)
+            function
+            source-function
+            blocks
+            label
+            assignments
+            vars
+            types
+            global-types
+            ret-ty
+            plan
+            functions
+            externs
+            program-index
+            spans
+            span-index
+            func-diag
+            use-counts
+            program-index.backend-state
+            function-state)]
+        ;; Cross-edge flags carry: take the compare the layout-previous block's
+        ;; tail branch left live, or clear the record. A non-empty const-hoist
+        ;; injection is code between that `jcc` and this block's first
+        ;; instruction, so it closes the window.
+        (compiler-backend-edge-flags-enter-block!
+          function-state
           label
-          true))
-      (compiler-backend-asm-append5
-        out
-        ".L"
-        (compiler-backend-asm-safe-symbol
-          (compiler-backend-global-shared-view function))
-        "_"
-        (compiler_ir_types.compiler-ir-label-text label)
-        ":\n")
-      (compiler-backend-asm-append
-        out
-        (compiler-backend-const-hoist-injection-for
-          (compiler-backend-state-function-state program-index.backend-state)
-          label
-          false))
-      (compiler-backend-emit-instrs
-        (CompilerBackendEmissionContext
-          type-segment-bases
-          (compiler-backend-state-emission-target-policy
-            program-index.backend-state)
-          function
-          source-function
-          blocks
-          label
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          span-index
-          func-diag
-          use-counts
-          program-index.backend-state
-          (compiler-backend-state-function-state program-index.backend-state))
-        fallthrough
-        instrs
-        0
-        out)]))
+          (& instrs)
+          predcount
+          (or
+            (> (string.string-length pre-injection) 0)
+            (> (string.string-length post-injection) 0)))
+        (compiler-backend-asm-append out pre-injection)
+        (compiler-backend-asm-append5
+          out
+          ".L"
+          (compiler-backend-asm-safe-symbol
+            (compiler-backend-global-shared-view function))
+          "_"
+          (compiler_ir_types.compiler-ir-label-text label)
+          ":\n")
+        (compiler-backend-asm-append out post-injection)
+        (compiler-backend-emit-instrs ctx fallthrough instrs 0 out))]))
 
 ;; Total IR instruction count over a function's blocks, read from the per-block
 ;; sequence lengths the emit loop already consults. Used only to size the body
@@ -61204,53 +61485,65 @@
   [func-diag : compiler_diagnostic.CompilerDiagnostic]
   [use-counts : (__tl_dyn-array i64)]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (for [index
-    (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count blocks))]
-    (let
-      [block (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
-      [mark : i64 (compiler-backend-asm-buf-len (& out))]
-      ;; Read the count in its own binding: the borrow ends here, before
-      ;; `block` moves into the emitter (a loop body's borrow would otherwise
-      ;; stay open to the end of the iteration for the published stage0).
-      [instr-count : i64
-        (match (& block)
-          [(Block _ instrs) instrs.len])]
-      [function-state : CompilerBackendFunctionState
-        (compiler-backend-state-function-state program-index.backend-state)]
-      (compiler-backend-function-state-set-emit-instr-post-base!
-        function-state
-        (+
-          (compiler-backend-function-state-emit-instr-post-base function-state)
-          instr-count))
+  ;; Cross-edge flags carry: one predecessor count per block, from the
+  ;; peephole's own CFG enumeration (the authoritative successor set), so the
+  ;; carry can require the successor's single predecessor without a second
+  ;; walk of its own.
+  (let
+    [predcount : backend_label_i64_map.Map
+      (compiler-backend-peephole-predcount-build-seq
+        (& blocks)
+        0
+        (backend_label_i64_map.with-capacity 64))]
+    (for [index
+      (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count blocks))]
       (let
-        [_
-          (try
-            (compiler-backend-emit-block
-              type-segment-bases
-              (compiler-backend-global-shared-view function)
-              source-function
-              (compiler-backend-global-shared-view all-blocks)
-              block
-              (compiler-backend-next-block-label-seq blocks (+ index 1))
-              assignments
-              vars
-              types
-              (compiler-backend-global-shared-view global-types)
-              (compiler-backend-global-shared-view ret-ty)
-              plan
-              (compiler-backend-global-shared-view functions)
-              (compiler-backend-global-shared-view externs)
-              program-index
-              (compiler-backend-global-shared-view spans)
-              (compiler-backend-global-shared-view span-index)
-              (compiler-backend-global-shared-view func-diag)
-              (compiler-backend-global-shared-view use-counts)
-              out))]
-        (compiler-backend-emergency-wrap-appended
-          out
-          mark
-          program-index.backend-state)
-        unit)))
+        [block (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
+        [mark : i64 (compiler-backend-asm-buf-len (& out))]
+        ;; Read the count in its own binding: the borrow ends here, before
+        ;; `block` moves into the emitter (a loop body's borrow would otherwise
+        ;; stay open to the end of the iteration for the published stage0).
+        [instr-count : i64
+          (match (& block)
+            [(Block _ instrs) instrs.len])]
+        [function-state : CompilerBackendFunctionState
+          (compiler-backend-state-function-state program-index.backend-state)]
+        (compiler-backend-function-state-set-emit-instr-post-base!
+          function-state
+          (+
+            (compiler-backend-function-state-emit-instr-post-base
+              function-state)
+            instr-count))
+        (let
+          [_
+            (try
+              (compiler-backend-emit-block
+                type-segment-bases
+                (compiler-backend-global-shared-view function)
+                source-function
+                (compiler-backend-global-shared-view all-blocks)
+                block
+                (& predcount)
+                (compiler-backend-next-block-label-seq blocks (+ index 1))
+                assignments
+                vars
+                types
+                (compiler-backend-global-shared-view global-types)
+                (compiler-backend-global-shared-view ret-ty)
+                plan
+                (compiler-backend-global-shared-view functions)
+                (compiler-backend-global-shared-view externs)
+                program-index
+                (compiler-backend-global-shared-view spans)
+                (compiler-backend-global-shared-view span-index)
+                (compiler-backend-global-shared-view func-diag)
+                (compiler-backend-global-shared-view use-counts)
+                out))]
+          (compiler-backend-emergency-wrap-appended
+            out
+            mark
+            program-index.backend-state)
+          unit))))
   (Ok ""))
 
 (define (compiler-backend-emit-blocks-into
@@ -64344,13 +64637,13 @@
 ;; included. Under-counting an edge is the only way carry could go wrong, and
 ;; this enumeration is complete (those are the only label-bearing terminators).
 (define (compiler-backend-peephole-predcount-build-seq
-  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]
   [counts : backend_label_i64_map.Map]) : backend_label_i64_map.Map
   (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
     counts
     (compiler-backend-peephole-predcount-build-seq
-      (compiler-backend-global-shared-view blocks)
+      blocks
       (+ index 1)
       (compiler-backend-peephole-predcount-bump
         counts
@@ -64483,7 +64776,7 @@
                 label-scope
                 entry-label
                 (compiler-backend-peephole-predcount-build-seq
-                  (compiler-backend-global-shared-view seq)
+                  (& seq)
                   0
                   (backend_label_i64_map.with-capacity 64))
                 entry

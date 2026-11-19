@@ -36,7 +36,8 @@ LIMIT_BYTES=33554432
 ACCOUNTING_FIXTURE_SECONDS=1
 export ACCOUNTING_FIXTURE_SECONDS
 ALLOCATE_AWK='BEGIN {
-    chunk = sprintf("%1048576s", "x")
+    chunk = sprintf("%4096s", "x")
+    for (j = 0; j < 8; j++) chunk = chunk chunk
     for (i = 0; i < 96; i++) values[i] = chunk i
     system("sleep 30")
 }'
@@ -840,7 +841,8 @@ dir=$3
 . ./scripts/lib-linux-memory-limit.sh
 sed -n 's/^0:://p' /proc/self/cgroup > "$dir/outer.cgroup"
 hold_awk='BEGIN {
-    chunk = sprintf("%1048576s", "x")
+    chunk = sprintf("%4096s", "x")
+    for (j = 0; j < 8; j++) chunk = chunk chunk
     for (i = 0; i < mib; i++) values[i] = chunk i
     system("touch \"" ready "\"; n=0; while [ ! -e \"" release "\" ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n + 1)); done")
 }'

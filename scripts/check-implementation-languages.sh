@@ -48,17 +48,17 @@ while IFS= read -r path || [ -n "$path" ]; do
     if is_forbidden_file "$path"; then
         printf '%s\n' "$path"
     fi
-done | sort -u > "$CURRENT"
+done | LC_ALL=C sort -u > "$CURRENT"
 
 if [ -f "$BASELINE" ]; then
-    sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$BASELINE" | sort -u > "$BASELINE_SORTED"
+    sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$BASELINE" | LC_ALL=C sort -u > "$BASELINE_SORTED"
 else
     : > "$BASELINE_SORTED"
 fi
 
-comm -23 "$CURRENT" "$BASELINE_SORTED" > "$NEW"
-comm -12 "$CURRENT" "$BASELINE_SORTED" > "$EXISTING"
-comm -13 "$CURRENT" "$BASELINE_SORTED" > "$RETIRED"
+LC_ALL=C comm -23 "$CURRENT" "$BASELINE_SORTED" > "$NEW"
+LC_ALL=C comm -12 "$CURRENT" "$BASELINE_SORTED" > "$EXISTING"
+LC_ALL=C comm -13 "$CURRENT" "$BASELINE_SORTED" > "$RETIRED"
 
 if [ -s "$EXISTING" ]; then
     echo "implementation language gate: baselined temporary files remain:"

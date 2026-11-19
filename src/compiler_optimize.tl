@@ -96029,14 +96029,51 @@
       [(and (= true-bit 0) (= false-bit 1)) 2]
       [else 0])))
 
+;; The reversed pair spells `not c`. When `c` is the comparison the source
+;; branched on -- the instruction directly above the retired branch, read by
+;; nothing else -- the negation is free: flip the predicate and emit the
+;; forwarded pair's single cast. That costs `cmp; setcc; movzbq` against
+;; `cmp; setcc; movzbq; xor $1` on the same operands, one instruction per
+;; execution of the source block, and it needs no widened temp var.
+;;
+;; A comparison with any other reader keeps its predicate: flipping it in place
+;; would change what that reader sees, so those joins keep the `xor $1`. Float
+;; predicates never flip either (`not (a < b)` is not `a >= b` under NaN).
+(defenum OptIfConvertNegation
+  (Keep)
+  (Flip ir.CompilerIrInstr))
+
+(define (opt-if-convert-negation
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [count : i64]
+  [uses : (& uses (__tl_dyn-array i64))]
+  [condition-var : i64]) : OptIfConvertNegation
+  (if (or
+    (< count 2)
+    (< condition-var 0)
+    (>= condition-var (array-length uses))
+    (not (= (array-ref uses condition-var) 1)))
+    (Keep)
+    (match (ir.compiler-ir-instr-seq-ref instrs (- count 2))
+      [(BinOp dst op lhs rhs ty)
+        (if (and
+          (= dst condition-var)
+          (opt-invertible-compare-op? (& op))
+          (not (opt-float-type? ty)))
+          (Flip
+            (ir.CompilerIrInstr.BinOp dst (opt-invert-compare-op op) lhs rhs ty))
+          (Keep))]
+      [_ (Keep)])))
+
 ;; The instruction (or pair) that reproduces `phi [on-true, taken],
 ;; [on-false, untaken]` at the end of the source block. The constant forms are
 ;; the point of the pass: a bool home is a full register holding 0 or 1 (the
 ;; backend materialises every compare as `setcc; movzbq`), so `cast %c : bool ->
 ;; i64` IS the value the diamond was branching to build, and it lowers to a
-;; single `movzbq`. The negated pair costs one extra `xor $1` over a fresh var
-;; -- still two instructions against the diamond's compare, branch, move and
-;; jump. Everything else falls back to the Select the pass has always emitted.
+;; single `movzbq`. The negated pair reaches here as form 1 too when
+;; `opt-if-convert-negation` flipped the source's predicate; only a comparison
+;; the pass cannot flip pays the `xor $1` over a fresh var. Everything else
+;; falls back to the Select the pass has always emitted.
 (define (opt-if-convert-emit!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
@@ -96093,6 +96130,7 @@
   [index : (& index OptCfgIndex)]
   [blocks : ir.CompilerIrBlockSeq]
   [facts : (__tl_dyn-array OptIfConvertBlockFact)]
+  [uses : (& uses (__tl_dyn-array i64))]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
   [id : i64]) : bool
   (let
@@ -96205,6 +96243,27 @@
                                             condition-var))))
                                     (return false))
                                   (let
+                                    [negation : OptIfConvertNegation
+                                      (if (= form 2)
+                                        (opt-if-convert-negation
+                                          source-instrs
+                                          source.count
+                                          uses
+                                          condition-var)
+                                        (Keep))]
+                                    ;; A flipped predicate IS the branch's own
+                                    ;; comparison, so the builder takes the
+                                    ;; block up to it and the rewritten compare
+                                    ;; takes its place; the join is then the
+                                    ;; forwarded pair's single cast.
+                                    [kept : i64
+                                      (match negation
+                                        [(Flip _) (- source.count 2)]
+                                        [(Keep) (- source.count 1)])]
+                                    [join-form : i64
+                                      (match negation
+                                        [(Flip _) 1]
+                                        [(Keep) form])]
                                     [source-builder : ir.CompilerIrInstrBuilder
                                       (ir.compiler-ir-instr-builder-with-capacity
                                         (+ source.count 2))]
@@ -96215,11 +96274,17 @@
                                       (&mut source-builder)
                                       source-instrs
                                       0
-                                      (- source.count 1))
+                                      kept)
+                                    (match negation
+                                      [(Flip instr)
+                                        (ir.compiler-ir-instr-builder-push!
+                                          (&mut source-builder)
+                                          instr)]
+                                      [(Keep) unit])
                                     (opt-if-convert-emit!
                                       (&mut source-builder)
                                       frame-cell
-                                      form
+                                      join-form
                                       dst
                                       condition-var
                                       (& on-true)
@@ -96314,6 +96379,11 @@
                   ;; same merge as one at the end of the function. The index also
                   ;; carries the predecessor rows the arm rail needs.
                   [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
+                  ;; Flipping a negated pair's predicate is only sound while the
+                  ;; comparison has no other reader, so the pass carries one
+                  ;; function-wide use count for it.
+                  [uses : (__tl_dyn-array i64)
+                    (opt-collect-blocks-uses-array frame (& blocks))]
                   ;; A negated constant join mints one var for the zero-extended
                   ;; condition, so the frame counter is carried in a cell and
                   ;; written back into the rewritten function.
@@ -96332,6 +96402,7 @@
                           index
                           (compiler-opt-global-shared-view seq)
                           (compiler-opt-global-shared-view facts)
+                          (& uses)
                           (&mut frame-cell)
                           read)
                           (set! changed true)

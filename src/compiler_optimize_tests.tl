@@ -77288,9 +77288,12 @@ return 0" true)
 ;; What the join becomes depends on the two values. A bool home is a full
 ;; register holding 0 or 1 (every compare is materialised `setcc; movzbq`), so
 ;; `phi [1, taken], [0, untaken]` IS the condition zero-extended and lowers to a
-;; single `movzbq`; the reversed pair is that cast with an `xor $1` over it.
-;; Anything else stays a `Select`. Arms holding INSTRUCTIONS are still refused:
-;; the pass never moves work above the branch, so it never speculates.
+;; single `movzbq`. The reversed pair spells `not c`: when `c` is the comparison
+;; the source branched on, read by nothing else, the pass flips its predicate
+;; and emits that same cast, so the negation costs one `setcc` instead of a
+;; materialised bool plus `xor $1`. Anything else stays a `Select`. Arms holding
+;; INSTRUCTIONS are still refused: the pass never moves work above the branch,
+;; so it never speculates.
 (define (opt-ifc-instr-kind [instr : (& ir.CompilerIrInstr)]) : i64
   (match instr
     [(Cast _ _ _ _) 1]
@@ -77299,6 +77302,8 @@ return 0" true)
     [(BinOp _ op _ _ _)
       (match op
         [(BitXor) 4]
+        [(Lt) 6]
+        [(Ge) 7]
         [_ 0])]
     [(Mov _ _ _) 5]
     [_ 0]))
@@ -77370,7 +77375,7 @@ return 0" true)
   (I64 value))
 
 ;; (a) The four-block diamond with literal arms. `flip` reverses the pair, so
-;; `(if c 1 0)` becomes `(if c 0 1)` and the cast picks up its `xor $1`.
+;; `(if c 1 0)` becomes `(if c 0 1)`: the negation the inverted predicate spells.
 (define (opt-ifc-diamond-blocks [flip : bool]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks
     (opt-nn-block
@@ -77486,6 +77491,25 @@ return 0" true)
        %11 = phi [%23, then], [%1, else] : i64
        return %11"))
 
+;; (g) The reversed pair whose comparison the join READS as well. The predicate
+;; flips only while the comparison has no other reader -- an in-place flip would
+;; change the value that reader sees -- so this join keeps the materialised bool
+;; and its `xor $1`.
+(define (opt-ifc-read-again-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %10 = lt %0, %1 : i64
+       branch %10, then, else
+     then:
+       jump merge
+     else:
+       jump merge
+     merge:
+       %11 = phi [0, then], [1, else] : i64
+       %12 = cast %10 : bool to i64
+       %13 = add %11, %12 : i64
+       return %13"))
+
 ;; Returns 42 only when every conversion and every refusal holds.
 (define (compiler-optimize-if-convert-self-test) : i64
   (let
@@ -77498,49 +77522,64 @@ return 0" true)
       (opt-ifc-run (opt-ifc-working-arm-blocks))]
     [vars : ir.CompilerIrBlockList (opt-ifc-run (opt-ifc-var-arms-blocks))]
     [legacy : ir.CompilerIrBlockList (opt-ifc-run (opt-ifc-legacy-blocks))]
+    [read-again : ir.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-read-again-blocks))]
     (cond
       ;; (a) `phi [1, then], [0, else]` is the condition itself: one cast, no
-      ;; select, no phi, and no negation over it.
+      ;; select, no phi, no negation, and the predicate untouched.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 1) 1)) 1]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 3) 0)) 2]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 2) 0)) 3]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 4) 0)) 4]
-      ;; ... and the reversed pair is that cast with one `xor $1` over it.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 1) 1)) 5]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 4) 1)) 6]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 3) 0)) 7]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 2) 0)) 8]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 6) 1)) 5]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 7) 0)) 6]
+      ;; ... and the reversed pair is that cast over the inverted predicate.
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 1) 1)) 7]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 4) 0)) 8]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 3) 0)) 9]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 2) 0)) 10]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 7) 1)) 11]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 6) 0)) 12]
       ;; (b) the triangle: one arm block, the other edge the source's own.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 1) 1))
-        9]
+        13]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 3) 0))
-        10]
+        14]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 2) 0))
-        11]
+        15]
       ;; (c) the merge laid out between the arms converts identically.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view scattered) 1) 1))
-        12]
+        16]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view scattered) 3) 0))
-        13]
+        17]
       ;; (d) an arm holding an instruction is refused outright: the phi, and
       ;; the branch that feeds it, are still there.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 3) 1))
-        14]
+        18]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 1) 0))
-        15]
+        19]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 2) 0))
-        16]
+        20]
       ;; (e) the pre-packet shape still converts, and still to a select. The
       ;; outer diamond's arms compute, so only the inner join folds: one select
       ;; and the outer phi are what remain.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 2) 1)) 17]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 3) 1)) 18]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 1) 0)) 19]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 2) 1)) 21]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 3) 1)) 22]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 1) 0)) 23]
       ;; (f) the same two computed vars on a newly visible join stay a branch:
       ;; the select is not widened past the shapes it already covered.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 2) 0)) 20]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 1) 0)) 21]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 3) 1)) 22]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 2) 0)) 24]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 1) 0)) 25]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 3) 1)) 26]
+      ;; (g) a comparison the join also reads keeps its predicate: the
+      ;; materialised bool and its `xor $1` are still there, and the source's
+      ;; own comparison is still the untouched `lt`.
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 4) 1))
+        27]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 6) 1))
+        28]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 7) 0))
+        29]
       [else 42])))
 
 (test
@@ -77548,7 +77587,7 @@ return 0" true)
   (test.assert-i64-eq
     (compiler-optimize-if-convert-self-test)
     42
-    "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension (0/1 as that cast under an xor); computed vars still fold to a select and an arm holding an instruction is still refused"))
+    "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension, with the reversed pair flipping a single-use comparison's predicate instead of paying an xor; computed vars still fold to a select, a comparison the join also reads is never flipped, and an arm holding an instruction is still refused"))
 
 ;; --- T2-2: load-CSE precision (MF-1 keys, MF-4 call filtering, MF-5 cells) ---
 ;;

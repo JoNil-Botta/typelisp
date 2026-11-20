@@ -285,7 +285,7 @@
           (clone (array-ref compiler-embedded-stdlib-tlci-group-cache-holder 0)))))
     (match (in-arena
       (unsafe
-        (arena.Arena (compiler-embedded-stdlib-tlci-session-arena)))
+        (arena.Arena compiler-embedded-stdlib-tlci-table-owner))
       (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
         (& payload.embedded-stdlib-tlci-bytes)
         catalog

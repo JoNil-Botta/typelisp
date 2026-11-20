@@ -33388,12 +33388,6 @@
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
     data.copy-thunk-bodies))
 
-(define (compiler-backend-state-set-copy-thunk-bodies!
-  [state : CompilerBackendState]
-  [bodies : (__tl_dyn-array String)]) : unit
-  (unsafe
-    (set! (deref (compiler-backend-state-ptr state)).copy-thunk-bodies bodies)))
-
 (define (compiler-backend-state-copy-thunk-count [state : CompilerBackendState]) : i64
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
@@ -33408,7 +33402,12 @@
 ;; A fresh emission starts with no thunks. Both tables are allocated in the
 ;; state's own long-lived lazy arena: the emit-time arenas are rewound and
 ;; replaced around program composition, so a table allocated in the arena that
-;; happens to be current here can be reused underneath the registry.
+;; happens to be current here can be reused underneath the registry. That
+;; arena is never rewound, so the entries an emission's table held outlive it.
+;; The tables are therefore created once and emptied in place -- an emission
+;; clears the map's slots and rewinds the body list, and the next one
+;; overwrites the slots it needs -- instead of being replaced, which would
+;; leave one dead table behind per program the process compiles.
 (define (compiler-backend-copy-thunks-reset! [state : CompilerBackendState]) : unit
   (let
     [data : (MutPtr CompilerBackendStateData)
@@ -33416,12 +33415,16 @@
     (in-arena
       (compiler-backend-state-lazy-table-arena-ensure! state)
       (unsafe
-        (set!
-          (deref data).copy-thunks
-          (backend_string_i64_map.with-capacity 512))
-        (set!
-          (deref data).copy-thunk-bodies
-          (__tl_make-array String compiler-backend-copy-thunk-capacity))
+        (if (<= (array-length (deref data).copy-thunk-bodies) 0)
+          (begin
+            (set! (deref data).copy-thunk-bodies (__tl_make-array String 0))
+            (set!
+              (deref data).copy-thunks
+              (backend_string_i64_map.with-capacity 8)))
+          (let
+            [seen : backend_string_i64_map.Map (deref data).copy-thunks]
+            (backend_string_i64_map.clear-ref! (&mut seen))
+            (set! (deref data).copy-thunks seen)))
         (set! (deref data).copy-thunk-count 0)))))
 
 (define (compiler-backend-copy-thunk-frame-base? [base : (& base str)]) : bool
@@ -33484,15 +33487,9 @@
           [index : i64 (compiler-backend-state-copy-thunk-count backend-state)]
           [bodies : (__tl_dyn-array String)
             (compiler-backend-state-copy-thunk-bodies backend-state)]
-          (if (> (array-length bodies) 0)
+          (if (< index (array-length bodies))
             (set! (array-ref bodies index) body)
-            (let
-              [fresh : (__tl_dyn-array String)
-                (__tl_make-array String compiler-backend-copy-thunk-capacity)]
-              (set! (array-ref fresh index) body)
-              (compiler-backend-state-set-copy-thunk-bodies!
-                backend-state
-                fresh)))
+            (__tl_array-push! bodies body))
           (backend_string_i64_map.insert-ref!
             (&mut seen)
             (compiler-backend-global-shared-view key)

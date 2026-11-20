@@ -111,6 +111,7 @@
 
 (define (init-forms [comptime T : type] [comptime n : i64]) : i64
   (let
+    ;; lint-allow: removed-init -- Preserve Init syntax coverage until #7951.
     [zero : T (cast (init : i64) : T)]
     [flag : bool (> n 0)]
     (if flag

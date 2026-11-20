@@ -1,5 +1,6 @@
 (import stdlib.byte_buf)
 (import stdlib.crypto_sha256 as sha)
+(import stdlib.io)
 (import stdlib.net.tls_wire as wire)
 (import stdlib.net.tls_transcript as transcript)
 (import stdlib.test)
@@ -28,7 +29,7 @@
     [(TlsTranscriptNewOk state) state]
     [(TlsTranscriptNewErr _)
       (test.assert-true false "valid transcript limits")
-      (init : transcript.TlsTranscript)]))
+      (io.panic "valid transcript limits")]))
 
 (define (require-ok [result : transcript.TlsTranscriptStatus]) : unit
   (match result

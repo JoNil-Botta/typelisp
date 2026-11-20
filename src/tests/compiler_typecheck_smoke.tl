@@ -1,3 +1,4 @@
+;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_typecheck_smoke.tl - Runnable smoke for the typechecker self-tests.
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
@@ -665,7 +666,7 @@
     (tc_tests.compiler-typecheck-ok?
       "(define (main [n : i64]) : unit
   (let
-    [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+    [items : (__tl_dyn-array (& n i64)) (__tl_make-array)]
     (begin
       (__tl_array-push! items (& n))
       (let [r : (& n i64) (array-ref items 0)] unit))))")
@@ -676,7 +677,7 @@
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [n : i64]) : unit
   (let
-    [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+    [items : (__tl_dyn-array (& n i64)) (__tl_make-array)]
     (let [n : i64 1] (__tl_array-push! items (& n)))))"
       "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
     (tc_tests.compiler-typecheck-error-ok?
@@ -694,7 +695,7 @@
   (and
     (tc_tests.compiler-typecheck-ok?
       "(define (main [n : i64]) : unit
-  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array)]
     (let [m : i64 1]
       (let [short : (__tl_dyn-array (& m i64)) items]
         (__tl_array-push! short (& m))))))")
@@ -702,7 +703,7 @@
       "(define (keep [items : (__tl_dyn-array (& l i64))] [r : (& l i64)]) : (__tl_dyn-array (& l i64))
   items)
 (define (main [n : i64]) : unit
-  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array)]
     (let [m : i64 1]
       (let [short : (__tl_dyn-array (& m i64)) (keep items (& m))]
         (__tl_array-push! short (& m))))))")
@@ -710,16 +711,16 @@
       "(define (count-both [a : (__tl_dyn-array (& l i64))] [b : (__tl_dyn-array (& l i64))]) : i64
   (+ (array-length a) (array-length b)))
 (define (main [n : i64]) : i64
-  (let [long : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+  (let [long : (__tl_dyn-array (& n i64)) (__tl_make-array)]
     (let [m : i64 1]
-      (let [short : (__tl_dyn-array (& m i64)) (init : (__tl_dyn-array (& m i64)))]
+      (let [short : (__tl_dyn-array (& m i64)) (__tl_make-array)]
         (count-both long short)))))")
     (tc_tests.compiler-typecheck-ok?
       "(defstruct Refs
   (:lifetimes a)
   (items (__tl_dyn-array (& a i64))))
 (define (main [n : i64]) : unit
-  (let [refs : (Refs n) (Refs (init : (__tl_dyn-array (& n i64))))]
+  (let [refs : (Refs n) (Refs (ann (__tl_make-array) : (__tl_dyn-array (& n i64))))]
     (let [m : i64 1]
       (let [short : (Refs m) refs]
         (__tl_array-push! short.items (& m))))))")
@@ -729,12 +730,12 @@
   (NoRefs)
   (SomeRefs (__tl_dyn-array (& a i64))))
 (define (main [n : i64]) : unit
-  (let [refs : (MaybeRefs n) (MaybeRefs.SomeRefs (init : (__tl_dyn-array (& n i64))))]
+  (let [refs : (MaybeRefs n) (MaybeRefs.SomeRefs (ann (__tl_make-array) : (__tl_dyn-array (& n i64))))]
     (let [m : i64 1]
       (let [short : (MaybeRefs m) refs] unit))))")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [n : i64]) : i64
-  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array)]
     (begin
       (let [m : i64 1]
         (let [short : (__tl_dyn-array (& m i64)) items]
@@ -743,7 +744,7 @@
       "typecheck: use of moved value `items`")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [n : i64]) : unit
-  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))]
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array)]
     (let [m : i64 1]
       (let [short : (__tl_dyn-array (& m i64)) items]
         (let [k : i64 2] (__tl_array-push! short (& k)))))))"
@@ -751,7 +752,7 @@
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [n : i64]) : unit
   (let [m : i64 1]
-    (let [items : (__tl_dyn-array (& m i64)) (init : (__tl_dyn-array (& m i64)))]
+    (let [items : (__tl_dyn-array (& m i64)) (__tl_make-array)]
       (let [long : (__tl_dyn-array (& n i64)) items] unit))))"
       "typecheck: let binding `long` type mismatch: expected (__tl_dyn-array (& n i64)), found (__tl_dyn-array (& m i64)); source lifetime `m` does not outlive required lifetime `n`")
     (tc_tests.compiler-typecheck-error-ok?

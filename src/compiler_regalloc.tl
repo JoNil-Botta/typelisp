@@ -604,7 +604,7 @@
 
 (define (compiler-reg-move-builder-empty) : CompilerRegMoveBuilder
   (let
-    [index : reg_i64_i64_map.Map (init)]
+    [index : reg_i64_i64_map.Map (reg_i64_i64_map.new)]
     (CompilerRegMoveBuilder
       (compiler-reg-move-seq-empty)
       index

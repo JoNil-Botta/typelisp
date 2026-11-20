@@ -9,6 +9,7 @@
 
 (define (first [p : (& a i64)]) : i64
   (let
+    ;; lint-allow: removed-init -- This test is about init's written type.
     [o : (RefOpt a) (init : (RefOpt a))]
     [q : (Ptr (& a i64)) (ptr-null : (Ptr (& a i64)))]
     [arr : (Array (Ptr (& a i64)) 2) (make-array (Ptr (& a i64)) 2)]

@@ -1,3 +1,4 @@
+;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_parse_core_tests.tl - White-box tests for the parser: declarations,
 ;; expressions, patterns, metadata, spans, error paths and compiler-parse-smoke.
 (import stdlib.iterator)

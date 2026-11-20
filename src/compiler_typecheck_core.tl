@@ -89624,6 +89624,7 @@
         [(Some ty) (tc-init-expr ctx env ty)]
         [(No)
           (Err
+            ;; lint-allow: removed-init -- Preserve the syntax diagnostic until #7951.
             "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")])]
     [(Ann inner-box ty-id)
       (let

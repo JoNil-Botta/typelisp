@@ -3,8 +3,7 @@
 (define (pick-refs [a : (& cell i64)] [b : (& cell i64)]) : (__tl_dyn-array
     (& cell i64))
   (let
-    [refs : (__tl_dyn-array (& cell i64))
-      (init : (__tl_dyn-array (& cell i64)))]
+    [refs : (__tl_dyn-array (& cell i64)) (__tl_make-array)]
     (begin
       (__tl_array-push! refs a)
       refs)))

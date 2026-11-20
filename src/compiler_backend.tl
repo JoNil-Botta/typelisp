@@ -73912,7 +73912,11 @@
 ;; function of the other.)
 (defstruct CompilerBackendIcfDigest
   (head i64)
-  (tail i64))
+  (tail i64)
+  ;; Set when the chunk reads a switch table. The tables are emitted in their
+  ;; own `.rodata` pass after the function bodies and name the function's local
+  ;; labels, so such a function must keep its body.
+  (pinned bool))
 
 (define (compiler-backend-icf-state-new
   [capacity : i64]
@@ -74023,7 +74027,8 @@
   [count : i64]) : CompilerBackendIcfDigest
   (CompilerBackendIcfDigest
     (compiler-backend-icf-mix digest.head 1099511628211 text start count)
-    (compiler-backend-icf-mix digest.tail 4294967311 text start count)))
+    (compiler-backend-icf-mix digest.tail 4294967311 text start count)
+    digest.pinned))
 
 ;; Fold one integer. The label renumbering needs no string for its slot: the fold
 ;; of `.Lc<n>` is the fold of the marker plus the number.
@@ -74032,7 +74037,8 @@
   [value : i64]) : CompilerBackendIcfDigest
   (CompilerBackendIcfDigest
     (* (bit-xor digest.head (+ value 1812433253)) 1099511628211)
-    (* (bit-xor digest.tail (+ value 2654435761)) 4294967311)))
+    (* (bit-xor digest.tail (+ value 2654435761)) 4294967311)
+    digest.pinned))
 
 (define (compiler-backend-icf-mix-view
   [digest : CompilerBackendIcfDigest]
@@ -74068,6 +74074,15 @@
             (+ index 1)
             -1)))
       -1)))
+
+;; True for the `.L<scope>_<label>_switch_table` token a switch's indirect jump
+;; reads. That label is defined by the switch-table pass, not by the chunk.
+(define (compiler-backend-icf-switch-table-token? [token : (& token str)]) : bool
+  (let
+    [length : i64 (__tl_string_length token)]
+    (if (< length 13)
+      false
+      (string.is-string-prefix-at token (& "_switch_table") (- length 13)))))
 
 ;; Offset of the `.globl` that opens the function. Everything before it is the
 ;; `#t <index> <name>` symbol-map comment, which carries the function's own
@@ -74114,8 +74129,12 @@
       [kind : i64 0]
       [value : i64 0]
       [counted : i64 0]
+      [pinned : bool false]
       [digest : CompilerBackendIcfDigest
-        (CompilerBackendIcfDigest 1469598103934665603 -3750763034362895579)]
+        (CompilerBackendIcfDigest
+          1469598103934665603
+          -3750763034362895579
+          false)]
       (begin
         (set! dot (string.index-of-byte text scan (cast '.' : u8)))
         (set! under (string.index-of-byte text scan (cast '_' : u8)))
@@ -74147,6 +74166,10 @@
                     (compiler-backend-icf-token-end text (+ hit 2) length)]
                   [token : (& text str)
                     (string.substring-view text hit (- end hit))]
+                  [_pinned : unit
+                    (if (compiler-backend-icf-switch-table-token? token)
+                      (set! pinned true)
+                      unit)]
                   [after : i64 (compiler-backend-icf-local-label-text token)]
                   (if (>= after 0)
                     (let
@@ -74226,7 +74249,20 @@
               (set! scan (+ hit 1))
               (set! dot (string.index-of-byte text scan (cast '.' : u8)))
               (set! under (string.index-of-byte text scan (cast '_' : u8))))))
-        (compiler-backend-icf-mix-range digest text copied (- length copied))))))
+        (CompilerBackendIcfDigest
+          (compiler-backend-icf-mix
+            digest.head
+            1099511628211
+            text
+            copied
+            (- length copied))
+          (compiler-backend-icf-mix
+            digest.tail
+            4294967311
+            text
+            copied
+            (- length copied))
+          pinned)))))
 
 (define (compiler-backend-icf-bucket-match
   [state : (& state CompilerBackendIcfState)]
@@ -74320,7 +74356,10 @@
           (let
             [digest : CompilerBackendIcfDigest
               (compiler-backend-icf-digest state home text symbol)]
-            [group : i64 (compiler-backend-icf-bucket-match state digest)]
+            [group : i64
+              (if digest.pinned
+                -1
+                (compiler-backend-icf-bucket-match state digest))]
             (if (>= group 0)
               (begin
                 (compiler-backend-icf-merged state home symbol group)
@@ -74337,7 +74376,9 @@
                     symbol
                     kept)))
               (begin
-                (compiler-backend-icf-register state home digest symbol)
+                (if digest.pinned
+                  unit
+                  (compiler-backend-icf-register state home digest symbol))
                 "")))]
         (begin
           (unsafe

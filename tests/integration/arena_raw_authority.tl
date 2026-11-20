@@ -18,7 +18,9 @@
     [view : arena.Arena
       (unsafe
         (arena.Arena raw))]
-    [zero : arena.Arena (init : arena.Arena)]
+    [zero : arena.Arena
+      (unsafe
+        (arena.Arena 0))]
     [local : Arena (Arena 40)]
     [size : i64 (in-arena view (string.string-length (string.concat "a" "b")))]
     (begin

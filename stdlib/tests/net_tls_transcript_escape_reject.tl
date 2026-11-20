@@ -1,3 +1,4 @@
+(import stdlib.io)
 (import stdlib.net.tls_transcript as transcript)
 
 (define (main) : i64
@@ -5,7 +6,7 @@
     [state : transcript.TlsTranscript
       (match (transcript.new (transcript.default-limits))
         [(TlsTranscriptNewOk value) value]
-        [_ (init : transcript.TlsTranscript)])]
+        [_ (io.panic "valid transcript limits")])]
     [escaped : transcript.TlsTranscriptHashResult
       (with-arena
         scratch

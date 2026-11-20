@@ -530,12 +530,12 @@
 (define (empty-config [host-data : HostsSnapshot]) : ConfigBuilder
   (ConfigBuilder
     host-data
-    (init : (Array Nameserver 8))
+    (make-array Nameserver 8)
     0
-    (init : (Array dns_name.DnsName 6))
+    (make-array dns_name.DnsName 6)
     0
     1000
-    (init : (Array ConfigDiagnostic 64))
+    (make-array ConfigDiagnostic 64)
     0
     0))
 

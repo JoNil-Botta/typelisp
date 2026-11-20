@@ -266,9 +266,7 @@
 ;; Native macro images are read one group at a time: a request expands the
 ;; group its frame belongs to, and the bytes belong to the asking compile's
 ;; arena, so this module never keeps the catalog resident.
-(define (compiler-embedded-stdlib-tlci-group-bytes
-  [group : i64]
-  [raw-limit : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
+(define (compiler-embedded-stdlib-tlci-group-bytes [group : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
   (when
     (not (compiler-embedded-stdlib-tlci-frames-ensure!))
     (return (Err "embedded stdlib tlci: catalog unavailable")))
@@ -278,12 +276,32 @@
     (when
       (or (< group 0) (>= group catalog.groups))
       (return (Err "embedded stdlib tlci: invalid group")))
-    (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
-      (& payload.embedded-stdlib-tlci-bytes)
-      catalog
-      group
-      raw-limit
-      (& (array-ref compiler-embedded-stdlib-tlci-model 0)))))
+    ;; The cached group answers every request in it, and a different group
+    ;; replaces it, so repeated requests in one group cost a lookup.
+    (when
+      (= group compiler-embedded-stdlib-tlci-group-cache-group)
+      (return
+        (Ok
+          (clone (array-ref compiler-embedded-stdlib-tlci-group-cache-holder 0)))))
+    (match (in-arena
+      (unsafe
+        (arena.Arena (compiler-embedded-stdlib-tlci-session-arena)))
+      (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+        (& payload.embedded-stdlib-tlci-bytes)
+        catalog
+        group
+        0
+        (& (array-ref compiler-embedded-stdlib-tlci-model 0))))
+      [(Err message) (Err message)]
+      [(Ok bytes)
+        (set!
+          (array-ref compiler-embedded-stdlib-tlci-group-cache-holder 0)
+          (clone bytes))
+        (set! compiler-embedded-stdlib-tlci-group-cache-group group)
+        (set!
+          compiler-embedded-stdlib-tlci-group-cache-raw
+          (array-length bytes))
+        (Ok bytes)])))
 
 ;; Frame `index`, expanded from its group and checked against the record's
 ;; checksum word.
@@ -309,13 +327,9 @@
             (& payload.embedded-stdlib-tlci-bytes)
             catalog
             index)]
-        ;; A group is tokenized as one window, so a frame boundary inside it
-        ;; need not fall on a token boundary; the soft prefix decode finishes
-        ;; the token that crosses it.
         [group : (__tl_dyn-array u8)
           (match (compiler-embedded-stdlib-tlci-group-bytes
-            (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
-            (+ offset raw))
+            (frames.compiler-embedded-stdlib-tlci-frames-group-of index))
             [(Ok bytes) bytes]
             [(Err _) (return (__tl_make-array u8 0))])]
         [record : i64

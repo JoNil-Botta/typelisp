@@ -213,9 +213,6 @@
   0)
 (define compiler-embedded-stdlib-tlci-legacy : i64
   0)
-(define compiler-embedded-stdlib-tlci-legacy-images : (__tl_dyn-array
-    (__tl_dyn-array u8))
-  (__tl_make-array (__tl_dyn-array u8) 1))
 (define compiler-embedded-stdlib-tlci-legacy-frames : (__tl_dyn-array
     frames_v2.CompilerEmbeddedStdlibTlciV2Frames)
   (__tl_make-array frames_v2.CompilerEmbeddedStdlibTlciV2Frames 1))

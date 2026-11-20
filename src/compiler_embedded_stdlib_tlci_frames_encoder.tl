@@ -122,8 +122,6 @@
       (set! index 0)
       (while (< index count)
         (let
-          [record : i64
-            (frames.compiler-embedded-stdlib-tlci-frames-record index)]
           [name-len : i64
             (if (= index 0)
               0
@@ -140,8 +138,7 @@
             (&mut out)
             (tlci.tlci-read-u64 (& (array-ref images index)) 48))
           (+= name-cursor name-len)
-          (+= raw-offset (string.string-length (& source)))
-          (set! record record))
+          (+= raw-offset (string.string-length (& source))))
         (set! index (+ index 1)))
       (set! index 0)
       (while (< index (array-length names))

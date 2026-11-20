@@ -1162,6 +1162,7 @@
   (user-symbol-cache-count i64)
   (user-symbol-cache-generation i64)
   (user-symbol-cache-table-id i64)
+  (absolute-switch-ok bool)
   (abort-site-counter i64)
   ;; Lazily allocated on the first emitted function.  Keep only the opaque
   ;; address here so the job owner stays independent of the function-state
@@ -1264,6 +1265,7 @@
         0
         (ci.intern-compat-state-generation intern-state)
         (ci.intern-compat-state-table-id intern-state)
+        false
         0
         0
         0
@@ -1934,6 +1936,17 @@
   ;; Three i64 lanes plus one String handle per slot.  This observation is
   ;; intentionally explicit rather than exposing the backing arrays.
   (* (compiler-backend-state-user-symbol-cache-capacity state) 32))
+
+(define (compiler-backend-state-absolute-switch-ok?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).absolute-switch-ok))
+
+(define (compiler-backend-state-set-absolute-switch-ok!
+  [state : CompilerBackendState]
+  [ok : bool]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).absolute-switch-ok ok)))
 
 (define (compiler-backend-state-abort-site-counter
   [state : CompilerBackendState]) : i64
@@ -49002,6 +49015,7 @@
   [retarget-phi-edges : bool]
   [targets : BackendSymbolSeq]
   [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
+  [absolute : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
     [out : text_buf.TextBuf buf]
@@ -49028,21 +49042,28 @@
                           current-label
                           tag)
                         label)))
-                  " - ")
-                (string.copy (& table-label)))
+                  (if absolute
+                    ""
+                    " - "))
+                (if absolute
+                  ""
+                  (string.copy (& table-label))))
               "\n"))]))
     out))
 
-;; One switch table: `cases.len` four-byte entries, each the difference between
-;; the case label and the table label. Both labels live in the function's own
-;; text section, so the assembler resolves every entry to a constant and the
-;; table needs no relocation in the object (ELF or COFF) and no 64-bit slot.
+;; One switch table: `cases.len` four-byte entries. A non-PIC ELF image takes
+;; the case address itself, which the linker fills through a 32-bit absolute
+;; relocation; every other code model takes the difference between the case
+;; label and the table label, which the assembler resolves to a constant, so
+;; those tables need no relocation at all. The caller emits the section
+;; directive for the whole run of tables.
 (define (compiler-backend-emit-switch-table
   [function : String]
   [current-label : i64]
   [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [retarget-phi-edges : bool]
-  [targets : BackendSymbolSeq]) : String
+  [targets : BackendSymbolSeq]
+  [absolute : bool]) : String
   (text_buf.render
     (compiler-backend-emit-switch-table-cases-into
       (compiler-backend-global-shared-view function)
@@ -49050,6 +49071,7 @@
       retarget-phi-edges
       targets
       cases
+      absolute
       (text_buf.append
         (text_buf.append
           (text_buf.append (text_buf.empty) "    .balign 4\n")
@@ -49060,6 +49082,7 @@
   [function : String]
   [current-label : i64]
   [targets : BackendSymbolSeq]
+  [absolute : bool]
   [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -49069,6 +49092,7 @@
       (compiler-backend-global-shared-view function)
       current-label
       (compiler-backend-global-shared-view targets)
+      absolute
       instrs
       (+ index 1)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
@@ -49084,12 +49108,14 @@
                 (compiler-backend-global-shared-view targets)
                 cases
                 default-label)
-              targets))]
+              targets
+              absolute))]
         [_ buf]))))
 
 (define (compiler-backend-emit-switch-tables-seq-into
   [function : String]
   [targets : BackendSymbolSeq]
+  [absolute : bool]
   [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -49100,29 +49126,41 @@
         (compiler-backend-emit-switch-tables-seq-into
           (compiler-backend-global-shared-view function)
           (compiler-backend-global-shared-view targets)
+          absolute
           blocks
           (+ index 1)
           (compiler-backend-emit-switch-tables-instr-seq-into
             function
             label
             targets
+            absolute
             instrs
             0
             buf))])))
 
+;; Every switch table of the program, in one run: `.rodata` for the 32-bit
+;; absolute entries a non-PIC ELF image can relocate, `.text` for the relative
+;; entries every other model folds at assembly time.
 (define (compiler-backend-emit-switch-tables-functions-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
+  [absolute : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (compiler-backend-emit-switch-tables-function-seq-into
     functions
     program-index
+    absolute
     0
-    (text_buf.append buf "    .text\n")))
+    (text_buf.append
+      buf
+      (if absolute
+        "    .section .rodata\n"
+        "    .text\n"))))
 
 (define (compiler-backend-emit-switch-tables-function-seq-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
+  [absolute : bool]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
@@ -49139,6 +49177,7 @@
           (compiler-backend-emit-switch-tables-function-seq-into
             functions
             program-index
+            absolute
             (+ index 1)
             (match (compiler-backend-global-shared-view blocks)
               [(Array seq)
@@ -49147,9 +49186,46 @@
                   (compiler-backend-function-state-phi-targets
                     (compiler-backend-state-function-state
                       program-index.backend-state))
+                  absolute
                   seq
                   0
                   buf)])))])))
+
+;; The case address for INDEX-REG: TABLE-REG holds the rip-relative table base
+;; and TARGET-REG the sign-extended 4-byte difference, or, for a non-PIC ELF
+;; image, TARGET-REG alone receives the entry's 32-bit absolute address.
+(define (compiler-backend-emit-switch-table-lookup
+  [function : String]
+  [current-label : i64]
+  [index-reg : String]
+  [table-reg : String]
+  [target-reg : String]
+  [absolute : bool]) : String
+  (if absolute
+    (str_cat.str-cat
+      "    movl "
+      (compiler-backend-switch-table-label function current-label)
+      "(,"
+      index-reg
+      ",4), "
+      (compiler-backend-reg-part target-reg 4)
+      "\n")
+    (str_cat.str-cat
+      "    leaq "
+      (compiler-backend-switch-table-label function current-label)
+      "(%rip), "
+      table-reg
+      "\n    movslq ("
+      table-reg
+      ","
+      index-reg
+      ",4), "
+      target-reg
+      "\n    addq "
+      table-reg
+      ", "
+      target-reg
+      "\n")))
 
 ;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
 ;; saturated at a switch dispatch, one or both of the index / jump-table-base
@@ -49181,6 +49257,7 @@
   [index-reg : String]
   [table-reg : String]
   [target-reg : String]
+  [absolute : bool]
   [load-index : String]
   [backend-state : CompilerBackendState]) : String
   (let
@@ -49231,6 +49308,10 @@
               (compiler_ir_types.compiler-ir-label-text current-label)
               "_disp_d"
               ""))))]
+    ;; The target is computed in the index register itself whenever that copy is
+    ;; a dead scratch: only then can the range check not run first, because the
+    ;; index must survive the load.
+    [shares-index : bool (string.eq target-reg index-reg)]
     ;; Emits the borrowed-occupant restores here (before the transfer) and
     ;; suppresses the wrap's trailing restore. Must be spliced AFTER the target
     ;; stash and BEFORE the indirect jump.
@@ -49247,6 +49328,16 @@
           index-reg
           "\n"
           ""))
+      (if (or total-switch (not shares-index))
+        ""
+        (str_cat.str-cat
+          "    leaq "
+          (compiler-backend-asm-label
+            (compiler-backend-global-shared-view function)
+            default-label)
+          "(%rip), "
+          target-reg
+          "\n"))
       (if total-switch
         ""
         (str_cat.str-cat
@@ -49255,24 +49346,18 @@
           ", "
           index-reg
           "\n    ja "
-          default-stub-label
+          (if shares-index
+            default-stub-label
+            done-label)
           "\n"))
-      "    leaq "
-      (compiler-backend-switch-table-label function current-label)
-      "(%rip), "
-      table-reg
-      "\n    movslq ("
-      table-reg
-      ","
-      index-reg
-      ",4), "
-      target-reg
-      "\n    addq "
-      table-reg
-      ", "
-      target-reg
-      "\n"
-      (if total-switch
+      (compiler-backend-emit-switch-table-lookup
+        function
+        current-label
+        index-reg
+        table-reg
+        target-reg
+        absolute)
+      (if (or total-switch (not shares-index))
         ""
         (str_cat.str-cat
           "    jmp "
@@ -49285,9 +49370,10 @@
             default-label)
           "(%rip), "
           target-reg
-          "\n"
-          done-label
-          ":\n"))
+          "\n"))
+      (if total-switch
+        ""
+        (str_cat.str-cat done-label ":\n"))
       "    movq "
       target-reg
       ", "
@@ -49329,14 +49415,17 @@
           "%r8"
           backend-state)
         index-home)]
+    [absolute : bool (compiler-backend-state-absolute-switch-ok? backend-state)]
     [table-exclude : (__tl_dyn-array String)
       (compiler-backend-one-exclude
         (compiler-backend-global-shared-view index-reg))]
-    ;; Every dispatch is rip-relative now, in both code models: a table entry is
-    ;; a 4-byte offset from the table base, so the base register is always
-    ;; needed.
+    ;; A relative entry is an offset from the table base, so that code model
+    ;; always needs a base register. A 32-bit absolute entry is the address
+    ;; itself, so the non-PIC form addresses the table directly.
     [table-reg : String
-      (compiler-backend-scavenge-reg-here table-exclude 1 "%r9" backend-state)]
+      (if absolute
+        ""
+        (compiler-backend-scavenge-reg-here table-exclude 1 "%r9" backend-state))]
     ;; The target address is computed in a scratch that is dead at the transfer.
     ;; The index copy is that scratch when the index had to be loaded into one;
     ;; otherwise the index home is still live here (a successor block can read
@@ -49347,7 +49436,7 @@
         (compiler-backend-global-shared-view table-reg))]
     [target-exclude-n : i64 2]
     [target-reg : String
-      (if need-index-scratch
+      (if (and (not absolute) need-index-scratch)
         (string.copy (& index-reg))
         (compiler-backend-scavenge-reg-here
           target-exclude
@@ -49380,6 +49469,7 @@
           index-reg
           table-reg
           target-reg
+          absolute
           load-index
           backend-state)
         (compiler-backend-emit-switch-dispatch-direct
@@ -49392,6 +49482,7 @@
           index-reg
           table-reg
           target-reg
+          absolute
           load-index)))))
 
 ;; The plain dispatch: the final target block address is computed into a scratch
@@ -49407,6 +49498,7 @@
   [index-reg : String]
   [table-reg : String]
   [target-reg : String]
+  [absolute : bool]
   [load-index : String]) : String
   (str_cat.str-cat
     load-index
@@ -49431,21 +49523,14 @@
           (compiler-backend-global-shared-view function)
           default-label)
         "\n"))
-    "    leaq "
-    (compiler-backend-switch-table-label function current-label)
-    "(%rip), "
-    table-reg
-    "\n    movslq ("
-    table-reg
-    ","
-    index-reg
-    ",4), "
-    target-reg
-    "\n    addq "
-    table-reg
-    ", "
-    target-reg
-    "\n    jmp *"
+    (compiler-backend-emit-switch-table-lookup
+      function
+      current-label
+      index-reg
+      table-reg
+      target-reg
+      absolute)
+    "    jmp *"
     target-reg
     "\n"))
 
@@ -78423,6 +78508,8 @@ tl_shared_object_init:
                       (compiler-backend-emit-switch-tables-functions-into
                         functions
                         program-index
+                        (compiler-backend-state-absolute-switch-ok?
+                          program-index.backend-state)
                         descriptor-buf)]
                     [runtime-data-buf : text_buf.TextBuf
                       (text_buf.append
@@ -78848,7 +78935,7 @@ tl_shared_object_init:
   [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]
-  [_pic-emit? : bool]
+  [pic-emit? : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
   (begin
     (when
@@ -78882,6 +78969,15 @@ tl_shared_object_init:
       backend-state
       (compiler-backend-state-stream-state backend-state))
     (compiler-backend-state-set-abort-site-counter! backend-state 0)
+    ;; A 4-byte table entry holding an absolute case address needs a
+    ;; 32-bit-absolute relocation, which only a non-PIC, non-shared ELF image
+    ;; below 2 GiB can carry; every other model keeps the rip-relative table.
+    (compiler-backend-state-set-absolute-switch-ok!
+      backend-state
+      (and
+        (not pic-emit?)
+        (not (compiler-backend-state-shared-object-code-model? backend-state))
+        (compiler-backend-target-elf? target)))
     (cfg
       test
       (profile_state.compiler-profile-metrics-reset-range!

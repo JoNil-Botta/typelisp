@@ -17242,7 +17242,10 @@ f:
       windows-policy.windows
       (not windows-policy.linux)
       pic-policy.linux
-      (not pic-policy.windows))))
+      (not pic-policy.windows)
+      (backend.compiler-backend-state-absolute-switch-ok? linux-state)
+      (not (backend.compiler-backend-state-absolute-switch-ok? windows-state))
+      (not (backend.compiler-backend-state-absolute-switch-ok? pic-state)))))
 
 (define (compiler-backend-abort-counter-failure-reset-ok?) : bool
   (let
@@ -17644,17 +17647,18 @@ f:
       (let
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
-          (asm-has?
-            body
-            "    leaq .Lf0_entry_switch_table(%rip), "
-            "    movslq ("
-            "    addq ")
+          ;; A non-PIC image reads the case address itself out of the table and
+          ;; transfers through the register it landed in.
+          (asm-has? body "    movl .Lf0_entry_switch_table(,%r" ",4), %e")
+          (asm-has? body "    jmp *%r")
           (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")
+          (asm-lacks? body "    movslq (")
           (= (backend.compiler-backend-string-count asm "    .long .Lf0_") 6)
           (asm-has?
             asm
-            "    .long .Lf0_zero - .Lf0_entry_switch_table\n"
-            "    .long .Lf0_five - .Lf0_entry_switch_table\n")))]
+            "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n"
+            "    .long .Lf0_zero\n"
+            "    .long .Lf0_five\n")))]
     [(Err _) false]))
 
 (define (compiler-backend-forwarded-total-switch-asm-ok?) : bool
@@ -17664,11 +17668,8 @@ f:
       (let
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
-          (asm-has?
-            body
-            "    leaq .Lf0_entry_switch_table(%rip), "
-            "    movslq ("
-            "    addq ")
+          (asm-has? body "    movl .Lf0_entry_switch_table(,%r" ",4), %e")
+          (asm-has? body "    jmp *%r")
           (asm-lacks? body "    cmpq $5" "    ja ")))]
     [(Err _) false]))
 
@@ -17689,7 +17690,11 @@ f:
             "    leaq .Lf0_entry_switch_table(%rip), "
             "    movslq ("
             "    addq ")
-          (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")))]
+          (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")
+          (asm-has?
+            asm
+            "    .text\n"
+            "    .long .Lf0_zero - .Lf0_entry_switch_table\n")))]
     [(Err _) false]))
 
 (define (compiler-backend-total-switch-object-image-ok?) : bool
@@ -17745,21 +17750,21 @@ f:
         (asm-has? asm "    movq -8(%rsp), %r8\n")
         (asm-has? asm "    cmpq $2, %r8\n")
         (asm-has? asm "    ja .Lf0_other\n")
-        ;; Every dispatch is rip-relative: the table base plus a 4-byte,
-        ;; sign-extended entry offset, then an indirect jump.
-        (asm-has? asm "    leaq .Lf0_entry_switch_table(%rip), ")
-        (asm-has? asm "    movslq (%r" ",%r" ",4), %r")
-        ;; The table is text-resident, 4-byte aligned, and holds differences,
-        ;; not 64-bit pointers.
-        (asm-has? asm "    .balign 4\n.Lf0_entry_switch_table:\n")
-        (asm-lacks?
+        ;; Non-PIC Linux reads the case address itself out of a 4-byte-entry
+        ;; table and transfers through the register it landed in.
+        (asm-has? asm "    movl .Lf0_entry_switch_table(,%r" ",4), %e")
+        (asm-has? asm "    jmp *%r")
+        (asm-lacks? asm "    movslq (")
+        ;; The table is read-only, 4-byte aligned, and holds 32-bit absolute
+        ;; case addresses, not 64-bit pointers or differences.
+        (asm-has?
           asm
-          "    .section .rodata\n    .balign 8\n.Lf0_entry_switch_table")
-        (asm-has? asm "    .long .Lf0_zero - .Lf0_entry_switch_table\n")
-        (asm-has? asm "    .long .Lf0_one - .Lf0_entry_switch_table\n")
-        (asm-has? asm "    .long .Lf0_two - .Lf0_entry_switch_table\n")
+          "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+        (asm-has? asm "    .long .Lf0_zero\n")
+        (asm-has? asm "    .long .Lf0_one\n")
+        (asm-has? asm "    .long .Lf0_two\n")
         (asm-lacks? asm "    .quad .Lf0_")
-        (asm-has? asm ".text\n"))]
+        (asm-lacks? asm "    .long .Lf0_zero - .Lf0_entry_switch_table\n"))]
     [(Err _) false]))
 
 (define (compiler-backend-switch-base-test-program) : ir.CompilerIrProgram
@@ -17816,9 +17821,9 @@ f:
         (asm-has? asm "    cmpq $1, %r8\n")
         (asm-has? asm "    ja .Lf0_other\n")
         ;; The base subtraction leaves the entry index, and the dispatch reads
-        ;; the 4-byte offset out of the rip-relative table.
-        (asm-has? asm "    leaq .Lf0_entry_switch_table(%rip), ")
-        (asm-has? asm "    movslq (%r" ",%r" ",4), %r"))]
+        ;; the 4-byte absolute case address out of the table.
+        (asm-has? asm "    movl .Lf0_entry_switch_table(,%r" ",4), %e")
+        (asm-has? asm "    jmp *%r"))]
     [(Err _) false]))
 
 (define (compiler-backend-switch-bad-shape-program) : ir.CompilerIrProgram
@@ -17904,8 +17909,8 @@ f:
     (has
       "    ja .Lf0_entry_switch_default\n"
       "    .balign 4\n.Lf0_entry_switch_table:\n"
-      "    .long .Lf0_entry_switch_case_0 - .Lf0_entry_switch_table\n"
-      "    .long .Lf0_entry_switch_case_1 - .Lf0_entry_switch_table\n"
+      "    .long .Lf0_entry_switch_case_0\n"
+      "    .long .Lf0_entry_switch_case_1\n"
       ".Lf0_entry_switch_case_0:\n"
       ".Lf0_entry_switch_case_1:\n"
       ".Lf0_entry_switch_default:\n"
@@ -17971,19 +17976,13 @@ f:
       (and
         (asm-has? asm ".Lf0_entry_switch_table:\n")
         ;; The negative key spells with `m`, in the table and at the block.
-        (asm-has?
-          asm
-          "    .long .Lf0_entry_switch_case_m1 - .Lf0_entry_switch_table\n")
+        (asm-has? asm "    .long .Lf0_entry_switch_case_m1\n")
         (asm-has? asm ".Lf0_entry_switch_case_m1:\n")
         ;; A non-negative key is spelled exactly as it always was.
-        (asm-has?
-          asm
-          "    .long .Lf0_entry_switch_case_0 - .Lf0_entry_switch_table\n")
+        (asm-has? asm "    .long .Lf0_entry_switch_case_0\n")
         (asm-has? asm ".Lf0_entry_switch_case_0:\n")
         ;; Equal-magnitude signed keys remain distinct.
-        (asm-has?
-          asm
-          "    .long .Lf0_entry_switch_case_1 - .Lf0_entry_switch_table\n")
+        (asm-has? asm "    .long .Lf0_entry_switch_case_1\n")
         (asm-has? asm ".Lf0_entry_switch_case_1:\n")
         ;; No `-` reaches a symbol name anywhere in the emission.
         (asm-lacks? asm "switch_case_-")

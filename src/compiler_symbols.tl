@@ -109,11 +109,11 @@
   (:lifetimes symbols)
   (value (& symbols CompilerSymbols)))
 
-;; A type map is append-only after construction. Its backing allocation
+;; A symbol map is append-only after construction. Its backing allocation
 ;; identifies one table incarnation, while `generation` observes additions
 ;; that fit without reallocating. Job-owned lookup caches use both fields so a
 ;; negative result cannot survive symbol growth or a rebuilt macro view.
-(defstruct CompilerSymbolsTypeMapStamp
+(defstruct CompilerSymbolsMapStamp
   (owner i64)
   (generation i64))
 
@@ -710,12 +710,22 @@
 (defmacro (compiler-symbols-type-map-stamp [symbols : Expr]) : Expr
   `(match (compiler-symbols-reference-shared-view ,symbols)
     [(CompilerSymbols _ types _ _ _ _)
-      (CompilerSymbolsTypeMapStamp
+      (CompilerSymbolsMapStamp
         (cast
           (unsafe
             (ptr->int (ptr-cast (__tl_array-data types.keys) : (Ptr i64))))
           : i64)
         types.len)]))
+
+(defmacro (compiler-symbols-value-map-stamp [symbols : Expr]) : Expr
+  `(match (compiler-symbols-reference-shared-view ,symbols)
+    [(CompilerSymbols values _ _ _ _ _)
+      (CompilerSymbolsMapStamp
+        (cast
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data values.keys) : (Ptr i64))))
+          : i64)
+        values.len)]))
 
 (define (compiler-symbols-lookup-macro-id
   [symbols : (& symbols CompilerSymbols)]

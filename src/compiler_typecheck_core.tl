@@ -6060,24 +6060,26 @@
         ctx
         env
         expected
-        (tc-selected-publish
+        (tc-infer-selected-loop-exit
+          ctx
+          env
           (tc-loop-control-expr env "break")
           syntax
           source
           typed.TypedOperation.Break
-          (tc-selected-no-occurrences)
           sink))]
     [(ast.AstExpr.Continue)
       (tc-selected-contextual-result
         ctx
         env
         expected
-        (tc-selected-publish
+        (tc-infer-selected-loop-exit
+          ctx
+          env
           (tc-loop-control-expr env "continue")
           syntax
           source
           typed.TypedOperation.Continue
-          (tc-selected-no-occurrences)
           sink))]
     [(ast.AstExpr.Call func-id args)
       (tc-infer-selected-call
@@ -11052,11 +11054,12 @@
             (tc-name-id-list-head origins)
             live))))))
 
-;; The end operator (D-C47): every end recognized by the builtin dispatch goes
-;; through this operator. Those are a safe destroy or rewind (`ArenaForm`) and
-;; a call passing `:invalidate` arguments. Two pre-existing bypasses are not
-;; recognized ends: a hygienic or macro-expanded name of the safe primitives
-;; (#9041) and a function-value alias of them (#9490).
+;; The end operator (D-C47): every end goes through this operator. Those are a
+;; safe destroy or rewind (`ArenaForm`, decided from the definition the callee
+;; resolves to, so a macro expansion is one), a call passing `:invalidate`
+;; arguments, and the exit of a `with` scope whose cleanup is a safe end
+;; (`tc-selected-with-cleanup-ends`). The safe ends are not function values
+;; (`tc-arena-end-value-message`), so no call reaches them unrecognized.
 ;;
 ;; Each end publishes its occurrences here, after `call` (its type
 ;; `result-ty`). No live `with` cleanup owner may hold an ended region: the
@@ -11088,6 +11091,10 @@
   [origins : TcNameIdList]
   [call : typed.TypedOccurrenceId]
   [result-ty : ast.AstType]
+  ;; The scoped slots the end reaches: those below `limit`, or all for -1. A
+  ;; `with` exit ends its binder's arena after the binder and the later
+  ;; bindings of its scope have been cleaned up (`tc-selected-with-cleanup-ends`).
+  [limit : i64]
   [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
@@ -11124,9 +11131,14 @@
           [carrier : TcTypeEnvScopedCarrier
             (tc-type-env-scoped-runtime-current env)]
           [count : i64
-            (if (< carrier.sidecar.stack.slot-count bindings.len)
-              carrier.sidecar.stack.slot-count
-              bindings.len)]
+            (let
+              [visible : i64
+                (if (< carrier.sidecar.stack.slot-count bindings.len)
+                  carrier.sidecar.stack.slot-count
+                  bindings.len)]
+              (if (and (>= limit 0) (< limit visible))
+                limit
+                visible))]
           [unit? : bool
             (tc-type-eq (tc-global-shared-view result-ty) ast.AstType.Unit)]
           [children : (__tl_dyn-array typed.TypedOccurrenceId)
@@ -11361,6 +11373,37 @@
                 (typed.TypedOccurrenceId
                   (typed.typed-handle-copy (& (array-ref ended index).handle))))
               (set! index (+ index 1))))
+          ;; A value the end yields holding an ended region is ended with
+          ;; it (a `with` result allocated in the arena its exit destroys).
+          (when
+            (and
+              (>= temporary 0)
+              (tc-selected-type-ends-region?
+                env
+                (clone result-ty)
+                owners
+                region))
+            (match (tc-selected-op!
+              store
+              lease
+              ast.AstType.Unit
+              (typed.TypedOperation.Invalidate
+                (typed.TypedBinderId
+                  (typed.typed-handle-copy (& (array-ref held 0).handle))))
+              (tc-selected-no-occurrences)
+              (& source))
+              [(TcSelectedPatternResult.Ok id)
+                (tc-selected-occurrences-push! (&mut children) id)]
+              [(TcSelectedPatternResult.Unsupported)
+                (return
+                  (tc-selected-unrepresented
+                    (ResultTcType.Ok result-ty)
+                    (TcSelectedSink.Capture store lease bindings)))]
+              [(TcSelectedPatternResult.Err message)
+                (return
+                  (TcSelectedResult.Err
+                    message
+                    (TcSelectedSink.Capture store lease bindings)))]))
           ;; A value the call yields is read back last.
           (when
             (>= temporary 0)
@@ -11634,6 +11677,7 @@
               args
               call
               ty
+              -1
               syntax
               source
               after)]
@@ -11977,6 +12021,45 @@
               [(TcSelectedResult.Ok _ sequence done)
                 (TcSelectedResult.Ok ty sequence done)])])])))
 
+;; What a safe end ends (-1 for none of each): a destroy's owner (an owner's
+;; every region ends), or a rewind's phase region and the phase's owner.
+(defstruct TcSelectedEndTarget
+  (owner i64)
+  (region i64)
+  (phase-owner i64))
+
+;; The target of `destroy-safe!` (`destroy?`, of type `owner-ty`) or
+;; `rewind-safe!` of operand `arg`, the variable `token` spells (-1 for none).
+(define (tc-selected-end-target
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [destroy? : bool]
+  [token : i64]
+  [arg : ast.AstExpr]
+  [owner-ty : ResultTcType]) : TcSelectedEndTarget
+  (if destroy?
+    (TcSelectedEndTarget
+      (match owner-ty
+        [(ResultTcType.Ok ty)
+          (match (tc-destroy-safe-owner-place-id ctx env arg ty)
+            [(TcMaybeNameId.Some id) id]
+            [(TcMaybeNameId.No) -1])]
+        [(ResultTcType.Err _) -1])
+      -1
+      -1)
+    (TcSelectedEndTarget
+      -1
+      (if (< token 0)
+        -1
+        (match (tc-arena-phase-token-region-active env token)
+          [(TcMaybeNameId.Some id) id]
+          [(TcMaybeNameId.No) -1]))
+      (if (< token 0)
+        -1
+        (match (tc-arena-phase-token-owner-active env token)
+          [(TcMaybeNameId.Some id) id]
+          [(TcMaybeNameId.No) -1])))))
+
 ;; `destroy-safe!` (`destroy?`) or `rewind-safe!` of operand `arg-id`.
 (define (tc-infer-selected-arena-invalidate
   [ctx : TcContext]
@@ -11999,37 +12082,60 @@
       (tc-expr-var-name-id
         (tc-context-expr-segment-bases ctx)
         (tc-global-shared-view arg))]
-    ;; The ended region's owner (an owner's every region ends) or, for a
-    ;; rewind, the phase region alone.
-    [owner : i64
-      (if destroy?
-        (match (tc-expr-id ctx env arg-id)
-          [(ResultTcType.Ok owner-ty)
-            (match (tc-destroy-safe-owner-place-id
-              ctx
-              env
-              (tc-global-shared-view arg)
-              owner-ty)
-              [(TcMaybeNameId.Some id) id]
-              [(TcMaybeNameId.No) -1])]
-          [(ResultTcType.Err _) -1])
-        -1)]
-    [region : i64
-      (if (or destroy? (< token 0))
-        -1
-        (match (tc-arena-phase-token-region-active env token)
-          [(TcMaybeNameId.Some id) id]
-          [(TcMaybeNameId.No) -1]))]
-    [phase-owner : i64
-      (if (or destroy? (< token 0))
-        -1
-        (match (tc-arena-phase-token-owner-active env token)
-          [(TcMaybeNameId.Some id) id]
-          [(TcMaybeNameId.No) -1]))]
+    [target : TcSelectedEndTarget
+      (tc-selected-end-target
+        ctx
+        env
+        destroy?
+        token
+        (clone arg)
+        (if destroy?
+          (tc-expr-id ctx env arg-id)
+          (ResultTcType.Ok ast.AstType.Unit)))]
+    [owner : i64 target.owner]
+    [region : i64 target.region]
+    [phase-owner : i64 target.phase-owner]
     [atomic-owner : i64
       (if destroy?
         owner
         phase-owner)]
+    ;; A `with` binder's cleanup ends its arena at the scope exit
+    ;; (`tc-selected-with-cleanup-ends`): an end inside the scope would end it
+    ;; twice.
+    [sink : (TcSelectedSink store lease intern bind)
+      (match sink
+        [(TcSelectedSink.Query) TcSelectedSink.Query]
+        [(TcSelectedSink.Capture store lease bindings)
+          (if (and
+            (>= token 0)
+            (match (tc-selected-named-binder env (& bindings) token)
+              [(TcSelectedBinder.Found binder)
+                (match (typed.typed-binder-get! store lease binder)
+                  [(typed.TypedBinderView.Ok row)
+                    (match (& row.kind)
+                      [(typed.TypedBinderKind.WithOwner _) true]
+                      [_ false])]
+                  [(typed.TypedBinderView.Err error)
+                    (return (tc-selected-failed error store lease bindings))])]
+              [(TcSelectedBinder.Unrepresented) false]))
+            (return
+              (TcSelectedResult.Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases ctx)
+                  arg
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                    (str_cat.str-cat
+                      "typecheck: "
+                      (tc-end-kind-operation
+                        (if destroy?
+                          0
+                          1))
+                      " cannot end `"
+                      (tc-env-key-name-text token)
+                      "`, whose with cleanup ends it when its scope exits")))
+                (TcSelectedSink.Capture store lease bindings)))
+            (TcSelectedSink.Capture store lease bindings))])]
     (cond
       [(and destroy? (< owner 0))
         (tc-selected-unrepresented (ResultTcType.Ok ty) sink)]
@@ -12097,6 +12203,7 @@
                                 (tc-name-id-list-add TcNameIdList.Nil arg-id)
                                 call
                                 ast.AstType.Unit
+                                -1
                                 syntax
                                 source
                                 after)
@@ -15243,43 +15350,81 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]) : i64
-  (if (and
-    (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
-    (tc-name-lexically-bound-id? env name))
+  (let
+    [key : i64 (tc-declared-name-key ctx env name)]
+    (if (< key 0)
+      -1
+      (tc-declared-symbol-index ctx name key))))
+
+;; The symbol index of the function definition or extern the declared-name key
+;; `key` denotes for `name`, or -1, once the key is known
+;; (`tc-declared-name-key`, or a lookup of the same name that already resolved
+;; it). One value-map lookup, no name resolution.
+(define (tc-declared-symbol-index [ctx : TcContext] [name : i64] [key : i64]) : i64
+  (if (< key 0)
     -1
+    (let
+      [moved : i64 (tc-move-value-symbol-handle-id ctx name)]
+      [handle : i64
+        (if (csym.compiler-symbols-handle-found? moved)
+          moved
+          (csym.compiler-symbols-lookup-value-id-or
+            (tc-context-symbols ctx)
+            key
+            (csym.compiler-symbols-missing-handle)))]
+      (if (and
+        (csym.compiler-symbols-handle-found? handle)
+        (or
+          (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-function-define))
+          (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-extern))))
+        (csym.compiler-symbol-handle-index handle)
+        -1))))
+
+;; True for the types a safe arena end can have: it is a function, so a value
+;; of any other type denotes no end.
+(define (tc-callable-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Func _ _) true]
+    [(ast.AstType.CFunc _ _) true]
+    [(ast.AstType.Invalidate _ _) true]
+    [(ast.AstType.Var _) true]
+    [_ false]))
+
+;; True when `name` resolves to no top-level declaration: it is a lexical
+;; local, or an unqualified import two modules provide.
+(define (tc-declared-name-unresolved?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : bool
+  (or
+    (and
+      (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
+      (tc-name-lexically-bound-id? env name))
     (match (tc-unqualified-import-ambiguity-message ctx env name)
-      [(TcMaybeString.Some _) -1]
-      [(TcMaybeString.No)
-        (match (tc-source-name-lookup-key-with-field-check-lookup
-          ctx
-          env
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)
-          name
-          false)
-          [(TcNameLookup.Err _) -1]
-          [(TcNameLookup.Ok _ key)
-            (let
-              [moved : i64 (tc-move-value-symbol-handle-id ctx name)]
-              [handle : i64
-                (if (csym.compiler-symbols-handle-found? moved)
-                  moved
-                  (csym.compiler-symbols-lookup-value-id-or
-                    (tc-context-symbols ctx)
-                    key
-                    (csym.compiler-symbols-missing-handle)))]
-              (if (and
-                (csym.compiler-symbols-handle-found? handle)
-                (or
-                  (=
-                    (csym.compiler-symbol-handle-kind handle)
-                    (csym.compiler-symbol-kind-function-define))
-                  (=
-                    (csym.compiler-symbol-handle-kind handle)
-                    (csym.compiler-symbol-kind-extern))))
-                (csym.compiler-symbol-handle-index handle)
-                -1))])])))
+      [(TcMaybeString.Some _) true]
+      [(TcMaybeString.No) false])))
+
+;; The lookup key of the top-level declaration `name` resolves to, or -1 for
+;; a lexical local, an ambiguous unqualified import or no declaration. A
+;; macro-hygiene name resolves in its definition context, so a name is
+;; identified by what it denotes, never by how the source spells it.
+(define (tc-declared-name-key [ctx : TcContext] [env : TcTypeEnv] [name : i64]) : i64
+  (if (tc-declared-name-unresolved? ctx env name)
+    -1
+    (match (tc-source-name-lookup-key-with-field-check-lookup
+      ctx
+      env
+      (tc-hygiene-name-text-id-for-session
+        (tc-context-structural-session ctx)
+        name)
+      name
+      false)
+      [(TcNameLookup.Err _) -1]
+      [(TcNameLookup.Ok _ key) key])))
 
 (define (tc-selected-call-type-ok? [ctx : TcContext] [ty : ast.AstType]) : bool
   (let
@@ -17584,12 +17729,18 @@
                     (= arg-count 1)
                     (tc-selected-safe-spawn-call? ctx env func-id (&mut callee)))
                   TcSelectedCallTarget.Spawn]
-                ;; The definition or extern this name denotes, looked up once
-                ;; (-1: none, a call through a value).
+                ;; The definition or extern this name denotes, resolved once
+                ;; with the builtin classification above (-1: none, a call
+                ;; through a value). A runtime identity classifies with
+                ;; shadowing off, so it resolves its own.
                 [else
                   (let
                     [declared : i64
-                      (tc-selected-call-declared-function ctx env raw-name)]
+                      (if (tc-runtime-identity-head?
+                        (tc-context-structural-session ctx)
+                        raw-name)
+                        (tc-selected-call-declared-function ctx env raw-name)
+                        builtin.declared)]
                     (cond
                       [(< declared 0)
                         (tc-selected-indirect-target ctx env func-id)]
@@ -32619,6 +32770,16 @@
     [(Some ty) (not (tc-never-type? ty))]
     [(No) false]))
 
+;; Inside a loop, the scope of `with` binder `name`, whose cleanup ends an
+;; arena, records it with a loop-target marker naming it: a `break` or
+;; `continue` leaving the scope is an end of that arena
+;; (`tc-infer-selected-loop-exit`), as its normal exit is. The loop stays the
+;; target; a loop inside the scope pushes its own marker above.
+(define (tc-record-loop-exit-end [env : TcTypeEnv] [name : i64]) : TcTypeEnv
+  (if (tc-in-loop-target? env)
+    (tc-bind-runtime-marker-id env (tc-loop-target-id) (Var name) Other)
+    env))
+
 (define (tc-loop-control-expr [env : TcTypeEnv] [form : String]) : ResultTcType
   (if (tc-in-loop-target? env)
     (Ok (Never))
@@ -32628,6 +32789,156 @@
         "typecheck: "
         form
         " requires enclosing scalar while"))))
+
+;; The `with` binders a `break` or `continue` leaves whose cleanup ends an
+;; arena (`tc-record-loop-exit-end`), outermost first: the binders the
+;; loop-target markers above the enclosing loop's own marker name. -1 as the
+;; only item when the scoped stack is not active (unrepresented).
+(define (tc-loop-exit-ends [env : TcTypeEnv]) : TcNameIdList
+  (if (not (tc-type-env-scoped-runtime-active? env))
+    (match (tc-env-marker-type env (tc-loop-target-id))
+      [(Some (ast.AstType.Var _)) (tc-name-id-list-cons TcNameIdList.Nil -1)]
+      [_ TcNameIdList.Nil])
+    (let
+      [carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-runtime-current env)]
+      [index : i64
+        (-
+          (if (<
+            carrier.sidecar.stack.slot-count
+            (array-length carrier.sidecar.stack.slots))
+            carrier.sidecar.stack.slot-count
+            (array-length carrier.sidecar.stack.slots))
+          1)]
+      [ends : TcNameIdList TcNameIdList.Nil]
+      (while (>= index 0)
+        (let
+          [slot : (& carrier TcTypeEnvScopedSlot)
+            (& (array-ref carrier.sidecar.stack.slots index))]
+          (when
+            (= slot.name-id (tc-loop-target-id))
+            (match (& slot.ty)
+              [(ast.AstType.Var name)
+                (set! ends (tc-name-id-list-cons ends name))]
+              [_ (return ends)]))
+          (set! index (- index 1))))
+      ends)))
+
+;; A `break` or `continue` (`operation`, typed `checked`). Each `with` scope it
+;; leaves whose cleanup ends an arena is ended on this edge as on its normal
+;; exit (`tc-selected-with-cleanup-end`), innermost first, before the exit.
+(define (tc-infer-selected-loop-exit
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [checked : ResultTcType]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [operation : typed.TypedOperation]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [ends : TcNameIdList (tc-loop-exit-ends env)]
+    (cond
+      [(tc-name-id-list-empty? ends)
+        (tc-selected-publish
+          checked
+          syntax
+          source
+          operation
+          (tc-selected-no-occurrences)
+          sink)]
+      [(< (tc-name-id-list-head ends) 0)
+        (tc-selected-unrepresented checked sink)]
+      [else
+        (match checked
+          [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
+          [(ResultTcType.Ok exit-ty)
+            (let
+              ;; Innermost first: `ends` lists the outermost first.
+              [inner-first : TcNameIdList TcNameIdList.Nil]
+              [cursor : TcNameIdList ends]
+              [_ : unit
+                (while (not (tc-name-id-list-empty? cursor))
+                  (set!
+                    inner-first
+                    (tc-name-id-list-cons
+                      inner-first
+                      (tc-name-id-list-head cursor)))
+                  (set! cursor (tc-name-id-list-rest cursor)))]
+              [current : (TcSelectedResult store lease intern bind)
+                (tc-selected-publish
+                  (ResultTcType.Ok ast.AstType.Unit)
+                  typed.TypedSyntax.Generated
+                  (ownership.ownership-source-copy (& source))
+                  (typed.TypedOperation.Literal ast.AstLiteral.Unit)
+                  (tc-selected-no-occurrences)
+                  sink)]
+              (set! cursor inner-first)
+              (while (not (tc-name-id-list-empty? cursor))
+                (let
+                  [name : i64 (tc-name-id-list-head cursor)]
+                  (set!
+                    current
+                    (tc-selected-with-cleanup-end
+                      ctx
+                      env
+                      ;; The binder's type says which end its cleanup is.
+                      (match (tc-expr ctx env (ast.AstExpr.Var name))
+                        [(ResultTcType.Ok ty)
+                          (if (tc-arena-phase-type? ctx ty)
+                            (tc-arena-safe-call-kind-rewind)
+                            (tc-arena-safe-call-kind-destroy))]
+                        [(ResultTcType.Err _) (tc-arena-safe-call-kind-destroy)])
+                      name
+                      -1
+                      (& source)
+                      current))
+                  (set! cursor (tc-name-id-list-rest cursor))))
+              (match current
+                [(TcSelectedResult.Err message next)
+                  (TcSelectedResult.Err message next)]
+                [(TcSelectedResult.Ok _ ended next)
+                  (match (tc-selected-publish
+                    (ResultTcType.Ok (clone exit-ty))
+                    syntax
+                    (ownership.ownership-source-copy (& source))
+                    operation
+                    (tc-selected-no-occurrences)
+                    next)
+                    [(TcSelectedResult.Err message after)
+                      (TcSelectedResult.Err message after)]
+                    [(TcSelectedResult.Ok _ exit after)
+                      (match ended
+                        [(TcSelectedOccurrence.Selected ended-id)
+                          (match exit
+                            [(TcSelectedOccurrence.Selected exit-id)
+                              (let
+                                [pair : (__tl_dyn-array typed.TypedOccurrenceId)
+                                  (tc-selected-no-occurrences)]
+                                (tc-selected-occurrences-push!
+                                  (&mut pair)
+                                  ended-id)
+                                (tc-selected-occurrences-push!
+                                  (&mut pair)
+                                  exit-id)
+                                (tc-selected-publish
+                                  (ResultTcType.Ok exit-ty)
+                                  typed.TypedSyntax.Generated
+                                  source
+                                  typed.TypedOperation.Sequence
+                                  pair
+                                  after))]
+                            [(TcSelectedOccurrence.Unrepresented)
+                              (tc-selected-unrepresented
+                                (ResultTcType.Ok exit-ty)
+                                after)])]
+                        [(TcSelectedOccurrence.Unrepresented)
+                          (tc-selected-unrepresented
+                            (ResultTcType.Ok exit-ty)
+                            after)])])]))])])))
 
 ;; Selected and Query loops share the same non-contextual child inference and
 ;; checks. A loop target becomes visible only after its condition was checked.
@@ -44401,7 +44712,7 @@
   [key : i64]) : i64
   (unsafe
     (let
-      [stamp : csym.CompilerSymbolsTypeMapStamp
+      [stamp : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp symbols)]
       [data : (MutPtr TcTypeHandleCacheStateData)
         (tc-type-handle-cache-state-ptr state)]
@@ -44497,7 +44808,7 @@
   (let
     [state : TcTypeHandleCacheState
       (tc-nominal-cache-type-handles nominal-state)]
-    [stamp : csym.CompilerSymbolsTypeMapStamp
+    [stamp : csym.CompilerSymbolsMapStamp
       (csym.compiler-symbols-type-map-stamp symbols)]
     [slot : i64 (tc-type-handle-cache-slot lookup-id)]
     (if (and
@@ -44551,7 +44862,7 @@
   (let
     [state : TcTypeHandleCacheState
       (tc-nominal-cache-type-handles nominal-state)]
-    [stamp : csym.CompilerSymbolsTypeMapStamp
+    [stamp : csym.CompilerSymbolsMapStamp
       (csym.compiler-symbols-type-map-stamp symbols)]
     ;; Cache the caller's exact identity. The backing symbol probe performs
     ;; nominal-name normalization on a miss; hits therefore avoid that generic
@@ -61256,54 +61567,156 @@
 (define (tc-arena-safe-call-kind-destroy) : i64
   3)
 
-(define (tc-arena-safe-call-base-kind-id [base-id : i64]) : i64
+;; The builtin dispatch arm of safe arena operation `kind` (0 for none).
+(define (tc-arena-safe-call-arm [kind : i64]) : i64
   (cond
-    [(= base-id cbi.compiler-builtin-id-arena-phase-base)
-      (tc-arena-safe-call-kind-phase)]
-    [(= base-id cbi.compiler-builtin-id-arena-rewind-safe-base)
-      (tc-arena-safe-call-kind-rewind)]
-    [(= base-id cbi.compiler-builtin-id-arena-destroy-safe-base)
-      (tc-arena-safe-call-kind-destroy)]
-    [else (tc-arena-safe-call-kind-none)]))
+    [(= kind (tc-arena-safe-call-kind-phase)) 10]
+    [(= kind (tc-arena-safe-call-kind-rewind)) 11]
+    [(= kind (tc-arena-safe-call-kind-destroy)) 12]
+    [else 0]))
 
-;; Call dispatch has already resolved dotted module aliases into `lookup-id`.
-;; Classify that canonical id once, then check the source-name owner fallback
-;; once.  The old per-builtin predicates repeated the same environment name
-;; resolution for phase, rewind-safe!, and destroy-safe! in sequence.
+;; The symbol handles and indices of `stdlib.arena`'s `phase`, `rewind-safe!`
+;; and `destroy-safe!` (missing and -1 when absent), read from the value map of
+;; the stamp below (`tc-arena-safe-declarations-refresh!`).
+(define tc-arena-safe-stamp-owner : i64
+  0)
+(define tc-arena-safe-stamp-generation : i64
+  -1)
+(define tc-arena-safe-phase-handle : i64
+  -1)
+(define tc-arena-safe-rewind-handle : i64
+  -1)
+(define tc-arena-safe-destroy-handle : i64
+  -1)
+(define tc-arena-safe-phase-index : i64
+  -1)
+(define tc-arena-safe-rewind-index : i64
+  -1)
+(define tc-arena-safe-destroy-index : i64
+  -1)
+
+;; The value-map handle of `stdlib.arena`'s definition named `base`.
+(define (tc-arena-safe-declaration-handle [ctx : TcContext] [base : i64]) : i64
+  (csym.compiler-symbols-lookup-value-id-or
+    (tc-context-symbols ctx)
+    (tc-module-name-id-by-id cbi.compiler-builtin-id-arena-module base)
+    (csym.compiler-symbols-missing-handle)))
+
+;; The symbol index of `handle`, or -1.
+(define (tc-arena-safe-handle-index [handle : i64]) : i64
+  (if (csym.compiler-symbols-handle-found? handle)
+    (csym.compiler-symbol-handle-index handle)
+    -1))
+
+;; Reads the safe arena operations' indices again when the context's value map
+;; is another incarnation or has grown since they were read.
+(define (tc-arena-safe-declarations-refresh! [ctx : TcContext]) : unit
+  (let
+    [stamp : csym.CompilerSymbolsMapStamp
+      (csym.compiler-symbols-value-map-stamp (tc-context-symbols ctx))]
+    (unless
+      (and
+        (= stamp.owner tc-arena-safe-stamp-owner)
+        (= stamp.generation tc-arena-safe-stamp-generation))
+      (set! tc-arena-safe-stamp-owner stamp.owner)
+      (set! tc-arena-safe-stamp-generation stamp.generation)
+      (set!
+        tc-arena-safe-phase-handle
+        (tc-arena-safe-declaration-handle
+          ctx
+          cbi.compiler-builtin-id-arena-phase-base))
+      (set!
+        tc-arena-safe-rewind-handle
+        (tc-arena-safe-declaration-handle
+          ctx
+          cbi.compiler-builtin-id-arena-rewind-safe-base))
+      (set!
+        tc-arena-safe-destroy-handle
+        (tc-arena-safe-declaration-handle
+          ctx
+          cbi.compiler-builtin-id-arena-destroy-safe-base))
+      (set!
+        tc-arena-safe-phase-index
+        (tc-arena-safe-handle-index tc-arena-safe-phase-handle))
+      (set!
+        tc-arena-safe-rewind-index
+        (tc-arena-safe-handle-index tc-arena-safe-rewind-handle))
+      (set!
+        tc-arena-safe-destroy-index
+        (tc-arena-safe-handle-index tc-arena-safe-destroy-handle)))))
+
+;; The safe arena operation callee `name` denotes: the phase, rewind or
+;; destroy definition of `stdlib.arena`, decided by the declaration the name
+;; resolves to (`tc-selected-call-declared-function`) alone, never by its
+;; spelling. A macro-hygiene name, a module alias and an item import alias
+;; (`(import stdlib.arena.destroy-safe! as kill)`) are the same callee; a
+;; local or another module's definition of that name is not.
 (define (tc-arena-safe-call-kind-id
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name-id : i64]
-  [lookup-id : i64]) : i64
+  [name : i64]) : i64
+  (if (tc-arena-safe-declarations-absent? ctx)
+    (tc-arena-safe-call-kind-none)
+    (tc-arena-safe-call-kind-declared
+      ctx
+      (tc-selected-call-declared-function ctx env name))))
+
+;; The safe arena end the declared-name key `key` of `name` denotes, or none
+;; (`tc-declared-name-key`): one value-map probe against the three handles
+;; `tc-arena-safe-declarations-refresh!` cached, so a read that already
+;; resolved `key` never resolves the name again. A lexical local or an
+;; ambiguous unqualified import denotes no declaration, which only a probe
+;; that matched has to establish.
+(define (tc-arena-safe-end-kind-of-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [key : i64]) : i64
+  (tc-arena-safe-declarations-refresh! ctx)
   (let
-    [canonical-module-id : i64 (tc-qualified-name-module-id lookup-id)]
-    [canonical-kind : i64
-      (if (= canonical-module-id cbi.compiler-builtin-id-arena-module)
-        (tc-arena-safe-call-base-kind-id (tc-qualified-name-base-id lookup-id))
-        (tc-arena-safe-call-kind-none))]
-    (if (not (= canonical-kind (tc-arena-safe-call-kind-none)))
-      canonical-kind
-      (let
-        [qualified : bool
-          (tc-name-qualified-id? (tc-context-structural-session ctx) name-id)]
-        [source-base-id : i64
-          (if qualified
-            (tc-qualified-name-base-id name-id)
-            name-id)]
-        [source-kind : i64 (tc-arena-safe-call-base-kind-id source-base-id)]
-        (cond
-          [(= source-kind (tc-arena-safe-call-kind-none)) source-kind]
-          [(and
-              qualified
-              (=
-                (tc-qualified-name-module-id name-id)
-                cbi.compiler-builtin-id-arena-module)
-              (tc-source-name-bound-exact-id? env name-id))
-            source-kind]
-          [qualified (tc-arena-safe-call-kind-none)]
-          [(= (tc-context-module-id ctx) cbi.compiler-builtin-id-arena-module)
-            source-kind]
-          [else (tc-arena-safe-call-kind-none)])))))
+    [handle : i64
+      (if (< key 0)
+        (csym.compiler-symbols-missing-handle)
+        (csym.compiler-symbols-lookup-value-id-or
+          (tc-context-symbols ctx)
+          key
+          (csym.compiler-symbols-missing-handle)))]
+    [kind : i64
+      (cond
+        [(not (csym.compiler-symbols-handle-found? handle))
+          (tc-arena-safe-call-kind-none)]
+        [(= handle tc-arena-safe-rewind-handle)
+          (tc-arena-safe-call-kind-rewind)]
+        [(= handle tc-arena-safe-destroy-handle)
+          (tc-arena-safe-call-kind-destroy)]
+        [(= handle tc-arena-safe-phase-handle) (tc-arena-safe-call-kind-phase)]
+        [else (tc-arena-safe-call-kind-none)])]
+    (if (and
+      (or
+        (= kind (tc-arena-safe-call-kind-rewind))
+        (= kind (tc-arena-safe-call-kind-destroy)))
+      (tc-declared-name-unresolved? ctx env name))
+      (tc-arena-safe-call-kind-none)
+      kind)))
+
+;; The safe arena operation `declared` denotes, or none.
+(define (tc-arena-safe-call-kind-declared [ctx : TcContext] [declared : i64]) : i64
+  (tc-arena-safe-declarations-refresh! ctx)
+  (cond
+    [(< declared 0) (tc-arena-safe-call-kind-none)]
+    [(= declared tc-arena-safe-phase-index) (tc-arena-safe-call-kind-phase)]
+    [(= declared tc-arena-safe-rewind-index) (tc-arena-safe-call-kind-rewind)]
+    [(= declared tc-arena-safe-destroy-index) (tc-arena-safe-call-kind-destroy)]
+    [else (tc-arena-safe-call-kind-none)]))
+
+;; True when `stdlib.arena` declares none of the safe operations, so no name
+;; can denote one.
+(define (tc-arena-safe-declarations-absent? [ctx : TcContext]) : bool
+  (tc-arena-safe-declarations-refresh! ctx)
+  (and
+    (< tc-arena-safe-phase-index 0)
+    (< tc-arena-safe-rewind-index 0)
+    (< tc-arena-safe-destroy-index 0)))
 
 (define (tc-arena-owner-kind-none) : i64
   0)
@@ -61446,29 +61859,22 @@
             (tc-expr-var-name-id
               (tc-context-expr-segment-bases ctx)
               (tc-context-expr-get ctx func-box))]
-          (if (>= nid 0)
+          (if (and
+            (>= nid 0)
+            (=
+              (tc-arena-safe-call-kind-id ctx env nid)
+              (tc-arena-safe-call-kind-phase)))
             (let
-              [source-id : i64
-                (macro-hygiene-global-source-name-id-or
-                  (tc-context-structural-session ctx)
-                  nid
-                  nid)]
-              [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
-              (if (=
-                (tc-arena-safe-call-kind-id ctx env source-id lookup-id)
-                (tc-arena-safe-call-kind-phase))
-                (let
-                  [oid : i64
-                    (tc-expr-var-name-id
-                      (tc-context-expr-segment-bases ctx)
-                      owner-expr)]
-                  (if (>= oid 0)
-                    (if (or
-                      (tc-ordinary-arena-owner-active-id? env oid)
-                      (tc-atomic-arena-owner-active-id? env oid))
-                      (Some oid)
-                      (No))
-                    (No)))
+              [oid : i64
+                (tc-expr-var-name-id
+                  (tc-context-expr-segment-bases ctx)
+                  owner-expr)]
+              (if (>= oid 0)
+                (if (or
+                  (tc-ordinary-arena-owner-active-id? env oid)
+                  (tc-atomic-arena-owner-active-id? env oid))
+                  (Some oid)
+                  (No))
                 (No)))
             (No)))
         (No))]
@@ -61559,6 +61965,18 @@
             (tc-expr-maybe-span
               (tc-context-expr-bases ctx)
               (tc-global-shared-view init)))))]
+    (tc-bind-id (tc-bind-arena-binder-env ctx env name (clone ty) init) name ty)))
+
+;; `env` with the arena owner or phase token local `name` (of type `ty`,
+;; initialized by `init`) introduces registered, so values allocated in it
+;; carry its region; `env` itself for any other binder.
+(define (tc-bind-arena-binder-env
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [ty : ast.AstType]
+  [init : ast.AstExpr]) : TcTypeEnv
+  (let
     [owner-env : TcTypeEnv
       (if (or
         (tc-type-eq (tc-type-strip-region (tc-global-shared-view ty)) (I64))
@@ -61570,9 +61988,184 @@
           (tc-global-shared-view ty)
           (tc-global-shared-view init))
         env)]
-    [phase-env : TcTypeEnv
-      (tc-bind-arena-phase-if-needed-id ctx owner-env name init)]
-    (tc-bind-id phase-env name ty)))
+    (tc-bind-arena-phase-if-needed-id ctx owner-env name init)))
+
+;; `env` with `with` binder `name` (of type `ty`, initialized by `init`) bound
+;; as the owner of `cleanup`, which the ownership graph runs on every exit of
+;; the scope. A binder whose cleanup ends an arena (`tc-with-cleanup-end-kind`)
+;; is the arena owner or phase token a `let` would bind
+;; (`tc-bind-arena-binder-env`), so values allocated in it carry its region
+;; for the end at the scope exit; the marker below its slot is that arena
+;; marker, not the cleanup-owner marker, as no value it holds is cleaned up.
+;; A `break` or `continue` leaving its scope is an end too
+;; (`tc-record-loop-exit-end`).
+(define (tc-bind-with-resource-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [ty : ast.AstType]
+  [init : ast.AstExpr]
+  ;; The binding's `tc-with-cleanup-end-kind`.
+  [end-kind : i64]) : TcTypeEnv
+  (if (= end-kind (tc-arena-safe-call-kind-none))
+    (tc-bind-id
+      (tc-bind-id env (tc-cleanup-owner-marker-id) (Var name))
+      name
+      ty)
+    (tc-bind-id
+      (tc-bind-arena-binder-env
+        ctx
+        (tc-record-loop-exit-end env name)
+        name
+        (clone ty)
+        init)
+      name
+      ty)))
+
+;; The type a `with` binder of initializer type `init-ty` is bound at: without
+;; the regions its value was allocated in, as a cleanup owner holds it, except
+;; for a binder whose cleanup ends an arena (`end-kind`), which keeps its
+;; arena's brand as a `let` does (`tc-bind-with-resource-id`).
+(define (tc-with-binding-type [end-kind : i64] [init-ty : ast.AstType]) : ast.AstType
+  (if (= end-kind (tc-arena-safe-call-kind-none))
+    (tc-type-without-regions init-ty)
+    init-ty))
+
+;; The safe arena end the `with` cleanup function expression `cleanup-id`
+;; names (rewind or destroy, by the definition it resolves to), else none.
+(define (tc-with-cleanup-end-kind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [cleanup-id : i64]) : i64
+  (let
+    [name : i64
+      (tc-expr-var-name-id
+        (tc-context-expr-segment-bases ctx)
+        (tc-context-expr-get ctx cleanup-id))]
+    [kind : i64
+      (if (< name 0)
+        (tc-arena-safe-call-kind-none)
+        (tc-arena-safe-call-kind-id ctx env name))]
+    (if (or
+      (= kind (tc-arena-safe-call-kind-rewind))
+      (= kind (tc-arena-safe-call-kind-destroy)))
+      kind
+      (tc-arena-safe-call-kind-none))))
+
+;; `message` located at the cleanup function expression `cleanup-id`, or as
+;; it is for -1 (an end on a loop exit).
+(define (tc-with-cleanup-end-message
+  [ctx : TcContext]
+  [cleanup-id : i64]
+  [message : String]) : String
+  (if (< cleanup-id 0)
+    message
+    (tc-locate-error-at-expr
+      (tc-context-expr-bases ctx)
+      (tc-context-expr-get ctx cleanup-id)
+      message)))
+
+;; The typing checks of the end a `with` exit is for binding `name` whose
+;; cleanup (expression `cleanup-id`) ends an arena (`kind`), after a body of
+;; type `result-ty`: those of a direct call of the cleanup on the binder,
+;; located at the cleanup. A with exit cannot end an atomic arena, whose
+;; release checks (`tc-selected-release-checks!`) precede an end, and the
+;; scope's result cannot hold values of the arena it ends.
+(define (tc-with-cleanup-end-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [kind : i64]
+  [name : i64]
+  [cleanup-id : i64]
+  [result-ty : ast.AstType]) : ResultTcUnit
+  (let
+    [destroy? : bool (= kind (tc-arena-safe-call-kind-destroy))]
+    [checked : ResultTcType
+      (if destroy?
+        (tc-destroy-safe-operand ctx env (ast.AstExpr.Var name))
+        (tc-rewind-safe-operand ctx env (ast.AstExpr.Var name)))]
+    [target : TcSelectedEndTarget
+      (tc-selected-end-target
+        ctx
+        env
+        destroy?
+        name
+        (ast.AstExpr.Var name)
+        (tc-expr ctx env (ast.AstExpr.Var name)))]
+    (match checked
+      [(ResultTcType.Err message)
+        (ResultTcUnit.Err (tc-with-cleanup-end-message ctx cleanup-id message))]
+      [(ResultTcType.Ok _)
+        (cond
+          [(tc-atomic-arena-owner-active-id?
+              env
+              (if destroy?
+                target.owner
+                target.phase-owner))
+            (ResultTcUnit.Err
+              (tc-with-cleanup-end-message
+                ctx
+                cleanup-id
+                (tc-kind-message
+                  (ArenaOwnership)
+                  (str_cat.str-cat
+                    "typecheck: a with cleanup cannot end atomic arena `"
+                    (tc-env-key-name-text name)
+                    "`; end it with a direct call"))))]
+          [(tc-selected-type-ends-region?
+              env
+              result-ty
+              (if (>= target.owner 0)
+                (tc-name-id-list-add TcNameIdList.Nil target.owner)
+                TcNameIdList.Nil)
+              target.region)
+            (ResultTcUnit.Err
+              (tc-with-cleanup-end-message
+                ctx
+                cleanup-id
+                (tc-kind-message
+                  (ArenaOwnership)
+                  (str_cat.str-cat
+                    "typecheck: the with result holds values of `"
+                    (tc-env-key-name-text name)
+                    "`, which its cleanup "
+                    (tc-end-kind-operation
+                      (if destroy?
+                        0
+                        1))
+                    " ends when the scope exits"))))]
+          [else ResultTcUnit.Ok])])))
+
+;; The typing checks of every arena end `bindings`' scope exit is
+;; (`tc-with-cleanup-end-check`), in `env`, the scope's body environment.
+(define (tc-with-cleanup-end-checks
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : (& bindings ast.AstResourceBindingList)]
+  [result-ty : ast.AstType]) : ResultTcUnit
+  (let
+    [index : i64 (- (ast.ast-resource-binding-list-len bindings) 1)]
+    (while (>= index 0)
+      (match (ast.ast-resource-binding-list-get
+        bindings
+        index
+        (ast.ast-resource-binding-fallback))
+        [(ast.AstResourceBinding.Binding name _ cleanup-box _)
+          (let
+            [kind : i64 (tc-with-cleanup-end-kind ctx env cleanup-box)]
+            (when
+              (not (= kind (tc-arena-safe-call-kind-none)))
+              (match (tc-with-cleanup-end-check
+                ctx
+                env
+                kind
+                name
+                cleanup-box
+                (clone result-ty))
+                [(ResultTcUnit.Err message) (return (ResultTcUnit.Err message))]
+                [(ResultTcUnit.Ok) unit])))])
+      (set! index (- index 1)))
+    ResultTcUnit.Ok))
 
 (define (tc-bind-checked-let-transition-id
   [ctx : TcContext]
@@ -63577,11 +64170,34 @@
 ;; boundary, but that type must never escape into a first-class value. Ordinary
 ;; expression typing therefore runs first, preserving dotted-name normalization,
 ;; diagnostics, facts, and every safe-call path. Only its specific unsafe-value
-;; rejection may be retried as a syntactically direct call target.
-(define (tc-unsafe-callable-value-error? [message : (& message str)]) : bool
+;; rejection, or the safe arena end's (`tc-arena-end-value-message`), may be
+;; retried as a syntactically direct call target.
+(define (tc-direct-call-target-error? [message : (& message str)]) : bool
+  (or
+    (string.contains
+      message
+      " is an unsafe callable and cannot be used as a plain function value")
+    (tc-arena-end-value-error? message)))
+
+;; `arena.rewind-safe!` and `arena.destroy-safe!` end an arena, which their
+;; ordinary function type cannot carry: a call through a value of it would end
+;; the arena with none of the end checks (#9490). Each is named only as a
+;; direct call target or a `with` cleanup function, whose scope exit is the
+;; end (`tc-selected-with-cleanup-ends`).
+(define (tc-arena-end-value-message [kind : i64]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.ArenaOwnership)
+    (str_cat.str-cat
+      "typecheck: "
+      (if (= kind (tc-arena-safe-call-kind-rewind))
+        "arena.rewind-safe!"
+        "arena.destroy-safe!")
+      " ends an arena and cannot be used as a function value; call it directly or name it as a with cleanup function")))
+
+(define (tc-arena-end-value-error? [message : (& message str)]) : bool
   (string.contains
     message
-    " is an unsafe callable and cannot be used as a plain function value"))
+    " ends an arena and cannot be used as a function value; call it directly or name it as a with cleanup function"))
 
 (define (tc-call-target-direct-name
   [ctx : TcContext]
@@ -63618,7 +64234,7 @@
   (match (tc-expr ctx env (tc-global-shared-view func))
     [(Ok ty) (Ok ty)]
     [(Err message)
-      (if (tc-unsafe-callable-value-error? message)
+      (if (tc-direct-call-target-error? message)
         (tc-call-target-direct-name ctx env func message)
         (Err message))]))
 
@@ -63631,7 +64247,7 @@
     (match (tc-expr-id ctx env func-id)
       [(Ok ty) (Ok ty)]
       [(Err message)
-        (if (tc-unsafe-callable-value-error? message)
+        (if (tc-direct-call-target-error? message)
           (let
             [result : ResultTcType
               (tc-call-target-direct-name ctx env func message)]
@@ -64019,51 +64635,60 @@
   [env : TcTypeEnv]
   [args : ast.AstExprList]) : ResultTcType
   (if (= args.len 1)
-    (let
-      [phase-expr : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      [phase-ty (try (tc-expr ctx env (tc-global-shared-view phase-expr)))]
-      (if (tc-arena-phase-type? ctx phase-ty)
-        (let
-          [pid : i64
-            (tc-expr-var-name-id
-              (tc-context-expr-segment-bases ctx)
-              (tc-global-shared-view phase-expr))]
-          (if (>= pid 0)
-            (match (tc-arena-phase-token-region-active env pid)
-              [(Some _)
-                (match (tc-arena-phase-token-owner-active env pid)
-                  [(Some owner)
-                    (if (tc-active-region-owned-by-arena-id? env owner)
-                      (Err
-                        (tc-locate-error-at-expr
-                          (tc-context-expr-bases ctx)
-                          phase-expr
-                          (tc-kind-message
-                            (ArenaOwnership)
-                            "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds")))
-                      (Ok (Unit)))]
-                  [(No) (Ok (Unit))])]
-              [(No)
-                (Err
-                  (tc-locate-error-at-expr
-                    (tc-context-expr-bases ctx)
-                    phase-expr
-                    "typecheck: arena.rewind-safe! requires a direct arena phase token"))])
-            (Err
-              (tc-locate-error-at-expr
-                (tc-context-expr-bases ctx)
-                phase-expr
-                "typecheck: arena.rewind-safe! requires a direct arena phase token"))))
-        (Err
-          (tc-locate-error-at-expr
-            (tc-context-expr-bases ctx)
-            phase-expr
-            "typecheck: arena.rewind-safe! phase must be ArenaPhase"))))
+    (tc-rewind-safe-operand
+      ctx
+      env
+      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))
     (Err
       (tc-kind-message
         (ArityMismatch)
         "typecheck: arena.rewind-safe! expects exactly one argument"))))
+
+;; The checks of a safe rewind of `phase-expr`: a direct call's argument, or
+;; the binder a `with` exit rewinds (`tc-selected-with-cleanup-ends`).
+(define (tc-rewind-safe-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [phase-expr : ast.AstExpr]) : ResultTcType
+  (let
+    [phase-ty (try (tc-expr ctx env (tc-global-shared-view phase-expr)))]
+    (if (tc-arena-phase-type? ctx phase-ty)
+      (let
+        [pid : i64
+          (tc-expr-var-name-id
+            (tc-context-expr-segment-bases ctx)
+            (tc-global-shared-view phase-expr))]
+        (if (>= pid 0)
+          (match (tc-arena-phase-token-region-active env pid)
+            [(Some _)
+              (match (tc-arena-phase-token-owner-active env pid)
+                [(Some owner)
+                  (if (tc-active-region-owned-by-arena-id? env owner)
+                    (Err
+                      (tc-locate-error-at-expr
+                        (tc-context-expr-bases ctx)
+                        phase-expr
+                        (tc-kind-message
+                          (ArenaOwnership)
+                          "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds")))
+                    (Ok (Unit)))]
+                [(No) (Ok (Unit))])]
+            [(No)
+              (Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases ctx)
+                  phase-expr
+                  "typecheck: arena.rewind-safe! requires a direct arena phase token"))])
+          (Err
+            (tc-locate-error-at-expr
+              (tc-context-expr-bases ctx)
+              phase-expr
+              "typecheck: arena.rewind-safe! requires a direct arena phase token"))))
+      (Err
+        (tc-locate-error-at-expr
+          (tc-context-expr-bases ctx)
+          phase-expr
+          "typecheck: arena.rewind-safe! phase must be ArenaPhase")))))
 
 ;; A brand a safe destroy or an `:invalidate` call may end: a local arena's
 ;; generated brand, or a lifetime the enclosing body's parameters invalidate.
@@ -64112,9 +64737,18 @@
         (tc-kind-message
           (ArityMismatch)
           "typecheck: arena.destroy-safe! expects exactly one argument"))))
+  (tc-destroy-safe-operand
+    ctx
+    env
+    (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))
+
+;; The checks of a safe destroy of `owner-expr`: a direct call's argument, or
+;; the binder a `with` exit destroys (`tc-selected-with-cleanup-ends`).
+(define (tc-destroy-safe-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner-expr : ast.AstExpr]) : ResultTcType
   (let
-    [owner-expr : ast.AstExpr
-      (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
     [owner-ty (try (tc-expr ctx env (tc-global-shared-view owner-expr)))]
     (unless
       (tc-arena-type? ctx (tc-global-shared-view owner-ty))
@@ -66120,6 +66754,9 @@
   (name String)
   (name-id i64)
   (lookup-id i64)
+  ;; The definition or extern the head denotes, or -1: the arena arm below and
+  ;; the call target dispatch both read it, so a call resolves it once.
+  (declared i64)
   ;; The builtin arm this call takes; zero is the ordinary call path.
   (arm i64)
   (arena-owner-kind i64)
@@ -66168,18 +66805,26 @@
       (< name-id 0)
       (csym.compiler-composite-triple-key-id? lookup-id)
       (tc-call-variant-name-id? ctx name-id))
-      (begin
+      (let
+        ;; No name test classifies this head, so the declaration decides it.
+        [declared : i64 (tc-selected-call-declared-function ctx env raw-name)]
+        ;; Decided from the definition the head resolves to, so a macro-hygiene
+        ;; name of a safe arena operation dispatches as the operation (#9041).
+        [arena-arm : i64
+          (tc-arena-safe-call-arm
+            (if runtime-head?
+              (tc-arena-safe-call-kind-id ctx env raw-name)
+              (tc-arena-safe-call-kind-declared ctx declared)))]
         (when runtime-head? (set! tc-builtin-classify-unshadowed? false))
         (TcCallBuiltinName
           name
           name-id
           lookup-id
-          0
+          declared
+          arena-arm
           (tc-arena-owner-kind-none)
           TcSliceViewCallKind.None))
       (let
-        [arena-call-kind : i64
-          (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
         [arena-owner-kind : i64
           (tc-arena-owner-call-kind-ids ctx env name-id lookup-id arg-count)]
         [slice-call-kind : TcSliceViewCallKind
@@ -66208,9 +66853,6 @@
                 (not (tc-source-value-bound-id? ctx env name-id)))
               8]
             [(not (= arena-owner-kind (tc-arena-owner-kind-none))) 9]
-            [(= arena-call-kind (tc-arena-safe-call-kind-phase)) 10]
-            [(= arena-call-kind (tc-arena-safe-call-kind-rewind)) 11]
-            [(= arena-call-kind (tc-arena-safe-call-kind-destroy)) 12]
             [(and
                 (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
                 (not (tc-source-value-bound-id? ctx env name-id)))
@@ -66249,12 +66891,29 @@
                 (not (tc-source-value-bound-id? ctx env name-id)))
               23]
             [else 0])]
+        ;; Only a head the name tests leave unclassified can be a safe arena
+        ;; operation, so only that one resolves its declaration, and the call
+        ;; target dispatch reads it back instead of resolving it again.
+        [declared : i64
+          (if (= arm 0)
+            (tc-selected-call-declared-function ctx env raw-name)
+            -1)]
+        [arena-arm : i64
+          (if (= arm 0)
+            (tc-arena-safe-call-arm
+              (if runtime-head?
+                (tc-arena-safe-call-kind-id ctx env raw-name)
+                (tc-arena-safe-call-kind-declared ctx declared)))
+            0)]
         (when runtime-head? (set! tc-builtin-classify-unshadowed? false))
         (TcCallBuiltinName
           name
           name-id
           lookup-id
-          arm
+          declared
+          (if (> arena-arm 0)
+            arena-arm
+            arm)
           arena-owner-kind
           slice-call-kind)))))
 
@@ -68582,14 +69241,19 @@
             (tc-global-shared-view source)
             TcSelectedSink.Query))
         sink)
-      (tc-infer-selected-begin
+      (tc-selected-with-cleanup-ends
         ctx
         env
-        body
-        typed.TypedSyntax.Generated
-        expected
-        (tc-global-shared-view source)
-        sink))
+        bindings
+        (& source)
+        (tc-infer-selected-begin
+          ctx
+          env
+          body
+          typed.TypedSyntax.Generated
+          expected
+          (tc-global-shared-view source)
+          sink)))
       [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
       [(TcSelectedResult.Ok ty occurrence next)
         (if (tc-expr-list-result-uses-cleanup-owner?
@@ -68646,6 +69310,7 @@
         (let
           [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
           [cleanup : ast.AstExpr (tc-context-expr-get ctx cleanup-box)]
+          [end-kind : i64 (tc-with-cleanup-end-kind ctx env cleanup-box)]
           (match (tc-resource-cleanup-resource-type
             ctx
             env
@@ -68656,7 +69321,11 @@
                 ctx
                 env
                 init-box
-                (ast.AstMaybeType.Some expected-init-ty)
+                ;; An arena an end cleanup takes keeps its brand
+                ;; (`tc-with-binding-type`).
+                (if (= end-kind (tc-arena-safe-call-kind-none))
+                  (ast.AstMaybeType.Some expected-init-ty)
+                  ast.AstMaybeType.No)
                 (tc-global-shared-view source)
                 (< cut 0)
                 sink)
@@ -68673,23 +69342,25 @@
                       (match (tc-resource-cleanup-ok
                         ctx
                         env
-                        (tc-global-shared-view cleanup)
+                        cleanup
+                        end-kind
                         (tc-global-shared-view init-ty))
                         [(ResultTcUnit.Err message)
                           (TcSelectedResult.Err message next)]
                         [(ResultTcUnit.Ok)
                           (let
                             [binding-ty : ast.AstType
-                              (tc-type-without-regions
+                              (tc-with-binding-type
+                                end-kind
                                 (tc-global-shared-view init-ty))]
                             [next-env : TcTypeEnv
-                              (tc-bind-id
-                                (tc-bind-id
-                                  env
-                                  (tc-cleanup-owner-marker-id)
-                                  (ast.AstType.Var name))
+                              (tc-bind-with-resource-id
+                                ctx
+                                env
                                 name
-                                (tc-global-shared-view binding-ty))]
+                                (tc-global-shared-view binding-ty)
+                                (tc-context-expr-get ctx init-box)
+                                end-kind)]
                             (match (tc-selected-let-initialize
                               ctx
                               next-env
@@ -68746,6 +69417,121 @@
                                       (+ index 1)
                                       cut)
                                     after))]))])])])]))])))
+
+;; The exit of a `with` scope after its body `result`: each binding whose
+;; cleanup ends an arena (`tc-with-cleanup-end-kind`), innermost first, is an
+;; end of that arena through `tc-selected-end`, as a direct call of the
+;; cleanup on the binder is. Its typing checks run first
+;; (`tc-with-cleanup-end-check`). The end reaches the slots below the binder:
+;; the binder and the later bindings of the scope are cleaned up before it.
+;; The scope's result is the value the end yields, so a result holding the
+;; ended arena's values is rejected. A loop exit leaving the scope is the same
+;; end (`tc-infer-selected-loop-exit`); a `return` leaves the function, whose
+;; result cannot hold a region of its body.
+(define (tc-selected-with-cleanup-ends
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : (& bindings ast.AstResourceBindingList)]
+  [source : (& source ownership.OwnershipSource)]
+  [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [index : i64 (- (ast.ast-resource-binding-list-len bindings) 1)]
+    [current : (TcSelectedResult store lease intern bind) result]
+    (while (>= index 0)
+      (match (ast.ast-resource-binding-list-get
+        bindings
+        index
+        (ast.ast-resource-binding-fallback))
+        [(ast.AstResourceBinding.Binding name _ cleanup-box _)
+          (let
+            [kind : i64 (tc-with-cleanup-end-kind ctx env cleanup-box)]
+            (when
+              (not (= kind (tc-arena-safe-call-kind-none)))
+              (set!
+                current
+                (tc-selected-with-cleanup-end
+                  ctx
+                  env
+                  kind
+                  name
+                  cleanup-box
+                  source
+                  current))))])
+      (set! index (- index 1)))
+    current))
+
+;; The end of the arena of `with` binder `name` (cleanup expression
+;; `cleanup-id` of `kind`, -1 on a loop exit) after `result`
+;; (`tc-selected-with-cleanup-ends`).
+(define (tc-selected-with-cleanup-end
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [kind : i64]
+  [name : i64]
+  [cleanup-id : i64]
+  [source : (& source ownership.OwnershipSource)]
+  [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match result
+    [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
+    [(TcSelectedResult.Ok ty occurrence next)
+      (match (tc-with-cleanup-end-check ctx env kind name cleanup-id (clone ty))
+        [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
+        [(ResultTcUnit.Ok)
+          (match occurrence
+            [(TcSelectedOccurrence.Unrepresented)
+              (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next)]
+            ;; A diverging body never reaches the normal exit: each of its
+            ;; exits that stays in the function is ended on its own edge
+            ;; (`tc-infer-selected-loop-exit`).
+            [(TcSelectedOccurrence.Selected call)
+              (when
+                (match (& ty)
+                  [(ast.AstType.Never) true]
+                  [_ false])
+                (return
+                  (TcSelectedResult.Ok
+                    ty
+                    (TcSelectedOccurrence.Selected call)
+                    next)))
+              (let
+                [destroy? : bool (= kind (tc-arena-safe-call-kind-destroy))]
+                [target : TcSelectedEndTarget
+                  (tc-selected-end-target
+                    ctx
+                    env
+                    destroy?
+                    name
+                    (ast.AstExpr.Var name)
+                    (tc-expr ctx env (ast.AstExpr.Var name)))]
+                (tc-selected-end
+                  ctx
+                  env
+                  (if destroy?
+                    0
+                    1)
+                  (if (>= target.owner 0)
+                    (tc-name-id-list-add TcNameIdList.Nil target.owner)
+                    TcNameIdList.Nil)
+                  target.region
+                  (cond
+                    [destroy? -1]
+                    [(>= target.phase-owner 0) target.phase-owner]
+                    [else name])
+                  (tc-name-id-list-add TcNameIdList.Nil -1)
+                  call
+                  ty
+                  (tc-type-env-scoped-runtime-lookup-index env name)
+                  typed.TypedSyntax.Generated
+                  (ownership.ownership-source-copy source)
+                  next))])])]))
 
 (define (tc-infer-selected-let-scoped
   [ctx : TcContext]
@@ -69629,7 +70415,16 @@
         (tc-resource-cleanup-direct-name-ok
           (tc-context-expr-segment-bases ctx)
           cleanup))]
-    [cleanup-ty : ast.AstType (try (tc-expr ctx env cleanup))]
+    ;; A safe arena end is named here as a direct target: the `with` exit is
+    ;; its call (`tc-selected-with-cleanup-ends`).
+    [cleanup-ty : ast.AstType
+      (try
+        (match (tc-expr ctx env (clone cleanup))
+          [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+          [(ResultTcType.Err message)
+            (if (tc-arena-end-value-error? message)
+              (tc-call-target-direct-name ctx env cleanup message)
+              (ResultTcType.Err message))]))]
     (match (tc-type-strip-region (tc-resolve-type ctx cleanup-ty))
       [(Func args ret)
         (let
@@ -69660,16 +70455,22 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [cleanup : ast.AstExpr]
+  ;; The cleanup's `tc-with-cleanup-end-kind`.
+  [end-kind : i64]
   [resource-ty : ast.AstType]) : ResultTcUnit
   (let
     [cleanup-resource-ty
       (try (tc-resource-cleanup-resource-type ctx env cleanup))]
-    (tc-expect
-      cleanup-resource-ty
-      (tc-type-without-regions resource-ty)
-      (tc-kind-message
-        (ResourceOwnership)
-        "typecheck: with cleanup function type mismatch"))))
+    ;; An arena end's binder is checked as the operand of that end, which
+    ;; takes its branded arena (`tc-with-cleanup-end-check`).
+    (if (= end-kind (tc-arena-safe-call-kind-none))
+      (tc-expect
+        cleanup-resource-ty
+        (tc-type-without-regions resource-ty)
+        (tc-kind-message
+          (ResourceOwnership)
+          "typecheck: with cleanup function type mismatch"))
+      Ok)))
 
 (define (tc-resource-bindings
   [ctx : TcContext]
@@ -69692,6 +70493,7 @@
         (let
           [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
           [cleanup : ast.AstExpr (tc-context-expr-get ctx cleanup-box)]
+          [end-kind : i64 (tc-with-cleanup-end-kind ctx env cleanup-box)]
           [expected-init-ty
             (try
               (tc-resource-cleanup-resource-type
@@ -69700,11 +70502,13 @@
                 (tc-global-shared-view cleanup)))]
           [init-ty : ast.AstType
             (try
-              (tc-expr-with-expected-or-actual-id
-                ctx
-                env
-                init-box
-                expected-init-ty))]
+              (if (= end-kind (tc-arena-safe-call-kind-none))
+                (tc-expr-with-expected-or-actual-id
+                  ctx
+                  env
+                  init-box
+                  expected-init-ty)
+                (tc-expr-id ctx env init-box)))]
           [_ (try (tc-ensure-cleanup-resource-not-transferred ctx env init))]
           (let
             [_
@@ -69713,14 +70517,18 @@
                   ctx
                   env
                   cleanup
+                  end-kind
                   (tc-global-shared-view init-ty)))]
             (tc-semantic-observe-binding-site! ctx env init-box)
             (tc-resource-bindings-at
               ctx
-              (tc-bind-id
-                (tc-bind-id env (tc-cleanup-owner-marker-id) (Var name))
+              (tc-bind-with-resource-id
+                ctx
+                env
                 name
-                (tc-type-without-regions init-ty))
+                (tc-with-binding-type end-kind init-ty)
+                (tc-context-expr-get ctx init-box)
+                end-kind)
               bindings
               (+ index 1))))])))
 
@@ -88259,6 +89067,9 @@
     [body-env : TcTypeEnv (try (tc-resource-bindings ctx env bindings))]
     [body-ty : ast.AstType
       (try (tc-begin-list-maybe-expected ctx body-env body expected))]
+    [_
+      (try
+        (tc-with-cleanup-end-checks ctx body-env (& bindings) (clone body-ty)))]
     (if (tc-expr-list-result-uses-cleanup-owner?
       (tc-context-expr-bases ctx)
       body
@@ -89123,78 +89934,88 @@
   (if (tc-type-env-scoped-identity-exhausted? env)
     (ResultTcBinding.Fault typed.TypedError.Exhausted)
     (if (tc-hygiene-global-name-id? (tc-context-structural-session ctx) name)
-      (tc-binding-unrepresented
-        (let
-          [global-id : i64
-            (macro-hygiene-global-source-name-id-or
-              (tc-context-structural-session ctx)
-              name
-              -1)]
-          (if (< global-id 0)
-            (ResultTcType.Err
-              (str_cat.str-cat
-                "typecheck: macro hygiene source id unavailable: "
-                name-text))
-            (if (macro-hygiene-global-id?
-              (tc-context-structural-session ctx)
-              name)
-              (let
-                [module-id : i64
-                  (macro-hygiene-global-module-id
+      (begin
+        (when
+          (not direct-call-target)
+          (let
+            [kind : i64 (tc-arena-safe-call-kind-id ctx env name)]
+            (when
+              (or
+                (= kind (tc-arena-safe-call-kind-rewind))
+                (= kind (tc-arena-safe-call-kind-destroy)))
+              (return (ResultTcBinding.Err (tc-arena-end-value-message kind))))))
+        (tc-binding-unrepresented
+          (let
+            [global-id : i64
+              (macro-hygiene-global-source-name-id-or
+                (tc-context-structural-session ctx)
+                name
+                -1)]
+            (if (< global-id 0)
+              (ResultTcType.Err
+                (str_cat.str-cat
+                  "typecheck: macro hygiene source id unavailable: "
+                  name-text))
+              (if (macro-hygiene-global-id?
+                (tc-context-structural-session ctx)
+                name)
+                (let
+                  [module-id : i64
+                    (macro-hygiene-global-module-id
+                      (tc-context-structural-session ctx)
+                      name)]
+                  (if (macro-hygiene-global-legacy-id?
                     (tc-context-structural-session ctx)
-                    name)]
-                (if (macro-hygiene-global-legacy-id?
-                  (tc-context-structural-session ctx)
-                  name)
-                  (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                    (match (tc-lookup-hygiene-global-visible-id
+                    name)
+                    (if (tc-hygiene-global-binding-unsafe-id? env global-id)
+                      (match (tc-lookup-hygiene-global-visible-id
+                        ctx
+                        env
+                        global-id)
+                        [(ResultTcType.Ok ty)
+                          (tc-unsafe-callable-use
+                            ctx
+                            env
+                            (ci.intern-str global-id)
+                            ty
+                            direct-call-target)]
+                        [(ResultTcType.Err message) (ResultTcType.Err message)])
+                      (tc-lookup-hygiene-global-visible-id ctx env global-id))
+                    (tc-lookup-hygiene-context-global-visible-id-mode
                       ctx
                       env
-                      global-id)
-                      [(ResultTcType.Ok ty)
-                        (tc-unsafe-callable-use
-                          ctx
-                          env
-                          (ci.intern-str global-id)
-                          ty
-                          direct-call-target)]
-                      [(ResultTcType.Err message) (ResultTcType.Err message)])
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id))
-                  (tc-lookup-hygiene-context-global-visible-id-mode
-                    ctx
-                    env
-                    (macro-decl-module-display module-id)
-                    module-id
-                    global-id
-                    direct-call-target)))
-              (match (tc-hygiene-global-decode name-text)
-                [(TcHygieneGlobalName.Legacy global-name)
-                  (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                    (match (tc-lookup-hygiene-global-visible-id
+                      (macro-decl-module-display module-id)
+                      module-id
+                      global-id
+                      direct-call-target)))
+                (match (tc-hygiene-global-decode name-text)
+                  [(TcHygieneGlobalName.Legacy global-name)
+                    (if (tc-hygiene-global-binding-unsafe-id? env global-id)
+                      (match (tc-lookup-hygiene-global-visible-id
+                        ctx
+                        env
+                        global-id)
+                        [(ResultTcType.Ok ty)
+                          (tc-unsafe-callable-use
+                            ctx
+                            env
+                            global-name
+                            ty
+                            direct-call-target)]
+                        [(ResultTcType.Err message) (ResultTcType.Err message)])
+                      (tc-lookup-hygiene-global-visible-id ctx env global-id))]
+                  [(TcHygieneGlobalName.Context module _)
+                    (tc-lookup-hygiene-context-global-visible-id-mode
                       ctx
                       env
-                      global-id)
-                      [(ResultTcType.Ok ty)
-                        (tc-unsafe-callable-use
-                          ctx
-                          env
-                          global-name
-                          ty
-                          direct-call-target)]
-                      [(ResultTcType.Err message) (ResultTcType.Err message)])
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id))]
-                [(TcHygieneGlobalName.Context module _)
-                  (tc-lookup-hygiene-context-global-visible-id-mode
-                    ctx
-                    env
-                    module
-                    (let
-                      [module-id : i64 (ci.intern-qualified-module-id name)]
-                      (if (< module-id 0)
-                        cbi.compiler-builtin-id-fix-empty
-                        module-id))
-                    global-id
-                    direct-call-target)])))))
+                      module
+                      (let
+                        [module-id : i64 (ci.intern-qualified-module-id name)]
+                        (if (< module-id 0)
+                          cbi.compiler-builtin-id-fix-empty
+                          module-id))
+                      global-id
+                      direct-call-target)]))))))
       (match (tc-source-name-lookup-key-with-field-check-lookup
         ctx
         env
@@ -89209,6 +90030,22 @@
                 lookup-id)]
             (match (tc-lookup-binding-selected-id env key key key true)
               [(ResultTcBinding.Ok ty unsafe origin)
+                ;; The safe arena ends are functions, so a value of any other
+                ;; type denotes none: only a callable type reads the
+                ;; declaration the lookup above already resolved, and that
+                ;; costs one probe of the cached declarations, never a second
+                ;; name resolution.
+                (when
+                  (and (not direct-call-target) (tc-callable-type? (& ty)))
+                  (let
+                    [kind : i64
+                      (tc-arena-safe-end-kind-of-key ctx env name lookup-id)]
+                    (when
+                      (or
+                        (= kind (tc-arena-safe-call-kind-rewind))
+                        (= kind (tc-arena-safe-call-kind-destroy)))
+                      (return
+                        (ResultTcBinding.Err (tc-arena-end-value-message kind))))))
                 (match (if (tc-bare-variant-name-gate? ctx name)
                   (tc-bare-variant-unexpected-check
                     ctx

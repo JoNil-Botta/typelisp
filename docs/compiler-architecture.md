@@ -14,7 +14,13 @@ imports. Typechecking supplies checked expression and ownership facts.
 Source literal and runtime text-include admission share the checked stdlib
 UTF-8 decoder; ordinary runtime byte strings keep their byte semantics.
 Lowering produces typed three-address IR, optimization transforms that IR,
-and the backend emits native code for the selected target. CLI, package,
+and the backend emits native code for the selected target. A local whose
+address is taken is memory, not a value, so no pass may forward a fact through
+a store or call that writes it; the `stage2-addr-taken-matrix` gate runs every
+program of `tests/addr-taken-matrix/` at `--opt-level 0`, 1 and 2 and fails
+when the three exit codes disagree or differ from the program's declared exit
+([#8190](https://github.com/JoNil-Botta/typelisp/issues/8190)).
+CLI, package,
 batch and LSP services orchestrate these stages.
 
 The embedded TLCI catalog decodes only the prelude surface or requested

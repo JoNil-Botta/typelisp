@@ -1,0 +1,18 @@
+;; store-to-load forwarding through the same pointer.
+;; Expected exit 6 at --opt-level 0, 1 and 2.
+(define (main) : i64
+  (let
+    [v : i64 1]
+    [p : (MutPtr i64)
+      (unsafe
+        (ptr-addr-of v))]
+    [a : i64
+      (unsafe
+        (ptr-read p))]
+    (unsafe
+      (ptr-write! p 5))
+    (let
+      [b : i64
+        (unsafe
+          (ptr-read p))]
+      (+ a b))))

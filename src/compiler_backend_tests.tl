@@ -7518,6 +7518,17 @@ high:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [_win : unit (compiler-backend-set-current-fn-win64! backend-state)]
+    ;; One group var (id 0 of three) with no exposed address: the compact
+    ;; second-word map reserves one word, and the canonical pair formula for
+    ;; the same id still starts at frame-slots+2. The dense rank of id 0 is 0,
+    ;; the position the raw-id formula gave it.
+    [_group-vars : unit
+      (begin
+        (backend.compiler-backend-current-slot-vars-set! backend-state 3)
+        (backend.compiler-backend-group-vars-enable!
+          backend-state
+          (compiler_liveness.compiler-live-set1 0)
+          (compiler_liveness.compiler-live-set-empty)))]
     [sparse : regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-xmm-sparse-assignments)]
     [full : regalloc.CompilerRegAssignmentTable
@@ -7626,15 +7637,11 @@ high:
           (backend.compiler-backend-frame-slots-with-groups
             3
             sparse
-            true
             backend-state)
-          34)
+          29)
         (=
-          (backend.compiler-backend-frame-slots-emergency-max
-            3
-            true
-            backend-state)
-          36)
+          (backend.compiler-backend-frame-slots-emergency-max 3 backend-state)
+          31)
         (=
           (backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
@@ -9160,25 +9167,28 @@ high:
 
 (define (compiler-backend-slice-reference-abi-windows-body-ok? [body : String]) : bool
   (let
+    ;; The two home words sit at the bottom of the frame; the dense pair region
+    ;; moved them from 16/24 to 0/8 of the 24-byte frame. Word order in the
+    ;; source text, not the numeric offset, is what the checks below pin.
     [incoming0 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq %rcx, 24(%rsp)\n"
+        "    movq %rcx, 8(%rsp)\n"
         0)]
     [incoming1 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq %rdx, 16(%rsp)\n"
+        "    movq %rdx, 0(%rsp)\n"
         0)]
     [outgoing0 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq 24(%rsp), %rax\n"
+        "    movq 8(%rsp), %rax\n"
         0)]
     [outgoing1 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq 16(%rsp), %rdx\n"
+        "    movq 0(%rsp), %rdx\n"
         0)]
     (and
       (> (string.string-length body) 0)

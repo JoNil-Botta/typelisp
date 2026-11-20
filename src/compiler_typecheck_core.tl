@@ -10805,18 +10805,16 @@
   [region : i64]) : bool
   (let
     [cursor : TcNameIdList owners]
+    [regions : TcNameIdList (tc-type-collect-regions (& ty))]
     [found : bool
       (and
         (>= region 0)
-        (tc-type-contains-arena-owner-region?
-          env
-          (tc-global-shared-view ty)
-          region))]
+        (tc-region-list-contains-arena-owner? env regions region))]
     (while (and (not found) (not (tc-name-id-list-empty? cursor)))
       (when
-        (tc-type-contains-arena-owner-region?
+        (tc-region-list-contains-arena-owner?
           env
-          (tc-global-shared-view ty)
+          regions
           (tc-name-id-list-head cursor))
         (set! found true))
       (set! cursor (tc-name-id-list-rest cursor)))
@@ -18723,11 +18721,7 @@
                     (not
                       (tc-type-regions-all-scratch? (tc-global-shared-view got)))
                     (not (tc-type-contains-reference? (& got)))
-                    (not
-                      (tc-tagged-arena-handle-borrow?
-                        ctx
-                        (tc-global-shared-view got)
-                        want)))
+                    (not (tc-tagged-arena-handle-borrow? ctx (clone got) want)))
                     (TcSelectedArgsResult.Err
                       (tc-region-call-arg-error
                         (tc-context-expr-bases ctx)
@@ -19295,9 +19289,9 @@
                                 (tc-check-invalidate-call
                                   ctx
                                   env
-                                  (tc-global-shared-view args)
-                                  (tc-global-shared-view declared-params)
-                                  (tc-global-shared-view params)
+                                  (& args)
+                                  (& declared-view)
+                                  (& params)
                                   (tc-global-shared-view ret)))])
                             [(ResultTcUnit.Err message)
                               (TcSelectedResult.Err message next)]
@@ -19347,8 +19341,8 @@
                                             (tc-call-erased-owner-result
                                               ctx
                                               env
-                                              args
-                                              (tc-global-shared-view params)
+                                              (& args)
+                                              (& params)
                                               constructed))
                                           ;; Key -1 names a constructor (no declaration),
                                           ;; -2 a call through a function value.
@@ -51506,7 +51500,7 @@
 ;; (`tc-type-can-hold-arena-handle?`). A branded or `:invalidate` formal ties
 ;; the call through its lifetime instead, and a function formal is a callback.
 (define (tc-formal-reaches-bare-arena? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx (tc-global-shared-view ty)))
+  (match (tc-type-strip-region (tc-resolve-type ctx (clone ty)))
     [(or (Ref _ inner) (MutRef _ inner))
       (tc-formal-reaches-bare-arena? ctx (tc-context-type-get ctx inner))]
     [(or (Invalidate _ _) (Func _ _)) false]
@@ -51566,13 +51560,11 @@
 (define (tc-call-erased-owner-result
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]
   [ty : ast.AstType]) : ResultTcType
   ;; Most results cannot hold a handle: one walk, before any formal's.
-  (unless
-    (tc-type-can-hold-arena-handle? ctx (tc-global-shared-view ty) Nil)
-    (return (Ok ty)))
+  (unless (tc-type-can-hold-arena-handle? ctx (clone ty) Nil) (return (Ok ty)))
   (let
     [index : i64 0]
     [reaches? : bool false]
@@ -51611,7 +51603,7 @@
                 (when
                   (and
                     (not (tc-name-id-list-empty? found))
-                    (not (tc-region-taggable-type? (tc-global-shared-view ty))))
+                    (not (tc-region-taggable-type? (clone ty))))
                   (return
                     (Err
                       (tc-locate-error-at-expr
@@ -51633,7 +51625,7 @@
       (set! index (+ index 1)))
     ;; A region the result already carries is not tagged twice.
     (let
-      [held : TcNameIdList (tc-type-outer-regions (tc-global-shared-view ty))]
+      [held : TcNameIdList (tc-type-outer-regions (clone ty))]
       (Ok (tc-tag-regions (tc-name-id-list-difference regions held) ty)))))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
@@ -61840,16 +61832,16 @@
             (match (tc-check-invalidate-call
               ctx
               env
-              args
-              params
-              resolved-params
+              (& args)
+              (& params)
+              (& resolved-params)
               (tc-global-shared-view resolved-ret))
               [(Ok)
                 (tc-call-erased-owner-result
                   ctx
                   env
-                  (tc-global-shared-view args)
-                  (tc-global-shared-view resolved-params)
+                  (& args)
+                  (& resolved-params)
                   (tc-tag-active-region env resolved-ret))]
               [(Err message) (Err message)])]
           [(Err message) (Err message)])]
@@ -62004,9 +61996,9 @@
 (define (tc-check-invalidate-call
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : ast.AstExprList]
-  [declared : ast.AstTypeList]
-  [params : ast.AstTypeList]
+  [args : (& args ast.AstExprList)]
+  [declared : (& declared ast.AstTypeList)]
+  [params : (& params ast.AstTypeList)]
   [ret : ast.AstType]) : ResultTcUnit
   (unless (tc-invalidate-types-present?) (return Ok))
   (let
@@ -62100,7 +62092,7 @@
                       (and
                         (tc-type-contains-arena-owner-region?
                           env
-                          (tc-global-shared-view actual)
+                          (clone actual)
                           (tc-name-id-list-head brand-cursor))
                         (not
                           (tc-name-id-list-contains
@@ -64603,14 +64595,14 @@
                           ctx
                           env
                           func
-                          args
-                          params
+                          (tc-global-shared-view args)
+                          (tc-global-shared-view params)
                           (tc-global-shared-view ret)))]
                     (tc-call-erased-owner-result
                       ctx
                       env
-                      (tc-global-shared-view args)
-                      (tc-global-shared-view params)
+                      (& args)
+                      (& params)
                       (tc-tag-regions
                         spawn-owner-regions
                         (tc-tag-active-region env ret)))))
@@ -64834,10 +64826,7 @@
                           (tc-global-shared-view got)))
                       (not (tc-type-contains-reference? (& got)))
                       (not
-                        (tc-tagged-arena-handle-borrow?
-                          ctx
-                          (tc-global-shared-view got)
-                          want)))
+                        (tc-tagged-arena-handle-borrow? ctx (clone got) want)))
                       (Err
                         (tc-region-call-arg-error
                           (tc-context-expr-bases ctx)

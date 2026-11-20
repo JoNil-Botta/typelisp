@@ -5979,10 +5979,6 @@
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-alloc)
 
-(define (lower-tl-alloc-global-symbol) : i64
-  (cbi.compiler-builtin-refresh!)
-  cbi.compiler-builtin-id-tl-alloc-global)
-
 (define (lower-tl-oob-abort-symbol) : i64
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-oob-abort)

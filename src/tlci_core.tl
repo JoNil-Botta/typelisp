@@ -688,6 +688,9 @@
   ;; Pop a size expression and a type value and push the make-array node the
   ;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
   compiler-comptime-host-callback-expr-make-array
+  ;; Pop a size expression and a type value and push the fixed-length
+  ;; make-array node the parser produces for `(make-array T N)`.
+  compiler-comptime-host-callback-expr-fixed-make-array
   ;; Comptime reflection and literal construction for computed transformer
   ;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
   ;; string of a type operand against caller bytes and returns 1/0 as data (a

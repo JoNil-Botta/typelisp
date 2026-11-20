@@ -1159,11 +1159,12 @@
   (Cons i64 ir.CompilerIrValue ast.AstType (Box OptConstEnv))
   (Shadow i64 (Box OptConstEnv)))
 
-(define (opt-const-unbind [env : (& env OptConstEnv)] [var : i64]) : OptConstEnv
+;; Both take the env by value: the new entry owns it as its tail.
+(define (opt-const-unbind [env : OptConstEnv] [var : i64]) : OptConstEnv
   (Shadow var (box env)))
 
 (define (opt-const-bind
-  [env : (& env OptConstEnv)]
+  [env : OptConstEnv]
   [var : i64]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptConstEnv
@@ -2493,7 +2494,7 @@
   (Result OptConstEnv ir.CompilerIrInstr))
 
 (define (opt-invalidate-addr-of
-  [env : (& env OptConstEnv)]
+  [env : OptConstEnv]
   [dst : i64]
   [src : i64]
   [instr : ir.CompilerIrInstr]) : OptInstrResult
@@ -2737,9 +2738,7 @@
           [(None) env])
         instr)]))
 
-(define (opt-strength-instr
-  [env : (& env OptConstEnv)]
-  [instr : ir.CompilerIrInstr]) : OptInstrResult
+(define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
     [(Mov dst value ty)
       (match (opt-resolve-known env (& value) ty)
@@ -53352,7 +53351,8 @@
 (define (opt-bounds-dom-nonneg-fuel) : i64
   8)
 
-;; The phis the current proof has entered, innermost first.
+;; The phis the current proof has entered, innermost first. Entering a phi
+;; conses onto a clone of the borrowed list (its length is bounded by the fuel).
 (defenum OptNonnegPhis
   (Nil)
   (Cons i64 (Box OptNonnegPhis)))
@@ -53517,7 +53517,7 @@
             (opt-bounds-dom-nonneg-inputs?
               env
               cmp-facts
-              (& (Cons var (box phis)))
+              (& (Cons var (box (clone (deref phis)))))
               inputs
               fuel))]
         [_ false])]
@@ -54344,7 +54344,7 @@
             (opt-bounds-dom-induct-inputs?
               env
               cmp-facts
-              (& (Cons var (box phis)))
+              (& (Cons var (box (clone (deref phis)))))
               label
               nonneg?
               below?
@@ -60428,7 +60428,9 @@
             (ir.compiler-ir-instr-seq-borrow instrs index)
             (ir.compiler-ir-instr-seq-borrow instrs (+ index 1)))))
         [(Result next-fold folded)
-          (match (opt-strength-instr strength-state folded)
+          (match (opt-strength-instr
+            (compiler-opt-global-shared-view strength-state)
+            folded)
             [(Result next-strength strengthened)
               (match (opt-cse-instr
                 type-segment-bases

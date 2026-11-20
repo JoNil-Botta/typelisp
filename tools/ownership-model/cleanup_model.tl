@@ -71,7 +71,10 @@
   (Rejected i64)
   (InvalidInput))
 
-(define (owner-index [owner : Owner]) : i64
+;; The stack stores owners inside a borrowed aggregate, so an owner read from it
+;; is a view of that borrow: take the owner by reference rather than copying it
+;; out (`top?`).
+(define (owner-index [owner : (& owner Owner)]) : i64
   (match owner
     [(Owner.Outer) 0]
     [(Owner.Inner) 1]))
@@ -293,7 +296,9 @@
     (while (> memory.depth 0)
       (let
         [owner : Owner (array-ref memory.stack (- memory.depth 1))]
-        (unless (leave! modes memory owner) (return false))))
+        ;; The stack element carries the borrow's view type: clone the small
+        ;; owner out of it to hand `leave!` an owned value.
+        (unless (leave! modes memory (clone owner)) (return false))))
     true))
 
 (define (export!

@@ -16424,6 +16424,7 @@
     [left-ok : bool
       (match (tc_core.tc-struct-get-selected-id
         ctx
+        tc_core.TcMaybeTypeEnv.No
         (ast.AstType.Struct left)
         member)
         [(tc_core.ResultTcField.Ok field)
@@ -16439,6 +16440,7 @@
     [right-ok : bool
       (match (tc_core.tc-struct-get-selected-id
         ctx
+        tc_core.TcMaybeTypeEnv.No
         (ast.AstType.Struct right)
         member)
         [(tc_core.ResultTcField.Ok field)
@@ -16454,6 +16456,7 @@
     [intrinsic : bool
       (match (tc_core.tc-struct-get-selected-id
         ctx
+        tc_core.TcMaybeTypeEnv.No
         ast.AstType.ExprList
         cbi.compiler-builtin-id-fix-len)
         [(tc_core.ResultTcField.Ok field)
@@ -16468,6 +16471,7 @@
     [legacy : bool
       (match (tc_core.tc-struct-get-result-type-id
         ctx
+        tc_core.TcMaybeTypeEnv.No
         (ast.AstType.Struct left)
         member)
         [(tc_core.ResultTcType.Ok ty)
@@ -16476,10 +16480,15 @@
             [_ false])]
         [_ false])]
     [invalid : bool
-      (match (tc_core.tc-struct-get-selected-id ctx ast.AstType.Bool member)
+      (match (tc_core.tc-struct-get-selected-id
+        ctx
+        tc_core.TcMaybeTypeEnv.No
+        ast.AstType.Bool
+        member)
         [(tc_core.ResultTcField.Err message)
           (match (tc_core.tc-struct-get-result-type-id
             ctx
+            tc_core.TcMaybeTypeEnv.No
             ast.AstType.Bool
             member)
             [(tc_core.ResultTcType.Err legacy-message)

@@ -2097,6 +2097,8 @@ opaque_foreign_init_reject|check-fail|tests/safety/opaque_foreign_init_reject.tl
 opaque_foreign_field_reject|check-fail|tests/safety/opaque_foreign_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_field_borrow_reject|check-fail|tests/safety/opaque_foreign_field_borrow_reject.tl|-|typecheck: cannot borrow a field of the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_unsafe_field_reject|check-fail|tests/safety/opaque_foreign_unsafe_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_make_array_dyn_reject|check-fail|tests/safety/opaque_foreign_make_array_dyn_reject.tl|-|typecheck: cannot initialize the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_make_array_reject|check-fail|tests/safety/opaque_foreign_make_array_reject.tl|-|typecheck: cannot initialize the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_match_reject|check-fail|tests/safety/opaque_foreign_match_reject.tl|-|typecheck: cannot match the opaque type opaque_dep/State outside its module family
 opaque_foreign_or_reject|check-fail|tests/safety/opaque_foreign_or_reject.tl|-|typecheck: cannot match the opaque type opaque_dep/State outside its module family
 opaque_foreign_fields_reject|check-fail|tests/safety/opaque_foreign_fields_reject.tl|-|typecheck: cannot match the opaque type opaque_dep/Connection outside its module family

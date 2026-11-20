@@ -19938,23 +19938,28 @@
       (match (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
         (tc-opaque-representation-ok
           ctx
-          (let
-            [resolved : ast.AstType
-              (tc-type-strip-region
-                (tc-resolve-type ctx (tc-global-shared-view container)))]
-            ;; Through a reference, the referent's representation is read.
-            (match (& resolved)
-              [(ast.AstType.Ref _ _)
+          (&
+            (let
+              [resolved : ast.AstType
                 (tc-type-strip-region
-                  (tc-resolve-type
-                    ctx
-                    (tc-selected-referent ctx (tc-global-shared-view resolved))))]
-              [(ast.AstType.MutRef _ _)
-                (tc-type-strip-region
-                  (tc-resolve-type
-                    ctx
-                    (tc-selected-referent ctx (tc-global-shared-view resolved))))]
-              [_ resolved]))
+                  (tc-resolve-type ctx (tc-global-shared-view container)))]
+              ;; Through a reference, the referent's representation is read.
+              (match (& resolved)
+                [(ast.AstType.Ref _ _)
+                  (tc-type-strip-region
+                    (tc-resolve-type
+                      ctx
+                      (tc-selected-referent
+                        ctx
+                        (tc-global-shared-view resolved))))]
+                [(ast.AstType.MutRef _ _)
+                  (tc-type-strip-region
+                    (tc-resolve-type
+                      ctx
+                      (tc-selected-referent
+                        ctx
+                        (tc-global-shared-view resolved))))]
+                [_ resolved])))
           "cannot access a field of the")
         ResultTcUnit.Ok)
         [(ResultTcUnit.Err message) (TcSelectedPlaceResult.Err message sink)]
@@ -79887,8 +79892,9 @@
       (tc-struct-get-selected-id ctx env receiver-ty field-id))
     (match (tc-opaque-representation-ok
       ctx
-      (tc-type-strip-region
-        (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+      (&
+        (tc-type-strip-region
+          (tc-resolve-type ctx (tc-global-shared-view receiver-ty))))
       "cannot access a field of the")
       [(Ok)
         (tc-field-type-only
@@ -80019,8 +80025,9 @@
             (try
               (tc-opaque-representation-ok
                 ctx
-                (tc-type-strip-region
-                  (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+                (&
+                  (tc-type-strip-region
+                    (tc-resolve-type ctx (tc-global-shared-view receiver-ty))))
                 "cannot borrow a field of the"))
             unit)]
         (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
@@ -87604,10 +87611,7 @@
     [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     [_
       (try
-        (tc-opaque-representation-ok
-          ctx
-          (tc-global-shared-view resolved)
-          "cannot initialize the"))]
+        (tc-opaque-representation-ok ctx (& resolved) "cannot initialize the"))]
     [_ (try (tc-init-type-supported ctx env (tc-global-shared-view resolved)))]
     (Ok (tc-tag-active-region env resolved))))
 
@@ -87826,24 +87830,28 @@
       (tc-not-zii-reason-text reason)
       "); construct the elements explicitly")))
 
-;; `make-array` / `__tl_make-array` element check. A type the classifier
-;; rejects is reported with its reason; every other type keeps the init rules,
-;; which still validate the value-fill element types (String, dynamic buffers,
-;; boxes), so the classifier never admits a type those rules reject.
+;; `make-array` / `__tl_make-array` element check. A foreign opaque element is
+;; a representation error, reported as `init` reports it, rather than a
+;; zero-initialization reason. A type the classifier rejects is reported with
+;; its reason; every other type keeps the init rules, which still validate the
+;; value-fill element types (String, dynamic buffers, boxes), so the classifier
+;; never admits a type those rules reject.
 (define (tc-make-array-element-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
   [elem : ast.AstType]) : ResultTcUnit
-  (match (tc-type-zii-class ctx (tc-global-shared-view elem))
-    [(NotZii reason)
-      (if (tc-not-zii-reason-rejects? reason)
-        (Err
-          (tc-make-array-not-zii-message
-            ctx
-            (tc-global-shared-view elem)
-            reason))
-        (tc-init-type-supported ctx env elem))]
-    [(Zii) (tc-init-type-supported ctx env elem)]))
+  (let
+    [_ (try (tc-opaque-representation-ok ctx (& elem) "cannot initialize the"))]
+    (match (tc-type-zii-class ctx (tc-global-shared-view elem))
+      [(NotZii reason)
+        (if (tc-not-zii-reason-rejects? reason)
+          (Err
+            (tc-make-array-not-zii-message
+              ctx
+              (tc-global-shared-view elem)
+              reason))
+          (tc-init-type-supported ctx env elem))]
+      [(Zii) (tc-init-type-supported ctx env elem)])))
 
 (define (tc-make-array-zero-literal-length?
   [expr-bases : i64]
@@ -94417,10 +94425,10 @@
 ;; Err with E0221 when TY is a foreign opaque aggregate, else Ok.
 (define (tc-opaque-representation-ok
   [ctx : TcContext]
-  [ty : ast.AstType]
+  [ty : (& ast.AstType)]
   [use : String]) : ResultTcUnit
   (let
-    [name : i64 (tc-opaque-foreign-type-name ctx (& ty))]
+    [name : i64 (tc-opaque-foreign-type-name ctx ty)]
     (if (< name 0)
       Ok
       (Err (tc-opaque-representation-message name use)))))

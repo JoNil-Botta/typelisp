@@ -203,10 +203,12 @@ with the same flags as every later stage. A compiler change that the current
 `stage0-latest` cannot compile therefore lands in two steps: first the compiler
 support, then, once `stage0-latest` has been republished with it, the sources
 that use it.
-`scripts/ci-verify.sh` runs the same gate as CI: the published compiler
-seeds a stage1->stage2->stage3 bootstrap fixpoint
-(`scripts/check-bootstrap-fixpoint.sh` compares stage2 and stage3 assembly),
-and every remaining gate runs on the freshly bootstrapped compiler. On
+`scripts/ci-verify.sh` runs the same gates as CI: the published compiler seeds a
+stage1->stage2->stage3 bootstrap fixpoint (`bootstrap-compiler`, where
+`scripts/check-bootstrap-fixpoint.sh` compares stage2 and stage3 assembly), and
+every remaining gate runs on the freshly bootstrapped compiler. `bootstrap-fixpoint`
+is the rest of that proof - the embedded-provenance parity compile - so it runs
+beside those gates and still fails the run and the lane receipt when it fails. On
 Windows the fixpoint script runs from Git Bash and uses `clang
 --target=x86_64-pc-windows-msvc` plus MSVC `link.exe`; set
 `TYPELISP_WINDOWS_CLANG` / `TYPELISP_WINDOWS_LINK` to override tool

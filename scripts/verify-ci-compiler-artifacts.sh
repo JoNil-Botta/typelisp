@@ -36,18 +36,20 @@ cat > "$source/scripts/ci-gates.tsv" <<'EOF'
 # fixture gate table
 id	hosts	label	needs	compiler	memory	locks	command
 fixture-self-test	all	fixture self-test	-	-	256	-	true
-bootstrap-fixpoint	all	bootstrap fixpoint	-	-	256	-	true
-stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint	stage2	256	-	true
-fixture-opt2-cli	all	fixture opt2 CLI	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	256	-	true
-fixture-gate-b	all	fixture gate b	bootstrap-fixpoint	stage2	256	-	true
-fixture-gate-c	all	fixture gate c	bootstrap-fixpoint,fixture-gate-b	stage2	256	-	true
+bootstrap-compiler	all	bootstrap compiler	-	-	256	-	true
+bootstrap-fixpoint	all	bootstrap fixpoint	bootstrap-compiler	-	256	-	true
+stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-compiler,bootstrap-fixpoint	stage2	256	-	true
+fixture-opt2-cli	all	fixture opt2 CLI	bootstrap-compiler,stage2-opt1-opt2-build-invariance@linux	stage2	256	-	true
+fixture-gate-b	all	fixture gate b	bootstrap-compiler	stage2	256	-	true
+fixture-gate-c	all	fixture gate c	bootstrap-compiler,fixture-gate-b	stage2	256	-	true
 EOF
 printf 'tool\thosts\tgates\tcheck\tinstall\n' > "$source/scripts/ci-host-tools.tsv"
 cat > "$source/scripts/ci-lanes.tsv" <<'EOF'
 # fixture lanes
 id	linux	windows
 fixture-self-test	linux-2	windows-2
-bootstrap-fixpoint	linux-2+linux-1	windows-1+windows-2
+bootstrap-compiler	linux-2+linux-1	windows-1+windows-2
+bootstrap-fixpoint	linux-2+linux-1!	windows-1+windows-2!
 stage2-opt1-opt2-build-invariance	linux-1	-
 fixture-opt2-cli	linux-1	windows-2
 fixture-gate-b	linux-2	windows-1
@@ -139,7 +141,7 @@ build_lane() {
       GITHUB_RUN_ID=1234 GITHUB_RUN_ATTEMPT=$attempt GITHUB_REPOSITORY=owner/repo \
       GITHUB_WORKFLOW_REF=owner/repo/.github/workflows/ci.yml@refs/pull/1/merge GITHUB_EVENT_PATH=$work/event.json \
       TYPELISP_CI_LANE=$lane cica_context github > "$dir/draft/context.json"
-    owned=$(awk -F '\t' -v c="$([ "$host" = linux ] && echo 2 || echo 3)" -v l="$lane" '!/^#/ && $1 != "id" { split($c, p, "+"); if (p[1] == l) print $1 }' "$source/scripts/ci-lanes.tsv" | paste -sd, -)
+    owned=$(awk -F '\t' -v c="$([ "$host" = linux ] && echo 2 || echo 3)" -v l="$lane" '!/^#/ && $1 != "id" { split($c, p, "+"); if (p[1] == l) print $1; for (i = 2; i <= length(p); i++) { t = p[i]; sub(/!$/, "", t); if (t == l && t != p[i]) print $1 } }' "$source/scripts/ci-lanes.tsv" | paste -sd, -)
     "$source/scripts/ci-verify.sh" --list-gates "$host" --gates "$owned" | sed 1d | cut -f 1 > "$dir/draft/lane/plan.txt"
     printf '%s\n' "$owned" | tr ',' '\n' > "$work/requested"
     case $variant in
@@ -420,13 +422,14 @@ if fixture_lane=linux-1 fixture_cli seal "$source" "$source/target/partial" linu
 [ ! -e "$source/target/partial/complete" ] || cica_fail 'partial became complete'
 record_result partial-seal rejected
 # A lane whose ci-verify.sh result is not a pass for every planned gate
-# cannot seal a receipt.
+# cannot seal a receipt: bootstrap-fixpoint, the repeat gate every lane plans,
+# fails here and the bundle stays unsealed.
 mkdir -p "$source/target/failed-seal/draft/lane"
 for f in context.json source-set.sha256 toolchain.json; do cp "$source/target/lanes/linux-2-a2-base/complete/$f" "$source/target/failed-seal/draft/"; done
 cp "$source/target/lanes/linux-2-a2-base/complete/lane/plan.txt" "$source/target/lanes/linux-2-a2-base/complete/lane/requested.txt" "$source/target/failed-seal/draft/lane/"
 failed_inputs=$source_real/target/failed-seal-inputs
 mkdir -p "$failed_inputs"
-awk -F '\t' -v OFS='\t' 'NR == 3 { $2 = "unfinished" } { print }' "$source_real/target/lanes/linux-2-a2-base-inputs/results.tsv" > "$failed_inputs/results.tsv"
+awk -F '\t' -v OFS='\t' '$1 == "bootstrap-fixpoint" { $2 = "unfinished" } { print }' "$source_real/target/lanes/linux-2-a2-base-inputs/results.tsv" > "$failed_inputs/results.tsv"
 if fixture_lane=linux-2 fixture_cli seal "$source" "$source/target/failed-seal" linux "$failed_inputs/results.tsv" - > "$work/failed-seal.stdout" 2> "$work/failed-seal.stderr"; then cica_fail 'failed lane sealed'; fi
 record_result failed-gate-seal rejected
 
@@ -475,10 +478,10 @@ out=$source/target/aggregate/linux/out
 # The merged artifact keeps the ci-timing format: each gate's rows once, from
 # its owning lane, and exactly one complete-verification row (slowest lane).
 [ "$(grep -c '	complete-verification	' "$out/linux.tsv")" = 1 ] && [ "$(grep -c 'partial-verification' "$out/linux.tsv")" = 0 ] &&
-    [ "$(grep -c '^bootstrap fixpoint	all	gate	' "$out/linux.tsv")" = 1 ] && [ "$(grep -c '	all	gate	' "$out/linux.tsv")" = 6 ] &&
+    [ "$(grep -c '^bootstrap fixpoint	all	gate	' "$out/linux.tsv")" = 1 ] && [ "$(grep -c '	all	gate	' "$out/linux.tsv")" = 7 ] &&
     grep -q '^CI verification	all	complete-verification	5002	0	linux$' "$out/linux.tsv" || cica_fail 'merged timing differs from the contract'
-cica_jq -e --arg root "$source_real" '.status=="pass" and .gates==6 and (.lanes|length)==2 and (.lanes|map(.attempt)|unique)==[2] and
-  (.lanes[]|select(.lane=="linux-1")|.duplicates)==["bootstrap-fixpoint"] and (.seeds|length)==1 and
+cica_jq -e --arg root "$source_real" '.status=="pass" and .gates==7 and (.lanes|length)==2 and (.lanes|map(.attempt)|unique)==[2] and
+  (.lanes[]|select(.lane=="linux-1")|.duplicates)==["bootstrap-compiler","bootstrap-fixpoint"] and (.seeds|length)==1 and
   .checkout==$root and (.lanes|map(.checkout)|unique)==[$root]' "$out/coverage.json" > /dev/null || cica_fail 'coverage proof incomplete'
 record_result aggregate-merged-timing-and-proof pass
 # shellcheck disable=SC2086
@@ -612,7 +615,7 @@ lane_check_case gate-not-on-host '$1 == "stage2-opt1-opt2-build-invariance" { $3
 # setup: three build-invariance workers only where nothing can run beside it.
 fixture_setup() { "$source/scripts/ci-lane.sh" setup "$1" | sed -n "s/^$2=//p"; }
 [ "$(fixture_setup linux-1 build_invariance_workers)" = 3 ] && [ -z "$(fixture_setup linux-2 build_invariance_workers)" ] &&
-    [ "$(fixture_setup linux-1 gates)" = stage2-opt1-opt2-build-invariance,fixture-opt2-cli ] || cica_fail 'lane setup changed'
+    [ "$(fixture_setup linux-1 gates)" = bootstrap-fixpoint,fixture-opt2-cli,stage2-opt1-opt2-build-invariance ] || cica_fail 'lane setup changed'
 awk -F '\t' -v OFS='\t' '$1 == "fixture-self-test" { $2 = "linux-1" } $1 == "bootstrap-fixpoint" { $2 = "linux-1+linux-2" } { print }' \
     "$source/scripts/ci-lanes.tsv" > "$work/ci-lanes.shared"
 cp "$work/ci-lanes.shared" "$source/scripts/ci-lanes.tsv"

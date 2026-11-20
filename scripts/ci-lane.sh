@@ -106,11 +106,19 @@ lane_check() {
                 n = split($c, part, "+")
                 dups = "-"
                 for (k = 1; k <= n; k++) {
-                    if (part[k] !~ ("^" host "-[1-9]$")) fail("line " FNR ": invalid " host " lane: " part[k])
-                    if (used[$1, host, part[k]]++) fail("line " FNR ": " $1 " names lane " part[k] " twice")
-                    if (k > 1) dups = (dups == "-" ? part[k] : dups "," part[k])
-                    else owns[host, part[k]] = 1
-                    if (!((host, part[k]) in lane)) { lane[host, part[k]] = 1; lanes[host]++ }
+                    tok = part[k]
+                    rep = 0
+                    if (substr(tok, length(tok)) == "!") { rep = 1; tok = substr(tok, 1, length(tok) - 1) }
+                    if (tok !~ ("^" host "-[1-9]$")) fail("line " FNR ": invalid " host " lane: " part[k])
+                    if (used[$1, host, tok]++) fail("line " FNR ": " $1 " names lane " tok " twice")
+                    if (k > 1) dups = (dups == "-" ? tok : dups "," tok)
+                    else if (rep) fail("line " FNR ": " $1 " marks its owning lane as a repeat")
+                    else owns[host, tok] = 1
+                    # `LANE!`: the lane requests the gate itself instead of
+                    # reaching it through the needs of a gate it owns, for a
+                    # proof that must run on every runner of the host.
+                    if (rep) repeat[host, $1] = (repeat[host, $1] == "" ? tok : repeat[host, $1] "," tok)
+                    if (!((host, tok) in lane)) { lane[host, tok] = 1; lanes[host]++ }
                 }
                 owner[host, $1] = part[1]
                 dup[host, $1] = dups
@@ -129,7 +137,7 @@ lane_check() {
                 for (k = 1; k <= rows[host]; k++) {
                     id = order[host, k]
                     if (!seen[id]) fail("unassigned gate: " id)
-                    print host "\t" id "\t" owner[host, id] "\t" dup[host, id] "\t" label[host, id]
+                    print host "\t" id "\t" owner[host, id] "\t" dup[host, id] "\t" label[host, id] "\t" (repeat[host, id] == "" ? "-" : repeat[host, id])
                 }
             }
         }' "$LANE_WORK/linux.inv" "$LANE_WORK/windows.inv" "$LANES_FILE" > "$LANE_WORK/cells.tsv" || exit 1
@@ -137,7 +145,9 @@ lane_check() {
     for _lc_host in linux windows; do
         for _lc_lane in $(awk -F '\t' -v h="$_lc_host" '$1 == h { print $3 }' "$LANE_WORK/cells.tsv" | sort -u); do
             _lc_owned=$(awk -F '\t' -v h="$_lc_host" -v l="$_lc_lane" '$1 == h && $3 == l { print $2 }' "$LANE_WORK/cells.tsv" | paste -sd, -)
-            lane_closure "$_lc_host" "$_lc_owned" > "$LANE_WORK/planned"
+            _lc_repeat=$(awk -F '\t' -v h="$_lc_host" -v l="$_lc_lane" '$1 == h && index("," $6 ",", "," l ",") { print $2 }' "$LANE_WORK/cells.tsv" | paste -sd, -)
+            _lc_requested=$(printf '%s\n%s\n' "$_lc_owned" "$_lc_repeat" | tr ',' '\n' | grep -v '^$' | LC_ALL=C sort -u | paste -sd, -)
+            lane_closure "$_lc_host" "$_lc_requested" > "$LANE_WORK/planned"
             awk -F '\t' -v h="$_lc_host" -v l="$_lc_lane" '$1 == h && $3 != l && index("," $4 ",", "," l ",") { print $2 }' \
                 "$LANE_WORK/cells.tsv" | LC_ALL=C sort > "$LANE_WORK/declared"
             printf '%s\n' "$_lc_owned" | tr ',' '\n' | LC_ALL=C sort > "$LANE_WORK/owned-sorted"
@@ -149,7 +159,7 @@ lane_check() {
                 sed 's/^/  /' "$LANE_WORK/declared" >&2
                 exit 1
             fi
-            printf '%s\t%s\t%s\t%s\n' "$_lc_host" "$_lc_lane" "$_lc_owned" "$(paste -sd, - < "$LANE_WORK/planned")" >> "$LANE_WORK/lanes.tsv"
+            printf '%s\t%s\t%s\t%s\t%s\n' "$_lc_host" "$_lc_lane" "$_lc_owned" "$(paste -sd, - < "$LANE_WORK/planned")" "$_lc_requested" >> "$LANE_WORK/lanes.tsv"
         done
     done
     # The self_compile ledger attributes a merge to the job that ran the
@@ -178,7 +188,7 @@ lane_field() {
 lane_setup() {
     _ls_host=$(lane_host "$1")
     lane_check
-    _ls_owned=$(lane_field "$1" 3)
+    _ls_owned=$(lane_field "$1" 5)
     _ls_planned=$(lane_field "$1" 4)
     _ls_tools=0
     for _ls_gate in $(awk -F '\t' -v h="$_ls_host" '!/^#/ && $1 == "valgrind" && ($2 == "all" || $2 == h) { print $3 }' \
@@ -247,7 +257,8 @@ lane_aggregate() {
         # The receipt must be this lane's assignment and its needs closure.
         lane_field "$_la_lane" 3 | tr ',' '\n' | LC_ALL=C sort > "$LANE_WORK/owned-$_la_lane"
         lane_field "$_la_lane" 4 | tr ',' '\n' > "$LANE_WORK/planned-$_la_lane"
-        cmp -s "$LANE_WORK/owned-$_la_lane" "$_la_bundle/lane/requested.txt" ||
+        lane_field "$_la_lane" 5 | tr ',' '\n' | LC_ALL=C sort > "$LANE_WORK/requested-$_la_lane"
+        cmp -s "$LANE_WORK/requested-$_la_lane" "$_la_bundle/lane/requested.txt" ||
             lane_fail "$_la_job requested gates other than the ones scripts/ci-lanes.tsv assigns it"
         cmp -s "$LANE_WORK/planned-$_la_lane" "$_la_bundle/lane/plan.txt" ||
             lane_fail "$_la_job planned gates other than its assignment's needs closure"

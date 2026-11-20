@@ -13,13 +13,18 @@
 # duplicate must be declared here. A lane is HOST-N, at most two per host,
 # and its job is named "CI lane HOST-N". An unassigned, doubly assigned,
 # unknown or undeclared gate fails every lane and aggregator.
+# A LANE suffixed with `!` requests the gate itself instead of reaching it
+# through an owned gate's needs: the proof runs on every runner of the host.
+# bootstrap-fixpoint is that repeat, so both lanes of a host prove the
+# bootstrap fixpoint and the aggregator compares their converged compilers.
 # ci-lane.sh setup grants the three-worker build-invariance pool only to a lane
 # that holds nothing else; under this layout build-invariance runs at the
 # default two workers. Both hosts' lanes come from the D-C42 scheduler replay
 # (scripts/README.md, CI lanes).
 id	linux	windows
 bootstrap-adaptive-control-flow	linux-2	windows-2
-bootstrap-fixpoint	linux-2+linux-1	windows-1+windows-2
+bootstrap-compiler	linux-2+linux-1	windows-1+windows-2
+bootstrap-fixpoint	linux-2+linux-1!	windows-1+windows-2!
 ispc-point-transform-corpus-contract	linux-2	windows-2
 tlci-format-corpus	linux-1	windows-2
 stage2-crypto-gcm-native-report	linux-2	windows-1

@@ -87448,12 +87448,19 @@
     [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (cond
       [(> depth (tc-zii-class-depth-limit)) (NotZii (Unsupported))]
-      [(tc-integer-type? (tc-global-shared-view resolved)) (Zii)]
-      [(>= (tc-opaque-foreign-type-name ctx (tc-global-shared-view resolved)) 0)
+      [(>= (tc-opaque-foreign-type-name ctx (& resolved)) 0)
         (NotZii (Unsupported))]
       [else
-        (match (tc-global-shared-view resolved)
-          [(or (F64) (F32) (Bool) (Char) (Unit) (Ptr _) (MutPtr _)) (Zii)]
+        (match (& resolved)
+          ;; An `:invalidate` wrapper lowers as its inner type; only an integer
+          ;; inner was ZII before, and every other wrapper shape falls through.
+          [(Invalidate _ inner)
+            (if (tc-integer-type? (tc-context-type-get ctx inner))
+              (Zii)
+              (NotZii (Unsupported)))]
+          [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool)
+               (Char) (Unit) (Ptr _) (MutPtr _))
+            (Zii)]
           [(CFunc _ mode)
             (if (ast.ast-c-function-mode-nullable? mode)
               (Zii)
@@ -87465,11 +87472,7 @@
           [(or (Ref _ _) (MutRef _ _)) (NotZii (Reference))]
           [(Never) (NotZii (Never))]
           [(or (Expr) (ExprList)) (NotZii (SyntaxValue))]
-          [(Tuple elems)
-            (let
-              [elem-types : ast.AstTypeList
-                (ast.ast-type-list-box-shared-view elems)]
-              (tc-type-list-zii-class ctx (& elem-types) depth))]
+          [(Tuple elems) (tc-type-list-zii-class ctx (& (deref elems)) depth)]
           [(Array elem count)
             (if (< count 0)
               (NotZii (Unsupported))
@@ -93993,7 +93996,7 @@
 
 ;; The name of TY when TY is a struct or enum declared (:opaque) whose module
 ;; family excludes the code CTX checks, else -1.
-(define (tc-opaque-foreign-type-name [ctx : TcContext] [ty : ast.AstType]) : i64
+(define (tc-opaque-foreign-type-name [ctx : TcContext] [ty : (& ast.AstType)]) : i64
   (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
     -1
     (let
@@ -94057,7 +94060,7 @@
     [resolved : ast.AstType (tc-resolve-type ctx ty)]
     (match (tc-global-shared-view resolved)
       [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _))
-        (tc-opaque-foreign-type-name ctx resolved)]
+        (tc-opaque-foreign-type-name ctx (& resolved))]
       [(Tuple elems)
         (tc-opaque-by-value-name-in-list
           ctx
@@ -94140,7 +94143,7 @@
   [ty : ast.AstType]
   [use : String]) : ResultTcUnit
   (let
-    [name : i64 (tc-opaque-foreign-type-name ctx ty)]
+    [name : i64 (tc-opaque-foreign-type-name ctx (& ty))]
     (if (< name 0)
       Ok
       (Err (tc-opaque-representation-message name use)))))

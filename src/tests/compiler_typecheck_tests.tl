@@ -1646,7 +1646,7 @@
   (let
     [class : String
       (compiler-typecheck-zii-class-name
-        (tc_core.tc-type-zii-class ctx (tc_core.tc-global-shared-view ty)))]
+        (tc_core.tc-type-zii-class ctx (clone ty)))]
     [init-ok : bool
       (match (tc_core.tc-init-type-supported
         ctx

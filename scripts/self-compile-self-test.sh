@@ -156,8 +156,9 @@ st_records() {
     st_record "$_d/r.tsv"
     st_succeeds "valid record" sc_record_validate "$_d/r.tsv" gate
     st_fails "role mismatch" sc_record_validate "$_d/r.tsv" base-fallback
-    st_record "$_d/r-nokernel.tsv" info.kernel='<delete>'
-    st_fails "missing info.kernel" sc_record_validate "$_d/r-nokernel.tsv"
+    st_record "$_d/r-nokernel.tsv" info.kernel='<delete>' key.kernel=6.11.0-1018-azure
+    st_succeeds "a record published before info.kernel is valid" sc_record_validate "$_d/r-nokernel.tsv" gate
+    st_succeeds "a missing info.kernel is not bound" sc_records_comparable "$_d/r.tsv" "$_d/r-nokernel.tsv"
     st_record "$_d/r-schema.tsv" schema=typelisp-self-compile-record/0
     st_fails "old schema" sc_record_validate "$_d/r-schema.tsv"
     st_record "$_d/r-ir.tsv" ir_count=12x
@@ -594,6 +595,14 @@ st_ledger() {
     st_eq "class S within bounds" "$(st_entry_says "$_d/s-ok")" "S ok -"
     st_eq "class S residual" "$(sc_record_get "$_d/s-ok/entry.tsv" r)" 300
     st_eq "class S from the PR's own report" "$(sc_record_get "$_d/s-ok/entry.tsv" own_source)" "PR report"
+    # A landed record published before the kernel was recorded as info.kernel
+    # still classifies, and records an unknown kernel in the pair identity.
+    st_entry "$_d/s-old-record" "$_P" 100000050000 mt=100000049700
+    awk -F '\t' '$1 != "info.kernel"' "$_d/s-old-record/landed.tsv" > "$_d/s-old-record/landed-old.tsv" &&
+        mv "$_d/s-old-record/landed-old.tsv" "$_d/s-old-record/landed.tsv"
+    st_eq "a landed record without info.kernel still classifies" "$(st_entry_says "$_d/s-old-record")" "S ok -"
+    st_eq "an unknown kernel is recorded in the pair identity" \
+        "$(sc_record_get "$_d/s-old-record/entry.tsv" pair_identity | cut -d'|' -f1)" unknown
     st_entry "$_d/s-warn" "$_P" 100000050000 mt=100000048999
     st_eq "class S warning" "$(st_entry_says "$_d/s-warn")" "S warning -"
     st_entry "$_d/s-fail" "$_P" 100000050000 mt=100000039999
@@ -893,12 +902,69 @@ st_tree() {
 st_fallback() {
     case "$(uname -s)" in Linux*) ;; *) return 0 ;; esac
     _sfb_dir=$1
-    mkdir -p "$_sfb_dir/repo/scripts" "$_sfb_dir/bin" "$_sfb_dir/tmp"
+    mkdir -p "$_sfb_dir/repo/scripts" "$_sfb_dir/bin" "$_sfb_dir/tmp" "$_sfb_dir/seed"
     cp "$SC_TOOL_DIR/self-compile.sh" "$SC_TOOL_DIR/lib-self-compile.sh" \
         "$SC_TOOL_DIR/self-compile-self-test.sh" "$_sfb_dir/repo/scripts/"
+    # The seed is fetched from the newest permanent stage0 release at or before
+    # the base: a newer non-ancestor, then two ancestors. Only the ancestors
+    # are downloadable, so choosing the newest release over all fails.
+    printf 'permanent stage0 fixture\n' > "$_sfb_dir/seed/typelisp-stage0-linux"
+    sha256sum "$_sfb_dir/seed/typelisp-stage0-linux" | cut -d ' ' -f 1 |
+        awk '{ print $1 "  typelisp-stage0-linux" }' > "$_sfb_dir/seed/SHA256SUMS"
+    _sfb_assets='[{"name":"typelisp-stage0-linux","state":"uploaded","size":10},{"name":"typelisp-stage0-windows.exe","state":"uploaded","size":10},{"name":"SHA256SUMS","state":"uploaded","size":100}]'
+    jq -n --argjson assets "$_sfb_assets" '
+        [{tag_name:"stage0-20261019-120000-r101", target_commitish:"1111111111111111111111111111111111111111", published_at:"2026-10-19T12:00:00Z"},
+         {tag_name:"stage0-20261018-120000-r100", target_commitish:"2222222222222222222222222222222222222222", published_at:"2026-10-18T12:00:00Z"},
+         {tag_name:"stage0-20261017-120000-r99", target_commitish:"3333333333333333333333333333333333333333", published_at:"2026-10-17T12:00:00Z"}] |
+        map(. + {draft:false, prerelease:false, assets:$assets})' > "$_sfb_dir/seed/releases.json"
+    printf '{"base_commit":{"sha":"0000000000000000000000000000000000000000"},"status":"diverged"}\n' \
+        > "$_sfb_dir/seed/compare-stage0-20261019-120000-r101.json"
+    printf '{"base_commit":{"sha":"2222222222222222222222222222222222222222"},"status":"ahead"}\n' \
+        > "$_sfb_dir/seed/compare-stage0-20261018-120000-r100.json"
+    printf '{"base_commit":{"sha":"3333333333333333333333333333333333333333"},"status":"ahead"}\n' \
+        > "$_sfb_dir/seed/compare-stage0-20261017-120000-r99.json"
+    cat > "$_sfb_dir/bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+fmt=
+url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) output=$2; shift ;;
+        -w) fmt=$2; shift ;;
+        -*) ;;
+        https://*) url=$1 ;;
+    esac
+    shift
+done
+printf '%s\n' "$url" >> "$ST_SEED/calls"
+case "$url" in
+    */releases\?per_page=100\&page=1) file=$ST_SEED/releases.json ;;
+    */compare/*)
+        tag=${url##*/compare/}
+        tag=${tag%%...*}
+        file=$ST_SEED/compare-$tag.json
+        ;;
+    */releases/download/stage0-20261019-120000-r101/*) file= ;;
+    */releases/download/*/SHA256SUMS) file=$ST_SEED/SHA256SUMS ;;
+    */releases/download/*) file=$ST_SEED/typelisp-stage0-linux ;;
+    *) file= ;;
+esac
+status=200
+if [ -z "$file" ] || [ ! -f "$file" ]; then
+    status=404
+fi
+[ -z "$fmt" ] || printf '%s' "$status"
+[ "$status" = 200 ] || exit 22
+cp "$file" "$output"
+EOF
+    chmod +x "$_sfb_dir/bin/curl"
     cat > "$_sfb_dir/repo/scripts/ci-verify.sh" <<'EOF'
 #!/bin/sh
 set -eu
+[ -x "${TYPELISP_BIN:-}" ] || { echo "no executable seed: ${TYPELISP_BIN:-<unset>}" >&2; exit 19; }
+printf '%s\n' "$TYPELISP_BIN" > "$RUNNER_TEMP/seed.txt"
 [ "${ST_BOOTSTRAP_FAIL:-no}" != yes ] || exit 17
 mkdir -p target/mock
 printf '#!/bin/sh\necho typelisp %s built fixture\n' "$(git rev-parse HEAD)" > target/mock/compiler
@@ -931,10 +997,19 @@ EOF
         ROOT=$PWD
         RUNNER_TEMP=$_sfb_dir/tmp
         PATH=$_sfb_dir/bin:$PATH
-        export RUNNER_TEMP PATH
+        ST_SEED=$_sfb_dir/seed
+        TYPELISP_STAGE0_FETCH_ATTEMPTS=1
+        TYPELISP_STAGE0_FETCH_RETRY_DELAY=0
+        export RUNNER_TEMP PATH ST_SEED TYPELISP_STAGE0_FETCH_ATTEMPTS TYPELISP_STAGE0_FETCH_RETRY_DELAY
         mkdir target
         echo preserved > target/sentinel
         st_succeeds "copied fallback measures parent" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/parent.tsv parent-fallback
+        st_eq "the base bootstrap is seeded with the newest stage0 ancestor" \
+            "$(cat "$_sfb_dir/tmp/seed.txt")" "$PWD/target/stage0/typelisp"
+        st_eq "the seed downloads the newest ancestor, not the newer release" \
+            "$(grep -c 'download/stage0-20261018-120000-r100/typelisp-stage0-linux' "$_sfb_dir/seed/calls" | tr -d ' ')|$(grep -c 'download/stage0-20261019-120000-r101/' "$_sfb_dir/seed/calls" | tr -d ' ')" "1|0"
+        st_eq "the seed never downloads the older ancestor or stage0-latest" \
+            "$(grep -c 'download/stage0-20261017-120000-r99/' "$_sfb_dir/seed/calls" | tr -d ' ')|$(grep -c 'download/stage0-latest/' "$_sfb_dir/seed/calls" | tr -d ' ')" "0|0"
         st_eq "fallback parent provenance" "$(sc_record_get target/records/parent.tsv commit)" "$_sfb_base"
         st_succeeds "second copied fallback measures PR base" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/base.tsv base-fallback
         st_eq "fallback restores checkout" "$(git rev-parse HEAD)" "$_sfb_head"

@@ -423,7 +423,7 @@ sc_run_fallback() {
     _srf_tool=$(mktemp -d "${RUNNER_TEMP:-/tmp}/self-compile-tool.XXXXXX") ||
         sc_fail "cannot create a directory for the fallback tool copy"
     cp "$SC_TOOL_DIR/self-compile.sh" "$SC_TOOL_DIR/lib-self-compile.sh" \
-        "$SC_TOOL_DIR/self-compile-self-test.sh" "$_srf_tool/"
+        "$SC_TOOL_DIR/self-compile-self-test.sh" "$SC_TOOL_DIR/fetch-stage0.sh" "$_srf_tool/"
     TYPELISP_SELF_COMPILE_ROOT=$ROOT sh "$_srf_tool/self-compile.sh" fallback \
         "$_srf_base" "$_srf_head" "$ROOT/$_srf_record" "$_srf_role"
 }
@@ -432,7 +432,8 @@ sc_run_fallback() {
 #   Measure BASE on this runner at this path: set HEAD's target/ aside,
 #   check out BASE, overlay HEAD's measurement harness (explicit in the
 #   record's procedure), build BASE's own fixpoint compiler with BASE's
-#   ci-verify and fetched seed, measure it, and restore HEAD and its target/.
+#   ci-verify and seeded from the newest stage0 release at or before BASE,
+#   measure it, and restore HEAD and its target/.
 sc_cmd_fallback() {
     [ "$#" -eq 4 ] || { usage >&2; exit 2; }
     _scf_base=$1
@@ -486,8 +487,17 @@ sc_cmd_fallback() {
         _scf_status=1
     fi
     if [ "$_scf_status" -eq 0 ]; then
-        env -u TYPELISP_BIN -u TYPELISP_CI_TIMING sh scripts/ci-verify.sh --gates bootstrap-fixpoint ||
+        # Seed the base's bootstrap from a permanent generation built at or
+        # before the base: the mutable stage0-latest may have been republished
+        # from a newer commit whose stricter compiler cannot build it (#9823).
+        _scf_seed=$ROOT/target/stage0/typelisp
+        sc_log "fallback: seeding $_scf_base from the newest permanent stage0 at or before it"
+        sh "$SC_TOOL_DIR/fetch-stage0.sh" --at-commit "$_scf_base" "$ROOT/target/stage0" ||
             _scf_status=1
+    fi
+    if [ "$_scf_status" -eq 0 ]; then
+        env -u TYPELISP_CI_TIMING TYPELISP_BIN="$_scf_seed" \
+            sh scripts/ci-verify.sh --gates bootstrap-fixpoint || _scf_status=1
     fi
     # Overlay the head's harness after the base's own bootstrap, so the base
     # compiler is built entirely by the base's scripts.

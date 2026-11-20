@@ -89,7 +89,9 @@ writes a record: the value and its measurement identity. The identity is:
 The image version, kernel and CPU model are recorded but are not part of the
 key: Cachegrind counts guest user-space instructions of a static binary, and
 hosted runners alternate kernels (`-aws`, `-azure`), so a kernel difference
-reuses the reference instead of re-measuring it.
+reuses the reference instead of re-measuring it. A record published before the
+kernel was recorded as `info.kernel` (it then carried `key.kernel`) stays
+readable: a missing kernel is recorded as unknown and never blocks reuse.
 For identity/build changes, the reference workflow's PR dry run also invokes
 `scripts/verify-self-compile-stamp-invariance.sh`. It reuses the first bootstrap
 and measurement, creates a local second commit of the same tree, then builds
@@ -134,11 +136,13 @@ the PR's honoured declaration in ppm, or 0. `TYPELISP_IR_SELF_COMPILE_TOLERANCE_
   A pending reference is awaited for up to 30 minutes.
 - Otherwise the job measures B in place. It sets T's `target/` aside and checks
   out B. It builds B's own fixpoint compiler with B's
-  `ci-verify --gates bootstrap-fixpoint` and a freshly fetched seed, measures it
-  with T's harness at the same path, then restores T, also when the job is
-  terminated. The rejected reference, if any, is kept alongside for comparison;
-  built with the same `as` and `ld`, it must have measured the same compiler
-  bytes.
+  `ci-verify --gates bootstrap-fixpoint`, seeded from the newest permanent
+  `stage0-<date>-r<run>` release built at or before B (never the mutable
+  `stage0-latest`, which may have been rebuilt from a newer commit that cannot
+  build B), measures it with T's harness at the same path, then restores T,
+  also when the job is terminated. The rejected reference, if any, is kept
+  alongside for comparison; built with the same `as` and `ld`, it must have
+  measured the same compiler bytes.
 - Nothing passes without a valid, comparable M(B) of B's commit and tree. An API
   error, a missing or rejected reference, or a pending one that does not finish
   within the wait leads to the in-place measurement; if that also fails, the

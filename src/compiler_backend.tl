@@ -49328,7 +49328,7 @@
           index-reg
           "\n"
           ""))
-      (if (or total-switch (not shares-index))
+      (if (or total-switch shares-index)
         ""
         (str_cat.str-cat
           "    leaq "

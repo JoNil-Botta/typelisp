@@ -164,7 +164,7 @@
 
 ;; Encoder search: hash-chain links per position and the lazy-match cap.
 (define (compiler-lzss-chain-links) : i64
-  128)
+  64)
 
 (define (compiler-lzss-lazy-floor) : i64
   12)

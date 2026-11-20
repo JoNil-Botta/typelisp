@@ -516,6 +516,12 @@ clang at `-O0` and `-O2` -- records the fastest of `--runs` builds and its peak
 RSS per leg in `target/compile-vs-clang/results.tsv`, and prints the geomean
 TypeLisp/clang time and peak-memory ratios for `opt1:-O0` and `opt2:-O2`.
 
+`scripts/benchmark-size-vs-clang.sh` is the size lane's counterpart. It builds
+the same pairs at `--opt-level 2` and with clang at `-Os` and `-O2`, strips all
+three binaries, records their byte sizes and TypeLisp/clang ratios in
+`target/size-vs-clang/results.tsv`, and prints the geomean `opt2:-Os` and
+`opt2:-O2` ratios plus the five largest `-Os` ratios.
+
 ## Moving a script
 
 Before moving or deleting a script:

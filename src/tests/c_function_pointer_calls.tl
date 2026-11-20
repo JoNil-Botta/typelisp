@@ -1,3 +1,4 @@
+;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 (import compiler_typecheck_api as tc_api)
 (import compiler_diagnostic as diagnostic)
 (import stdlib.string)

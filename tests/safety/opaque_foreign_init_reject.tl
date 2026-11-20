@@ -3,5 +3,6 @@
 
 (define (main) : i64
   (let
+    ;; lint-allow: removed-init -- This test rejects init on an opaque type.
     [_c (init : opaque_dep.Connection)]
     0))

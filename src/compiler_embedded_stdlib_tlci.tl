@@ -297,12 +297,13 @@
             (& payload.embedded-stdlib-tlci-bytes)
             catalog
             index)]
-        ;; Only the group's stream up to this frame's end is expanded, so a
-        ;; low frame costs its own bytes rather than the whole group.
+        ;; A group is tokenized as one window, so a frame boundary inside it
+        ;; need not fall on a token boundary: expand the whole group and take
+        ;; the frame out of it.
         [group : (__tl_dyn-array u8)
           (match (compiler-embedded-stdlib-tlci-group-bytes
             (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
-            (+ offset raw))
+            0)
             [(Ok bytes) bytes]
             [(Err _) (return (__tl_make-array u8 0))])]
         [record : i64

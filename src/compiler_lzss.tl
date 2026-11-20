@@ -1212,6 +1212,12 @@
     [tokens-len : i64 0]
     [reps : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [main-base : i64 (compiler-lzss-main-symbols)]
+    ;; The lazy lookahead's match, kept for the next position.
+    [pending-valid : bool false]
+    [pending-offset : i64 0]
+    [pending-length : i64 0]
+    [lookahead-offset : i64 0]
+    [lookahead-length : i64 0]
     [index : i64 0]
     (compiler-lzss-fill! (&mut head) -1)
     (set! (array-ref reps 0) 1)
@@ -1250,14 +1256,21 @@
               (compiler-lzss-max-match)))]
         [literal-gain : i64
           (- (array-ref sums (+ index 1)) (array-ref sums index))]
-        [match : CompilerLzssMatch
-          (compiler-lzss-find data source-len head-view previous-view index 0)]
+        [match : CompilerLzssMatch (CompilerLzssMatch 0 0)]
         [best-symbol : i64 -1]
         [best-length : i64 0]
         [best-distance : i64 0]
         [best-gain : i64 0]
         [rep0-len : i64 0]
         [k : i64 0]
+        ;; A rejected lazy lookahead already found this position's match, so
+        ;; the chain walk is not repeated here.
+        (set!
+          match
+          (if pending-valid
+            (CompilerLzssMatch pending-offset pending-length)
+            (compiler-lzss-find data source-len head-view previous-view index 0)))
+        (set! pending-valid false)
         (compiler-lzss-insert! data source-len head-slots previous-slots index)
         ;; Repeat offsets spend no distance bits, so they usually win.
         (while (< k 4)
@@ -1358,13 +1371,20 @@
                           next.offset))
                       literal-gain)]
                   (set! lazy (> next-gain best-gain)))
-                (set! lazy false))))
+                (set! lazy false))
+              (set! lookahead-offset next.offset)
+              (set! lookahead-length next.length)))
           (cond
             [lazy
+              ;; The literal here is a token of its own; the lookahead match is
+              ;; the next position's, so it is carried into the next iteration.
               (set!
                 (array-ref tokens tokens-len)
                 (CompilerLzssToken (compiler-lzss-byte data index) 1 0))
               (set! tokens-len (+ tokens-len 1))
+              (set! pending-valid true)
+              (set! pending-offset lookahead-offset)
+              (set! pending-length lookahead-length)
               (set! index (+ index 1))]
             [(< best-symbol 0)
               (set!

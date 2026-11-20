@@ -3705,9 +3705,9 @@
           map-key
           202)]
       [symbols-growth : csym.CompilerSymbols (csym.compiler-symbols-empty)]
-      [stamp-a : csym.CompilerSymbolsTypeMapStamp
+      [stamp-a : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp (& symbols-a))]
-      [stamp-b : csym.CompilerSymbolsTypeMapStamp
+      [stamp-b : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp (& symbols-b))]
       [positive-a : i64
         (tc_core.tc-type-handle-lookup-id
@@ -3757,14 +3757,14 @@
           cache-key)
           [(Hit handle) (= handle -1)]
           [(Miss) false])]
-      [growth-before : csym.CompilerSymbolsTypeMapStamp
+      [growth-before : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp (& symbols-growth))]
       [symbols-growth-next : csym.CompilerSymbols
         (csym.compiler-symbols-add-type-alias-key-id
           (& symbols-growth)
           map-key
           303)]
-      [growth-after : csym.CompilerSymbolsTypeMapStamp
+      [growth-after : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp (& symbols-growth-next))]
       [after-add : i64
         (tc_core.tc-type-handle-lookup-id
@@ -7820,21 +7820,6 @@
           (tc_core.tc-nominal-name-id-eq?
             generated-type
             cbi.compiler-builtin-id-arena-type))
-        (=
-          (tc_core.tc-arena-safe-call-base-kind-id
-            cbi.compiler-builtin-id-arena-phase-base)
-          (tc_core.tc-arena-safe-call-kind-phase))
-        (=
-          (tc_core.tc-arena-safe-call-base-kind-id
-            cbi.compiler-builtin-id-arena-rewind-safe-base)
-          (tc_core.tc-arena-safe-call-kind-rewind))
-        (=
-          (tc_core.tc-arena-safe-call-base-kind-id
-            cbi.compiler-builtin-id-arena-destroy-safe-base)
-          (tc_core.tc-arena-safe-call-kind-destroy))
-        (=
-          (tc_core.tc-arena-safe-call-base-kind-id generated-phase)
-          (tc_core.tc-arena-safe-call-kind-none))
         (tc_core.tc-arena-canonical-call-base-id?
           (cis.InternStructuralSessionHandle 0)
           canonical-phase

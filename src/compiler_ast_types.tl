@@ -9629,6 +9629,22 @@
           elem)
         size))))
 
+(define (ast-expr-fixed-make-array-with-cells
+  [expr-cell-address : u64]
+  [type-cell-address : u64]
+  [elem : (& AstType)]
+  [size : i64]) : i64
+  (ast-node-pool-context-expr-push-cells
+    expr-cell-address
+    type-cell-address
+    (&
+      (FixedMakeArray
+        (ast-node-pool-context-type-push-cells
+          expr-cell-address
+          type-cell-address
+          elem)
+        size))))
+
 (define (ast-expr-type-literal-with-pools
   [pools : AstNodePoolContext]
   [ty : (& AstType)]) : i64

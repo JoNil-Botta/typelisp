@@ -539,7 +539,6 @@
   (written-roots lower_i64_i64_map.Map)
   (written-roots-complete bool)
   ;; The subset written inside some loop (`while`, owned `for`, `foreach`).
-  (loop-written-roots lower_i64_i64_map.Map)
   ;; Right-hand-side expression ids of the `set!` forms inside some loop.
   (loop-set-values lower_i64_i64_map.Map)
   ;; -1 unavailable; otherwise the exact canonical quick-precheck result.
@@ -1343,8 +1342,7 @@
             origin.actionable
             origin.primary)
           frame-start
-          frames.len
-          origin.truncated)))
+          frames.len)))
     (if (>= head 0)
       (begin
         (set! (array-ref sites.items.slots previous).next-source ordinal)
@@ -1463,12 +1461,7 @@
             (if (< frames.len ir.compiler-spmd-max-macro-frames)
               (ir.compiler-spmd-macro-frame-list-append!
                 frames
-                (ir.CompilerSpmdMacroFrame
-                  name-id
-                  (ir.CompilerSourceLocation
-                    invocation
-                    (clone origin.primary.span))
-                  origin-path))
+                (ir.CompilerSpmdMacroFrame name-id))
               (set! origin.truncated true)))
           (when
             (>= origin-path 0)
@@ -1661,8 +1654,7 @@
         location
         location
         0
-        0
-        false))))
+        0))))
 
 (define (lower-spmd-finish-site!
   [state : LowerState]
@@ -1846,9 +1838,6 @@
   ;; Whose patterns are being bound (`lower-match-view`): 0 a value's, 1 a
   ;; view's. Cleared in each arm's body.
   (view-match i64)
-  ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
-  ;; (every root) until lower-bind-source-params sets it.
-  (mut-borrow-scope i64)
   ;; Storage ownership evidence for this function (see "Storage ownership
   ;; evidence" below): address var -> the root var of the storage it points
   ;; into, root var -> its kind, and root var -> the one binding that owns it.
@@ -1932,7 +1921,6 @@
         (lower_i64_i64_map.with-capacity 1)
         -1
         0
-        -1
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
@@ -8641,7 +8629,6 @@
         (lower_i64_i64_map.with-capacity 0)
         false
         (lower_i64_i64_map.with-capacity 0)
-        (lower_i64_i64_map.with-capacity 0)
         -1
         -1
         (LowerAddressExposure
@@ -8702,13 +8689,11 @@
 
 (define (compiler-lower-function-state-loop-written-roots-set!
   [state : CompilerLowerFunctionState]
-  [roots : lower_i64_i64_map.Map]
   [set-values : lower_i64_i64_map.Map]) : unit
   (let
     [data : (MutPtr CompilerLowerFunctionStateData)
       (compiler-lower-function-state-ptr state)]
     (unsafe
-      (set! (deref data).loop-written-roots roots)
       (set! (deref data).loop-set-values set-values))))
 
 ;; Fail-closed: true unless the complete scan shows the `set!` whose
@@ -27405,7 +27390,6 @@
       loop-complete)
     (compiler-lower-function-state-loop-written-roots-set!
       function-state
-      loop-roots
       loop-set-values)))
 
 ;; Names written inside some loop: each loop node's whole subtree is scanned
@@ -27753,83 +27737,32 @@
           (if (>= place 0)
             (lower-written-roots-note-mentions! ctx place roots budget)
             true)])]
-    [write-free-form? : bool
+    ;; These are the forms lowering consumes before this pass. One that
+    ;; appears anyway has a subtree that is not lowered yet, so its operands
+    ;; are counted as mentions instead of scanned.
+    [scan-children? : bool
       (match (& expr)
-        [(ast.AstExpr.Spanned _ _) true]
-        [(ast.AstExpr.Literal _) true]
-        [(ast.AstExpr.Var _) true]
-        [(ast.AstExpr.Binary _ _ _) true]
-        [(ast.AstExpr.Unary _ _) true]
-        [(ast.AstExpr.Call _ _) true]
-        [(ast.AstExpr.If _ _ _) true]
-        [(ast.AstExpr.Let _) true]
-        [(ast.AstExpr.Lambda _) true]
-        [(ast.AstExpr.Tuple _) true]
-        [(ast.AstExpr.TupleRef _ _) true]
-        [(ast.AstExpr.Array _) true]
-        [(ast.AstExpr.DynArray _) true]
-        [(ast.AstExpr.FixedMakeArray _ _) true]
-        [(ast.AstExpr.MakeArray _ _) true]
-        [(ast.AstExpr.ArrayRef _ _) true]
-        [(ast.AstExpr.StringRef _ _) true]
-        [(ast.AstExpr.While _ _) true]
-        [(ast.AstExpr.Begin _) true]
-        [(ast.AstExpr.Unsafe _) true]
-        [(ast.AstExpr.Ann _ _) true]
-        [(ast.AstExpr.Cast _ _) true]
-        [(ast.AstExpr.Match _) true]
-        [(ast.AstExpr.StructGet _ _) true]
-        [(ast.AstExpr.WithRegion _ _) true]
-        [(ast.AstExpr.WithEscape _ _) true]
-        [(ast.AstExpr.WithScratch _) true]
-        [(ast.AstExpr.InArena _ _) true]
-        [(ast.AstExpr.Box _) true]
-        [(ast.AstExpr.BoxGet _) true]
-        [(ast.AstExpr.TypeLiteral _) true]
-        [(ast.AstExpr.Init _) true]
-        [(ast.AstExpr.Comptime _) true]
-        [(ast.AstExpr.Quote _) true]
-        [(ast.AstExpr.Quasiquote _) true]
-        [(ast.AstExpr.Unquote _) true]
-        [(ast.AstExpr.UnquoteSplicing _) true]
-        [(ast.AstExpr.BracketClause _) true]
-        [(ast.AstExpr.Try _) true]
-        [(ast.AstExpr.Return _) true]
-        [(ast.AstExpr.Break) true]
-        [(ast.AstExpr.Continue) true]
-        [(ast.AstExpr.PtrNull _) true]
-        [(ast.AstExpr.PtrNullCheck _) true]
-        [(ast.AstExpr.PtrRead _) true]
-        [(ast.AstExpr.PtrWrite _ _) true]
-        [(ast.AstExpr.PtrOffset _ _) true]
-        [(ast.AstExpr.PtrCast _ _) true]
-        [(ast.AstExpr.PtrToInt _) true]
-        [(ast.AstExpr.IntToPtr _ _) true]
-        [(ast.AstExpr.StringData _) true]
-        [(ast.AstExpr.StringFromBytes _ _) true]
-        [(ast.AstExpr.ArrayData _) true]
-        [(ast.AstExpr.BinaryData _) true]
-        [(ast.AstExpr.ProgramArgc) true]
-        [(ast.AstExpr.ProgramArgv) true]
-        [(ast.AstExpr.ProgramEnvp) true]
-        [(ast.AstExpr.MacroExpansion _ _ _) true]
-        [(ast.AstExpr.SpmdProgramIndex) true]
-        [(ast.AstExpr.SpmdProgramCount) true]
-        ;; Known writes: their place was noted above; operands are scanned.
-        [(ast.AstExpr.Set _ _) true]
-        [(ast.AstExpr.StructSet _ _ _) true]
-        [(ast.AstExpr.ArraySet _ _ _) true]
-        [(ast.AstExpr.ArrayTake _ _ _) true]
-        [(ast.AstExpr.ArrayPush _ _) true]
-        [(ast.AstExpr.BoxSet _ _) true]
-        [(ast.AstExpr.BoxTake _) true]
-        [(ast.AstExpr.Replace _ _) true]
-        [(ast.AstExpr.Borrow _ _ _) true]
-        [(ast.AstExpr.PtrAddrOf _) true]
-        [_ false])]
+        [(ast.AstExpr.Foreach _) false]
+        [(ast.AstExpr.ForeachActive _ _) false]
+        [(ast.AstExpr.ForOwnedState _) false]
+        [(ast.AstExpr.ForOwnedStep _) false]
+        [(ast.AstExpr.LaneValue _) false]
+        [(ast.AstExpr.SpmdReduce _) false]
+        [(ast.AstExpr.SpmdScan _) false]
+        [(ast.AstExpr.SpmdCompact _) false]
+        [(ast.AstExpr.SpmdBroadcast _ _) false]
+        [(ast.AstExpr.SpmdShuffle _ _) false]
+        [(ast.AstExpr.Syscall _) false]
+        [(ast.AstExpr.CpuIdEax _ _) false]
+        [(ast.AstExpr.CpuIdEbx _ _) false]
+        [(ast.AstExpr.CpuIdEcx _ _) false]
+        [(ast.AstExpr.CpuIdEdx _ _) false]
+        [(ast.AstExpr.Xgetbv _) false]
+        [(ast.AstExpr.WithResource _) false]
+        [_ true])]
     (and
       own-write
-      (if write-free-form?
+      (if scan-children?
         (lower-written-roots-scan-children!
           ctx
           (ast.ast-expr-child-ids (lower-global-shared-view expr))
@@ -28917,28 +28850,16 @@
     [(or (Unit) (Never)) false]
     [(or (Ref _ _) (MutRef _ _))
       (match tail
-        [(or (Operand _) (PlaceOperands _ _)) true]
+        [(Operand _) true]
         [_ false])]
     [(or (Ptr _) (MutPtr _)) true]
     [_
-      (or
-        ;; Array places retain their descriptor and its type facts. A snapshot
-        ;; neither copies nor takes ownership of the backing elements.
-        (and
-          (match tail
-            [(PlaceOperands _ _) true]
-            [_ false])
-          (match (& ty)
-            [(or (Array _ _) (DynArray _)) true]
-            [_ false]))
-        (lower-clone-scalar-type? ty)
-        (lower-type-register-resident? ctx ty))]))
+      (or (lower-clone-scalar-type? ty) (lower-type-register-resident? ctx ty))]))
 
 ;; The pending expressions that can overwrite an operand's storage. An
 ;; operator has one; a call shares its existing argument list without copying it.
 (defenum LowerSnapshotTail
   (Operand i64)
-  (PlaceOperands i64 i64)
   (Arguments ast.AstExprList i64))
 
 (define (lower-snapshot-tail-write-code
@@ -28947,16 +28868,6 @@
   [tail : (& tail LowerSnapshotTail)]) : i64
   (match tail
     [(Operand expr-box) (lower-call-arg-expr-write-code ctx name expr-box)]
-    [(PlaceOperands first-box second-box)
-      (let
-        [first (lower-call-arg-expr-write-code ctx name first-box)]
-        (if (= first 2)
-          first
-          (let
-            [second (lower-call-arg-expr-write-code ctx name second-box)]
-            (if (> second first)
-              second
-              first))))]
     [(Arguments args index)
       (lower-call-arg-exprs-write-code ctx name args index)]))
 
@@ -28965,10 +28876,6 @@
   [tail : (& tail LowerSnapshotTail)]) : bool
   (match tail
     [(Operand expr-box) (lower-call-arg-expr-reads-only? ctx expr-box)]
-    [(PlaceOperands first-box second-box)
-      (and
-        (lower-call-arg-expr-reads-only? ctx first-box)
-        (lower-call-arg-expr-reads-only? ctx second-box))]
     [(Arguments args index) (lower-call-args-read-only? ctx args index)]))
 
 ;; An operand's state and value after its snapshot, and what is known about
@@ -28994,7 +28901,7 @@
     [code : i64
       (if (match tail
         [(Arguments args index) (>= index args.len)]
-        [(or (Operand _) (PlaceOperands _ _)) false])
+        [(Operand _) false])
         writes
         (match (& value)
           [(Var var-id)
@@ -29027,7 +28934,7 @@
           [(Global _)
             (if (and
               (match tail
-                [(or (Operand _) (PlaceOperands _ _)) true]
+                [(Operand _) true]
                 [_ false])
               (lower-operand-snapshot-type?
                 ctx

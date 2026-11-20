@@ -30772,12 +30772,10 @@
 ;; the register file and legal-home policy.  An empty assigned register is an
 ;; explicit "use the scavenger" outcome.
 (defenum CompilerRegScratchClass
-  (Gp)
-  (Xmm))
+  (Gp))
 
 (defstruct CompilerRegScratchConstraint
   (register-class CompilerRegScratchClass)
-  (allowed CompilerRegIdSeq)
   (excluded CompilerRegIdSeq)
   (fixed i64))
 
@@ -30863,11 +30861,7 @@
 
 (define (compiler-reg-scratch-gp-constraint-excluding
   [excluded : CompilerRegIdSeq]) : CompilerRegScratchConstraint
-  (CompilerRegScratchConstraint
-    (Gp)
-    (compiler-reg-id-seq-empty)
-    excluded
-    cabi.compiler-reg-id-invalid))
+  (CompilerRegScratchConstraint (Gp) excluded cabi.compiler-reg-id-invalid))
 
 (define (compiler-reg-scratch-location-registers
   [assignments : CompilerRegAssignmentTable]
@@ -30911,7 +30905,6 @@
   [reg : i64]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (Gp)
-    (compiler-reg-id-seq-empty)
     (compiler-reg-scratch-instr-registers assignments instr)
     reg))
 
@@ -30955,8 +30948,7 @@
       (set!
         (array-ref types var)
         (match requirement.constraint.register-class
-          [(Gp) (ast.AstType.I64)]
-          [(Xmm) (ast.AstType.F64)])))))
+          [(Gp) (ast.AstType.I64)])))))
 
 ;; The bounded early model contains scratch demands that may require an ordinary
 ;; value to move or spill. Most scratch remains late-only because preserving a

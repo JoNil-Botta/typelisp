@@ -1511,6 +1511,46 @@ arena_invalidate_branch_defined|run-exit|tests/safety/arena_invalidate_branch_de
 arena_invalidate_try_defined|run-exit|tests/safety/arena_invalidate_try_defined.tl|42|-
 arena_invalidate_transfer_defined|run-exit|tests/safety/arena_invalidate_transfer_defined.tl|42|-
 arena_invalidate_function_value_defined|run-exit|tests/safety/arena_invalidate_function_value_defined.tl|42|-
+# An arena end is decided from the definition the callee resolves to, never
+# from its spelling (#9041, #9490): a macro expansion is that call; the safe
+# ends `arena.destroy-safe!` and `arena.rewind-safe!` are not first-class
+# values; named as a with cleanup, one ends its binder's arena at every exit
+# of the scope (after the body, or a `break`/`continue` leaving it) through the
+# same end checks (#9775), so the with result and any later use cannot hold
+# its values, and no inner end bypasses it. An item import alias is the same
+# callee.
+arena_end_macro_use_after_reject|check-fail|tests/safety/arena_end_macro_use_after_reject.tl|-|use of moved value `text`
+arena_end_macro_double_destroy_reject|check-fail|tests/safety/arena_end_macro_double_destroy_reject.tl|-|use of moved value `scratch`
+arena_end_macro_rewind_with_owner_reject|check-fail|tests/safety/arena_end_macro_rewind_with_owner_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `w` holds values from it
+arena_end_macro_imported_use_after_reject|check-fail|tests/safety/arena_end_macro_imported_use_after_reject.tl|-|use of moved value `text`
+arena_end_macro_invalidate_discharge_defined|run-exit|tests/safety/arena_end_macro_invalidate_discharge_defined.tl|42|-
+arena_end_value_local_reject|check-fail|tests/safety/arena_end_value_local_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_value_with_owner_reject|check-fail|tests/safety/arena_end_value_with_owner_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_value_argument_reject|check-fail|tests/safety/arena_end_value_argument_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_value_rewind_reject|check-fail|tests/safety/arena_end_value_rewind_reject.tl|-|arena.rewind-safe! ends an arena and cannot be used as a function value
+arena_end_with_cleanup_use_after_reject|check-fail|tests/safety/arena_end_with_cleanup_use_after_reject.tl|-|use of moved value `text`
+arena_end_with_cleanup_owner_live_reject|check-fail|tests/safety/arena_end_with_cleanup_owner_live_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `a` while `with` cleanup owner `w` holds values from it
+arena_end_with_result_escape_reject|check-fail|tests/safety/arena_end_with_result_escape_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_result_box_reject|check-fail|tests/safety/arena_end_with_result_box_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_result_local_reject|check-fail|tests/safety/arena_end_with_result_local_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_result_fixed_array_reject|check-fail|tests/safety/arena_end_with_result_fixed_array_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_rewind_result_reject|check-fail|tests/safety/arena_end_with_rewind_result_reject.tl|-|the with result holds values of `p`, which its cleanup arena.rewind-safe! ends when the scope exits
+arena_end_with_break_reject|check-fail|tests/safety/arena_end_with_break_reject.tl|-|use of moved value `text`
+arena_end_with_break_owner_live_reject|check-fail|tests/safety/arena_end_with_break_owner_live_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `a` while `with` cleanup owner `w` holds values from it
+arena_end_alias_call_reject|check-fail|tests/safety/arena_end_alias_call_reject.tl|-|use of moved value `text`
+arena_end_alias_value_reject|check-fail|tests/safety/arena_end_alias_value_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_alias_with_reject|check-fail|tests/safety/arena_end_alias_with_reject.tl|-|use of moved value `text`
+arena_end_with_double_destroy_reject|check-fail|tests/safety/arena_end_with_double_destroy_reject.tl|-|arena.destroy-safe! cannot end `a`, whose with cleanup ends it when its scope exits
+arena_end_with_atomic_reject|check-fail|tests/safety/arena_end_with_atomic_reject.tl|-|a with cleanup cannot end atomic arena `a`
+arena_end_with_invalidate_use_after_reject|check-fail|tests/safety/arena_end_with_invalidate_use_after_reject.tl|-|use of moved value `t`
+arena_end_with_cleanup_scope_defined|run-exit|tests/safety/arena_end_with_cleanup_scope_defined.tl|42|-
+arena_end_with_cleanup_param_result_defined|run-exit|tests/safety/arena_end_with_cleanup_param_result_defined.tl|42|-
+arena_end_with_cleanup_moved_owner_defined|run-exit|tests/safety/arena_end_with_cleanup_moved_owner_defined.tl|42|-
+arena_end_with_rewind_defined|run-exit|tests/safety/arena_end_with_rewind_defined.tl|42|-
+arena_end_with_invalidate_defined|run-exit|tests/safety/arena_end_with_invalidate_defined.tl|42|-
+arena_end_with_inner_loop_defined|run-exit|tests/safety/arena_end_with_inner_loop_defined.tl|42|-
+arena_end_with_break_defined|run-exit|tests/safety/arena_end_with_break_defined.tl|42|-
+arena_end_with_continue_defined|run-exit|tests/safety/arena_end_with_continue_defined.tl|42|-
 arena_cookbook_double_buffer_stale_reject|check-fail|tests/safety/arena_cookbook_double_buffer_stale_reject.tl|-|use of moved value `previous`
 arena_cookbook_longer_lived_store_reject|check-fail|tests/safety/arena_cookbook_longer_lived_store_reject.tl|-|cannot store region-tagged value into struct field
 arena_cookbook_closure_capture_reject|check-fail|tests/safety/arena_cookbook_closure_capture_reject.tl|-|lambda cannot capture region-tagged value
@@ -2097,6 +2137,8 @@ opaque_foreign_init_reject|check-fail|tests/safety/opaque_foreign_init_reject.tl
 opaque_foreign_field_reject|check-fail|tests/safety/opaque_foreign_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_field_borrow_reject|check-fail|tests/safety/opaque_foreign_field_borrow_reject.tl|-|typecheck: cannot borrow a field of the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_unsafe_field_reject|check-fail|tests/safety/opaque_foreign_unsafe_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_make_array_dyn_reject|check-fail|tests/safety/opaque_foreign_make_array_dyn_reject.tl|-|typecheck: cannot initialize the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_make_array_reject|check-fail|tests/safety/opaque_foreign_make_array_reject.tl|-|typecheck: cannot initialize the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_match_reject|check-fail|tests/safety/opaque_foreign_match_reject.tl|-|typecheck: cannot match the opaque type opaque_dep/State outside its module family
 opaque_foreign_or_reject|check-fail|tests/safety/opaque_foreign_or_reject.tl|-|typecheck: cannot match the opaque type opaque_dep/State outside its module family
 opaque_foreign_fields_reject|check-fail|tests/safety/opaque_foreign_fields_reject.tl|-|typecheck: cannot match the opaque type opaque_dep/Connection outside its module family

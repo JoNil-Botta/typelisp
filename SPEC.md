@@ -7140,6 +7140,19 @@ joined-user proof. Both calls are rejected while executing inside the same owner
 operation. They are also rejected while a live `with` cleanup owner (section
 5.19) carries the destroyed brand or the rewound phase generation: that owner
 is not merely made unusable, because its cleanup runs when its scope ends.
+A call is one of these ends when its callee resolves to the `stdlib.arena`
+definition, however it is spelled, including through a module alias, an item
+import alias or a macro expansion. `arena.rewind-safe!` and
+`arena.destroy-safe!` are not first-class values: their ordinary function type
+cannot carry the end, so naming either anywhere but as the direct target of a
+call or the cleanup function of a `with` binding is rejected. As a `with`
+cleanup, the binder is the token or owner the end consumes, typed and checked
+exactly as the argument of a direct call, and every exit of the scope that
+stays in the function, after the body or through a `break` or `continue`
+leaving it, is that end: every binder outside the scope holding the ended
+values becomes unusable on that path, the scope's result cannot hold them, and
+an end of the binder inside the scope is rejected. A `with` cleanup cannot end
+an atomic arena.
 
 **Owner moves:** a direct local owner tracked from `arena.make` or
 `arena.make-atomic` moves when it is stored. That covers:

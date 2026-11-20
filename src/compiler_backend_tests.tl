@@ -24983,6 +24983,7 @@ entry:
       assignments
       2
       1
+      1
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(Ok asm) (string.eq asm "    leaq -16(%rbp), %r12\n")]

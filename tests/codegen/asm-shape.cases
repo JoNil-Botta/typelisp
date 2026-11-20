@@ -1836,3 +1836,25 @@ contains lock cmpxchgq
 contains __shrinkwrap_save
 order testq || __shrinkwrap_bare0: || ret || __shrinkwrap_save: || subq
 not-match [-][0-9]+\(%rsp\)
+
+# GAP5 precise leaq poison: a frame object whose address is taken keeps every
+# store into its own slots, including a field address (base+8) and an element
+# array whose callee reads every element. The stores are unread in the
+# caller's text, so only the addressed object's extent may protect them.
+case addr-taken-stack-aggregates
+source tests/integration/addr_taken_stack_aggregates.tl
+target linux-x86_64
+opt 2
+in fn _tl_addr_taken_stack_aggregates_array_case
+count >= 1 ^[[:space:]]+leaq [0-9]+\(%rsp\), %r
+count >= 4 ^[[:space:]]+movq %r[a-z0-9]+, .*\(%r[a-z0-9]+\)$
+count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_sum_all
+in fn _tl_addr_taken_stack_aggregates_struct_case
+count >= 1 ^[[:space:]]+leaq [0-9]+\(%rsp\), %r
+count >= 2 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$
+count >= 1 ^[[:space:]]+addq \$8, %r
+count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_read_slot
+in fn _tl_addr_taken_stack_aggregates_scalar_case
+count >= 1 ^[[:space:]]+leaq [0-9]+\(%rsp\), %r
+count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$
+count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_read_slot

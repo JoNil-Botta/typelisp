@@ -439,6 +439,7 @@ cmp_dup_addr_taken|all|0,1,2|tests/integration/cmp_dup_addr_taken.tl|42|-|-|-|-
 sink_addr_taken_ptr_write|all|0,1,2|tests/integration/sink_addr_taken_ptr_write.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
 sink_addr_taken_local|all|0,1,2|tests/integration/sink_addr_taken_local.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 addr_taken_frame_slots|all|0,1,2|tests/integration/addr_taken_frame_slots.tl|42|-|-|-|-
+addr_taken_stack_aggregates|all|0,1,2|tests/integration/addr_taken_stack_aggregates.tl|42|-|-|-|-
 addr_taken_frame_join|all|0,1|tests/integration/addr_taken_frame_join.tl|42|-|-|-|-
 bounds_dom_addr_taken_local|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|42|-|0 2 0|stdlib/io.tl stdlib/string.tl|-
 bounds_dom_addr_taken_local_last|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|43|-|0 3 1|stdlib/io.tl stdlib/string.tl|-

@@ -167,7 +167,7 @@
   128)
 
 (define (compiler-lzss-lazy-floor) : i64
-  6)
+  12)
 
 ;; The fixed model's symbol spec: one character 'A' + code length per symbol,
 ;; in this order: 16 context tables of 262 symbols, the 29 length symbols, and

@@ -26,7 +26,6 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
-(import stdlib.io)
 
 ;; Native-comptime session cells are process-global owner slots. Read-only
 ;; callbacks intentionally share their live contents; make that shallow view
@@ -145,17 +144,6 @@
 ;; * Loaded entry records, liveness cells and failure messages live here.
 ;;   Executable mappings and their catalog indexes are still released at pass
 ;;   close; compressed bytes are static and decoded entry bytes are transient.
-;; The most recently expanded catalog group. Requests for one group repeat
-;; (a compile resolves several entries of it), so keeping that single window
-;; makes them a slice; a different group replaces it, and it is dropped with
-;; the session. One group is about a twelfth of the catalog, far below the
-;; compile-profile live-drift budget.
-(define compiler-embedded-stdlib-tlci-group-cache-group : i64
-  -1)
-(define compiler-embedded-stdlib-tlci-group-cache-raw : i64
-  0)
-(define compiler-embedded-stdlib-tlci-group-cache : (__tl_dyn-array u8)
-  (__tl_make-array u8 0))
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 
@@ -278,36 +266,12 @@
     (when
       (or (< group 0) (>= group catalog.groups))
       (return (Err "embedded stdlib tlci: invalid group")))
-    ;; The cached group answers every request in it, and a different group
-    ;; replaces it, so repeated requests in one group cost a lookup.
-    (when
-      (and
-        (= group compiler-embedded-stdlib-tlci-group-cache-group)
-        (>= compiler-embedded-stdlib-tlci-group-cache-raw raw-limit)
-        (> compiler-embedded-stdlib-tlci-group-cache-raw 0))
-      (return
-        (Ok
-          (tlci.tlci-slice-bytes
-            (& compiler-embedded-stdlib-tlci-group-cache)
-            0
-            raw-limit))))
-    (match (in-arena
-      (unsafe
-        (arena.Arena compiler-embedded-stdlib-tlci-table-owner))
-      (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
-        (& payload.embedded-stdlib-tlci-bytes)
-        catalog
-        group
-        raw-limit
-        (& (array-ref compiler-embedded-stdlib-tlci-model 0))))
-      [(Err message) (Err message)]
-      [(Ok bytes)
-        (set! compiler-embedded-stdlib-tlci-group-cache (clone bytes))
-        (set! compiler-embedded-stdlib-tlci-group-cache-group group)
-        (set!
-          compiler-embedded-stdlib-tlci-group-cache-raw
-          (array-length compiler-embedded-stdlib-tlci-group-cache))
-        (Ok bytes)])))
+    (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+      (& payload.embedded-stdlib-tlci-bytes)
+      catalog
+      group
+      raw-limit
+      (& (array-ref compiler-embedded-stdlib-tlci-model 0)))))
 
 ;; Frame `index`, expanded from its group and checked against the record's
 ;; checksum word.
@@ -333,6 +297,9 @@
             (& payload.embedded-stdlib-tlci-bytes)
             catalog
             index)]
+        ;; A group is tokenized as one window, so a frame boundary inside it
+        ;; need not fall on a token boundary; the soft prefix decode finishes
+        ;; the token that crosses it.
         [group : (__tl_dyn-array u8)
           (match (compiler-embedded-stdlib-tlci-group-bytes
             (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
@@ -433,9 +400,6 @@
 
 ;; Called before `owner` is destroyed.
 (define (compiler-embedded-stdlib-tlci-forget-decoded! [owner : i64]) : unit
-  ;; The cached group belongs to the session arena, so it goes with the session.
-  (set! compiler-embedded-stdlib-tlci-group-cache-group -1)
-  (set! compiler-embedded-stdlib-tlci-group-cache-raw 0)
   (if (and (> owner 0) (= compiler-embedded-stdlib-tlci-decoded-owner owner))
     (set! compiler-embedded-stdlib-tlci-decoded-owner 0)
     unit))

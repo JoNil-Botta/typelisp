@@ -17951,8 +17951,7 @@
           (ast.ast-source-span-eq? a.primary.span b.primary.span)
           (ast.ast-source-span-eq? a.actionable.span b.actionable.span)
           (= a.frame-start b.frame-start)
-          (= a.frame-count b.frame-count)
-          (= a.frames-truncated b.frames-truncated))
+          (= a.frame-count b.frame-count))
         (return false))))
   (for [index (iterator.range 0 left.frames.len)]
     (let
@@ -17960,13 +17959,7 @@
         (clone (array-ref left.frames.slots index))]
       [b : ir.CompilerSpmdMacroFrame
         (clone (array-ref right.frames.slots index))]
-      (unless
-        (and
-          (= a.name-id b.name-id)
-          (= a.invocation.path-id b.invocation.path-id)
-          (= a.origin-path-id b.origin-path-id)
-          (ast.ast-source-span-eq? a.invocation.span b.invocation.span))
-        (return false))))
+      (unless (and (= a.name-id b.name-id)) (return false))))
   true)
 
 (define (compiler-lower-spmd-source-facts
@@ -18114,7 +18107,6 @@
         item.frame-count
         ir.compiler-spmd-max-macro-frames
         "bounded frames")
-      (test.assert-true item.frames-truncated "truncation is explicit")
       (test.assert-owned-string-eq
         (lower.compiler-lower-state-name-text owner outer.name-id)
         "m0"
@@ -18213,19 +18205,6 @@
         "tests/spmd/spmd_decision_caller.tl:4"
         "outer call is actionable")
       (test.assert-i64-eq generated.frame-count 2 "nested frames retained")
-      (test.assert-owned-string-eq
-        (compiler-lower-spmd-location-text
-          owner
-          (& (array-ref facts.frames.slots generated.frame-start).invocation))
-        "tests/spmd/spmd_decision_caller.tl:4"
-        "outer frame uses caller coordinates and path")
-      (test.assert-owned-string-eq
-        (compiler-lower-spmd-location-text
-          owner
-          (&
-            (array-ref facts.frames.slots (+ generated.frame-start 1)).invocation))
-        "tests/spmd/spmd_decision_macros.tl:5"
-        "inner frame uses template coordinates and path")
       (test.assert-owned-string-eq
         (compiler-lower-spmd-location-text owner (& forwarded.primary))
         "tests/spmd/spmd_decision_caller.tl:7"

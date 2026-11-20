@@ -539,7 +539,6 @@
   (written-roots lower_i64_i64_map.Map)
   (written-roots-complete bool)
   ;; The subset written inside some loop (`while`, owned `for`, `foreach`).
-  (loop-written-roots lower_i64_i64_map.Map)
   ;; Right-hand-side expression ids of the `set!` forms inside some loop.
   (loop-set-values lower_i64_i64_map.Map)
   ;; -1 unavailable; otherwise the exact canonical quick-precheck result.
@@ -1343,8 +1342,7 @@
             origin.actionable
             origin.primary)
           frame-start
-          frames.len
-          origin.truncated)))
+          frames.len)))
     (if (>= head 0)
       (begin
         (set! (array-ref sites.items.slots previous).next-source ordinal)
@@ -1463,12 +1461,7 @@
             (if (< frames.len ir.compiler-spmd-max-macro-frames)
               (ir.compiler-spmd-macro-frame-list-append!
                 frames
-                (ir.CompilerSpmdMacroFrame
-                  name-id
-                  (ir.CompilerSourceLocation
-                    invocation
-                    (clone origin.primary.span))
-                  origin-path))
+                (ir.CompilerSpmdMacroFrame name-id))
               (set! origin.truncated true)))
           (when
             (>= origin-path 0)
@@ -1661,8 +1654,7 @@
         location
         location
         0
-        0
-        false))))
+        0))))
 
 (define (lower-spmd-finish-site!
   [state : LowerState]
@@ -1846,9 +1838,6 @@
   ;; Whose patterns are being bound (`lower-match-view`): 0 a value's, 1 a
   ;; view's. Cleared in each arm's body.
   (view-match i64)
-  ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
-  ;; (every root) until lower-bind-source-params sets it.
-  (mut-borrow-scope i64)
   ;; Storage ownership evidence for this function (see "Storage ownership
   ;; evidence" below): address var -> the root var of the storage it points
   ;; into, root var -> its kind, and root var -> the one binding that owns it.
@@ -1932,7 +1921,6 @@
         (lower_i64_i64_map.with-capacity 1)
         -1
         0
-        -1
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
@@ -8645,7 +8633,6 @@
         (lower_i64_i64_map.with-capacity 0)
         false
         (lower_i64_i64_map.with-capacity 0)
-        (lower_i64_i64_map.with-capacity 0)
         -1
         -1
         (LowerAddressExposure
@@ -8706,13 +8693,11 @@
 
 (define (compiler-lower-function-state-loop-written-roots-set!
   [state : CompilerLowerFunctionState]
-  [roots : lower_i64_i64_map.Map]
   [set-values : lower_i64_i64_map.Map]) : unit
   (let
     [data : (MutPtr CompilerLowerFunctionStateData)
       (compiler-lower-function-state-ptr state)]
     (unsafe
-      (set! (deref data).loop-written-roots roots)
       (set! (deref data).loop-set-values set-values))))
 
 ;; Fail-closed: true unless the complete scan shows the `set!` whose
@@ -27412,7 +27397,6 @@
       loop-complete)
     (compiler-lower-function-state-loop-written-roots-set!
       function-state
-      loop-roots
       loop-set-values)))
 
 ;; Names written inside some loop: each loop node's whole subtree is scanned
@@ -28925,28 +28909,16 @@
     [(or (Unit) (Never)) false]
     [(or (Ref _ _) (MutRef _ _))
       (match tail
-        [(or (Operand _) (PlaceOperands _ _)) true]
+        [(Operand _) true]
         [_ false])]
     [(or (Ptr _) (MutPtr _)) true]
     [_
-      (or
-        ;; Array places retain their descriptor and its type facts. A snapshot
-        ;; neither copies nor takes ownership of the backing elements.
-        (and
-          (match tail
-            [(PlaceOperands _ _) true]
-            [_ false])
-          (match (& ty)
-            [(or (Array _ _) (DynArray _)) true]
-            [_ false]))
-        (lower-clone-scalar-type? ty)
-        (lower-type-register-resident? ctx ty))]))
+      (or (lower-clone-scalar-type? ty) (lower-type-register-resident? ctx ty))]))
 
 ;; The pending expressions that can overwrite an operand's storage. An
 ;; operator has one; a call shares its existing argument list without copying it.
 (defenum LowerSnapshotTail
   (Operand i64)
-  (PlaceOperands i64 i64)
   (Arguments ast.AstExprList i64))
 
 (define (lower-snapshot-tail-write-code
@@ -28955,16 +28927,6 @@
   [tail : (& tail LowerSnapshotTail)]) : i64
   (match tail
     [(Operand expr-box) (lower-call-arg-expr-write-code ctx name expr-box)]
-    [(PlaceOperands first-box second-box)
-      (let
-        [first (lower-call-arg-expr-write-code ctx name first-box)]
-        (if (= first 2)
-          first
-          (let
-            [second (lower-call-arg-expr-write-code ctx name second-box)]
-            (if (> second first)
-              second
-              first))))]
     [(Arguments args index)
       (lower-call-arg-exprs-write-code ctx name args index)]))
 
@@ -28973,10 +28935,6 @@
   [tail : (& tail LowerSnapshotTail)]) : bool
   (match tail
     [(Operand expr-box) (lower-call-arg-expr-reads-only? ctx expr-box)]
-    [(PlaceOperands first-box second-box)
-      (and
-        (lower-call-arg-expr-reads-only? ctx first-box)
-        (lower-call-arg-expr-reads-only? ctx second-box))]
     [(Arguments args index) (lower-call-args-read-only? ctx args index)]))
 
 ;; An operand's state and value after its snapshot, and what is known about
@@ -29002,7 +28960,7 @@
     [code : i64
       (if (match tail
         [(Arguments args index) (>= index args.len)]
-        [(or (Operand _) (PlaceOperands _ _)) false])
+        [(Operand _) false])
         writes
         (match (& value)
           [(Var var-id)
@@ -29035,7 +28993,7 @@
           [(Global _)
             (if (and
               (match tail
-                [(or (Operand _) (PlaceOperands _ _)) true]
+                [(Operand _) true]
                 [_ false])
               (lower-operand-snapshot-type?
                 ctx

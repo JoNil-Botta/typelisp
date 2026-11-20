@@ -8267,11 +8267,6 @@
     [(or (Pure) (MemoryRead)) false]
     [(or (CpuProbe) (MemoryWrite) (ControlFlow) (Unknown)) true]))
 
-(define (compiler-ir-effect-invalidates-cse? [effect : CompilerIrEffect]) : bool
-  (match effect
-    [(Pure) false]
-    [_ true]))
-
 ;; Runtime call semantics are keyed by the source-symbol identities installed
 ;; alongside the active interner. Generated or hygienic symbols with identical
 ;; display text are ordinary unknown calls.
@@ -8640,9 +8635,7 @@
 ;; POD snapshots use the same canonical path IDs and spans as instruction
 ;; locations. No AST node, provenance composite, or frontend arena is retained.
 (defstruct CompilerSpmdMacroFrame
-  (name-id i64)
-  (invocation CompilerSourceLocation)
-  (origin-path-id i64))
+  (name-id i64))
 
 (defstruct CompilerSpmdDecision
   (site CompilerSpmdSiteId)
@@ -8655,8 +8648,7 @@
   (primary CompilerSourceLocation)
   (actionable CompilerSourceLocation)
   (frame-start i64)
-  (frame-count i64)
-  (frames-truncated bool))
+  (frame-count i64))
 
 (define compiler-spmd-max-macro-frames : i64
   8)

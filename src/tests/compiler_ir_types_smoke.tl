@@ -1770,16 +1770,10 @@
           4
           (ast.ast-source-span 9 2 9 8))
         0
-        1
-        false))
+        1))
     (compiler_ir_types.compiler-spmd-macro-frame-list-append!
       (&mut facts.frames)
-      (compiler_ir_types.CompilerSpmdMacroFrame
-        19
-        (compiler_ir_types.CompilerSourceLocation
-          5
-          (ast.ast-source-span 4 1 4 6))
-        6))
+      (compiler_ir_types.CompilerSpmdMacroFrame 19))
     (compiler_ir_types.compiler-source-spans-set-spmd spans facts)))
 
 (define (compiler-ir-smoke-spmd-spans-ok?
@@ -1808,11 +1802,7 @@
           (= (ast.ast-source-span-start-line item.actionable.span) 9)
           (= item.frame-start 0)
           (= item.frame-count 1)
-          (not item.frames-truncated)
-          (= frame.name-id 19)
-          (= frame.invocation.path-id 5)
-          (= frame.origin-path-id 6)
-          (= (ast.ast-source-span-start-line frame.invocation.span) 4))))))
+          (= frame.name-id 19))))))
 
 (define (compiler-ir-smoke-source-spans-escape-ok?) : bool
   (let
@@ -3683,13 +3673,7 @@
     (compiler_ir_types.compiler-ir-effect-has-side-effect? CpuProbe)
     (compiler_ir_types.compiler-ir-effect-has-side-effect? MemoryWrite)
     (compiler_ir_types.compiler-ir-effect-has-side-effect? ControlFlow)
-    (compiler_ir_types.compiler-ir-effect-has-side-effect? Unknown)
-    (not (compiler_ir_types.compiler-ir-effect-invalidates-cse? Pure))
-    (compiler_ir_types.compiler-ir-effect-invalidates-cse? MemoryRead)
-    (compiler_ir_types.compiler-ir-effect-invalidates-cse? CpuProbe)
-    (compiler_ir_types.compiler-ir-effect-invalidates-cse? MemoryWrite)
-    (compiler_ir_types.compiler-ir-effect-invalidates-cse? ControlFlow)
-    (compiler_ir_types.compiler-ir-effect-invalidates-cse? Unknown)))
+    (compiler_ir_types.compiler-ir-effect-has-side-effect? Unknown)))
 
 (define (compiler-ir-renders-as?
   [instr : compiler_ir_types.CompilerIrInstr]

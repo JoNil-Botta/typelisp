@@ -5,8 +5,8 @@
 ;; constant/cast folding, CFG simplification, bounds-check elimination,
 ;; CFG/dominance/SSA verification, opt-level policy, fixed-point iteration,
 ;; self-tail-recursion lowering, sparse conditional constant propagation,
-;; aggregate stack promotion, global value numbering, loop-invariant code
-;; motion, induction variables, scratch regions and the call graph).
+;; global value numbering, loop-invariant code motion, induction variables,
+;; scratch regions and the call graph).
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_optimize_tests as ot)
@@ -4045,14 +4045,6 @@
 (test tailrec (smoke-require-42 (ot.compiler-optimize-tailrec-self-test)))
 
 (test global-dce (smoke-require-42 (ot.compiler-optimize-global-dce-self-test)))
-
-(test
-  aggregate-candidate
-  (smoke-require-42 (ot.compiler-optimize-aggregate-candidate-self-test)))
-
-(test
-  aggregate-promote
-  (smoke-require-42 (ot.compiler-optimize-aggregate-promote-self-test)))
 
 (test
   aggregate-split

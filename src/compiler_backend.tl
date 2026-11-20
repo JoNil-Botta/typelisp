@@ -928,7 +928,6 @@
   (MissingEntrySymbol)
   (MissingRuntimeEntry)
   (EmptyTextSection)
-  (TargetMismatch)
   (ForcedAssembly)
   ;; The ELF writer has no initial-exec TLS relocation or `.data.rel.ro`
   ;; section yet, so a shared-object emission takes the assembly route.
@@ -1982,6 +1981,8 @@
 ;; stays ahead of the hashmap fields, whose comptime layout is not reliable in
 ;; every compilation root.
 (defstruct CompilerBackendProgramTables
+  ;; The tables' own address, written by the creator through raw memory: the
+  ;; slot is storage, not a field any code reads.
   (self u64)
   ;; Shared pre-optimization nominal representation capability. It positively
   ;; distinguishes one-word handles, register groups, and unresolved forms.
@@ -1990,7 +1991,6 @@
   (function-names (__tl_dyn-array String))
   (function-signatures (__tl_dyn-array CompilerBackendMaybeSignature))
   (extern-signatures backend_i64_i64_map.Map)
-  (extern-names (__tl_dyn-array String))
   (extern-signature-values (__tl_dyn-array CompilerBackendMaybeSignature))
   ;; Extern call classification, packed by extern slot: bit 0 is C ABI,
   ;; bit 1 has aggregate parameters, and the remaining bits encode the
@@ -37260,7 +37260,6 @@
           function-names
           function-signatures
           extern-signature-ids
-          extern-names
           extern-signatures
           extern-call-infos
           extern-reference-ids
@@ -70106,7 +70105,6 @@
 (defstruct CompilerBackendSwbPlan
   (label i64)
   (bare (__tl_dyn-array i64))
-  (bare-count i64)
   ;; TD-1: byte offsets in the analysed text at which the duplicated tail's
   ;; label suffix is spliced onto a bypass branch operand, and the tail block
   ;; the emitter appends.  Empty when no tail was duplicated.
@@ -70118,7 +70116,6 @@
   (CompilerBackendSwbPlan
     (compiler_ir_types.compiler-ir-label-none)
     (__tl_make-array i64 0)
-    0
     (__tl_make-array i64 0)
     0
     ""))
@@ -71739,7 +71736,6 @@
                         (CompilerBackendSwbPlan
                           saving
                           packed
-                          bare-count
                           dup.sites
                           dup.site-count
                           dup.text)))))))))))))
@@ -83190,7 +83186,6 @@ tl_shared_object_init:
     [(MissingEntrySymbol) "missing-entry-symbol"]
     [(MissingRuntimeEntry) "missing-runtime-entry"]
     [(EmptyTextSection) "empty-text-section"]
-    [(TargetMismatch) "target-mismatch"]
     [(ForcedAssembly) "forced-assembly"]
     [(SharedObjectCodeModel) "shared-object-code-model"]))
 

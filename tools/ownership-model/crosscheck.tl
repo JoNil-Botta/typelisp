@@ -16,7 +16,11 @@
   (core.OwnershipBlockId (crosscheck-id) index))
 
 (define (crosscheck-source [line : i64]) : core.OwnershipSource
-  (core.OwnershipSource "ownership-model-v1" line 1 "independent finite model"))
+  (core.OwnershipSource
+    (core.ownership-body-path "ownership-model-v1")
+    line
+    1
+    "independent finite model"))
 
 (define (crosscheck-instruction [code : i64]) : core.OwnershipInstruction
   (let

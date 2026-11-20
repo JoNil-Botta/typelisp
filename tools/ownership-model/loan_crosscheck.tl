@@ -23,7 +23,11 @@
   (core.OwnershipLoanId (loan-cross-id) id))
 
 (define (loan-cross-source [line : i64]) : core.OwnershipSource
-  (core.OwnershipSource "loan-model-case.tl" line 1 "concrete loan trace"))
+  (core.OwnershipSource
+    (core.ownership-body-path "loan-model-case.tl")
+    line
+    1
+    "concrete loan trace"))
 
 (define (loan-cross-cell [cell : model.Cell]) : i64
   (match cell

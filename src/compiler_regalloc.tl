@@ -3200,31 +3200,49 @@
   [live-after : (& live.CompilerLiveI64Set)]
   [point : i64]
   [instr : (& ir.CompilerIrInstr)]) : unit
-  (let
-    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
-    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
-    (if (< id-count 0)
-      (begin
-        (compiler-reg-extend-set-words
-          starts
-          ends
-          (& (live.compiler-live-instr-defs instr))
-          0
-          point)
-        (compiler-reg-extend-set-words
-          starts
-          ends
-          (& (live.compiler-live-instr-uses instr))
-          0
-          point))
-      (begin
-        (compiler-reg-extend-interval
-          starts
-          ends
-          (ir.compiler-ir-instr-dst instr)
-          point)
-        (compiler-reg-extend-interval-ids! starts ends (& ids) id-count point)))
-    (compiler-reg-extend-set-words starts ends live-after 0 (+ point 1))))
+  (compiler-reg-extend-instr-mentions!
+    starts
+    ends
+    point
+    instr
+    (live.compiler-live-instr-use-ids! instr))
+  (compiler-reg-extend-set-words starts ends live-after 0 (+ point 1)))
+
+;; The def/use half of compiler-reg-extend-instr: extend every var `instr`
+;; mentions to `point`. `id-count` is what compiler-live-instr-use-ids!
+;; returned for `instr`, whose ids are in compiler-live-instr-ids.
+(define (compiler-reg-extend-instr-mentions!
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]
+  [point : i64]
+  [instr : (& ir.CompilerIrInstr)]
+  [id-count : i64]) : unit
+  (if (< id-count 0)
+    (begin
+      (compiler-reg-extend-set-words
+        starts
+        ends
+        (& (live.compiler-live-instr-defs instr))
+        0
+        point)
+      (compiler-reg-extend-set-words
+        starts
+        ends
+        (& (live.compiler-live-instr-uses instr))
+        0
+        point))
+    (begin
+      (compiler-reg-extend-interval
+        starts
+        ends
+        (ir.compiler-ir-instr-dst instr)
+        point)
+      (compiler-reg-extend-interval-ids!
+        starts
+        ends
+        (& (live.compiler-live-instr-ids))
+        id-count
+        point))))
 
 (define (compiler-reg-live-intervals-instr-seq
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -4638,7 +4656,7 @@
 ;;
 ;; Liveness is the least fixpoint of live-in(b) = uses(b) | (live-out(b) & ~defs(b))
 ;; and live-out(b) = the union of live-in(s) over b's successors s, over the block
-;; uses/defs of `compiler-live-block-use-def-ids!`. It is solved one variable at
+;; uses/defs of `compiler-live-instr-use-def-ids!`. It is solved one variable at
 ;; a time (#8417): a backward walk from the blocks with an upward-exposed use
 ;; marks each predecessor live-out and enters it live-in unless it defines the
 ;; variable. A block is entered at most once per variable, so the work is the
@@ -4900,20 +4918,36 @@
         [ir-block (ir.compiler-ir-block-seq-ref seq block)]
         (match (compiler-reg-global-shared-view ir-block)
           [(Block _ instrs)
-            (set!
-              (array-ref bounds (+ block 1))
-              (compiler-reg-bits-mentions-instr-seq
-                (& instrs)
-                (array-ref bounds block)
-                (&mut starts)
-                (&mut ends)))
-            (live.compiler-live-block-use-def-ids!
-              instrs
-              block
-              (&mut use-at)
-              (&mut def-at)
-              (&mut use-ids)
-              (&mut def-ids))
+            ;; One walk feeds both the instruction mention hulls
+            ;; (compiler-reg-bits-mentions-instr-seq) and the block's use/def
+            ;; ids, extracting each instruction's operand ids once.
+            (let
+              [phi-end : i64
+                (live.compiler-live-leading-phi-count
+                  (compiler-reg-global-shared-view instrs))]
+              [point : i64 (array-ref bounds block)]
+              (for [index (iterator.range 0 instrs.len)]
+                (let
+                  [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+                  [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+                  (compiler-reg-extend-instr-mentions!
+                    (&mut starts)
+                    (&mut ends)
+                    point
+                    instr
+                    id-count)
+                  (live.compiler-live-instr-use-def-ids!
+                    (& instrs)
+                    index
+                    phi-end
+                    id-count
+                    block
+                    (&mut use-at)
+                    (&mut def-at)
+                    (&mut use-ids)
+                    (&mut def-ids))
+                  (+= point 2)))
+              (set! (array-ref bounds (+ block 1)) point))
             (set! (array-ref use-ends block) (reg_ids.len (& use-ids)))
             (set! (array-ref def-ends block) (reg_ids.len (& def-ids)))
             (set!

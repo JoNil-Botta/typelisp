@@ -46,6 +46,10 @@ set -eu
 # Every case runs once per target x opt x mode x each variant. SIMD modes that the host
 # cannot execute natively use pinned Intel SDE for AVX-512 when configured.
 # Without either route, local runs skip run-output rows; CI fails closed.
+# TYPELISP_SIMD_MODE_FILTER restricts the mode axis to the listed modes (the
+# forced-SDE duplicate gates select avx512, whose route is the only one SDE
+# changes). A variant whose mode is not explicit (`-`) cannot be classified and
+# fails closed; a filter that selects no variant fails the run.
 #
 # Transcript steps run after the case's action, in order. SHELL is shell text
 # evaluated by this runner (globbing off); {{name}} placeholders in it become
@@ -174,6 +178,7 @@ CC_FAILURES=0
 CC_ROWS=0
 CC_SKIPPED=0
 CC_SELECTED=0
+CC_MODE_SELECTED=0
 
 # ---------------------------------------------------------------- helpers
 
@@ -535,6 +540,16 @@ cc_variant() {
     CV_OPT=$3
     CV_MODE=$4
     CV_EACH=$5
+    if ! simd_mode_selected "$CV_MODE"; then
+        case "$CV_MODE" in
+            -)
+                CV_STEP_ID=
+                cc_fail "$CC_LINE" "cannot determine the backend mode under TYPELISP_SIMD_MODE_FILTER=$SIMD_MODE_FILTER"
+                ;;
+        esac
+        return 0
+    fi
+    CC_MODE_SELECTED=$((CC_MODE_SELECTED + 1))
     # A single-variant case runs in its own directory: Windows path budgets
     # (git's PATH_MAX - 40 for $GIT_DIR) leave no room for a `default` level.
     CV_DIR="$CC_WORK/$CC_CASE"
@@ -1141,8 +1156,13 @@ cc_translate() {
             gsub(/-/, "_", s)
             s = "plugin_" s
             for (i = 2; i <= n; i++) s = s " \"$(cc_expand " sq(W[i]) ")\""
-            if (ncase == 0) dflt["setup"] = (("setup" in dflt) ? dflt["setup"] " && " : "") s
-            else cfg["setup"] = (("setup" in cfg) ? cfg["setup"] " && " : "") s
+            if (ncase == 0) {
+                if ("setup" in dflt) dflt["setup"] = dflt["setup"] " && " s
+                else dflt["setup"] = s
+            } else {
+                if ("setup" in cfg) cfg["setup"] = cfg["setup"] " && " s
+                else cfg["setup"] = s
+            }
             next
         }
         if (ncase == 0) die("expectation before the first case: " kw)
@@ -1198,6 +1218,10 @@ done
 
 if [ "$CC_SELECTED" -eq 0 ]; then
     echo "[codegen-cases] no case matches --only $CC_ONLY" >&2
+    exit 1
+fi
+if [ -n "${SIMD_MODE_FILTER:-}" ] && [ "$CC_MODE_SELECTED" -eq 0 ]; then
+    echo "[codegen-cases] TYPELISP_SIMD_MODE_FILTER=$SIMD_MODE_FILTER selected no case variant" >&2
     exit 1
 fi
 if [ "$CC_FAILURES" -ne 0 ]; then

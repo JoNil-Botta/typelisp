@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-8297.356	skips fused optimizer block stages the fold pre-scan rules out (byte-identical output); local measurement 117,761,270,799 -> 116,784,163,605 Ir at main 0c81766a5

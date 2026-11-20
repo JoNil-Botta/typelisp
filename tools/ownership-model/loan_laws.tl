@@ -342,7 +342,11 @@
   (core.OwnershipLoanId (law-body-id) slot))
 
 (define (law-source) : core.OwnershipSource
-  (core.OwnershipSource "loan-laws.tl" 1 1 "finite direct-status law"))
+  (core.OwnershipSource
+    (core.ownership-body-path "loan-laws.tl")
+    1
+    1
+    "finite direct-status law"))
 
 (define (law-instruction [operation : i64] [slot : i64]) : core.OwnershipInstruction
   (core.OwnershipInstruction

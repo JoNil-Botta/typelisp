@@ -1,5 +1,5 @@
 # Backend diagnostics and the public lint command (gate
-# stage2-public-tool-surface).
+# stage2-public-tool-cli-transcripts-3).
 do none
 target -
 opt -

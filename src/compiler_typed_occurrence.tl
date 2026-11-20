@@ -1350,7 +1350,7 @@
   (unless
     (own.ownership-source-valid? (& source))
     (return (TypedOriginResult.Err TypedError.Shape)))
-  (try (typed-charge! store lease (string.string-length (& source.path))))
+  (try (typed-charge! store lease source.path.bytes))
   (try (typed-charge! store lease (string.string-length (& source.expansion))))
   (let
     [handle : TypedHandle (typed-fresh! store store.origin-count)]

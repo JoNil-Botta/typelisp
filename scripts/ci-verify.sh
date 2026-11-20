@@ -579,11 +579,22 @@ gate_heavy_instruction_counts() {
 
 # Hosts without native AVX-512 already ran every AVX-512 program of the SPMD,
 # gang-width, package-call and cross-mode gates under the pinned Intel SDE. A
-# native AVX-512 host repeats those four suites with SDE forced, after their
-# ordinary gates (its needs) consumed the native observations it overwrites.
-# The forced environment reaches only these commands. As in those harnesses,
-# CI=true requires every route and local runs report an unavailable one.
-gate_sde_fallback() {
+# native AVX-512 host repeats each suite with SDE forced in its own gate, after
+# that suite's ordinary gates (its needs) consumed the native observations it
+# overwrites. The forced policy moves only AVX-512 executions, so those gates
+# select only AVX-512 modes (TYPELISP_SIMD_MODE_FILTER): the non-AVX-512 work
+# would compile and execute exactly as the ordinary gates did. The forced SPMD
+# run writes target/spmd-simd-verify-sde with its AVX-512 observations, reads
+# the ordinary root's native scalar reference, and the forced cross-mode run
+# reads native observations from that same ordinary root, so neither disturbs
+# the native observations the ordinary cross-mode gate consumes.
+# ci_sde_fallback_run holds the one route decision and forced environment; as in
+# those harnesses, CI=true requires every route and local runs report an
+# unavailable one.
+ci_sde_fallback_run() {
+    _ci_sde_tag=$1
+    _ci_sde_report=$2
+    _ci_sde_command=$3
     _ci_sde_required=0
     case "${CI:-false}" in true | 1) _ci_sde_required=1 ;; esac
     _ci_sde_isas=$(sh scripts/detect-simd-isa.sh) || {
@@ -594,31 +605,52 @@ gate_sde_fallback() {
     case " $_ci_sde_isas" in
         *' avx512 '*)
             if [ -z "${TYPELISP_SDE_BIN:-}" ] && [ "$_ci_sde_required" = 0 ]; then
-                echo "[sde-fallback] unavailable locally: native AVX-512 host without TYPELISP_SDE_BIN (scripts/fetch-sde.sh); CI=true runs the forced-SDE suites"
+                echo "[$_ci_sde_tag] unavailable locally: native AVX-512 host without TYPELISP_SDE_BIN (scripts/fetch-sde.sh); CI=true runs the forced-SDE suite"
                 return 0
             fi
             env TYPELISP_AVX512_EXECUTION=sde TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" \
+                TYPELISP_SIMD_MODE_FILTER=avx512 \
+                TYPELISP_SPMD_SIMD_WORKDIR="$ROOT/target/spmd-simd-verify-sde" \
+                TYPELISP_SPMD_SIMD_ARTIFACT_ROOT="$ROOT/target/spmd-simd-verify-sde" \
+                TYPELISP_SPMD_SIMD_NATIVE_ROOT="$ROOT/target/spmd-simd-verify" \
                 scripts/run-memory-bounded.sh --limit-mib 8192 \
-                --report target/sde-fallback.memory -- bash -e -c '
-                    scripts/verify-spmd-simd.sh
-                    scripts/verify-codegen-cases.sh tests/spmd/gang-width.cases
-                    scripts/verify-spmd-package-calls.sh
-                    scripts/verify-cross-mode-differential.sh
-                '
+                --report "$_ci_sde_report" -- bash -e -c "$_ci_sde_command"
             return $?
             ;;
     esac
     # Not applicable only when the ordinary gates' route for AVX-512 is SDE.
     if (. "$ROOT/scripts/lib-simd-execution.sh" && simd_execution_init &&
         simd_execution_mode avx512 && [ "$SIMDEX_MODE" = sde ]); then
-        echo "[sde-fallback] not applicable: no native AVX-512 (native ISAs: ${_ci_sde_isas:-none}); every ordinary AVX-512 execution used Intel SDE 10.13.1"
+        echo "[$_ci_sde_tag] not applicable: no native AVX-512 (native ISAs: ${_ci_sde_isas:-none}); every ordinary AVX-512 execution used Intel SDE 10.13.1"
         return 0
     fi
     if [ "$_ci_sde_required" = 1 ]; then
         ci_verify_error "no native AVX-512 and no Intel SDE route: the ordinary AVX-512 executions did not use SDE"
         return 1
     fi
-    echo "[sde-fallback] unavailable locally: neither native AVX-512 nor TYPELISP_SDE_BIN; the ordinary gates reported their AVX-512 executions skipped"
+    echo "[$_ci_sde_tag] unavailable locally: neither native AVX-512 nor TYPELISP_SDE_BIN; the ordinary gates reported their AVX-512 executions skipped"
+}
+
+# The forced cross-mode differential validates the forced SPMD gate's SDE
+# receipts, so it needs that gate as well as the ordinary cross-mode gate.
+gate_sde_fallback_spmd_simd() {
+    ci_sde_fallback_run sde-fallback-spmd-simd target/sde-fallback-spmd-simd.memory \
+        'scripts/verify-spmd-simd.sh'
+}
+
+gate_sde_fallback_gang_width() {
+    ci_sde_fallback_run sde-fallback-gang-width target/sde-fallback-gang-width.memory \
+        'scripts/verify-codegen-cases.sh tests/spmd/gang-width.cases'
+}
+
+gate_sde_fallback_package_calls() {
+    ci_sde_fallback_run sde-fallback-package-calls target/sde-fallback-package-calls.memory \
+        'scripts/verify-spmd-package-calls.sh'
+}
+
+gate_sde_fallback_cross_mode_differential() {
+    ci_sde_fallback_run sde-fallback-cross-mode-differential target/sde-fallback-cross-mode-differential.memory \
+        'scripts/verify-cross-mode-differential.sh'
 }
 
 # Arguments and listing are read-only and must be handled before any runtime

@@ -582,7 +582,14 @@
   (sweep-addr-count i64)
   (sweep-addr-flushed i64)
   (sweep-addr-overflow bool)
-  (sweep-poison-bits (__tl_dyn-array i64)))
+  (sweep-poison-bits (__tl_dyn-array i64))
+  ;; Per-program scratch for the address-extent tables and the poison bitmap:
+  ;; a dedicated arena (raw handle + start mark) rewound by `sweep-reset!`, so
+  ;; none of it is retained after a program's emission. `sweep-scratch-empty`
+  ;; is the shared empty array the cleared fields point at.
+  (sweep-addr-arena i64)
+  (sweep-addr-mark i64)
+  (sweep-scratch-empty (__tl_dyn-array i64)))
 
 (defstruct CompilerBackendStreamState
   (address i64))
@@ -1786,6 +1793,9 @@
         0
         0
         false
+        (__tl_make-array i64 0)
+        0
+        0
         (__tl_make-array i64 0)))
     (CompilerBackendStreamState
       (cast
@@ -66771,7 +66781,7 @@
         unit
         (let
           [owner : arena.Arena
-            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+            (compiler-backend-sweep-addr-arena-ensure! backend-state stream)]
           [frames : i64 (array-length (deref data).sweep-sym-off)]
           [frame-cap : i64
             (if (> frames 0)
@@ -66835,34 +66845,40 @@
             (set! data.sweep-em-lo-arr em-lo-arr)
             (set! data.sweep-em-hi-arr em-hi-arr)
             (if (> (array-length data.sweep-addr-rbp) 0)
-              (let
-                [addr-cap : i64
-                  (if (< (array-length data.sweep-addr-rbp) new-cap)
-                    new-cap
-                    (array-length data.sweep-addr-rbp))]
-                [addr-rbp : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
-                [addr-ext : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
-                [addr-start : (__tl_dyn-array i64)
-                  (__tl_make-array i64 addr-cap)]
-                [addr-len : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
-                (for [i (iterator.range 0 data.sweep-addr-count)]
-                  (set!
-                    (array-ref addr-rbp i)
-                    (array-ref data.sweep-addr-rbp i))
-                  (set!
-                    (array-ref addr-ext i)
-                    (array-ref data.sweep-addr-ext i)))
-                (for [i (iterator.range 0 data.sweep-count)]
-                  (set!
-                    (array-ref addr-start i)
-                    (array-ref data.sweep-addr-start-arr i))
-                  (set!
-                    (array-ref addr-len i)
-                    (array-ref data.sweep-addr-len-arr i)))
-                (set! data.sweep-addr-rbp addr-rbp)
-                (set! data.sweep-addr-ext addr-ext)
-                (set! data.sweep-addr-start-arr addr-start)
-                (set! data.sweep-addr-len-arr addr-len))
+              (in-arena
+                (compiler-backend-sweep-addr-arena-ensure! backend-state stream)
+                (let
+                  [addr-cap : i64
+                    (if (< (array-length data.sweep-addr-rbp) new-cap)
+                      new-cap
+                      (array-length data.sweep-addr-rbp))]
+                  [addr-rbp : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  [addr-ext : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  [addr-start : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  [addr-len : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  (for [i (iterator.range 0 data.sweep-addr-count)]
+                    (set!
+                      (array-ref addr-rbp i)
+                      (array-ref data.sweep-addr-rbp i))
+                    (set!
+                      (array-ref addr-ext i)
+                      (array-ref data.sweep-addr-ext i)))
+                  (for [i (iterator.range 0 data.sweep-count)]
+                    (set!
+                      (array-ref addr-start i)
+                      (array-ref data.sweep-addr-start-arr i))
+                    (set!
+                      (array-ref addr-len i)
+                      (array-ref data.sweep-addr-len-arr i)))
+                  (set! data.sweep-addr-rbp addr-rbp)
+                  (set! data.sweep-addr-ext addr-ext)
+                  (set! data.sweep-addr-start-arr addr-start)
+                  (set! data.sweep-addr-len-arr addr-len)
+                  unit))
               unit)
             (compiler-backend-stream-state-data-set! stream data)
             true))))))
@@ -66912,7 +66928,28 @@
         (set! (deref data).sweep-count 0)
         (set! (deref data).sweep-sym-bytes-count 0)
         (set! (deref data).sweep-addr-count 0)
-        (set! (deref data).sweep-addr-flushed 0))
+        (set! (deref data).sweep-addr-flushed 0)
+        ;; Reclaim the address-extent tables and the poison bitmap with the
+        ;; program's emission, then drop every handle into them so no later
+        ;; read can touch the rewound pages.
+        (if (> (deref data).sweep-addr-arena 0)
+          (let
+            [home : arena.Arena (arena.current)]
+            [owner : arena.Arena
+              (unsafe
+                (arena.Arena (deref data).sweep-addr-arena))]
+            (unsafe
+              (arena.set! owner)
+              (arena.rewind (arena.ArenaMark (deref data).sweep-addr-mark))
+              (arena.set! home)))
+          unit)
+        (set! (deref data).sweep-addr-rbp (deref data).sweep-scratch-empty)
+        (set! (deref data).sweep-addr-ext (deref data).sweep-scratch-empty)
+        (set!
+          (deref data).sweep-addr-start-arr
+          (deref data).sweep-scratch-empty)
+        (set! (deref data).sweep-addr-len-arr (deref data).sweep-scratch-empty)
+        (set! (deref data).sweep-poison-bits (deref data).sweep-scratch-empty))
       (cfg
         test
         (profile_state.compiler-profile-metrics-reset-range!
@@ -66954,7 +66991,7 @@
       false
       (let
         [owner : arena.Arena
-          (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+          (compiler-backend-sweep-addr-arena-ensure! backend-state stream)]
         (in-arena
           owner
           (let
@@ -67649,6 +67686,31 @@
 (define compiler-backend-sweep-coverage-max-words : i64
   4096)
 
+;; Arena for the address-extent tables and the poison bitmap. It is created on
+;; first use and rewound by `sweep-reset!` at the end of every program's sweep,
+;; so the tables never survive the emission that built them.
+(define (compiler-backend-sweep-addr-arena-ensure!
+  [_backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : arena.Arena
+  (let
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (if (= (deref data).sweep-addr-arena 0)
+        (let
+          [home : arena.Arena (arena.current)]
+          [owner : arena.Arena
+            (unsafe
+              (arena.Arena (arena.tl_arena_make_small)))]
+          [_set-owner : unit (arena.set! owner)]
+          [mark : arena.ArenaMark (arena.mark)]
+          (arena.set! home)
+          (set! (deref data).sweep-addr-arena (arena.raw-handle owner))
+          (set! (deref data).sweep-addr-mark (arena.mark-raw-handle mark))
+          owner)
+        (unsafe
+          (arena.Arena (deref data).sweep-addr-arena))))))
+
 (define (compiler-backend-sweep-coverage-ensure!
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]
@@ -67673,19 +67735,29 @@
           (* new-cap 2))))
     (if (< new-cap required)
       false
-      (if (= new-cap (array-length old))
-        true
-        (let
-          [owner : arena.Arena
-            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-          (in-arena
-            owner
-            (let
-              [bits : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+      (begin
+        (unless
+          (>=
+            (array-length
               (unsafe
-                (set! (deref data).sweep-coverage-bits bits)
+                (deref data).sweep-poison-bits))
+            new-cap)
+          (in-arena
+            (compiler-backend-sweep-addr-arena-ensure! backend-state stream)
+            (unsafe
+              (set!
+                (deref data).sweep-poison-bits
+                (__tl_make-array i64 new-cap)))))
+        (if (= new-cap (array-length old))
+          true
+          (let
+            [owner : arena.Arena
+              (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+            (in-arena
+              owner
+              (unsafe
                 (set!
-                  (deref data).sweep-poison-bits
+                  (deref data).sweep-coverage-bits
                   (__tl_make-array i64 new-cap)))
               true)))))))
 

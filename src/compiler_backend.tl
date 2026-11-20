@@ -73868,7 +73868,7 @@
 ;;         .set NAME, KEPT
 ;;         .size NAME, 0             ; ELF only: the alias owns no bytes
 ;;
-;; The identity text folds the function's chunk with exactly three spellings
+;; The identity digest folds the function's chunk with exactly three spellings
 ;; normalized: its local-label scope (`.L<scope>_<label>` becomes a dense
 ;; `.Lc<n>` numbered by first appearance in the chunk), its own symbol
 ;; (`%SELF%`), and every reference to a symbol an earlier chunk already merged
@@ -73882,13 +73882,15 @@
 ;; Nothing of the chunk text is retained: the state is one bucket map, two
 ;; symbol maps, and three per-group words (kept symbol, second digest half,
 ;; bucket chain). The two digest halves use different multipliers, so equal
-;; (head, tail) is the merge criterion exactly as a linker's ICF compares
+;; (head, tail) is the merge criterion, exactly as a linker's ICF compares
 ;; content hashes.
 ;;
 ;; Per-function data stays with the kept body. A debug build pins every
 ;; function: its chunk carries `.cfi_*`, the per-function backtrace record and
 ;; the `.L_tl_backtrace_function_end_<id>` label that record points at, so
-;; dropping the body would leave that record dangling. Closure entry adapters
+;; dropping the body would leave that record dangling. A chunk that reads a
+;; switch table is pinned the same way: the tables are emitted by their own
+;; `.rodata` pass and name the function's local labels. Closure entry adapters
 ;; and the `.L_tl_fn_entry_*` labels they define come from their own pass after
 ;; this one, so a merged function keeps a distinct function-value address and
 ;; its `.L_tl_fn_desc_*` record still names a defined entry. On Windows the
@@ -73908,8 +73910,8 @@
 
 ;; Two independent 64-bit folds of the identity text. Equal `head` and equal
 ;; `tail` is the merge criterion, so a collision would have to satisfy both.
-;; (Their multipliers differ, which is what keeps the pair from being one affine
-;; function of the other.)
+;; Their multipliers differ, which is what keeps the pair from being one affine
+;; function of the other.
 (defstruct CompilerBackendIcfDigest
   (head i64)
   (tail i64)
@@ -73964,15 +73966,13 @@
   [length : i64]) : i64
   (let
     [end : i64 start]
-    (begin
-      (while (and
-        (< end length)
-        (compiler-backend-icf-word-byte?
-          (cast (__tl_string_ref text end) : i64)))
-        (set! end (+ end 1)))
-      end)))
+    (while (and
+      (< end length)
+      (compiler-backend-icf-word-byte? (cast (__tl_string_ref text end) : i64)))
+      (set! end (+ end 1)))
+    end))
 
-;; Fold one byte range into a 64-bit mix. Whole words plus one overlapping last
+;; Fold one byte range into both halves. Whole words plus one overlapping last
 ;; word keep every byte in the mix without a bounds check per byte.
 (define (compiler-backend-icf-mix-range
   [digest : CompilerBackendIcfDigest]
@@ -73994,37 +73994,38 @@
             [wide : (Ptr i64) (ptr-cast base : (Ptr i64))]
             [index : i64 0]
             [word : i64 0]
-            (begin
-              (while (< index words)
-                (set! word (ptr-read (ptr-offset wide index)))
-                (set! head (* (bit-xor head word) 1099511628211))
-                (set! tail (* (bit-xor tail word) 4294967311))
-                (set! index (+ index 1)))
-              (set!
-                word
-                (ptr-read (ptr-cast (ptr-offset base (- count 8)) : (Ptr i64))))
-              (CompilerBackendIcfDigest
-                (* (bit-xor head word) 1099511628211)
-                (* (bit-xor tail word) 4294967311)
-                digest.pinned))))
+            (while (< index words)
+              (set! word (ptr-read (ptr-offset wide index)))
+              (set! head (* (bit-xor head word) 1099511628211))
+              (set! tail (* (bit-xor tail word) 4294967311))
+              (set! index (+ index 1)))
+            ;; The tail reads the last whole word, overlapping what the loop
+            ;; compared, so every byte still reaches the mix.
+            (set!
+              word
+              (ptr-read (ptr-cast (ptr-offset base (- count 8)) : (Ptr i64))))
+            (CompilerBackendIcfDigest
+              (* (bit-xor head word) 1099511628211)
+              (* (bit-xor tail word) 4294967311)
+              digest.pinned)))
         (unsafe
           (let
             [index : i64 0]
-            (begin
-              (while (< index count)
-                (let
-                  [byte : i64 (cast (ptr-read (ptr-offset base index)) : i64)]
-                  (begin
-                    (set! head (* (bit-xor head byte) 1099511628211))
-                    (set! tail (* (bit-xor tail byte) 4294967311))))
-                (set! index (+ index 1)))
-              (CompilerBackendIcfDigest head tail digest.pinned))))))))
+            (while (< index count)
+              (let
+                [byte : i64 (cast (ptr-read (ptr-offset base index)) : i64)]
+                (set! head (* (bit-xor head byte) 1099511628211))
+                (set! tail (* (bit-xor tail byte) 4294967311)))
+              (set! index (+ index 1)))
+            (CompilerBackendIcfDigest head tail digest.pinned)))))))
 
 (define (compiler-backend-icf-mix-view
   [digest : CompilerBackendIcfDigest]
   [text : (& text str)]) : CompilerBackendIcfDigest
   (compiler-backend-icf-mix-range digest text 0 (__tl_string_length text)))
 
+;; Fold one integer. The label renumbering needs no string for its slot: the fold
+;; of `.Lc<n>` is the fold of the marker plus the number.
 (define (compiler-backend-icf-mix-word
   [digest : CompilerBackendIcfDigest]
   [value : i64]) : CompilerBackendIcfDigest
@@ -74048,19 +74049,17 @@
       (= (__tl_string_ref token 2) 'f'))
       (let
         [index : i64 3]
-        (begin
-          (while (and
-            (< index length)
-            (and
-              (>= (cast (__tl_string_ref token index) : i64) 48)
-              (<= (cast (__tl_string_ref token index) : i64) 57)))
-            (set! index (+ index 1)))
-          (if (and
-            (> index 3)
-            (< index length)
-            (= (__tl_string_ref token index) '_'))
-            (+ index 1)
-            -1)))
+        (while (and
+          (< index length)
+          (>= (cast (__tl_string_ref token index) : i64) 48)
+          (<= (cast (__tl_string_ref token index) : i64) 57))
+          (set! index (+ index 1)))
+        (if (and
+          (> index 3)
+          (< index length)
+          (= (__tl_string_ref token index) '_'))
+          (+ index 1)
+          -1))
       -1)))
 
 ;; True for the `.L<scope>_<label>_switch_table` token a switch's indirect jump
@@ -74080,18 +74079,17 @@
     [length : i64 (__tl_string_length text)]
     [offset : i64 (string.index-of-byte text 0 (cast '.' : u8))]
     [found : i64 -1]
-    (begin
-      (while (and (>= offset 0) (< found 0))
-        (if (and
-          (<= (+ offset 6) length)
-          (= (__tl_string_ref text (+ offset 1)) 'g')
-          (= (__tl_string_ref text (+ offset 2)) 'l')
-          (= (__tl_string_ref text (+ offset 3)) 'o')
-          (= (__tl_string_ref text (+ offset 4)) 'b')
-          (= (__tl_string_ref text (+ offset 5)) 'l'))
-          (set! found offset)
-          (set! offset (string.index-of-byte text (+ offset 1) (cast '.' : u8)))))
-      found)))
+    (while (and (>= offset 0) (< found 0))
+      (if (and
+        (<= (+ offset 6) length)
+        (= (__tl_string_ref text (+ offset 1)) 'g')
+        (= (__tl_string_ref text (+ offset 2)) 'l')
+        (= (__tl_string_ref text (+ offset 3)) 'o')
+        (= (__tl_string_ref text (+ offset 4)) 'b')
+        (= (__tl_string_ref text (+ offset 5)) 'l'))
+        (set! found offset)
+        (set! offset (string.index-of-byte text (+ offset 1) (cast '.' : u8)))))
+    found))
 
 ;; The identity digest of one function chunk. See the section comment for the
 ;; three normalized spellings; every other byte is folded exactly as emitted,
@@ -74099,155 +74097,137 @@
 ;; the previous one produced.
 (define (compiler-backend-icf-digest
   [state : (&mut state CompilerBackendIcfState)]
-  [home : arena.Arena]
   [text : (& text str)]
   [symbol : (& symbol str)]) : CompilerBackendIcfDigest
   (let
     [length : i64 (__tl_string_length text)]
     [start : i64 (compiler-backend-icf-globl-offset text)]
     [_cleared : unit (backend_string_i64_map.clear-ref! (&mut state.labels))]
-    (let
-      [copied : i64
-        (if (< start 1)
-          0
-          start)]
-      [scan : i64 copied]
-      [dot : i64 0]
-      [under : i64 0]
-      [kind : i64 0]
-      [value : i64 0]
-      [counted : i64 0]
-      [pinned : bool false]
-      [digest : CompilerBackendIcfDigest
-        (CompilerBackendIcfDigest
-          1469598103934665603
-          -3750763034362895579
-          false)]
-      (begin
-        (set! dot (string.index-of-byte text scan (cast '.' : u8)))
-        (set! under (string.index-of-byte text scan (cast '_' : u8)))
-        (while (or (>= dot 0) (>= under 0))
+    [copied : i64
+      (if (< start 1)
+        0
+        start)]
+    [scan : i64 copied]
+    [dot : i64 0]
+    [under : i64 0]
+    [kind : i64 0]
+    [value : i64 0]
+    [counted : i64 0]
+    [pinned : bool false]
+    [digest : CompilerBackendIcfDigest
+      (CompilerBackendIcfDigest 1469598103934665603 -3750763034362895579 false)]
+    (set! dot (string.index-of-byte text scan (cast '.' : u8)))
+    (set! under (string.index-of-byte text scan (cast '_' : u8)))
+    (while (or (>= dot 0) (>= under 0))
+      (let
+        [hit : i64
+          (cond
+            [(< dot 0) under]
+            [(< under 0) dot]
+            [(< dot under) dot]
+            [else under])]
+        [code : i64 (cast (__tl_string_ref text hit) : i64)]
+        [boundary : bool
+          (or
+            (= hit 0)
+            (not
+              (compiler-backend-icf-word-byte?
+                (cast (__tl_string_ref text (- hit 1)) : i64))))]
+        (set! kind 0)
+        (set! counted hit)
+        (if (and
+          boundary
+          (= code 46)
+          (< (+ hit 2) length)
+          (= (__tl_string_ref text (+ hit 1)) 'L'))
           (let
-            [hit : i64
-              (cond
-                [(< dot 0) under]
-                [(< under 0) dot]
-                [(< dot under) dot]
-                [else under])]
-            [code : i64 (cast (__tl_string_ref text hit) : i64)]
-            [boundary : bool
-              (or
-                (= hit 0)
-                (not
-                  (compiler-backend-icf-word-byte?
-                    (cast (__tl_string_ref text (- hit 1)) : i64))))]
-            (begin
-              (set! kind 0)
-              (set! counted hit)
-              (if (and
-                boundary
-                (= code 46)
-                (< (+ hit 2) length)
-                (= (__tl_string_ref text (+ hit 1)) 'L'))
+            [end : i64 (compiler-backend-icf-token-end text (+ hit 2) length)]
+            [token : (& text str) (string.substring-view text hit (- end hit))]
+            (if (compiler-backend-icf-switch-table-token? token)
+              (set! pinned true)
+              unit)
+            (let
+              [after : i64 (compiler-backend-icf-local-label-text token)]
+              (if (>= after 0)
                 (let
-                  [end : i64
-                    (compiler-backend-icf-token-end text (+ hit 2) length)]
-                  [token : (& text str)
-                    (string.substring-view text hit (- end hit))]
-                  [_pinned : unit
-                    (if (compiler-backend-icf-switch-table-token? token)
-                      (set! pinned true)
-                      unit)]
-                  [after : i64 (compiler-backend-icf-local-label-text token)]
-                  (if (>= after 0)
-                    (let
-                      [key : (& text str)
-                        (string.substring-view
-                          token
-                          after
-                          (- (__tl_string_length token) after))]
-                      (begin
-                        (set!
-                          value
-                          (match (backend_string_i64_map.get-borrowed
-                            (& state.labels)
-                            key)
-                            [(LookupFound slot) slot]
-                            [(LookupMissing)
-                              (let
-                                [fresh : i64
-                                  (backend_string_i64_map.len (& state.labels))]
-                                (begin
-                                  (backend_string_i64_map.insert-ref!
-                                    (&mut state.labels)
-                                    (in-arena
-                                      home
-                                      (string.substring
-                                        key
-                                        0
-                                        (string.string-length key)))
-                                    fresh)
-                                  fresh))]))
-                        (set! kind 1)
-                        (set! counted end)))
-                    unit))
-                unit)
-              (if (and
-                boundary
-                (= code 95)
-                (>= (- length hit) 4)
-                (= (__tl_string_ref text (+ hit 1)) 't')
-                (= (__tl_string_ref text (+ hit 2)) 'l')
-                (= (__tl_string_ref text (+ hit 3)) '_'))
-                (let
-                  [end : i64
-                    (compiler-backend-icf-token-end text (+ hit 1) length)]
-                  [token : (& text str)
-                    (string.substring-view text hit (- end hit))]
-                  (if (string.eq token symbol)
-                    (begin
-                      (set! kind 2)
-                      (set! counted end))
+                  [key : (& text str)
+                    (string.substring-view
+                      token
+                      after
+                      (- (__tl_string_length token) after))]
+                  (set!
+                    value
                     (match (backend_string_i64_map.get-borrowed
-                      (& state.canonical)
-                      token)
-                      [(LookupFound group)
-                        (begin
-                          (set! kind 3)
-                          (set! value group)
-                          (set! counted end))]
-                      [(LookupMissing) unit])))
-                unit)
-              (if (> counted hit)
-                (begin
-                  (set!
+                      (& state.labels)
+                      key)
+                      [(LookupFound slot) slot]
+                      [(LookupMissing)
+                        (let
+                          [fresh : i64
+                            (backend_string_i64_map.len (& state.labels))]
+                          (backend_string_i64_map.insert-ref!
+                            (&mut state.labels)
+                            (in-arena
+                              (arena.current)
+                              (string.substring
+                                key
+                                0
+                                (string.string-length key)))
+                            fresh)
+                          fresh)]))
+                  (set! kind 1)
+                  (set! counted end))
+                unit)))
+          unit)
+        (if (and
+          boundary
+          (= code 95)
+          (>= (- length hit) 4)
+          (= (__tl_string_ref text (+ hit 1)) 't')
+          (= (__tl_string_ref text (+ hit 2)) 'l')
+          (= (__tl_string_ref text (+ hit 3)) '_'))
+          (let
+            [end : i64 (compiler-backend-icf-token-end text (+ hit 1) length)]
+            [token : (& text str) (string.substring-view text hit (- end hit))]
+            (if (string.eq token symbol)
+              (begin
+                (set! kind 2)
+                (set! counted end))
+              (match (backend_string_i64_map.get-borrowed
+                (& state.canonical)
+                token)
+                [(LookupFound group)
+                  (set! kind 3)
+                  (set! value group)
+                  (set! counted end)]
+                [(LookupMissing) unit])))
+          unit)
+        (if (> counted hit)
+          (begin
+            (set!
+              digest
+              (compiler-backend-icf-mix-range digest text copied (- hit copied)))
+            (set!
+              digest
+              (if (= kind 1)
+                (compiler-backend-icf-mix-word
+                  (compiler-backend-icf-mix-view digest (& ".Lc"))
+                  value)
+                (if (= kind 2)
+                  (compiler-backend-icf-mix-view digest (& "%SELF%"))
+                  (compiler-backend-icf-mix-view
                     digest
-                    (compiler-backend-icf-mix-range
-                      digest
-                      text
-                      copied
-                      (- hit copied)))
-                  (set!
-                    digest
-                    (if (= kind 1)
-                      (compiler-backend-icf-mix-word
-                        (compiler-backend-icf-mix-view digest (& ".Lc"))
-                        value)
-                      (if (= kind 2)
-                        (compiler-backend-icf-mix-view digest (& "%SELF%"))
-                        (compiler-backend-icf-mix-view
-                          digest
-                          (& (array-ref state.symbols value))))))
-                  (set! copied counted))
-                unit)
-              (set! scan (+ hit 1))
-              (set! dot (string.index-of-byte text scan (cast '.' : u8)))
-              (set! under (string.index-of-byte text scan (cast '_' : u8))))))
-        (compiler-backend-icf-mix-range
-          (CompilerBackendIcfDigest digest.head digest.tail pinned)
-          text
-          copied
-          (- length copied))))))
+                    (& (array-ref state.symbols value))))))
+            (set! copied counted))
+          unit)
+        (set! scan (+ hit 1))
+        (set! dot (string.index-of-byte text scan (cast '.' : u8)))
+        (set! under (string.index-of-byte text scan (cast '_' : u8)))))
+    (compiler-backend-icf-mix-range
+      (CompilerBackendIcfDigest digest.head digest.tail pinned)
+      text
+      copied
+      (- length copied))))
 
 (define (compiler-backend-icf-bucket-match
   [state : (& state CompilerBackendIcfState)]
@@ -74256,12 +74236,11 @@
     [group : i64
       (backend_i64_i64_map.get-value-or (& state.buckets) digest.head -1)]
     [found : i64 -1]
-    (begin
-      (while (and (>= group 0) (< found 0))
-        (if (= (array-ref state.tail group) digest.tail)
-          (set! found group)
-          (set! group (array-ref state.chain group))))
-      found)))
+    (while (and (>= group 0) (< found 0))
+      (if (= (array-ref state.tail group) digest.tail)
+        (set! found group)
+        (set! group (array-ref state.chain group))))
+    found))
 
 (define (compiler-backend-icf-register
   [state : (&mut state CompilerBackendIcfState)]
@@ -74291,12 +74270,11 @@
   [home : arena.Arena]
   [symbol : (& symbol str)]
   [group : i64]) : unit
-  (begin
-    (backend_string_i64_map.insert-ref!
-      (&mut state.canonical)
-      (in-arena home (string.substring symbol 0 (string.string-length symbol)))
-      group)
-    unit))
+  (backend_string_i64_map.insert-ref!
+    (&mut state.canonical)
+    (in-arena home (string.substring symbol 0 (string.string-length symbol)))
+    group)
+  unit)
 
 (define (compiler-backend-icf-alias-text
   [elf : bool]
@@ -74320,14 +74298,14 @@
       (str_cat.str-cat "    .size " symbol ", 0\n")
       "")))
 
-;; "" keeps the chunk. Anything else replaces it, so the caller never has to know
-;; whether this chunk is a kept body or a merged-away alias.
 ;; Merging a body only pays for the bodies a program repeats: a body this large
 ;; is written once. Bounding the work here keeps the pass off the long tail
 ;; without changing which repeats are found.
 (define (compiler-backend-icf-body-limit) : i64
   8192)
 
+;; "" keeps the chunk. Anything else replaces it, so the caller never has to know
+;; whether this chunk is a kept body or a merged-away alias.
 (define (compiler-backend-icf-decide
   [state : (&mut state CompilerBackendIcfState)]
   [home : arena.Arena]
@@ -74344,38 +74322,36 @@
       [_switched : unit
         (unsafe
           (arena.set! home))]
-      (let
-        [replacement : String
-          (let
-            [digest : CompilerBackendIcfDigest
-              (compiler-backend-icf-digest state home text symbol)]
-            [group : i64
-              (if digest.pinned
-                -1
-                (compiler-backend-icf-bucket-match state digest))]
-            (if (>= group 0)
-              (begin
-                (compiler-backend-icf-merged state home symbol group)
+      [digest : CompilerBackendIcfDigest
+        (compiler-backend-icf-digest state text symbol)]
+      [group : i64
+        (if digest.pinned
+          -1
+          (compiler-backend-icf-bucket-match state digest))]
+      [replacement : String
+        (if (>= group 0)
+          (begin
+            (compiler-backend-icf-merged state home symbol group)
+            (let
+              [elf : bool state.elf]
+              [kept : (& state str) (& (array-ref state.symbols group))]
+              (compiler-backend-icf-alias-text
+                elf
                 (let
-                  [elf : bool state.elf]
-                  [kept : (& state str) (& (array-ref state.symbols group))]
-                  (compiler-backend-icf-alias-text
-                    elf
-                    (let
-                      [start : i64 (compiler-backend-icf-globl-offset text)]
-                      (if (> start 0)
-                        (string.substring text 0 start)
-                        ""))
-                    symbol
-                    kept)))
-              (begin
-                (if digest.pinned
-                  unit
-                  (compiler-backend-icf-register state home digest symbol))
-                "")))]
-        (unsafe
-          (arena.set! previous))
-        replacement))))
+                  [start : i64 (compiler-backend-icf-globl-offset text)]
+                  (if (> start 0)
+                    (string.substring text 0 start)
+                    ""))
+                symbol
+                kept)))
+          (begin
+            (if digest.pinned
+              unit
+              (compiler-backend-icf-register state home digest symbol))
+            ""))]
+      (unsafe
+        (arena.set! previous))
+      replacement)))
 
 (define (compiler-backend-emit-functions-buffer-raw-into
   [type-segment-bases : i64]

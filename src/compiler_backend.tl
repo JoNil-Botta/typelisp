@@ -78213,27 +78213,6 @@ tl_shared_object_init:
     program
     (CompilerBackendTarget.Linux)))
 
-(define (compiler-backend-emit-program-linux-with-spans
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode
-    program
-    (CompilerBackendTarget.Linux)
-    (Scalar)
-    spans
-    true))
-
-(define (compiler-backend-emit-program-with-spans-for-target
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode
-    program
-    target
-    (Scalar)
-    spans
-    true))
-
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -83590,27 +83569,16 @@ tl_shared_object_init:
         crt-entry
         profile-state))))
 
-(define (compiler-backend-emit-program-object-image-target
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
-    program
-    target
-    (Scalar)
-    spans
-    emit-entry
-    false))
-
 (define (compiler-backend-emit-program-object-image-linux
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target
+  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
     program
     (CompilerBackendTarget.Linux)
+    (Scalar)
     spans
-    true))
+    true
+    false))
 
 (define (compiler-backend-peephole-byte-at [data : (Ptr u8)] [index : i64]) : i64
   (cast
@@ -93488,26 +93456,22 @@ tl_shared_object_init:
     (compiler-backend-sweep-reset! backend-state stream)
     buf))
 
-(define (compiler-backend-peephole-asm-buffer
-  [asm : String]
-  [drop-fallthrough? : bool]) : text_buf.TextBuf
+;; Production entry: same whole-text pass with the fallthrough-`jmp` deletion
+;; folded in, matching what the streaming emission walk applies per group.
+(define (compiler-backend-peephole-asm-drop-fallthrough [asm : String]) : String
   (let
     [backend-state : CompilerBackendState
       (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
     [stream : CompilerBackendStreamState
       (compiler-backend-state-stream-state backend-state)]
     (compiler-backend-sweep-reset! backend-state stream)
-    (compiler-backend-peephole-asm-buffer-with-state
-      backend-state
-      stream
-      asm
-      drop-fallthrough?
-      false)))
-
-;; Production entry: same whole-text pass with the fallthrough-`jmp` deletion
-;; folded in, matching what the streaming emission walk applies per group.
-(define (compiler-backend-peephole-asm-drop-fallthrough [asm : String]) : String
-  (text_buf.render (compiler-backend-peephole-asm-buffer asm true)))
+    (text_buf.render
+      (compiler-backend-peephole-asm-buffer-with-state
+        backend-state
+        stream
+        asm
+        true
+        false))))
 
 ;; PIC uses the whole-text finalizer rather than a streaming group flush.
 ;; Its production boundary must expand probes after the same analyses.
@@ -93641,24 +93605,6 @@ tl_shared_object_init:
                   backend-state)
                 (Err owned-message))]))))))
 
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -93690,23 +93636,25 @@ tl_shared_object_init:
         crt-entry
         profile-state))))
 
-(define (compiler-backend-emit-program-target-with-mode-and-crt
+(define (compiler-backend-emit-program-target-with-mode
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
+  [emit-entry : bool]) : ResultCompilerBackend
   (let
     [buf
       (try
-        (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+        (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          (compiler-backend-state-new (ci.intern-compat-state-capture-active))
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           program
           target
           mode
           spans
           emit-entry
-          crt-entry))]
+          false
+          (profile_state.compiler-profile-state-new)))]
     (Ok (text_buf.render buf))))
 
 (define (compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
@@ -93733,20 +93681,6 @@ tl_shared_object_init:
           crt-entry
           profile-state))]
     (Ok (text_buf.render buf))))
-
-(define (compiler-backend-emit-program-target-with-mode
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode-and-crt
-    program
-    target
-    mode
-    spans
-    emit-entry
-    false))
 
 (define (compiler-backend-lower-mode-for-target
   [target : CompilerBackendTarget]
@@ -93811,7 +93745,12 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackend
-          (compiler-backend-emit-program-linux-with-spans program spans)]
+          (compiler-backend-emit-program-target-with-mode
+            program
+            (CompilerBackendTarget.Linux)
+            (Scalar)
+            spans
+            true)]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
@@ -93824,10 +93763,12 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackend
-          (compiler-backend-emit-program-with-spans-for-target
+          (compiler-backend-emit-program-target-with-mode
             program
+            target
+            (Scalar)
             spans
-            target)]
+            true)]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
@@ -93840,11 +93781,13 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackendObject
-          (compiler-backend-emit-program-object-image-target
+          (compiler-backend-emit-program-object-image-target-with-mode-and-crt
             program
             target
+            (Scalar)
             spans
-            true)]
+            true
+            false)]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
@@ -94299,23 +94242,6 @@ tl_shared_object_init:
         crt-entry
         profile-state))))
 
-(define (compiler-backend-emit-program-pic-target-with-mode
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    false
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-backend-emit-source-pic-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackendPic
@@ -94323,21 +94249,20 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackendPic
-          (compiler-backend-emit-program-pic-target-with-mode
+          (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+            (compiler-backend-state-new (ci.intern-compat-state-capture-active))
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             program
             target
             (Scalar)
             spans
-            true)]
+            true
+            false
+            (profile_state.compiler-profile-state-new))]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
     [(Err diag) (Err diag)]))
-
-(define (compiler-backend-emit-source-pic-linux [src : String]) : ResultCompilerBackendPic
-  (compiler-backend-emit-source-pic-for-target
-    src
-    (CompilerBackendTarget.Linux)))
 
 (define (compiler-backend-runtime-helper-externs) : compiler_ir_types.CompilerIrExternSeq
   (compiler_ir_types.compiler-ir-extern-seq4

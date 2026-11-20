@@ -29562,23 +29562,6 @@
                         (array-ref frame-cell 0)
                         (or licm-changed? guarded?))])])))))]))
 
-(define (opt-licm-function-with-direct-call-clean
-  [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]
-  [direct-call-clean : (& opt_i64_i64_map.Map)]) : ir.CompilerIrFunction
-  (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
-      (match (opt-licm-function-with-context-result-and-direct-call-clean
-        type-segment-bases
-        (& (opt-cfg-context-build blocks))
-        false
-        direct-call-clean
-        (& (opt_i64_i64_map.with-capacity 1))
-        (& (opt-global-cell-summary-empty))
-        false
-        func)
-        [(Result next _) next])]))
-
 (define (opt-licm-function
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
@@ -29592,27 +29575,6 @@
         (& (opt_i64_i64_map.with-capacity 1))
         (& (opt-global-cell-summary-empty))
         false
-        func)
-        [(Result next _) next])]))
-
-;; Test-only driver: LICM with the program's global-cell facts supplied, so a
-;; test can exercise loop-scope global operand promotion (which needs declared
-;; cell types) without building a whole program pipeline.
-(define (opt-licm-function-with-global-cells
-  [type-segment-bases : i64]
-  [global-cells : (& OptGlobalCellSummary)]
-  [late? : bool]
-  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
-      (match (opt-licm-function-with-context-result-and-direct-call-clean
-        type-segment-bases
-        (& (opt-cfg-context-build blocks))
-        false
-        (& (opt_i64_i64_map.with-capacity 1))
-        (& (opt_i64_i64_map.with-capacity 1))
-        global-cells
-        late?
         func)
         [(Result next _) next])]))
 
@@ -33313,27 +33275,6 @@
             false))
           [(Result next-blocks next-frame changed)
             (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
-
-(define (opt-induction-function-with-context
-  [type-segment-bases : i64]
-  [context : (& OptCfgContext)]
-  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (opt-induction-function-with-context-result
-    type-segment-bases
-    context
-    false
-    func)
-    [(Result next _) next]))
-
-(define (opt-induction-function
-  [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
-      (opt-induction-function-with-context
-        type-segment-bases
-        (& (opt-cfg-context-build blocks))
-        func)]))
 
 ;; --- dead phi elimination (dead_phi) -----------------------------------------
 ;;
@@ -39433,18 +39374,6 @@
             false))
           [(Result next-blocks next-frame changed)
             (OptBlockRewriteResult.Result next-blocks next-frame changed)]))]))
-
-(define (opt-lftr-function
-  [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
-      (match (opt-lftr-function-with-context-result
-        type-segment-bases
-        (& (opt-cfg-context-build blocks))
-        false
-        func)
-        [(Result next _) next])]))
 
 ;; Branch folding can leave both source blocks reachable while removing only
 ;; one source-to-phi edge. Filter against the destination's actual reachable
@@ -66229,22 +66158,6 @@
               state.changed?))))]))
 
 ;; Standalone driver for tests and ad-hoc runs.
-(define (opt-loop-call-function
-  [try-rewrite
-    : (->
-      ir.CompilerIrBlockList
-      i64
-      ir.CompilerIrBlock
-      (&mut state OptLoopCallRewriteState)
-      ir.CompilerIrBlock)]
-  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (opt-loop-call-function-with-context-result
-    try-rewrite
-    (& (opt-cfg-context-build (opt-function-blocks func)))
-    false
-    func)
-    [(Result out _) out]))
-
 (define (opt-fill-call-try-rewrite
   [blocks : ir.CompilerIrBlockList]
   [entry-label : i64]
@@ -93321,15 +93234,6 @@
                 [(Ok) (Result next next-context)]
                 [(Err _) (Result func context)])))])]))
 
-(define (opt-successor-sink-function
-  [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (opt-successor-sink-function-with-context-result
-    type-segment-bases
-    (opt-cfg-context-build (opt-function-blocks func))
-    (owned_view.compiler-owned-reference-shared-view func))
-    [(Result f _) f]))
-
 ;; --- GS-1: uniform-phi substitution -----------------------------------------
 ;;
 ;; `opt-cfg-clean-instr` already folds a phi whose non-self inputs all name one
@@ -95355,15 +95259,6 @@
                       [(Err _)
                         (opt-cfg-index-refresh-blocks! (& context.index) blocks)
                         (Result func context)])))]))])]))
-
-(define (opt-guard-sink-function
-  [cells : (& OptGlobalCellSummary)]
-  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
-  (match (opt-guard-sink-function-with-context-result
-    cells
-    (opt-cfg-context-build (opt-function-blocks func))
-    (owned_view.compiler-owned-reference-shared-view func))
-    [(Result f _) f]))
 
 ;; ---------------------------------------------------------------------------
 (defstruct OptIfConvertBlockFact
@@ -128482,14 +128377,6 @@
     (owned_view.compiler-owned-reference-shared-view program)
     spans
     (optimize-request (ast.ast-node-pool-reader-context-current) level)))
-
-(define (optimize-program-with-spans
-  [program : (& ir.CompilerIrProgram)]
-  [spans : ir.CompilerSourceSpans]) : CompilerOptimizedProgram
-  (optimize-program-with-spans-and-level
-    program
-    spans
-    (compiler-optimize-default-level)))
 
 (define (opt-function-blocks [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrBlockList
   (match func

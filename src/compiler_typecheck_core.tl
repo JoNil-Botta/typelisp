@@ -8977,15 +8977,21 @@
                   (tc-global-shared-view got)
                   (tc-global-shared-view want))
                   ;; The expected type gives the shape; the arms give the
-                  ;; regions.
+                  ;; regions. A `&mut` arm keeps its invariant referent.
                   [(TcInferredTypeMatch.Compatible _)
-                    (ResultTcType.Ok
-                      (tc-type-join-regions
-                        env
+                    (let
+                      [base : ast.AstType
                         (if (= index 0)
                           want
-                          merged)
-                        (& got)))]
+                          merged)]
+                      (if (tc-mut-ref-join-referent-disagrees?
+                        arm-env
+                        (& base)
+                        (& got))
+                        (ResultTcType.Err
+                          "typecheck: match arm result type mismatch")
+                        (ResultTcType.Ok
+                          (tc-type-join-regions env base (& got)))))]
                   [(TcInferredTypeMatch.Mismatch _)
                     (ResultTcType.Err
                       "typecheck: match arm result type mismatch")])]
@@ -50648,6 +50654,45 @@
                 canonical-actual
                 (tc-source-owned-nominal-name-id ctx expected))]))])))
 
+;; Mutable references are invariant in their referent, as in Rust: a join may
+;; not give one arm's storage the other arm's region. The referents must be
+;; equal, arena region tags included, and an arm whose lifetime is an arena
+;; region -- a borrow of that arena's storage -- joins only with another arm of
+;; the same region. A store or a growing push through the joined reference
+;; would otherwise put arena storage into the place the other arm borrowed.
+(define (tc-mut-ref-join-referent-disagrees?
+  [env : TcTypeEnv]
+  [a : (& a ast.AstType)]
+  [b : (& b ast.AstType)]) : bool
+  (match (tc-type-strip-region (clone (deref a)))
+    [(MutRef a-region a-inner)
+      (match (tc-type-strip-region (clone (deref b)))
+        [(MutRef b-region b-inner)
+          (let
+            [a-tags : TcNameIdList
+              (tc-type-region-tags-into (& (ast.ty-node-get a-inner)) Nil)]
+            [b-tags : TcNameIdList
+              (tc-type-region-tags-into (& (ast.ty-node-get b-inner)) Nil)]
+            (or
+              (not
+                (tc-type-eq (ast.ty-node-get a-inner) (ast.ty-node-get b-inner)))
+              (not
+                (tc-name-id-list-empty?
+                  (tc-name-id-list-difference a-tags b-tags)))
+              (not
+                (tc-name-id-list-empty?
+                  (tc-name-id-list-difference b-tags a-tags)))
+              (if (or
+                (tc-selected-arena-region? env a-region)
+                (tc-selected-arena-region? env b-region))
+                (not
+                  (and
+                    (= a-region b-region)
+                    (tc-selected-arena-region? env a-region)))
+                false)))]
+        [_ false])]
+    [_ false]))
+
 (define (tc-merge-branch-type-raw
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -50656,6 +50701,10 @@
   (cond
     [(tc-never-type? (tc-global-shared-view a)) (Ok b)]
     [(tc-never-type? (tc-global-shared-view b)) (Ok a)]
+    ;; A mutable reference keeps its referent and its arena region: the arms
+    ;; must agree on both.
+    [(tc-mut-ref-join-referent-disagrees? env (& a) (& b))
+      (Err (tc-kind-message (TypeMismatch) "typecheck: if branches must match"))]
     ;; The arms' region tags join; distinct lifetimes (such as two arenas'
     ;; brands) do not.
     [(tc-type-eq (tc-global-shared-view a) (tc-global-shared-view b))
@@ -56917,7 +56966,20 @@
                               ctx
                               env
                               (tc-global-shared-view want)
-                              (tc-global-shared-view else-ty)))
+                              (tc-global-shared-view else-ty))
+                            ;; A `&mut` arm keeps its invariant referent and
+                            ;; arena region, and falls through to the join that
+                            ;; rejects a disagreeing one.
+                            (not
+                              (tc-mut-ref-join-referent-disagrees?
+                                env
+                                (& want)
+                                (& then-ty)))
+                            (not
+                              (tc-mut-ref-join-referent-disagrees?
+                                env
+                                (& want)
+                                (& else-ty))))
                             ;; The expected type gives the shape; the
                             ;; branches give the regions.
                             (ResultTcType.Ok
@@ -84882,9 +84944,15 @@
                       (tc-global-shared-view got)
                       (tc-global-shared-view expected))
                       ;; The expected type gives the shape; the arm gives
-                      ;; the regions.
+                      ;; the regions. A `&mut` arm keeps its invariant
+                      ;; referent.
                       [(Compatible _)
-                        (Ok (tc-type-join-regions arm-env expected (& got)))]
+                        (if (tc-mut-ref-join-referent-disagrees?
+                          arm-env
+                          (& expected)
+                          (& got))
+                          (Err "typecheck: match arm result type mismatch")
+                          (Ok (tc-type-join-regions arm-env expected (& got))))]
                       [(Mismatch actual)
                         (Err
                           (tc-type-mismatch-message-in-context
@@ -90590,6 +90658,24 @@
                 "array"))]
           (Ok (Unit)))))))
 
+;; Growing a dynamic array reallocates its buffer in the arena active at the
+;; push (SPEC 3.9). That buffer is an allocation of the active region, so the
+;; array's own storage must name it: growing a place that outlives the arena
+;; would leave it pointing at memory the arena reclaims, whatever the element
+;; type it holds. A push is the only primitive that regrows a buffer.
+(define (tc-array-growth-ok
+  [env : TcTypeEnv]
+  [array-ty : ast.AstType]
+  [elem-ty : ast.AstType]) : ResultTcUnit
+  (match (tc-active-region env)
+    [(No) ResultTcUnit.Ok]
+    [(Some region)
+      (tc-ensure-region-value-can-flow-into
+        env
+        array-ty
+        (tc-tag-region region (ast.ast-ty-dyn-array (& elem-ty)))
+        "the array this push grows")]))
+
 (define (tc-tuple-set-element-type
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
@@ -91808,16 +91894,24 @@
         [receiver (try (tc-array-push-receiver ctx array-ty))]
         (match receiver
           [(TcArrayReceiver container-ty elem-ty)
-            (tc-array-mutation-value
-              ctx
-              env
-              array
-              container-ty
-              elem-ty
-              value
-              (tc-kind-message
-                (TypeMismatch)
-                "typecheck: __tl_array-push! value type mismatch"))]))]
+            (let
+              [grown-array : ast.AstType (clone container-ty)]
+              [grown-elem : ast.AstType (clone elem-ty)]
+              (match (tc-array-mutation-value
+                ctx
+                env
+                array
+                container-ty
+                elem-ty
+                value
+                (tc-kind-message
+                  (TypeMismatch)
+                  "typecheck: __tl_array-push! value type mismatch"))
+                [(ResultTcType.Err message) (Err message)]
+                [(ResultTcType.Ok pushed)
+                  (match (tc-array-growth-ok env grown-array grown-elem)
+                    [(ResultTcUnit.Ok) (Ok pushed)]
+                    [(ResultTcUnit.Err message) (Err message)])]))]))]
     [(StringRef str-box index-box)
       (let
         [str-ty (try (tc-expr-id ctx env str-box))]

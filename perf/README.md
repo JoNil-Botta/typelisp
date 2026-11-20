@@ -116,9 +116,13 @@ reference (artifact `self-compile-reference`, kept 90 days).
 `scripts/self-compile.sh check`. It identifies the tested merge T, its first
 parent B (the main it merges onto) and the PR head H. It then gates the PR's
 own cost, `own = M(T) − M(B)`. The check passes if and only if
-`|own × 10⁶ − d × M(B)| ≤ 5000 × M(B)`, computed in exact integers, where d is
-the PR's honoured declaration in ppm, or 0. `TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM`
-(default 5000) is unchanged.
+`|own × 10⁶ − d × M(B)| ≤ 4000 × M(B)`, computed in exact integers, where d is
+the PR's honoured declaration in ppm, or 0. The PR window is
+`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM` (default 5000) less the class-M bound
+(1000 ppm), leaving that bound as headroom to the ledger's unchanged 5000 ppm
+landed window: an undeclared PR within it lands inside the landed window unless
+main's cost moved between its base and its parent (a residual of about 40 ppm
+per 1% of movement).
 
 - M(B) is B's reference only when all of these hold:
   - the GitHub API shows a push-to-main run of the reviewed workflow, in this
@@ -150,7 +154,7 @@ the PR's honoured declaration in ppm, or 0. `TYPELISP_IR_SELF_COMPILE_TOLERANCE_
 - The job summary and the `self-compile-measurement` artifact record T, B, H,
   both values, the source of M(B), the own cost in Ir and ppm, and the status.
 
-**Declarations.** A PR whose own cost is beyond ±5000 ppm acknowledges it in
+**Declarations.** A PR whose own cost is beyond ±4000 ppm acknowledges it in
 `perf/self-compile-declarations/pr-<N>.tsv`, where N is its PR number. The file
 is one line:
 `self_compile/compile_cli_opt1<TAB><finite signed decimal ppm><TAB><reason>`.

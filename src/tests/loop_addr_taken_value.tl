@@ -406,9 +406,12 @@
       [func (lftr-function mode)]
       [_reset (reset!)]
       [out
-        (opt.opt-lftr-function
+        (match (opt.opt-lftr-function-with-context-result
           (ast.ast-node-pool-reader-type-segment-bases)
-          (& func))]
+          (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+          false
+          (& func))
+          [(Result next _) next])]
       (test.assert-i64-eq
         (opt.opt-function-frame out)
         (if (= mode 0)
@@ -422,9 +425,12 @@
       [_valid
         (test.assert-true (valid? (& func)) "the LFTR fixture is valid IR")]
       [out
-        (opt.opt-lftr-function
+        (match (opt.opt-lftr-function-with-context-result
           (ast.ast-node-pool-reader-type-segment-bases)
-          (& func))]
+          (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+          false
+          (& func))
+          [(Result next _) next])]
       (test.assert-i64-eq
         (opt.opt-function-frame out)
         (if (= which 0)

@@ -10944,7 +10944,7 @@
           marker.name-id)
           [(Some (TokenRegionMarker token)) (= token slot.name-id)]
           [_ false])
-        (match (owned_view.compiler-owned-reference-shared-view (& marker.ty))
+        (match (& marker.ty)
           [(ast.AstType.Var phase)
             (tc-selected-phase-ends? env phase owners region)]
           [_ false])))))
@@ -11043,10 +11043,7 @@
       (set! index (+ index 1)))
     (if (and
       (>= region 0)
-      (tc-type-contains-arena-owner-region?
-        env
-        (tc-global-shared-view held)
-        region))
+      (tc-type-contains-arena-owner-region? env held region))
       index
       -1)))
 
@@ -18702,7 +18699,7 @@
                       (tc-tagged-arena-handle-borrow?
                         ctx
                         (tc-global-shared-view got)
-                        (tc-global-shared-view want))))
+                        want)))
                     (TcSelectedArgsResult.Err
                       (tc-region-call-arg-error
                         (tc-context-expr-bases ctx)
@@ -19320,7 +19317,7 @@
                                             (tc-call-erased-owner-result
                                               ctx
                                               env
-                                              (tc-global-shared-view args)
+                                              args
                                               (tc-global-shared-view params)
                                               constructed))
                                           ;; Key -1 names a constructor (no declaration),
@@ -27891,14 +27888,14 @@
   [got : ast.AstType]
   [want : ast.AstType]) : bool
   (and
-    (tc-arena-type? ctx (tc-global-shared-view got))
-    (tc-arena-type? ctx (tc-global-shared-view want))
-    (match (tc-arena-branded-region ctx (tc-global-shared-view got))
-      [(Some _) false]
-      [(No) true])
-    (match (tc-arena-branded-region ctx (tc-global-shared-view want))
-      [(Some _) false]
-      [(No) true])))
+    (match (tc-arena-target ctx got)
+      [(TcArenaTarget.Target (TcArenaTargetAccess.Value) _ (TcMaybeNameId.No))
+        true]
+      [_ false])
+    (match (tc-arena-target ctx want)
+      [(TcArenaTarget.Target (TcArenaTargetAccess.Value) _ (TcMaybeNameId.No))
+        true]
+      [_ false])))
 
 ;; A direct array read through a reference rvalue can produce a region-tagged
 ;; move-only aggregate. Keep the sound confinement rejection, but make this
@@ -37891,10 +37888,7 @@
             (when
               (and
                 (= slot.name-id (tc-region-marker-id))
-                (tc-region-marker-owned-by?
-                  env
-                  (owned_view.compiler-owned-reference-shared-view (& slot.ty))
-                  owner))
+                (tc-region-marker-owned-by? env (& slot.ty) owner))
               (return true))
             (set! index (- index 1))))
         (tc-region-markers-owned-by-scan?
@@ -37906,7 +37900,7 @@
 ;; Active region marker type `ty` names a region of `owner`.
 (define (tc-region-marker-owned-by?
   [env : TcTypeEnv]
-  [ty : ast.AstType]
+  [ty : (& ty ast.AstType)]
   [owner : i64]) : bool
   (match ty
     [(or (Var region) (Region region _))
@@ -37926,7 +37920,7 @@
       (or
         (and
           (= key (tc-region-marker-id))
-          (tc-region-marker-owned-by? env ty owner))
+          (tc-region-marker-owned-by? env (& ty) owner))
         (tc-region-markers-owned-by-scan? env rest owner))]))
 
 (define (tc-cleanup-owner-marker-for?
@@ -51531,11 +51525,7 @@
             [(Ok actual)
               (let
                 [found : TcNameIdList
-                  (tc-call-arg-arena-identities
-                    ctx
-                    env
-                    arg-id
-                    (tc-global-shared-view actual))]
+                  (tc-call-arg-arena-identities ctx env arg-id actual)]
                 (when
                   (and
                     (not (tc-name-id-list-empty? found))
@@ -61715,15 +61705,15 @@
               ctx
               env
               args
-              (tc-global-shared-view params)
-              (tc-global-shared-view resolved-params)
+              params
+              resolved-params
               (tc-global-shared-view resolved-ret))
               [(Ok)
                 (tc-call-erased-owner-result
                   ctx
                   env
                   (tc-global-shared-view args)
-                  resolved-params
+                  (tc-global-shared-view resolved-params)
                   (tc-tag-active-region env resolved-ret))]
               [(Err message) (Err message)])]
           [(Err message) (Err message)])]
@@ -61961,7 +61951,7 @@
                     (& declared)
                     index
                     (ast.ast-type-id-fallback))))]
-            (match (tc-expr ctx env (tc-global-shared-view arg))
+            (match (tc-expr ctx env arg)
               [(Ok actual)
                 (let
                   [brand-cursor : TcNameIdList seen]
@@ -62498,7 +62488,7 @@
   [owner : i64]) : i64
   (match (tc-lookup-id env owner)
     [(Ok ty)
-      (match (tc-arena-branded-region ctx (tc-global-shared-view ty))
+      (match (tc-arena-branded-region ctx ty)
         [(Some brand)
           (if (or
             (tc-ordinary-arena-owner-active-id? env brand)

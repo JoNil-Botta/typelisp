@@ -299,8 +299,8 @@ never run at once:
 
 | Lock | Shared path |
 | --- | --- |
-| `build-stamp` | `target/build-stage0/git-hash.txt` and `tree-hash.txt`, which compile with `compiler-build-identity` includes and root package builds rewrite (the CLI smoke poisons them on purpose) |
-| `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
+| `build-stamp` | `target/build-stage0/git-hash.txt` and `tree-hash.txt`, which compile with `compiler-build-identity` includes (the bootstrap parity recompile among them) and root package builds rewrite (the CLI smoke poisons them on purpose) |
+| `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include (the bootstrap parity recompile among them) and the image and resource gates rebuild in place |
 | `embedded-payload` | `target/embedded-stdlib-payload-verify/`, which the payload gate and the stdlib gate (through `verify-embedded-stdlib-payload.sh`) both reset |
 | `instruction-count` | `target/instruction-count-check/`, where the benchmark instruction-count gate (which resets it) and the `self_compile` gate both measure at their historical paths, because measured paths reach the counts |
 | `root-release` | `target/release/`, the root package build's output |

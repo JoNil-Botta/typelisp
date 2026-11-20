@@ -17,7 +17,7 @@
 id	hosts	label	needs	compiler	memory	locks	command
 bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-	-	256	-	scripts/verify-bootstrap-fixpoint-control.sh
 bootstrap-compiler	all	bootstrap compiler	-	-	6400	-	gate_bootstrap_compiler
-bootstrap-fixpoint	all	bootstrap fixpoint	bootstrap-compiler	-	6400	-	gate_bootstrap_fixpoint
+bootstrap-fixpoint	all	bootstrap fixpoint	bootstrap-compiler	-	6400	build-stamp,embedded-image	gate_bootstrap_fixpoint
 ispc-point-transform-corpus-contract	all	ISPC point-transform corpus contract	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh --only 'point_transform-*' tests/codegen/ispc.cases
 tlci-format-corpus	all	TLCI format corpus	bootstrap-compiler	stage2	256	-	scripts/verify-tlci-corpus.sh
 stage2-crypto-gcm-native-report	all	stage2 crypto GCM native performance report	bootstrap-compiler	stage2	6144	-	scripts/measure-crypto-gcm.sh

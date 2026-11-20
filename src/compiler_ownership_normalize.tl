@@ -1975,9 +1975,7 @@
   ;; `normalize-source-charge!`
   (let
     [bytes : i64
-      (+
-        (string.string-length (& source.path))
-        (string.string-length (& source.expansion)))]
+      (+ source.path.bytes (string.string-length (& source.expansion)))]
     (try (normalize-charge! state 1 bytes bytes))
     (normalize-source-clone source)))
 
@@ -1994,13 +1992,8 @@
   [work : i64]) : NormalizeSource
   (let
     [bytes : i64
-      (+
-        (string.string-length (& source.path))
-        (string.string-length (& source.expansion)))]
-    (if (and
-      (> (string.string-length (& source.path)) 0)
-      (> source.line 0)
-      (> source.column 0))
+      (+ source.path.bytes (string.string-length (& source.expansion)))]
+    (if (and (> source.path.bytes 0) (> source.line 0) (> source.column 0))
       (try
         (normalize-charge!
           state
@@ -2017,16 +2010,14 @@
   [source : (& source own.OwnershipSource)]) : NormalizeUnit
   (let
     [bytes : i64
-      (+
-        (string.string-length (& source.path))
-        (string.string-length (& source.expansion)))]
+      (+ source.path.bytes (string.string-length (& source.expansion)))]
     (normalize-charge! state 1 bytes bytes)))
 
 (define (normalize-source-clone [source : (& source own.OwnershipSource)]) : NormalizeSource
   (if (own.ownership-source-valid? source)
     (NormalizeSource.Ok
       (own.OwnershipSource
-        (string.copy (& source.path))
+        (own.ownership-path-copy (& source.path))
         source.line
         source.column
         (own.ownership-text-copy (& source.expansion))))
@@ -4204,7 +4195,7 @@
           (!= (string.string-ref (& source.expansion) last) ';'))
           (set! last (- last 1)))
         (own.OwnershipSource
-          (own.ownership-text-copy (& source.path))
+          (own.ownership-path-copy (& source.path))
           (normalize-frame-field (& source.expansion) (+ last 1) 1)
           (normalize-frame-field (& source.expansion) (+ last 1) 2)
           "")))))
@@ -8379,7 +8370,7 @@
             (= (array-ref state.effect-places index) root)
             (= effect.line source.line)
             (= effect.column source.column)
-            (string.eq (& effect.path) (& source.path))
+            (= effect.path.id source.path.id)
             (string.eq (& effect.expansion) (& source.expansion)))
           (return index)))
       (set! index (+ index 1)))
@@ -16617,7 +16608,10 @@
         (io.print-error " ")
         (io.print-error (string.int->string (array-length body.places)))
         (io.print-error " ")
-        (io.print-error (string.copy (& (array-ref body.blocks 0).source.path)))
+        ;; The path's byte count: the body's path text is not at hand here.
+        (io.print-error "path-bytes=")
+        (io.print-error
+          (string.int->string (array-ref body.blocks 0).source.path.bytes))
         (io.print-error ":")
         (io.print-error
           (string.int->string (array-ref body.blocks 0).source.line))
@@ -16705,7 +16699,10 @@
 (define (normalize-mir-dump [body : (& body own.OwnershipBody)]) : unit
   (cfg
     ownership-mir-dump
-    (match (ownership_dump.ownership-dump body (own.ownership-default-limits))
+    (match (ownership_dump.ownership-dump
+      body
+      (own.ownership-default-limits)
+      "<body>")
       [(ownership_dump.OwnershipDumpResult.Ok text) (io.print-error text)]
       [(ownership_dump.OwnershipDumpResult.Err _)
         (io.print-error "ownership-mir-dump: the graph does not validate\n")]))

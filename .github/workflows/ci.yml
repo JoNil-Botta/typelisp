@@ -63,8 +63,9 @@ jobs:
       - uses: actions/checkout@v4
 
       # Fails every lane when scripts/ci-lanes.tsv leaves a gate unassigned,
-      # assigns one twice or omits a declared duplicate. Lane linux-1 isolates
-      # build-invariance, so only it gets three pool workers (hosted only).
+      # assigns one twice or omits a declared duplicate. Only a lane that holds
+      # nothing else beside build-invariance gets three pool workers (hosted
+      # only); under this layout no lane does.
       - name: Plan CI lane
         id: plan
         shell: bash
@@ -318,13 +319,13 @@ jobs:
             target/embedded-stdlib-tlci-resources/*/source.s
           if-no-files-found: ignore
 
-      # The stage2-sde-fallback gate's peak (#9460), for its reservation.
+      # The stage2-sde-fallback-* gates' peaks (#9460), for their reservations.
       - name: Upload SDE fallback memory evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sde-fallback-memory-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
-          path: target/sde-fallback.memory
+          path: target/sde-fallback-*.memory
           if-no-files-found: ignore
 
       # self_compile has no checked row (#9307, perf/README.md). The

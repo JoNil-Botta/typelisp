@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-8113.300	drops repeated emission and register-planning work (byte-identical output); local measurement 117,764,874,008 -> 116,809,412,274 Ir at main 0c81766a5

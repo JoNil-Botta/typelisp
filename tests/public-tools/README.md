@@ -48,7 +48,8 @@ shares: placeholder expansion, request framing, file URIs and the
 fresh-versus-batch normalization. `test-result-checks.sh` is its self-test
 (passing and failing checks, the order of the failure lines, repeated keys,
 literal path substitution, UTF-8 request frames, byte and final-newline
-edges); `verify-public-tools.sh` runs it before the corpora.
+edges); the `corpora` part of `verify-public-tools.sh` runs it before the
+corpora.
 
 ## Running
 
@@ -56,11 +57,19 @@ From the repository root:
 
 ```bash
 # Set TYPELISP_BIN, or the script fetches the published stage0 automatically.
-TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-public-tools.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-public-tools.sh corpora
 TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh lsp fresh
 ```
 
-`verify-public-tools.sh` calls `run-corpus.sh` for both corpora.
+`verify-public-tools.sh PART` runs one gate part: `affected-map` (the
+`ci-affected.sh --self-test` audit, Linux), `cli-transcripts-1` to
+`cli-transcripts-3` (the `tests/cli/public-*.cases` transcripts, split into
+three balanced groups that together cover every file exactly once) and
+`corpora`; `scripts/ci-gates.tsv` runs each part as its own gate, and
+`scripts/ci-verify.sh --gates stage2-public-tool-affected-map,
+stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,
+stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora` runs them all.
+`corpora` calls `run-corpus.sh` for both corpora.
 `run-corpus.sh [repl|lsp] [fresh|batch|differential]` runs one corpus; LSP cases
 run one process per case (`fresh`), all cases through one batch process
 (`batch`, the Windows default), or both with their results compared

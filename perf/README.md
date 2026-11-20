@@ -581,4 +581,11 @@ in the comparison gate.
 
 Exact instruction counts guard performance instead. Use
 `scripts/benchmark-compile-cli.sh` for phase-level local investigation of a
-compile-time change.
+compile-time change, and `scripts/benchmark-compile-vs-clang.sh` for the
+compile-lane reference: it builds the benchmark pairs with the compiler at
+opt1/opt2 and clang at `-O0`/`-O2`, then reports the geomean TypeLisp/clang
+wall-time and peak-RSS ratios from `target/compile-vs-clang/results.tsv`.
+`scripts/benchmark-size-vs-clang.sh` is the size-lane reference: it builds the
+same pairs with the compiler at opt2 and clang at `-Os`/`-O2`, strips the
+binaries, and reports the geomean TypeLisp/clang byte ratios from
+`target/size-vs-clang/results.tsv`.

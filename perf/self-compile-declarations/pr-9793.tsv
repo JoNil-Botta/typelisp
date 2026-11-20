@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-17948.583698104	C03 backend text-pipeline cost (rsp rebase into a byte buffer, per-instruction diagnostic copy, flags-writer and owner-key scans, rebased-ref writer); byte-identical assembly; local same-source -2,113,487,612 Ir

@@ -11314,6 +11314,10 @@
       [table-b : i64 (ci.intern-compat-state-table-id intern-b)]
       [generation-a : i64 (ci.intern-compat-state-generation intern-a)]
       [generation-b : i64 (ci.intern-compat-state-generation intern-b)]
+      [names-a : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state (& intern-a))]
+      [names-b : ci.InternSourceNameSessionHandle
+        (ci.intern-source-name-session-handle-from-state (& intern-b))]
       [initially-lazy? : bool
         (and
           (=
@@ -11355,30 +11359,12 @@
           (arena.set! caller))
         (unsafe
           (arena.destroy scratch))
-        (tc_core.tc-agg-size-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-align-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-regwords-cache-ensure-for-state!
-          state-a
-          table-a
-          generation-a)
-        (tc_core.tc-agg-size-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
-        (tc_core.tc-agg-align-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
-        (tc_core.tc-agg-regwords-cache-ensure-for-state!
-          state-b
-          table-b
-          generation-b)
+        (tc_core.tc-agg-size-cache-ensure-for-state! state-a names-a)
+        (tc_core.tc-agg-align-cache-ensure-for-state! state-a names-a)
+        (tc_core.tc-agg-regwords-cache-ensure-for-state! state-a names-a)
+        (tc_core.tc-agg-size-cache-ensure-for-state! state-b names-b)
+        (tc_core.tc-agg-align-cache-ensure-for-state! state-b names-b)
+        (tc_core.tc-agg-regwords-cache-ensure-for-state! state-b names-b)
         (let
           [data-a : tc_core.TcAggScalarCacheStateData
             (tc_core.tc-agg-scalar-cache-state-data state-a)]
@@ -11407,18 +11393,9 @@
             17)
           (ci.intern-compat-state-install! decoy)
           (tc_core.tc-agg-caches-reset-for-job! job-a)
-          (tc_core.tc-agg-size-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
-          (tc_core.tc-agg-align-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
-          (tc_core.tc-agg-regwords-cache-ensure-for-state!
-            state-a
-            table-a
-            generation-a)
+          (tc_core.tc-agg-size-cache-ensure-for-state! state-a names-a)
+          (tc_core.tc-agg-align-cache-ensure-for-state! state-a names-a)
+          (tc_core.tc-agg-regwords-cache-ensure-for-state! state-a names-a)
           (let
             [reset-a : tc_core.TcAggScalarCacheStateData
               (tc_core.tc-agg-scalar-cache-state-data state-a)]
@@ -13249,7 +13226,11 @@
       (tc_core.tc-empty-env)
       id
       (ast.AstMaybeType.Some want)
-      (ownership.OwnershipSource "selected.tl" 7 3 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-body-path "selected.tl")
+        7
+        3
+        "")
       (tc_core.tc-selected-capture store lease (&mut bindings)))
       [(tc_core.TcSelectedResult.Ok _ occurrence _)
         (match occurrence
@@ -13399,7 +13380,11 @@
         (ast.AstExpr.Literal (ast.ast-lit-int 9))
         typed.TypedSyntax.Generated
         (ast.AstMaybeType.Some ast.AstType.U16)
-        (ownership.OwnershipSource "generated.tl" 3 4 "test expansion")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "generated.tl")
+          3
+          4
+          "test expansion")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13420,7 +13405,11 @@
         (tc_core.tc-empty-env)
         branch
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "query.tl" 1 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "query.tl")
+          1
+          1
+          "")
         tc_core.TcSelectedSink.Query)
         [(tc_core.TcSelectedResult.Ok _ occurrence _)
           (match occurrence
@@ -13487,7 +13476,11 @@
         (tc_core.tc-empty-env)
         branch
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "unary.tl" 3 2 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "unary.tl")
+          3
+          2
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13560,7 +13553,11 @@
         (tc_core.tc-empty-env)
         bad
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "unary.tl" 8 2 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "unary.tl")
+          8
+          2
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13573,7 +13570,11 @@
         (tc_core.tc-empty-env)
         overflow
         (ast.AstMaybeType.Some ast.AstType.I8)
-        (ownership.OwnershipSource "unary.tl" 9 2 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "unary.tl")
+          9
+          2
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13669,7 +13670,11 @@
         (tc_core.tc-empty-env)
         sum
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "binary.tl" 3 2 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "binary.tl")
+          3
+          2
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13700,7 +13705,11 @@
         (tc_core.tc-empty-env)
         literal-sum
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "binary.tl" 5 2 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "binary.tl")
+          5
+          2
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13718,7 +13727,11 @@
         (tc_core.tc-empty-env)
         bad
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "binary.tl" 7 2 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "binary.tl")
+          7
+          2
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13829,7 +13842,11 @@
         env
         sum
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "literal-probe.tl" 7 2 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "literal-probe.tl")
+          7
+          2
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13985,7 +14002,11 @@
         (tc_core.tc-empty-env)
         bad
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "bad.tl" 2 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "bad.tl")
+          2
+          1
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14005,7 +14026,11 @@
         (tc_core.tc-empty-env)
         branch
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "unsupported.tl" 2 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "unsupported.tl")
+          2
+          1
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14027,7 +14052,11 @@
         (tc_core.tc-empty-env)
         literal
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "budget.tl" 2 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "budget.tl")
+          2
+          1
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14087,7 +14116,11 @@
         (tc_core.tc-empty-env)
         9223372036854775807
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "query-pools.tl")
+          1
+          1
+          "")
         tc_core.TcSelectedSink.Query)
         [(tc_core.TcSelectedResult.Err message _)
           (string.eq
@@ -14102,7 +14135,11 @@
         (tc_core.tc-empty-env)
         9223372036854775807
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "query-pools.tl")
+          1
+          1
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14117,7 +14154,11 @@
         (tc_core.tc-empty-env)
         past-end
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "query-pools.tl")
+          1
+          1
+          "")
         tc_core.TcSelectedSink.Query)
         [(tc_core.TcSelectedResult.Err message _)
           (string.eq
@@ -14141,7 +14182,11 @@
         (tc_core.tc-empty-env)
         past-end
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "query-pools.tl")
+          1
+          1
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14244,7 +14289,11 @@
       (match (typed.typed-origin-add!
         (&mut store)
         (& lease)
-        (ownership.OwnershipSource "selected.tl" 7 3 ""))
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected.tl")
+          7
+          3
+          ""))
         [(typed.TypedOriginResult.Ok id) id]
         [_ (io.panic "selected normalization: origin")])]
     [binder : typed.TypedBinderId
@@ -14644,7 +14693,11 @@
         env
         early-id
         (ast.AstMaybeType.Some ast.AstType.I8)
-        (ownership.OwnershipSource "selected.tl" 7 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected.tl")
+          7
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14664,7 +14717,11 @@
         env
         early-id
         (ast.AstMaybeType.Some ast.AstType.Bool)
-        (ownership.OwnershipSource "selected.tl" 7 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected.tl")
+          7
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14813,7 +14870,11 @@
         env
         outer
         (ast.AstMaybeType.Some ast.AstType.I8)
-        (ownership.OwnershipSource "selected-let.tl" 7 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-let.tl")
+          7
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14932,7 +14993,9 @@
           (and
             (= origin.line 11)
             (= origin.column 5)
-            (string.eq origin.path "selected-let.tl"))]
+            (string.eq
+              (ownership.ownership-path-text (& origin.path) "selected-let.tl")
+              "selected-let.tl"))]
         [_ false])]
     [abandoned? : bool
       (match (tc_core.tc-infer-selected-id
@@ -14940,7 +15003,11 @@
         env
         abandoned
         (ast.AstMaybeType.Some ast.AstType.I8)
-        (ownership.OwnershipSource "selected-let.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-let.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14962,7 +15029,11 @@
         env
         rejected
         (ast.AstMaybeType.Some ast.AstType.I8)
-        (ownership.OwnershipSource "selected-let.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-let.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15074,7 +15145,11 @@
         env
         outer
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "selected-set.tl" 7 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-set.tl")
+          7
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15144,7 +15219,11 @@
         env
         persistent-assign
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "selected-set.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-set.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15246,7 +15325,11 @@
         env
         outer
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "selected-return.tl" 7 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-return.tl")
+          7
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15337,7 +15420,11 @@
         env
         divergent-binary
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-return.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15355,7 +15442,11 @@
         env
         divergent-unary
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-return.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15383,7 +15474,11 @@
         env
         divergent-init
         (ast.AstMaybeType.Some ast.AstType.I64)
-        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-return.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15441,7 +15536,11 @@
         env
         bad-return
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-return.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15461,7 +15560,11 @@
         base
         bad-return
         ast.AstMaybeType.No
-        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (ownership.OwnershipSource
+          (ownership.ownership-body-path "selected-return.tl")
+          9
+          3
+          "")
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15507,7 +15610,11 @@
     [bindings : tc_core.TcSelectedBindings
       (tc_core.tc-selected-bindings-new (& lease))]
     [source : ownership.OwnershipSource
-      (ownership.OwnershipSource "selected.tl" 7 3 "")]
+      (ownership.OwnershipSource
+        (ownership.ownership-body-path "selected.tl")
+        7
+        3
+        "")]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
     [name : i64 (ci.intern "selected-parameter")]
@@ -15855,7 +15962,11 @@
     [bindings : tc_core.TcSelectedBindings
       (tc_core.tc-selected-bindings-new (& lease))]
     [source : ownership.OwnershipSource
-      (ownership.OwnershipSource "selected-tuple.tl" 4 9 "")]
+      (ownership.OwnershipSource
+        (ownership.ownership-body-path "selected-tuple.tl")
+        4
+        9
+        "")]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
     [params : ast.AstParamList (ast.ast-param-list-new)]
@@ -16156,7 +16267,11 @@
     [bindings : tc_core.TcSelectedBindings
       (tc_core.tc-selected-bindings-new (& lease))]
     [source : ownership.OwnershipSource
-      (ownership.OwnershipSource "selected-array.tl" 4 9 "")]
+      (ownership.OwnershipSource
+        (ownership.ownership-body-path "selected-array.tl")
+        4
+        9
+        "")]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
     [params : ast.AstParamList (ast.ast-param-list-new)]
@@ -16657,7 +16772,11 @@
           env
           expression
           ast.AstMaybeType.No
-          (ownership.OwnershipSource "selected-while.tl" 19 3 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-body-path "selected-while.tl")
+            19
+            3
+            "")
           (tc_core.tc-selected-capture
             (&mut store)
             (& lease)

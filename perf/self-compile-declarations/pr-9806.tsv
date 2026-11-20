@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	5927	Arena-store summary for calls under scoped arenas (Refs #8681, #8692, #8805, #8815, #8173): checker work plus the compiler source it adds, over the region-join baseline; local Cachegrind 109641315876 -> 110291228629

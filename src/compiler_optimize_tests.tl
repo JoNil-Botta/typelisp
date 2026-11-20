@@ -4437,14 +4437,19 @@
     (in-arena
       scratch
       (let
-        [temporary : ir.CompilerIrFunction (opt-test-price-memo-function 41)]
-        (opt.opt-inline-price-memo-record!
-          pools
-          bases
-          (& temporary)
-          0
-          fingerprint
-          37)))
+        [temporary : ir.CompilerIrFunction
+          (unsafe
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (opt-test-price-memo-function 41))]
+        (unsafe
+          ;; unsafe: the memo entry is cloned into the memo's own arena, not this one
+          (opt.opt-inline-price-memo-record!
+            pools
+            bases
+            (& temporary)
+            0
+            fingerprint
+            37))))
     (arena.destroy-safe! scratch)
     (test.assert-i64-eq
       (opt.opt-inline-price-memo-lookup bases (& probe) 0 fingerprint)
@@ -71378,11 +71383,15 @@ done:
         previous
         (let
           [blocks : ir.CompilerIrBlockList
-            (irt.blocks
-              "entry:
+            (unsafe
+              ;; unsafe: interned names live in the persistent intern arena, not this one
+              (irt.blocks
+                "entry:
                            %1 = addr_of %0
-                           return %0")]
-          (opt.opt-function-addr-taken-install! 2 (& blocks))))]
+                           return %0"))]
+          (unsafe
+            ;; unsafe: the next install replaces these tables before they are read
+            (opt.opt-function-addr-taken-install! 2 (& blocks)))))]
     [_retire-previous : unit (arena.destroy-safe! previous)]
     [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
     [no-exprs : ir.CompilerIrInstrSeq (irt.instrs "%1 = mov %0 : i64")]
@@ -72753,21 +72762,25 @@ done:
           (let
             [dump-owner : i64 (arena.tl_arena_current)]
             [_configure : unit
-              (opt.compiler-opt-debug-configure!
-                structural-session
-                false
-                "linear-dump"
-                false)]
+              (unsafe
+                ;; unsafe: installs the global debug dump state; reset before this arena ends
+                (opt.compiler-opt-debug-configure!
+                  structural-session
+                  false
+                  "linear-dump"
+                  false))]
             [start-bytes : i64
               (allocation_profile.compiler-allocation-profile-arena-bump-bytes
                 dump-owner)]
             [i : i64 0]
             (while (< i 16)
               (begin
-                (opt.compiler-opt-debug-observe-function
-                  0
-                  "linear-dump"
-                  (ir.compiler-ir-global-shared-view func))
+                (unsafe
+                  ;; unsafe: interned names live in the persistent intern arena, not this one
+                  (opt.compiler-opt-debug-observe-function
+                    0
+                    "linear-dump"
+                    (ir.compiler-ir-global-shared-view func)))
                 unit)
               (+= i 1))
             (let
@@ -72777,10 +72790,12 @@ done:
               [mid-length : i64 (opt.compiler-opt-debug-dump-length)]
               (while (< i 32)
                 (begin
-                  (opt.compiler-opt-debug-observe-function
-                    0
-                    "linear-dump"
-                    (ir.compiler-ir-global-shared-view func))
+                  (unsafe
+                    ;; unsafe: interned names live in the persistent intern arena, not this one
+                    (opt.compiler-opt-debug-observe-function
+                      0
+                      "linear-dump"
+                      (ir.compiler-ir-global-shared-view func)))
                   unit)
                 (+= i 1))
               (let

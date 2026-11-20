@@ -10152,7 +10152,13 @@
                 [(TcSelectedNoteResult.Ok after) after]
                 [(TcSelectedNoteResult.Err message after)
                   (return (TcSelectedResult.Err message after))])]
-            [(TcMaybeNameId.No) noted])]
+            ;; An arena with no region is an explicit one, not the caller's:
+            ;; the arena-store summary does not count what its body allocates.
+            [(TcMaybeNameId.No)
+              (tc-arena-store-mark!
+                ctx
+                (tc-arena-store-regionless-key arena-id))
+              noted])]
         (if (not
           (tc-arena-allocation-target? ctx (tc-global-shared-view arena-ty)))
           (TcSelectedResult.Err
@@ -10289,7 +10295,7 @@
           [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
           [(ResultTcUnit.Ok)
             (if (or
-              (tc-type-contains-any-region (tc-global-shared-view got))
+              (tc-type-contains-any-region (& got))
               (tc-selected-same-type?
                 (tc-global-shared-view got)
                 (tc-global-shared-view want-ty)))
@@ -13763,8 +13769,8 @@
         (when
           (or
             (not (tc-type-copyable? ctx (tc-global-shared-view capture-type)))
-            (tc-type-contains-reference? (tc-global-shared-view capture-type))
-            (tc-type-contains-any-region capture-type))
+            (tc-type-contains-reference? (& capture-type))
+            (tc-type-contains-any-region (& capture-type)))
           (set! plain? false))
         (set! index (+ index 1))))
     plain?))
@@ -13786,11 +13792,13 @@
         (when
           (or
             (tc-type-contains-reference?
-              (owned_view.compiler-owned-reference-shared-view
-                (& (array-ref capture-types index))))
+              (&
+                (owned_view.compiler-owned-reference-shared-view
+                  (& (array-ref capture-types index)))))
             (tc-type-contains-any-region
-              (owned_view.compiler-owned-reference-shared-view
-                (& (array-ref capture-types index)))))
+              (&
+                (owned_view.compiler-owned-reference-shared-view
+                  (& (array-ref capture-types index))))))
           (set! references? true))
         (set! index (+ index 1)))
       (ResultTcUnit.Err
@@ -14992,7 +15000,7 @@
             [resolved : ast.AstType
               (tc-type-strip-region (tc-resolve-type ctx ty))]
             (and
-              (tc-type-contains-reference? (tc-global-shared-view resolved))
+              (tc-type-contains-reference? (& resolved))
               (not (tc-type-reaches-cleanup? ctx resolved))))]
         [(ResultTcType.Err _) false]))))
 
@@ -15061,7 +15069,7 @@
 
 (define (tc-selected-selectable-element? [ctx : TcContext] [ty : ast.AstType]) : bool
   (and
-    (tc-type-contains-reference? (tc-global-shared-view ty))
+    (tc-type-contains-reference? (& ty))
     (not (tc-type-reaches-cleanup? ctx ty))))
 
 ;; The literal's items, then the index.
@@ -18456,6 +18464,8 @@
   ;; (`tc-type-join-regions`), as the constructed value holds them.
   [constructed : (&mut constructed ast.AstType)]
   [arity-msg : TcArityMessage]
+  ;; `tc-call-arena-store-region`, once per call.
+  [arena-region : i64]
   [index : i64]
   [children : (__tl_dyn-array typed.TypedOccurrenceId)]
   [represented? : bool]
@@ -18467,7 +18477,17 @@
     bind)
   (if (or (>= index args.len) (>= index (ast.ast-type-list-len params)))
     (if (and (>= index args.len) (>= index (ast.ast-type-list-len params)))
-      (TcSelectedArgsResult.Ok children represented? sink)
+      (begin
+        (tc-call-arena-store-note!
+          ctx
+          env
+          arena-region
+          params
+          (tc-global-shared-view func)
+          (tc-global-shared-view func)
+          -1
+          (No))
+        (TcSelectedArgsResult.Ok children represented? sink))
       (TcSelectedArgsResult.Err
         (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg)
         sink))
@@ -18683,19 +18703,26 @@
                           index)))
                     next)]
                 [(TcInferredTypeMatch.Compatible _)
+                  (tc-call-arena-store-note!
+                    ctx
+                    env
+                    arena-region
+                    params
+                    (tc-global-shared-view func)
+                    (tc-global-shared-view effective-arg)
+                    index
+                    (Some (tc-global-shared-view got)))
                   (if (and
-                    (tc-type-contains-any-region (tc-global-shared-view got))
+                    (tc-type-contains-any-region (& got))
                     (not allow-region-args)
-                    (not
-                      (tc-type-contains-any-region (tc-global-shared-view want)))
+                    (not (tc-type-contains-any-region (& want)))
                     (not
                       (tc-type-regions-all-atomic-arena-owners?
                         env
                         (tc-global-shared-view got)))
                     (not
                       (tc-type-regions-all-scratch? (tc-global-shared-view got)))
-                    (not
-                      (tc-type-contains-reference? (tc-global-shared-view got)))
+                    (not (tc-type-contains-reference? (& got)))
                     (not
                       (tc-tagged-arena-handle-borrow?
                         ctx
@@ -18748,6 +18775,7 @@
                             constructor
                             constructed
                             arity-msg
+                            arena-region
                             (+ index 1)
                             children
                             (and
@@ -19231,6 +19259,7 @@
                           (tc-global-shared-view func)
                           (tc-global-shared-view args)
                           (tc-global-shared-view params))
+                        (tc-call-arena-store-region ctx env)
                         0
                         children
                         true
@@ -21941,6 +21970,10 @@
         "typecheck: struct field assignment type mismatch")))
     [(ResultTcUnit.Err message) (return (ResultTcUnit.Err message))]
     [(ResultTcUnit.Ok) unit])
+  (tc-arena-store-note-tagged!
+    ctx
+    (tc-arena-store-expr-node ctx (& value))
+    (& value-ty))
   (match (tc-ensure-cleanup-resource-not-stored-expr ctx env value)
     [(ResultTcUnit.Err message) (return (ResultTcUnit.Err message))]
     [(ResultTcUnit.Ok) unit])
@@ -39264,7 +39297,7 @@
   [env : TcTypeEnv]
   [value-ty : ast.AstType]) : ResultTcUnit
   (let
-    [lifetimes : TcNameIdList (tc-type-collect-regions value-ty)]
+    [lifetimes : TcNameIdList (tc-type-collect-regions (& value-ty))]
     (if (tc-reference-lifetimes-visible? env lifetimes)
       Ok
       (Err
@@ -39288,7 +39321,7 @@
 (define (tc-ensure-reference-type-does-not-escape-names
   [ty : ast.AstType]
   [names : TcNameIdList]) : ResultTcUnit
-  (if (tc-name-id-list-overlaps? (tc-type-collect-regions ty) names)
+  (if (tc-name-id-list-overlaps? (tc-type-collect-regions (& ty)) names)
     (Err
       (tc-kind-message
         (RegionEscape)
@@ -39525,8 +39558,8 @@
         region)]
     [_ false]))
 
-(define (tc-type-list-contains-any-region [types : ast.AstTypeList]) : bool
-  (tc-type-list-contains-any-region-at? (& types) 0))
+(define (tc-type-list-contains-any-region [types : (& types ast.AstTypeList)]) : bool
+  (tc-type-list-contains-any-region-at? types 0))
 
 (define (tc-type-list-contains-any-region-at?
   [types : (& types ast.AstTypeList)]
@@ -39535,30 +39568,28 @@
     false
     (or
       (tc-type-contains-any-region
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+        (&
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       (tc-type-list-contains-any-region-at? types (+ index 1)))))
 
-(define (tc-type-contains-any-region [ty : ast.AstType]) : bool
+(define (tc-type-contains-any-region [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(Func args ret)
       (or
-        (tc-type-list-contains-any-region
-          (ast.ast-type-list-box-shared-view args))
-        (tc-type-contains-any-region (ast.ty-node-get ret)))]
-    [(Tuple elems)
-      (tc-type-list-contains-any-region
-        (ast.ast-type-list-box-shared-view elems))]
+        (tc-type-list-contains-any-region args)
+        (tc-type-contains-any-region (& (ast.ty-node-get ret))))]
+    [(Tuple elems) (tc-type-list-contains-any-region elems)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem))
-      (tc-type-contains-any-region (ast.ty-node-get elem))]
+      (tc-type-contains-any-region (& (ast.ty-node-get elem)))]
     [(or (Ref _ _) (MutRef _ _) (Region _ _) (Invalidate _ _)) true]
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
-      (> (tc-lifetime-list-count (deref lifetimes)) 0)]
+      (> (tc-lifetime-list-count lifetimes) 0)]
     [_ false]))
 
-(define (tc-type-list-contains-reference? [types : ast.AstTypeList]) : bool
-  (tc-type-list-contains-reference-at? (& types) 0))
+(define (tc-type-list-contains-reference? [types : (& types ast.AstTypeList)]) : bool
+  (tc-type-list-contains-reference-at? types 0))
 
 (define (tc-type-list-contains-reference-at?
   [types : (& types ast.AstTypeList)]
@@ -39567,8 +39598,9 @@
     false
     (or
       (tc-type-contains-reference?
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+        (&
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       (tc-type-list-contains-reference-at? types (+ index 1)))))
 
 (define (tc-type-list-contains-mut-reference? [types : ast.AstTypeList]) : bool
@@ -39585,19 +39617,16 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
       (tc-type-list-contains-mut-reference-at? types (+ index 1)))))
 
-(define (tc-type-contains-reference? [ty : ast.AstType]) : bool
+(define (tc-type-contains-reference? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(Func args ret)
       (or
-        (tc-type-list-contains-reference?
-          (ast.ast-type-list-box-shared-view args))
-        (tc-type-contains-reference? (ast.ty-node-get ret)))]
-    [(Tuple elems)
-      (tc-type-list-contains-reference?
-        (ast.ast-type-list-box-shared-view elems))]
+        (tc-type-list-contains-reference? args)
+        (tc-type-contains-reference? (& (ast.ty-node-get ret))))]
+    [(Tuple elems) (tc-type-list-contains-reference? elems)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem) (Region _ elem) (Invalidate _ elem))
-      (tc-type-contains-reference? (ast.ty-node-get elem))]
+      (tc-type-contains-reference? (& (ast.ty-node-get elem)))]
     [(or (Ref _ _) (MutRef _ _)) true]
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
       (> (tc-lifetime-list-count (deref lifetimes)) 0)]
@@ -40211,7 +40240,7 @@
 (define (tc-maybe-type-contains-reference? [maybe-ty : ast.AstMaybeType]) : bool
   (match maybe-ty
     [(No) false]
-    [(Some ty) (tc-type-contains-reference? ty)]))
+    [(Some ty) (tc-type-contains-reference? (& ty))]))
 
 (define (tc-param-list-reference-return-lifetimes-into
   [ctx : TcContext]
@@ -40378,7 +40407,7 @@
   [params : ast.AstParamList]
   [ret : ast.AstType]) : ResultTcUnit
   (if (tc-type-contains-reference?
-    (tc-resolve-type ctx (tc-global-shared-view ret)))
+    (& (tc-resolve-type ctx (tc-global-shared-view ret))))
     (let
       [parameter : i64
         (tc-reference-return-parameter-lifetime
@@ -40403,9 +40432,9 @@
     Ok))
 
 (define (tc-type-list-collect-regions
-  [types : ast.AstTypeList]
+  [types : (& types ast.AstTypeList)]
   [out : TcNameIdList]) : TcNameIdList
-  (tc-type-list-collect-regions-at (& types) out 0))
+  (tc-type-list-collect-regions-at types out 0))
 
 (define (tc-type-list-collect-regions-at
   [types : (& types ast.AstTypeList)]
@@ -40421,44 +40450,40 @@
         3
         0
         (tc-type-collect-regions-into
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+          (&
+            (ast.ty-node-get
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
           out)
         (tc-type-collect-regions-id
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))
           out))
       (+ index 1))))
 
-(define (tc-type-collect-regions-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
+(define (tc-type-collect-regions-into
+  [ty : (& ty ast.AstType)]
+  [out : TcNameIdList]) : TcNameIdList
   (match ty
     [(Func args ret)
-      (let
-        [arg-types : ast.AstTypeList (ast.ast-type-list-box-shared-view args)]
-        (tc-walk-fan
-          tc-walk-visits-3
-          tc-walk-serial-3
-          3
-          0
-          (tc-type-collect-regions-into
-            (ast.ty-node-get ret)
-            (tc-type-list-collect-regions arg-types out))
-          (tc-type-collect-regions-id
-            ret
-            (tc-type-list-collect-regions arg-types out))))]
-    [(Tuple elems)
-      (tc-type-list-collect-regions
-        (ast.ast-type-list-box-shared-view elems)
-        out)]
+      (tc-walk-fan
+        tc-walk-visits-3
+        tc-walk-serial-3
+        3
+        0
+        (tc-type-collect-regions-into
+          (& (ast.ty-node-get ret))
+          (tc-type-list-collect-regions args out))
+        (tc-type-collect-regions-id ret (tc-type-list-collect-regions args out)))]
+    [(Tuple elems) (tc-type-list-collect-regions elems out)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem))
-      (tc-type-collect-regions-into (ast.ty-node-get elem) out)]
+      (tc-type-collect-regions-into (& (ast.ty-node-get elem)) out)]
     [(or (Ref name inner) (MutRef name inner) (Region name inner)
          (Invalidate name inner))
       (tc-type-collect-regions-into
-        (ast.ty-node-get inner)
+        (& (ast.ty-node-get inner))
         (tc-name-id-list-add out name))]
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
-      (tc-lifetime-list-to-name-id-list-into (deref lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into lifetimes out)]
     [_ out]))
 
 (define (tc-type-collect-regions-id [id : i64] [out : TcNameIdList]) : TcNameIdList
@@ -40471,11 +40496,11 @@
       out
       (let
         [answer : TcNameIdList
-          (tc-type-collect-regions-into (ast.ty-node-get id) out)]
+          (tc-type-collect-regions-into (& (ast.ty-node-get id)) out)]
         (when (= code 1) (tc-walk-store! tc-walk-serial-3 id 1))
         answer))))
 
-(define (tc-type-collect-regions [ty : ast.AstType]) : TcNameIdList
+(define (tc-type-collect-regions [ty : (& ty ast.AstType)]) : TcNameIdList
   (tc-type-collect-regions-into ty Nil))
 
 ;; A region of `regions` ends with `owner`: it is `owner`, a phase of it, or a
@@ -40502,7 +40527,10 @@
   [env : TcTypeEnv]
   [ty : ast.AstType]
   [owner : i64]) : bool
-  (tc-region-list-contains-arena-owner? env (tc-type-collect-regions ty) owner))
+  (tc-region-list-contains-arena-owner?
+    env
+    (tc-type-collect-regions (& ty))
+    owner))
 
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -40520,7 +40548,7 @@
 (define (tc-type-regions-all-atomic-arena-owners?
   [env : TcTypeEnv]
   [ty : ast.AstType]) : bool
-  (tc-region-list-all-atomic-arena-owners? env (tc-type-collect-regions ty)))
+  (tc-region-list-all-atomic-arena-owners? env (tc-type-collect-regions (& ty))))
 
 (define (tc-type-outer-region [ty : ast.AstType]) : TcMaybeNameId
   (match ty
@@ -40616,7 +40644,8 @@
       (let
         ;; BASE already names a region in any form: a tag, a lifetime argument
         ;; or a reference lifetime.
-        [present : TcNameIdList (tc-type-collect-regions (clone (deref base)))]
+        [present : TcNameIdList
+          (tc-type-collect-regions (& (clone (deref base))))]
         (while (not (tc-name-id-list-empty? cursor))
           (let
             [region : i64 (tc-name-id-list-head cursor)]
@@ -40834,7 +40863,7 @@
   (tc-ensure-regions-can-flow-into
     env
     target-ty
-    (tc-type-collect-regions value-ty)
+    (tc-type-collect-regions (& value-ty))
     context
     true))
 
@@ -40846,7 +40875,7 @@
   (tc-ensure-regions-can-flow-into
     env
     target-ty
-    (tc-type-collect-regions value-ty)
+    (tc-type-collect-regions (& value-ty))
     "constructor result"
     false))
 
@@ -40863,10 +40892,9 @@
       [(Nil) Ok]
       [_
         (let
-          [has-region : bool
-            (tc-type-contains-any-region (tc-global-shared-view target-ty))]
+          [has-region : bool (tc-type-contains-any-region (& target-ty))]
           [target-regions : TcNameIdList
-            (tc-type-collect-regions (clone target-ty))]
+            (tc-type-collect-regions (& target-ty))]
           (cond
             [(and
                 has-region
@@ -50605,10 +50633,10 @@
       (let
         [a-lifetimes : TcNameIdList
           (tc-type-collect-regions
-            (tc-type-without-regions (tc-global-shared-view a)))]
+            (& (tc-type-without-regions (tc-global-shared-view a))))]
         [b-lifetimes : TcNameIdList
           (tc-type-collect-regions
-            (tc-type-without-regions (tc-global-shared-view b)))]
+            (& (tc-type-without-regions (tc-global-shared-view b))))]
         (if (tc-name-id-list-eq a-lifetimes b-lifetimes)
           (Ok (tc-type-join-regions env a (& b)))
           (match a-lifetimes
@@ -51499,7 +51527,7 @@
   [arg-id : i64]
   [actual : ast.AstType]) : TcNameIdList
   (let
-    [cursor : TcNameIdList (tc-type-collect-regions actual)]
+    [cursor : TcNameIdList (tc-type-collect-regions (& actual))]
     [out : TcNameIdList Nil]
     [place-id : i64
       (match (ast.ast-expr-unspan (& (tc-context-expr-get ctx arg-id)))
@@ -52707,6 +52735,40 @@
 ;; region when that parameter is a self-named carrier; otherwise it names the
 ;; parameter's storage (#8890) and is rooted at the parameter. One pass reads
 ;; each parameter once.
+;; A bare `arena.Arena` parameter is bound in its body as `(arena.Arena r)`
+;; for an elided brand `r` of its own (#8173), as Rust reads `&Arena` as
+;; `&'_ Arena`: a caller lifetime of scratch kind. Allocating through it
+;; then tags the result with `r`, so returning it or storing it where it
+;; outlives the call is rejected; it may still be passed to a by-value
+;; parameter, and the arena-store summary checks what that callee does.
+(define (tc-param-elided-arena-brand
+  [name : i64]
+  [resolved : (& resolved ast.AstType)]) : i64
+  (match resolved
+    [(Struct nominal)
+      (if (tc-arena-nominal-name-id? nominal)
+        (tc-generated-name-id
+          (str_cat.str-cat
+            (tc-scratch-region-name-prefix)
+            "arena_parameter_"
+            (tc-env-key-name-text name)))
+        -1)]
+    [_ -1]))
+
+(define (tc-param-binding-type [name : i64] [resolved : ast.AstType]) : ast.AstType
+  (let
+    [brand : i64 (tc-param-elided-arena-brand name (& resolved))]
+    (if (< brand 0)
+      resolved
+      (match resolved
+        [(Struct nominal)
+          (let
+            [lifetimes : ast.AstLifetimeList
+              (ast.ast-lifetime-list-with-capacity 1)]
+            (ast.ast-lifetime-list-push (&mut lifetimes) brand)
+            (ast.ast-ty-struct-args nominal lifetimes))]
+        [_ resolved]))))
+
 (define (tc-signature-lifetime-marker-type
   [ctx : TcContext]
   [params : (& params ast.AstParamList)]) : ast.AstMaybeType
@@ -52719,6 +52781,18 @@
           (when
             (tc-param-type-carries-own-lifetime? ctx (& ty) name)
             (set! carriers (tc-name-id-list-add carriers name)))
+          (let
+            ;; Only a plain type name can be a bare `arena.Arena`.
+            [brand : i64
+              (match ty
+                [(or (Var _) (Struct _))
+                  (tc-param-elided-arena-brand
+                    name
+                    (& (tc-resolve-type ctx (tc-global-shared-view ty))))]
+                [_ -1])]
+            (when
+              (>= brand 0)
+              (set! lifetimes (tc-name-id-list-add lifetimes brand))))
           (set!
             lifetimes
             (tc-signature-lifetime-type-collect-into ty -1 lifetimes))]))
@@ -52863,11 +52937,13 @@
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (let
-          [resolved : ast.AstType
+          [resolved-ty : ast.AstType
+            (tc-resolve-type ctx (tc-global-shared-view ty))]
+          [binding-ty : ast.AstType
             (if (tc-invalidate-types-present?)
-              (tc-type-strip-invalidate
-                (tc-resolve-type ctx (tc-global-shared-view ty)))
-              (tc-resolve-type ctx (tc-global-shared-view ty)))]
+              (tc-type-strip-invalidate resolved-ty)
+              resolved-ty)]
+          [resolved : ast.AstType (tc-param-binding-type name binding-ty)]
           (tc-bind-params-at
             ctx
             (tc-bind-id env name resolved)
@@ -53142,11 +53218,13 @@
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (let
-          [resolved : ast.AstType
+          [resolved-ty : ast.AstType
+            (tc-resolve-type ctx (tc-global-shared-view ty))]
+          [binding-ty : ast.AstType
             (if (tc-invalidate-types-present?)
-              (tc-type-strip-invalidate
-                (tc-resolve-type ctx (tc-global-shared-view ty)))
-              (tc-resolve-type ctx (tc-global-shared-view ty)))]
+              (tc-type-strip-invalidate resolved-ty)
+              resolved-ty)]
+          [resolved : ast.AstType (tc-param-binding-type name binding-ty)]
           [next : TcTypeEnvScopedCarrier
             (tc-type-env-scoped-carrier-bind-id
               carrier
@@ -57628,7 +57706,7 @@
     [(InArena arena-box body)
       (let
         [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
-        (tc-in-arena-expr-scoped ctx env arena body (Some expected)))]
+        (tc-in-arena-expr-scoped ctx env arena-box arena body (Some expected)))]
     [(WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(WithResource bindings body)
@@ -59740,6 +59818,10 @@
 (defenum TcArityMessage
   (Detailed ast.AstExpr ast.AstExprList ast.AstTypeList))
 
+(define (tc-arity-message-func [arity-msg : TcArityMessage]) : ast.AstExpr
+  (match arity-msg
+    [(Detailed func _ _) func]))
+
 (define (tc-arity-message-text [expr-bases : i64] [arity-msg : TcArityMessage]) : String
   (match arity-msg
     [(Detailed func args params)
@@ -61001,7 +61083,7 @@
 ;; after). tc-resolve-type resolves aliases structurally, so lifetimes hidden
 ;; behind an alias are still seen.
 (define (tc-lifetime-subst-formal-inert? [ctx : TcContext] [want : ast.AstType]) : bool
-  (match (tc-type-collect-regions-into (tc-resolve-type ctx want) Nil)
+  (match (tc-type-collect-regions-into (& (tc-resolve-type ctx want)) Nil)
     [(Nil) true]
     [_ false]))
 
@@ -62000,11 +62082,12 @@
               (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) index 0))]
             [named : TcNameIdList
               (tc-type-collect-regions
-                (ast.ty-node-get
-                  (ast.ast-type-list-get
-                    (& declared)
-                    index
-                    (ast.ast-type-id-fallback))))]
+                (&
+                  (ast.ty-node-get
+                    (ast.ast-type-list-get
+                      (& declared)
+                      index
+                      (ast.ast-type-id-fallback)))))]
             (match (tc-expr ctx env arg)
               [(Ok actual)
                 (let
@@ -63943,7 +64026,7 @@
 (define (tc-type-atomic-arena-owner-regions
   [env : TcTypeEnv]
   [ty : ast.AstType]) : TcNameIdList
-  (tc-region-list-atomic-arena-owners env (tc-type-collect-regions ty) Nil))
+  (tc-region-list-atomic-arena-owners env (tc-type-collect-regions (& ty)) Nil))
 
 (define (tc-thread-safe-spawn-capture-message
   [spawn-name : String]
@@ -64560,7 +64643,8 @@
       allow-region-args
       constructor-target
       arity-msg
-      false)))
+      false
+      (tc-call-arena-store-region ctx env))))
 
 (define (tc-check-thread-spawn-args-with-message
   [ctx : TcContext]
@@ -64581,7 +64665,8 @@
       allow-region-args
       constructor-target
       arity-msg
-      true)))
+      true
+      (tc-call-arena-store-region ctx env))))
 
 ;; Call-only compatibility extensions. Keep ordinary inferred-type matching
 ;; unchanged, then admit the closed whole-array reference unsize and an owned
@@ -64624,12 +64709,24 @@
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]
-  [thread-spawn-args : bool]) : ResultTcType
+  [thread-spawn-args : bool]
+  ;; `tc-call-arena-store-region`, once per call.
+  [arena-region : i64]) : ResultTcType
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
-      (match constructor-target
-        [(Some target) (Ok target)]
-        [(No) (Ok ast.AstType.Unit)])
+      (begin
+        (tc-call-arena-store-note!
+          ctx
+          env
+          arena-region
+          params
+          (tc-arity-message-func (tc-global-shared-view arity-msg))
+          (tc-arity-message-func (tc-global-shared-view arity-msg))
+          -1
+          (No))
+        (match constructor-target
+          [(Some target) (Ok target)]
+          [(No) (Ok ast.AstType.Unit)]))
       (Err
         (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg)))
     (if (>= index (ast.ast-type-list-len params))
@@ -64713,10 +64810,21 @@
                                   (tc-global-shared-view arity-msg)
                                   index))))])]
                     [_ (try expect-result)]
+                    [_
+                      (tc-call-arena-store-note!
+                        ctx
+                        env
+                        arena-region
+                        params
+                        (tc-arity-message-func
+                          (tc-global-shared-view arity-msg))
+                        (tc-global-shared-view effective-arg)
+                        index
+                        (Some (tc-global-shared-view got)))]
                     (if (and
-                      (tc-type-contains-any-region (tc-global-shared-view got))
+                      (tc-type-contains-any-region (& got))
                       (not allow-region-args)
-                      (not (tc-type-contains-any-region want))
+                      (not (tc-type-contains-any-region (& want)))
                       (not
                         (tc-type-regions-all-atomic-arena-owners?
                           env
@@ -64724,14 +64832,12 @@
                       (not
                         (tc-type-regions-all-scratch?
                           (tc-global-shared-view got)))
-                      (not
-                        (tc-type-contains-reference?
-                          (tc-global-shared-view got)))
+                      (not (tc-type-contains-reference? (& got)))
                       (not
                         (tc-tagged-arena-handle-borrow?
                           ctx
                           (tc-global-shared-view got)
-                          (tc-global-shared-view want))))
+                          want)))
                       (Err
                         (tc-region-call-arg-error
                           (tc-context-expr-bases ctx)
@@ -64764,7 +64870,8 @@
                                 (ast.AstMaybeType.Some
                                   (tc-type-join-regions env target (& got)))
                                 arity-msg
-                                thread-spawn-args)))]
+                                thread-spawn-args
+                                arena-region)))]
                         [(No)
                           (tc-check-call-args-with-message-at
                             ctx
@@ -64775,7 +64882,8 @@
                             allow-region-args
                             constructor-target
                             arity-msg
-                            thread-spawn-args)])))]
+                            thread-spawn-args
+                            arena-region)])))]
                 ;; A `(type X)` argument types as an error. It fills a
                 ;; `[comptime T : type]` parameter, and reaches here only before
                 ;; specialization removes it from the call.
@@ -64796,7 +64904,8 @@
                       allow-region-args
                       constructor-target
                       arity-msg
-                      thread-spawn-args)
+                      thread-spawn-args
+                      arena-region)
                     (Err message))]))]
           [(Err message)
             (Err
@@ -67837,7 +67946,7 @@
             (tc-global-shared-view body)
             (tc-env-key-name-text key)
             (tc-global-shared-view bound))
-          (tc-type-contains-reference? ty))
+          (tc-type-contains-reference? (& ty)))
           true
           (tc-type-env-scoped-lambda-captures-reference-scan
             expr-bases
@@ -68793,9 +68902,8 @@
                           (tc-type-copyable?
                             ctx
                             (tc-global-shared-view capture-type))
-                          (tc-type-contains-reference?
-                            (tc-global-shared-view capture-type))
-                          (tc-type-contains-any-region capture-type)))
+                          (tc-type-contains-reference? (& capture-type))
+                          (tc-type-contains-any-region (& capture-type))))
                       (set! found true))
                     (set! index (+ index 1))))
                 found)]
@@ -68957,7 +69065,7 @@
           [(not
               (tc-reference-lifetimes-visible?
                 env
-                (tc-type-collect-regions (tc-global-shared-view ty))))
+                (tc-type-collect-regions (& ty))))
             (ast.AstMaybeType.Some (tc-selected-strip-regions ty))]
           [(match (& maybe-want)
               [(ast.AstMaybeType.Some _) true]
@@ -69275,7 +69383,7 @@
               [(ResultTcUnit.Err message)
                 (return (ResultTcLetBinding.Err message))]
               [(ResultTcUnit.Ok) unit])
-            (if (tc-type-contains-any-region (tc-global-shared-view init-ty))
+            (if (tc-type-contains-any-region (& init-ty))
               (tc-global-shared-view init-ty)
               resolved-want))]
         [(ast.AstMaybeType.No) (tc-global-shared-view init-ty)])]
@@ -69831,6 +69939,10 @@
         (tc-context-expr-get ctx replacement-id))
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
         [(ResultTcUnit.Ok)
+          (tc-arena-store-note-tagged!
+            ctx
+            (tc-arena-store-node ctx replacement-id)
+            (& replacement-ty))
           (match (tc-ensure-region-value-can-flow-into
             env
             (tc-global-shared-view place-ty)
@@ -73073,8 +73185,7 @@
                 [bound-ty : ast.AstType
                   (match maybe-ty
                     [(Some want)
-                      (if (tc-type-contains-any-region
-                        (tc-global-shared-view init-ty))
+                      (if (tc-type-contains-any-region (& init-ty))
                         init-ty
                         (tc-resolve-type ctx want))]
                     [(No) init-ty])]
@@ -73360,8 +73471,7 @@
                 [bound-ty : ast.AstType
                   (match maybe-ty
                     [(Some want)
-                      (if (tc-type-contains-any-region
-                        (tc-global-shared-view init-ty))
+                      (if (tc-type-contains-any-region (& init-ty))
                         init-ty
                         (tc-resolve-type ctx want))]
                     [(No) init-ty])]
@@ -74096,8 +74206,7 @@
                 [bound-ty : ast.AstType
                   (match maybe-ty
                     [(Some want)
-                      (if (tc-type-contains-any-region
-                        (tc-global-shared-view init-ty))
+                      (if (tc-type-contains-any-region (& init-ty))
                         init-ty
                         (tc-resolve-type ctx want))]
                     [(No) init-ty])]
@@ -77702,7 +77811,7 @@
                 (tc-kind-message
                   (RegionEscape)
                   "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")))]
-          [(tc-type-contains-reference? (tc-global-shared-view ty))
+          [(tc-type-contains-reference? (& ty))
             (if (or
               allow-immutable-reference-captures
               ;; Nominal lifetime arguments participate in the general
@@ -77723,7 +77832,7 @@
                 (tc-kind-message
                   (RegionEscape)
                   "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")))]
-          [(tc-type-contains-any-region (tc-global-shared-view ty))
+          [(tc-type-contains-any-region (& ty))
             (if (tc-type-regions-all-atomic-arena-owners?
               (tc-type-env-scoped-carrier-env carrier)
               ty)
@@ -80646,7 +80755,7 @@
           ;; A declared type without regions collects none, so nothing flows.
           [target-regions : TcNameIdList
             (match (tc-current-return-type env)
-              [(Ok ty) (tc-type-collect-regions ty)]
+              [(Ok ty) (tc-type-collect-regions (& ty))]
               [(Err _) Nil])]
           [entries : (__tl_dyn-array i64) (tc-selected-no-i64s)]
           [blocked? : bool false]
@@ -80748,7 +80857,7 @@
   [error-ty : ast.AstType]) : TcNameIdList
   (if (tc-early-exit-allocated-payload? (tc-global-shared-view error-ty))
     (tc-type-collect-regions-into error-ty carrier-regions)
-    (tc-type-collect-regions error-ty)))
+    (tc-type-collect-regions (& error-ty))))
 
 ;; Inline arrays allocate no container, but a nonempty residual still carries
 ;; its elements across the reset. Scalar and empty residuals carry no allocation
@@ -80906,7 +81015,7 @@
                 [regions : TcNameIdList
                   (if (tc-type-contains-region-tag?
                     (tc-global-shared-view value-ty))
-                    (tc-type-collect-regions value-ty)
+                    (tc-type-collect-regions (& value-ty))
                     Nil)]
                 (if (tc-regions-have-scratch-body? regions)
                   (TcSelectedResult.Err (tc-scratch-exit-error "return") next)
@@ -81444,7 +81553,7 @@
           true))]
     [_
       (if (and
-        (tc-type-contains-reference? (tc-global-shared-view ty))
+        (tc-type-contains-reference? (& ty))
         (not
           (tc-reference-containing-place-borrow-ok? (tc-global-shared-view ty))))
         (Err
@@ -82383,8 +82492,7 @@
                 (tc-global-shared-view operand-ty))]
             (cond
               [(and
-                  (tc-type-contains-reference?
-                    (tc-global-shared-view operand-ty))
+                  (tc-type-contains-reference? (& operand-ty))
                   (not
                     (tc-reference-containing-place-borrow-ok?
                       (tc-global-shared-view operand-ty))))
@@ -82485,7 +82593,7 @@
               (ast.ast-type-list-get params cursor (ast.ast-type-id-fallback)))))
           [(ast.AstType.MutRef _ referent)
             (if (tc-name-id-list-contains
-              (tc-type-collect-regions (ast.ty-node-get referent))
+              (tc-type-collect-regions (& (ast.ty-node-get referent)))
               lifetime)
               (set! found true)
               unit)]
@@ -82535,9 +82643,7 @@
                   (begin
                     (unless
                       ret-lifetimes-ready
-                      (set!
-                        ret-lifetimes
-                        (tc-type-collect-regions (tc-global-shared-view ret)))
+                      (set! ret-lifetimes (tc-type-collect-regions (& ret)))
                       (set! ret-lifetimes-ready true))
                     ret-lifetimes)
                   lifetime)
@@ -88838,6 +88944,11 @@
             (& inner-ty)
             "typecheck: box assignment type mismatch"))]
       (let
+        [_
+          (tc-arena-store-note-tagged!
+            ctx
+            (tc-arena-store-expr-node ctx (& value))
+            (& value-ty))]
         [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
         (let
           [_
@@ -89355,7 +89466,7 @@
   (not
     (and
       (tc-make-array-zero-literal-length? expr-bases len)
-      (not (tc-type-contains-reference? elem)))))
+      (not (tc-type-contains-reference? (& elem))))))
 
 (define (tc-fixed-make-array-expr
   [ctx : TcContext]
@@ -89584,7 +89695,7 @@
 
 (define (tc-type-regions-all-scratch? [ty : ast.AstType]) : bool
   (let
-    [cursor : TcNameIdList (tc-type-collect-regions ty)]
+    [cursor : TcNameIdList (tc-type-collect-regions (& ty))]
     [all-scratch : bool true]
     (while (and all-scratch (not (tc-name-id-list-empty? cursor)))
       (if (tc-scratch-region-id? (tc-name-id-list-head cursor))
@@ -89714,6 +89825,7 @@
 (define (tc-in-arena-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [arena-id : i64]
   [arena : ast.AstExpr]
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
@@ -89721,6 +89833,19 @@
     [arena-ty (try (tc-expr ctx env (tc-global-shared-view arena)))]
     (if (tc-arena-allocation-target? ctx (tc-global-shared-view arena-ty))
       (let
+        ;; An arena with no region is an explicit one, not the caller's: the
+        ;; arena-store summary does not count what its body allocates.
+        [_regionless : unit
+          (match (tc-in-arena-region
+            ctx
+            env
+            (tc-global-shared-view arena)
+            (tc-global-shared-view arena-ty))
+            [(Some _) unit]
+            [(No)
+              (tc-arena-store-mark!
+                ctx
+                (tc-arena-store-regionless-key arena-id))])]
         [body-ty
           (try
             (tc-begin-list-maybe-expected
@@ -89791,13 +89916,15 @@
 (define (tc-in-arena-expr-scoped
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [arena-id : i64]
   [arena : ast.AstExpr]
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [saved : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter-env! env)]
-    [result : ResultTcType (tc-in-arena-expr ctx env arena body expected)]
+    [result : ResultTcType
+      (tc-in-arena-expr ctx env arena-id arena body expected)]
     (tc-type-env-scoped-runtime-restore! saved)
     result))
 
@@ -89855,7 +89982,7 @@
               (tc-resolve-type ctx ret))]
           [(No) (tc-expr ctx lambda-env body)]))]
     (if (and
-      (tc-type-contains-any-region (tc-global-shared-view body-ty))
+      (tc-type-contains-any-region (& body-ty))
       (not
         (tc-type-regions-all-atomic-arena-owners?
           lambda-env
@@ -89865,7 +89992,7 @@
       ;; by the ordinary expected-type and return-lifetime checks.
       (not
         (match (tc-global-shared-view maybe-ret)
-          [(Some ret) (tc-type-contains-reference? ret)]
+          [(Some ret) (tc-type-contains-reference? (& ret))]
           [(No) false])))
       (Err
         (tc-kind-message
@@ -90299,6 +90426,11 @@
                       replacement))]
                 (let
                   [_
+                    (tc-arena-store-note-tagged!
+                      ctx
+                      (tc-arena-store-node ctx replacement-id)
+                      (& replacement-ty))]
+                  [_
                     (try
                       (tc-ensure-region-value-can-flow-into
                         env
@@ -90375,6 +90507,11 @@
       (try
         (tc-expect-noting-shadow env (& value-ty) (& elem-ty) mismatch-message))]
     (let
+      [_
+        (tc-arena-store-note-tagged!
+          ctx
+          (tc-arena-store-expr-node ctx (& value))
+          (& value-ty))]
       [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
       (let
         [_
@@ -90532,6 +90669,11 @@
                 (TypeMismatch)
                 "typecheck: struct field assignment type mismatch"))))]
       (let
+        [_
+          (tc-arena-store-note-tagged!
+            ctx
+            (tc-arena-store-expr-node ctx (& value))
+            (& value-ty))]
         [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
         (let
           [_
@@ -90948,6 +91090,10 @@
     "typecheck: assignment type mismatch")
     [(ResultTcUnit.Err message) (return (ResultTcUnit.Err message))]
     [(ResultTcUnit.Ok) unit])
+  (tc-arena-store-note-tagged!
+    ctx
+    (tc-arena-store-expr-node ctx (& value))
+    (& value-ty))
   (match (tc-ensure-cleanup-resource-not-assigned ctx env value)
     [(ResultTcUnit.Err message) (return (ResultTcUnit.Err message))]
     [(ResultTcUnit.Ok) unit])
@@ -91412,7 +91558,7 @@
               (& want-ty)
               "typecheck: annotation type mismatch"))]
         (Ok
-          (if (tc-type-contains-any-region (tc-global-shared-view got))
+          (if (tc-type-contains-any-region (& got))
             got
             want-ty)))]
     [(Let let-box)
@@ -92084,7 +92230,7 @@
     [(InArena arena-box body)
       (let
         [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
-        (tc-in-arena-expr-scoped ctx env arena body No))]
+        (tc-in-arena-expr-scoped ctx env arena-box arena body No))]
     [(WithResource wr-box)
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(WithResource bindings body)
@@ -96351,7 +96497,24 @@
   (address-only bool)
   (bindings ast.AstLetBindingList)
   (declaration i64)
-  (first-contextual-declaration i64))
+  (first-contextual-declaration i64)
+  ;; The parameter count of the declaration being scanned, and how many
+  ;; arena-scoping forms enclose the current expression.
+  (params i64)
+  (scoped i64)
+  ;; Whether this walk builds the arena-store summary, and the stored value
+  ;; nodes typing found region-tagged.
+  (arena bool)
+  (tagged tc_i64_i64_map.Map)
+  ;; Inside an `in-arena` over an arena with no region: the binding count at
+  ;; its entry, else -1. That arena is not the caller's.
+  (inarena i64)
+  ;; The next mutable borrow scanned is an argument of a call whose effects
+  ;; land in that explicit arena.
+  (exempt-borrow bool)
+  ;; The declaration scanned holds a function value, a lambda or a call
+  ;; inside an arena scope: what the indirect union's scan can find.
+  (contributes bool))
 
 (defstruct TcGlobalBorrowQuery
   (global i64)
@@ -96380,7 +96543,46 @@
   (temporary-callers tc_i64_i64_map.Map)
   (typed-temporaries tc_i64_i64_map.Map)
   (collected (__tl_dyn-array i64))
-  (pending i64))
+  (pending i64)
+  ;; The arena-store summary (#8681) has its own graph, collected only once
+  ;; every body is checked, with the stored value nodes typing found
+  ;; region-tagged and the call queries it answers then.
+  (arena-graph global_effects.Graph)
+  (arena-collected (__tl_dyn-array i64))
+  (tagged tc_i64_i64_map.Map)
+  (arena-pending i64)
+  ;; Queued queries by `tc-arena-store-query-hash`: both typing paths queue a
+  ;; call.
+  (arena-queued tc_i64_i64_map.Map)
+  ;; Whether this state's program is in its final check: only that check's
+  ;; queries are answered, so no earlier pass queues any.
+  (arena-final bool)
+  ;; The declarations the indirect union's first scan found contributing, so
+  ;; the other graph's union scans only those; -1 before that scan.
+  (union-count i64)
+  (union-declarations effect_words.Vec))
+
+;; A call the arena-store summary answers once every body is checked: kind 0
+;; asks whether the callee may store an allocation into a global, kind 1
+;; through an argument, kind 2 whether the function value passed at `index`
+;; (node `function`) may, when the callee calls it inside an arena scope.
+(defstruct TcArenaStoreQuery
+  (kind i64)
+  (callee i64)
+  ;; The call head's source node, or -1: a call of the enclosing function's
+  ;; parameter inside an arena scope is checked at that function's callers.
+  (head i64)
+  (function i64)
+  (index i64)
+  ;; Kind 2: whether the function's parameters reach writable storage.
+  (reach bool)
+  ;; The enclosing `unsafe` block's unused-unsafe slot (-1 untracked) when
+  ;; the call is exempt; -2 when it is checked.
+  (exempt i64)
+  (primary TcMaybeAstSourceSpan)
+  (source-path String)
+  (path-bound bool)
+  (next i64))
 
 (define (tc-global-effect-name-part
   [ctx : TcContext]
@@ -96501,6 +96703,541 @@
     (tc-context-expr-get ctx place))
     [(Some name) (tc-global-effect-write-name! ctx collector node bound name)]
     [(No) unit]))
+
+;; A function allocates in whatever arena its caller made active (SPEC 3.9).
+;; The arena-store summary keys of the global-write graph record what may
+;; leave such an arena through a body's stores: an allocation stored into a
+;; global, or into storage reached through an argument, a capture or a
+;; pointer. Calls checked under a scoped arena query them (#8681, #8692).
+(define (tc-arena-store-global-key [indirect : i64]) : i64
+  (+ indirect 1))
+
+(define (tc-arena-store-argument-key [indirect : i64]) : i64
+  (+ indirect 2))
+
+;; The arena-store graph splits the indirect-call union by parameter types:
+;; a function value whose parameters are P can only be a function or lambda
+;; in bucket(P). Past the indirect node `indirect` (a call of unknown type,
+;; which reaches every bucket) come the wild node, holding lambdas and
+;; functions of unknown parameter types, which every bucket reaches, and the
+;; buckets. A shared bucket only merges candidates, so it stays sound.
+(define (tc-arena-store-bucket-count) : i64
+  64)
+
+(define (tc-arena-store-union-nodes) : i64
+  (+ 1 (tc-arena-store-bucket-count)))
+
+(define (tc-arena-store-wild-node [indirect : i64]) : i64
+  (+ indirect 1))
+
+(define (tc-arena-store-bucket-node [indirect : i64] [hash : i64]) : i64
+  (+ indirect (+ 2 (bit-and hash (- (tc-arena-store-bucket-count) 1)))))
+
+(define (tc-arena-store-graph-new [count : i64]) : global_effects.Graph
+  (let
+    [graph : global_effects.Graph
+      (global_effects.new-with-extra count (tc-arena-store-union-nodes))]
+    (for [bucket (iterator.range 0 (tc-arena-store-bucket-count))]
+      (let
+        [node : i64 (+ count (+ 2 bucket))]
+        (global_effects.add-call! (&mut graph) count node)
+        (global_effects.add-call!
+          (&mut graph)
+          node
+          (tc-arena-store-wild-node count))))
+    graph))
+
+;; A structural hash of a resolved type that ignores regions and lifetimes,
+;; or -1 when the type is not known well enough to place.
+(define (tc-arena-store-type-hash [ty : ast.AstType]) : i64
+  (match ty
+    [(or (Region _ inner) (Invalidate _ inner))
+      (tc-arena-store-type-hash (ast.ty-node-get inner))]
+    [(Ref _ inner) (tc-arena-store-wrapped-hash 41 inner)]
+    [(MutRef _ inner) (tc-arena-store-wrapped-hash 42 inner)]
+    [(DynArray inner) (tc-arena-store-wrapped-hash 43 inner)]
+    [(Slice inner) (tc-arena-store-wrapped-hash 44 inner)]
+    [(Box inner) (tc-arena-store-wrapped-hash 45 inner)]
+    [(Ptr inner) (tc-arena-store-wrapped-hash 46 inner)]
+    [(MutPtr inner) (tc-arena-store-wrapped-hash 47 inner)]
+    [(Array inner _) (tc-arena-store-wrapped-hash 48 inner)]
+    [(or (Struct name) (Enum name) (StructArgs name _) (EnumArgs name _))
+      (hash.combine 7 (csym.compiler-symbol-name-id-key name))]
+    [(Tuple elems)
+      (tc-arena-store-types-hash
+        (& (ast.ast-type-list-box-shared-view elems))
+        11)]
+    [(Func args _) (hash.combine 13 (ast.ast-type-list-len (& (deref args))))]
+    [(or (Var _) (VarArgs _ _)) -1]
+    [_ (ast.ty-node-hash-value (& ty))]))
+
+(define (tc-arena-store-wrapped-hash [code : i64] [inner : i64]) : i64
+  (let
+    [inner-hash : i64 (tc-arena-store-type-hash (ast.ty-node-get inner))]
+    (if (< inner-hash 0)
+      -1
+      (hash.combine code inner-hash))))
+
+(define (tc-arena-store-types-hash
+  [types : (& types ast.AstTypeList)]
+  [seed : i64]) : i64
+  (let
+    [out : i64 seed]
+    (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+      (let
+        [part : i64
+          (tc-arena-store-type-hash
+            (ast.ty-node-get
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))]
+        (if (< part 0)
+          (set! out -1)
+          (when (>= out 0) (set! out (hash.combine out part))))))
+    out))
+
+;; The union node of a function value whose resolved parameter types are
+;; `params`: its bucket, or the wild node when a type is not known.
+(define (tc-arena-store-params-node
+  [indirect : i64]
+  [params : (& params ast.AstTypeList)]) : i64
+  (let
+    [hash : i64 (tc-arena-store-types-hash params 3)]
+    (if (< hash 0)
+      (tc-arena-store-wild-node indirect)
+      (tc-arena-store-bucket-node indirect hash))))
+
+;; The union node a call through a function value of resolved parameter
+;; types `params` may reach: that bucket, or every bucket when unknown.
+(define (tc-arena-store-call-node
+  [indirect : i64]
+  [params : (& params ast.AstTypeList)]) : i64
+  (let
+    [hash : i64 (tc-arena-store-types-hash params 3)]
+    (if (< hash 0)
+      indirect
+      (tc-arena-store-bucket-node indirect hash))))
+
+;; The final check of `ctx`'s program begins: from now on calls are noted.
+(define (tc-arena-store-begin-final! [ctx : TcContext]) : unit
+  (let
+    [state : (MutPtr TcGlobalCallEffects) (tc-global-call-effects-ensure! ctx)]
+    (unsafe
+      (set! (deref state).arena-final true))))
+
+;; Whether `ctx` is its program's final check, whose queries are answered.
+(define (tc-arena-store-final? [ctx : TcContext]) : bool
+  (let
+    [address : i64
+      (tc-macro-state-slot-address
+        (tc-context-macro-state ctx)
+        tc-macro-state-slot-global-call-effects)]
+    (if (= address 0)
+      false
+      (let
+        [state : (Ptr TcGlobalCallEffects)
+          (unsafe
+            (int->ptr (cast address : u64) : (Ptr TcGlobalCallEffects)))]
+        (unsafe
+          (and
+            (deref state).arena-final
+            (= (deref state).program ctx.program-decls)))))))
+
+;; Whether a value of a known type `ty` holds no allocation: it is Copy.
+(define (tc-arena-store-copy? [ctx : TcContext] [ty : ast.AstMaybeType]) : bool
+  (match ty
+    [(Some known) (tc-type-copyable? ctx known)]
+    [(No) false]))
+
+;; The syntactically known type of the slot a store writes: the field of a
+;; struct place, the element of an array place (`kind` 1), the contents of a
+;; box place or the referent of a reference place (`kind` 2), or the place
+;; itself (`kind` 0).
+(define (tc-arena-store-slot-type
+  [ctx : TcContext]
+  [collector : (& collector TcGlobalEffectCollector)]
+  [place : i64]
+  [field : i64]
+  [kind : i64]) : ast.AstMaybeType
+  (let
+    [known : ast.AstMaybeType
+      (tc-global-effect-known-type ctx collector place collector.bindings.len)]
+    (match known
+      [(Some ty)
+        (if (>= field 0)
+          (match (tc-struct-get-result-type-id
+            ctx
+            TcMaybeTypeEnv.No
+            (match (tc-type-strip-region (tc-global-shared-view ty))
+              [(or (Ref _ inner) (MutRef _ inner)) (ast.ty-node-get inner)]
+              [_ ty])
+            field)
+            [(Ok result) (Some result)]
+            [_ (No)])
+          (match (tc-type-strip-region (tc-global-shared-view ty))
+            [(or (DynArray elem) (Array elem _) (Slice elem))
+              (if (= kind 1)
+                (Some (ast.ty-node-get elem))
+                (if (= kind 0)
+                  (Some ty)
+                  (No)))]
+            [(Box elem)
+              (if (= kind 2)
+                (Some (ast.ty-node-get elem))
+                (if (= kind 0)
+                  (Some ty)
+                  (No)))]
+            [(or (Ref _ inner) (MutRef _ inner))
+              (cond
+                [(= kind 2) (Some (ast.ty-node-get inner))]
+                [(= kind 1)
+                  (match (tc-type-strip-region (ast.ty-node-get inner))
+                    [(or (DynArray elem) (Array elem _) (Slice elem))
+                      (Some (ast.ty-node-get elem))]
+                    [_ (No)])]
+                [else (Some ty)])]
+            [_
+              (if (= kind 0)
+                (Some ty)
+                (No))]))]
+      [(No) (No)])))
+
+;; The source node under span and expansion wrappers, which typing and the
+;; summary both reach from a stored value.
+(define (tc-arena-store-node [ctx : TcContext] [id : i64]) : i64
+  (match (tc-context-expr-get ctx id)
+    [(or (Spanned inner _) (MacroExpansion inner _ _))
+      (tc-arena-store-node ctx inner)]
+    [_ id]))
+
+;; `tc-arena-store-node` of the node a typed expression was read from, or -1
+;; for an unwrapped expression, whose node typing does not know.
+(define (tc-arena-store-expr-node
+  [ctx : TcContext]
+  [expr : (& expr ast.AstExpr)]) : i64
+  (match expr
+    [(or (Spanned inner _) (MacroExpansion inner _ _))
+      (tc-arena-store-node ctx inner)]
+    [_ -1]))
+
+;; Whether stored value `value` is no allocation of the caller's arena: a
+;; literal, which is static data, a scalar operator result, or a value typing
+;; tagged with a region,
+;; such as the result of `(in-arena x ...)`, which lives in that region.
+(define (tc-arena-store-not-ambient?
+  [ctx : TcContext]
+  [collector : (& collector TcGlobalEffectCollector)]
+  [value : i64]) : bool
+  (let
+    [node : i64 (tc-arena-store-node ctx value)]
+    (or
+      ;; A cast, unary or binary operator yields a scalar (SPEC 5.12).
+      (match (tc-context-expr-get ctx node)
+        [(or (Literal _) (Cast _ _) (Unary _ _) (Binary _ _ _)) true]
+        [_ false])
+      (tc_i64_i64_map.contains? (& collector.tagged) node))))
+
+;; The union node of declaration `index` taken as a function value.
+(define (tc-arena-store-decl-node
+  [ctx : TcContext]
+  [index : i64]
+  [indirect : i64]) : i64
+  (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) index)
+    [(Ok decl)
+      (match (ast.ast-decl-unwrapped (& decl))
+        [(DefFn _ _ params _ _ _)
+          (tc-arena-store-param-list-node
+            (tc-context-with-module-id
+              ctx
+              (tc-env-key-name-text
+                (csym.compiler-symbols-owner-module-id-at-index-or
+                  (tc-context-symbols ctx)
+                  index
+                  cbi.compiler-builtin-id-fix-empty))
+              (csym.compiler-symbols-owner-module-id-at-index-or
+                (tc-context-symbols ctx)
+                index
+                cbi.compiler-builtin-id-fix-empty))
+            indirect
+            (& params))]
+        [_ (tc-arena-store-wild-node indirect)])]
+    [(Err _) (tc-arena-store-wild-node indirect)]))
+
+;; The union node of a function or lambda declaring `params`, as
+;; `tc-arena-store-params-node` reads resolved types.
+(define (tc-arena-store-param-list-node
+  [ctx : TcContext]
+  [indirect : i64]
+  [params : (& params ast.AstParamList)]) : i64
+  (let
+    [out : i64 3]
+    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param _ ty _)
+          (let
+            [part : i64
+              (tc-arena-store-type-hash
+                (tc-resolve-type ctx (tc-global-shared-view ty)))]
+            (if (< part 0)
+              (set! out -1)
+              (when (>= out 0) (set! out (hash.combine out part)))))]))
+    (if (< out 0)
+      (tc-arena-store-wild-node indirect)
+      (tc-arena-store-bucket-node indirect out))))
+
+;; The union node a call through the function value `func` reaches: its
+;; declared type's bucket when known, else the whole union.
+(define (tc-arena-store-local-call-node
+  [ctx : TcContext]
+  [collector : (& collector TcGlobalEffectCollector)]
+  [func : i64]) : i64
+  (match (tc-global-effect-known-type ctx collector func collector.bindings.len)
+    [(Some ty)
+      (match (tc-type-strip-region ty)
+        [(Func args _)
+          (tc-arena-store-call-node
+            collector.graph.indirect
+            (& (ast.ast-type-list-box-shared-view args)))]
+        [_ collector.graph.indirect])]
+    [(No) collector.graph.indirect]))
+
+;; Whether value `id`, below binding `limit`, is allocated inside the current
+;; explicit `in-arena` (or is a literal or scalar) and holds no value from
+;; outside it.
+(define (tc-arena-store-fresh?
+  [ctx : TcContext]
+  [collector : (& collector TcGlobalEffectCollector)]
+  [bound : TcNameIdList]
+  [id : i64]
+  [limit : i64]) : bool
+  (if (< id 0)
+    false
+    (match (tc-context-expr-get ctx id)
+      [(or (Spanned inner _) (MacroExpansion inner _ _))
+        (tc-arena-store-fresh? ctx collector bound inner limit)]
+      [(or (Literal _) (Cast _ _) (Unary _ _) (Binary _ _ _)) true]
+      ;; A new array is allocated here; its elements start zeroed.
+      [(or (MakeArray _ count) (FixedMakeArray _ count))
+        (tc-arena-store-fresh? ctx collector bound count limit)]
+      [(or (Unsafe items) (Begin items))
+        (and
+          (> items.len 0)
+          (tc-arena-store-fresh?
+            ctx
+            collector
+            bound
+            (ast.ast-expr-list-get (& items) (- items.len 1) -1)
+            limit))]
+      [(Call _ args)
+        (tc-arena-store-safe-arguments? ctx collector bound (& args))]
+      [(Var name)
+        (let
+          [index : i64 (- limit 1)]
+          [found : i64 -1]
+          (while (and (< found 0) (>= index 0))
+            (match (ast.ast-let-binding-list-get
+              (& collector.bindings)
+              index
+              (ast.ast-let-binding-fallback))
+              [(Binding local _ _) (when (= local name) (set! found index))])
+            (-= index 1))
+          (or
+            (tc-arena-store-copy?
+              ctx
+              (tc-global-effect-known-type ctx collector id limit))
+            (and
+              (>= found collector.inarena)
+              (match (ast.ast-let-binding-list-get
+                (& collector.bindings)
+                found
+                (ast.ast-let-binding-fallback))
+                [(Binding _ _ init)
+                  (tc-arena-store-fresh? ctx collector bound init found)]))))]
+      [_ false])))
+
+;; Whether every argument brings no outside value into a call: a fresh value
+;; (`tc-arena-store-fresh?`), a shared borrow, or a mutable borrow of a
+;; global, whose contents are no allocation of the caller's.
+(define (tc-arena-store-safe-arguments?
+  [ctx : TcContext]
+  [collector : (& collector TcGlobalEffectCollector)]
+  [bound : TcNameIdList]
+  [args : (& args ast.AstExprList)]) : bool
+  (let
+    [safe : bool true]
+    (for [index (iterator.range 0 args.len)]
+      (let
+        [arg : i64 (ast.ast-expr-list-get args index -1)]
+        (unless
+          (match (ast.ast-expr-unspan (& (tc-context-expr-get ctx arg)))
+            [(Borrow mutable _ place)
+              (or
+                (not mutable)
+                (tc-global-effect-global-place? ctx bound place true))]
+            [_
+              (tc-arena-store-fresh?
+                ctx
+                collector
+                bound
+                arg
+                collector.bindings.len)])
+          (set! safe false)
+          (break))))
+    safe))
+
+;; `node` may store `value` (-1: a fresh allocation, as container growth
+;; does) into a slot of type `slot` rooted at `root` (-1: through a pointer
+;; or a call result). A lexical root is an argument or an alias of one; a
+;; Copy value holds no allocation.
+(define (tc-arena-store-effect!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [bound : TcNameIdList]
+  [root : i64]
+  [value : i64]
+  [slot : ast.AstMaybeType]) : unit
+  (unless
+    (or
+      (not collector.arena)
+      collector.prefix-only
+      collector.address-only
+      (and
+        (>= value 0)
+        (or
+          (tc-arena-store-not-ambient? ctx collector value)
+          (tc-arena-store-explicit-result? ctx collector bound value)
+          (and
+            (>= collector.inarena 0)
+            (tc-arena-store-fresh?
+              ctx
+              collector
+              bound
+              value
+              collector.bindings.len))
+          (tc-arena-store-copy? ctx slot)
+          (tc-arena-store-copy?
+            ctx
+            (tc-global-effect-known-type
+              ctx
+              collector
+              value
+              collector.bindings.len)))))
+    (let
+      [handle : i64 (tc-global-effect-handle ctx bound root)]
+      (global_effects.add-write!
+        (&mut collector.graph)
+        node
+        (if (and
+          (csym.compiler-symbols-handle-found? handle)
+          (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-value-define)))
+          (tc-arena-store-global-key collector.graph.indirect)
+          (tc-arena-store-argument-key collector.graph.indirect))))))
+
+;; Whether stored value `value` is an `in-arena` over an arena with no region
+;; whose result is allocated inside it (`tc-arena-store-fresh?`).
+(define (tc-arena-store-explicit-result?
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [bound : TcNameIdList]
+  [value : i64]) : bool
+  (match (tc-context-expr-get ctx (tc-arena-store-node ctx value))
+    [(InArena target items)
+      (if (and
+        (> items.len 0)
+        (tc_i64_i64_map.contains?
+          (& collector.tagged)
+          (tc-arena-store-regionless-key target)))
+        (let
+          [outer : i64 collector.inarena]
+          (set! collector.inarena collector.bindings.len)
+          (let
+            [fresh : bool
+              (tc-arena-store-fresh?
+                ctx
+                collector
+                bound
+                (ast.ast-expr-list-get (& items) (- items.len 1) -1)
+                collector.bindings.len)]
+            (set! collector.inarena outer)
+            fresh))
+        false)]
+    [_ false]))
+
+(define (tc-arena-store-place-effect!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [bound : TcNameIdList]
+  [place : i64]
+  [value : i64]
+  [field : i64]
+  [kind : i64]) : unit
+  (tc-arena-store-effect!
+    ctx
+    collector
+    node
+    bound
+    (match (tc-move-root-projection-var-id
+      (tc-context-expr-bases ctx)
+      (tc-context-expr-get ctx place))
+      [(Some name) name]
+      [(No) -1])
+    value
+    (tc-arena-store-slot-type ctx collector place field kind)))
+
+;; The arena-store key recording that a declaration calls its function
+;; parameter `index` inside an arena-scoping form: each caller checks the
+;; function value it passes there as if called under a scoped arena.
+(define (tc-arena-store-parameter-key [indirect : i64] [index : i64]) : i64
+  (+ indirect (+ 3 index)))
+
+;; The key recording that the call whose head is source node `head` is such
+;; a parameter call; the call itself is checked at the callers instead.
+(define (tc-arena-store-parameter-call-key [head : i64]) : i64
+  (- -2 head))
+
+;; The source node of a call head, through span and expansion wrappers, or -1.
+(define (tc-arena-store-head-node [ctx : TcContext] [id : i64]) : i64
+  (match (tc-context-expr-get ctx id)
+    [(or (Spanned inner _) (MacroExpansion inner _ _))
+      (tc-arena-store-head-node ctx inner)]
+    [(Var _) id]
+    [_ -1]))
+
+;; Record a call of a parameter of the declaration being scanned, found by
+;; its innermost binding, made inside an arena-scoping form.
+(define (tc-arena-store-parameter-call!
+  [ctx : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [func : i64]) : unit
+  (let
+    [head : i64 (tc-arena-store-head-node ctx func)]
+    [name : i64
+      (if (>= head 0)
+        (tc-expr-var-name-id
+          (tc-context-expr-bases ctx)
+          (tc-context-expr-get ctx head))
+        -1)]
+    [index : i64 (- collector.bindings.len 1)]
+    [found : i64 -1]
+    (while (and (>= name 0) (< found 0) (>= index 0))
+      (match (ast.ast-let-binding-list-get
+        (& collector.bindings)
+        index
+        (ast.ast-let-binding-fallback))
+        [(Binding local _ _) (when (= local name) (set! found index))])
+      (-= index 1))
+    (when
+      (and (>= found 0) (< found collector.params))
+      (global_effects.add-write!
+        (&mut collector.graph)
+        collector.declaration
+        (tc-arena-store-parameter-key collector.graph.indirect found))
+      (global_effects.add-write!
+        (&mut collector.graph)
+        collector.declaration
+        (tc-arena-store-parameter-call-key head)))))
 
 (define (tc-global-effect-callee
   [ctx : TcContext]
@@ -96880,7 +97617,14 @@
           false
           (ast.ast-let-binding-list-new)
           -1
-          indexed)]
+          indexed
+          0
+          0
+          false
+          (tc_i64_i64_map.with-capacity 0)
+          -1
+          false
+          false)]
       (for [index (iterator.range 0 indexed)]
         (tc-global-effect-scan-declaration! ctx (&mut collector) index)
         (when (< collector.first-contextual-declaration indexed) (break)))
@@ -96919,9 +97663,12 @@
               (tc-global-effect-callee ctx bound expr collector.graph.indirect)]
             (when
               (and (>= target 0) (!= target collector.graph.indirect))
+              (set! collector.contributes true)
               (global_effects.add-call!
                 (&mut collector.graph)
-                collector.graph.indirect
+                (if collector.arena
+                  (tc-arena-store-decl-node ctx target collector.graph.indirect)
+                  collector.graph.indirect)
                 target)
               (when
                 (!= (array-ref collector.collected collector.graph.indirect) 0)
@@ -96936,9 +97683,27 @@
                 bound
                 (tc-context-expr-get ctx func)
                 collector.graph.indirect))]
+          ;; Inside an explicit `in-arena`, a call whose arguments bring no
+          ;; outside value allocates only in that arena.
+          [explicit : bool
+            (and
+              collector.arena
+              (>= collector.inarena 0)
+              (tc-arena-store-safe-arguments? ctx collector bound (& args)))]
           (when
-            (>= callee 0)
-            (tc-global-effect-add-call! collector node callee))
+            (and (>= callee 0) (not explicit))
+            (tc-global-effect-add-call!
+              collector
+              node
+              (if (and collector.arena (= callee collector.graph.indirect))
+                (tc-arena-store-local-call-node ctx collector func)
+                callee)))
+          (when
+            (> collector.scoped 0)
+            (set! collector.contributes true)
+            (when
+              collector.arena
+              (tc-arena-store-parameter-call! ctx collector func)))
           (when
             collector.prefix-only
             (for [index (iterator.range 0 args.len)]
@@ -96950,17 +97715,32 @@
                   false)
                 (tc-global-effect-contextual! collector))))
           (tc-global-effect-scan! ctx collector node bound func true)
-          (tc-global-effect-scan-list! ctx collector node bound (& args)))]
+          (for [index (iterator.range 0 args.len)]
+            (set! collector.exempt-borrow explicit)
+            (tc-global-effect-scan!
+              ctx
+              collector
+              node
+              bound
+              (ast.ast-expr-list-get (& args) index 0)
+              false)
+            (set! collector.exempt-borrow false)))]
       [(Lambda payload)
         (match (ast.ast-lambda-box-shared-view payload)
           [(Lambda params _ body)
             (let
               [discovery : bool collector.address-only]
+              (set! collector.contributes true)
               (set! collector.address-only false)
               (tc-global-effect-scan!
                 ctx
                 collector
-                collector.graph.indirect
+                (if collector.arena
+                  (tc-arena-store-param-list-node
+                    ctx
+                    collector.graph.indirect
+                    (& params))
+                  collector.graph.indirect)
                 (tc-global-effect-bind-params collector params bound)
                 body
                 false)
@@ -97099,12 +97879,31 @@
                       (tc-global-effect-bind! collector scope name (No) init))]))
               (tc-global-effect-scan-list! ctx collector node scope (& body)))])]
       [(or (WithRegion name items) (WithEscape name items))
+        (+= collector.scoped 1)
         (tc-global-effect-scan-list!
           ctx
           collector
           node
           (tc-global-effect-bind! collector bound name (No) -1)
-          (& items))]
+          (& items))
+        (-= collector.scoped 1)]
+      [(WithScratch items)
+        (+= collector.scoped 1)
+        (tc-global-effect-scan-list! ctx collector node bound (& items))
+        (-= collector.scoped 1)]
+      [(InArena arena items)
+        (tc-global-effect-scan! ctx collector node bound arena false)
+        (let
+          [outer : i64 collector.inarena]
+          (when
+            (tc_i64_i64_map.contains?
+              (& collector.tagged)
+              (tc-arena-store-regionless-key arena))
+            (set! collector.inarena collector.bindings.len))
+          (+= collector.scoped 1)
+          (tc-global-effect-scan-list! ctx collector node bound (& items))
+          (-= collector.scoped 1)
+          (set! collector.inarena outer))]
       [(ForOwnedState payload)
         (tc-global-effect-scan!
           ctx
@@ -97264,12 +98063,104 @@
           false)]
       [_
         (match (tc-global-shared-view expr)
-          [(Set name _)
-            (tc-global-effect-write-name! ctx collector node bound name)]
-          [(or (Replace place _) (StructSet place _ _) (ArraySet place _ _)
-               (ArrayPush place _) (BoxSet place _) (PtrAddrOf place))
+          [(Set name value)
+            (tc-global-effect-write-name! ctx collector node bound name)
+            ;; Assigning a body binder stores nothing outside the body.
+            (unless
+              (tc-name-id-list-contains bound name)
+              (tc-arena-store-effect!
+                ctx
+                collector
+                node
+                bound
+                name
+                value
+                (tc-global-effect-declared-type ctx name false)))]
+          [(Replace place value)
+            (tc-global-effect-write-place! ctx collector node bound place)
+            (tc-arena-store-place-effect!
+              ctx
+              collector
+              node
+              bound
+              place
+              value
+              -1
+              0)]
+          [(StructSet place field value)
+            (tc-global-effect-write-place! ctx collector node bound place)
+            (tc-arena-store-place-effect!
+              ctx
+              collector
+              node
+              bound
+              place
+              value
+              field
+              0)]
+          [(ArraySet place _ value)
+            (tc-global-effect-write-place! ctx collector node bound place)
+            (tc-arena-store-place-effect!
+              ctx
+              collector
+              node
+              bound
+              place
+              value
+              -1
+              1)]
+          [(BoxSet place value)
+            (tc-global-effect-write-place! ctx collector node bound place)
+            (tc-arena-store-place-effect!
+              ctx
+              collector
+              node
+              bound
+              place
+              value
+              -1
+              2)]
+          [(ArrayPush place value)
+            (tc-global-effect-write-place! ctx collector node bound place)
+            ;; Growth allocates in the active arena: an explicit one keeps
+            ;; only the element to check.
+            (tc-arena-store-place-effect!
+              ctx
+              collector
+              node
+              bound
+              place
+              (if (>= collector.inarena 0)
+                value
+                -1)
+              -1
+              0)]
+          [(PtrAddrOf place)
             (tc-global-effect-write-place! ctx collector node bound place)]
+          [(PtrWrite _ value)
+            (tc-arena-store-effect! ctx collector node bound -1 value (No))]
           [(Borrow mutable _ place)
+            ;; A borrow passed on is the callee's store, reached through its call
+            ;; edge; only a global's borrow is this body's own global store,
+            ;; unless the call's effects land in an explicit arena.
+            (when
+              (and
+                mutable
+                (not
+                  (let
+                    [exempt : bool collector.exempt-borrow]
+                    (set! collector.exempt-borrow false)
+                    exempt))
+                (tc-global-effect-global-place? ctx bound place true))
+              (tc-arena-store-place-effect!
+                ctx
+                collector
+                node
+                bound
+                place
+                place
+                -1
+                0))
             (when
               (and
                 collector.prefix-only
@@ -97430,13 +98321,16 @@
               [_ false]))
           (match (ast.ast-decl-unwrapped (& decl))
             [(DefFn _ _ params _ body _)
+              (set! collector.params params.len)
+              (set! collector.scoped 0)
               (tc-global-effect-scan!
                 owner
                 collector
                 index
                 (tc-global-effect-bind-params collector params Nil)
                 body
-                false)]
+                false)
+              (set! collector.params 0)]
             [(Def _ _ _ init)
               (tc-global-effect-scan! owner collector index Nil init false)]
             [(or (DefStruct _ _ _ cleanup fields)
@@ -97596,7 +98490,15 @@
               (tc_i64_i64_map.with-capacity 0)
               (tc_i64_i64_map.with-capacity 0)
               (__tl_make-array i64 (+ count 1))
-              0))
+              0
+              (tc-arena-store-graph-new count)
+              (__tl_make-array i64 (+ count (+ 1 (tc-arena-store-union-nodes))))
+              (tc_i64_i64_map.with-capacity 0)
+              0
+              (tc_i64_i64_map.with-capacity 0)
+              false
+              -1
+              (effect_words.new)))
           (set!
             address
             (unsafe
@@ -97613,11 +98515,15 @@
 (define (tc-global-call-effects-collect!
   [ctx : TcContext]
   [state : (MutPtr TcGlobalCallEffects)]
-  [root : i64]) : unit
+  [root : i64]
+  [arena? : bool]) : unit
   (let
     [collected : (__tl_dyn-array i64)
-      (unsafe
-        (deref state).collected)]
+      (if arena?
+        (unsafe
+          (deref state).arena-collected)
+        (unsafe
+          (deref state).collected))]
     (when (!= (array-ref collected root) 0) (return unit))
     (let
       [enclosing : i64 (arena.tl_arena_current)]
@@ -97627,9 +98533,12 @@
       (let
         [collector : TcGlobalEffectCollector
           (TcGlobalEffectCollector
-            (global_effects.new
+            (global_effects.new-with-extra
               (unsafe
-                (deref state).count))
+                (deref state).count)
+              (if arena?
+                (tc-arena-store-union-nodes)
+                0))
             (tc_i64_i64_map.with-capacity 0)
             (unsafe
               (deref state).typed-temporaries)
@@ -97640,27 +98549,86 @@
             (ast.ast-let-binding-list-new)
             -1
             (unsafe
-              (deref state).count))]
+              (deref state).count)
+            0
+            0
+            arena?
+            (unsafe
+              (deref state).tagged)
+            -1
+            false
+            false)]
         [cursor : i64 0]
+        [union : effect_words.Vec
+          (unsafe
+            (deref state).union-declarations)]
+        [union-count : i64
+          (unsafe
+            (deref state).union-count)]
+        [scanned : bool (< union-count 0)]
+        [found : effect_words.Vec (effect_words.new)]
         (tc-global-effect-enqueue! (&mut collector) root)
         (while (< cursor (effect_words.len (& collector.pending)))
           (let
             [node : i64 (effect_words.get (& collector.pending) cursor 0)]
-            (if (= node collector.graph.indirect)
-              (begin
+            (cond
+              ;; A bucket or the wild node is found by the union's one scan.
+              [(> node collector.graph.indirect)
+                (tc-global-effect-enqueue!
+                  (&mut collector)
+                  collector.graph.indirect)]
+              [(= node collector.graph.indirect)
                 ;; Callable values in every runtime body contribute to the
                 ;; indirect union, even when their enclosing body is uncalled.
+                ;; The first graph to scan them all records which bodies did.
                 (set! collector.address-only true)
-                (for [index (iterator.range 0 collector.graph.indirect)]
-                  (tc-global-effect-scan-declaration!
-                    ctx
-                    (&mut collector)
-                    index))
-                (set! collector.address-only false))
-              (tc-global-effect-scan-declaration! ctx (&mut collector) node)))
+                (if (>= union-count 0)
+                  (for [index (iterator.range 0 union-count)]
+                    (tc-global-effect-scan-declaration!
+                      ctx
+                      (&mut collector)
+                      (effect_words.get (& union) index 0)))
+                  (for [index (iterator.range 0 collector.graph.indirect)]
+                    (set! collector.contributes false)
+                    (tc-global-effect-scan-declaration!
+                      ctx
+                      (&mut collector)
+                      index)
+                    (when
+                      collector.contributes
+                      (effect_words.push-ref! (&mut found) index))))
+                (set! collector.address-only false)
+                (when
+                  (< union-count 0)
+                  (set! union-count (effect_words.len (& found))))]
+              [else
+                (tc-global-effect-scan-declaration! ctx (&mut collector) node)]))
           (+= cursor 1))
         (unsafe
           (arena.tl_arena_set (deref state).arena))
+        (when
+          (and scanned (>= union-count 0))
+          (let
+            [kept : effect_words.Vec (effect_words.new)]
+            (for [index (iterator.range 0 union-count)]
+              (effect_words.push-ref!
+                (&mut kept)
+                (effect_words.get (& found) index 0)))
+            (unsafe
+              (set! (deref state).union-count union-count)
+              (set! (deref state).union-declarations kept))))
+        (when
+          arena?
+          (let
+            [graph : global_effects.Graph
+              (unsafe
+                (deref state).arena-graph)]
+            (global_effects.append! (&mut graph) (& collector.graph))
+            (unsafe
+              (set! (deref state).arena-graph graph)
+              (arena.tl_arena_set enclosing)
+              (arena.tl_arena_destroy scratch))
+            (return unit)))
         (let
           [graph : global_effects.Graph
             (unsafe
@@ -97783,7 +98751,8 @@
             (tc-global-call-effects-collect!
               ctx
               state
-              (csym.compiler-symbol-handle-index handle))))))))
+              (csym.compiler-symbol-handle-index handle)
+              false)))))))
 
 ;; A negative reachability result remains provisional until all bodies have
 ;; supplied their inferred temporary cleanup edges. Retain spans and the
@@ -97934,11 +98903,31 @@
                 (set! (deref query).source-path (string.copy (& path))))
               (set! (deref query).path-bound true)
               (set! head (deref query).next))))
+        (let
+          [arena-head : i64
+            (unsafe
+              (deref state).arena-pending)]
+          (while (!= arena-head 0)
+            (let
+              [query : (MutPtr TcArenaStoreQuery)
+                (unsafe
+                  (int->ptr
+                    (cast arena-head : u64)
+                    : (MutPtr TcArenaStoreQuery)))]
+              [current : TcArenaStoreQuery
+                (unsafe
+                  (ptr-read
+                    (int->ptr (cast arena-head : u64) : (Ptr TcArenaStoreQuery))))]
+              (when current.path-bound (break))
+              (unsafe
+                (set! (deref query).source-path (string.copy (& path)))
+                (set! (deref query).path-bound true)
+                (set! arena-head (deref query).next)))))
         (unsafe
           (arena.tl_arena_set enclosing))))))
 
 (define (tc-global-effect-node-name [ctx : TcContext] [node : i64]) : String
-  (if (= node (csym.compiler-symbols-decl-count (tc-context-symbols ctx)))
+  (if (>= node (csym.compiler-symbols-decl-count (tc-context-symbols ctx)))
     "<indirect call/lambda>"
     (match (csym.compiler-symbols-decl-at-index (tc-context-symbols ctx) node)
       [(Ok decl)
@@ -98009,6 +98998,765 @@
         (set! (deref state).graph graph)
         (arena.tl_arena_set enclosing))
       path)))
+
+;; The arena-store summary's witness: the call chain along which `node`
+;; writes arena-store key `key` (empty when it cannot).
+(define (tc-arena-store-witness!
+  [state : (MutPtr TcGlobalCallEffects)]
+  [node : i64]
+  [key : i64]) : effect_words.Vec
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    (unsafe
+      (arena.tl_arena_set (deref state).arena))
+    (let
+      [graph : global_effects.Graph
+        (unsafe
+          (deref state).arena-graph)]
+      [path : effect_words.Vec (global_effects.witness! (&mut graph) node key)]
+      (unsafe
+        (set! (deref state).arena-graph graph)
+        (arena.tl_arena_set enclosing))
+      path)))
+
+;; Typing found stored value `value` tagged with a region: it is no
+;; allocation of the caller's arena (`tc-arena-store-not-ambient?`).
+(define (tc-arena-store-note-tagged!
+  [ctx : TcContext]
+  [node : i64]
+  [value-ty : (& value-ty ast.AstType)]) : unit
+  (when
+    (and (>= node 0) (tc-type-contains-any-region value-ty))
+    (tc-arena-store-mark! ctx node)))
+
+;; The `tagged` key of an `in-arena` whose target expression `id` typing
+;; found to have no region: an explicit arena, never the caller's.
+(define (tc-arena-store-regionless-key [id : i64]) : i64
+  (- -1 id))
+
+;; Record `key` in the final check's `tagged` facts.
+(define (tc-arena-store-mark! [ctx : TcContext] [key : i64]) : unit
+  (when
+    (tc-arena-store-final? ctx)
+    (let
+      [state : (MutPtr TcGlobalCallEffects)
+        (tc-global-call-effects-ensure! ctx)]
+      [enclosing : i64 (arena.tl_arena_current)]
+      (unsafe
+        (arena.tl_arena_set (deref state).arena))
+      (let
+        [tagged : tc_i64_i64_map.Map
+          (unsafe
+            (deref state).tagged)]
+        (tc_i64_i64_map.insert-ref! (&mut tagged) key 1)
+        (unsafe
+          (set! (deref state).tagged tagged)
+          (arena.tl_arena_set enclosing))))))
+
+;; Whether a value of type `ty` cannot hold an allocation: a Copy type that
+;; reaches no writable storage, or a slice or array of one.
+(define (tc-type-allocation-free?
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [stack : TcNameIdList]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx (tc-global-shared-view ty)))
+    [(or (Slice inner) (Array inner _))
+      (tc-type-allocation-free? ctx (ast.ty-node-get inner) stack)]
+    [(Bytes) true]
+    [_
+      (and
+        (tc-type-copyable? ctx (tc-global-shared-view ty))
+        (not (tc-type-reaches-writable-storage? ctx ty -1 false stack)))]))
+
+;; Whether an argument of type `ty` lets the callee write storage outliving
+;; region `region` (-1: any storage): a mutable reference to storage not
+;; allocated in it, a pointer, or a function value, held directly or inside
+;; a struct, tuple, enum, array or box; through a shared reference (`shared`),
+;; only a pointer or function value it reaches. A referent that cannot hold
+;; an allocation receives none.
+(define (tc-type-reaches-writable-storage?
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [region : i64]
+  [shared : bool]
+  [stack : TcNameIdList]) : bool
+  (match (tc-resolve-type ctx ty)
+    [(or (Region _ inner) (Invalidate _ inner) (Array inner _) (DynArray inner)
+         (Slice inner) (Box inner))
+      (tc-type-reaches-writable-storage?
+        ctx
+        (ast.ty-node-get inner)
+        region
+        shared
+        stack)]
+    [(Tuple elems)
+      (tc-types-reach-writable-storage?
+        ctx
+        (ast.ast-type-list-box-shared-view elems)
+        region
+        shared
+        stack)]
+    [(MutRef lifetime inner)
+      (let
+        [referent : ast.AstType (ast.ty-node-get inner)]
+        (if shared
+          (tc-type-reaches-writable-storage? ctx referent region true stack)
+          (not
+            (or
+              (and
+                (>= region 0)
+                (or
+                  (= lifetime region)
+                  (tc-type-contains-region (ast.ty-node-get inner) region)))
+              (tc-type-allocation-free? ctx referent stack)))))]
+    [(Ref _ inner)
+      (tc-type-reaches-writable-storage?
+        ctx
+        (ast.ty-node-get inner)
+        region
+        true
+        stack)]
+    [(or (Ptr inner) (MutPtr inner))
+      (not (tc-type-allocation-free? ctx (ast.ty-node-get inner) stack))]
+    [(or (Func _ _) (CFunc _ _)) true]
+    [(or (Struct name) (Enum name) (StructArgs name _) (EnumArgs name _))
+      (tc-nominal-reaches-writable-storage? ctx name shared stack)]
+    [_ false]))
+
+(define (tc-types-reach-writable-storage?
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [region : i64]
+  [shared : bool]
+  [stack : TcNameIdList]) : bool
+  (let
+    [found : bool false]
+    (for [index (iterator.range 0 (ast.ast-type-list-len (& types)))]
+      (when
+        (tc-type-reaches-writable-storage?
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
+          region
+          shared
+          stack)
+        (set! found true)
+        (break)))
+    found))
+
+;; A nominal type's fields or payloads, read in its declaring module; an
+;; unknown type reaches storage. Field references are not tied to the call's
+;; region, so none is region-local.
+(define (tc-nominal-reaches-writable-storage?
+  [ctx : TcContext]
+  [name-id : i64]
+  [shared : bool]
+  [stack : TcNameIdList]) : bool
+  (let
+    [handle : i64
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache (tc-context-job-state ctx))
+        (tc-context-symbols-ref (& ctx))
+        name-id
+        tc-type-handle-lookup-caller-move-kind)]
+    (if (not (csym.compiler-symbols-handle-found? handle))
+      true
+      (let
+        [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+        [index : i64 (csym.compiler-symbol-handle-index handle)]
+        [owner : TcContext
+          (tc-context-with-nominal-owner-index-module ctx index)]
+        [next : TcNameIdList (tc-name-id-list-add stack nominal-id)]
+        (if (tc-name-id-list-contains stack nominal-id)
+          false
+          (match (csym.compiler-symbols-decl-at-index
+            (tc-context-symbols-ref (& owner))
+            index)
+            [(Ok decl)
+              (match decl
+                [(or (DefStruct _ _ _ _ fields)
+                     (DefStructLifetimes _ _ _ _ _ fields))
+                  (tc-types-reach-writable-storage?
+                    owner
+                    (tc-field-type-list owner fields)
+                    -1
+                    shared
+                    next)]
+                [(or (DefEnum _ _ _ variants)
+                     (DefEnumLifetimes _ _ _ _ variants))
+                  (let
+                    [found : bool false]
+                    (for [variant (iterator.range 0 variants.len)]
+                      (match (ast.ast-variant-def-list-get
+                        (& variants)
+                        variant
+                        (ast.ast-variant-def-fallback))
+                        [(Def _ payloads _)
+                          (when
+                            (tc-types-reach-writable-storage?
+                              owner
+                              (tc-resolve-type-list owner payloads)
+                              -1
+                              shared
+                              next)
+                            (set! found true))]))
+                    found)]
+                [_ true])]
+            [(Err _) true]))))))
+
+(define (tc-arena-store-query-hash [query : (& query TcArenaStoreQuery)]) : i64
+  (let
+    [line : i64
+      (match query.primary
+        [(Some span)
+          (+ (* (cast span.start-line : i64) 4096) (cast span.start-col : i64))]
+        [(No) -1])]
+    (+
+      (* 1000003 (+ (* 31 (+ (* 31 query.kind) query.callee)) query.function))
+      (+ (* 131 (+ (* 7 query.index) query.exempt)) line))))
+
+(define (tc-arena-store-query-same?
+  [left : (& left TcArenaStoreQuery)]
+  [right : (& right TcArenaStoreQuery)]) : bool
+  (and
+    (= left.kind right.kind)
+    (= left.callee right.callee)
+    (= left.function right.function)
+    (= left.index right.index)
+    (= left.exempt right.exempt)
+    (tc-maybe-span-eq? (& left.primary) (& right.primary))))
+
+;; Queue a query for `tc-arena-store-late-diagnostics`; a call typed twice
+;; (by both typing paths) queues it once. A hash collision only queues twice.
+(define (tc-arena-store-query! [ctx : TcContext] [query : TcArenaStoreQuery]) : unit
+  (let
+    [state : (MutPtr TcGlobalCallEffects) (tc-global-call-effects-ensure! ctx)]
+    [key : i64 (tc-arena-store-query-hash (& query))]
+    [queued-map : tc_i64_i64_map.Map
+      (unsafe
+        (deref state).arena-queued)]
+    [queued-at : i64 (tc_i64_i64_map.get-value-or (& queued-map) key 0)]
+    (when
+      (!= queued-at 0)
+      (let
+        [queued : TcArenaStoreQuery
+          (unsafe
+            (ptr-read
+              (int->ptr (cast queued-at : u64) : (Ptr TcArenaStoreQuery))))]
+        (when (tc-arena-store-query-same? (& queued) (& query)) (return unit))))
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      (unsafe
+        (arena.tl_arena_set (deref state).arena))
+      (let
+        [cell : (__tl_dyn-array TcArenaStoreQuery)
+          (__tl_make-array TcArenaStoreQuery 1)]
+        (set!
+          (array-ref cell 0)
+          (TcArenaStoreQuery
+            query.kind
+            query.callee
+            query.head
+            query.function
+            query.index
+            query.reach
+            query.exempt
+            query.primary
+            ""
+            false
+            (unsafe
+              (deref state).arena-pending)))
+        (let
+          [address : i64
+            (unsafe
+              (cast (ptr->int (__tl_array-data cell)) : i64))]
+          [queued : tc_i64_i64_map.Map
+            (unsafe
+              (deref state).arena-queued)]
+          (tc_i64_i64_map.insert-ref! (&mut queued) key address)
+          (unsafe
+            (set! (deref state).arena-pending address)
+            (set! (deref state).arena-queued queued)
+            (arena.tl_arena_set enclosing)))))))
+
+;; The region argument of `tc-call-arena-store-note!`, computed once per
+;; call: the active scoped region, -1 when none, or -2 outside the program's
+;; final check, whose queries alone are answered.
+(define (tc-call-arena-store-region [ctx : TcContext] [env : TcTypeEnv]) : i64
+  (if (tc-arena-store-final? ctx)
+    (match (tc-active-region env)
+      [(Some region) region]
+      [(No) -1])
+    -2))
+
+;; The effect node of call head or function argument `expr`: its declaration,
+;; -1 when it runs no function body (a constructor or primitive), or
+;; `indirect` for a function value, a local binding included.
+(define (tc-arena-store-typed-callee
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [indirect : i64]) : i64
+  (let
+    [name : i64
+      (tc-expr-var-name-id
+        (tc-context-expr-bases ctx)
+        (tc-global-shared-view expr))]
+    (cond
+      [(< name 0) indirect]
+      [(tc-name-lexically-bound-id? env name) indirect]
+      [else (tc-global-effect-callee ctx Nil expr indirect)])))
+
+(define (tc-arena-store-record!
+  [ctx : TcContext]
+  [kind : i64]
+  [callee : i64]
+  [head : i64]
+  [function : i64]
+  [index : i64]
+  [reach : bool]
+  [exempt : i64]
+  [primary : TcMaybeAstSourceSpan]) : unit
+  (tc-arena-store-query!
+    ctx
+    (TcArenaStoreQuery
+      kind
+      callee
+      head
+      function
+      index
+      reach
+      exempt
+      primary
+      ""
+      false
+      0)))
+
+;; A callee allocates in the arena active at its call (SPEC 3.9). Under a
+;; scoped arena `region`, the call is rejected when the callee may store an
+;; allocation into a global (kind 0) or, through argument `at` of type `arg`,
+;; into storage outside that arena (kind 1); a function value called there
+;; may also write through what it captures (kind 1 of the call). A by-value
+;; argument tagged with a scratch region that is not the active one (an
+;; allocation through a bare arena parameter, or an outer scratch body's) may
+;; itself be stored either way. A function value passed where the callee
+;; calls it inside an arena scope is checked the same way (kind 2). A
+;; function value, a local binding included, may be any function or lambda
+;; of its parameter types `params`. The summary answers once every body is
+;; checked; `arg` is No for the check made once per call. Calls in `unsafe`
+;; are exempt, and an exemption that matters uses the block.
+(define (tc-call-arena-store-note!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [region : i64]
+  [params : (& params ast.AstTypeList)]
+  [func : ast.AstExpr]
+  [at : ast.AstExpr]
+  [index : i64]
+  [arg : ast.AstMaybeType]) : unit
+  (when (= region -2) (return unit))
+  ;; A scalar, string or shared reference to one carries no region, reaches no
+  ;; writable storage and is no function value: most arguments stop here.
+  (when
+    (match (tc-global-shared-view arg)
+      [(Some ty) (tc-arena-store-plain-argument? (& ty))]
+      [(No) false])
+    (return unit))
+  (let
+    [function? : bool
+      (match (tc-global-shared-view arg)
+        [(Some ty)
+          (match (tc-type-strip-region (tc-global-shared-view ty))
+            [(Func _ _) true]
+            [_ false])]
+        [(No) false])]
+    ;; Only a by-value argument's region can be a foreign scratch region.
+    [tagged? : bool
+      (match (tc-global-shared-view arg)
+        [(Some ty)
+          (and
+            (tc-type-contains-any-region (& ty))
+            (not (tc-type-contains-reference? (& ty))))]
+        [(No) false])]
+    (when (not (or (>= region 0) function? tagged?)) (return unit))
+    (let
+      [indirect : i64
+        (csym.compiler-symbols-decl-count (tc-context-symbols ctx))]
+      [direct : i64
+        (tc-arena-store-typed-callee
+          ctx
+          env
+          (tc-global-shared-view func)
+          indirect)]
+      [callee : i64
+        (if (= direct indirect)
+          (tc-arena-store-call-node indirect params)
+          direct)]
+      (when (< callee 0) (return unit))
+      (let
+        [exempt : i64
+          (if (tc-in-unsafe? env)
+            (let
+              [data : TcUnusedUnsafeStateData
+                (tc-unused-unsafe-state-data
+                  (tc-job-state-unused-unsafe (tc-context-job-state ctx)))]
+              (if data.enabled
+                data.current-block
+                -1))
+            -2)]
+        ;; An exemption only marks its block used, for unused-unsafe tracking.
+        (when (= exempt -1) (return unit))
+        (let
+          [head : i64 (tc-arena-store-expr-node ctx (& func))]
+          [primary : TcMaybeAstSourceSpan
+            (tc-expr-maybe-span
+              (tc-context-expr-bases ctx)
+              (tc-global-shared-view at))]
+          (match (tc-global-shared-view arg)
+            [(No)
+              (when
+                (>= region 0)
+                (tc-arena-store-record!
+                  ctx
+                  0
+                  callee
+                  head
+                  -1
+                  -1
+                  false
+                  exempt
+                  primary)
+                (when
+                  (>= callee indirect)
+                  (tc-arena-store-record!
+                    ctx
+                    1
+                    callee
+                    head
+                    -1
+                    -1
+                    false
+                    exempt
+                    primary)))]
+            [(Some ty)
+              (let
+                [foreign : bool
+                  (and
+                    tagged?
+                    (let
+                      [cursor : TcNameIdList (tc-type-collect-regions (& ty))]
+                      [found : bool false]
+                      (while (and
+                        (not found)
+                        (not (tc-name-id-list-empty? cursor)))
+                        (let
+                          [region-head : i64 (tc-name-id-list-head cursor)]
+                          (when
+                            (and
+                              (!= region-head region)
+                              (tc-scratch-region-id? region-head))
+                            (set! found true)))
+                        (set! cursor (tc-name-id-list-rest cursor)))
+                      found))]
+                (when
+                  foreign
+                  (tc-arena-store-record!
+                    ctx
+                    0
+                    callee
+                    head
+                    -1
+                    -1
+                    false
+                    exempt
+                    primary))
+                (when
+                  (or
+                    foreign
+                    (and
+                      (>= region 0)
+                      (tc-type-reaches-writable-storage?
+                        ctx
+                        (tc-global-shared-view ty)
+                        region
+                        false
+                        Nil)))
+                  (tc-arena-store-record!
+                    ctx
+                    1
+                    callee
+                    head
+                    -1
+                    -1
+                    false
+                    exempt
+                    primary))
+                ;; A function value's own calls inside an arena scope happen in
+                ;; a declared callee; a lambda parameter's are checked in place.
+                (when
+                  (and function? (< callee indirect))
+                  (match (tc-type-strip-region (tc-global-shared-view ty))
+                    [(Func arg-params _)
+                      (let
+                        [param-list : ast.AstTypeList
+                          (ast.ast-type-list-box-shared-view arg-params)]
+                        [value : i64
+                          (tc-arena-store-typed-callee
+                            ctx
+                            env
+                            (tc-global-shared-view at)
+                            indirect)]
+                        [function : i64
+                          (if (= value indirect)
+                            (tc-arena-store-call-node indirect (& param-list))
+                            value)]
+                        (when
+                          (>= function 0)
+                          (tc-arena-store-record!
+                            ctx
+                            2
+                            callee
+                            head
+                            function
+                            index
+                            (tc-types-reach-writable-storage?
+                              ctx
+                              param-list
+                              -1
+                              false
+                              Nil)
+                            exempt
+                            primary)))]
+                    [_ unit])))]))))))
+
+(define (tc-arena-store-plain-argument? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
+         (Unit) (Never) (String) (Str) (Bytes))
+      true]
+    [(Ref _ inner) (tc-arena-store-plain-argument? (& (ast.ty-node-get inner)))]
+    [_ false]))
+
+(define (tc-arena-store-chain
+  [ctx : TcContext]
+  [path : (& path effect_words.Vec)]) : String
+  (let
+    [chain : String ""]
+    (for [index (iterator.range 0 (effect_words.len path))]
+      (set!
+        chain
+        (str_cat.str-cat
+          chain
+          (if (= index 0)
+            ""
+            " -> ")
+          (tc-global-effect-node-name ctx (effect_words.get path index 0)))))
+    chain))
+
+;; Answer the queued arena-store queries once every body is checked; queries
+;; from another program (a macro expansion pass) were dropped with its state.
+(define (tc-arena-store-graph [state : (MutPtr TcGlobalCallEffects)]) : global_effects.Graph
+  (unsafe
+    (deref state).arena-graph))
+
+;; The parameters `node` itself calls inside an arena scope, as a bit mask
+;; over its first 63 parameters, from a scan of its own body alone.
+(define (tc-arena-store-direct-mask
+  [ctx : TcContext]
+  [state : (MutPtr TcGlobalCallEffects)]
+  [node : i64]) : i64
+  (let
+    [count : i64
+      (unsafe
+        (deref state).count)]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make_small)]
+    (unsafe
+      (arena.tl_arena_set scratch))
+    (let
+      [collector : TcGlobalEffectCollector
+        (TcGlobalEffectCollector
+          (global_effects.new-with-extra count (tc-arena-store-union-nodes))
+          (tc_i64_i64_map.with-capacity 0)
+          (unsafe
+            (deref state).typed-temporaries)
+          (__tl_make-array i64 (+ count (+ 1 (tc-arena-store-union-nodes))))
+          (effect_words.new)
+          false
+          false
+          (ast.ast-let-binding-list-new)
+          -1
+          count
+          0
+          0
+          true
+          (unsafe
+            (deref state).tagged)
+          -1
+          false
+          false)]
+      [mask : i64 0]
+      (tc-global-effect-scan-declaration! ctx (&mut collector) node)
+      (for [index (iterator.range 0 63)]
+        (when
+          (global_effects.direct-writer?
+            (& collector.graph)
+            node
+            (tc-arena-store-parameter-key count index))
+          (set! mask (bit-or mask (shl 1 index)))))
+      (unsafe
+        (arena.tl_arena_set enclosing)
+        (arena.tl_arena_destroy scratch))
+      mask)))
+
+;; Whether a kind-2 query's callee calls its parameter `index` inside an
+;; arena scope (`tc-arena-store-direct-mask`, by callee in `masks`).
+(define (tc-arena-store-invokes?
+  [masks : (& masks tc_i64_i64_map.Map)]
+  [kind : i64]
+  [callee : i64]
+  [index : i64]) : bool
+  (and
+    (= kind 2)
+    (< index 63)
+    (!= (bit-and (tc_i64_i64_map.get-value-or masks callee 0) (shl 1 index)) 0)))
+
+(define (tc-arena-store-late-diagnostics [ctx : TcContext]) : cdiag.CompilerDiagnosticList
+  (let
+    [out : cdiag.CompilerDiagnosticList (cdiag.compiler-diagnostic-list-empty)]
+    [state : (MutPtr TcGlobalCallEffects) (tc-global-call-effects-ensure! ctx)]
+    [indirect : i64
+      (unsafe
+        (deref state).count)]
+    [first : i64
+      (unsafe
+        (deref state).arena-pending)]
+    [head : i64 first]
+    ;; A callee's own parameter calls inside an arena scope, by callee.
+    [masks : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 0)]
+    ;; Collect every query's roots first: a collection after a witness would
+    ;; discard the witness caches.
+    (while (!= head 0)
+      (let
+        [query : TcArenaStoreQuery
+          (unsafe
+            (ptr-read (int->ptr (cast head : u64) : (Ptr TcArenaStoreQuery))))]
+        (if (= query.kind 2)
+          (begin
+            (unless
+              (tc_i64_i64_map.contains? (& masks) query.callee)
+              (tc_i64_i64_map.insert-ref!
+                (&mut masks)
+                query.callee
+                (tc-arena-store-direct-mask ctx state query.callee)))
+            (when
+              (tc-arena-store-invokes?
+                (& masks)
+                query.kind
+                query.callee
+                query.index)
+              (tc-global-call-effects-collect! ctx state query.function true)))
+          (tc-global-call-effects-collect! ctx state query.callee true))
+        (set! head query.next)))
+    (set! head first)
+    (while (!= head 0)
+      (let
+        [query : TcArenaStoreQuery
+          (unsafe
+            (ptr-read (int->ptr (cast head : u64) : (Ptr TcArenaStoreQuery))))]
+        (unless
+          (and
+            (>= query.callee indirect)
+            (>= query.head 0)
+            (global_effects.written?
+              (& (tc-arena-store-graph state))
+              (tc-arena-store-parameter-call-key query.head)))
+          (let
+            [path : effect_words.Vec
+              (if (= query.kind 2)
+                (if (tc-arena-store-invokes?
+                  (& masks)
+                  query.kind
+                  query.callee
+                  query.index)
+                  (let
+                    [global : effect_words.Vec
+                      (tc-arena-store-witness!
+                        state
+                        query.function
+                        (tc-arena-store-global-key indirect))]
+                    (if (or
+                      (> (effect_words.len (& global)) 0)
+                      (not query.reach))
+                      global
+                      (tc-arena-store-witness!
+                        state
+                        query.function
+                        (tc-arena-store-argument-key indirect))))
+                  (effect_words.new))
+                (tc-arena-store-witness!
+                  state
+                  query.callee
+                  (if (= query.kind 0)
+                    (tc-arena-store-global-key indirect)
+                    (tc-arena-store-argument-key indirect))))]
+            (when
+              (> (effect_words.len (& path)) 0)
+              (if (>= query.exempt -1)
+                (when
+                  (>= query.exempt 0)
+                  (let
+                    [data : TcUnusedUnsafeStateData
+                      (tc-unused-unsafe-state-data
+                        (tc-job-state-unused-unsafe (tc-context-job-state ctx)))]
+                    (when
+                      (and data.enabled (< query.exempt data.block-len))
+                      (set! (array-ref data.block-used query.exempt) true))))
+                (let
+                  [message : String
+                    (tc-kind-message
+                      (RegionEscape)
+                      (if (= query.kind 2)
+                        (str_cat.str-cat
+                          "typecheck: cannot pass `"
+                          (tc-global-effect-node-name ctx query.function)
+                          "` to `"
+                          (tc-global-effect-node-name ctx query.callee)
+                          "`: it calls the function inside an arena scope, and `"
+                          (tc-global-effect-node-name ctx query.function)
+                          "` may store an allocation of that arena where it would outlive it (via "
+                          (tc-arena-store-chain ctx (& path))
+                          "); region value would escape")
+                        (str_cat.str-cat
+                          "typecheck: cannot call `"
+                          (tc-global-effect-node-name ctx query.callee)
+                          "` here: it allocates in the active arena and may store an allocation "
+                          (if (= query.kind 0)
+                            "into a global"
+                            "through this argument")
+                          ", which would outlive the arena (via "
+                          (tc-arena-store-chain ctx (& path))
+                          "); region value would escape")))]
+                  [located : String
+                    (match query.primary
+                      [(Some primary) (tc-located-error primary message)]
+                      [(No) message])]
+                  (cdiag.compiler-diagnostic-list-push!
+                    (&mut out)
+                    (cdiag.compiler-diagnostic-with-fallback-path
+                      (tc-diag-at-start located)
+                      (tc-global-shared-view query.source-path))))))))
+        (set! head query.next)))
+    ;; Each query is answered once, by the check that queued it.
+    (let
+      [queued : tc_i64_i64_map.Map
+        (unsafe
+          (deref state).arena-queued)]
+      (tc_i64_i64_map.clear-ref! (&mut queued))
+      (unsafe
+        (set! (deref state).arena-pending 0)
+        (set! (deref state).arena-queued queued)))
+    out))
 
 (define (tc-global-effect-late-diagnostics [ctx : TcContext]) : cdiag.CompilerDiagnosticList
   (let
@@ -98085,6 +99833,16 @@
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (tc-global-effect-late-diagnostics ctx)]
+        (let
+          [arena-diagnostics : cdiag.CompilerDiagnosticList
+            (tc-arena-store-late-diagnostics ctx)]
+          (for [index
+            (iterator.range
+              0
+              (cdiag.compiler-diagnostic-list-count arena-diagnostics))]
+            (cdiag.compiler-diagnostic-list-push!
+              (&mut diagnostics)
+              (cdiag.compiler-diagnostic-list-get arena-diagnostics index))))
         (if (= (cdiag.compiler-diagnostic-list-count diagnostics) 0)
           (Ok summary ctx top-env paths)
           (Partial (box diagnostics) ctx top-env paths)))]
@@ -127559,12 +129317,9 @@
 (define (tc-selected-holding-type? [_ctx : TcContext] [resolved : ast.AstType]) : bool
   (and
     (match (& resolved)
-      [(ast.AstType.StructArgs _ _)
-        (tc-type-contains-reference? (tc-global-shared-view resolved))]
-      [(ast.AstType.EnumArgs _ _)
-        (tc-type-contains-reference? (tc-global-shared-view resolved))]
-      [(ast.AstType.Tuple _)
-        (tc-type-contains-reference? (tc-global-shared-view resolved))]
+      [(ast.AstType.StructArgs _ _) (tc-type-contains-reference? (& resolved))]
+      [(ast.AstType.EnumArgs _ _) (tc-type-contains-reference? (& resolved))]
+      [(ast.AstType.Tuple _) (tc-type-contains-reference? (& resolved))]
       [_ false])
     (not (tc-selected-type-contains-view? (tc-global-shared-view resolved)))))
 
@@ -129956,7 +131711,7 @@
   [globals : (& globals (__tl_dyn-array i64))]) : unit
   (when
     (>= callee 0)
-    (tc-global-call-effects-collect! ctx state callee)
+    (tc-global-call-effects-collect! ctx state callee false)
     (let
       [global : i64 0]
       [growing? : bool (tc-global-effects-growing? state)]
@@ -130163,7 +131918,7 @@
               [cleanup : i64 (csym.compiler-symbol-handle-index handle)]
               [global : i64 0]
               [growing? : bool false]
-              (tc-global-call-effects-collect! ctx state cleanup)
+              (tc-global-call-effects-collect! ctx state cleanup false)
               (set! growing? (tc-global-effects-growing? state))
               (while (< global (array-length globals))
                 (let
@@ -130201,7 +131956,7 @@
               indirect)]
           (when
             (>= cleanup 0)
-            (tc-global-call-effects-collect! ctx state cleanup)
+            (tc-global-call-effects-collect! ctx state cleanup false)
             (let
               [global : i64 0]
               [growing? : bool (tc-global-effects-growing? state)]
@@ -132643,6 +134398,7 @@
   [summary : CompilerTypecheckSummary]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
+  (tc-arena-store-begin-final! ctx)
   ;; A cached prefix contains only its summary, not semantic observations from
   ;; the declarations it skipped. Consumers requiring complete let facts take
   ;; the ordinary walk. Lowering may infer missing facts after trusted surface

@@ -20,9 +20,15 @@
             (__tl_make-array 11)
             (__tl_make-array 0))]
         (unless
-          (surface_facts.surface-typecheck-facts-publish-composite! facts)
+          (unsafe
+            ;; unsafe: publishes global surface facts; cleared before this arena ends
+            (surface_facts.surface-typecheck-facts-publish-composite! facts))
           (io.panic "source composite facts must be valid"))
-        (in-arena home (surface_facts.surface-typecheck-facts-retain-current!))))
+        (in-arena
+          home
+          (unsafe
+            ;; unsafe: retains the global surface facts in this arena; cleared before it ends
+            (surface_facts.surface-typecheck-facts-retain-current!)))))
     (with-scratch
       (let
         [reuse : (__tl_dyn-array i64) (__tl_make-array i64 1048576)]

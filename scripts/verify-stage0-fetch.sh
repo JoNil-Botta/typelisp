@@ -198,6 +198,118 @@ for fetcher in $fetchers; do
     done
 done
 
+# --at-commit selects the newest permanent generation built at or before that
+# commit, never the mutable stage0-latest (#9823).
+at_commit=abcdef0123456789abcdef0123456789abcdef01
+at_newer=stage0-20261019-120000-r101
+at_ancestor=stage0-20261018-120000-r100
+at_older=stage0-20261017-120000-r99
+at_sha_newer=1111111111111111111111111111111111111111
+at_sha_ancestor=2222222222222222222222222222222222222222
+at_sha_older=3333333333333333333333333333333333333333
+at_releases=$(jq -n \
+    --arg newer "$at_newer" --arg ancestor "$at_ancestor" --arg older "$at_older" \
+    --arg sha_newer "$at_sha_newer" --arg sha_ancestor "$at_sha_ancestor" --arg sha_older "$at_sha_older" '
+    [{tag_name:$newer, target_commitish:$sha_newer, published_at:"2026-10-19T12:00:00Z"},
+     {tag_name:$ancestor, target_commitish:$sha_ancestor, published_at:"2026-10-18T12:00:00Z"},
+     {tag_name:$older, target_commitish:$sha_older, published_at:"2026-10-17T12:00:00Z"}] |
+    map(. + {draft:false, prerelease:false,
+        assets:[{name:"typelisp-stage0-linux",state:"uploaded",size:10},
+                {name:"typelisp-stage0-windows.exe",state:"uploaded",size:10},
+                {name:"SHA256SUMS",state:"uploaded",size:100}]})')
+# The newest release is not an ancestor of the base; of the two ancestors the
+# newer one must win. Only the two ancestors can be downloaded, so a wrong
+# choice fails instead of merely fetching another tag.
+at_responses() {
+    jq -n --arg api "$api" --arg base "$base" --arg at "$at_commit" \
+        --arg newer "$at_newer" --arg ancestor "$at_ancestor" --arg older "$at_older" \
+        --arg sha_ancestor "$at_sha_ancestor" --arg sha_older "$at_sha_older" \
+        --argjson releases "$at_releases" --arg mode "$1" '
+    def entry($body): {status:200, body:($body|tojson)};
+    {
+      ($api+"/releases?per_page=100&page=1"):
+        (if $mode == "api-failure" then {status:503} else entry($releases) end),
+      ($api+"/compare/"+$newer+"..."+$at):
+        entry({base_commit:{sha:"0000000000000000000000000000000000000000"},status:"diverged"}),
+      ($api+"/compare/"+$ancestor+"..."+$at):
+        entry({base_commit:{sha:$sha_ancestor},status:(if $mode == "none" then "diverged" else "ahead" end)}),
+      ($api+"/compare/"+$older+"..."+$at):
+        entry({base_commit:{sha:$sha_older},status:(if $mode == "none" then "behind" else "ahead" end)}),
+      ($base+"/"+$ancestor+"/typelisp-stage0-linux"):{status:200,file:"payload"},
+      ($base+"/"+$ancestor+"/typelisp-stage0-windows.exe"):{status:200,file:"payload"},
+      ($base+"/"+$ancestor+"/SHA256SUMS"):{status:200,file:"SHA256SUMS"},
+      ($base+"/"+$older+"/typelisp-stage0-linux"):{status:200,file:"payload"},
+      ($base+"/"+$older+"/typelisp-stage0-windows.exe"):{status:200,file:"payload"},
+      ($base+"/"+$older+"/SHA256SUMS"):{status:200,file:"SHA256SUMS"}
+    }' > "$work/responses.json"
+}
+case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) at_output=typelisp.exe ;; *) at_output=typelisp ;; esac
+for at_mode in choose none api-failure; do
+    out="$work/at-$at_mode"
+    mkdir "$out"
+    printf 'previous compiler\n' > "$out/$at_output"
+    chmod +x "$out/$at_output"
+    : > "$work/calls"
+    at_responses "$at_mode"
+    status=0
+    PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" FETCH_REAL_JQ="$real_jq" FETCH_CRLF=0 \
+        TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS=1 TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
+        sh "$ROOT/scripts/fetch-stage0.sh" --at-commit "$at_commit" "$out" > "$work/result.log" 2>&1 || status=$?
+    case "$at_mode" in
+        choose)
+            if [ "$status" -ne 0 ] || ! cmp -s "$work/payload" "$out/$at_output"; then
+                cat "$work/result.log" >&2
+                echo "stage0 fetch sh/at-commit-$at_mode failed" >&2
+                exit 1
+            fi
+            grep -F "newest permanent release at or before $at_commit is $at_ancestor" "$work/result.log" >/dev/null || {
+                cat "$work/result.log" >&2
+                echo "stage0 fetch sh/at-commit-$at_mode did not name the newest ancestor" >&2
+                exit 1
+            }
+            grep -F "/$at_ancestor/typelisp" "$work/calls" >/dev/null || {
+                cat "$work/calls" >&2
+                echo "stage0 fetch sh/at-commit-$at_mode did not download the newest ancestor" >&2
+                exit 1
+            }
+            if grep -E "/($at_newer|$at_older)/" "$work/calls" >/dev/null; then
+                cat "$work/calls" >&2
+                echo "stage0 fetch sh/at-commit-$at_mode downloaded another generation" >&2
+                exit 1
+            fi
+            ;;
+        *)
+            if [ "$status" -eq 0 ] || ! cmp -s "$work/previous" "$out/$at_output" || [ ! -x "$out/$at_output" ]; then
+                cat "$work/result.log" >&2
+                echo "stage0 fetch sh/at-commit-$at_mode accepted an unusable selection" >&2
+                exit 1
+            fi
+            if [ "$at_mode" = api-failure ]; then
+                grep -F "cannot list permanent stage0 releases" "$work/result.log" >/dev/null || {
+                    cat "$work/result.log" >&2
+                    echo "stage0 fetch sh/at-commit-$at_mode hid the API failure" >&2
+                    exit 1
+                }
+            else
+                grep -F "refusing the mutable stage0-latest" "$work/result.log" >/dev/null || {
+                    cat "$work/result.log" >&2
+                    echo "stage0 fetch sh/at-commit-$at_mode did not explain the refusal" >&2
+                    exit 1
+                }
+            fi
+            if grep -F "/stage0-latest/" "$work/calls" >/dev/null; then
+                cat "$work/calls" >&2
+                echo "stage0 fetch sh/at-commit-$at_mode fell back to stage0-latest" >&2
+                exit 1
+            fi
+            ;;
+    esac
+    for temp in "$out"/.stage0-download.*; do
+        [ ! -e "$temp" ] || { echo "stage0 fetch left temporary state: $temp" >&2; exit 1; }
+    done
+    echo "stage0 fetch sh/at-commit-$at_mode passed"
+done
+
 case "$(uname -s)" in
     Linux*)
         out="$work/concurrent output"

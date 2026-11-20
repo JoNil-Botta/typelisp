@@ -194,14 +194,16 @@
         [bytes
           (try
             (with-scratch
-              (producer.embedded-native-emit-package
-                context
-                (string.copy (& metadata-text))
-                (string.copy (& build-hash))
-                windows-target
-                (tlci.tlci-empty-bytes)
-                (__tl_make-array (string.copy (& (array-ref sorted index))))
-                captures)))]
+              (unsafe
+                ;; unsafe: the native report strings are read before this arena ends
+                (producer.embedded-native-emit-package
+                  context
+                  (string.copy (& metadata-text))
+                  (string.copy (& build-hash))
+                  windows-target
+                  (tlci.tlci-empty-bytes)
+                  (__tl_make-array (string.copy (& (array-ref sorted index))))
+                  captures))))]
         (set! (array-ref images (+ index 1)) bytes)))
     (let
       [ordinary

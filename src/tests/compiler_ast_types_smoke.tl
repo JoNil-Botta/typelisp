@@ -252,7 +252,9 @@
       [duplicate : i64
         (in-arena
           scratch
-          (ast.ast-node-pool-context-type-push pools duplicate-node))]
+          (unsafe
+            ;; unsafe: installs global AST pool state; replaced before this arena ends
+            (ast.ast-node-pool-context-type-push pools duplicate-node)))]
       [_destroy : unit
         (unsafe
           (arena.destroy scratch))]

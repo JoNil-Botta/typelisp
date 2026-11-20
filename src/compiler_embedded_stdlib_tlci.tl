@@ -309,7 +309,10 @@
           ;; Only decoded bytes belong to the retained surface owner;
           ;; shared decode tables stay in their process arena.
           [bytes : (__tl_dyn-array u8)
-            (with-scratch (compiler-embedded-stdlib-tlci-decode-frame 0))]
+            (with-scratch
+              (unsafe
+                ;; unsafe: decode tables live in the arena of the callee's own bare handle, not this one
+                (compiler-embedded-stdlib-tlci-decode-frame 0)))]
           (set!
             (array-ref compiler-embedded-stdlib-tlci-decoded 0)
             (owned_view.compiler-owned-shared-view bytes))

@@ -24,8 +24,13 @@
   (indirect i64))
 
 (define (new [node-count : i64]) : Graph
+  (new-with-extra node-count 0))
+
+;; A graph whose nodes past the indirect node `node-count` are `extra` more
+;; union nodes of the caller's own.
+(define (new-with-extra [node-count : i64] [extra : i64]) : Graph
   (Graph
-    (__tl_make-array i64 (+ node-count 1))
+    (__tl_make-array i64 (+ node-count (+ 1 extra)))
     (words.new)
     (words.with-capacity 8)
     (ids.with-capacity 0)
@@ -152,3 +157,19 @@
       (words.push-ref! (&mut path) node)
       (set! node (- (array-ref summary node) 1)))
     path))
+
+;; Whether `node` itself writes `key`, not only through a call.
+(define (direct-writer? [graph : (& graph Graph)] [node : i64] [key : i64]) : bool
+  (let
+    [cursor : i64 (ids.get-value-or (& graph.writers) key 0)]
+    [found : bool false]
+    (while (and (not found) (!= cursor 0))
+      (let
+        [edge : Edge (link-at (& graph.links) (- cursor 1))]
+        (when (= edge.node node) (set! found true))
+        (set! cursor edge.next)))
+    found))
+
+;; Whether any function writes `key`.
+(define (written? [graph : (& graph Graph)] [key : i64]) : bool
+  (!= (ids.get-value-or (& graph.writers) key 0) 0))

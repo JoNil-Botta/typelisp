@@ -1394,6 +1394,26 @@
     0
     (lint_core.lint-findings-empty)))
 
+;; Typing decides an unsafe block the classifier cannot; a file with `test`
+;; declarations is typed as its tests are built, with `test` enabled.
+(define (selfhost-lint-typed-cfgs
+  [cfgs : sym_i64_env.SymI64Env]
+  [program : (& program ast.AstProgram)]) : sym_i64_env.SymI64Env
+  (match program
+    [(Program decls-box)
+      (let
+        [decls : (& program ast.AstDeclList) (& (deref decls-box))]
+        [tests : bool false]
+        (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+          (match (ast.ast-decl-list-ref-borrowed decls index)
+            [(Test _ _ _ _)
+              (set! tests true)
+              (break)]
+            [_ unit]))
+        (if tests
+          (parser.compiler-cfg-enable cfgs "test")
+          cfgs))]))
+
 (define (selfhost-lint-program-and-typed-findings
   [path : String]
   [source : String]
@@ -1412,6 +1432,10 @@
     (owned_view.compiler-owned-shared-view stdlib-roots)
     cfgs)
   (let
+    [typed-cfgs : sym_i64_env.SymI64Env
+      (selfhost-lint-typed-cfgs
+        (sym_i64_env.sym-i64-shared-view (& cfgs))
+        (& program))]
     [ordinary : lint_core.LintFindings
       (selfhost-lint-program-findings-with-all-options
         path
@@ -1434,7 +1458,7 @@
           path
           source
           stdlib-roots
-          cfgs)
+          typed-cfgs)
         (lint_core.lint-findings-empty))]
     [base : lint_core.LintFindings
       (if (> unknown-count 0)
@@ -2324,19 +2348,25 @@
       (with-scratch
         (let
           [scratch-scan : SelfhostLintDeadScan
-            (selfhost-lint-dead-scan-source
-              (SelfhostLintDeadScan
-                (selfhost-lint-dead-decls-empty)
-                (lint_svec.new))
-              (owned_view.compiler-owned-shared-view path)
-              (byte_buf.to-string (io.read-file path))
-              visible-root
-              reportable)]
+            (unsafe
+              ;; unsafe: installs global AST pool state; replaced before this arena ends
+              (selfhost-lint-dead-scan-source
+                (SelfhostLintDeadScan
+                  (selfhost-lint-dead-decls-empty)
+                  (lint_svec.new))
+                (owned_view.compiler-owned-shared-view path)
+                (byte_buf.to-string (io.read-file path))
+                visible-root
+                reportable))]
           ;; Clear compiler globals while the scratch allocations they may
           ;; reference are still mapped. Allocate any replacement state in
           ;; the enclosing owner, then clone only this file's compact scan
           ;; out before reclaiming its complete AST.
-          (in-arena home (selfhost-lint-reset-file-state!))
+          (in-arena
+            home
+            (unsafe
+              ;; unsafe: resets the global lint caches; they keep no allocation of this arena
+              (selfhost-lint-reset-file-state!)))
           scratch-scan))]
     [next : SelfhostLintDeadScan
       (selfhost-lint-dead-scan-append-owned scan source-scan)]
@@ -3010,12 +3040,15 @@
       (with-scratch
         (let
           [scratch-result : ResultSelfhostLintDeadImportList
-            (match (parser.parse-ast-source-diagnostic-with-cfg
-              (owned_view.compiler-owned-shared-view path)
-              (&
-                (byte_buf.to-string
-                  (io.read-file (owned_view.compiler-owned-shared-view path))))
-              (selfhost-lint-package-dead-cfgs))
+            (match (unsafe
+              ;; unsafe: installs global AST pool state; replaced before this arena ends
+              ;; unsafe: interned names live in the persistent intern arena, not this one
+              (parser.parse-ast-source-diagnostic-with-cfg
+                (owned_view.compiler-owned-shared-view path)
+                (&
+                  (byte_buf.to-string
+                    (io.read-file (owned_view.compiler-owned-shared-view path))))
+                (selfhost-lint-package-dead-cfgs)))
               [(Err diag) (Err diag)]
               [(Ok program)
                 (match program
@@ -3026,18 +3059,24 @@
                       [importer-scan-decls : ast.AstDeclList
                         (compiler_load.compiler-load-importer-scan-decls
                           (& decls))]
-                      (selfhost-lint-package-dead-import-paths-from-decls
-                        decls
-                        (& importer-scan-decls)
-                        path
-                        import-root
-                        source-set
-                        root-sources
-                        stdlib-roots
-                        pools
-                        package-imports
-                        (lint_svec.new)))])])]
-          (in-arena home (selfhost-lint-reset-file-state!))
+                      (unsafe
+                        ;; unsafe: interned names live in the persistent intern arena, not this one
+                        (selfhost-lint-package-dead-import-paths-from-decls
+                          decls
+                          (& importer-scan-decls)
+                          path
+                          import-root
+                          source-set
+                          root-sources
+                          stdlib-roots
+                          pools
+                          package-imports
+                          (lint_svec.new))))])])]
+          (in-arena
+            home
+            (unsafe
+              ;; unsafe: resets the global lint caches; they keep no allocation of this arena
+              (selfhost-lint-reset-file-state!)))
           scratch-result))]
     (ast.ast-node-pool-context-reset-to! pools 0 0)
     (ast.ast-node-pool-compat-context-clear!)
@@ -3356,15 +3395,17 @@
       (with-scratch
         (let
           [file-status : i64
-            (selfhost-lint-file
-              input-path
-              stdlib-roots
-              enforcing
-              deprecated-string-concat
-              redundant-function-name
-              redundant-begin
-              prefer-dotted-field
-              name-case)]
+            (unsafe
+              ;; unsafe: global lint findings are reset before this arena ends
+              (selfhost-lint-file
+                input-path
+                stdlib-roots
+                enforcing
+                deprecated-string-concat
+                redundant-function-name
+                redundant-begin
+                prefer-dotted-field
+                name-case))]
           ;; Without an explicit batch reset, the unsafe-surface cache was
           ;; ensured into this file scratch. Release it before with-scratch
           ;; reclaims the arena, and rebuild global state in the enclosing
@@ -3373,9 +3414,15 @@
             (unsafe
               (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
             (arena.current))
-            (selfhost-lint-unsafe-surface-cache-release!)
+            (unsafe
+              ;; unsafe: releases the global lint cache; it keeps no allocation of this arena
+              (selfhost-lint-unsafe-surface-cache-release!))
             unit)
-          (in-arena home (selfhost-lint-reset-file-state!))
+          (in-arena
+            home
+            (unsafe
+              ;; unsafe: resets the global lint caches; they keep no allocation of this arena
+              (selfhost-lint-reset-file-state!)))
           file-status))]
     (ast.ast-node-pool-context-reset-to! pools 0 0)
     (ast.ast-node-pool-compat-context-clear!)
@@ -3408,23 +3455,31 @@
       (with-scratch
         (let
           [file-status : i64
-            (selfhost-lint-file-with-package-dead
-              input-path
-              stdlib-roots
-              enforcing
-              deprecated-string-concat
-              redundant-function-name
-              redundant-begin
-              prefer-dotted-field
-              name-case
-              dead-decls)]
+            (unsafe
+              ;; unsafe: global lint findings are reset before this arena ends
+              (selfhost-lint-file-with-package-dead
+                input-path
+                stdlib-roots
+                enforcing
+                deprecated-string-concat
+                redundant-function-name
+                redundant-begin
+                prefer-dotted-field
+                name-case
+                dead-decls))]
           (if (arena.eq?
             (unsafe
               (arena.Arena selfhost-lint-unsafe-surface-cache-arena))
             (arena.current))
-            (selfhost-lint-unsafe-surface-cache-release!)
+            (unsafe
+              ;; unsafe: releases the global lint cache; it keeps no allocation of this arena
+              (selfhost-lint-unsafe-surface-cache-release!))
             unit)
-          (in-arena home (selfhost-lint-reset-file-state!))
+          (in-arena
+            home
+            (unsafe
+              ;; unsafe: resets the global lint caches; they keep no allocation of this arena
+              (selfhost-lint-reset-file-state!)))
           file-status))]
     (ast.ast-node-pool-context-reset-to! pools 0 0)
     (ast.ast-node-pool-compat-context-clear!)

@@ -595,10 +595,14 @@
           (if shared?
             (in-arena
               owner
-              (tc_core.macro-hygiene-produced-expr root env context 0))
+              (unsafe
+                ;; unsafe: installs global AST pool state; replaced before this arena ends
+                (tc_core.macro-hygiene-produced-expr root env context 0)))
             (in-arena
               scratch
-              (tc_core.macro-hygiene-produced-expr root env context 0)))]
+              (unsafe
+                ;; unsafe: installs global AST pool state; replaced before this arena ends
+                (tc_core.macro-hygiene-produced-expr root env context 0))))]
         [_leave : unit
           (unsafe
             (arena.set! owner))]
@@ -12784,15 +12788,19 @@
         scratch
         (unless
           (and
-            (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
-              env-a
-              outer
-              inner)
-            (not
+            (unsafe
+              ;; unsafe: interned names live in the persistent intern arena, not this one
               (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
-                env-b
+                env-a
                 outer
-                inner)))
+                inner))
+            (not
+              (unsafe
+                ;; unsafe: interned names live in the persistent intern arena, not this one
+                (tc_core.tc-lifetime-outlives-lifetime-persistent-id?
+                  env-b
+                  outer
+                  inner))))
           (set! ok false)))
       (unsafe
         (arena.destroy scratch))
@@ -13011,7 +13019,14 @@
               false
               (ast.ast-let-binding-list-new)
               -1
-              0)]
+              0
+              0
+              0
+              false
+              (tc_i64_i64_map.with-capacity 0)
+              -1
+              false
+              false)]
           [outer : tc_core.TcNameIdList
             (tc_core.tc-global-effect-bind!
               (&mut collector)
@@ -13069,7 +13084,11 @@
           (global_effects.add-write! (&mut graph) 0 7)
           (unsafe
             (set! (deref state-a).graph graph))))
-      (in-arena scratch (tc_core.tc-global-effect-witness! state-a 0 7))
+      (in-arena
+        scratch
+        (unsafe
+          ;; unsafe: the effect graph lives in its state's own arena, not this one
+          (tc_core.tc-global-effect-witness! state-a 0 7)))
       (unsafe
         (arena.destroy scratch))
       (test.assert-i64-eq

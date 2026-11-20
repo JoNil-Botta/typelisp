@@ -1595,6 +1595,15 @@ arena_phase_rewind_outer_later_token_reject|check-fail|tests/safety/arena_phase_
 arena_phase_rewind_outer_pre_phase_defined|run-exit|tests/safety/arena_phase_rewind_outer_pre_phase_defined.tl|42|-
 arena_phase_rewind_after_destroy_reject|check-fail|tests/safety/arena_phase_rewind_after_destroy_reject.tl|-|use of moved value `p`
 arena_phase_rewind_after_destroy_with_reject|check-fail|tests/safety/arena_phase_rewind_after_destroy_with_reject.tl|-|cleanup owner `p` moved before with scope exit
+# A branded owner's phase covers a constructor result, a `box`, a capturing
+# closure, a `with-scratch` clone, a match binder and a branded owner field
+# allocated through `in-arena` (#9479).
+arena_phase_rewind_constructor_reject|check-fail|tests/safety/arena_phase_rewind_constructor_reject.tl|-|use of moved value `h`
+arena_phase_rewind_box_reject|check-fail|tests/safety/arena_phase_rewind_box_reject.tl|-|use of moved value `b`
+arena_phase_rewind_closure_reject|check-fail|tests/safety/arena_phase_rewind_closure_reject.tl|-|use of moved value `f`
+arena_phase_rewind_with_scratch_reject|check-fail|tests/safety/arena_phase_rewind_with_scratch_reject.tl|-|use of moved value `text`
+arena_phase_rewind_match_binder_reject|check-fail|tests/safety/arena_phase_rewind_match_binder_reject.tl|-|use of moved value `text`
+arena_phase_rewind_branded_field_reject|check-fail|tests/safety/arena_phase_rewind_branded_field_reject.tl|-|use of moved value `text`
 # An end cannot run while its arena is active anywhere on the stack, including
 # under a nested `with-arena` (#9502), nor end an arena a closure captures
 # (#9482).

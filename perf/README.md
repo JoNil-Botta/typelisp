@@ -119,8 +119,10 @@ own cost, `own = M(T) − M(B)`. The check passes if and only if
 `|own × 10⁶ − d × M(B)| ≤ 4000 × M(B)`, computed in exact integers, where d is
 the PR's honoured declaration in ppm, or 0. The PR window is
 `TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM` (default 5000) less the class-M bound
-(1000 ppm): a landing can add interaction A up to that bound, and the ledger's
-landed window stays 5000 ppm, so a PR that passes here stays inside it.
+(1000 ppm), leaving that bound as headroom to the ledger's unchanged 5000 ppm
+landed window: an undeclared PR within it lands inside the landed window unless
+main's cost moved between its base and its parent (a residual of about 40 ppm
+per 1% of movement).
 
 - M(B) is B's reference only when all of these hold:
   - the GitHub API shows a push-to-main run of the reviewed workflow, in this

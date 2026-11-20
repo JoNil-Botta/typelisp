@@ -266,11 +266,20 @@ st_gate() {
     st_eq "declared window past the edge" "$(_st_gate 1005001 1000)" "DECLARATION-MISMATCH non-routine no"
     st_eq "declared window lower edge" "$(_st_gate 997000 1000)" "declared-ok routine no"
     st_eq "declared window past the lower edge" "$(_st_gate 996999 1000)" "DECLARATION-MISMATCH routine no"
-    # A PR that could fail the landed window on main is caught here: its own
-    # cost plus interaction A (at most 1000 ppm) would exceed 5000 ppm.
+    # A PR whose own cost plus interaction A (at most 1000 ppm) would exceed
+    # 5000 ppm is caught here; the landed window also allows for movement of
+    # main's cost between the PR's base and the landed parent.
     st_eq "own +4500 undeclared is a regression" "$(_st_gate 1004500 none)" "REGRESSION routine no"
     st_eq "own +3900 undeclared is ok" "$(_st_gate 1003900 none)" "ok routine no"
     st_eq "own +4729 declared" "$(_st_gate 1004729 4729)" "declared-ok routine no"
+    # An override that would make the PR window zero, negative or unparsable
+    # is refused with its own message, before any arithmetic on it.
+    st_eq "unparsable tolerance override" \
+        "$(TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5k sh "$SC_TOOL_DIR/self-compile.sh" check 2>&1 | head -n 1)" \
+        "[self-compile] TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: 5k"
+    st_eq "tolerance override at the class-M bound" \
+        "$(TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=1000 sh "$SC_TOOL_DIR/self-compile.sh" check 2>&1 | head -n 1)" \
+        "[self-compile] TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must exceed the class-M bound ($SC_CLASS_M_FAIL_PPM ppm): 1000"
 }
 
 st_declarations() {

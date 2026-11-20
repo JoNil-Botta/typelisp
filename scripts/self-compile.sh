@@ -14,11 +14,12 @@ set -eu
 #   check      PR CI, after ci-verify: gate the PR's own cost
 #              M(T) - M(B), T the tested merge and B its first parent, at
 #              TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM (5000) less the
-#              class-M bound (1000): a landing may add interaction A up to
-#              that bound, so a PR that passes here stays inside the ledger's
-#              landed window. M(B) is B's main reference after API-verified
-#              provenance and an identical identity, or B measured in place
-#              on this runner.
+#              class-M bound (1000). That bound is headroom: a landing may
+#              add interaction A up to it, so an undeclared PR within the PR
+#              window lands inside the ledger's landed window unless main's
+#              cost moved between its base and its parent. M(B) is B's main
+#              reference after API-verified provenance and an identical
+#              identity, or B measured in place on this runner.
 #   reference  Main push workflow: publish this commit's gate record.
 #   ledger     Main push workflow: compare the landed merge with its PR's
 #              report, classify it, and carry the cumulative account forward.
@@ -97,6 +98,9 @@ SC_POLL_SECONDS=$(sc_decimal "$SC_POLL_SECONDS")
 case "$SC_TOLERANCE_PPM" in
     "" | *[!0-9]*) sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: $SC_TOLERANCE_PPM" ;;
 esac
+[ "$SC_TOLERANCE_PPM" -gt "$SC_CLASS_M_FAIL_PPM" ] ||
+    sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must exceed the class-M bound ($SC_CLASS_M_FAIL_PPM ppm): $SC_TOLERANCE_PPM"
+sc_pr_gate_ppm_set
 
 # --- identity ------------------------------------------------------------------
 

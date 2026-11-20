@@ -48,16 +48,23 @@ SC_PROCEDURE_FILES="scripts/measure-instruction-counts.sh scripts/lib-benchmark.
 
 # Tolerance and bounds. TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM keeps its name
 # and 5000 ppm default from the retired checked-row gate. The landed window
-# uses it as is; the PR gate is narrower by the class-M bound, so a PR that
-# passes it cannot fail the landed window when its landing adds interaction A
-# up to that bound.
+# uses it as is; the PR gate is narrower by the class-M bound, which is left as
+# headroom: an undeclared PR within the PR window lands inside the landed
+# window unless main's cost moved between its base and its parent.
 SC_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
 SC_RUNNER_VARIATION_IR=1000
 SC_CLASS_S_WARN_IR=1000
 SC_CLASS_S_FAIL_IR=10000
 SC_CLASS_M_WARN_IR=10000
 SC_CLASS_M_FAIL_PPM=1000
-SC_PR_GATE_PPM=$((SC_TOLERANCE_PPM - SC_CLASS_M_FAIL_PPM))
+
+# sc_pr_gate_ppm_set  ->  SC_PR_GATE_PPM, the PR gate window: the landed window
+# SC_TOLERANCE_PPM less the class-M bound, left as headroom for the interaction
+# A a landing can add. The caller validates the tolerance override first, so a
+# malformed one fails with its own message, not an arithmetic error here.
+sc_pr_gate_ppm_set() {
+    SC_PR_GATE_PPM=$((SC_TOLERANCE_PPM - SC_CLASS_M_FAIL_PPM))
+}
 
 # Reuse key and measurement identity: two measurements may be subtracted only
 # when every one of these fields is equal (D-C15 amendment 4). The kernel is
@@ -436,9 +443,10 @@ sc_declaration_diff_check() {
 
 # sc_gate_decide HEAD_REC BASE_REC DECLARED  ->  writes key/value lines:
 # own, ppm, status, routing. DECLARED is `none` or a finite signed decimal.
-# The window is SC_PR_GATE_PPM, narrower than the landed window by the class-M
-# bound: a landing can add interaction A up to that bound, so a PR that passes
-# here stays inside SC_TOLERANCE_PPM when it lands.
+# The window is SC_PR_GATE_PPM: the landed window SC_TOLERANCE_PPM less the
+# class-M bound, left as headroom for the interaction A a landing can add. An
+# undeclared PR within it lands inside the landed window unless main's cost
+# moved between its base and its parent.
 sc_gate_decide() {
     _sgd_now=$(sc_record_get "$1" ir_count)
     _sgd_base=$(sc_record_get "$2" ir_count)

@@ -672,45 +672,10 @@
           unit))
       func]))
 
-(defenum OptAggregatePointer
-  (Pointer i64 i64))
-
-(import (vector.vector OptAggregatePointer core) as opt_aggregate_pointer_vec)
-
-(defenum OptAggregateAccess
-  (Store i64 ast.AstType)
-  (Load i64 i64 ast.AstType))
-
-(import (vector.vector OptAggregateAccess core) as opt_aggregate_access_vec)
-
-(defenum OptAggregateAllocCandidate
-  (Candidate
-    i64
-    ast.AstType
-    i64
-    opt_aggregate_pointer_vec.Vec
-    opt_aggregate_access_vec.Vec))
-
-(import (vector.vector OptAggregateAllocCandidate core) as opt_aggregate_candidate_vec)
-
 (defenum OptMaybeAggregateAlloc
   (No)
   (Some i64 ast.AstType i64))
 
-(defenum OptAggregateScanResult
-  (Ok opt_aggregate_pointer_vec.Vec opt_aggregate_access_vec.Vec)
-  (Reject))
-
-(defenum OptAggregatePromoteSlot
-  (Slot i64 i64))
-
-(import (vector.vector OptAggregatePromoteSlot core) as opt_aggregate_promote_slot_vec)
-
-(defenum OptAggregatePromoteBuild
-  (Build opt_aggregate_promote_slot_vec.Vec i64))
-
-(define opt-aggregate-list-initial-capacity : i64
-  4)
 (define compiler-optimize-level-default : i64
   1)
 
@@ -3820,11 +3785,10 @@
     pools
     (owned_view.compiler-owned-reference-shared-view items)))
 
-;; --- aggregate allocation candidate analysis --------------------------------
+;; --- aggregate allocation classification ------------------------------------
 ;;
-;; This is intentionally analysis-only. It recognizes heap aggregate allocations
-;; that stay local to a function and records the constant-offset derived pointers
-;; plus load/store accesses that a later scalar-replacement slice can consume.
+;; Recognizes the heap aggregate allocations the scalar-replacement slice
+;; (`aggregate_split`) admits: fixed Struct/Enum/Tuple/Array shapes only.
 (define (opt-aggregate-fixed-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)
@@ -3855,677 +3819,6 @@
         (No))]
     [_ (No)]))
 
-(define (opt-aggregate-pointer-list-lookup-from
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [var : i64]
-  [index : i64]) : option_i64.Option
-  (if (< index 0)
-    (None)
-    (match (opt_aggregate_pointer_vec.get
-      (& ptrs)
-      index
-      (OptAggregatePointer.Pointer 0 0))
-      [(Pointer ptr-var offset)
-        (if (= ptr-var var)
-          (Some offset)
-          (opt-aggregate-pointer-list-lookup-from ptrs var (- index 1)))])))
-
-(define (opt-aggregate-pointer-list-lookup
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [var : i64]) : option_i64.Option
-  (opt-aggregate-pointer-list-lookup-from
-    ptrs
-    var
-    (- (opt_aggregate_pointer_vec.len (& ptrs)) 1)))
-
-(define (opt-aggregate-value-offset
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [value : (& value ir.CompilerIrValue)]) : option_i64.Option
-  (match value
-    [(Var var)
-      (if (= var base)
-        (Some 0)
-        (opt-aggregate-pointer-list-lookup ptrs var))]
-    [_ (None)]))
-
-(define (opt-aggregate-value-has-pointer?
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [value : (& value ir.CompilerIrValue)]) : bool
-  (match (opt-aggregate-value-offset base ptrs value)
-    [(Some _) true]
-    [(None) false]))
-
-(define (opt-aggregate-use-has-pointer?
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [_role : ir.CompilerIrOperandRole]
-  [found : bool]
-  [value : ir.CompilerIrValue]) : bool
-  (or found (opt-aggregate-value-has-pointer? base ptrs value)))
-
-(define (opt-aggregate-raw-var-is-pointer?
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [var : i64]) : bool
-  (or
-    (= var base)
-    (match (opt-aggregate-pointer-list-lookup ptrs var)
-      [(Some _) true]
-      [(None) false])))
-
-;; The indirect calls and the register-group ops are not scanned.
-(define (opt-aggregate-instr-has-pointer?
-  [instr : (& instr ir.CompilerIrInstr)]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (match instr
-    [(AddrOf _ src _storage-words)
-      (opt-aggregate-raw-var-is-pointer? base ptrs src)]
-    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (Pack _ _ _)
-         (Word _ _ _ _))
-      false]
-    [_
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        false
-        opt-aggregate-use-has-pointer?
-        base
-        ptrs)]))
-
-(define (opt-aggregate-instrs-touch-candidate?
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
-    (or
-      (let
-        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-        (opt-aggregate-instr-has-pointer? instr base ptrs))
-      (opt-aggregate-instrs-touch-candidate? instrs (+ index 1) base ptrs))))
-
-(define (opt-aggregate-instr-known-safe?
-  [instr : (& instr ir.CompilerIrInstr)]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (match instr
-    [(Call dst name _ _)
-      (and
-        (= dst base)
-        (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc))]
-    [(Gep _ src offset _)
-      (match (opt-aggregate-value-offset base ptrs src)
-        [(Some _)
-          (match offset
-            [(I64 _) true]
-            [_ false])]
-        [(None) false])]
-    [(Load _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
-    [(or (StorePtr ptr value _) (StoreOwned ptr value _))
-      (and
-        (opt-aggregate-value-has-pointer? base ptrs ptr)
-        (not (opt-aggregate-value-has-pointer? base ptrs value)))]
-    [(CopyBytes _ _ _) false]
-    [_ false]))
-
-(define (opt-aggregate-instr-crosses-unknown-effect?
-  [instr : (& ir.CompilerIrInstr)]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (if (opt-aggregate-instr-known-safe? instr base ptrs)
-    false
-    (ir.compiler-ir-effect-invalidates-cse? (ir.compiler-ir-instr-effect instr))))
-
-(define (opt-aggregate-scan-store
-  [type-segment-bases : i64]
-  [base : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [ptrs : (& opt_aggregate_pointer_vec.Vec)]
-  [accesses : opt_aggregate_access_vec.Vec]
-  [ptr : (& ir.CompilerIrValue)]
-  [value : (& ir.CompilerIrValue)]
-  [store-ty : ast.AstType]) : OptAggregateScanResult
-  (match (opt-aggregate-value-offset base ptrs ptr)
-    [(Some offset)
-      (if (opt-aggregate-value-has-pointer? base ptrs value)
-        (Reject)
-        (begin
-          (opt_aggregate_access_vec.push-ref!
-            (&mut accesses)
-            (OptAggregateAccess.Store offset store-ty))
-          (opt-aggregate-scan-instrs
-            type-segment-bases
-            base
-            ty
-            size
-            instrs
-            (+ index 1)
-            (owned_view.compiler-owned-reference-shared-view ptrs)
-            accesses
-            true)))]
-    [(None)
-      (if (or
-        (opt-aggregate-value-has-pointer? base ptrs value)
-        (opt-aggregate-instrs-touch-candidate? instrs (+ index 1) base ptrs))
-        (Reject)
-        (opt-aggregate-scan-instrs
-          type-segment-bases
-          base
-          ty
-          size
-          instrs
-          (+ index 1)
-          (owned_view.compiler-owned-reference-shared-view ptrs)
-          accesses
-          true))]))
-
-(define (opt-aggregate-scan-instrs
-  [type-segment-bases : i64]
-  [base : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [ptrs-input : opt_aggregate_pointer_vec.Vec]
-  [accesses-input : opt_aggregate_access_vec.Vec]
-  [seen-alloc : bool]) : OptAggregateScanResult
-  (let
-    [ptrs : opt_aggregate_pointer_vec.Vec ptrs-input]
-    [accesses : opt_aggregate_access_vec.Vec accesses-input]
-    (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-      (if seen-alloc
-        (Ok ptrs accesses)
-        (Reject))
-      (let
-        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-        (if (not seen-alloc)
-          (match (opt-aggregate-direct-alloc instr)
-            [(Some dst alloc-ty alloc-size)
-              (if (and
-                (= dst base)
-                (= alloc-size size)
-                (opt-type-eq type-segment-bases alloc-ty ty))
-                (opt-aggregate-scan-instrs
-                  type-segment-bases
-                  base
-                  ty
-                  size
-                  instrs
-                  (+ index 1)
-                  ptrs
-                  accesses
-                  true)
-                (opt-aggregate-scan-instrs
-                  type-segment-bases
-                  base
-                  ty
-                  size
-                  instrs
-                  (+ index 1)
-                  ptrs
-                  accesses
-                  false))]
-            [(No)
-              (opt-aggregate-scan-instrs
-                type-segment-bases
-                base
-                ty
-                size
-                instrs
-                (+ index 1)
-                ptrs
-                accesses
-                false)])
-          (match (compiler-opt-global-shared-view instr)
-            [(Gep dst src offset _)
-              (match (opt-aggregate-value-offset base ptrs src)
-                [(Some base-offset)
-                  (match offset
-                    [(I64 field-offset)
-                      (opt_aggregate_pointer_vec.push-ref!
-                        (&mut ptrs)
-                        (OptAggregatePointer.Pointer
-                          dst
-                          (+ base-offset field-offset)))
-                      (opt-aggregate-scan-instrs
-                        type-segment-bases
-                        base
-                        ty
-                        size
-                        instrs
-                        (+ index 1)
-                        ptrs
-                        accesses
-                        true)]
-                    [_ (Reject)])]
-                [(None)
-                  (if (opt-aggregate-value-has-pointer? base ptrs offset)
-                    (Reject)
-                    (opt-aggregate-scan-instrs
-                      type-segment-bases
-                      base
-                      ty
-                      size
-                      instrs
-                      (+ index 1)
-                      ptrs
-                      accesses
-                      true))])]
-            [(Load dst src load-ty)
-              (match (opt-aggregate-value-offset base ptrs src)
-                [(Some offset)
-                  (opt_aggregate_access_vec.push-ref!
-                    (&mut accesses)
-                    (OptAggregateAccess.Load
-                      dst
-                      offset
-                      (ast.ty-node-persist load-ty)))
-                  (opt-aggregate-scan-instrs
-                    type-segment-bases
-                    base
-                    ty
-                    size
-                    instrs
-                    (+ index 1)
-                    ptrs
-                    accesses
-                    true)]
-                [(None)
-                  (if (opt-aggregate-instrs-touch-candidate?
-                    instrs
-                    (+ index 1)
-                    base
-                    ptrs)
-                    (Reject)
-                    (opt-aggregate-scan-instrs
-                      type-segment-bases
-                      base
-                      ty
-                      size
-                      instrs
-                      (+ index 1)
-                      ptrs
-                      accesses
-                      true))])]
-            [(or (StorePtr ptr value store-ty) (StoreOwned ptr value store-ty))
-              (opt-aggregate-scan-store
-                type-segment-bases
-                base
-                ty
-                size
-                instrs
-                index
-                (& ptrs)
-                accesses
-                (& ptr)
-                (& value)
-                (ast.ty-node-persist store-ty))]
-            [_
-              (if (opt-aggregate-instr-has-pointer? instr base ptrs)
-                (Reject)
-                (if (and
-                  (opt-aggregate-instr-crosses-unknown-effect?
-                    (& instr)
-                    base
-                    ptrs)
-                  (opt-aggregate-instrs-touch-candidate?
-                    instrs
-                    (+ index 1)
-                    base
-                    ptrs))
-                  (Reject)
-                  (opt-aggregate-scan-instrs
-                    type-segment-bases
-                    base
-                    ty
-                    size
-                    instrs
-                    (+ index 1)
-                    ptrs
-                    accesses
-                    true)))]))))))
-
-(define (opt-aggregate-classify-one
-  [type-segment-bases : i64]
-  [base : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [start : i64]) : OptAggregateScanResult
-  (opt-aggregate-scan-instrs
-    type-segment-bases
-    base
-    ty
-    size
-    instrs
-    start
-    (opt_aggregate_pointer_vec.with-capacity
-      opt-aggregate-list-initial-capacity)
-    (opt_aggregate_access_vec.with-capacity opt-aggregate-list-initial-capacity)
-    false))
-
-(define (opt-aggregate-candidates-from-instrs
-  [type-segment-bases : i64]
-  [scan : (& ir.CompilerIrInstrSeq)]
-  [candidates : (& opt_aggregate_candidate_vec.Vec)]) : opt_aggregate_candidate_vec.Vec
-  (let
-    [index : i64 0]
-    (opt-aggregate-candidates-from-instrs-at
-      type-segment-bases
-      scan
-      index
-      (owned_view.compiler-owned-reference-shared-view candidates))))
-
-(define (opt-aggregate-candidates-from-instrs-at
-  [type-segment-bases : i64]
-  [scan : (& scan ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [candidates-input : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
-  (let
-    [candidates : opt_aggregate_candidate_vec.Vec candidates-input]
-    (if (>= index (ir.compiler-ir-instr-seq-count scan))
-      candidates
-      (let
-        [instr (ir.compiler-ir-instr-seq-borrow scan index)]
-        (match (opt-aggregate-direct-alloc instr)
-          [(Some base ty size)
-            (match (opt-aggregate-classify-one
-              type-segment-bases
-              base
-              (& ty)
-              size
-              scan
-              index)
-              [(Ok ptrs accesses)
-                (opt_aggregate_candidate_vec.push-ref!
-                  (&mut candidates)
-                  (OptAggregateAllocCandidate.Candidate
-                    base
-                    ty
-                    size
-                    ptrs
-                    accesses))
-                (opt-aggregate-candidates-from-instrs-at
-                  type-segment-bases
-                  scan
-                  (+ index 1)
-                  candidates)]
-              [(Reject)
-                (opt-aggregate-candidates-from-instrs-at
-                  type-segment-bases
-                  scan
-                  (+ index 1)
-                  candidates)])]
-          [(No)
-            (opt-aggregate-candidates-from-instrs-at
-              type-segment-bases
-              scan
-              (+ index 1)
-              candidates)])))))
-
-(define (opt-aggregate-append-blocks!
-  [blocks : (& ir.CompilerIrBlockList)]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match blocks
-    [(Array seq)
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (for [index (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-borrow seq index)
-            [(Block _ instrs)
-              (ir.compiler-ir-instr-builder-append-seq-range!
-                builder
-                instrs
-                0
-                (ir.compiler-ir-instr-seq-count instrs))])))]))
-
-(define (opt-aggregate-flatten-blocks [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrInstrSeq
-  (let
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity
-        (ir.compiler-ir-block-list-instruction-count blocks))]
-    (opt-aggregate-append-blocks! blocks (&mut builder))
-    (ir.compiler-ir-instr-builder-to-seq builder)))
-
-(define (opt-aggregate-allocation-candidates-function
-  [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]) : opt_aggregate_candidate_vec.Vec
-  (match func
-    [(Function _ _ _ _ blocks _)
-      (opt-aggregate-candidates-from-instrs
-        type-segment-bases
-        (& (opt-aggregate-flatten-blocks (& blocks)))
-        (&
-          (opt_aggregate_candidate_vec.with-capacity
-            opt-aggregate-list-initial-capacity)))]))
-
-(define (opt-aggregate-candidate-list-append!
-  [left : (&mut left opt_aggregate_candidate_vec.Vec)]
-  [right : (& opt_aggregate_candidate_vec.Vec)]) : unit
-  (let
-    [right-count : i64 (opt_aggregate_candidate_vec.len right)]
-    (for [i (iterator.range 0 right-count)]
-      (opt_aggregate_candidate_vec.push-ref!
-        left
-        (compiler-opt-borrowed-array-element-shared-view
-          (opt_aggregate_candidate_vec.slots right)
-          i)))
-    unit))
-
-(define (opt-aggregate-access-list-load-count-from
-  [accesses : (& opt_aggregate_access_vec.Vec)]
-  [index : i64]) : i64
-  (if (>= index (opt_aggregate_access_vec.len accesses))
-    0
-    (+
-      (match (opt_aggregate_access_vec.get
-        accesses
-        index
-        (OptAggregateAccess.Store 0 (Unit)))
-        [(Load _ _ _) 1]
-        [_ 0])
-      (opt-aggregate-access-list-load-count-from accesses (+ index 1)))))
-
-(define (opt-aggregate-access-list-store-count-from
-  [accesses : (& opt_aggregate_access_vec.Vec)]
-  [index : i64]) : i64
-  (if (>= index (opt_aggregate_access_vec.len accesses))
-    0
-    (+
-      (match (opt_aggregate_access_vec.get
-        accesses
-        index
-        (OptAggregateAccess.Store 0 (Unit)))
-        [(Store _ _) 1]
-        [_ 0])
-      (opt-aggregate-access-list-store-count-from accesses (+ index 1)))))
-
-;; --- aggregate stack promotion ----------------------------------------------
-;;
-;; Reuse the non-escaping aggregate classifier, but keep this first promotion
-;; slice conservative: only fixed handle-shaped structs/enums/tuples are moved
-;; onto local frame storage. Dynamic arrays and array payloads stay heap-backed.
-;;
-;; The backend frame model exposes 8-byte slots. To preserve positive byte
-;; offsets from the aggregate base, the address points at the lowest-addressed
-;; reserved slot; offset +8 then walks back toward earlier reserved slots.
-(define (opt-aggregate-stack-promote-type? [ty : (& ast.AstType)]) : bool
-  (match ty
-    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)) true]
-    [_ false]))
-
-(define (opt-aggregate-stack-promote-instr-candidate?
-  [instr : ir.CompilerIrInstr]) : bool
-  (match (opt-aggregate-direct-alloc instr)
-    [(Some _ ty _) (opt-aggregate-stack-promote-type? (& ty))]
-    [(No) false]))
-
-(define (opt-aggregate-stack-promote-block-candidate?
-  [block : (& block ir.CompilerIrBlock)]) : bool
-  (match block
-    [(Block _ instrs)
-      (opt-instrs-any? instrs opt-aggregate-stack-promote-instr-candidate?)]))
-
-(define (opt-aggregate-stack-promote-blocks-have-candidate?
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
-  (opt-blocks-any? blocks opt-aggregate-stack-promote-instr-candidate?))
-
-(define (opt-aggregate-stack-slot-count [size : i64]) : i64
-  (if (< size 1)
-    1
-    (/ (+ size 7) 8)))
-
-(define (opt-aggregate-promote-build
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [next-frame : i64]) : OptAggregatePromoteBuild
-  (let
-    [candidate-slots : (&
-      candidates
-      (__tl_dyn-array OptAggregateAllocCandidate))
-      (opt_aggregate_candidate_vec.slots (& candidates))]
-    [candidate-count : i64 (opt_aggregate_candidate_vec.len (& candidates))]
-    [promote-slots : opt_aggregate_promote_slot_vec.Vec
-      (opt_aggregate_promote_slot_vec.with-capacity
-        opt-aggregate-list-initial-capacity)]
-    [frame : i64 next-frame]
-    (for [index (iterator.range 0 candidate-count)]
-      (match (owned_view.compiler-owned-element-view candidate-slots index)
-        [(Candidate base ty size _ _)
-          (if (opt-aggregate-stack-promote-type? (& ty))
-            (let
-              [slot-count : i64 (opt-aggregate-stack-slot-count size)]
-              [storage : i64 (+ frame (- slot-count 1))]
-              (opt_aggregate_promote_slot_vec.push-ref!
-                (&mut promote-slots)
-                (OptAggregatePromoteSlot.Slot base storage))
-              (+= frame slot-count))
-            unit)]))
-    (Build promote-slots frame)))
-
-(define (opt-aggregate-promote-lookup-from
-  [slot-list : (& slot-list opt_aggregate_promote_slot_vec.Vec)]
-  [base : i64]) : option_i64.Option
-  (for [index
-    (iterator.range 0 (opt_aggregate_promote_slot_vec.len (& slot-list)))]
-    (match (opt_aggregate_promote_slot_vec.get
-      (& slot-list)
-      index
-      (OptAggregatePromoteSlot.Slot 0 0))
-      [(Slot found storage) (when (= found base) (return (Some storage)))]))
-  (None))
-
-(define (opt-aggregate-promote-lookup
-  [slots : (& slots opt_aggregate_promote_slot_vec.Vec)]
-  [base : i64]) : option_i64.Option
-  (opt-aggregate-promote-lookup-from slots base))
-
-;; Dense forward rebuild of one block under the slot plan: a promotable direct
-;; alloc becomes one consecutive `alloc` per reserved frame slot (ending at
-;; `storage`), followed by `addr_of base storage`. This is the same contiguous
-;; reservation shape emitted by lowering; every other instr is kept. Blocks
-;; without a stack-promotable alloc, or whose allocs all escaped the slot plan,
-;; keep the ORIGINAL block value by reference.
-(define (opt-aggregate-promote-alloc-run!
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [storage : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]) : unit
-  (let
-    [slot-count : i64 (opt-aggregate-stack-slot-count size)]
-    (for [slot (iterator.range (+ (- storage slot-count) 1) (+ storage 1))]
-      (ir.compiler-ir-instr-builder-push!
-        builder
-        (ir.CompilerIrInstr.Alloc
-          slot
-          (owned_view.compiler-owned-reference-shared-view ty))))))
-
-(define (opt-aggregate-promote-block
-  [slots : (& slots opt_aggregate_promote_slot_vec.Vec)]
-  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (match (& block)
-    [(Block label instrs)
-      (if (not (opt-aggregate-stack-promote-block-candidate? block))
-        block
-        (let
-          [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-          [builder : ir.CompilerIrInstrBuilder
-            (ir.compiler-ir-instr-builder-with-capacity count)]
-          [changed : bool false]
-          (for [index (iterator.range 0 count)]
-            (let
-              [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-              (match (opt-aggregate-direct-alloc instr)
-                [(Some base ty size)
-                  (match (opt-aggregate-promote-lookup slots base)
-                    [(Some storage)
-                      (opt-aggregate-promote-alloc-run!
-                        (&mut builder)
-                        storage
-                        (& ty)
-                        size)
-                      (ir.compiler-ir-instr-builder-push!
-                        (&mut builder)
-                        (ir.CompilerIrInstr.AddrOf
-                          base
-                          storage
-                          (opt-aggregate-stack-slot-count size)))
-                      (set! changed true)]
-                    [(None)
-                      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])]
-                [(No) (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])))
-          (if changed
-            (Block label (ir.compiler-ir-instr-builder-to-seq builder))
-            block)))]))
-
-(define (opt-aggregate-promote-blocks
-  [slots : (& slots opt_aggregate_promote_slot_vec.Vec)]
-  [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (match blocks
-    ;; Dense driver: scan the block sequence in place and write a dense output
-    ;; sequence. opt-aggregate-promote-block keeps blocks it does not rewrite by
-    ;; reference, so unchanged blocks are never re-sequenced.
-    [(Array seq)
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [out : (__tl_dyn-array ir.CompilerIrBlock)
-          (__tl_make-array ir.CompilerIrBlock count)]
-        (for [index (iterator.range 0 count)]
-          (set!
-            (array-ref out index)
-            (opt-aggregate-promote-block
-              slots
-              (ir.compiler-ir-block-seq-ref seq index))))
-        (Array (ir.CompilerIrBlockSeq out count)))]))
-
-(define (opt-aggregate-stack-promote-function
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
-      (if (opt-aggregate-stack-promote-blocks-have-candidate? blocks)
-        (match (opt-aggregate-promote-build
-          (opt-aggregate-allocation-candidates-function
-            type-segment-bases
-            (& func))
-          frame)
-          [(Build slots promoted-frame)
-            (if (= (opt_aggregate_promote_slot_vec.len (& slots)) 0)
-              func
-              (Function
-                name
-                params
-                ret-ty
-                promoted-frame
-                (opt-aggregate-promote-blocks slots (& blocks))
-                function-abi))])
-        func)]))
-
 ;; --- aggregate word split (aggregate_split) ---------------------------------
 ;;
 ;; SROA-2. Forwarding a field load from the last DOMINATING store leaves a
@@ -4540,9 +3833,9 @@
 ;; THE ADMISSION RULE.
 ;;
 ;; ROOT. Either the `Alloc`-run + `AddrOf` inline storage the lowerer emits
-;; (`lower-reserve-inline-storage`, which aggregate stack promotion reproduces
-;; instruction for instruction), or the `tl_alloc` call `opt-aggregate-direct-
-;; alloc` already recognizes. The reserved run must end at the `addr_of`'s slot,
+;; (`lower-reserve-inline-storage`), or the `tl_alloc` call that
+;; `opt-aggregate-direct-alloc` recognizes. The reserved run must end at the
+;; `addr_of`'s slot,
 ;; carry one type, and hold at most `opt-aggregate-split-word-limit` words.
 ;;
 ;; POINTER SET. The transitive closure of the root under `gep <literal> : u8`
@@ -4579,9 +3872,8 @@
 ;; carry them -- so a `copy_bytes` over such a word refuses the candidate
 ;; (`access:copy-lanes`).
 ;;
-;; HANDLES. The stack-promotion classifier's "handle-shaped" note
-;; (`opt-aggregate-stack-promote-type?`) means "a fixed Struct/Enum/Tuple", not
-;; "holds an owning handle": this language has no implicit destructor walk, and
+;; HANDLES. "A fixed Struct/Enum/Tuple" is not "holds an owning handle": this
+;; language has no implicit destructor walk, and
 ;; every ownership edge is an explicit `store_owned` instruction or an explicit
 ;; destroy CALL. The rule this pass states is therefore: an ownership-edge
 ;; instruction that touches the allocation refuses it (it is not one of the
@@ -4952,8 +4244,7 @@
 ;; The reserved-slot run an `addr_of` completes: walk back, never past the
 ;; block start, while the instruction is an `alloc` of the same type whose
 ;; destination is the next slot down. That is exactly the contiguous
-;; reservation `lower-reserve-inline-storage` and
-;; `opt-aggregate-promote-alloc-run!` emit.
+;; reservation `lower-reserve-inline-storage` emits.
 (define (opt-aggregate-split-run-count
   [type-segment-bases : i64]
   [flat : (& flat OptSplitFlat)]
@@ -29075,7 +28366,6 @@
   (ptrs OptLicmPtrEnv)
   (globals OptLicmGlobalFacts)
   (store-summary OptLicmStoreSummary)
-  (legacy-store-summary OptLicmStoreSummary)
   ;; The composed body summary BEFORE the return-shaped side-exit poison is
   ;; folded in. The poison is a profitability verdict spelled as a fake
   ;; header-or-unknown store, so blaming a store for it would name an
@@ -29489,7 +28779,6 @@
   [ptrs : OptLicmPtrEnv]
   [globals : OptLicmGlobalFacts]
   [store-summary : OptLicmStoreSummary]
-  [legacy-store-summary : OptLicmStoreSummary]
   [raw-legacy-summary : OptLicmStoreSummary]
   [direct-call-clean : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
@@ -29511,7 +28800,6 @@
           ptrs
           globals
           store-summary
-          legacy-store-summary
           raw-legacy-summary
           direct-call-clean
           cells
@@ -29822,7 +29110,6 @@
                   ptrs
                   globals
                   store-summary
-                  legacy-store-summary
                   raw-legacy-summary
                   (owned_view.compiler-owned-reference-shared-view
                     direct-call-clean)
@@ -92233,7 +91520,6 @@
   (target i64)
   (blocks ir.CompilerIrBlockList)
   (instrs ir.CompilerIrInstrSeq)
-  (terminator-index i64)
   (last-barrier i64)
   (defs (__tl_dyn-array i64))
   (all-defs (__tl_dyn-array i64))
@@ -93496,7 +92782,6 @@
           target
           blocks
           instrs
-          terminator-index
           last-barrier
           defs
           all-defs
@@ -103040,20 +102325,11 @@
               (opt-pass-params s)
               (opt-pass-blocks s)))
           s))]
-    [s
-      (opt-stage
-        "stack_promote"
-        (opt-pass-with-cfg-func
-          (&
-            (opt-aggregate-stack-promote-function
-              type-segment-bases
-              (opt-pass-func s)))
-          s))]
-    ;; SROA-2: the word split runs on the post-promotion blocks and before
+    ;; SROA-2: the word split runs after slot forwarding and before
     ;; rotation/`ssa`, so the scalar mem2reg below builds the phis the
     ;; per-arm word stores need. It mints word vars, so every pass underneath
-    ;; reads ITS frame, not the promoted one. It is not in the priced
-    ;; pipeline (see opt-aggregate-split-function).
+    ;; reads ITS frame. It is not in the priced pipeline (see
+    ;; opt-aggregate-split-function).
     [s
       (opt-stage
         "aggregate_split"
@@ -103913,15 +103189,6 @@
               (opt-pass-frame s)
               (opt-pass-params s)
               (opt-pass-blocks s)))
-          s))]
-    [s
-      (opt-stage
-        "stack_promote"
-        (opt-pass-with-cfg-func
-          (&
-            (opt-aggregate-stack-promote-function
-              type-segment-bases
-              (opt-pass-func s)))
           s))]
     [used : (__tl_dyn-array i64) (opt-used-array-new (opt-pass-frame s))]
     [s

@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+5600.417	Sharing large aggregate copy runs as thunks costs a call plus the thunk ret at every executed 64-byte-or-longer copy site, against 202,959 fewer .text bytes; local same-host delta over e6f860c27: 111,431,126,935 -> 112,055,188,522 Ir.

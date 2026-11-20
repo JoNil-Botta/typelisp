@@ -14,6 +14,7 @@
 (import compiler_float as cfloat)
 (import compiler_profile_state as profile_state)
 (import stdlib.io)
+(import stdlib.byte_buf)
 (import stdlib.arena)
 (import stdlib.comptime)
 (import stdlib.hashmap)
@@ -56489,16 +56490,26 @@
       [(not (opt-alias-contains? loaded 0 (Unique 0))) 6]
       [(not (opt-alias-contains? loaded 1 (MayAlias))) 7]
       [(not (= (opt-alias-facts-len stored) 0)) 8]
-      [(not (opt.opt-alias-instr-clears-all? (& (opt-alias-sample-store)))) 9]
+      [(not
+          (opt.opt-alias-instr-clears-all?
+            (& opt.opt-addr-taken-none)
+            (& (opt-alias-sample-store))))
+        9]
       [(not (= (opt-alias-facts-len called) 0)) 10]
-      [(not (opt.opt-alias-instr-clears-all? (& (opt-alias-sample-tail-call))))
+      [(not
+          (opt.opt-alias-instr-clears-all?
+            (& opt.opt-addr-taken-none)
+            (& (opt-alias-sample-tail-call))))
         11]
       [(not (opt-alias-contains? copied 1 (Derived 0))) 12]
       [(not (opt-alias-contains? copied 2 (MayAlias))) 13]
       [(not (= (opt-alias-facts-len joined) 1)) 14]
       [(not (opt-alias-contains? joined 0 (Unique 0))) 15]
       [(opt-alias-contains? joined 1 (Derived 0)) 16]
-      [(opt.opt-alias-instr-clears-all? (& (opt-alias-sample-binop))) 17]
+      [(opt.opt-alias-instr-clears-all?
+          (& opt.opt-addr-taken-none)
+          (& (opt-alias-sample-binop)))
+        17]
       [(not (opt-alias-contains? invalidated 0 (Invalidated))) 18]
       [(not (opt-alias-contains? seeded 0 (SharedRef))) 19]
       [(not (opt-alias-contains? seeded 1 (ExclusiveRef))) 20]
@@ -85947,3 +85958,77 @@ return
             (string.int->string i)
             ": "
             (string.copy (& actual))))))))
+
+;; A def of an address-taken local is a store to it; every other instruction
+;; keeps the IR's form-only class (#8514, #8785).
+(test
+  opt-instr-effect-address-taken-local
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks "entry:
+           %1 = addr_of %0
+           return %0")]
+    [scan : opt.OptFunctionAddrTakenScan
+      (opt.opt-function-addr-taken-scan-new 4)]
+    (opt.opt-function-addr-taken-scan-blocks! (&mut scan) (& blocks))
+    (test.assert-true
+      (ir.compiler-ir-effect-eq?
+        (opt.opt-instr-effect (& scan.marks) (& (irt.instr "%0 = mov 5 : i64")))
+        (ir.CompilerIrEffect.MemoryWrite))
+      "a def of an address-taken local writes memory")
+    (test.assert-true
+      (ir.compiler-ir-effect-eq?
+        (opt.opt-instr-effect
+          (& scan.marks)
+          (& (irt.instr "%0 = load %3 : i64")))
+        (ir.CompilerIrEffect.MemoryWrite))
+      "a load into an address-taken local writes it")
+    (test.assert-true
+      (ir.compiler-ir-effect-eq?
+        (opt.opt-instr-effect
+          (& scan.marks)
+          (& (irt.instr "%3 = add %2, 1 : i64")))
+        (ir.CompilerIrEffect.Pure))
+      "any other local stays pure")
+    (test.assert-true
+      (ir.compiler-ir-effect-eq?
+        (opt.opt-instr-effect (& scan.marks) (& (irt.instr "%1 = addr_of %0")))
+        (ir.CompilerIrEffect.Pure))
+      "taking the address reads nothing")
+    (test.assert-true
+      (ir.compiler-ir-effect-eq?
+        (opt.opt-instr-effect
+          (& opt.opt-addr-taken-none)
+          (& (irt.instr "%0 = mov 5 : i64")))
+        (ir.CompilerIrEffect.Pure))
+      "a stage with no set installed keeps the form-only class")))
+
+;; `opt-instr-effect` is the optimizer's one effect classifier: a direct call of
+;; the IR's form-only `compiler-ir-instr-effect` would call a def of an
+;; address-taken local pure (#8514, #8785). So compiler_optimize.tl names it,
+;; qualified, exactly once, inside `opt-instr-effect`.
+(define (opt-test-qualified-instr-effect-count) : i64
+  (let
+    [source : String
+      (byte_buf.to-string (io.read-file "src/compiler_optimize.tl"))]
+    [needle : String ".compiler-ir-instr-effect"]
+    [count : i64 0]
+    (for [start
+      (iterator.range
+        0
+        (+
+          (-
+            (string.string-length (& source))
+            (string.string-length (& needle)))
+          1))]
+      (when
+        (string.is-string-prefix-at (& source) (& needle) start)
+        (+= count 1)))
+    count))
+
+(test
+  opt-instr-effect-sole-classifier
+  (test.assert-i64-eq
+    (opt-test-qualified-instr-effect-count)
+    1
+    "every effect query in compiler_optimize.tl goes through opt-instr-effect"))

@@ -10731,6 +10731,40 @@ high:
       session.backend-state)
     (compiler-backend-peephole-test-session-asm session asm)))
 
+(define (compiler-backend-peephole-test-fpo-asm-with-addr
+  [symbol : String]
+  [frame : i64]
+  [push-count : i64]
+  [slot-vars : i64]
+  [em-slot-offset : i64]
+  [em-used-count : i64]
+  [outgoing : i64]
+  [storage-words : i64]
+  [asm : String]) : String
+  (let
+    [session : CompilerBackendPeepholeTestSession
+      (compiler-backend-peephole-test-session-new)]
+    (compiler-backend-peephole-test-session-reset! session)
+    ;; Drive the real emitter-side recorder: var 2 is slot -24 rbp, so a
+    ;; two-word object records the canonical span [24, 40), which contains the
+    ;; leaq at 24 and the later word's store at 32.
+    (backend.compiler-backend-note-addr-of-extent!
+      (regalloc.compiler-reg-assignment-table-empty)
+      2
+      storage-words
+      session.backend-state)
+    (backend.compiler-backend-sweep-record-fpo!
+      session.stream
+      symbol
+      frame
+      push-count
+      slot-vars
+      em-slot-offset
+      em-used-count
+      outgoing
+      session.backend-state)
+    (compiler-backend-peephole-test-session-asm session asm)))
+
 ;; then the reload with it, so the clobbered value is consumed by
 ;; `movq %rax, -104(%rbp)` -- the owner-invalidation coverage is unchanged and
 ;; the pair stays out of A2's reach.
@@ -11572,6 +11606,89 @@ high:
       (compiler-backend-peephole-test-win64-asm "main" 48 5 0 0 0 input)]
     (string.eq got want)))
 
+;; A recorded address extent, not a poison-everything watermark, bounds the
+;; leaq: the leaq at 16 resolves to the object whose span contains it, so the
+;; second word's store at 24 stays. Narrowing that object to one word leaves
+;; the leaq inside it and makes the store at 24 sweepable, which is exactly
+;; the under-protection the whole-object span prevents.
+(define (compiler-backend-deadstore-sweep-extent-input) : String
+  "main:
+    subq $48, %rsp
+    movq $1, 16(%rsp)
+    movq $2, 24(%rsp)
+    leaq 16(%rsp), %rax
+    addq $48, %rsp
+    ret
+")
+
+(define (compiler-backend-deadstore-sweep-extent-want) : String
+  "main:
+    subq $48, %rsp
+    movq $1, 16(%rsp)
+    leaq 16(%rsp), %rax
+    addq $48, %rsp
+    ret
+")
+
+;; A recorded address extent, not a poison-everything watermark, bounds the
+;; leaq: the leaq at 24 resolves to the object whose span contains it, so the
+;; later word's store at 32 stays. Narrowing that object to one word leaves
+;; the leaq inside it and makes the store at 32 sweepable, which is exactly
+;; the under-protection the whole-object span prevents.
+(define (compiler-backend-deadstore-sweep-leaq-extent-ok?) : bool
+  (let
+    [wide : String
+      (compiler-backend-peephole-test-fpo-asm-with-addr
+        "main"
+        48
+        0
+        4
+        0
+        0
+        0
+        2
+        (compiler-backend-deadstore-sweep-extent-input))]
+    [narrow : String
+      (compiler-backend-peephole-test-fpo-asm-with-addr
+        "main"
+        48
+        0
+        4
+        0
+        0
+        0
+        1
+        (compiler-backend-deadstore-sweep-extent-input))]
+    (and
+      (string.eq wide (compiler-backend-deadstore-sweep-extent-input))
+      (string.eq narrow (compiler-backend-deadstore-sweep-extent-want)))))
+
+(define (compiler-backend-deadstore-sweep-wide-frame-input) : String
+  "main:
+    subq $300008, %rsp
+    movq $1, 200000(%rsp)
+    leaq 200000(%rsp), %rax
+    addq $300008, %rsp
+    ret
+")
+
+;; A frame wider than the coverage bitmap window (4096 words = 256 KB) takes
+;; the watermark path: the poison scan must not index the bitmap that path
+;; never allocates. A 320,000-byte variable window is the smallest shape that
+;; crosses it, and the leaq keeps the store below it.
+(define (compiler-backend-deadstore-sweep-wide-frame-ok?) : bool
+  (string.eq
+    (compiler-backend-peephole-test-fpo-asm
+      "main"
+      300000
+      0
+      40000
+      0
+      0
+      0
+      (compiler-backend-deadstore-sweep-wide-frame-input))
+    (compiler-backend-deadstore-sweep-wide-frame-input)))
+
 ;; The reads set is region-wide: a read before the store keeps it just as a
 ;; read after it does.
 (define (compiler-backend-deadstore-sweep-read-before-store-ok?) : bool
@@ -11770,6 +11887,8 @@ high:
     (compiler-backend-deadstore-sweep-coverage-hi-edge-ok?)
     (compiler-backend-deadstore-sweep-coverage-cap-ok?)
     (compiler-backend-deadstore-sweep-leaq-watermark-ok?)
+    (compiler-backend-deadstore-sweep-leaq-extent-ok?)
+    (compiler-backend-deadstore-sweep-wide-frame-ok?)
     (compiler-backend-deadstore-sweep-read-before-store-ok?)
     (compiler-backend-deadstore-sweep-coverage-em-window-ok?)
     (compiler-backend-deadstore-sweep-win64-inert-tail-poison-ok?)

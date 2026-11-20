@@ -425,6 +425,7 @@ stdlib/tests/byte_buf_live_extent.tl	stage2-public-tool-affected-map,stage2-publ
 stdlib/tests/raw_copy_api.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/tests/vector_live_extent.tl	stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
 stdlib/tests/wire_byte_buf_live_extent.tl	stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/addr_taken_stack_aggregates.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/alias_global_shift.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/alias_row_overflow.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/alias_typed_word.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

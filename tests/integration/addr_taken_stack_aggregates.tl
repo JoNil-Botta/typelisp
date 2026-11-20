@@ -53,19 +53,30 @@
         4))))
 
 ;; A field address inside a stack struct goes to the callee: the address is
-;; base+8, and the callee reads it, so the whole 16-byte object must stay.
-(define (struct-case [seed : i64]) : i64
+;; base+8, and the callee reads it, so the whole 16-byte object must stay. The
+;; six scalars are live across the call, so they take frame slots, which keeps
+;; the struct's words inside the sweep's variable window.
+(define (struct-case
+  [seed : i64]
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]) : i64
   (if (< seed -999999)
-    (struct-case (- seed 1))
+    (struct-case (- seed 1) a b c d e f)
     (let
       [p : Pair (Pair seed (+ seed 2) unit)]
       [field : (MutPtr i64)
         (unsafe
           (ptr-addr-of p.hi))]
-      (read-slot
-        (unsafe
-          (ptr-cast field : (Ptr i64)))
-        3))))
+      [read : i64
+        (read-slot
+          (unsafe
+            (ptr-cast field : (Ptr i64)))
+          3)]
+      (+ read (+ a (+ b (+ c (+ d (+ e f)))))))))
 
 ;; A scalar local whose address goes to the callee.
 (define (scalar-case [seed : i64]) : i64
@@ -83,7 +94,8 @@
 
 (define (main) : i64
   (let
-    [out : i64 (+ (array-case 1) (+ (struct-case 2) (scalar-case 3)))]
+    [out : i64
+      (+ (array-case 1) (+ (struct-case 2 3 5 7 11 13 17) (scalar-case 3)))]
     (if (> out 0)
       42
       1)))

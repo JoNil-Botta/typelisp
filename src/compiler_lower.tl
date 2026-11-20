@@ -29,6 +29,9 @@
 (import compiler_intern_state as cis)
 (import compiler_profile_state as profile_state)
 (import compiler_allocation_profile as allocation_profile)
+(cfg
+  embedded-stdlib-tlci
+  (import compiler_embedded_stdlib_tlci as embedded_tlci))
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_spmd_numeric_policy as spmd_numeric)
 (import compiler_spmd_logical_gang as spmd_gang)
@@ -79120,13 +79123,22 @@
   ;; typecheck-compiler-program-with-paths for why).
   (let
     [generated (try (spec.gen-normalize-program (& program)))]
-    (match (tc_core.macro-expand-program generated)
-      [(Ok expanded _)
-        (lower-compiler-expanded-program-unlocated-mode
-          lower-state
-          expanded
-          mode)]
-      [(Err diag) (Err diag)])))
+    [_retain-macro-groups : unit
+      (cfg
+        embedded-stdlib-tlci
+        (embedded_tlci.compiler-embedded-stdlib-tlci-group-cache-scope-enter!))]
+    [result : ResultCompilerLower
+      (match (tc_core.macro-expand-program generated)
+        [(Ok expanded _)
+          (lower-compiler-expanded-program-unlocated-mode
+            lower-state
+            expanded
+            mode)]
+        [(Err diag) (Err diag)])]
+    (cfg
+      embedded-stdlib-tlci
+      (embedded_tlci.compiler-embedded-stdlib-tlci-group-cache-scope-leave!))
+    result))
 
 (define (lower-compiler-program-with-path-mode-and-state
   [lower-state : CompilerLowerState]
@@ -79974,6 +79986,10 @@
                 (let
                   [macro-intern-state : ci.InternCompatState
                     (ci.intern-global-shared-view intern-state)]
+                  [_retain-macro-groups : unit
+                    (cfg
+                      embedded-stdlib-tlci
+                      (embedded_tlci.compiler-embedded-stdlib-tlci-group-cache-scope-enter!))]
                   [macro-result : tc_core.ResultMacroExpand
                     (tc_core.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
                       (lower-global-shared-view load-state)
@@ -80109,22 +80125,30 @@
                                   lower-state
                                   "macro_finalize"))
                               unit)]
-                          (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
-                            lower-state
-                            load-state
-                            prefix-cache
-                            job-state
-                            detached-entry-path
-                            detached-program
-                            detached-paths
-                            mode
-                            stdlib-roots
-                            detached-cache-scope
-                            committed-pools
-                            source-names
-                            intern-state)))]
+                          [result : ResultCompilerLower
+                            (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-intern-state
+                              lower-state
+                              load-state
+                              prefix-cache
+                              job-state
+                              detached-entry-path
+                              detached-program
+                              detached-paths
+                              mode
+                              stdlib-roots
+                              detached-cache-scope
+                              committed-pools
+                              source-names
+                              intern-state)]
+                          (cfg
+                            embedded-stdlib-tlci
+                            (embedded_tlci.compiler-embedded-stdlib-tlci-group-cache-scope-leave!))
+                          result))]
                     [(Err diag)
                       (begin
+                        (cfg
+                          embedded-stdlib-tlci
+                          (embedded_tlci.compiler-embedded-stdlib-tlci-group-cache-scope-leave!))
                         (cfg
                           compile-profile
                           (compiler-lower-profile-finish

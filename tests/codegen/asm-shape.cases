@@ -475,12 +475,15 @@ count = 1 ^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$
 capture data_reg ^[[:space:]]*movq \(%rdi\), (%r[a-z0-9]*)$
 count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\({{data_reg}}\)$
 
-# Non-PIC Linux switch dispatch uses the absolute indexed form; no table
-# register is borrowed under pressure.
+# Every switch dispatch loads the table base rip-relatively and reads 4-byte
+# entry offsets; under pressure the target is stashed and the jump stays
+# slot-indirect, so the GAP2b-v2 restore precedes it.
 case switch-dispatch-scavenge
 source tests/integration/switch_dispatch_scavenge.tl
 in fn _tl_switch_dispatch_scavenge_run_switch
-count = 1 ^[[:space:]]+jmp \*\.Lf.*_switch_table\(,%r[a-z0-9]+,8\)$
+count = 1 ^[[:space:]]+leaq \.Lf.*_switch_table\(%rip\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movslq \(%r[a-z0-9]+,%r[a-z0-9]+,4\), %r[a-z0-9]+$
+not-match _switch_table\(,%r
 not-match ^[[:space:]]+jmp \*%r
 
 # The length compare reads memory directly and the check is eliminated.

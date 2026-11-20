@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-10743	long str-cat (>= 6 operands, 569 sites in the compiler) builds one stack array of String handles and makes one concat-all call, instead of a heap pack allocation and one bounds-checked part store per operand; the same bytes are copied, no work is skipped

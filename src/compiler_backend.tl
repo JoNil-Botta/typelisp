@@ -2766,8 +2766,15 @@
 ;; compiler-backend-blocks-expose-frame-at?.
 (define compiler-backend-function-i64-frame-may-escape : i64
   23)
-(define compiler-backend-function-i64-count : i64
+
+;; Words the dense group-pair region reserves below the callee-save area: two
+;; per group var when the function exposes a group address (both words live in
+;; the canonical pair region), one per group var otherwise (only word1 leaves
+;; the var region). Zero when the function has no group var.
+(define compiler-backend-function-i64-group-pair-reserve : i64
   24)
+(define compiler-backend-function-i64-count : i64
+  25)
 (define compiler-backend-function-bool-current-fn-win64 : i64
   0)
 (define compiler-backend-function-bool-addr-of-forwarding-enabled : i64
@@ -2882,8 +2889,14 @@
 ;; the end. Cleared at every emit-blocks entry; built on the first edge lookup.
 (define compiler-backend-function-i64-array-edge-index : i64
   9)
-(define compiler-backend-function-i64-array-count : i64
+
+;; Per var: its dense group-pair index (compiler-backend-group-rank), -1 for an
+;; id that carries no group pair. Filled once at group-vars install, so a
+;; group-slot lookup is one array read.
+(define compiler-backend-function-i64-array-group-ranks : i64
   10)
+(define compiler-backend-function-i64-array-count : i64
+  11)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -3374,6 +3387,9 @@
       (array-ref i64-arrays compiler-backend-function-i64-array-jump-forward)
       (compiler-backend-global-shared-view empty-i64-array))
     (set!
+      (array-ref i64-arrays compiler-backend-function-i64-array-group-ranks)
+      (compiler-backend-global-shared-view empty-i64-array))
+    (set!
       (array-ref
         i64-arrays
         compiler-backend-function-i64-array-shift-count-bounds)
@@ -3816,6 +3832,11 @@
       (compiler-backend-global-shared-view data.empty-i64-array))
     (set!
       (array-ref data.i64-arrays compiler-backend-function-i64-array-edge-index)
+      (compiler-backend-global-shared-view data.empty-i64-array))
+    (set!
+      (array-ref
+        data.i64-arrays
+        compiler-backend-function-i64-array-group-ranks)
       (compiler-backend-global-shared-view data.empty-i64-array))
     (set!
       (array-ref data.assignment-indexes 0)
@@ -14406,19 +14427,17 @@
 
 ;; Reserve enough space for either group-home mode. Functions with exposed
 ;; group addresses need the canonical pair region, with word0 at base and
-;; word1 at base+8. Every second word uses that region in a mixed function;
-;; ordinary first words keep their scalar slots. Without exposed groups the
-;; compact second-word map also fits this unchanged reservation.
+;; word1 at base+8; without exposed groups only word1 leaves the var region, in
+;; the compact map. Both regions are dense: one word per group var in the
+;; compact map, two per group var in the canonical pair region, indexed by the
+;; dense per-function group rank rather than by the raw var id.
 (define (compiler-backend-frame-slots-with-groups
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [has-group-vars : bool]
   [backend-state : CompilerBackendState]) : i64
-  (let
-    [base : i64 (compiler-backend-frame-slots vars assignments backend-state)]
-    (if has-group-vars
-      (+ base (* 2 vars))
-      base)))
+  (+
+    (compiler-backend-frame-slots vars assignments backend-state)
+    (compiler-backend-group-pair-reserve backend-state)))
 
 ;; Frame slots reserving the LARGEST possible callee-save area (all callee
 ;; regs). The emergency spill slot is placed pre-body from frame-slots, but
@@ -14428,7 +14447,6 @@
 ;; the frame size when an emergency actually fires (so the slot is in-bounds).
 (define (compiler-backend-frame-slots-emergency-max
   [vars : i64]
-  [has-group-vars : bool]
   [backend-state : CompilerBackendState]) : i64
   (let
     [win64 : bool (compiler-backend-current-fn-win64? backend-state)]
@@ -14436,9 +14454,7 @@
       (if win64
         (+ (compiler-backend-round-up-even-slots (+ vars 6)) 20)
         (+ vars 6))]
-    (if has-group-vars
-      (+ base (* 2 vars))
-      base)))
+    (+ base (compiler-backend-group-pair-reserve backend-state))))
 
 (define (compiler-backend-callee-save-slot-offset [vars : i64] [idx : i64]) : i64
   (- 0 (* 8 (+ vars (+ idx 1)))))
@@ -21305,6 +21321,8 @@
 ;; Precondition: the function's addressable-group bitmap has no storage. A
 ;; retained nonempty bitmap can conservatively select canonical pair slots;
 ;; only zero words prove that no exposed pair can overlap this compact map.
+;; Both regions are dense (compiler-backend-group-rank), so the compact map
+;; needs one word per group var, not one per var.
 (define (compiler-backend-group-legacy-word1-slot
   [var : i64]
   [vars : i64]
@@ -21316,7 +21334,7 @@
       8
       (+
         (compiler-backend-frame-slots vars assignments backend-state)
-        (+ var 1)))))
+        (+ (compiler-backend-group-rank backend-state var) 1)))))
 
 ;; Canonical pair offsets for a group var without a register home. In functions
 ;; with exposed groups, both storage modes use word1; exposed values also use
@@ -21336,7 +21354,7 @@
       8
       (+
         (compiler-backend-frame-slots vars assignments backend-state)
-        (+ (* 2 var) 2)))))
+        (+ (* 2 (compiler-backend-group-rank backend-state var)) 2)))))
 
 (define (compiler-backend-group-word1-slot
   [var : i64]
@@ -37287,6 +37305,44 @@
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state backend-state)]
+    ;; The dense pair index: rank(var) counts the group vars below var in
+    ;; ascending id order, so the pair region holds exactly one (or two) words
+    ;; per group var instead of two per var. Sized past the highest group bit
+    ;; so a lookup is total; an id without a pair reads -1.
+    [slot-vars : i64
+      (compiler-backend-function-state-i64
+        function-state
+        compiler-backend-function-i64-current-slot-vars)]
+    [rank-slots : i64
+      (let
+        [set-bits : i64
+          (*
+            (compiler_liveness.compiler-live-set-word-count vars)
+            (compiler_liveness.compiler-live-set-word-bits))]
+        (if (> set-bits slot-vars)
+          set-bits
+          slot-vars))]
+    [ranks : (__tl_dyn-array i64) (__tl_make-array i64 rank-slots)]
+    [group-count : i64 0]
+    [_ranks : unit
+      (for [var (iterator.range 0 rank-slots)]
+        (if (compiler_liveness.compiler-live-set-contains? vars var)
+          (begin
+            (set! (array-ref ranks var) group-count)
+            (set! group-count (+ group-count 1)))
+          (set! (array-ref ranks var) (- 0 1))))]
+    [_install : unit
+      (begin
+        (compiler-backend-function-state-set-i64-array!
+          function-state
+          compiler-backend-function-i64-array-group-ranks
+          ranks)
+        (compiler-backend-function-state-set-i64!
+          function-state
+          compiler-backend-function-i64-group-pair-reserve
+          (if (> (compiler_liveness.compiler-live-set-count addressable) 0)
+            (* 2 group-count)
+            group-count)))]
     (compiler-backend-function-state-set-live-set!
       function-state
       compiler-backend-function-live-set-group-vars
@@ -37321,6 +37377,26 @@
     (compiler-backend-state-function-state backend-state)
     compiler-backend-function-i64-current-slot-vars
     vars))
+
+;; Dense pair index of a group var inside the group-pair region, -1 when the id
+;; carries no pair (no caller spells a group slot for such an id).
+(define (compiler-backend-group-rank
+  [backend-state : CompilerBackendState]
+  [var : i64]) : i64
+  (let
+    [ranks : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-i64-array-group-ranks)]
+    (if (and (>= var 0) (< var (array-length ranks)))
+      (array-ref ranks var)
+      (- 0 1))))
+
+(define (compiler-backend-group-pair-reserve
+  [backend-state : CompilerBackendState]) : i64
+  (compiler-backend-function-state-i64
+    (compiler-backend-state-function-state backend-state)
+    compiler-backend-function-i64-group-pair-reserve))
 
 (define (compiler-backend-group-var?
   [backend-state : CompilerBackendState]
@@ -71833,8 +71909,6 @@
                 (compiler-backend-global-shared-view rewritten-blocks)
                 (compiler-backend-global-shared-view function-abi)))
             plan-types)]
-        [has-group-vars : bool
-          (> (compiler_liveness.compiler-live-set-count fn-group-vars) 0)]
         ;; Address temps the gep fusion peepholes fold into their consumer.
         ;; Computed on the exact blocks and assignments the coloring pass reads,
         ;; so the ids line up; see compiler-backend-gep-fusion-pinned-vars.
@@ -72277,7 +72351,6 @@
               emit-vars
               (compiler-backend-frame-slots-emergency-max
                 slot-vars
-                has-group-vars
                 program-index.backend-state)
               function-state
               program-index.backend-state)
@@ -72455,7 +72528,6 @@
                 (+
                   (compiler-backend-frame-slots-emergency-max
                     slot-vars
-                    has-group-vars
                     program-index.backend-state)
                   (compiler-backend-function-scratch-i64
                     function-state
@@ -72602,7 +72674,6 @@
                                 ;; slots never overlap on-demand CSR saves.
                                 (compiler-backend-frame-slots-emergency-max
                                   slot-vars
-                                  has-group-vars
                                   program-index.backend-state)
                                 ;; Nothing named a frame slot: the slot
                                 ;; region is dead. Leaf helpers stop paying
@@ -72636,7 +72707,6 @@
                                   (compiler-backend-frame-slots-with-groups
                                     slot-vars
                                     assignments
-                                    has-group-vars
                                     program-index.backend-state)
                                   0))
                               (compiler-backend-function-scratch-i64
@@ -74045,19 +74115,31 @@
     ;; target's own convention: a C extern target receives a Platform call.
     [convention : compiler_abi.CompilerCallConvention
       (compiler_regalloc.compiler-reg-direct-call-convention name)]
+    ;; Group params spill word1 at -(8*(vars+rank+1))(%rbp) in the compact map
+    ;; (no exposed group here), so the frame must cover one word per group
+    ;; param (no red zone on Windows -- the outgoing stack-arg area would
+    ;; clobber them otherwise). The region is sized from the very set the
+    ;; param spills index, so it is installed before the frame is computed.
+    [groups : compiler_liveness.CompilerLiveI64Set
+      (compiler-backend-type-list-group-vars
+        type-segment-bases
+        param-types
+        program-index)]
+    [_groups : unit
+      (begin
+        (compiler-backend-current-slot-vars-set!
+          program-index.backend-state
+          (compiler-backend-type-list-count param-types))
+        (compiler-backend-group-vars-enable!
+          program-index.backend-state
+          groups
+          (compiler_liveness.compiler-live-set-empty)))]
     [frame : i64
       (+
         (compiler-backend-frame-size
-          ;; Group params spill word1 at -(8*(vars+var+1))(%rbp); the
-          ;; frame must cover those slots (no red zone on Windows -- the
-          ;; outgoing stack-arg area would clobber them otherwise).
           (compiler-backend-frame-slots-with-groups
             vars
             (compiler_regalloc.compiler-reg-assignment-table-empty)
-            (compiler-backend-type-list-has-group?
-              type-segment-bases
-              param-types
-              program-index)
             program-index.backend-state))
         (compiler-backend-closure-adapter-outgoing-frame-space
           type-segment-bases
@@ -74187,20 +74269,6 @@
       (compiler-backend-set-current-fn-abi!
         backend-state
         (compiler-backend-state-emission-target-policy backend-state).abi)]
-    [groups : compiler_liveness.CompilerLiveI64Set
-      (compiler-backend-type-list-group-vars
-        type-segment-bases
-        param-types
-        program-index)]
-    [_groups : unit
-      (begin
-        (compiler-backend-current-slot-vars-set!
-          backend-state
-          (compiler-backend-type-list-count param-types))
-        (compiler-backend-group-vars-enable!
-          backend-state
-          groups
-          (compiler_liveness.compiler-live-set-empty)))]
     [emitted : ResultCompilerBackend
       (compiler-backend-emit-closure-entry-adapter
         type-segment-bases

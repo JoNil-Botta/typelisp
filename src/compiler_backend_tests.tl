@@ -7518,6 +7518,17 @@ high:
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [_win : unit (compiler-backend-set-current-fn-win64! backend-state)]
+    ;; One group var (id 0 of three) with no exposed address: the compact
+    ;; second-word map reserves one word, and the canonical pair formula for
+    ;; the same id still starts at frame-slots+2. The dense rank of id 0 is 0,
+    ;; the position the raw-id formula gave it.
+    [_group-vars : unit
+      (begin
+        (backend.compiler-backend-current-slot-vars-set! backend-state 3)
+        (backend.compiler-backend-group-vars-enable!
+          backend-state
+          (compiler_liveness.compiler-live-set1 0)
+          (compiler_liveness.compiler-live-set-empty)))]
     [sparse : regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-xmm-sparse-assignments)]
     [full : regalloc.CompilerRegAssignmentTable
@@ -7626,15 +7637,11 @@ high:
           (backend.compiler-backend-frame-slots-with-groups
             3
             sparse
-            true
             backend-state)
-          34)
+          29)
         (=
-          (backend.compiler-backend-frame-slots-emergency-max
-            3
-            true
-            backend-state)
-          36)
+          (backend.compiler-backend-frame-slots-emergency-max 3 backend-state)
+          31)
         (=
           (backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state

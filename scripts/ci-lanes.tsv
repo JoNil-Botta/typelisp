@@ -28,7 +28,7 @@ bootstrap-fixpoint	linux-2+linux-1!	windows-1+windows-2!
 ispc-point-transform-corpus-contract	linux-2	windows-2
 tlci-format-corpus	linux-1	windows-2
 stage2-crypto-gcm-native-report	linux-2	windows-1
-stage2-public-tool-cli-transcripts-2	linux-1	windows-2
+stage2-public-tool-cli-transcripts-2	linux-2	windows-2
 stage2-prelude-macro-mutation-guard	linux-2	windows-2
 stage2-inline-typelisp-tests	linux-2	windows-1
 stage2-spmd-simd-comparison	linux-2	windows-1
@@ -82,8 +82,8 @@ stage2-stdlib-selfhost-verifier	linux-2	windows-1
 stage2-compile-profile-verifier	linux-2	windows-1
 stage2-stdlib-modules-and-fixtures	linux-2	windows-2
 stage2-public-tool-cli-transcripts-1	linux-2	windows-2
-stage2-native-integration-corpus	linux-2+linux-1	windows-1
-stage2-linux-shared-object-code-model	linux-1	-
+stage2-native-integration-corpus	linux-2	windows-1
+stage2-linux-shared-object-code-model	linux-2	-
 stage2-safety-corpus	linux-1	windows-2
 stage2-sde-fallback-spmd-simd	linux-2	windows-1
 typelisp-format-compiler-selection-control	linux-2	windows-1

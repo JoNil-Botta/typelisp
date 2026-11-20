@@ -1,8 +1,11 @@
-;; Bounded decoder for compiler-owned `include-str-lzss` payloads.
+;; Read-only decoder for the include-str-lzss envelope that the published seed
+;; writes. The compiler embeds its stdlib sources through include-str-lzss, so
+;; a compiler built by the seed carries that envelope and must still read it
+;; while it compiles its successor.
 ;;
-;; The declaration form emits a versioned envelope containing arbitrary bytes,
-;; despite its historical name. Consumers choose a raw-size limit appropriate
-;; for their payload before this module allocates the output buffer.
+;; Delete this module once the published seed writes the v3 envelope
+;; (compiler_lzss): the v3 encoder never produces a v2 frame, so nothing else
+;; needs this reader.
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_owned_view as owned_view)
@@ -15,9 +18,6 @@
 (defenum CompilerLzssV2Bytes
   (Err String)
   (Ok (__tl_dyn-array u8)))
-
-(define (compiler-lzss-envelope-prefix) : String
-  "__typelisp_embedded_stdlib_lzss_v1__")
 
 (define (compiler-lzss-prefix?
   [payload : (& payload (__tl_dyn-array u8))]
@@ -35,20 +35,8 @@
       (+= index 1))
     matches))
 
-;: Validate the envelope and return the claimed raw length and token offset.
-;: `raw-limit` is a consumer policy and is checked before any output allocation.
-(define (compiler-lzss-frame
-  [payload : (& payload (__tl_dyn-array u8))]
-  [raw-limit : i64]) : CompilerLzssV2Frame
-  (compiler-lzss-frame-with-prefix
-    payload
-    raw-limit
-    (compiler-lzss-envelope-prefix)
-    9))
-
-;: The frame under `prefix`, where one compressed byte expands to at most
-;: `expansion` output bytes (v1: a flag byte's eight literals and a token's
-;: nine; v2: a 3-bit back-reference of 18 bytes, 48 per byte).
+;: The v2 frame under `prefix`, where one compressed byte expands to at most
+;: `expansion` output bytes (a 3-bit back-reference of 18 bytes, 48 per byte).
 (define (compiler-lzss-frame-with-prefix
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-limit : i64]
@@ -141,206 +129,6 @@
           (ptr-read (ptr-offset dst (- copied ,distance)))))
       (set! copied (+ copied 1)))))
 
-;; The fast group path needs, before reading a group's flag byte, the flag
-;; byte plus two bytes for each of its eight tokens.
-(define compiler-lzss-fast-group-input : i64
-  17)
-
-;; The fast group path needs this much output room before a group: seven
-;; tokens of at most 18 bytes each, then a match that writes three whole words.
-;; Within it no token can pass `raw-len`, so the group never ends early.
-(define compiler-lzss-fast-group-output : i64
-  150)
-
-;: Copy one back-reference of at most 18 bytes inside the fast group path,
-;: whose output room covers 24 bytes at `out-index`. A source at least eight
-;: bytes back is final for each whole word read, so three words reproduce the
-;: byte loop on the first `length` bytes; the bytes after them are rewritten
-;: by later tokens before the decode can succeed. A nearer, overlapping source
-;: goes byte by byte.
-(defmacro (compiler-lzss-copy-short-match!
-  [out-data : Expr]
-  [out-index : Expr]
-  [distance : Expr]
-  [length : Expr]) : unit
-  `(let
-    [dst : (MutPtr u8)
-      (unsafe
-        (ptr-offset ,out-data ,out-index))]
-    (if (>= ,distance 8)
-      (let
-        [src : (MutPtr u8)
-          (unsafe
-            (ptr-offset dst (- 0 ,distance)))]
-        (unsafe
-          (ptr-write!
-            (ptr-cast dst : (MutPtr i64))
-            (ptr-read (ptr-cast src : (Ptr i64))))
-          (ptr-write!
-            (ptr-cast (ptr-offset dst 8) : (MutPtr i64))
-            (ptr-read (ptr-cast (ptr-offset src 8) : (Ptr i64))))
-          (ptr-write!
-            (ptr-cast (ptr-offset dst 16) : (MutPtr i64))
-            (ptr-read (ptr-cast (ptr-offset src 16) : (Ptr i64))))))
-      (let
-        [copied : i64 0]
-        (while (< copied ,length)
-          (unsafe
-            (ptr-write!
-              (ptr-offset dst copied)
-              (ptr-read (ptr-offset dst (- copied ,distance)))))
-          (set! copied (+ copied 1)))))))
-
-(define (compiler-lzss-decode-tokens
-  [payload : (& payload (__tl_dyn-array u8))]
-  [compressed-start : i64]
-  [raw-len : i64]) : CompilerLzssV2Bytes
-  (let
-    [payload-len : i64 (array-length payload)]
-    [compressed-len : i64 (- payload-len compressed-start)]
-    [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
-    [compressed-index : i64 0]
-    [out-index : i64 0]
-    [valid : bool true]
-    [error : String ""]
-    [payload-view : (__tl_dyn-array u8)
-      (owned_view.compiler-owned-reference-shared-view payload)]
-    [in-data : (Ptr u8)
-      (unsafe
-        (ptr-offset
-          (ptr-cast (__tl_array-data payload-view) : (Ptr u8))
-          compressed-start))]
-    [out-data : (MutPtr u8)
-      (unsafe
-        (__tl_array-data out))]
-    (while (and valid (< out-index raw-len))
-      ;; A whole group whose input and output room are proven up front reads
-      ;; and writes without per-token checks. The only error it can meet is a
-      ;; backreference before the output, reported as the checked loop would.
-      (while (and
-        valid
-        (>= (- compressed-len compressed-index) compiler-lzss-fast-group-input)
-        (>= (- raw-len out-index) compiler-lzss-fast-group-output))
-        (let
-          [flags : i64
-            (cast
-              (unsafe
-                (ptr-read (ptr-offset in-data compressed-index)))
-              : i64)]
-          [token : i64 0]
-          (+= compressed-index 1)
-          (while (and valid (< token 8))
-            (if (= (bit-and flags 1) 1)
-              (begin
-                (unsafe
-                  (ptr-write!
-                    (ptr-offset out-data out-index)
-                    (ptr-read (ptr-offset in-data compressed-index))))
-                (+= compressed-index 1)
-                (+= out-index 1))
-              (let
-                [packed : i64
-                  (bit-or
-                    (shl
-                      (cast
-                        (unsafe
-                          (ptr-read (ptr-offset in-data compressed-index)))
-                        : i64)
-                      8)
-                    (cast
-                      (unsafe
-                        (ptr-read (ptr-offset in-data (+ compressed-index 1))))
-                      : i64))]
-                [offset : i64 (+ (shr packed 4) 1)]
-                [length : i64 (+ (bit-and packed 15) 3)]
-                (+= compressed-index 2)
-                (if (> offset out-index)
-                  (begin
-                    (set! valid false)
-                    (set! error "compiler lzss: backreference before output"))
-                  (begin
-                    (compiler-lzss-copy-short-match!
-                      out-data
-                      out-index
-                      offset
-                      length)
-                    (+= out-index length)))))
-            (set! flags (shr flags 1))
-            (+= token 1))))
-      (cond
-        [(or (not valid) (>= out-index raw-len)) unit]
-        [(>= compressed-index compressed-len)
-          (set! valid false)
-          (set! error "compiler lzss: truncated token stream")]
-        [else
-          (let
-            [flags : i64
-              (cast
-                (array-ref payload (+ compressed-start compressed-index))
-                : i64)]
-            [bit : i64 0]
-            (+= compressed-index 1)
-            (while (and valid (< bit 8) (< out-index raw-len))
-              (if (!= (bit-and flags (shl 1 bit)) 0)
-                (if (>= compressed-index compressed-len)
-                  (begin
-                    (set! valid false)
-                    (set! error "compiler lzss: truncated literal token"))
-                  (begin
-                    (set!
-                      (array-ref out out-index)
-                      (array-ref payload (+ compressed-start compressed-index)))
-                    (+= compressed-index 1)
-                    (+= out-index 1)))
-                (if (< (- compressed-len compressed-index) 2)
-                  (begin
-                    (set! valid false)
-                    (set! error "compiler lzss: truncated backreference token"))
-                  (let
-                    [packed : i64
-                      (bit-or
-                        (shl
-                          (cast
-                            (array-ref
-                              payload
-                              (+ compressed-start compressed-index))
-                            : i64)
-                          8)
-                        (cast
-                          (array-ref
-                            payload
-                            (+ compressed-start (+ compressed-index 1)))
-                          : i64))]
-                    [offset : i64 (+ (shr packed 4) 1)]
-                    [length : i64 (+ (bit-and packed 15) 3)]
-                    (+= compressed-index 2)
-                    (cond
-                      [(> offset out-index)
-                        (set! valid false)
-                        (set!
-                          error
-                          "compiler lzss: backreference before output")]
-                      [(> length (- raw-len out-index))
-                        (set! valid false)
-                        (set! error "compiler lzss: token exceeds raw length")]
-                      [else
-                        (compiler-lzss-copy-match!
-                          (unsafe
-                            (__tl_array-data out))
-                          out-index
-                          offset
-                          length)
-                        (+= out-index length)]))))
-              (+= bit 1)))]))
-    (cond
-      [(not valid) (Err error)]
-      [(!= out-index raw-len) (Err "compiler lzss: expanded length mismatch")]
-      [(!= compressed-index compressed-len)
-        (Err "compiler lzss: trailing compressed bytes")]
-      [else (Ok out)])))
-
-;; --- envelope v2 --------------------------------------------------------------
-;;
 ;; The v1 token stream re-coded bit by bit (most significant bit first) under one
 ;; FIXED canonical Huffman model, so a payload carries no code tables: a main
 ;; symbol (a literal byte, or 256 for a back-reference), then for a
@@ -675,16 +463,11 @@
 (define (compiler-lzss-decode
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-limit : i64]) : CompilerLzssV2Bytes
-  (if (compiler-lzss-prefix? payload (compiler-lzss-v2-prefix))
-    (match (compiler-lzss-frame-with-prefix
-      payload
-      raw-limit
-      (compiler-lzss-v2-prefix)
-      48)
-      [(Err message) (Err message)]
-      [(Ok raw-len compressed-start)
-        (compiler-lzss-decode-v2 payload compressed-start raw-len)])
-    (match (compiler-lzss-frame payload raw-limit)
-      [(Err message) (Err message)]
-      [(Ok raw-len compressed-start)
-        (compiler-lzss-decode-tokens payload compressed-start raw-len)])))
+  (match (compiler-lzss-frame-with-prefix
+    payload
+    raw-limit
+    (compiler-lzss-v2-prefix)
+    48)
+    [(Err message) (Err message)]
+    [(Ok raw-len compressed-start)
+      (compiler-lzss-decode-v2 payload compressed-start raw-len)]))

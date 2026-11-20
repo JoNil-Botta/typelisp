@@ -30,6 +30,10 @@
   (Err String)
   (Ok (__tl_dyn-array u8)))
 
+(defenum CompilerLzssCheck
+  (Err String)
+  (Ok unit))
+
 (define (compiler-lzss-envelope-prefix) : String
   "__typelisp_embedded_stdlib_tlss_v3__")
 
@@ -79,6 +83,69 @@
 ;; Literal and match symbols share one alphabet per context, so decoding reads
 ;; one context table; a direct table of `bits` bits covers most codes and the
 ;; canonical walk finishes the rest.
+;; Check a stored model before anything decodes with it: every symbol needs a
+;; code of at most `max-code-bits`, and no table may claim more code space than
+;; a prefix code allows (a Kraft sum over one).
+(define (compiler-lzss-model-check [lengths : (& lengths (__tl_dyn-array i64))]) : CompilerLzssCheck
+  (let
+    [contexts : i64 (compiler-lzss-contexts)]
+    [main-symbols : i64 (compiler-lzss-main-symbols)]
+    [length-start : i64 (* contexts main-symbols)]
+    [distance-start : i64 (+ length-start (compiler-lzss-length-symbols))]
+    [limit : i64 (shl 1 (compiler-lzss-max-code-bits))]
+    [context : i64 0]
+    [ok : bool (= (array-length lengths) (compiler-lzss-model-spec-bytes))]
+    (while (and ok (< context contexts))
+      (unless
+        (compiler-lzss-table-check
+          lengths
+          (* context main-symbols)
+          main-symbols
+          limit)
+        (set! ok false))
+      (set! context (+ context 1)))
+    (when
+      ok
+      (unless
+        (compiler-lzss-table-check
+          lengths
+          length-start
+          (compiler-lzss-length-symbols)
+          limit)
+        (set! ok false)))
+    (set! context 0)
+    (while (and ok (< context (compiler-lzss-length-buckets)))
+      (unless
+        (compiler-lzss-table-check
+          lengths
+          (+ distance-start (* context (compiler-lzss-distance-symbols)))
+          (compiler-lzss-distance-symbols)
+          limit)
+        (set! ok false))
+      (set! context (+ context 1)))
+    (if ok
+      (Ok unit)
+      (Err "compiler lzss: invalid stored model"))))
+
+(define (compiler-lzss-table-check
+  [lengths : (& lengths (__tl_dyn-array i64))]
+  [start : i64]
+  [n : i64]
+  [limit : i64]) : bool
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    [ok : bool true]
+    (while (and ok (< index n))
+      (let
+        [length : i64 (array-ref lengths (+ start index))]
+        (cond
+          [(< length 1) (set! ok false)]
+          [(> length (compiler-lzss-max-code-bits)) (set! ok false)]
+          [else (+= total (shl 1 (- (compiler-lzss-max-code-bits) length)))]))
+      (set! index (+ index 1)))
+    (and ok (<= total limit))))
+
 ;; Bytes of one stored model: every table's code lengths as 'A' + length.
 (define (compiler-lzss-model-spec-bytes) : i64
   (+
@@ -1493,17 +1560,15 @@
         (Err "compiler lzss: trailing compressed bytes")]
       [else (Ok out)])))
 
-;: Decode one `include-str-lzss` payload after bounded validation of its
-;: envelope. A compiler built by a previous release embeds the earlier envelope,
-;; so its reader stays until that release is superseded; the encoder below only
-;; ever writes the current one.
+;; Decode one `include-str-lzss` payload after bounded validation of its
+;; envelope. The published seed writes the v2 envelope, so a compiler built by
+;; it carries v2 frames and keeps this reader until the seed writes v3; the
+;; encoder below only ever writes the current one.
 (define (compiler-lzss-decode
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-limit : i64]) : CompilerLzssBytes
   (when
-    (or
-      (compiler-lzss-prefix? payload (lzss_v2.compiler-lzss-v2-prefix))
-      (compiler-lzss-prefix? payload (lzss_v2.compiler-lzss-envelope-prefix)))
+    (compiler-lzss-prefix? payload (lzss_v2.compiler-lzss-v2-prefix))
     (return
       (match (lzss_v2.compiler-lzss-decode payload raw-limit)
         [(lzss_v2.CompilerLzssV2Bytes.Err message) (Err message)]

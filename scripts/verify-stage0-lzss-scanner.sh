@@ -255,16 +255,23 @@ stamp_index() {
         END { printf "%.0f",h }')
     u64 "$index_hash" | dd of="$work/v3" bs=1 seek=60 conv=notrunc 2>/dev/null
 }
-directory=4489
+# magic(36) + raw, index end, count, hash, stream bytes, groups(84),
+# model(4413), one group record(32), one frame record(48), then the stream.
+model_start=84
+model_bytes=4413
+group_table=$((model_start + model_bytes))
+directory=$((group_table + 32))
+index_end=$((directory + 48))
 write_v3() {
     {
         printf '__typelisp_embedded_stdlib_tlci_v3__'
-        u64 176; u64 "$((directory + 48))"; u64 1; u64 0; u64 1
-        dd if=/dev/zero bs=4413 count=1 2>/dev/null
-        u64 "$((directory + 48))"; u64 0; u64 0; u64 176; u64 0; u64 1
+        u64 176; u64 "$index_end"; u64 1; u64 0; u64 1; u64 1
+        dd if=/dev/zero bs="$model_bytes" count=1 2>/dev/null
+        u64 0; u64 1; u64 0; u64 176
+        u64 "$index_end"; u64 0; u64 0; u64 176; u64 0; u64 1
         printf 'x'
     } > "$work/v3"
-    stamp_index "$((directory + 48))"
+    stamp_index "$index_end"
 }
 reject_v3() {
     if scan_stage0_tlch "$work/v3" > "$work/out" 2> "$work/err"; then
@@ -275,8 +282,8 @@ reject_v3() {
 }
 write_v3
 actual=$(scan_stage0_tlch "$work/v3")
-[ "$actual" = "1 176 1 $((directory + 49))" ] || {
-    echo "TLCH scanner: expected 1 176 1 $((directory + 49)), got $actual" >&2
+[ "$actual" = "1 176 1 $((index_end + 1))" ] || {
+    echo "TLCH scanner: expected 1 176 1 $((index_end + 1)), got $actual" >&2
     exit 1
 }
 {
@@ -439,87 +446,6 @@ analyze_reject 'payload not found'
 printf '(include-str-lzss catalog "catalog.tsv")\n' > "$work/catalog.tl"
 printf X > "$work/image.bin"
 printf ' (\n include-bin image "image.bin.tlch") ; image\n' >> "$work/manifest.tl"
-u64() {
-    # Binary octets: awk's `%c` would re-encode values above 127 as UTF-8, so
-    # write each byte through printf's octal escape.
-    _u64_value=$1
-    _u64_index=0
-    while [ "$_u64_index" -lt 8 ]; do
-        printf "\\$(printf '%03o' "$((_u64_value % 256))")"
-        _u64_value=$((_u64_value / 256))
-        _u64_index=$((_u64_index + 1))
-    done
-}
-stamp_index() {
-    index_hash=$(od -An -v -tu1 "$work/v3" | awk -v end="$1" '
-        BEGIN { h=1; i=0 }
-        { for (f=1;f<=NF && i<end;f++) { h=(h*131+((i>=60 && i<68)?0:$f))%2147483647; i++ } }
-        END { printf "%.0f",h }')
-    u64 "$index_hash" | dd of="$work/v3" bs=1 seek=60 conv=notrunc 2>/dev/null
-}
-directory=4489
-write_v3() {
-    {
-        printf '__typelisp_embedded_stdlib_tlci_v3__'
-        u64 176; u64 "$((directory + 48))"; u64 1; u64 0; u64 1
-        dd if=/dev/zero bs=4413 count=1 2>/dev/null
-        u64 "$((directory + 48))"; u64 0; u64 0; u64 176; u64 0; u64 1
-        printf 'x'
-    } > "$work/v3"
-    stamp_index "$((directory + 48))"
-}
-reject_v3() {
-    if scan_stage0_tlch "$work/v3" > "$work/out" 2> "$work/err"; then
-        echo "TLCH scanner accepted $label" >&2
-        exit 1
-    fi
-    grep -F "$1" "$work/err" >/dev/null || { cat "$work/err" >&2; exit 1; }
-}
-write_v3
-actual=$(scan_stage0_tlch "$work/v3")
-[ "$actual" = "1 176 1 $((directory + 49))" ] || {
-    echo "TLCH scanner: expected 1 176 1 $((directory + 49)), got $actual" >&2
-    exit 1
-}
-{
-    cat "$work/frame-a"
-    cat "$work/frame-aaaa"
-    cat "$work/v3"
-} > "$work/frame"
-analyze > "$work/report"
-grep -Fx "tlci_envelope_raw_bytes${tab}176" "$work/report" >/dev/null
-
-label=index-hash
-printf X | dd of="$work/v3" bs=1 seek="$directory" conv=notrunc 2>/dev/null
-reject_v3 'index hash mismatch'
-label=frame-record
-write_v3
-u64 7 | dd of="$work/v3" bs=1 seek="$((directory + 32))" conv=notrunc 2>/dev/null
-stamp_index "$((directory + 48))"
-reject_v3 'invalid frame record'
-# A zero frame count is not a recognizable envelope, so the analyzer reports
-# the missing stream rather than the scanner failing on it.
-label=frame-count
-write_v3
-u64 0 | dd of="$work/v3" bs=1 seek=52 conv=notrunc 2>/dev/null
-stamp_index "$((directory + 48))"
-{
-    cat "$work/frame-a"
-    cat "$work/frame-aaaa"
-    cat "$work/v3"
-} > "$work/frame"
-analyze_reject 'found 0'
-label=stream-short
-write_v3
-u64 2 | dd of="$work/v3" bs=1 seek=68 conv=notrunc 2>/dev/null
-stamp_index "$((directory + 48))"
-reject_v3 'inconsistent index length'
-label=truncated
-write_v3
-size=$(wc -c < "$work/v3" | tr -d ' ')
-dd if="$work/v3" of="$work/short" bs=1 count="$((size - 1))" 2>/dev/null
-cp "$work/short" "$work/v3"
-reject_v3 'inconsistent index length'
 if [ "${1:-}" != --target-tmpdir ]; then
     mkdir "$work/target"
     TMPDIR="$work/target" "$ROOT/scripts/verify-stage0-lzss-scanner.sh" --target-tmpdir

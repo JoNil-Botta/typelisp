@@ -1,5 +1,6 @@
-;; Indexed TLCH v2 deployment: one model, a surface, and independent native images.
-;; Each decoded frame is an ordinary TLCI image with its own integrity checks.
+;; Indexed catalog deployment: one stored model, one surface, independently
+;; loadable native images, and one token stream split into groups so a reader
+;; expands only the group holding the frame it needs.
 (import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.byte_buf_core as buf)
@@ -11,7 +12,9 @@
 (defstruct CompilerEmbeddedStdlibTlciFrames
   (raw-len i64)
   (count i64)
-  (index-end i64))
+  (index-end i64)
+  (groups i64)
+  (directory i64))
 
 (defenum ResultCompilerEmbeddedStdlibTlciFrames
   (Err String)
@@ -21,22 +24,41 @@
   (Err String)
   (Ok (__tl_dyn-array (__tl_dyn-array u8))))
 
+;; One group's expanded bytes, starting at its first frame.
+(defenum ResultCompilerEmbeddedStdlibTlciFramesGroup
+  (Err String)
+  (Ok (__tl_dyn-array u8)))
+
 (define (compiler-embedded-stdlib-tlci-frames-prefix) : String
   (codec.compiler-embedded-stdlib-tlci-codec-prefix))
-
-(define (compiler-embedded-stdlib-tlci-frames-directory) : i64
-  (codec.compiler-embedded-stdlib-tlci-codec-directory))
 
 (define (compiler-embedded-stdlib-tlci-frames-record-bytes) : i64
   (codec.compiler-embedded-stdlib-tlci-codec-record-bytes))
 
-(define (compiler-embedded-stdlib-tlci-frames-record [index : i64]) : i64
-  (+
-    (compiler-embedded-stdlib-tlci-frames-directory)
-    (* index (compiler-embedded-stdlib-tlci-frames-record-bytes))))
+(define (compiler-embedded-stdlib-tlci-frames-group-bytes) : i64
+  (codec.compiler-embedded-stdlib-tlci-codec-group-bytes))
 
-;; Authenticate the complete index, including lengths, names and the shared
-;; model, before allocation or lookup. Bodies are checked independently on use.
+(define (compiler-embedded-stdlib-tlci-frames-group-record [group : i64]) : i64
+  (+
+    (codec.compiler-embedded-stdlib-tlci-codec-group-table)
+    (* group (compiler-embedded-stdlib-tlci-frames-group-bytes))))
+
+(define (compiler-embedded-stdlib-tlci-frames-record-at
+  [directory : i64]
+  [index : i64]) : i64
+  (+ directory (* index (compiler-embedded-stdlib-tlci-frames-record-bytes))))
+
+(define (compiler-embedded-stdlib-tlci-frames-group-of [index : i64]) : i64
+  (codec.compiler-embedded-stdlib-tlci-codec-group-of index))
+
+(define (compiler-embedded-stdlib-tlci-frames-group-first [group : i64]) : i64
+  (codec.compiler-embedded-stdlib-tlci-codec-group-first group))
+
+(define (compiler-embedded-stdlib-tlci-frames-record
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
+  [index : i64]) : i64
+  (compiler-embedded-stdlib-tlci-frames-record-at catalog.directory index))
+
 (define (compiler-embedded-stdlib-tlci-frames-index-hash
   [payload : (& payload (__tl_dyn-array u8))]
   [end : i64]) : i64
@@ -66,6 +88,9 @@
       (- left-len right-len)
       order)))
 
+;; Validate the whole index and the group table before allocating anything: the
+;; group ranges must be contiguous, byte-aligned, and cover exactly the frames
+;; and the stream.
 (define (compiler-embedded-stdlib-tlci-frames-parse
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-limit : i64]) : ResultCompilerEmbeddedStdlibTlciFrames
@@ -74,7 +99,7 @@
     (when
       (or
         (< raw-limit 0)
-        (< len (compiler-embedded-stdlib-tlci-frames-directory)))
+        (< len (codec.compiler-embedded-stdlib-tlci-codec-group-table)))
       (return
         (Err "embedded stdlib tlci frames: truncated header or invalid limit")))
     (unless
@@ -88,40 +113,81 @@
       [count : i64 (tlci.tlci-read-u64 payload 52)]
       [expected-hash : i64 (tlci.tlci-read-u64 payload 60)]
       [stream-bytes : i64 (tlci.tlci-read-u64 payload 68)]
-      ;; Division bounds every later record multiplication before it happens.
+      [groups : i64 (tlci.tlci-read-u64 payload 76)]
+      [directory : i64
+        (codec.compiler-embedded-stdlib-tlci-codec-directory groups)]
       (when
         (or
           (< raw-len 0)
           (> raw-len raw-limit)
           (< count 1)
-          (< index-end (compiler-embedded-stdlib-tlci-frames-directory))
+          (!=
+            groups
+            (codec.compiler-embedded-stdlib-tlci-codec-group-count count))
+          (< index-end directory)
           (> index-end len)
           (< stream-bytes 1)
           (> stream-bytes (- len index-end))
           (>
             count
             (/
-              (- index-end (compiler-embedded-stdlib-tlci-frames-directory))
-              48)))
+              (- index-end directory)
+              (compiler-embedded-stdlib-tlci-frames-record-bytes))))
         (return (Err "embedded stdlib tlci frames: invalid index bounds")))
       (unless
         (=
           expected-hash
           (compiler-embedded-stdlib-tlci-frames-index-hash payload index-end))
         (return (Err "embedded stdlib tlci frames: index hash mismatch")))
+      ;; Group table: contiguous byte ranges, contiguous raw ranges, the first
+      ;; group exactly frame zero, and the last group ending at the stream end.
       (let
-        [name-cursor : i64 (compiler-embedded-stdlib-tlci-frames-record count)]
+        [stream-cursor : i64 0]
+        [raw-cursor : i64 0]
+        [group : i64 0]
+        (while (< group groups)
+          (let
+            [record : i64
+              (compiler-embedded-stdlib-tlci-frames-group-record group)]
+            [stream : i64 (tlci.tlci-read-u64 payload record)]
+            [stream-len : i64 (tlci.tlci-read-u64 payload (+ record 8))]
+            [raw : i64 (tlci.tlci-read-u64 payload (+ record 16))]
+            [raw-group-len : i64 (tlci.tlci-read-u64 payload (+ record 24))]
+            (when
+              (or
+                (< stream-len 1)
+                (!= stream stream-cursor)
+                (> (+ stream stream-len) stream-bytes)
+                (< raw-group-len 0)
+                (!= raw raw-cursor)
+                (> (+ raw raw-group-len) raw-len)
+                (if (= group 0)
+                  (= raw-group-len 0)
+                  false))
+              (return (Err "embedded stdlib tlci frames: invalid group table")))
+            (+= stream-cursor stream-len)
+            (+= raw-cursor raw-group-len))
+          (set! group (+ group 1)))
+        (unless
+          (and (= stream-cursor stream-bytes) (= raw-cursor raw-len))
+          (return
+            (Err
+              "embedded stdlib tlci frames: group ranges do not cover the stream"))))
+      (let
+        [name-cursor : i64
+          (compiler-embedded-stdlib-tlci-frames-record-at directory count)]
         [total : i64 0]
         [previous-name : i64 0]
         [previous-len : i64 0]
         (for [index (iterator.range 0 count)]
           (let
-            [record : i64 (compiler-embedded-stdlib-tlci-frames-record index)]
+            [record : i64
+              (compiler-embedded-stdlib-tlci-frames-record-at directory index)]
             [name : i64 (tlci.tlci-read-u64 payload record)]
             [name-len : i64 (tlci.tlci-read-u64 payload (+ record 8))]
             [raw-offset : i64 (tlci.tlci-read-u64 payload (+ record 16))]
             [raw : i64 (tlci.tlci-read-u64 payload (+ record 24))]
-            [reserved : i64 (tlci.tlci-read-u64 payload (+ record 32))]
+            [group : i64 (tlci.tlci-read-u64 payload (+ record 32))]
             [checksum : i64 (tlci.tlci-read-u64 payload (+ record 40))]
             (when
               (or
@@ -134,7 +200,7 @@
                 (< raw tlci.tlci-header-size)
                 (> raw (- raw-limit total))
                 (!= raw-offset total)
-                (!= reserved 0)
+                (!= group (compiler-embedded-stdlib-tlci-frames-group-of index))
                 (< checksum 0)
                 (> checksum 2147483647))
               (return (Err "embedded stdlib tlci frames: invalid frame bounds")))
@@ -157,22 +223,24 @@
             (set! previous-name name)
             (set! previous-len name-len)))
         (unless
-          (and
-            (= name-cursor index-end)
-            (= (+ index-end stream-bytes) len)
-            (= total raw-len)
-            (> index-end -1)
-            (< index-end len))
+          (and (= name-cursor index-end) (= total raw-len))
           (return
             (Err
               "embedded stdlib tlci frames: trailing bytes or raw length mismatch")))
-        (Ok (CompilerEmbeddedStdlibTlciFrames raw-len count index-end))))))
+        (Ok
+          (CompilerEmbeddedStdlibTlciFrames
+            raw-len
+            count
+            index-end
+            groups
+            directory))))))
 
 (define (compiler-embedded-stdlib-tlci-frames-name
   [payload : (& payload (__tl_dyn-array u8))]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
   [index : i64]) : String
   (let
-    [record : i64 (compiler-embedded-stdlib-tlci-frames-record index)]
+    [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog index)]
     (tlci.tlci-bytes->string
       payload
       (tlci.tlci-read-u64 payload record)
@@ -180,7 +248,7 @@
 
 (define (compiler-embedded-stdlib-tlci-frames-find
   [payload : (& payload (__tl_dyn-array u8))]
-  [catalog : CompilerEmbeddedStdlibTlciFrames]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
   [name : (& name str)]) : i64
   (let
     [lo : i64 1]
@@ -189,7 +257,7 @@
     (while (< lo hi)
       (let
         [mid : i64 (+ lo (/ (- hi lo) 2))]
-        [record : i64 (compiler-embedded-stdlib-tlci-frames-record mid)]
+        [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog mid)]
         [offset : i64 (tlci.tlci-read-u64 payload record)]
         [name-len : i64 (tlci.tlci-read-u64 payload (+ record 8))]
         [index : i64 0]
@@ -208,38 +276,117 @@
           [else (set! hi mid)])))
     -1))
 
-;; Expand the whole stream once and cut out every frame, checking each frame's
-;; recorded checksum. `model` is the envelope's stored model.
+;; Frame `index`'s raw length and offset inside its group.
+(define (compiler-embedded-stdlib-tlci-frames-frame-offset
+  [payload : (& payload (__tl_dyn-array u8))]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
+  [index : i64]) : i64
+  (let
+    [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog index)]
+    [group-record : i64
+      (compiler-embedded-stdlib-tlci-frames-group-record
+        (compiler-embedded-stdlib-tlci-frames-group-of index))]
+    (-
+      (tlci.tlci-read-u64 payload (+ record 16))
+      (tlci.tlci-read-u64 payload (+ group-record 16)))))
+
+(define (compiler-embedded-stdlib-tlci-frames-frame-length
+  [payload : (& payload (__tl_dyn-array u8))]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
+  [index : i64]) : i64
+  (let
+    [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog index)]
+    (tlci.tlci-read-u64 payload (+ record 24))))
+
+;; Expand one group of frames.
+(define (compiler-embedded-stdlib-tlci-frames-decode-group
+  [payload : (& payload (__tl_dyn-array u8))]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
+  [group : i64]
+  [model : (& model lzss.CompilerLzssModel)]) : ResultCompilerEmbeddedStdlibTlciFramesGroup
+  (when
+    (or (< group 0) (>= group catalog.groups))
+    (return (Err "embedded stdlib tlci frames: invalid group")))
+  (let
+    [record : i64 (compiler-embedded-stdlib-tlci-frames-group-record group)]
+    [stream : i64 (tlci.tlci-read-u64 payload record)]
+    [stream-len : i64 (tlci.tlci-read-u64 payload (+ record 8))]
+    [raw-group-len : i64 (tlci.tlci-read-u64 payload (+ record 24))]
+    (when
+      (> (+ stream stream-len) (- (array-length payload) catalog.index-end))
+      (return (Err "embedded stdlib tlci frames: truncated group")))
+    (match (codec.compiler-embedded-stdlib-tlci-codec-decode-group
+      payload
+      (+ catalog.index-end stream)
+      raw-group-len
+      model)
+      [(Err message) (Err message)]
+      [(Ok bytes)
+        (when
+          (!= (array-length bytes) raw-group-len)
+          (return (Err "embedded stdlib tlci frames: group length mismatch")))
+        (Ok bytes)])))
+
+;; Expand every frame once, in index order, checking each checksum.
 (define (compiler-embedded-stdlib-tlci-frames-decode-images
   [payload : (& payload (__tl_dyn-array u8))]
-  [catalog : CompilerEmbeddedStdlibTlciFrames]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
   [model : (& model lzss.CompilerLzssModel)]) : ResultCompilerEmbeddedStdlibTlciFramesImages
   (let
-    [stream
-      (try
-        (codec.compiler-embedded-stdlib-tlci-codec-decode
-          payload
-          catalog.index-end
-          catalog.raw-len
-          model))]
     [images : (__tl_dyn-array (__tl_dyn-array u8))
       (__tl_make-array (__tl_dyn-array u8) catalog.count)]
-    (for [index (iterator.range 0 catalog.count)]
+    [index : i64 0]
+    [group : i64 0]
+    (while (< group catalog.groups)
       (let
-        [record : i64 (compiler-embedded-stdlib-tlci-frames-record index)]
-        [raw-offset : i64 (tlci.tlci-read-u64 payload (+ record 16))]
-        [raw : i64 (tlci.tlci-read-u64 payload (+ record 24))]
-        [expected : i64 (tlci.tlci-read-u64 payload (+ record 40))]
-        [bytes : (__tl_dyn-array u8)
-          (tlci.tlci-slice-bytes (& stream) raw-offset raw)]
-        (unless
-          (= (tlci.tlci-read-u64 (& bytes) 48) expected)
-          (return
-            (Err
-              "embedded stdlib tlci frames: frame checksum identity mismatch")))
-        (set! (array-ref images index) bytes)))
+        [bytes
+          (try
+            (compiler-embedded-stdlib-tlci-frames-decode-group
+              payload
+              catalog
+              group
+              model))]
+        [first : i64 (compiler-embedded-stdlib-tlci-frames-group-first group)]
+        [last : i64
+          (let
+            [end : i64
+              (if (= group 0)
+                (+ first 1)
+                (+
+                  first
+                  (codec.compiler-embedded-stdlib-tlci-codec-group-frames)))]
+            (if (< end catalog.count)
+              end
+              catalog.count))]
+        (set! index first)
+        (while (< index last)
+          (let
+            [offset : i64
+              (compiler-embedded-stdlib-tlci-frames-frame-offset
+                payload
+                catalog
+                index)]
+            [raw : i64
+              (compiler-embedded-stdlib-tlci-frames-frame-length
+                payload
+                catalog
+                index)]
+            [record : i64
+              (compiler-embedded-stdlib-tlci-frames-record catalog index)]
+            [expected : i64 (tlci.tlci-read-u64 payload (+ record 40))]
+            [frame : (__tl_dyn-array u8)
+              (tlci.tlci-slice-bytes (& bytes) offset raw)]
+            (unless
+              (= (tlci.tlci-read-u64 (& frame) 48) expected)
+              (return
+                (Err
+                  "embedded stdlib tlci frames: frame checksum identity mismatch")))
+            (set! (array-ref images index) frame))
+          (set! index (+ index 1))))
+      (set! group (+ group 1)))
     (Ok images)))
 
+;; Parse the envelope, expand every frame and rebuild the ordinary catalog.
 (define (compiler-embedded-stdlib-tlci-frames-expand
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-limit : i64]) : tlci.ResultTlciBytes
@@ -258,7 +405,7 @@
     (for [index (iterator.range 0 (- catalog.count 1))]
       (set!
         (array-ref names index)
-        (compiler-embedded-stdlib-tlci-frames-name payload (+ index 1))))
+        (compiler-embedded-stdlib-tlci-frames-name payload catalog (+ index 1))))
     (compiler-embedded-stdlib-tlci-frames-aggregate (& images) (& names))))
 
 ;; Recreate a canonical ordinary TLCI catalog for inspection and byte parity.

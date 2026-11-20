@@ -197,6 +197,86 @@
       (set! keep (+ keep 1)))
     ok))
 
+;; A source with real matches: the fixed model encodes this as a few literals
+;; and many back-references, so corrupting its body exercises the match path.
+(define (compiler-lzss-test-match-source) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 2048)]
+    [index : i64 0]
+    (while (< index 64)
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        "let x : i64 (f x) (g x) ; repeated line for matches\n")
+      (set! index (+ index 1)))
+    (byte_buf_core.byte-buf-builder-to-string (& out))))
+
+;; The stored-model path: the same bytes decode through a model parsed from its
+;; spec, and a prefix decode stops exactly at the requested length.
+(define (compiler-lzss-test-stored-model-ok?) : bool
+  (let
+    [text : String (compiler-lzss-test-match-source)]
+    [stored : lzss.CompilerLzssModel
+      (lzss.compiler-lzss-model-from-spec (& lzss.compiler-lzss-fixed-spec))]
+    [tokens : (__tl_dyn-array lzss.CompilerLzssToken)
+      (lzss.compiler-lzss-tokenize (& text) (& stored))]
+    [writer : lzss.CompilerLzssWriter (lzss.compiler-lzss-writer)]
+    (lzss.compiler-lzss-emit (& text) (& tokens) (& stored) (&mut writer))
+    (let
+      [body : String (lzss.compiler-lzss-finish-writer (&mut writer))]
+      [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& body))]
+      ;; A prefix decode may only stop where a token ends, so take the raw
+      ;; length of the stream's first half of tokens.
+      [half : i64 (compiler-lzss-test-token-prefix-length (& tokens))]
+      [lengths : (__tl_dyn-array i64)
+        (lzss.compiler-lzss-spec-lengths (& lzss.compiler-lzss-fixed-spec))]
+      (and
+        (> (array-length tokens) 0)
+        (match (lzss.compiler-lzss-decode-prefix (& packed) 0 half (& stored))
+          [(Ok bytes)
+            (and
+              (= (array-length bytes) half)
+              (compiler-lzss-test-same-prefix? (& bytes) (& text)))]
+          [(Err _) false])
+        ;; The stored model passes the same check the envelope parse applies.
+        (match (lzss.compiler-lzss-model-check (& lengths))
+          [(lzss.CompilerLzssCheck.Ok _) true]
+          [(lzss.CompilerLzssCheck.Err _) false])))))
+
+(define (compiler-lzss-test-token-prefix-length
+  [tokens : (& tokens (__tl_dyn-array lzss.CompilerLzssToken))]) : i64
+  (let
+    [limit : i64 (/ (array-length tokens) 2)]
+    [index : i64 0]
+    [total : i64 0]
+    (while (< index limit)
+      (let
+        [token : lzss.CompilerLzssToken (array-ref tokens index)]
+        (+= total token.length))
+      (set! index (+ index 1)))
+    total))
+
+(define (compiler-lzss-test-same-prefix?
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [text : (& text str)]) : bool
+  (let
+    [n : i64 (array-length bytes)]
+    [same : bool (<= n (string.string-length text))]
+    [index : i64 0]
+    (while (and same (< index n))
+      (unless
+        (= (array-ref bytes index) (cast (string.string-ref text index) : u8))
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
+
+;; Corrupting a byte of a payload that carries matches may decode to different
+;; bytes, but every code, length and distance stays in range.
+(define (compiler-lzss-test-match-corruption-safe?) : bool
+  (let
+    [text : String (compiler-lzss-test-match-source)]
+    (compiler-lzss-test-corrupt-safe? (& text))))
+
 (define (compiler-lzss-test-rejects?
   [payload : (__tl_dyn-array u8)]
   [raw-limit : i64]) : bool
@@ -287,6 +367,12 @@
       [(not (compiler-lzss-test-round-trip? "abcabcabcabcabcabc")) 5]
       [(not (compiler-lzss-test-round-trip? (& repeat))) 6]
       [(not (compiler-lzss-test-round-trip? (& noise))) 7]
+      [(not (compiler-lzss-test-stored-model-ok?)) 16]
+      [(not (compiler-lzss-test-match-corruption-safe?)) 17]
+      [(not
+          (compiler-lzss-test-truncations-rejected?
+            (& (compiler-lzss-test-match-source))))
+        18]
       [(not (compiler-lzss-test-corrupt-safe? (& noise))) 8]
       [(not (compiler-lzss-test-truncations-rejected? "abcdefghij")) 9]
       [(not (compiler-lzss-test-truncations-rejected? (& noise))) 10]

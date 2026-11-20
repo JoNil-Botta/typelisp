@@ -25,28 +25,28 @@
   (match (frames.compiler-embedded-stdlib-tlci-frames-parse envelope 268435456)
     [(Err _) false]
     [(Ok catalog)
-      ;; Alter the authenticated checksum binding, then one meaningful bit of
-      ;; each endpoint frame. None may produce a valid ordinary catalog.
+      ;; Case 0 breaks the first frame's checksum, case 1 a byte of the first
+      ;; group's token stream, and case 2 the last frame's checksum. None may
+      ;; produce a valid ordinary catalog.
       (for [case (iterator.range 0 3)]
         (let
           [changed : (__tl_dyn-array u8)
             (clone (view.compiler-owned-reference-shared-view envelope))]
           [record : i64
             (frames.compiler-embedded-stdlib-tlci-frames-record
+              catalog
               (if (= case 2)
                 (- catalog.count 1)
                 0))]
-          ;; Case 0 breaks the checksum word of the first frame; the other
-          ;; cases break the first byte of the shared token stream.
           [offset : i64
-            (if (= case 0)
-              (+ record 40)
-              catalog.index-end)]
+            (if (= case 1)
+              catalog.index-end
+              (+ record 40))]
           (set!
             (array-ref changed offset)
             (cast (bit-xor (cast (array-ref changed offset) : i64) 128) : u8))
           (when
-            (= case 0)
+            (= case 1)
             (tlci.tlci-set-u64!
               (&mut changed)
               60

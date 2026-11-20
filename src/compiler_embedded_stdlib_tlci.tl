@@ -7,12 +7,6 @@
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_lzss as lzss)
 (import compiler_embedded_stdlib_tlci_frames as frames)
-
-;; Read-only support for a compiler built by the previous release, which embeds
-;; the earlier envelope. This compiler never writes it; delete with the next
-;; release.
-(import compiler_embedded_stdlib_tlci_frames_v2 as frames_v2)
-(import compiler_embedded_stdlib_tlci_codec_v2 as codec_v2)
 (import tlci_loader as loader)
 (cfg compile-profile (import compiler_allocation_profile as allocation_profile))
 

@@ -568,7 +568,28 @@
   ;; Dense line-record sink (3 fields).
   (records-lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
   (records-live (__tl_dyn-array i64))
-  (records-len i64))
+  (records-len i64)
+  ;; Address-taken frame objects (7 fields; GAP5 precise leaq poison).
+  ;; `sweep-addr-rbp`/`sweep-addr-ext` hold one entry per emitted frame
+  ;; address as (rbp-relative slot offset, object extent in bytes) in
+  ;; emission order; `sweep-addr-start-arr`/`-len-arr` slice that list per
+  ;; sweep-metadata entry; `sweep-poison-bits` is the per-region bitmap the
+  ;; sweep marks the resolved poison spans in.
+  (sweep-addr-rbp (__tl_dyn-array i64))
+  (sweep-addr-ext (__tl_dyn-array i64))
+  (sweep-addr-start-arr (__tl_dyn-array i64))
+  (sweep-addr-len-arr (__tl_dyn-array i64))
+  (sweep-addr-count i64)
+  (sweep-addr-flushed i64)
+  (sweep-addr-overflow bool)
+  (sweep-poison-bits (__tl_dyn-array i64))
+  ;; Per-program scratch for the address-extent tables and the poison bitmap:
+  ;; a dedicated arena (raw handle + start mark) rewound by `sweep-reset!`, so
+  ;; none of it is retained after a program's emission. `sweep-scratch-empty`
+  ;; is the shared empty array the cleared fields point at.
+  (sweep-addr-arena i64)
+  (sweep-addr-mark i64)
+  (sweep-scratch-empty (__tl_dyn-array i64)))
 
 (defstruct CompilerBackendStreamState
   (address i64))
@@ -1764,7 +1785,18 @@
         1
         (__tl_make-array CompilerBackendPeepholeLineRecord 0)
         (__tl_make-array i64 0)
-        0))
+        0
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        0
+        0
+        false
+        (__tl_make-array i64 0)
+        0
+        0
+        (__tl_make-array i64 0)))
     (CompilerBackendStreamState
       (cast
         (unsafe
@@ -21365,32 +21397,82 @@
   [backend-state : CompilerBackendState]) : i64
   (+ (compiler-backend-group-word0-slot var vars assignments backend-state) 8))
 
-(define (compiler-backend-addr-of-source-slot
+;; The rbp-relative slot offset of the object an `AddrOf` names, mirroring
+;; `compiler-backend-addr-of-source-slot` numerically: the group-word0 slot
+;; for an addressable group, the assigned spill offset, else the canonical
+;; slot for the var. The sweep turns it into a delta-0 canonical offset with
+;; `canonical = (hi + 8) + rbp-offset`.
+(define (compiler-backend-addr-of-source-rbp-offset
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [src : i64]
-  [backend-state : CompilerBackendState]) : String
+  [backend-state : CompilerBackendState]) : i64
   (if (compiler-backend-addressable-group-var? backend-state src)
-    (compiler-backend-frame-offset-with-backend-state
-      backend-state
-      (compiler-backend-group-word0-slot
-        src
-        (compiler-backend-function-state-i64
-          (compiler-backend-state-function-state backend-state)
-          compiler-backend-function-i64-current-slot-vars)
-        assignments
-        backend-state))
+    (compiler-backend-group-word0-slot
+      src
+      (compiler-backend-function-state-i64
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-i64-current-slot-vars)
+      assignments
+      backend-state)
     (match (compiler-backend-emit-assignment-lookup
       backend-state
       assignments
       src)
       [(Some location)
         (match location
-          [(Spill offset)
-            (compiler-backend-frame-offset-with-backend-state
-              backend-state
-              offset)]
-          [_ (compiler-backend-slot-with-backend-state backend-state src)])]
-      [(No) (compiler-backend-slot-with-backend-state backend-state src)])))
+          [(Spill offset) offset]
+          [_ (- 0 (* 8 (+ src 1)))])]
+      [(No) (- 0 (* 8 (+ src 1)))])))
+
+;; Record the addressed object's extent for the sweep's precise leaq poison.
+;; A register-resident group is two words; every other object is its declared
+;; storage words (an `AddrOf`'s storage operand), never less than one slot.
+(define (compiler-backend-note-addr-of-extent!
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [src : i64]
+  [storage-words : i64]
+  [backend-state : CompilerBackendState]) : unit
+  (compiler-backend-sweep-addr-record!
+    backend-state
+    (compiler-backend-addr-of-source-rbp-offset assignments src backend-state)
+    (if (compiler-backend-addressable-group-var? backend-state src)
+      16
+      (if (< storage-words 1)
+        8
+        (* 8 storage-words)))))
+
+;; True when the addressed object has a frame slot home this pass renders
+;; through the frame-offset formatter: an addressable group, or a spilled var.
+;; A register-homed or uncolored var goes through `slot-with-backend-state`,
+;; which records the slot reference for frame sizing.
+(define (compiler-backend-addr-of-source-frame-homed?
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [src : i64]
+  [backend-state : CompilerBackendState]) : bool
+  (or
+    (compiler-backend-addressable-group-var? backend-state src)
+    (match (compiler-backend-emit-assignment-lookup
+      backend-state
+      assignments
+      src)
+      [(Some location)
+        (match location
+          [(Spill _) true]
+          [_ false])]
+      [(No) false])))
+
+(define (compiler-backend-addr-of-source-slot
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [src : i64]
+  [backend-state : CompilerBackendState]) : String
+  (if (compiler-backend-addr-of-source-frame-homed?
+    assignments
+    src
+    backend-state)
+    (compiler-backend-frame-offset-with-backend-state
+      backend-state
+      (compiler-backend-addr-of-source-rbp-offset assignments src backend-state))
+    (compiler-backend-slot-with-backend-state backend-state src)))
 
 (define (compiler-backend-emit-pack
   [type-segment-bases : i64]
@@ -32169,66 +32251,77 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : i64]
+  [storage-words : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (>= (compiler-backend-forwarded-addr-of-src backend-state dst) 0)
-    (Ok "")
-    (let
-      [slot : String
-        (compiler-backend-addr-of-source-slot assignments src backend-state)]
-      (Ok
-        (match (compiler-backend-emit-assignment-lookup
-          backend-state
-          assignments
-          dst)
-          [(Some location)
-            (match location
-              [(or (Register home) (RegisterPair home _))
-                (str_cat.str-cat
-                  "    leaq "
-                  slot
-                  ", "
-                  (compiler_abi.compiler-abi-register-spelling home)
-                  "\n")]
-              [(Spill offset)
-                (let
-                  [addr-reg : String
-                    (compiler-backend-scavenge-reg
-                      dst
-                      (compiler-backend-addr-scavenge-exclude)
-                      0
-                      "%r8"
-                      backend-state)]
+  ;; Record the addressed object's extent for the sweep's precise leaq poison.
+  ;; A forwarded AddrOf emits no leaq here but materialises the same slot at
+  ;; its use, so the extent applies to that later leaq too.
+  (let
+    [_extent : unit
+      (compiler-backend-note-addr-of-extent!
+        assignments
+        src
+        storage-words
+        backend-state)]
+    (if (>= (compiler-backend-forwarded-addr-of-src backend-state dst) 0)
+      (Ok "")
+      (let
+        [slot : String
+          (compiler-backend-addr-of-source-slot assignments src backend-state)]
+        (Ok
+          (match (compiler-backend-emit-assignment-lookup
+            backend-state
+            assignments
+            dst)
+            [(Some location)
+              (match location
+                [(or (Register home) (RegisterPair home _))
                   (str_cat.str-cat
-                    (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
+                    "    leaq "
+                    slot
+                    ", "
+                    (compiler_abi.compiler-abi-register-spelling home)
+                    "\n")]
+                [(Spill offset)
+                  (let
+                    [addr-reg : String
+                      (compiler-backend-scavenge-reg
+                        dst
+                        (compiler-backend-addr-scavenge-exclude)
+                        0
+                        "%r8"
+                        backend-state)]
                     (str_cat.str-cat
-                      "    movq "
-                      addr-reg
-                      ", "
-                      (compiler-backend-frame-offset-with-backend-state
-                        backend-state
-                        offset)
-                      "\n"
-                      ""
-                      "")))]
-              ;; The address-of result is defined by CompilerIrInstr.AddrOf, never a remat
-              ;; Mov; unreachable.
-              [(Remat _) ""])]
-          [(No)
-            (let
-              [addr-reg : String
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-addr-scavenge-exclude)
-                  0
-                  "%r8"
-                  backend-state)]
-              (str_cat.str-cat
-                (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
-                (compiler-backend-emit-store-var
-                  assignments
-                  dst
-                  addr-reg
-                  backend-state)))])))))
+                      (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
+                      (str_cat.str-cat
+                        "    movq "
+                        addr-reg
+                        ", "
+                        (compiler-backend-frame-offset-with-backend-state
+                          backend-state
+                          offset)
+                        "\n"
+                        ""
+                        "")))]
+                ;; The address-of result is defined by CompilerIrInstr.AddrOf, never a remat
+                ;; Mov; unreachable.
+                [(Remat _) ""])]
+            [(No)
+              (let
+                [addr-reg : String
+                  (compiler-backend-scavenge-reg
+                    dst
+                    (compiler-backend-addr-scavenge-exclude)
+                    0
+                    "%r8"
+                    backend-state)]
+                (str_cat.str-cat
+                  (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
+                  (compiler-backend-emit-store-var
+                    assignments
+                    dst
+                    addr-reg
+                    backend-state)))]))))))
 
 ;; The shift count for a power-of-two scale > 1, or None. Scales are small
 ;; positive type sizes, so the scan is bounded.
@@ -49700,12 +49793,13 @@
             ctx.backend-state)
           instr-diag)]
       [(or (Alloc _ _) (Phi _ _ _)) (Ok "")]
-      [(AddrOf dst src _storage-words)
+      [(AddrOf dst src storage-words)
         (compiler-backend-with-instr-diagnostic
           (compiler-backend-emit-addr-of
             ctx.assignments
             dst
             src
+            storage-words
             ctx.backend-state)
           instr-diag)]
       [(Gep dst base offset elem-ty)
@@ -66545,12 +66639,20 @@
 ;;    prologue line, terminal CSR pop-run `leaq K(%rsp),%rsp` where K is below
 ;;    the var span, and `leave`. Any non-terminal untracked rsp mutation still
 ;;    disables the function.
-;;  * Address-taken slots: `leaq N(%rsp)` poisons every slot at canonical
-;;    >= N-delta (an object pointer only ever indexes upward: gep field and
-;;    element offsets are non-negative). Indexed rsp addressing "(%rsp,",
-;;    popq with a frame operand (post-increment addressing), bare %rsp
-;;    outside a tracked subq/addq dst or the proven Win64 prologue/epilogue
-;;    shapes, and any other untracked rsp write each disable the WHOLE function.
+;;  * Address-taken slots: a `leaq L(%rsp)` resolves, per leaq, to the
+;;    recorded frame object whose span contains L (`AddrOf`'s storage words,
+;;    `sweep-addr-rbp`/`sweep-addr-ext`), and poisons exactly that object's
+;;    span -- so a field/element leaq inside an object is covered by the WHOLE
+;;    object while unrelated slots above it stay sweepable. A leaq with no
+;;    recorded span at its offset keeps the old rule and poisons every slot at
+;;    canonical >= L: an emitter this recording does not know (rebase-folded
+;;    leaqs, adapters, epilogue forms) is conservative by construction.
+;;    An object pointer only ever indexes upward within its extent (gep field
+;;    and element offsets are non-negative and in-bounds). Indexed rsp
+;;    addressing "(%rsp,", popq with a frame operand (post-increment
+;;    addressing), bare %rsp outside a tracked subq/addq dst or the proven
+;;    Win64 prologue/epilogue shapes, and any other untracked rsp write each
+;;    disable the WHOLE function.
 ;;  * Only whole `movq SRC, N(%rsp)` lines are removed, SRC a single %reg
 ;;    (not %rsp) or $imm token: a pure 8-byte store to a private, never-read,
 ;;    never-address-taken local slot has no observable effect (the runtime
@@ -66662,6 +66764,42 @@
                   u8
                   compiler-backend-sweep-initial-bytes-capacity)))))))))
 
+;; Initial capacity of the address-extent tables. They are allocated on the
+;; first recorded frame address, not with the per-function table, so a program
+;; that never takes a frame address pays nothing for them.
+(define compiler-backend-sweep-addr-initial-capacity : i64
+  16)
+
+(define (compiler-backend-sweep-addr-ensure!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (if (> (array-length (deref data).sweep-addr-rbp) 0)
+        unit
+        (let
+          [owner : arena.Arena
+            (compiler-backend-sweep-addr-arena-ensure! backend-state stream)]
+          [frames : i64 (array-length (deref data).sweep-sym-off)]
+          [frame-cap : i64
+            (if (> frames 0)
+              frames
+              compiler-backend-sweep-initial-capacity)]
+          (in-arena
+            owner
+            (let
+              [cap : i64 compiler-backend-sweep-addr-initial-capacity]
+              (set! (deref data).sweep-addr-rbp (__tl_make-array i64 cap))
+              (set! (deref data).sweep-addr-ext (__tl_make-array i64 cap))
+              (set!
+                (deref data).sweep-addr-start-arr
+                (__tl_make-array i64 frame-cap))
+              (set!
+                (deref data).sweep-addr-len-arr
+                (__tl_make-array i64 frame-cap)))))))))
+
 (define (compiler-backend-sweep-table-grow!
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : bool
@@ -66706,6 +66844,42 @@
             (set! data.sweep-win64-arr win64-arr)
             (set! data.sweep-em-lo-arr em-lo-arr)
             (set! data.sweep-em-hi-arr em-hi-arr)
+            (if (> (array-length data.sweep-addr-rbp) 0)
+              (in-arena
+                (compiler-backend-sweep-addr-arena-ensure! backend-state stream)
+                (let
+                  [addr-cap : i64
+                    (if (< (array-length data.sweep-addr-rbp) new-cap)
+                      new-cap
+                      (array-length data.sweep-addr-rbp))]
+                  [addr-rbp : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  [addr-ext : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  [addr-start : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  [addr-len : (__tl_dyn-array i64)
+                    (__tl_make-array i64 addr-cap)]
+                  (for [i (iterator.range 0 data.sweep-addr-count)]
+                    (set!
+                      (array-ref addr-rbp i)
+                      (array-ref data.sweep-addr-rbp i))
+                    (set!
+                      (array-ref addr-ext i)
+                      (array-ref data.sweep-addr-ext i)))
+                  (for [i (iterator.range 0 data.sweep-count)]
+                    (set!
+                      (array-ref addr-start i)
+                      (array-ref data.sweep-addr-start-arr i))
+                    (set!
+                      (array-ref addr-len i)
+                      (array-ref data.sweep-addr-len-arr i)))
+                  (set! data.sweep-addr-rbp addr-rbp)
+                  (set! data.sweep-addr-ext addr-ext)
+                  (set! data.sweep-addr-start-arr addr-start)
+                  (set! data.sweep-addr-len-arr addr-len)
+                  unit))
+              unit)
             (compiler-backend-stream-state-data-set! stream data)
             true))))))
 
@@ -66752,7 +66926,30 @@
     (begin
       (unsafe
         (set! (deref data).sweep-count 0)
-        (set! (deref data).sweep-sym-bytes-count 0))
+        (set! (deref data).sweep-sym-bytes-count 0)
+        (set! (deref data).sweep-addr-count 0)
+        (set! (deref data).sweep-addr-flushed 0)
+        ;; Reclaim the address-extent tables and the poison bitmap with the
+        ;; program's emission, then drop every handle into them so no later
+        ;; read can touch the rewound pages.
+        (if (> (deref data).sweep-addr-arena 0)
+          (let
+            [home : arena.Arena (arena.current)]
+            [owner : arena.Arena
+              (unsafe
+                (arena.Arena (deref data).sweep-addr-arena))]
+            (unsafe
+              (arena.set! owner)
+              (arena.rewind (arena.ArenaMark (deref data).sweep-addr-mark))
+              (arena.set! home)))
+          unit)
+        (set! (deref data).sweep-addr-rbp (deref data).sweep-scratch-empty)
+        (set! (deref data).sweep-addr-ext (deref data).sweep-scratch-empty)
+        (set!
+          (deref data).sweep-addr-start-arr
+          (deref data).sweep-scratch-empty)
+        (set! (deref data).sweep-addr-len-arr (deref data).sweep-scratch-empty)
+        (set! (deref data).sweep-poison-bits (deref data).sweep-scratch-empty))
       (cfg
         test
         (profile_state.compiler-profile-metrics-reset-range!
@@ -66760,6 +66957,92 @@
           compiler-backend-sweep-swept-stores-metric
           compiler-backend-census-metric-end)
         unit))))
+
+;; Start the address-extent staging for one function emission attempt: move
+;; the flush mark past anything an abandoned attempt left behind, so the slice
+;; the accepted body's commit records holds exactly that body's addresses.
+(define (compiler-backend-sweep-addr-begin!
+  [backend-state : CompilerBackendState]) : unit
+  (let
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state backend-state)]
+    [_storage : unit
+      (compiler-backend-sweep-storage-ensure! backend-state stream)]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (set! (deref data).sweep-addr-flushed (deref data).sweep-addr-count)
+      (set! (deref data).sweep-addr-overflow false))))
+
+;; Grow the address-extent table on demand. Records arrive per AddrOf, not per
+;; function, so a single large function can outgrow the per-function table.
+(define (compiler-backend-sweep-addr-grow!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : bool
+  (let
+    [data : CompilerBackendStreamStateData
+      (compiler-backend-stream-state-data stream)]
+    [old-cap : i64 (array-length data.sweep-addr-rbp)]
+    [new-cap : i64
+      (if (> (* old-cap 2) compiler-backend-sweep-capacity)
+        compiler-backend-sweep-capacity
+        (* old-cap 2))]
+    (if (<= new-cap old-cap)
+      false
+      (let
+        [owner : arena.Arena
+          (compiler-backend-sweep-addr-arena-ensure! backend-state stream)]
+        (in-arena
+          owner
+          (let
+            [rbp : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+            [ext : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+            (for [i (iterator.range 0 data.sweep-addr-count)]
+              (set! (array-ref rbp i) (array-ref data.sweep-addr-rbp i))
+              (set! (array-ref ext i) (array-ref data.sweep-addr-ext i)))
+            (set! data.sweep-addr-rbp rbp)
+            (set! data.sweep-addr-ext ext)
+            (compiler-backend-stream-state-data-set! stream data)
+            true))))))
+
+;; Record one emitted frame-address object: its rbp-relative slot offset and
+;; its extent in bytes. The sweep resolves a `leaq L(%rsp)` to the recorded
+;; objects whose spans contain L and poisons exactly those spans; a leaq with
+;; no recorded span at its offset keeps the old poison-everything watermark.
+;; A record that cannot be stored is NOT soundness-neutral: two coloured
+;; storage ranges can share a base slot, so a surviving narrower record would
+;; win over the fallback for the wider object's leaq. The overflow flag
+;; therefore invalidates this function's whole extent slice at commit, which
+;; makes every leaq in it take the watermark fallback.
+(define (compiler-backend-sweep-addr-record!
+  [backend-state : CompilerBackendState]
+  [rbp-offset : i64]
+  [extent : i64]) : unit
+  (let
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state backend-state)]
+    [_storage : unit
+      (compiler-backend-sweep-storage-ensure! backend-state stream)]
+    [_addr : unit (compiler-backend-sweep-addr-ensure! backend-state stream)]
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (when
+        (>=
+          (deref data).sweep-addr-count
+          (array-length (deref data).sweep-addr-rbp))
+        (unless
+          (compiler-backend-sweep-addr-grow! backend-state stream)
+          (set! (deref data).sweep-addr-overflow true))))
+    (unsafe
+      (let
+        [count : i64 (deref data).sweep-addr-count]
+        (if (< count (array-length (deref data).sweep-addr-rbp))
+          (begin
+            (set! (array-ref (deref data).sweep-addr-rbp count) rbp-offset)
+            (set! (array-ref (deref data).sweep-addr-ext count) extent)
+            (set! (deref data).sweep-addr-count (+ count 1)))
+          unit)))))
 
 ;; Record one FPO-audited function's sweep metadata. A full table silently
 ;; drops the entry (the function is simply not swept -- sound).
@@ -66850,6 +67133,23 @@
               0))
           (set! (array-ref (deref current).sweep-em-lo-arr idx) em-lo)
           (set! (array-ref (deref current).sweep-em-hi-arr idx) em-hi)
+          (if (> (array-length (deref current).sweep-addr-start-arr) 0)
+            (begin
+              (set!
+                (array-ref (deref current).sweep-addr-start-arr idx)
+                (deref current).sweep-addr-flushed)
+              (set!
+                (array-ref (deref current).sweep-addr-len-arr idx)
+                (if (deref current).sweep-addr-overflow
+                  0
+                  (-
+                    (deref current).sweep-addr-count
+                    (deref current).sweep-addr-flushed))))
+            unit)
+          (set!
+            (deref current).sweep-addr-flushed
+            (deref current).sweep-addr-count)
+          (set! (deref current).sweep-addr-overflow false)
           (set! (deref current).sweep-sym-bytes-count (+ start len))
           (set! (deref current).sweep-count (+ idx 1)))))))
 
@@ -67302,6 +67602,67 @@
           (+= q 1))))
     0))
 
+;; Set every bit of [a, b) in one byte bitmap. Callers clip [a, b) to the
+;; coverage window; every mark is slot-aligned.
+(define (compiler-backend-sweep-bitmap-mark!
+  [bits : (&mut bits (__tl_dyn-array i64))]
+  [wlo : i64]
+  [a : i64]
+  [b : i64]) : unit
+  (if (< a b)
+    (let
+      [aw : i64 (shr (- a wlo) 6)]
+      [bw : i64 (shr (- (- b wlo) 1) 6)]
+      (for [w (iterator.range aw (+ bw 1))]
+        (let
+          [lo-bit : i64
+            (if (= w aw)
+              (bit-and (- a wlo) 63)
+              0)]
+          [hi-bit : i64
+            (if (= w bw)
+              (bit-and (- (- b wlo) 1) 63)
+              63)]
+          [width : i64 (+ (- hi-bit lo-bit) 1)]
+          [mask : i64
+            (if (= width 64)
+              -1
+              (shl (- (shl 1 width) 1) lo-bit))]
+          (set! (array-ref bits w) (bit-or (array-ref bits w) mask)))))
+    unit))
+
+;; True when any bit of the eight bytes at canonical `c` is set.
+(define (compiler-backend-sweep-bitmap-hit?
+  [bits : (& bits (__tl_dyn-array i64))]
+  [wlo : i64]
+  [c : i64]) : bool
+  (let
+    [a : i64 (- c wlo)]
+    [aw : i64 (shr a 6)]
+    [bw : i64 (shr (+ a 7) 6)]
+    [w : i64 aw]
+    [hit : bool false]
+    (while (and (not hit) (<= w bw))
+      (let
+        [lo-bit : i64
+          (if (= w aw)
+            (bit-and a 63)
+            0)]
+        [hi-bit : i64
+          (if (= w bw)
+            (bit-and (+ a 7) 63)
+            63)]
+        [width : i64 (+ (- hi-bit lo-bit) 1)]
+        [mask : i64
+          (if (= width 64)
+            -1
+            (shl (- (shl 1 width) 1) lo-bit))]
+        (if (not (= (bit-and (array-ref bits w) mask) 0))
+          (set! hit true)
+          unit)
+        (+= w 1)))
+    hit))
+
 ;; Sweep one function region [rstart,rend) of the record array: collect
 ;; reads/candidates/poison state in pass 1, then mark every dead candidate
 ;; store's record deleted. The line bytes are never re-read -- the per-record
@@ -67324,6 +67685,31 @@
 ;; depends only on region metadata, never on results.
 (define compiler-backend-sweep-coverage-max-words : i64
   4096)
+
+;; Arena for the address-extent tables and the poison bitmap. It is created on
+;; first use and rewound by `sweep-reset!` at the end of every program's sweep,
+;; so the tables never survive the emission that built them.
+(define (compiler-backend-sweep-addr-arena-ensure!
+  [_backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : arena.Arena
+  (let
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (if (= (deref data).sweep-addr-arena 0)
+        (let
+          [home : arena.Arena (arena.current)]
+          [owner : arena.Arena
+            (unsafe
+              (arena.Arena (arena.tl_arena_make_small)))]
+          [_set-owner : unit (arena.set! owner)]
+          [mark : arena.ArenaMark (arena.mark)]
+          (arena.set! home)
+          (set! (deref data).sweep-addr-arena (arena.raw-handle owner))
+          (set! (deref data).sweep-addr-mark (arena.mark-raw-handle mark))
+          owner)
+        (unsafe
+          (arena.Arena (deref data).sweep-addr-arena))))))
 
 (define (compiler-backend-sweep-coverage-ensure!
   [backend-state : CompilerBackendState]
@@ -67349,17 +67735,30 @@
           (* new-cap 2))))
     (if (< new-cap required)
       false
-      (if (= new-cap (array-length old))
-        true
-        (let
-          [owner : arena.Arena
-            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
-          (in-arena
-            owner
-            (let
-              [bits : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+      (begin
+        (unless
+          (>=
+            (array-length
               (unsafe
-                (set! (deref data).sweep-coverage-bits bits))
+                (deref data).sweep-poison-bits))
+            new-cap)
+          (in-arena
+            (compiler-backend-sweep-addr-arena-ensure! backend-state stream)
+            (unsafe
+              (set!
+                (deref data).sweep-poison-bits
+                (__tl_make-array i64 new-cap)))))
+        (if (= new-cap (array-length old))
+          true
+          (let
+            [owner : arena.Arena
+              (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+            (in-arena
+              owner
+              (unsafe
+                (set!
+                  (deref data).sweep-coverage-bits
+                  (__tl_make-array i64 new-cap)))
               true)))))))
 
 (define (compiler-backend-sweep-region-records!
@@ -67374,13 +67773,17 @@
   [disp : i64]
   [em-lo : i64]
   [em-hi : i64]
-  [win64 : bool]) : unit
+  [win64 : bool]
+  [addr-start : i64]
+  [addr-len : i64]) : unit
   (let
     [stream : CompilerBackendStreamState stream]
     [delta : i64 (- 0 disp)]
     [sweepable : bool true]
     [win64-tail : bool false]
     [watermark : i64 4611686018427387904]
+    [leaqs : (__tl_dyn-array i64) (__tl_make-array i64 32)]
+    [leaq-count : i64 0]
     [none : i64 compiler-backend-sweep-no-candidate]
     [reads-lo : (__tl_dyn-array i64) (__tl_make-array i64 64)]
     [reads-hi : (__tl_dyn-array i64) (__tl_make-array i64 64)]
@@ -67563,12 +67966,22 @@
                                   (- delta 8)
                                   delta))]
                             (if leaq?
-                              ;; address taken: poison upward
+                              ;; A frame address: remember its canonical offset;
+                              ;; pass 2 resolves the addressed object's extent
+                              ;; for it and poisons only that span.
                               (if win64-epilogue-leaq?
                                 unit
-                                (if (< c watermark)
-                                  (set! watermark c)
-                                  unit))
+                                (begin
+                                  (set!
+                                    leaqs
+                                    (compiler-backend-sweep-i64-push
+                                      leaqs
+                                      leaq-count
+                                      c))
+                                  (+= leaq-count 1)
+                                  (if (< c watermark)
+                                    (set! watermark c)
+                                    unit)))
                               (begin
                                 (set!
                                   reads-lo
@@ -67645,47 +68058,68 @@
         [coverage-bits : (__tl_dyn-array i64)
           (unsafe
             (deref coverage-data).sweep-coverage-bits)]
+        [poison-bits : (__tl_dyn-array i64)
+          (unsafe
+            (deref coverage-data).sweep-poison-bits)]
+        [addr-rbp : (__tl_dyn-array i64)
+          (unsafe
+            (deref coverage-data).sweep-addr-rbp)]
+        [addr-ext : (__tl_dyn-array i64)
+          (unsafe
+            (deref coverage-data).sweep-addr-ext)]
         (when
           use-bitmap?
           (for [w (iterator.range 0 words)]
-            (set! (array-ref coverage-bits w) 0))
+            (set! (array-ref coverage-bits w) 0)
+            (set! (array-ref poison-bits w) 0))
           (for [r (iterator.range 0 read-count)]
+            (compiler-backend-sweep-bitmap-mark!
+              (&mut coverage-bits)
+              wlo
+              (if (> (array-ref reads-lo r) wlo)
+                (array-ref reads-lo r)
+                wlo)
+              (if (< (array-ref reads-hi r) whi)
+                (array-ref reads-hi r)
+                whi)))
+          ;; Poison: an addressing leaq protects the recorded object whose span
+          ;; contains it (so a field/element leaq at B+k is covered by the
+          ;; whole object), and a leaq with no recorded span at its offset
+          ;; keeps the old poison-everything watermark from that offset.
+          (for [k (iterator.range 0 leaq-count)]
             (let
-              [a : i64
-                (-
-                  (if (> (array-ref reads-lo r) wlo)
-                    (array-ref reads-lo r)
-                    wlo)
-                  wlo)]
-              [b : i64
-                (-
-                  (if (< (array-ref reads-hi r) whi)
-                    (array-ref reads-hi r)
-                    whi)
-                  wlo)]
-              (if (< a b)
+              [l : i64 (array-ref leaqs k)]
+              [found : bool false]
+              [j : i64 0]
+              (while (< j addr-len)
                 (let
-                  [aw : i64 (shr a 6)]
-                  [bw : i64 (shr (- b 1) 6)]
-                  (for [w (iterator.range aw (+ bw 1))]
-                    (let
-                      [lo-bit : i64
-                        (if (= w aw)
-                          (bit-and a 63)
-                          0)]
-                      [hi-bit : i64
-                        (if (= w bw)
-                          (bit-and (- b 1) 63)
-                          63)]
-                      [width : i64 (+ (- hi-bit lo-bit) 1)]
-                      [mask : i64
-                        (if (= width 64)
-                          -1
-                          (shl (- (shl 1 width) 1) lo-bit))]
-                      (set!
-                        (array-ref coverage-bits w)
-                        (bit-or (array-ref coverage-bits w) mask)))))
-                unit))))
+                  [span-lo : i64
+                    (+ (+ hi 8) (array-ref addr-rbp (+ addr-start j)))]
+                  [span-hi : i64
+                    (+ span-lo (array-ref addr-ext (+ addr-start j)))]
+                  (if (and (<= span-lo l) (< l span-hi))
+                    (begin
+                      (set! found true)
+                      (compiler-backend-sweep-bitmap-mark!
+                        (&mut poison-bits)
+                        wlo
+                        (if (> span-lo wlo)
+                          span-lo
+                          wlo)
+                        (if (< span-hi whi)
+                          span-hi
+                          whi)))
+                    unit))
+                (+= j 1))
+              (if found
+                unit
+                (compiler-backend-sweep-bitmap-mark!
+                  (&mut poison-bits)
+                  wlo
+                  (if (> l wlo)
+                    l
+                    wlo)
+                  whi)))))
         (let
           [swept : i64 0]
           (for [k (iterator.range 0 cand-count)]
@@ -67696,37 +68130,17 @@
                 (or
                   (and (>= c lo) (<= c hi) (= (bit-and (- c lo) 7) 0))
                   (and (>= c em-lo) (<= c em-hi) (= (bit-and (- c em-lo) 7) 0)))
-                (< c watermark))
+                (if use-bitmap?
+                  (not
+                    (compiler-backend-sweep-bitmap-hit? (& poison-bits) wlo c))
+                  (< c watermark)))
                 (let
                   [read : bool
                     (if use-bitmap?
-                      (let
-                        [a : i64 (- c wlo)]
-                        [aw : i64 (shr a 6)]
-                        [bw : i64 (shr (+ a 7) 6)]
-                        [w : i64 aw]
-                        [hit : bool false]
-                        (while (and (not hit) (<= w bw))
-                          (let
-                            [lo-bit : i64
-                              (if (= w aw)
-                                (bit-and a 63)
-                                0)]
-                            [hi-bit : i64
-                              (if (= w bw)
-                                (bit-and (+ a 7) 63)
-                                63)]
-                            [width : i64 (+ (- hi-bit lo-bit) 1)]
-                            [mask : i64
-                              (if (= width 64)
-                                -1
-                                (shl (- (shl 1 width) 1) lo-bit))]
-                            (if (not
-                              (= (bit-and (array-ref coverage-bits w) mask) 0))
-                              (set! hit true)
-                              unit)
-                            (+= w 1)))
-                        hit)
+                      (compiler-backend-sweep-bitmap-hit?
+                        (& coverage-bits)
+                        wlo
+                        c)
                       (let
                         [r : i64 0]
                         [hit : bool false]
@@ -67812,7 +68226,13 @@
                     (array-ref (deref data).sweep-disp-arr cursor)
                     (array-ref (deref data).sweep-em-lo-arr cursor)
                     (array-ref (deref data).sweep-em-hi-arr cursor)
-                    (= (array-ref (deref data).sweep-win64-arr cursor) 1))
+                    (= (array-ref (deref data).sweep-win64-arr cursor) 1)
+                    (if (> (array-length (deref data).sweep-addr-start-arr) 0)
+                      (array-ref (deref data).sweep-addr-start-arr cursor)
+                      0)
+                    (if (> (array-length (deref data).sweep-addr-len-arr) 0)
+                      (array-ref (deref data).sweep-addr-len-arr cursor)
+                      0))
                   (+= cursor 1)
                   (set! i rend))
                 (+= i 1))))
@@ -71626,6 +72046,8 @@
             function-state
             compiler-backend-scratch-i64-current-source-function
             name)]
+        [_sweep-addr-begin : unit
+          (compiler-backend-sweep-addr-begin! backend-state)]
         [scalar-registers-enabled : bool
           (compiler-backend-state-scalar-registers-enabled? backend-state)]
         ;; Prefix dry-emission is part of shrink-wrap admission and precedes

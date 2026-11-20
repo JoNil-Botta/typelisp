@@ -188,3 +188,22 @@ shape inventory. Old instruction counts above describe the original bitsliced
 core. The [stack review](stack-scrub-review.md) records the current intervals,
 residue controls and changed GCTR call target. This is a best-effort reduction
 of the disclosed exposure, never an erasure or side-channel guarantee.
+
+## Dead-store sweep re-pin (PR #9827)
+
+The backend's frame-store sweep now resolves an address-taken frame slot's
+`leaq` to that object's recorded extent instead of poisoning every slot at or
+above it. The opt1 pins were re-derived from the rebased tree
+(`shape-linux-x86_64-opt1.sha256`, `shape-windows-x86_64-opt1.sha256`); opt2
+pins are unchanged. Changed bodies and removed lines:
+
+- linux opt1: `construct_schedule` 11, `encrypt_checked_bang` 2,
+  `expand_bang` 8, `main` 14 — 4 bodies, 35 stores.
+- windows opt1: `construct_schedule` 11, `encrypt_checked_bang` 2, `main`
+  10 — 3 bodies, 23 stores.
+
+Per changed body, checked before re-pinning: no line is added, every removed
+line is a `movq`/`movl`/`movups`/`set*` store whose destination is a
+`N(%rsp)` slot, and no remaining line in that body reads that slot. Every
+branch, call, table reference, address form and wipe instruction is
+byte-identical, so the fixed-work and wipe properties above are unchanged.

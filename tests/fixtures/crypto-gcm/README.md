@@ -197,3 +197,20 @@ three-repeat D-C155 measurements retain +405 Ir per standalone block for each
 AES variant, +0.097653% seal and +0.098010% open per 16 KiB record. The Windows
 opt2 scrub path remains 435 static instructions. PR #9664 tracks the required independent D-C150/D-C155 exposure reviews
 and full hosted acceptance.
+
+## Dead-store sweep re-pin (PR #9827)
+
+The backend's frame-store sweep now resolves an address-taken frame slot's
+`leaq` to that object's recorded extent instead of poisoning every slot at or
+above it. Re-derived pins:
+
+- linux opt1: 11 bodies, 80 stores (`shape-linux-x86_64-opt1.sha256`);
+- windows opt1: 9 bodies, 53 stores (`shape-windows-x86_64-opt1.sha256`);
+- windows opt2: 1 body, 1 store (`shape-windows-x86_64-opt2.sha256`);
+- linux opt2: unchanged.
+
+Per changed body, checked before re-pinning: no line is added, every removed
+line is a `movq`/`movl`/`movups`/`set*` store whose destination is a
+`N(%rsp)` slot, and no remaining line in that body reads that slot. Every
+branch, call, table reference, address form and wipe instruction is
+byte-identical.

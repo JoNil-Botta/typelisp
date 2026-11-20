@@ -1982,6 +1982,10 @@ Lending arena data to a helper through a borrow parameter does not escape:
       (+ (line-value (& (deref line))) 2))))
 ```
 
+A callee allocates in its caller's active arena, so a call inside a scoped
+arena whose callee may store an allocation into a global or into outer storage
+is rejected too (section 5.16, "Callee stores under a scoped arena").
+
 Storing arena data into a longer-lived binding does, and is rejected with
 `E0205` (`tests/safety/region_helper_store_reject.tl`):
 
@@ -7050,9 +7054,47 @@ does. `in-arena` inside the body keeps the body region unless its arena names
 an owner region, as inside `with-arena`. The region is never a branded or
 owned scratch arena's own region, which outlives the rewind. Unlike a
 `with-arena` body, a body allocation may be passed by value to an ordinary
-function: the check covers the body's own stores and exits, not what a callee
-does with an argument. The form's result still leaves cloned, without region
-tags.
+function; the callee-store rule below covers what that callee does with it.
+The form's result still leaves cloned, without region tags.
+
+**Callee stores under a scoped arena (#8681, #8692, #8805, #8815):** a function
+allocates in whatever arena is active at its call. Inside `with-arena`,
+`with-scratch`, `with-escape`, or an `in-arena` whose arena has a region, a call
+is rejected (E0205) when its callee may, directly or through the calls it makes:
+
+- store an allocation into a global;
+- store an allocation through an argument that reaches writable storage
+  outside that arena: a mutable reference to storage not allocated in it, a
+  pointer, or a function value, held directly or inside a struct, tuple, enum,
+  array or `Box`. A mutable reference to a Copy referent, or to a slice or
+  array of one, receives no allocation; growing a container declared outside
+  the arena does.
+
+A by-value argument carrying a scratch region other than the active one is
+checked the same way at any call. A store of a literal, which is static data,
+or of a value whose type carries a region, which lives in that region, is no
+allocation of the caller's arena. Inside an `in-arena` whose arena has no
+region (a bare handle that is neither a tracked owner nor branded), a fresh
+allocation lands in that arena, not the caller's; a value brought in from
+outside it still counts. A call through a function value, including a local
+binding that shadows a function of the same name, may reach any function or
+lambda of the same parameter types whose value is taken, and the function
+value itself counts as an argument, so a closure capturing a mutable reference
+is checked like one. A function that calls its own function
+parameter inside such a form is not checked there: each call that passes it a
+function value checks that function as if called under a scoped arena. The
+answer comes from a summary of every checked body, so it is reported once the
+whole program is checked. A call inside `unsafe` is exempt: the caller states
+the store's lifetime obligation itself, and that exemption uses the block.
+Calls outside every scoped arena are unaffected, so a helper that grows a
+caller's vector stays valid there.
+
+**Bare arena parameters (#8173):** inside a function, a bare `arena.Arena`
+parameter is an arena with an elided brand of its own: allocating through it
+with `in-arena` tags the result with that brand. Such a value may be used and
+passed by value inside the call, but returning it or storing it where it would
+outlive the call is rejected (E0205). A helper that returns a value allocated
+in a caller's arena takes `(arena.Arena r)` and returns `(in r T)`.
 
 **First-class arena target:** `(in-arena arena-expr body ...)` is the safe
 dynamic allocation-target form for first-class arena handles. `arena-expr` must

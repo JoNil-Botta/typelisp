@@ -708,35 +708,45 @@
     (with-scratch
       (let
         [scope : driver.CompilerDriverPackageRuntimeScope
-          (driver.compiler-driver-package-runtime-scope-new home)]
+          (unsafe
+            ;; unsafe: installs the global load session; replaced before this arena ends
+            (driver.compiler-driver-package-runtime-scope-new home))]
         [owner : arena.Arena (arena.make)]
         [checked : bool
           (in-arena
             (unsafe
               (arena.Arena (array-ref scope.frontend-arena 0)))
-            (match (facts.compiler-check-semantic-request
-              (facts.CompilerSemanticCheckRequest
-                (check.CompilerSemanticCheckInput.Source
-                  "semantic_facts_test.tl"
-                  source)
-                (roots.new)
-                (check.compiler-check-language-cfgs)
-                (driver.compiler-driver-state-typecheck (& scope.state))
-                ;; The request borrows the facts arena destroyed after it.
-                (unsafe
-                  (arena.Arena owner.handle))
-                generated
-                home.handle
-                semantic-facts-test-consumer-in-owner))
+            (match (unsafe
+              ;; unsafe: the test consumer's globals are read before this arena ends
+              ;; unsafe: false positive: the callee stores only into a cell it allocates itself
+              ;; unsafe: interned names live in the persistent intern arena, not this one
+              (facts.compiler-check-semantic-request
+                (facts.CompilerSemanticCheckRequest
+                  (check.CompilerSemanticCheckInput.Source
+                    "semantic_facts_test.tl"
+                    source)
+                  (roots.new)
+                  (check.compiler-check-language-cfgs)
+                  (driver.compiler-driver-state-typecheck (& scope.state))
+                  ;; The request borrows the facts arena destroyed after it.
+                  (unsafe
+                    (arena.Arena owner.handle))
+                  generated
+                  home.handle
+                  semantic-facts-test-consumer-in-owner)))
               [(check.ResultCompilerCheck.Ok _ _) true]
               [_ false]))]
         [_capture : unit
           (driver.compiler-driver-package-runtime-capture-frontend!
             (owned_view.compiler-owned-shared-view scope))]
         (arena.destroy-safe! owner)
-        (driver.compiler-driver-package-runtime-scope-release!
-          (owned_view.compiler-owned-shared-view scope))
-        (driver.compiler-driver-package-runtime-scope-release! scope)
+        (unsafe
+          ;; unsafe: installs global intern state; replaced before this arena ends
+          (driver.compiler-driver-package-runtime-scope-release!
+            (owned_view.compiler-owned-shared-view scope)))
+        (unsafe
+          ;; unsafe: installs global intern state; replaced before this arena ends
+          (driver.compiler-driver-package-runtime-scope-release! scope))
         checked))))
 
 (test

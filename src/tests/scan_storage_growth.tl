@@ -363,7 +363,15 @@
   (let
     [scratch : arena.Arena (arena.make)]
     [ok : bool
-      (in-arena scratch (and (scan-lexer-growth-ok?) (scan-reader-growth-ok?)))]
+      (in-arena
+        scratch
+        (and
+          (unsafe
+            ;; unsafe: releases the global token buffers; they keep no allocation of this arena
+            (scan-lexer-growth-ok?))
+          (unsafe
+            ;; unsafe: grows the global token buffer in this arena; reset before it is destroyed
+            (scan-reader-growth-ok?))))]
     (arena.destroy-safe! scratch)
     (unless
       (and ok (scan-lexer-growth-ok?) (scan-reader-growth-ok?))

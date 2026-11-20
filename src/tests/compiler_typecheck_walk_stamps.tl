@@ -133,7 +133,7 @@
           "wrapped collect"
           (tc.tc-name-id-list-contains
             (tc.tc-type-collect-regions
-              (ast.ty-node-get (walk-wrap (walk-flat count reference))))
+              (& (ast.ty-node-get (walk-wrap (walk-flat count reference)))))
             r)))
       (walk-expect
         "flat region tag"
@@ -149,7 +149,7 @@
         "flat collect"
         (tc.tc-name-id-list-contains
           (tc.tc-type-collect-regions
-            (ast.ty-node-get (walk-flat count reference)))
+            (& (ast.ty-node-get (walk-flat count reference))))
           r)))))
 
 ;; Shared DAGs: exact for every ctx-free family (and polynomial at depth 40
@@ -178,7 +178,7 @@
       (not (tc.tc-selected-type-contains-view? (ast.ty-node-get without))))
     (let
       [regions : tc.TcNameIdList
-        (tc.tc-type-collect-regions (ast.ty-node-get with-reference))]
+        (tc.tc-type-collect-regions (& (ast.ty-node-get with-reference)))]
       (walk-expect "dag collect one" (= (tc.tc-name-id-list-len regions) 1))
       (walk-expect "dag collect r" (tc.tc-name-id-list-contains regions r)))
     (walk-expect

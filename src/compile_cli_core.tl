@@ -891,14 +891,18 @@
         (if has-inline-tests
           (with-scratch
             (test_cli_core.tltest-inline-clear-load-only-caches!)
-            (compiler_driver_core.compiler-driver-reset-file-state!)
-            (test_cli_core.tltest-inline-typecheck-file-with-cfg
-              (owned_view.compiler-owned-shared-view input-path)
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              (compiler_driver_core.compiler-driver-target-cfgs
-                target
-                (target_cfg.compiler-target-user-cfgs cfgs))
-              "typecheck-prefix-inline-compile-batch"))
+            (unsafe
+              ;; unsafe: installs the global load session; replaced before this arena ends
+              (compiler_driver_core.compiler-driver-reset-file-state!))
+            (unsafe
+              ;; unsafe: interned names live in the persistent intern arena, not this one
+              (test_cli_core.tltest-inline-typecheck-file-with-cfg
+                (owned_view.compiler-owned-shared-view input-path)
+                (owned_view.compiler-owned-shared-view stdlib-roots)
+                (compiler_driver_core.compiler-driver-target-cfgs
+                  target
+                  (target_cfg.compiler-target-user-cfgs cfgs))
+                "typecheck-prefix-inline-compile-batch")))
           0)]
       ;; `compiler-load-default-session-use!` copies the active session wrapper
       ;; into the current arena. The preflight reset therefore leaves that

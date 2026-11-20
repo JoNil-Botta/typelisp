@@ -72047,12 +72047,14 @@
                     emit-vars
                     (compiler-backend-global-shared-view emit-blocks-list)
                     function-abi)]
-                (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                  (& scavenge-func)
-                  (&
-                    (compiler_liveness.compiler-live-analyze-function
-                      (& scavenge-func)))
-                  false))
+                (unsafe
+                  ;; unsafe: grows the global liveness id buffer here; reset before this arena ends
+                  (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
+                    (& scavenge-func)
+                    (&
+                      (compiler_liveness.compiler-live-analyze-function
+                        (& scavenge-func)))
+                    false)))
               (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
                 (compiler_regalloc.compiler-reg-interval-index-build
@@ -73467,25 +73469,27 @@
               backend-state
               function-state)]
           [emitted : ResultCompilerBackend
-            (compiler-backend-emit-function
-              type-segment-bases
-              target
-              mode
-              func
-              all-functions
-              globals
-              global-types
-              externs
-              plan
-              program-index
-              spans
-              span-index
-              emit-entry
-              crt-entry
-              true
-              true
-              (compiler_ir_types.compiler-ir-label-none)
-              (__tl_make-array i64 0))]
+            (unsafe
+              ;; unsafe: the early-exit label globals are reset for each function
+              (compiler-backend-emit-function
+                type-segment-bases
+                target
+                mode
+                func
+                all-functions
+                globals
+                global-types
+                externs
+                plan
+                program-index
+                spans
+                span-index
+                emit-entry
+                crt-entry
+                true
+                true
+                (compiler_ir_types.compiler-ir-label-none)
+                (__tl_make-array i64 0)))]
           [wrapped : ResultCompilerBackend
             (match emitted
               [(Ok head)
@@ -90192,18 +90196,22 @@ tl_shared_object_init:
           stream
           (compiler-backend-global-shared-view records))]
       [finished : CompilerBackendPeepholeSweepChunkState
-        (in-arena
-          home-arena
-          (let
-            [_probes : unit
-              (compiler-backend-expand-stack-probes!
-                backend-state
-                (&mut records))]
-            [kept : String (compiler-backend-peephole-records-render records)]
-            (CompilerBackendPeepholeSweepChunkState
-              (text_buf.append state.out kept)
-              (text_buf.empty)
-              cursor)))]
+        (unsafe
+          ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
+          ;; result from naming a caller region; the state it returns lives in
+          ;; that arena, whose owner outlives every use of it
+          (in-arena
+            (arena.Arena (arena.raw-handle home-arena))
+            (let
+              [_probes : unit
+                (compiler-backend-expand-stack-probes!
+                  backend-state
+                  (&mut records))]
+              [kept : String (compiler-backend-peephole-records-render records)]
+              (CompilerBackendPeepholeSweepChunkState
+                (text_buf.append state.out kept)
+                (text_buf.empty)
+                cursor))))]
       [_carry-home : unit
         (compiler-backend-assembly-stream-carry-home-current! stream home-arena)]
       (compiler-backend-peephole-records-retire! stream)
@@ -90224,7 +90232,11 @@ tl_shared_object_init:
   [peephole-mark : arena.ArenaMark]
   [home-arena : arena.Arena]) : unit
   (let
-    [batch : text_buf.TextBuf (in-arena raw-arena (text_buf.empty))]
+    ;; unsafe: the stream state keeps these buffers while raw-arena and
+    ;; home-arena live; a bare arena parameter's allocation cannot leave the call.
+    [batch : text_buf.TextBuf
+      (unsafe
+        (in-arena (arena.Arena (arena.raw-handle raw-arena)) (text_buf.empty)))]
     [data : (MutPtr CompilerBackendStreamStateData)
       (compiler-backend-stream-state-ptr stream)]
     (unsafe
@@ -90232,7 +90244,9 @@ tl_shared_object_init:
       (set! (deref data).assembly-raw-mark raw-mark)
       (set! (deref data).assembly-peephole-arena peephole-arena)
       (set! (deref data).assembly-peephole-mark peephole-mark)
-      (set! (deref data).assembly-out (in-arena home-arena (text_buf.empty)))
+      (set!
+        (deref data).assembly-out
+        (in-arena (arena.Arena (arena.raw-handle home-arena)) (text_buf.empty)))
       (set! (deref data).assembly-home-arena home-arena)
       (set! (deref data).assembly-sweep-cursor 0)
       (set! (deref data).assembly-batch batch)

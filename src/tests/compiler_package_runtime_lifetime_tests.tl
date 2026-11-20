@@ -30,12 +30,16 @@
       (let
         [job : arena.Arena (arena.current)]
         [scope : driver.CompilerDriverPackageRuntimeScope
-          (driver.compiler-driver-package-runtime-scope-new home)]
+          (unsafe
+            ;; unsafe: installs the global load session; replaced before this arena ends
+            (driver.compiler-driver-package-runtime-scope-new home))]
         [program : parser.ResultAstProgram
           (in-arena
             (unsafe
               (arena.Arena (array-ref scope.frontend-arena 0)))
-            (parser.parse-ast-source (& source)))]
+            (unsafe
+              ;; unsafe: resets the global origin capture; it keeps no allocation of this arena
+              (parser.parse-ast-source (& source))))]
         [_capture : unit
           (driver.compiler-driver-package-runtime-capture-frontend!
             (owned_view.compiler-owned-shared-view scope))]
@@ -49,26 +53,31 @@
                   [(Program decls-box)
                     (let
                       [lowered : driver.ResultCompilerDriverLowered
-                        (driver.compiler-driver-package-runtime-lower
-                          (owned_view.compiler-owned-shared-view scope)
-                          "owner_smoke"
-                          target
-                          (Scalar)
-                          (owned_view.compiler-owned-box-shared-view decls-box)
-                          (ast.ast-decl-path-list-new)
-                          (cfg_core.compiler-cfg-empty)
-                          level)]
+                        (unsafe
+                          ;; unsafe: installs global intern state; replaced before this arena ends
+                          (driver.compiler-driver-package-runtime-lower
+                            (owned_view.compiler-owned-shared-view scope)
+                            "owner_smoke"
+                            target
+                            (Scalar)
+                            (owned_view.compiler-owned-box-shared-view
+                              decls-box)
+                            (ast.ast-decl-path-list-new)
+                            (cfg_core.compiler-cfg-empty)
+                            level))]
                       (match (if direct-object
                         (match target
                           [(Windows)
-                            (match (coff.compiler-windows-batch-emit-lowered-result
-                              ""
-                              lowered
-                              (Scalar)
-                              level
-                              emit-entry
-                              false
-                              true)
+                            (match (unsafe
+                              ;; unsafe: the optimizer's global pass state is reset before this arena ends
+                              (coff.compiler-windows-batch-emit-lowered-result
+                                ""
+                                lowered
+                                (Scalar)
+                                level
+                                emit-entry
+                                false
+                                true))
                               [(CoffObject _ side advisories)
                                 (match side
                                   [(Some asm)
@@ -87,14 +96,16 @@
                                   diag
                                   advisories)])]
                           [(Linux)
-                            (match (driver.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
-                              ""
-                              lowered
-                              target
-                              (Scalar)
-                              level
-                              emit-entry
-                              false)
+                            (match (unsafe
+                              ;; unsafe: the optimizer's global pass state is reset before this arena ends
+                              (driver.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
+                                ""
+                                lowered
+                                target
+                                (Scalar)
+                                level
+                                emit-entry
+                                false))
                               [(Object _ asm advisories)
                                 (driver.ResultCompilerDriver.Ok asm advisories)]
                               [(Assembly _ _ _)
@@ -104,15 +115,17 @@
                                 (driver.ResultCompilerDriver.Err
                                   diag
                                   advisories)])])
-                        (driver.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-                          ""
-                          lowered
-                          target
-                          true
-                          (Scalar)
-                          level
-                          emit-entry
-                          false))
+                        (unsafe
+                          ;; unsafe: the optimizer's global pass state is reset before this arena ends
+                          (driver.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+                            ""
+                            lowered
+                            target
+                            true
+                            (Scalar)
+                            level
+                            emit-entry
+                            false)))
                         [(Ok asm _) (in-arena home (string.copy asm))]
                         [(Err diag _)
                           (in-arena
@@ -121,9 +134,13 @@
                               (owned_view.compiler-owned-box-shared-view diag)))]))])]))]
         (in-arena
           job
-          (driver.compiler-driver-package-runtime-scope-release!
-            (owned_view.compiler-owned-shared-view scope))
-          (driver.compiler-driver-package-runtime-scope-release! scope))
+          (unsafe
+            ;; unsafe: installs global intern state; replaced before this arena ends
+            (driver.compiler-driver-package-runtime-scope-release!
+              (owned_view.compiler-owned-shared-view scope)))
+          (unsafe
+            ;; unsafe: installs global intern state; replaced before this arena ends
+            (driver.compiler-driver-package-runtime-scope-release! scope)))
         result))))
 
 (define (runtime-owner-smoke-for-route
@@ -249,23 +266,29 @@
     (with-scratch
       (let
         [scope : driver.CompilerDriverPackageRuntimeScope
-          (driver.compiler-driver-package-runtime-scope-new home)]
+          (unsafe
+            ;; unsafe: installs the global load session; replaced before this arena ends
+            (driver.compiler-driver-package-runtime-scope-new home))]
         [message : String
           (in-arena
             home
-            (match (driver.compiler-driver-package-runtime-load
-              (owned_view.compiler-owned-shared-view scope)
-              path
-              (roots_vec.new)
-              "target/exp/package-runtime-lifetime"
-              (load.compiler-pkg-deps-empty)
-              false
-              (cfg_core.compiler-cfg-empty))
+            (match (unsafe
+              ;; unsafe: publishes global surface facts; cleared before this arena ends
+              (driver.compiler-driver-package-runtime-load
+                (owned_view.compiler-owned-shared-view scope)
+                path
+                (roots_vec.new)
+                "target/exp/package-runtime-lifetime"
+                (load.compiler-pkg-deps-empty)
+                false
+                (cfg_core.compiler-cfg-empty)))
               [(Ok _ _ _ _) "loaded"]
               [(Err diag)
                 (driver.compiler-driver-render-source-diagnostic
                   (owned_view.compiler-owned-box-shared-view diag))]))]
-        (driver.compiler-driver-package-runtime-scope-release! scope)
+        (unsafe
+          ;; unsafe: installs global intern state; replaced before this arena ends
+          (driver.compiler-driver-package-runtime-scope-release! scope))
         message))))
 
 (test
@@ -301,7 +324,13 @@
   (with-scratch
     (let
       [asm : String
-        (runtime-owner-smoke-for-route "(define (main) : i64 42)" Linux 0 true)]
+        (unsafe
+          ;; unsafe: installs the global load session; replaced before this arena ends
+          (runtime-owner-smoke-for-route
+            "(define (main) : i64 42)"
+            Linux
+            0
+            true))]
       (unless
         (string.contains asm "main:")
         (io.panic "direct object side assembly must survive runtime cleanup")))))
@@ -404,15 +433,30 @@
     (with-scratch
       (let
         [scope : driver.CompilerDriverPackageRuntimeScope
-          (driver.compiler-driver-package-runtime-scope-new home)]
-        [first : i64 (ci.intern-composite-pair-id 11 12)]
+          (unsafe
+            ;; unsafe: installs the global load session; replaced before this arena ends
+            (driver.compiler-driver-package-runtime-scope-new home))]
+        [first : i64
+          (unsafe
+            ;; unsafe: interned keys live in the persistent intern arena, not this one
+            (ci.intern-composite-pair-id 11 12))]
         (for [index (iterator.range 0 count)]
           (let
-            [_raw : i64 (ci.intern-composite-pair-id 13 (+ 14 index))]
+            [_raw : i64
+              (unsafe
+                ;; unsafe: interned keys live in the persistent intern arena, not this one
+                (ci.intern-composite-pair-id 13 (+ 14 index)))]
             unit))
         (let
-          [same? : bool (= (ci.intern-composite-pair-id 11 12) first)]
-          (driver.compiler-driver-package-runtime-scope-release! scope)
+          [same? : bool
+            (=
+              (unsafe
+                ;; unsafe: interned keys live in the persistent intern arena, not this one
+                (ci.intern-composite-pair-id 11 12))
+              first)]
+          (unsafe
+            ;; unsafe: installs global intern state; replaced before this arena ends
+            (driver.compiler-driver-package-runtime-scope-release! scope))
           same?)))))
 
 (test

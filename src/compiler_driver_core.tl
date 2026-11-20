@@ -4702,15 +4702,25 @@
   [builtins : cbi.CompilerBuiltinIdsState]) : unit
   (in-arena
     home
-    (ci.intern-compat-state-install! interns)
-    (compiler_ast_types.ast-node-pool-context-install! pools)
+    (unsafe
+      ;; unsafe: installs global intern state; replaced before this arena ends
+      (ci.intern-compat-state-install! interns))
+    (unsafe
+      ;; unsafe: installs global AST pool state; replaced before this arena ends
+      (compiler_ast_types.ast-node-pool-context-install! pools))
     (if (array-ref parent.intern-state-ready 0)
-      (compiler_load.compiler-load-session-state-use-with-intern-state!
-        parent
-        (compiler_load.compiler-load-session-state-interns parent))
-      (compiler_load.compiler-load-session-state-use! parent))
+      (unsafe
+        ;; unsafe: installs the global load session; replaced before this arena ends
+        (compiler_load.compiler-load-session-state-use-with-intern-state!
+          parent
+          (compiler_load.compiler-load-session-state-interns parent)))
+      (unsafe
+        ;; unsafe: installs the global load session; replaced before this arena ends
+        (compiler_load.compiler-load-session-state-use! parent)))
     (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
-    (compiler-driver-reset-analysis-state!)
+    (unsafe
+      ;; unsafe: resets global analysis state; it holds no allocation of this arena
+      (compiler-driver-reset-analysis-state!))
     (cbi.state-install! (& builtins))))
 
 ;; This scope's carrier belongs to the outer package-job scratch arena. Its
@@ -5034,27 +5044,40 @@
           (compiler_load.compiler-load-session-state-new-for-package-child
             (& parent))]
         [_install-pools : unit
-          (compiler_ast_types.ast-node-pool-context-install! pools)]
-        [_install-interns : unit (ci.intern-compat-state-install! interns)]
+          (unsafe
+            ;; unsafe: installs global AST pool state; replaced before this arena ends
+            (compiler_ast_types.ast-node-pool-context-install! pools))]
+        [_install-interns : unit
+          (unsafe
+            ;; unsafe: installs global intern state; replaced before this arena ends
+            (ci.intern-compat-state-install! interns))]
         [_install-session
           : unit
           ;; This boundary uses the serial loader, whose parser advances the
           ;; active interner cursor. Capture that live owner through the serial
           ;; session adapter instead of retaining a pre-parse scalar snapshot.
-          (compiler_load.compiler-load-session-state-use! state)]
+          (unsafe
+            ;; unsafe: installs the global load session; replaced before this arena ends
+            (compiler_load.compiler-load-session-state-use! state))]
         [_reset-intern-caches : unit
           (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)]
-        [_reset-analysis : unit (compiler-driver-reset-analysis-state!)]
+        [_reset-analysis : unit
+          (unsafe
+            ;; unsafe: resets global analysis state; it holds no allocation of this arena
+            (compiler-driver-reset-analysis-state!))]
         [result : ResultCompilerDriverPackagePaths
-          (match (compiler-driver-load-package-file-with-runtime-cfg
-            input-path
-            stdlib-roots
-            manifest-dir
-            deps
-            emit-entry
-            (compiler-driver-target-cfgs
-              target
-              (target_cfg.compiler-target-user-cfgs cfg-names)))
+          (match (unsafe
+            ;; unsafe: publishes global surface facts; cleared before this arena ends
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (compiler-driver-load-package-file-with-runtime-cfg
+              input-path
+              stdlib-roots
+              manifest-dir
+              deps
+              emit-entry
+              (compiler-driver-target-cfgs
+                target
+                (target_cfg.compiler-target-user-cfgs cfg-names))))
             [(Ok _ paths _ _)
               (in-arena
                 home
@@ -5068,16 +5091,23 @@
         [retired-pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
         [intern-arena : i64 (ci.intern-persistent-arena-handle)]
-        (compiler_load.compiler-load-session-reset-pools!)
+        (unsafe
+          ;; unsafe: resets a global cache; it keeps no allocation of this arena
+          (compiler_load.compiler-load-session-reset-pools!))
         ;; No declarations escape, so the reader's origin prefix is empty.
         ;; The normal handoff now releases all scan capacity as well.
-        (compiler_load.compiler-load-transfer-frontend-handoff!)
-        (compiler-driver-restore-parent-session!
-          home
-          parent
-          home-pools
-          home-interns
-          home-builtins)
+        (unsafe
+          ;; unsafe: releases the global token buffers; they keep no allocation of this arena
+          (compiler_load.compiler-load-transfer-frontend-handoff!))
+        (unsafe
+          ;; unsafe: installs the global load session; replaced before this arena ends
+          ;; unsafe: installs global intern state; replaced before this arena ends
+          (compiler-driver-restore-parent-session!
+            home
+            parent
+            home-pools
+            home-interns
+            home-builtins))
         (compiler_load.compiler-load-dependency-surface-list-destroy-storage!
           (& (array-ref state.dependency-surfaces.fragments 0)))
         (compiler_ast_types.ast-node-pool-context-destroy-storage!

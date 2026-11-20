@@ -2525,6 +2525,28 @@
   [import-ref : (& import-ref LintImportRef)]) : bool
   (lint-name-uses-import? (ci.intern-str name) import-ref))
 
+(define (lint-expr-list-has-call? [exprs : (& exprs ast.AstExprList)]) : bool
+  (let
+    [found : bool false]
+    (for [index (iterator.range 0 exprs.len)]
+      (when
+        (lint-expr-has-call? (ast.ast-expr-list-get exprs index -1))
+        (set! found true)
+        (break)))
+    found))
+
+(define (lint-expr-has-call? [node-id : i64]) : bool
+  (if (< node-id 0)
+    false
+    (let
+      [expr : ast.AstExpr (ast.ast-node-get node-id)]
+      (match expr
+        [(Call _ _) true]
+        [_
+          (let
+            [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+            (lint-expr-list-has-call? (& children)))]))))
+
 (define (lint-expr-list-requires-enclosing-unsafe?
   [exprs : (& exprs ast.AstExprList)]) : bool
   (__tl-project-field
@@ -8425,6 +8447,11 @@
       (lint-unused-unsafe-block-push!
         span
         (lint-expr-list-requires-enclosing-unsafe? exprs))
+      ;; A call in `unsafe` may be one the arena-store check exempts; only
+      ;; typing knows whether that uses the block.
+      (when
+        (lint-expr-list-has-call? (& exprs))
+        (lint-unused-unsafe-block-mark-unknown!))
       (lint-unused-unsafe-finish-state
         (lint-unused-variable-expr-list exprs state))]
     ;; A `deref` needs unsafe only through a raw pointer, which takes types.

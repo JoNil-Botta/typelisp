@@ -6331,15 +6331,17 @@
         (compiler-reg-global-shared-view blocks)
         (compiler-reg-ineligible-memory
           (& blocks)
-          (compiler-reg-call-arg-vars-blocks-scalar
-            type-segment-bases
-            (& blocks)
-            (compiler-reg-ineligible-non-scalars
+          (unsafe
+            ;; unsafe: interned keys live in the persistent intern arena, not this one
+            (compiler-reg-call-arg-vars-blocks-scalar
+              type-segment-bases
+              (& blocks)
+              (compiler-reg-ineligible-non-scalars
+                types
+                (live.compiler-live-set-empty)
+                true)
               types
-              (live.compiler-live-set-empty)
-              true)
-            types
-            target-abi)))]))
+              target-abi))))]))
 
 ;; SIMD/AVX register planning shares the integer GP allocation quality of the
 ;; scalar path: a value live across a call is NOT force-spilled. The SIMD integer
@@ -30149,16 +30151,18 @@
   (compiler-reg-with-analysis-scratch
     vars
     (owned_view.compiler-owned-reference-shared-view blocks)
-    (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
-      type-segment-bases
-      plan
-      group-vars
-      params
-      blocks
-      vars
-      slot-candidate-vars
-      identity-pinned
-      stack-only?)))
+    (unsafe
+      ;; unsafe: grows the global liveness id buffer here; reset before this arena ends
+      (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
+        type-segment-bases
+        plan
+        group-vars
+        params
+        blocks
+        vars
+        slot-candidate-vars
+        identity-pinned
+        stack-only?))))
 
 ;; Only the result-owning wrapper above calls this analysis implementation.
 (define (compiler-reg-color-stack-slots-with-stack-only-in-current-arena

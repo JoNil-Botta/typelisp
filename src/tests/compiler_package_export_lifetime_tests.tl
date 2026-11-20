@@ -73,12 +73,20 @@
         [interns : ci.InternCompatState (ci.intern-compat-state-new)]
         [_install : unit
           (begin
-            (ast.ast-node-pool-context-install! pools)
-            (ci.intern-compat-state-install! interns)
+            (unsafe
+              ;; unsafe: installs global AST pool state; replaced before this arena ends
+              (ast.ast-node-pool-context-install! pools))
+            (unsafe
+              ;; unsafe: installs global intern state; replaced before this arena ends
+              (ci.intern-compat-state-install! interns))
             (tc.compiler-typecheck-reset-intern-owned-state!)
-            (driver.compiler-driver-reset-analysis-state!))]
+            (unsafe
+              ;; unsafe: resets global analysis state; it holds no allocation of this arena
+              (driver.compiler-driver-reset-analysis-state!)))]
         [result : build.ResultBuildPackageTlciExports
-          (match (parse.parse-ast-source (& source))
+          (match (unsafe
+            ;; unsafe: resets the global origin capture; it keeps no allocation of this arena
+            (parse.parse-ast-source (& source)))
             [(Err _) (in-arena home (Err (string.copy "fixture parse failed")))]
             [(Ok program)
               (match program
@@ -99,24 +107,36 @@
                         (ci.intern-compat-state-capture-active))]
                     (in-arena
                       home
-                      (build.build-package-tlci-capture-exports
-                        (& context)
-                        manifest
-                        mode
-                        decls
-                        paths
-                        sources)))])])]
+                      (unsafe
+                        ;; unsafe: the native report strings are read before this arena ends
+                        (build.build-package-tlci-capture-exports
+                          (& context)
+                          manifest
+                          mode
+                          decls
+                          paths
+                          sources))))])])]
         [retired-pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         [intern-arena : i64 (ci.intern-persistent-arena-handle)]
-        (load.compiler-load-session-reset-pools!)
-        (load.compiler-load-transfer-frontend-handoff!)
+        (unsafe
+          ;; unsafe: resets a global cache; it keeps no allocation of this arena
+          (load.compiler-load-session-reset-pools!))
+        (unsafe
+          ;; unsafe: releases the global token buffers; they keep no allocation of this arena
+          (load.compiler-load-transfer-frontend-handoff!))
         (in-arena
           home
-          (ci.intern-compat-state-install! home-interns)
-          (ast.ast-node-pool-context-install! home-pools)
+          (unsafe
+            ;; unsafe: installs global intern state; replaced before this arena ends
+            (ci.intern-compat-state-install! home-interns))
+          (unsafe
+            ;; unsafe: installs global AST pool state; replaced before this arena ends
+            (ast.ast-node-pool-context-install! home-pools))
           (tc.compiler-typecheck-reset-intern-owned-state!)
-          (driver.compiler-driver-reset-analysis-state!)
+          (unsafe
+            ;; unsafe: resets global analysis state; it holds no allocation of this arena
+            (driver.compiler-driver-reset-analysis-state!))
           (cbi.state-install! (& home-builtins)))
         (ast.ast-node-pool-context-destroy-storage! retired-pools)
         (unsafe

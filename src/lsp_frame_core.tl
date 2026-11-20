@@ -13762,10 +13762,12 @@
   (match (lsp-message-envelope (& message))
     [(Invalid)
       (with-scratch
-        (lsp-write-error
-          (lsp-invalid-request-id (& message))
-          -32600
-          "Invalid Request"))
+        (unsafe
+          ;; unsafe: stdout text lives in the arena of the global lsp-frame-memory-state.owner handle
+          (lsp-write-error
+            (lsp-invalid-request-id (& message))
+            -32600
+            "Invalid Request")))
       (return (Continue state))]
     [(Response) (return (Continue state))]
     [(Request) unit])
@@ -13783,7 +13785,9 @@
                 [id-key : String "id"]
                 (match (lsp-json-field-ref (& message) (& id-key))
                   [(Found id)
-                    (lsp-write-error (clone (deref id)) -32602 error-message)]
+                    (unsafe
+                      ;; unsafe: stdout text lives in the arena of the global lsp-frame-memory-state.owner handle
+                      (lsp-write-error (clone (deref id)) -32602 error-message))]
                   [(Missing) unit]))
               true]))
         (return (Continue state)))

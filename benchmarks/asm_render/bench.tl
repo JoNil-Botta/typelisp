@@ -669,7 +669,15 @@
     (while (< round rounds)
       (set! acc (asm-mix acc round))
       (set! acc (asm-mix acc start))
-      (set! acc (asm-mix acc (with-arena round-arena (asm-round start))))
+      (set!
+        acc
+        (asm-mix
+          acc
+          (with-arena
+            round-arena
+            (unsafe
+              ;; unsafe: false positive: asm-vec-set! stores only a count through its &mut argument
+              (asm-round start)))))
       (set! start (+ start 1))
       (when (>= start asm-chunks) (set! start 0))
       (set! round (+ round 1)))

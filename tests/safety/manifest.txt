@@ -1533,6 +1533,7 @@ arena_end_with_cleanup_owner_live_reject|check-fail|tests/safety/arena_end_with_
 arena_end_with_result_escape_reject|check-fail|tests/safety/arena_end_with_result_escape_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
 arena_end_with_result_box_reject|check-fail|tests/safety/arena_end_with_result_box_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
 arena_end_with_result_local_reject|check-fail|tests/safety/arena_end_with_result_local_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_result_fixed_array_reject|check-fail|tests/safety/arena_end_with_result_fixed_array_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
 arena_end_with_rewind_result_reject|check-fail|tests/safety/arena_end_with_rewind_result_reject.tl|-|the with result holds values of `p`, which its cleanup arena.rewind-safe! ends when the scope exits
 arena_end_with_break_reject|check-fail|tests/safety/arena_end_with_break_reject.tl|-|use of moved value `text`
 arena_end_with_break_owner_live_reject|check-fail|tests/safety/arena_end_with_break_owner_live_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `a` while `with` cleanup owner `w` holds values from it

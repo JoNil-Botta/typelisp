@@ -20227,175 +20227,108 @@
             elem-ty
             backend-state))))))
 
-(define (compiler-backend-vector-reduce-horizontal-asm
+(define (compiler-backend-avx2-vector-reduce-horizontal-asm
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [mnemonic : String]
-  [wide-reg : String]
-  [mid-reg : String]
+  [ymm : String]
+  [xmm : String]
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [acc-xmm : String]
-  [acc-ymm : String]
   [scratch-xmm : String]
-  [mask-xmm : String]
-  [wide? : bool]) : String
-  (let
-    [lane-sum?
-      (match (& op)
-        [(Sum) true]
-        [_ false])]
-    [extract-src : String
-      (if wide?
-        (compiler-backend-global-shared-view acc-ymm)
-        (compiler-backend-global-shared-view wide-reg))]
-    [extract-dst : String
-      (if wide?
-        (compiler-backend-global-shared-view scratch-xmm)
-        (compiler-backend-global-shared-view acc-xmm))]
-    [lane-src : String
-      (if wide?
-        (compiler-backend-global-shared-view acc-xmm)
-        (compiler-backend-global-shared-view mid-reg))]
-    (match elem-ty
-      [(F32)
+  [mask-xmm : String]) : String
+  (match elem-ty
+    [(F32)
+      (str_cat.str-cat
         (str_cat.str-cat
-          (if wide?
-            (str_cat.str-cat
-              "    vextractf32x8 $1, "
-              wide-reg
-              ", "
-              acc-ymm
-              "\n    "
-              mnemonic
-              " "
-              acc-ymm
-              ", "
-              mid-reg
-              ", "
-              acc-ymm
-              "\n")
-            "")
-          (str_cat.str-cat
-            "    vextractf128 $1, "
-            extract-src
-            ", "
-            extract-dst
-            "\n    "
-            mnemonic
-            " "
-            extract-dst
-            ", "
-            lane-src
-            ", "
-            acc-xmm
-            "\n")
-          (str_cat.str-cat
-            "    vshufps $78, "
-            acc-xmm
-            ", "
-            acc-xmm
-            ", "
-            scratch-xmm
-            "\n    "
-            mnemonic
-            " "
-            scratch-xmm
-            ", "
-            acc-xmm
-            ", "
-            acc-xmm
-            "\n"
-            "")
-          (str_cat.str-cat
-            "    vshufps $177, "
-            acc-xmm
-            ", "
-            acc-xmm
-            ", "
-            scratch-xmm
-            "\n    vaddss "
-            scratch-xmm
-            ", "
-            acc-xmm
-            ", "
-            acc-xmm
-            "\n"))]
-      [(F64)
+          "    vextractf128 $1, "
+          ymm
+          ", "
+          acc-xmm
+          "\n    "
+          mnemonic
+          " "
+          acc-xmm
+          ", "
+          xmm
+          ", "
+          acc-xmm
+          "\n")
         (str_cat.str-cat
-          (if wide?
-            (str_cat.str-cat
-              "    vextractf64x4 $1, "
-              wide-reg
-              ", "
-              acc-ymm
-              "\n    "
-              mnemonic
-              " "
-              acc-ymm
-              ", "
-              mid-reg
-              ", "
-              acc-ymm
-              "\n")
-            "")
+          "    vshufps $78, "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vshufps $177, "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddss "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
+    [(F64)
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    vextractf128 $1, "
+          ymm
+          ", "
+          acc-xmm
+          "\n    "
+          mnemonic
+          " "
+          acc-xmm
+          ", "
+          xmm
+          ", "
+          acc-xmm
+          "\n")
+        (str_cat.str-cat
+          "    vunpckhpd "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddsd "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
+    [(I64)
+      (match op
+        [(Sum)
           (str_cat.str-cat
-            "    vextractf128 $1, "
-            extract-src
-            ", "
-            extract-dst
-            "\n    "
-            mnemonic
-            " "
-            extract-dst
-            ", "
-            lane-src
-            ", "
-            acc-xmm
-            "\n"
-            "")
-          (str_cat.str-cat
-            "    vunpckhpd "
-            acc-xmm
-            ", "
-            acc-xmm
-            ", "
-            scratch-xmm
-            "\n    vaddsd "
-            scratch-xmm
-            ", "
-            acc-xmm
-            ", "
-            acc-xmm
-            "\n"))]
-      [(I64)
-        (if (or wide? lane-sum?)
-          (str_cat.str-cat
-            (if wide?
-              (str_cat.str-cat
-                "    vextracti64x4 $1, "
-                wide-reg
-                ", "
-                acc-ymm
-                "\n    "
-                mnemonic
-                " "
-                acc-ymm
-                ", "
-                mid-reg
-                ", "
-                acc-ymm
-                "\n")
-              "")
             (str_cat.str-cat
               "    vextracti128 $1, "
-              extract-src
+              ymm
               ", "
-              extract-dst
+              acc-xmm
               "\n    "
               mnemonic
               " "
-              extract-dst
+              acc-xmm
               ", "
-              lane-src
+              xmm
               ", "
               acc-xmm
               "\n")
@@ -20413,27 +20346,28 @@
               ", "
               acc-xmm
               "\n"
-              ""))
+              ""))]
+        [_
           (let
             [high-compare-left : String
-              (match (& op)
-                [(Min) (compiler-backend-global-shared-view acc-xmm)]
-                [_ (compiler-backend-global-shared-view mid-reg)])]
+              (match op
+                [(Min) (owned_view.compiler-owned-shared-view acc-xmm)]
+                [_ (owned_view.compiler-owned-shared-view xmm)])]
             [high-compare-right : String
-              (match (& op)
-                [(Min) (compiler-backend-global-shared-view mid-reg)]
-                [_ (compiler-backend-global-shared-view acc-xmm)])]
+              (match op
+                [(Min) (owned_view.compiler-owned-shared-view xmm)]
+                [_ (owned_view.compiler-owned-shared-view acc-xmm)])]
             [lane-compare-left : String
-              (match (& op)
-                [(Min) (compiler-backend-global-shared-view scratch-xmm)]
-                [_ (compiler-backend-global-shared-view acc-xmm)])]
+              (match op
+                [(Min) (owned_view.compiler-owned-shared-view scratch-xmm)]
+                [_ (owned_view.compiler-owned-shared-view acc-xmm)])]
             [lane-compare-right : String
-              (match (& op)
-                [(Min) (compiler-backend-global-shared-view acc-xmm)]
-                [_ (compiler-backend-global-shared-view scratch-xmm)])]
+              (match op
+                [(Min) (owned_view.compiler-owned-shared-view acc-xmm)]
+                [_ (owned_view.compiler-owned-shared-view scratch-xmm)])]
             (str_cat.str-cat
               "    vextracti128 $1, "
-              wide-reg
+              ymm
               ", "
               acc-xmm
               "\n    vpcmpgtq "
@@ -20447,7 +20381,7 @@
               ", "
               acc-xmm
               ", "
-              mid-reg
+              xmm
               ", "
               acc-xmm
               "\n    vpsrldq $8, "
@@ -20469,82 +20403,288 @@
               ", "
               acc-xmm
               "\n"
-              "")))]
-      [(I32)
+              ""))])]
+    [(I32)
+      (str_cat.str-cat
         (str_cat.str-cat
-          (if wide?
-            (str_cat.str-cat
-              "    vextracti64x4 $1, "
-              wide-reg
-              ", "
-              acc-ymm
-              "\n    "
-              mnemonic
-              " "
-              acc-ymm
-              ", "
-              mid-reg
-              ", "
-              acc-ymm
-              "\n")
-            "")
-          (str_cat.str-cat
-            "    vextracti128 $1, "
-            extract-src
-            ", "
-            extract-dst
-            "\n    "
-            mnemonic
-            " "
-            extract-dst
-            ", "
-            lane-src
-            ", "
-            acc-xmm
-            "\n"
-            "")
-          (str_cat.str-cat
-            "    vpsrldq $8, "
-            acc-xmm
-            ", "
-            scratch-xmm
-            "\n    "
-            mnemonic
-            " "
-            scratch-xmm
-            ", "
-            acc-xmm
-            ", "
-            acc-xmm
-            "\n"
-            "")
-          (str_cat.str-cat
-            "    vpsrldq $4, "
-            acc-xmm
-            ", "
-            scratch-xmm
-            "\n    "
-            mnemonic
-            " "
-            scratch-xmm
-            ", "
-            acc-xmm
-            ", "
-            acc-xmm
-            "\n"
-            ""))]
-      [(or (I16) (U16) (I8) (U8))
-        (if wide?
-          (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
-            mnemonic
-            wide-reg
-            mid-reg
-            elem-ty
-            acc-xmm
-            acc-ymm
-            scratch-xmm)
-          "")]
-      [_ ""])))
+          "    vextracti128 $1, "
+          ymm
+          ", "
+          acc-xmm
+          "\n    "
+          mnemonic
+          " "
+          acc-xmm
+          ", "
+          xmm
+          ", "
+          acc-xmm
+          "\n")
+        (str_cat.str-cat
+          "    vpsrldq $8, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vpsrldq $4, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          ""))]
+    [_ ""]))
+
+(define (compiler-backend-avx512-vector-reduce-horizontal-asm
+  [mnemonic : String]
+  [zmm : String]
+  [ymm : String]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [acc-xmm : (& acc-xmm str)]
+  [acc-ymm : String]
+  [scratch-xmm : String]) : String
+  (match elem-ty
+    [(F32)
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    vextractf32x8 $1, "
+          zmm
+          ", "
+          acc-ymm
+          "\n    "
+          mnemonic
+          " "
+          acc-ymm
+          ", "
+          ymm
+          ", "
+          acc-ymm
+          "\n")
+        (str_cat.str-cat
+          "    vextractf128 $1, "
+          acc-ymm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vshufps $78, "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vshufps $177, "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddss "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
+    [(F64)
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    vextractf64x4 $1, "
+          zmm
+          ", "
+          acc-ymm
+          "\n    "
+          mnemonic
+          " "
+          acc-ymm
+          ", "
+          ymm
+          ", "
+          acc-ymm
+          "\n")
+        (str_cat.str-cat
+          "    vextractf128 $1, "
+          acc-ymm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vunpckhpd "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddsd "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
+    [(I64)
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    vextracti64x4 $1, "
+          zmm
+          ", "
+          acc-ymm
+          "\n    "
+          mnemonic
+          " "
+          acc-ymm
+          ", "
+          ymm
+          ", "
+          acc-ymm
+          "\n")
+        (str_cat.str-cat
+          "    vextracti128 $1, "
+          acc-ymm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vpsrldq $8, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          ""))]
+    [(I32)
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    vextracti64x4 $1, "
+          zmm
+          ", "
+          acc-ymm
+          "\n    "
+          mnemonic
+          " "
+          acc-ymm
+          ", "
+          ymm
+          ", "
+          acc-ymm
+          "\n")
+        (str_cat.str-cat
+          "    vextracti128 $1, "
+          acc-ymm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vpsrldq $8, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    vpsrldq $4, "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    "
+          mnemonic
+          " "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"
+          ""))]
+    [(or (I16) (U16) (I8) (U8))
+      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+        mnemonic
+        zmm
+        ymm
+        elem-ty
+        acc-xmm
+        acc-ymm
+        scratch-xmm)]
+    [_ ""]))
 
 (define (compiler-backend-emit-avx2-vector-reduce
   [type-segment-bases : i64]
@@ -20630,17 +20770,15 @@
                     (Ok
                       (str_cat.str-cat
                         src-asm
-                        (compiler-backend-vector-reduce-horizontal-asm
+                        (compiler-backend-avx2-vector-reduce-horizontal-asm
                           op
                           mnemonic
                           ymm
                           xmm
                           elem-ty
                           (compiler-backend-global-shared-view acc-xmm)
-                          ""
                           scratch-xmm
-                          mask-xmm
-                          false)
+                          mask-xmm)
                         (compiler-backend-vector-reduce-store-scalar
                           assignments
                           dst
@@ -20794,17 +20932,14 @@
                     (Ok
                       (str_cat.str-cat
                         src-asm
-                        (compiler-backend-vector-reduce-horizontal-asm
-                          op
+                        (compiler-backend-avx512-vector-reduce-horizontal-asm
                           mnemonic
                           zmm
                           ymm
                           elem-ty
-                          (compiler-backend-global-shared-view acc-xmm)
+                          acc-xmm
                           acc-ymm
-                          scratch-xmm
-                          ""
-                          true)
+                          scratch-xmm)
                         (compiler-backend-vector-reduce-store-scalar
                           assignments
                           dst

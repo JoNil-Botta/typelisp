@@ -2359,9 +2359,9 @@ mir_function_array_ok|run-exit|tests/safety/mir_function_array_ok.tl|42|-
 mir_box_pattern_move_reject|check-fail|tests/safety/mir_box_pattern_move_reject.tl|tests/safety/mir_box_pattern_move_reject.tl:11:32|use of moved value `cell`
 mir_box_pattern_copy_ok|run-exit|tests/safety/mir_box_pattern_copy_ok.tl|42|-
 mir_deref_reference_read_ok|run-exit|tests/safety/mir_deref_reference_read_ok.tl|42|-
-mir_reference_array_push_reject|check-fail|tests/safety/mir_reference_array_push_reject.tl|tests/safety/mir_reference_array_push_reject.tl:13:13|cannot mutably borrow borrowed place `value`
-mir_reference_array_store_reject|check-fail|tests/safety/mir_reference_array_store_reject.tl|tests/safety/mir_reference_array_store_reject.tl:18:13|cannot mutably borrow borrowed place `pair`
-mir_holding_array_push_reject|check-fail|tests/safety/mir_holding_array_push_reject.tl|tests/safety/mir_holding_array_push_reject.tl:16:13|cannot mutably borrow borrowed place `value`
+mir_reference_array_push_reject|check-fail|tests/safety/mir_reference_array_push_reject.tl|tests/safety/mir_reference_array_push_reject.tl:12:13|cannot mutably borrow borrowed place `value`
+mir_reference_array_store_reject|check-fail|tests/safety/mir_reference_array_store_reject.tl|tests/safety/mir_reference_array_store_reject.tl:17:13|cannot mutably borrow borrowed place `pair`
+mir_holding_array_push_reject|check-fail|tests/safety/mir_holding_array_push_reject.tl|tests/safety/mir_holding_array_push_reject.tl:15:13|cannot mutably borrow borrowed place `value`
 mir_reference_array_return_ok|check-ok|tests/safety/mir_reference_array_return_ok.tl|-|-
 mir_reference_slice_param_ok|check-ok|tests/safety/mir_reference_slice_param_ok.tl|-|-
 mir_box_reference_borrow_reject|check-fail|tests/safety/mir_box_reference_borrow_reject.tl|tests/safety/mir_box_reference_borrow_reject.tl:15:13|cannot mutably borrow borrowed place `pair`

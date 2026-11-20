@@ -134,7 +134,6 @@ sc_authority() {
 # The reuse key of this host, plus recorded-but-unbound information.
 sc_identity_lines() {
     sc_record_line key.image_os "${ImageOS:-unknown}"
-    sc_record_line key.kernel "$(uname -r)"
     sc_record_line key.valgrind "$(sc_first_line valgrind --version)"
     sc_record_line key.as "$(sc_first_line as --version)"
     sc_record_line key.ld "$(sc_first_line ld --version)"
@@ -142,6 +141,7 @@ sc_identity_lines() {
     sc_record_line key.arch "${RUNNER_ARCH:-$(uname -m)}"
     sc_record_line info.image_version "${ImageVersion:-unknown}"
     sc_record_line info.cpu "$(sc_cpu_model)"
+    sc_record_line info.kernel "$(uname -r)"
     sc_record_line info.valgrind_package "$(dpkg-query -W -f='${Version}' valgrind 2>/dev/null || echo unknown)"
     sc_record_line info.runner_environment "${RUNNER_ENVIRONMENT:-local}"
     sc_record_line authority "$(sc_authority)"

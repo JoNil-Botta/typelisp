@@ -83,10 +83,13 @@ writes a record: the value and its measurement identity. The identity is:
   and `scripts/lib-benchmark.sh`);
 - the SHA-256 of the measured compiler, and the source commit stamped into it,
   which must be the measured commit;
-- the environment reuse key: ImageOS, kernel, valgrind, `as`, `ld`, workspace
-  path and architecture.
+- the environment reuse key: ImageOS, valgrind, `as`, `ld`, workspace path
+  and architecture.
 
-The image version and CPU model are recorded but are not part of the key.
+The image version, kernel and CPU model are recorded but are not part of the
+key: Cachegrind counts guest user-space instructions of a static binary, and
+hosted runners alternate kernels (`-aws`, `-azure`), so a kernel difference
+reuses the reference instead of re-measuring it.
 For identity/build changes, the reference workflow's PR dry run also invokes
 `scripts/verify-self-compile-stamp-invariance.sh`. It reuses the first bootstrap
 and measurement, creates a local second commit of the same tree, then builds

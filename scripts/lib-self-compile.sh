@@ -56,9 +56,11 @@ SC_CLASS_M_WARN_IR=10000
 SC_CLASS_M_FAIL_PPM=1000
 
 # Reuse key and measurement identity: two measurements may be subtracted only
-# when every one of these fields is equal (D-C15 amendment 4).
-SC_COMPARABLE_KEYS="metric argv_normalized cwd env procedure key.image_os key.kernel key.valgrind key.as key.ld key.workspace key.arch"
-SC_RECORD_REQUIRED_KEYS="schema metric ir_count commit tree role argv argv_normalized cwd env procedure compiler_sha256 compiler_commit key.image_os key.kernel key.valgrind key.as key.ld key.workspace key.arch info.image_version info.cpu authority"
+# when every one of these fields is equal (D-C15 amendment 4). The kernel is
+# recorded as info.kernel but not bound: Cachegrind counts guest user-space
+# instructions of a static binary, and hosted runners alternate kernels.
+SC_COMPARABLE_KEYS="metric argv_normalized cwd env procedure key.image_os key.valgrind key.as key.ld key.workspace key.arch"
+SC_RECORD_REQUIRED_KEYS="schema metric ir_count commit tree role argv argv_normalized cwd env procedure compiler_sha256 compiler_commit key.image_os key.valgrind key.as key.ld key.workspace key.arch info.image_version info.cpu info.kernel authority"
 
 sc_log() {
     printf '[self-compile] %s\n' "$*" >&2
@@ -663,7 +665,7 @@ sc_ledger_entry() {
         sc_record_line binary_problem "$(tr '\n' ';' < "$_sle_dir/binary-problem")"
         _sle_failures="$_sle_failures comparability"
     fi
-    sc_record_line pair_identity "$(sc_record_get "$_sle_dir/landed.tsv" key.kernel)|$(sc_record_get "$_sle_dir/landed.tsv" key.valgrind)|$(sc_record_get "$_sle_dir/landed.tsv" key.as)|$(sc_record_get "$_sle_dir/landed.tsv" procedure)"
+    sc_record_line pair_identity "$(sc_record_get "$_sle_dir/landed.tsv" info.kernel)|$(sc_record_get "$_sle_dir/landed.tsv" key.valgrind)|$(sc_record_get "$_sle_dir/landed.tsv" key.as)|$(sc_record_get "$_sle_dir/landed.tsv" procedure)"
 
     # Landed gate window, for every merge with a step: the merge as it landed
     # against its parent, with the PR's honoured declaration or 0.

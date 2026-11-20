@@ -17751,7 +17751,10 @@ f:
         (asm-has? asm "    movslq (%r" ",%r" ",4), %r")
         ;; The table is text-resident, 4-byte aligned, and holds differences,
         ;; not 64-bit pointers.
-        (asm-has? asm "    .text\n    .balign 4\n.Lf0_entry_switch_table:\n")
+        (asm-has? asm "    .balign 4\n.Lf0_entry_switch_table:\n")
+        (asm-lacks?
+          asm
+          "    .section .rodata\n    .balign 8\n.Lf0_entry_switch_table")
         (asm-has? asm "    .long .Lf0_zero - .Lf0_entry_switch_table\n")
         (asm-has? asm "    .long .Lf0_one - .Lf0_entry_switch_table\n")
         (asm-has? asm "    .long .Lf0_two - .Lf0_entry_switch_table\n")
@@ -17900,7 +17903,7 @@ f:
       (compiler-backend-switch-phi-program))
     (has
       "    ja .Lf0_entry_switch_default\n"
-      "    .text\n    .balign 4\n.Lf0_entry_switch_table:\n"
+      "    .balign 4\n.Lf0_entry_switch_table:\n"
       "    .long .Lf0_entry_switch_case_0 - .Lf0_entry_switch_table\n"
       "    .long .Lf0_entry_switch_case_1 - .Lf0_entry_switch_table\n"
       ".Lf0_entry_switch_case_0:\n"

@@ -49110,31 +49110,46 @@
             0
             buf))])))
 
-;; FUNC's switch tables, appended after everything else it emitted: they land in
-;; the function's own `.text` section, outside its symbol, unwind, CFI and
-;; backtrace ranges, and every entry is a difference of two same-section labels
-;; the assembler resolves itself, so no table byte needs a relocation.
-(define (compiler-backend-append-function-switch-tables
+(define (compiler-backend-emit-switch-tables-functions-into
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
-  [func : compiler_ir_types.CompilerIrFunction]
-  [head : String]) : String
-  (match func
-    [(Function name _ _ _ blocks _)
-      (let
-        [tables : text_buf.TextBuf
-          (match (compiler-backend-global-shared-view blocks)
-            [(Array seq)
-              (compiler-backend-emit-switch-tables-seq-into
-                (compiler-backend-function-label-scope program-index name)
-                (compiler-backend-function-state-phi-targets
-                  (compiler-backend-state-function-state
-                    program-index.backend-state))
-                seq
-                0
-                (text_buf.empty))])]
-        (if (= tables.len 0)
-          head
-          (str_cat.str-cat head "    .text\n" (text_buf.render tables))))]))
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (compiler-backend-emit-switch-tables-function-seq-into
+    functions
+    program-index
+    0
+    (text_buf.append buf "    .text\n")))
+
+(define (compiler-backend-emit-switch-tables-function-seq-into
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
+    buf
+    (match (owned_view.compiler-owned-element-view functions.slots index)
+      [(Function name _ _ _ blocks _)
+        (let
+          [_phi-targets : unit
+            (compiler-backend-function-state-install-phi-targets!
+              (compiler-backend-state-function-state
+                program-index.backend-state)
+              (compiler-backend-phi-target-labels-for-blocks
+                (compiler-backend-global-shared-view blocks)))]
+          (compiler-backend-emit-switch-tables-function-seq-into
+            functions
+            program-index
+            (+ index 1)
+            (match (compiler-backend-global-shared-view blocks)
+              [(Array seq)
+                (compiler-backend-emit-switch-tables-seq-into
+                  (compiler-backend-function-label-scope program-index name)
+                  (compiler-backend-function-state-phi-targets
+                    (compiler-backend-state-function-state
+                      program-index.backend-state))
+                  seq
+                  0
+                  buf)])))])))
 
 ;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
 ;; saturated at a switch dispatch, one or both of the index / jump-table-base
@@ -73773,12 +73788,7 @@
                 emit-entry
                 crt-entry
                 scratch
-                (text_buf.append
-                  buf
-                  (compiler-backend-append-function-switch-tables
-                    program-index
-                    func
-                    head))))]
+                (text_buf.append buf head)))]
           [(Err message)
             (begin
               (cfg
@@ -73892,10 +73902,7 @@
                     program-index.backend-state
                     func)))
               (compiler-backend-assembly-stream-process-string!
-                (compiler-backend-append-function-switch-tables
-                  program-index
-                  func
-                  head)
+                head
                 program-index.backend-state
                 (compiler-backend-state-stream-state
                   program-index.backend-state))
@@ -78412,9 +78419,14 @@ tl_shared_object_init:
                     compile-profile
                     (compiler-backend-profile-start program-index.profile-state))
                   (let
+                    [switch-buf : text_buf.TextBuf
+                      (compiler-backend-emit-switch-tables-functions-into
+                        functions
+                        program-index
+                        descriptor-buf)]
                     [runtime-data-buf : text_buf.TextBuf
                       (text_buf.append
-                        descriptor-buf
+                        switch-buf
                         (if emit-entry
                           (compiler-backend-runtime-data-for-target
                             target

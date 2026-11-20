@@ -321,15 +321,20 @@
     (when
       (> (+ stream stream-len) (- (array-length payload) catalog.index-end))
       (return (Err "embedded stdlib tlci frames: truncated group")))
-    (match (codec.compiler-embedded-stdlib-tlci-codec-decode-group
+    (match (codec.compiler-embedded-stdlib-tlci-codec-decode-group-prefix
       payload
       (+ catalog.index-end stream)
       raw-needed
+      (> raw-limit 0)
       model)
       [(Err message) (Err message)]
       [(Ok bytes)
+        ;; A soft prefix holds at least its length; the token that crossed the
+        ;; limit may have written up to a whole match past it.
         (when
-          (!= (array-length bytes) raw-needed)
+          (if (> raw-limit 0)
+            (< (array-length bytes) raw-needed)
+            (!= (array-length bytes) raw-needed))
           (return (Err "embedded stdlib tlci frames: group length mismatch")))
         (Ok bytes)])))
 

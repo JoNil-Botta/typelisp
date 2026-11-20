@@ -816,12 +816,16 @@
   [data : (MutPtr u8)]
   [out-start : i64]
   [raw-len : i64]
+  ;; Bytes past `raw-len` a token may still write: a prefix decode ends where
+  ;; the caller asked but the token that crosses that point finishes.
+  [slack : i64]
   [model : (& model CompilerLzssModel)]) : String
   (let
     [window : i64 (compiler-lzss-window)]
     [reps : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [out-index : i64 out-start]
     [end : i64 (+ out-start raw-len)]
+    [hard-end : i64 (+ out-start raw-len slack)]
     (set! (array-ref reps 0) 1)
     (set! (array-ref reps 1) 1)
     (set! (array-ref reps 2) 1)
@@ -880,7 +884,7 @@
                 (> length (compiler-lzss-max-match)))
               (return "compiler lzss: invalid match length"))
             (when
-              (> length (- end out-index))
+              (> length (- hard-end out-index))
               (return "compiler lzss: token exceeds raw length"))
             (cond
               [(= kind 0)
@@ -1527,6 +1531,36 @@
     [spec : String (compiler-lzss-spec-string payload start count)]
     (compiler-lzss-model-from-spec (& spec))))
 
+;; Decode a stream prefix that need not end on a token boundary: the token that
+;; crosses `raw-len` finishes, so the result holds at least `raw-len` bytes and
+;; at most `raw-len + max-match`. A caller that needs one early frame of a
+;; group pays for that frame, not for the rest of the group.
+(define (compiler-lzss-decode-prefix-soft
+  [payload : (& payload (__tl_dyn-array u8))]
+  [start : i64]
+  [raw-len : i64]
+  [model : (& model CompilerLzssModel)]) : CompilerLzssBytes
+  (let
+    [slack : i64 (compiler-lzss-max-match)]
+    [reader : CompilerLzssReader
+      (CompilerLzssReader start (- (array-length payload) start) 0 0 0 0)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ raw-len slack))]
+    [error : String
+      (if (= raw-len 0)
+        ""
+        (compiler-lzss-decode-body
+          payload
+          (&mut reader)
+          (unsafe
+            (__tl_array-data out))
+          0
+          raw-len
+          slack
+          model))]
+    (if (> (string.string-length (& error)) 0)
+      (Err error)
+      (Ok out))))
+
 ;; Decode a stream prefix without the tail checks: a caller that only needs the
 ;; first frames must not pay for the rest of the stream.
 (define (compiler-lzss-decode-prefix
@@ -1548,6 +1582,7 @@
             (__tl_array-data out))
           0
           raw-len
+          0
           model))]
     (if (> (string.string-length (& error)) 0)
       (Err error)
@@ -1573,6 +1608,7 @@
             (__tl_array-data out))
           0
           raw-len
+          0
           model))]
     (cond
       [(> (string.string-length (& error)) 0) (Err error)]

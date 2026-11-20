@@ -110,10 +110,15 @@
       [(lzss.CompilerLzssCheck.Ok _)
         (Ok (lzss.compiler-lzss-model-from-lengths lengths))])))
 
-;; Expand one group of frames; every frame's bytes follow in order.
-(define (compiler-embedded-stdlib-tlci-codec-decode-group
+;; Expand one group of frames; every frame's bytes follow in order. With
+;; `soft`, `raw-len` may fall inside a token: the token that crosses it
+;; finishes, so the caller gets at least `raw-len` bytes.
+(define (compiler-embedded-stdlib-tlci-codec-decode-group-prefix
   [payload : (& payload (__tl_dyn-array u8))]
   [start : i64]
   [raw-len : i64]
+  [soft : bool]
   [model : (& model lzss.CompilerLzssModel)]) : lzss.CompilerLzssBytes
-  (lzss.compiler-lzss-decode-prefix payload start raw-len model))
+  (if soft
+    (lzss.compiler-lzss-decode-prefix-soft payload start raw-len model)
+    (lzss.compiler-lzss-decode-prefix payload start raw-len model)))

@@ -298,12 +298,12 @@
             catalog
             index)]
         ;; A group is tokenized as one window, so a frame boundary inside it
-        ;; need not fall on a token boundary: expand the whole group and take
-        ;; the frame out of it.
+        ;; need not fall on a token boundary; the soft prefix decode finishes
+        ;; the token that crosses it.
         [group : (__tl_dyn-array u8)
           (match (compiler-embedded-stdlib-tlci-group-bytes
             (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
-            0)
+            (+ offset raw))
             [(Ok bytes) bytes]
             [(Err _) (return (__tl_make-array u8 0))])]
         [record : i64

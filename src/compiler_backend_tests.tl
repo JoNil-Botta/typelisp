@@ -2249,8 +2249,9 @@
   (foreign-call 1))")
 
 (define (compiler-backend-pic-output-ok?) : bool
-  (match (backend.compiler-backend-emit-source-pic-linux
-    (compiler-backend-pic-source))
+  (match (backend.compiler-backend-emit-source-pic-for-target
+    (compiler-backend-pic-source)
+    (backend.CompilerBackendTarget.Linux))
     [(Ok output)
       (let
         [asm : String output.asm]
@@ -2284,8 +2285,9 @@
     [(Err _) false]))
 
 (define (compiler-backend-pic-extern-reject-ok?) : bool
-  (match (backend.compiler-backend-emit-source-pic-linux
-    (compiler-backend-pic-extern-source))
+  (match (backend.compiler-backend-emit-source-pic-for-target
+    (compiler-backend-pic-extern-source)
+    (backend.CompilerBackendTarget.Linux))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -2864,11 +2866,13 @@
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
     [renders : bool
-      (match (backend.compiler-backend-emit-program-object-image-target
+      (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program
         target
+        (Scalar)
         (ir.compiler-source-spans-empty)
-        true)
+        true
+        false)
         [(Err _) false]
         [(Ok image)
           (match target
@@ -9630,11 +9634,13 @@ high:
 
 (define (compiler-backend-descriptor-pair-object-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-emit-program-object-image-target
+  (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
     (compiler-backend-descriptor-pair-object-program)
     target
+    (Scalar)
     (ir.compiler-source-spans-empty)
-    true)
+    true
+    false)
     [(Ok image)
       (let
         [sections : cobj.CompilerObjectSectionList
@@ -9711,11 +9717,13 @@ high:
           (owned_view.compiler-owned-shared-view program)
           target)
         (has "    call _tl_f1\n"))
-      (match (backend.compiler-backend-emit-program-object-image-target
+      (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program
         target
+        (Scalar)
         (ir.compiler-source-spans-empty)
-        true)
+        true
+        false)
         [(Ok _) true]
         [(Err _) false])
       (compiler-backend-descriptor-pair-object-target-ok? target))))
@@ -12028,13 +12036,17 @@ high:
                     [(Ok second-program second-spans lower-owner)
                       (let
                         [result : bool
-                          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+                          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+                            (backend.compiler-backend-state-new
+                              (ci.intern-compat-state-capture-active))
+                            (ast.ast-node-pool-reader-type-segment-bases)
                             second-program
                             (backend.CompilerBackendTarget.Linux)
                             (Scalar)
                             second-spans
                             true
-                            false)
+                            false
+                            (profile_state.compiler-profile-state-new))
                             [(Ok streamed)
                               (string.eq legacy (text_buf.render streamed))]
                             [(Err _) false])]
@@ -15852,28 +15864,34 @@ f:
     [(Ok program spans lower-owner)
       (let
         [ok : bool
-          (match (backend.compiler-backend-emit-program-target-with-mode-and-crt
+          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+            (backend.compiler-backend-state-new
+              (ci.intern-compat-state-capture-active))
+            (ast.ast-node-pool-reader-type-segment-bases)
             program
             (backend.CompilerBackendTarget.Linux)
             (Scalar)
             spans
             true
-            true)
-            [(Ok asm)
-              (and
-                (let
-                  [text
-                    (backend.compiler-backend-target-entry-text-with-crt
-                      (backend.CompilerBackendTarget.Linux)
-                      true
-                      true)]
-                  (asm-has? text ".globl main"))
-                (asm-has?
-                  asm
-                  "main:\n"
-                  "    movq %rdi, .L_tl_argc(%rip)\n"
-                  "    call _tl___global_init_")
-                (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n"))]
+            true
+            (profile_state.compiler-profile-state-new))
+            [(Ok buf)
+              (let
+                [asm : String (text_buf.render buf)]
+                (and
+                  (let
+                    [text
+                      (backend.compiler-backend-target-entry-text-with-crt
+                        (backend.CompilerBackendTarget.Linux)
+                        true
+                        true)]
+                    (asm-has? text ".globl main"))
+                  (asm-has?
+                    asm
+                    "main:\n"
+                    "    movq %rdi, .L_tl_argc(%rip)\n"
+                    "    call _tl___global_init_")
+                  (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n")))]
             [(Err _) false])]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas lower-owner))
@@ -17392,9 +17410,12 @@ f:
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
-    (match (backend.compiler-backend-emit-program-linux-with-spans
+    (match (backend.compiler-backend-emit-program-target-with-mode
       program
-      spans)
+      (backend.CompilerBackendTarget.Linux)
+      (Scalar)
+      spans
+      true)
       [(Err diag)
         (and
           (string.eq
@@ -17665,12 +17686,16 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-total-switch-pic-asm-ok?) : bool
-  (match (backend.compiler-backend-emit-program-pic-target-with-mode
+  (match (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))
+    (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-total-switch-test-program)
     (backend.CompilerBackendTarget.Linux)
     (Scalar)
     (ir.compiler-source-spans-empty)
-    true)
+    true
+    false
+    (profile_state.compiler-profile-state-new))
     [(Ok output)
       (let
         [asm : String output.asm]
@@ -22501,7 +22526,10 @@ entry:
     [(Ok program spans lower-owner)
       (let
         [ok : bool
-          (match (opt.optimize-program-with-spans (& program) spans)
+          (match (opt.optimize-program-with-spans-and-level
+            (& program)
+            spans
+            (opt.compiler-optimize-default-level))
             [(Program optimized optimized-spans)
               (match (backend.compiler-backend-emit-program-target-with-mode
                 optimized
@@ -23012,11 +23040,17 @@ entry:
       (begin
         ;; Non-abort instruction spans are intentionally a debug-only cost.
         (ir.compiler-debug-info-set-enabled! true)
-        (match (opt.optimize-program-with-spans (& program) spans)
+        (match (opt.optimize-program-with-spans-and-level
+          (& program)
+          spans
+          (opt.compiler-optimize-default-level))
           [(Program optimized optimized-spans)
-            (match (backend.compiler-backend-emit-program-linux-with-spans
+            (match (backend.compiler-backend-emit-program-target-with-mode
               optimized
-              optimized-spans)
+              (backend.CompilerBackendTarget.Linux)
+              (Scalar)
+              optimized-spans
+              true)
               [(Err diag)
                 (and
                   (string.eq
@@ -40162,11 +40196,13 @@ b_keep:
                   spans
                   (% mode 3))
                   [(Program optimized optimized-spans)
-                    (backend.compiler-backend-emit-program-object-image-target
+                    (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
                       optimized
                       target
+                      (Scalar)
                       optimized-spans
-                      true)])]
+                      true
+                      false)])]
               (lower.compiler-lower-arena-state-release!
                 (lower.compiler-lower-state-arenas lower-owner))
               result)])]
@@ -41569,7 +41605,20 @@ b_keep:
     result))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
-  (text_buf.render (backend.compiler-backend-peephole-asm-buffer asm false)))
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream : backend.CompilerBackendStreamState
+      (backend.compiler-backend-state-stream-state state)]
+    (backend.compiler-backend-sweep-reset! state stream)
+    (text_buf.render
+      (backend.compiler-backend-peephole-asm-buffer-with-state
+        state
+        stream
+        asm
+        false
+        false))))
 
 ;; Inline-by-value aggregates are the always-on default lowering, so
 ;; emitting "in inline-aggregates mode" is just the ordinary target emit. The
@@ -45461,10 +45510,12 @@ user_fn:
               (& (ir.compiler-ir-function-seq-empty)))))
         (ir.compiler-ir-extern-seq1 provided)
         (ir.CompilerIrReturnStorageAuthority.None))]
-    (match (backend.compiler-backend-emit-program-object-image-target
+    (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
       (clone program)
       (backend.CompilerBackendTarget.Windows)
+      (Scalar)
       (ir.compiler-source-spans-empty)
+      false
       false)
       [(Err diag)
         (test.assert-true

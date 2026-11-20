@@ -62,6 +62,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Defender real-time scanning re-scans every new executable and file write on
+      # hosted Windows runners; this only speeds the gates up, so failures just warn.
+      - name: Exclude Windows runner paths from Defender scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          function Invoke-DefenderAttempt($label, $body) {
+            try {
+              & $body
+            } catch {
+              Write-Warning "Defender $label failed, continuing: $_"
+            }
+          }
+
+          Invoke-DefenderAttempt 'status before' {
+            Get-MpComputerStatus -ErrorAction Stop |
+              Select-Object RealTimeProtectionEnabled, AntivirusEnabled
+          }
+          Invoke-DefenderAttempt 'disable real-time monitoring' {
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+          }
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:RUNNER_TOOL_CACHE) |
+            Where-Object { $_ }
+          Invoke-DefenderAttempt 'exclusions' {
+            Add-MpPreference -ExclusionPath $paths -ErrorAction Stop
+          }
+          Invoke-DefenderAttempt 'status after' {
+            Get-MpComputerStatus -ErrorAction Stop |
+              Select-Object RealTimeProtectionEnabled, AntivirusEnabled
+          }
+
       # Fails every lane when scripts/ci-lanes.tsv leaves a gate unassigned,
       # assigns one twice or omits a declared duplicate. Only a lane that holds
       # nothing else beside build-invariance gets three pool workers (hosted
@@ -394,6 +425,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      # Defender real-time scanning re-scans every new executable and file write on
+      # hosted Windows runners; this only speeds the gates up, so failures just warn.
+      - name: Exclude Windows runner paths from Defender scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          function Invoke-DefenderAttempt($label, $body) {
+            try {
+              & $body
+            } catch {
+              Write-Warning "Defender $label failed, continuing: $_"
+            }
+          }
+
+          Invoke-DefenderAttempt 'status before' {
+            Get-MpComputerStatus -ErrorAction Stop |
+              Select-Object RealTimeProtectionEnabled, AntivirusEnabled
+          }
+          Invoke-DefenderAttempt 'disable real-time monitoring' {
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+          }
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:RUNNER_TOOL_CACHE) |
+            Where-Object { $_ }
+          Invoke-DefenderAttempt 'exclusions' {
+            Add-MpPreference -ExclusionPath $paths -ErrorAction Stop
+          }
+          Invoke-DefenderAttempt 'status after' {
+            Get-MpComputerStatus -ErrorAction Stop |
+              Select-Object RealTimeProtectionEnabled, AntivirusEnabled
+          }
 
       # Every attempt's envelopes: a lane copied by "Re-run failed jobs" is
       # bound to the attempt that executed it.

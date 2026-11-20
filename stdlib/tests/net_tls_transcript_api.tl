@@ -509,6 +509,8 @@
     (absorb-frame (&mut baseline) (byte_buf.as-bytes (& original)))
     (let
       [expected : sha.Sha256Digest (snapshot (& baseline))]
+      ;; Built outside the arena: a value made inside it carries its region.
+      [limits : wire.TlsWireLimits (wire.default-limits)]
       [iteration : i64 0]
       [seed : u32 0x7719cafe]
       (while (< iteration 524)
@@ -520,7 +522,7 @@
             [state : transcript.TlsTranscript (new-transcript)]
             [before : transcript.TlsTranscript (copy-state (& state))]
             [reader : wire.TlsHandshakeReader
-              (wire.handshake-reader-new (clone (wire.default-limits)))]
+              (wire.handshake-reader-new limits)]
             [position : i64
               (if (< iteration 12)
                 iteration

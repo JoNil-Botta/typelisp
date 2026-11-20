@@ -3386,9 +3386,11 @@
     (set!
       (array-ref i64-arrays compiler-backend-function-i64-array-jump-forward)
       (compiler-backend-global-shared-view empty-i64-array))
+    ;; Fresh, not a view of the shared sentinel: the rank table is per function
+    ;; and the shared-view ratchet admits no new aliases.
     (set!
       (array-ref i64-arrays compiler-backend-function-i64-array-group-ranks)
-      (compiler-backend-global-shared-view empty-i64-array))
+      (__tl_make-array i64 0))
     (set!
       (array-ref
         i64-arrays
@@ -3837,7 +3839,7 @@
       (array-ref
         data.i64-arrays
         compiler-backend-function-i64-array-group-ranks)
-      (compiler-backend-global-shared-view data.empty-i64-array))
+      (__tl_make-array i64 0))
     (set!
       (array-ref data.assignment-indexes 0)
       (compiler-backend-global-shared-view data.empty-assignment-index))

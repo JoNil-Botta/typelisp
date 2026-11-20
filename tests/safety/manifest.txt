@@ -1604,6 +1604,12 @@ arena_phase_rewind_closure_reject|check-fail|tests/safety/arena_phase_rewind_clo
 arena_phase_rewind_with_scratch_reject|check-fail|tests/safety/arena_phase_rewind_with_scratch_reject.tl|-|use of moved value `text`
 arena_phase_rewind_match_binder_reject|check-fail|tests/safety/arena_phase_rewind_match_binder_reject.tl|-|use of moved value `text`
 arena_phase_rewind_branded_field_reject|check-fail|tests/safety/arena_phase_rewind_branded_field_reject.tl|-|use of moved value `text`
+# A phase taken after another ends with it wherever its binder sat: an inner
+# `let`, a shadowed token name, and a chain longer than any fixed depth (#9480).
+arena_phase_inner_scope_annotated_reject|check-fail|tests/safety/arena_phase_inner_scope_annotated_reject.tl|-|use of moved value `v`
+arena_phase_inner_scope_branded_reject|check-fail|tests/safety/arena_phase_inner_scope_branded_reject.tl|-|use of moved value `v`
+arena_phase_shadowed_token_reject|check-fail|tests/safety/arena_phase_shadowed_token_reject.tl|-|use of moved value `v`
+arena_phase_rewind_seventy_phases_reject|check-fail|tests/safety/arena_phase_rewind_seventy_phases_reject.tl|-|use of moved value `v`
 # An end cannot run while its arena is active anywhere on the stack, including
 # under a nested `with-arena` (#9502), nor end an arena a closure captures
 # (#9482).

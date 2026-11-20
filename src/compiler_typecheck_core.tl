@@ -18461,6 +18461,12 @@
   ;; The call's result type; a constructor's joins each argument's regions
   ;; (`tc-type-join-regions`), as the constructed value holds them.
   [constructed : (&mut constructed ast.AstType)]
+  ;; Each argument's type, in argument order, for
+  ;; `tc-call-erased-owner-result`: its identity walk never re-types an
+  ;; argument. Filled only when the call's result can hold an arena handle, the
+  ;; one case an erased owner's region can be tagged on it.
+  [collect-arg-types? : bool]
+  [arg-types : (&mut arg-types (__tl_dyn-array ast.AstType))]
   [arity-msg : TcArityMessage]
   ;; `tc-call-arena-store-region`, once per call.
   [arena-region : i64]
@@ -18680,6 +18686,9 @@
             [(TcSelectedResult.Err message next)
               (TcSelectedArgsResult.Err message next)]
             [(TcSelectedResult.Ok got child next)
+              (when
+                collect-arg-types?
+                (tc-selected-types-push! (&mut arg-types) (clone got)))
               (match (tc-match-call-type-for-expected
                 ctx
                 env
@@ -18768,6 +18777,8 @@
                             allow-region-args
                             constructor
                             constructed
+                            collect-arg-types?
+                            arg-types
                             arity-msg
                             arena-region
                             (+ index 1)
@@ -19215,6 +19226,8 @@
                     (tc-lifetime-subst-type subst declared-ret))]
                 [children : (__tl_dyn-array typed.TypedOccurrenceId)
                   (__tl_make-array typed.TypedOccurrenceId args.len)]
+                [arg-types : (__tl_dyn-array ast.AstType)
+                  (tc-selected-no-types)]
                 ;; A call through a function value reads the callee first.
                 (match (if (= key -2)
                   (tc-infer-selected-callee
@@ -19233,6 +19246,11 @@
                     (let
                       [constructed : ast.AstType
                         (tc-tag-active-region env (clone ret))]
+                      [collect-arg-types? : bool
+                        (tc-type-can-hold-arena-handle?
+                          ctx
+                          (clone constructed)
+                          Nil)]
                       (match (tc-infer-selected-call-args
                         ctx
                         env
@@ -19249,6 +19267,8 @@
                               (tc-global-shared-view ret)))
                           ast.AstMaybeType.No)
                         (&mut constructed)
+                        collect-arg-types?
+                        (&mut arg-types)
                         (TcArityMessage.Detailed
                           (tc-global-shared-view func)
                           (tc-global-shared-view args)
@@ -19343,6 +19363,7 @@
                                               env
                                               (& args)
                                               (& params)
+                                              (& arg-types)
                                               constructed))
                                           ;; Key -1 names a constructor (no declaration),
                                           ;; -2 a call through a function value.
@@ -51533,9 +51554,9 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arg-id : i64]
-  [actual : ast.AstType]) : TcNameIdList
+  [actual : (& actual ast.AstType)]) : TcNameIdList
   (let
-    [cursor : TcNameIdList (tc-type-collect-regions (& actual))]
+    [cursor : TcNameIdList (tc-type-collect-regions actual)]
     [out : TcNameIdList Nil]
     [place-id : i64
       (match (ast.ast-expr-unspan (& (tc-context-expr-get ctx arg-id)))
@@ -51576,6 +51597,9 @@
   [env : TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstTypeList)]
+  ;; Each argument's type, as the call site typed it. Typing an argument again
+  ;; here is what made a nested `(pass (pass ...))` chain exponential.
+  [arg-types : (& arg-types (__tl_dyn-array ast.AstType))]
   [ty : ast.AstType]) : ResultTcType
   ;; Most results cannot hold a handle: one walk, before any formal's.
   (unless (tc-type-can-hold-arena-handle? ctx (clone ty) Nil) (return (Ok ty)))
@@ -51583,21 +51607,8 @@
     [index : i64 0]
     [reaches? : bool false]
     [regions : TcNameIdList Nil]
-    (while (and
-      (not reaches?)
-      (< index (ast.ast-type-list-len (& params)))
-      (< index args.len))
-      (when
-        (tc-formal-reaches-bare-arena?
-          ctx
-          (tc-context-type-get
-            ctx
-            (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback))))
-        (set! reaches? true))
-      (set! index (+ index 1)))
-    (unless reaches? (return (Ok ty)))
-    (set! index 0)
-    (while (and (< index (ast.ast-type-list-len (& params))) (< index args.len))
+    [first-arg-id : i64 -1]
+    (while (and (< index (ast.ast-type-list-len params)) (< index args.len))
       (let
         [arg-id : i64 (ast.ast-expr-list-get (& args) index 0)]
         (when
@@ -51609,38 +51620,71 @@
                 (& params)
                 index
                 (ast.ast-type-id-fallback))))
-          (match (tc-expr-id ctx env arg-id)
-            [(Ok actual)
-              (let
-                [found : TcNameIdList
-                  (tc-call-arg-arena-identities ctx env arg-id actual)]
-                (when
-                  (and
-                    (not (tc-name-id-list-empty? found))
-                    (not (tc-region-taggable-type? (clone ty))))
-                  (return
-                    (Err
-                      (tc-locate-error-at-expr
-                        (tc-context-expr-bases ctx)
-                        (tc-context-expr-get ctx arg-id)
-                        (tc-kind-message
-                          (ArenaOwnership)
-                          "typecheck: this call's result type cannot carry the region of the arena owner passed to it (a function or fixed-array result cannot), so a copy of the owner's handle could outlive the owner's end; take the parameter as `(arena.Arena r)`")))))
-                (while (not (tc-name-id-list-empty? found))
-                  (unless
-                    (tc-name-id-list-contains
-                      regions
-                      (tc-name-id-list-head found))
+          (set! reaches? true)
+          (when
+            (< index (array-length arg-types))
+            (let
+              [found : TcNameIdList
+                (tc-call-arg-arena-identities
+                  ctx
+                  env
+                  arg-id
+                  (& (array-ref arg-types index)))]
+              (unless
+                (tc-name-id-list-empty? found)
+                (when (< first-arg-id 0) (set! first-arg-id arg-id))
+                (let
+                  [cursor : TcNameIdList found]
+                  (while (not (tc-name-id-list-empty? cursor))
                     (set!
                       regions
-                      (tc-name-id-list-add regions (tc-name-id-list-head found))))
-                  (set! found (tc-name-id-list-rest found))))]
-            [(Err _) unit])))
+                      (tc-name-id-list-add
+                        regions
+                        (tc-name-id-list-head cursor)))
+                    (set! cursor (tc-name-id-list-rest cursor)))))))))
       (set! index (+ index 1)))
-    ;; A region the result already carries is not tagged twice.
-    (let
-      [held : TcNameIdList (tc-type-outer-regions (clone ty))]
-      (Ok (tc-tag-regions (tc-name-id-list-difference regions held) ty)))))
+    (unless reaches? (return (Ok ty)))
+    (if (tc-name-id-list-empty? regions)
+      (Ok ty)
+      (begin
+        (unless
+          (tc-region-taggable-type? (clone ty))
+          (return
+            (Err
+              (tc-locate-error-at-expr
+                (tc-context-expr-bases ctx)
+                (tc-context-expr-get ctx first-arg-id)
+                (tc-kind-message
+                  (ArenaOwnership)
+                  "typecheck: this call's result type cannot carry the region of the arena owner passed to it (a function or fixed-array result cannot), so a copy of the owner's handle could outlive the owner's end; take the parameter as `(arena.Arena r)`")))))
+        ;; A region the result already carries is not tagged twice.
+        (let
+          [held : TcNameIdList (tc-type-outer-regions (clone ty))]
+          (Ok (tc-tag-regions (tc-name-id-list-difference regions held) ty)))))))
+
+;; Each argument's type in argument order, typed only where the formal reaches
+;; a bare `arena.Arena` handle: the identity walk never looks at the others, and
+;; typing an argument is what a chain of nested calls must not pay twice.
+(define (tc-call-argument-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]) : (__tl_dyn-array ast.AstType)
+  (let
+    [index : i64 0]
+    [types : (__tl_dyn-array ast.AstType) (tc-selected-no-types)]
+    (while (and (< index args.len) (< index (ast.ast-type-list-len params)))
+      (if (tc-formal-reaches-bare-arena?
+        ctx
+        (tc-context-type-get
+          ctx
+          (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback))))
+        (match (tc-expr-id ctx env (ast.ast-expr-list-get (& args) index 0))
+          [(Ok actual) (tc-selected-types-push! (&mut types) actual)]
+          [(Err _) (tc-selected-types-push! (&mut types) ast.AstType.Unit)])
+        (tc-selected-types-push! (&mut types) ast.AstType.Unit))
+      (set! index (+ index 1)))
+    types))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
@@ -61851,12 +61895,20 @@
               (& resolved-params)
               (tc-global-shared-view resolved-ret))
               [(Ok)
-                (tc-call-erased-owner-result
-                  ctx
-                  env
-                  (& args)
-                  (& resolved-params)
-                  (tc-tag-active-region env resolved-ret))]
+                (let
+                  [arg-types : (__tl_dyn-array ast.AstType)
+                    (tc-call-argument-types
+                      ctx
+                      env
+                      (& args)
+                      (& resolved-params))]
+                  (tc-call-erased-owner-result
+                    ctx
+                    env
+                    (& args)
+                    (& resolved-params)
+                    (& arg-types)
+                    (tc-tag-active-region env resolved-ret)))]
               [(Err message) (Err message)])]
           [(Err message) (Err message)])]
       [(Err message) (Err message)])))
@@ -64612,14 +64664,18 @@
                           (tc-global-shared-view args)
                           (tc-global-shared-view params)
                           (tc-global-shared-view ret)))]
-                    (tc-call-erased-owner-result
-                      ctx
-                      env
-                      (& args)
-                      (& params)
-                      (tc-tag-regions
-                        spawn-owner-regions
-                        (tc-tag-active-region env ret)))))
+                    (let
+                      [arg-types : (__tl_dyn-array ast.AstType)
+                        (tc-call-argument-types ctx env (& args) (& params))]
+                      (tc-call-erased-owner-result
+                        ctx
+                        env
+                        (& args)
+                        (& params)
+                        (& arg-types)
+                        (tc-tag-regions
+                          spawn-owner-regions
+                          (tc-tag-active-region env ret))))))
                 (tc-call-lifetime-function-type
                   ctx
                   env

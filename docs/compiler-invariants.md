@@ -1547,17 +1547,24 @@ annotation would name, not the spelling: `(type other.Point)` through an import
 alias reaches the layout of its defining module's `Point` (#8112).
 
 
-An array allocation (`make-array`, `__tl_make-array`) whose element default
-is all-zero bytes lowers to `tl_array_zero`. That runtime fill skips memory
-the arena has never handed out. Other defaults lower to a per-element init
-loop. `lower-make-array-zero-fill-supported?` decides which applies:
-- scalars and raw pointers;
-- default-layout structs whose fields all qualify;
-- enums whose tag-0 variant's payload fields all qualify, including a
-  fieldless tag-0 variant (#8520).
+A private array allocation (`__tl_make-array`) whose element type is ZII
+lowers to `tl_array_zero`. That runtime fill skips memory the arena has never
+handed out. One classifier, `tc-type-zii-class` in
+`src/compiler_typecheck_core.tl`, decides ZII for every storage shape (SPEC
+5.12.1, "Zero value of each type") and is shared by make-array typechecking and
+lowering. It returns `Zii` or `NotZii` with a stable reason:
+- ZII: scalars, raw pointers, nullable `CFunc`, and tuples, fixed arrays,
+  default-layout structs without cleanup and enums without cleanup whose
+  tag-0 variant's payload fields are all ZII, including a fieldless tag-0
+  variant (#8520).
+- `string-handle`: the element keeps the shared fill (`fill8` or a store loop
+  of one empty-string value; `lower-make-array-shared-fill?`).
+- `box`, `dynamic-buffer`: a live allocation per element, so the per-element
+  init loop.
+- every other reason: typechecking rejects the element type and names the
+  reason.
 
-Types outside that list, such as `String` and `Box`, keep the loop. A `Box`
-default, for one, is a live allocation.
+Fixed `make-array` keeps its array-literal lowering of zero-valued elements.
 
 A field store into a packed (register-resident) struct local writes through
 the local's frame address and then reloads the packed value

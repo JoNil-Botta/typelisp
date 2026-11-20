@@ -22,10 +22,6 @@
 (import (option.option i64) as option_i64)
 (import stdlib.test)
 (import stdlib.vector)
-(import (vector.vector opt.OptAggregatePointer core) as opt_aggregate_pointer_vec)
-(import (vector.vector opt.OptAggregateAccess core) as opt_aggregate_access_vec)
-(import (vector.vector opt.OptAggregateAllocCandidate core) as opt_aggregate_candidate_vec)
-(import (vector.vector opt.OptAggregatePromoteSlot core) as opt_aggregate_promote_slot_vec)
 (import (vector.vector i64 core) as opt_dense_i64_vec)
 (import (vector.vector opt.OptSsaDenseEntry core) as opt_ssa_dense_vec)
 (import (vector.vector opt.OptGlobalFact core) as opt_global_fact_vec)
@@ -4942,570 +4938,6 @@
     (if ok
       42
       1)))
-
-(define (opt-aggregate-test-alloc) : ir.CompilerIrInstr
-  (cbi.compiler-builtin-initialize-for-parse!)
-  (Call
-    1
-    cbi.compiler-builtin-id-tl-alloc
-    (One (I64 16))
-    (Struct (ci.intern "Pair"))))
-
-(define (opt-aggregate-positive-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-aggregate-test-alloc)
-    (irt.instr "%2 = gep %1, 0 : u8")
-    (irt.instr "store_ptr %2, 10 : i64")
-    (irt.instr "%3 = gep %1, 8 : u8")
-    (irt.instr "store_ptr %3, true : bool")
-    (irt.instr "%4 = gep %1, 0 : u8")
-    (ir.CompilerIrInstr.Load 5 (Var 4) (I64))
-    (irt.instr "return %5")))
-
-(define (opt-aggregate-returned-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs (opt-aggregate-test-alloc) (irt.instr "return %1")))
-
-(define (opt-aggregate-passed-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-aggregate-test-alloc)
-    (irt.instr "%2 = call touch(%1) : unit")
-    (irt.instr "return 0")))
-
-(define (opt-aggregate-global-store-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-aggregate-test-alloc)
-    (irt.instr "store @escaped, %1 : u64")
-    (irt.instr "return 0")))
-
-(define (opt-aggregate-store-through-other-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-aggregate-test-alloc)
-    (irt.instr "store_ptr %99, %1 : u64")
-    (irt.instr "return 0")))
-
-(define (opt-aggregate-unknown-offset-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-aggregate-test-alloc)
-    (irt.instr "%2 = gep %1, %9 : u8")
-    (irt.instr "return 0")))
-
-(define (opt-aggregate-call-separated-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-aggregate-test-alloc)
-    (irt.instr "%2 = gep %1, 0 : u8")
-    (irt.instr "store_ptr %2, 10 : i64")
-    (irt.instr "%9 = call touch() : unit")
-    (irt.instr "%3 = gep %1, 0 : u8")
-    (ir.CompilerIrInstr.Load 4 (Var 3) (I64))
-    (irt.instr "return %4")))
-
-(define (opt-aggregate-predicated-memory-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (opt-aggregate-test-alloc)
-    (irt.instr "%2 = gep %1, 0 : u8")
-    (irt.instr "store_ptr %2, 10 : i64")
-    (ir.ir-instr-predicated-load 8 (Var 99) (I64 0) (Bool true) 4 (I64))
-    (irt.instr "%3 = gep %1, 0 : u8")
-    (ir.CompilerIrInstr.Load 4 (Var 3) (I64))
-    (irt.instr "return %4")))
-
-(define (opt-aggregate-phi-flowed-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-blocks-with-tail
-    (irt.blocks "join:
-         %2 = phi [%1, entry] : u64
-         return 0")
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instrs
-        (opt-aggregate-test-alloc)
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))))
-
-(define (opt-aggregate-no-candidates? [instrs : ir.CompilerIrInstrSeq]) : bool
-  (=
-    (let
-      [candidates
-        (opt-aggregate-allocation-candidates
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (opt-spans-program instrs))]
-      (opt-aggregate-candidate-list-count candidates))
-    0))
-
-(define (opt-aggregate-phi-flowed-rejected?) : bool
-  (=
-    (let
-      [candidates
-        (opt-aggregate-allocation-candidates
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (Program
-            (ir.compiler-ir-global-seq-empty)
-            (ir.compiler-ir-function-seq-prepend
-              (&
-                (Function
-                  (opt-test-symbol "main")
-                  (ir.compiler-ir-param-seq-empty)
-                  (I64)
-                  4
-                  (opt-aggregate-phi-flowed-blocks)
-                  Ordinary))
-              (& (ir.compiler-ir-function-seq-empty)))
-            (ir.compiler-ir-extern-seq-empty)
-            (ir.CompilerIrReturnStorageAuthority.None)))]
-      (opt-aggregate-candidate-list-count candidates))
-    0))
-
-(define (opt-aggregate-positive-classified?) : bool
-  (let
-    [instrs : ir.CompilerIrInstrSeq (opt-aggregate-positive-instrs)]
-    [instr-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [candidates : opt_aggregate_candidate_vec.Vec
-      (opt-aggregate-allocation-candidates
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (opt-spans-program instrs))]
-    (if (= (opt-aggregate-candidate-list-count candidates) 1)
-      (match (owned_view.compiler-owned-element-view
-        (opt_aggregate_candidate_vec.slots (& candidates))
-        0)
-        [(Candidate base ty size ptrs accesses)
-          (and
-            (= base 1)
-            (= size 16)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              ty
-              (& (Struct (ci.intern "Pair"))))
-            (= (opt-aggregate-pointer-list-count ptrs) 3)
-            (= (opt_aggregate_access_vec.len (& accesses)) 3)
-            (=
-              (opt-aggregate-access-list-store-count
-                (opt.compiler-opt-global-shared-view accesses))
-              2)
-            (=
-              (opt-aggregate-access-list-load-count
-                (opt.compiler-opt-global-shared-view accesses))
-              1)
-            (< (opt_aggregate_pointer_vec.capacity (& ptrs)) instr-count)
-            (< (opt_aggregate_access_vec.capacity (& accesses)) instr-count))])
-      false)))
-
-;; Grow the append-ordered classifier scratch vector past its initial capacity.
-;; The optimizer relies on the exact load/store order when it later promotes an
-;; aggregate, so test both the interleaving and the metadata preserved by each
-;; access entry.
-(define (opt-aggregate-access-vector-growth-ok?) : bool
-  (let
-    [accesses : opt_aggregate_access_vec.Vec
-      (opt_aggregate_access_vec.with-capacity 1)]
-    (opt_aggregate_access_vec.push-ref!
-      (&mut accesses)
-      (opt.OptAggregateAccess.Store 0 (I64)))
-    (opt_aggregate_access_vec.push-ref!
-      (&mut accesses)
-      (opt.OptAggregateAccess.Load 11 0 (I64)))
-    (opt_aggregate_access_vec.push-ref!
-      (&mut accesses)
-      (opt.OptAggregateAccess.Store 8 (Bool)))
-    (opt_aggregate_access_vec.push-ref!
-      (&mut accesses)
-      (opt.OptAggregateAccess.Load 12 8 (Bool)))
-    (opt_aggregate_access_vec.push-ref!
-      (&mut accesses)
-      (opt.OptAggregateAccess.Store 16 (U64)))
-    (and
-      (= (opt_aggregate_access_vec.len (& accesses)) 5)
-      (>= (opt_aggregate_access_vec.capacity (& accesses)) 5)
-      (=
-        (opt-aggregate-access-list-store-count
-          (opt.compiler-opt-global-shared-view accesses))
-        3)
-      (=
-        (opt-aggregate-access-list-load-count
-          (opt.compiler-opt-global-shared-view accesses))
-        2)
-      (match (opt_aggregate_access_vec.get
-        (& accesses)
-        0
-        (opt.OptAggregateAccess.Store -1 (Unit)))
-        [(Store offset ty)
-          (and
-            (= offset 0)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              ty
-              (& (I64))))]
-        [_ false])
-      (match (opt_aggregate_access_vec.get
-        (& accesses)
-        1
-        (opt.OptAggregateAccess.Store -1 (Unit)))
-        [(Load dst offset ty)
-          (and
-            (= dst 11)
-            (= offset 0)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              ty
-              (& (I64))))]
-        [_ false])
-      (match (opt_aggregate_access_vec.get
-        (& accesses)
-        2
-        (opt.OptAggregateAccess.Store -1 (Unit)))
-        [(Store offset ty)
-          (and
-            (= offset 8)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              ty
-              (& (Bool))))]
-        [_ false])
-      (match (opt_aggregate_access_vec.get
-        (& accesses)
-        3
-        (opt.OptAggregateAccess.Store -1 (Unit)))
-        [(Load dst offset ty)
-          (and
-            (= dst 12)
-            (= offset 8)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              ty
-              (& (Bool))))]
-        [_ false])
-      (match (opt_aggregate_access_vec.get
-        (& accesses)
-        4
-        (opt.OptAggregateAccess.Store -1 (Unit)))
-        [(Store offset ty)
-          (and
-            (= offset 16)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              ty
-              (& (U64))))]
-        [_ false]))))
-
-;; Exercise the three former hand-written scratch wrappers past their initial
-;; capacity. Pointer facts must retain append order and newest-match lookup;
-;; candidates and promotion slots must keep the same selection order.
-(define (opt-aggregate-core-vector-growth-ok?) : bool
-  (let
-    [ptrs : opt_aggregate_pointer_vec.Vec
-      (opt_aggregate_pointer_vec.with-capacity 1)]
-    [candidates : opt_aggregate_candidate_vec.Vec
-      (opt_aggregate_candidate_vec.with-capacity 1)]
-    [promote-slots : opt_aggregate_promote_slot_vec.Vec
-      (opt_aggregate_promote_slot_vec.with-capacity 1)]
-    (for [index (iterator.range 0 5)]
-      (opt_aggregate_pointer_vec.push-ref!
-        (&mut ptrs)
-        (opt.OptAggregatePointer.Pointer
-          (if (or (= index 0) (= index 4))
-            10
-            (+ 10 index))
-          (* index 8)))
-      (opt_aggregate_candidate_vec.push-ref!
-        (&mut candidates)
-        (opt.OptAggregateAllocCandidate.Candidate
-          index
-          (Unit)
-          (+ index 1)
-          (opt_aggregate_pointer_vec.new)
-          (opt_aggregate_access_vec.new)))
-      (opt_aggregate_promote_slot_vec.push-ref!
-        (&mut promote-slots)
-        (opt.OptAggregatePromoteSlot.Slot index (+ 100 index))))
-    (and
-      (= (opt_aggregate_pointer_vec.len (& ptrs)) 5)
-      (>= (opt_aggregate_pointer_vec.capacity (& ptrs)) 5)
-      (= (opt_aggregate_candidate_vec.len (& candidates)) 5)
-      (>= (opt_aggregate_candidate_vec.capacity (& candidates)) 5)
-      (= (opt_aggregate_promote_slot_vec.len (& promote-slots)) 5)
-      (>= (opt_aggregate_promote_slot_vec.capacity (& promote-slots)) 5)
-      (match (opt_aggregate_pointer_vec.get
-        (& ptrs)
-        0
-        (opt.OptAggregatePointer.Pointer -1 -1))
-        [(Pointer var offset) (and (= var 10) (= offset 0))])
-      (match (opt.opt-aggregate-pointer-list-lookup ptrs 10)
-        [(Some offset) (= offset 32)]
-        [(None) false])
-      (match (owned_view.compiler-owned-element-view
-        (opt_aggregate_candidate_vec.slots (& candidates))
-        0)
-        [(Candidate base _ size _ _) (and (= base 0) (= size 1))])
-      (match (owned_view.compiler-owned-element-view
-        (opt_aggregate_candidate_vec.slots (& candidates))
-        4)
-        [(Candidate base _ size _ _) (and (= base 4) (= size 5))])
-      (match (opt.opt-aggregate-promote-lookup promote-slots 4)
-        [(Some storage) (= storage 104)]
-        [(None) false]))))
-
-(define (compiler-optimize-aggregate-candidate-self-test) : i64
-  (cond
-    [(not (opt-aggregate-positive-classified?)) 1]
-    [(not (opt-aggregate-no-candidates? (opt-aggregate-returned-instrs))) 2]
-    [(not (opt-aggregate-no-candidates? (opt-aggregate-passed-instrs))) 3]
-    [(not (opt-aggregate-no-candidates? (opt-aggregate-global-store-instrs))) 4]
-    [(not
-        (opt-aggregate-no-candidates?
-          (opt-aggregate-store-through-other-instrs)))
-      5]
-    [(not (opt-aggregate-no-candidates? (opt-aggregate-unknown-offset-instrs)))
-      6]
-    [(not (opt-aggregate-no-candidates? (opt-aggregate-call-separated-instrs)))
-      7]
-    [(not (opt-aggregate-phi-flowed-rejected?)) 8]
-    [(not
-        (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
-      9]
-    [(not (opt-aggregate-access-vector-growth-ok?)) 10]
-    [(not (opt-aggregate-core-vector-growth-ok?)) 11]
-    [(not
-        (opt-aggregate-cross-block-candidates-rejected?
-          (opt-aggregate-cross-block-load-blocks)))
-      12]
-    [(not
-        (opt-aggregate-cross-block-candidates-rejected?
-          (opt-aggregate-cross-block-load-blocks)))
-      13]
-    [(not
-        (opt-aggregate-cross-block-flatten-order-ok?
-          (opt-aggregate-cross-block-load-blocks)))
-      14]
-    [(not
-        (opt-aggregate-cross-block-flatten-order-ok?
-          (opt-aggregate-cross-block-load-blocks)))
-      15]
-    [else 42]))
-
-(define (opt-aggregate-array-local-instrs) : ir.CompilerIrInstrSeq
-  (opt-test-instrs
-    (ir.CompilerIrInstr.Call
-      1
-      cbi.compiler-builtin-id-tl-alloc
-      (One (I64 16))
-      (ast.ast-ty-array (& (I64)) 2))
-    (ir.CompilerIrInstr.Gep 2 (Var 1) (I64 0) (U8))
-    (ir.CompilerIrInstr.StorePtr (Var 2) (Var 9) (ast.ast-ty-array (& (I64)) 2))
-    (ir.CompilerIrInstr.Gep 3 (Var 1) (I64 0) (U8))
-    (ir.CompilerIrInstr.Load 4 (Var 3) (ast.ast-ty-array (& (I64)) 2))
-    (ir.CompilerIrInstr.Return (Some (I64 0)))))
-
-(define (opt-count-tl-alloc-calls-from
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    0
-    (+
-      (match (ir.compiler-ir-instr-seq-borrow instrs index)
-        [(Call _ name _ _)
-          (if (= name cbi.compiler-builtin-id-tl-alloc)
-            1
-            0)]
-        [_ 0])
-      (opt-count-tl-alloc-calls-from instrs (+ index 1)))))
-
-(define (opt-count-tl-alloc-calls [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
-  (opt-count-tl-alloc-calls-from instrs 0))
-
-(define (opt-count-ir-alloc-instrs-from
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    0
-    (+
-      (match (ir.compiler-ir-instr-seq-borrow instrs index)
-        [(Alloc _ _) 1]
-        [_ 0])
-      (opt-count-ir-alloc-instrs-from instrs (+ index 1)))))
-
-(define (opt-count-ir-alloc-instrs [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
-  (opt-count-ir-alloc-instrs-from instrs 0))
-
-(define (opt-count-addr-of-instrs-from
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    0
-    (+
-      (match (ir.compiler-ir-instr-seq-borrow instrs index)
-        [(AddrOf _ _ _) 1]
-        [_ 0])
-      (opt-count-addr-of-instrs-from instrs (+ index 1)))))
-
-(define (opt-count-addr-of-instrs [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
-  (opt-count-addr-of-instrs-from instrs 0))
-
-(define (opt-aggregate-promote-shape-ok? [instrs : ir.CompilerIrInstrSeq]) : bool
-  (and
-    (= (ir.compiler-ir-instr-seq-count instrs) 10)
-    (match (ir.compiler-ir-instr-seq-borrow instrs 0)
-      [(Alloc first-dst first-ty)
-        (match (ir.compiler-ir-instr-seq-borrow instrs 1)
-          [(Alloc second-dst second-ty)
-            (match (ir.compiler-ir-instr-seq-borrow instrs 2)
-              [(AddrOf base storage _)
-                (and
-                  (= first-dst 4)
-                  (= second-dst 5)
-                  (= storage 5)
-                  (= base 1)
-                  (opt.opt-type-eq
-                    (ast.ast-node-pool-reader-type-segment-bases)
-                    first-ty
-                    (& second-ty)))]
-              [_ false])]
-          [_ false])]
-      [_ false])))
-
-(define (opt-aggregate-promote-test-function [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrFunction
-  (opt.opt-aggregate-stack-promote-function
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (opt-spans-function instrs)))
-
-;; Self-test helper: materializes the optimized first block for dense fixture
-;; assertions only, outside the production optimizer pipeline.
-(define (opt-aggregate-promote-test-instrs [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (match (opt-aggregate-promote-test-function instrs)
-    [(Function _ _ _ _ blocks _)
-      (match (ir.compiler-ir-block-list-view blocks)
-        [(slice block & _)
-          (match (owned_view.compiler-owned-reference-shared-view block)
-            [(Block _ optimized) optimized])]
-        [(slice) (ir.compiler-ir-instr-seq-empty)])]))
-
-(define (opt-aggregate-promote-test-frame [instrs : ir.CompilerIrInstrSeq]) : i64
-  (match (opt-aggregate-promote-test-function instrs)
-    [(Function _ _ _ frame _ _) frame]))
-
-(define (compiler-optimize-aggregate-promote-self-test) : i64
-  (let
-    [positive : ir.CompilerIrInstrSeq
-      (opt-aggregate-promote-test-instrs (opt-aggregate-positive-instrs))]
-    [returned : ir.CompilerIrInstrSeq
-      (opt-aggregate-promote-test-instrs (opt-aggregate-returned-instrs))]
-    [passed : ir.CompilerIrInstrSeq
-      (opt-aggregate-promote-test-instrs (opt-aggregate-passed-instrs))]
-    [stored : ir.CompilerIrInstrSeq
-      (opt-aggregate-promote-test-instrs (opt-aggregate-global-store-instrs))]
-    [unknown-offset : ir.CompilerIrInstrSeq
-      (opt-aggregate-promote-test-instrs (opt-aggregate-unknown-offset-instrs))]
-    [call-separated : ir.CompilerIrInstrSeq
-      (opt-aggregate-promote-test-instrs (opt-aggregate-call-separated-instrs))]
-    [array-local : ir.CompilerIrInstrSeq
-      (opt-aggregate-promote-test-instrs (opt-aggregate-array-local-instrs))]
-    [level0 : ir.CompilerIrProgram
-      (opt-test-optimize-program-with-level
-        (opt-spans-program (opt-aggregate-positive-instrs))
-        0)]
-    [level2 : ir.CompilerIrProgram
-      (opt-test-optimize-program-with-level
-        (opt-spans-program (opt-aggregate-positive-instrs))
-        2)]
-    (cond
-      [(not (= (opt-count-tl-alloc-calls positive) 0)) 1]
-      [(not (= (opt-count-ir-alloc-instrs positive) 2)) 2]
-      [(not (= (opt-count-addr-of-instrs positive) 1)) 3]
-      [(not (opt-aggregate-promote-shape-ok? positive)) 4]
-      [(not
-          (=
-            (opt-aggregate-promote-test-frame (opt-aggregate-positive-instrs))
-            6))
-        5]
-      [(not (= (opt-count-tl-alloc-calls returned) 1)) 6]
-      [(not (= (opt-count-tl-alloc-calls passed) 1)) 7]
-      [(not (= (opt-count-tl-alloc-calls stored) 1)) 8]
-      [(not (= (opt-count-tl-alloc-calls unknown-offset) 1)) 9]
-      [(not (= (opt-count-tl-alloc-calls call-separated) 1)) 10]
-      [(not (= (opt-count-tl-alloc-calls array-local) 1)) 11]
-      [(not
-          (=
-            (let
-              [instrs (opt-program-first-instrs level0)]
-              (opt-count-tl-alloc-calls instrs))
-            1))
-        12]
-      [(not
-          (=
-            (let
-              [instrs (opt-program-first-instrs level2)]
-              (opt-count-tl-alloc-calls instrs))
-            0))
-        13]
-      [else 42])))
-
-(define (opt-aggregate-cross-block-load-blocks) : ir.CompilerIrBlockList
-  (ir.compiler-ir-blocks-with-tail
-    (irt.blocks
-      "next:
-         %3 = gep %1, 0 : u8
-         %4 = load %3 : i64
-         return %4")
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instrs
-        (opt-aggregate-test-alloc)
-        (irt.instr "%2 = gep %1, 0 : u8")
-        (irt.instr "store_ptr %2, 10 : i64")
-        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "next"))))))
-
-(define (opt-aggregate-cross-block-candidates-rejected?
-  [blocks : ir.CompilerIrBlockList]) : bool
-  (let
-    [program : ir.CompilerIrProgram
-      (Program
-        (ir.compiler-ir-global-seq-empty)
-        (ir.compiler-ir-function-seq-prepend
-          (&
-            (Function
-              (opt-test-symbol "main")
-              (ir.compiler-ir-param-seq-empty)
-              (I64)
-              4
-              blocks
-              Ordinary))
-          (& (ir.compiler-ir-function-seq-empty)))
-        (ir.compiler-ir-extern-seq-empty)
-        (ir.CompilerIrReturnStorageAuthority.None))]
-    [candidates : opt_aggregate_candidate_vec.Vec
-      (opt-aggregate-allocation-candidates
-        (ast.ast-node-pool-reader-type-segment-bases)
-        program)]
-    (= (opt-aggregate-candidate-list-count candidates) 0)))
-
-(define (opt-aggregate-cross-block-flatten-order-ok?
-  [blocks : ir.CompilerIrBlockList]) : bool
-  (let
-    [instrs : ir.CompilerIrInstrSeq
-      (opt.opt-aggregate-flatten-blocks (& blocks))]
-    (and
-      (= (ir.compiler-ir-instr-seq-count instrs) 7)
-      (match (ir.compiler-ir-instr-seq-borrow instrs 0)
-        [(Call dst name _ _)
-          (and (= dst 1) (= name cbi.compiler-builtin-id-tl-alloc))]
-        [_ false])
-      (match (ir.compiler-ir-instr-seq-borrow instrs 1)
-        [(Gep dst (Var src) (I64 offset) _)
-          (and (= dst 2) (= src 1) (= offset 0))]
-        [_ false])
-      (match (ir.compiler-ir-instr-seq-borrow instrs 2)
-        [(StorePtr (Var ptr) (I64 value) _) (and (= ptr 2) (= value 10))]
-        [_ false])
-      (match (ir.compiler-ir-instr-seq-borrow instrs 3)
-        [(Jump label)
-          (ir.compiler-ir-symbol-eq? label (ir.compiler-ir-label "next"))]
-        [_ false])
-      (match (ir.compiler-ir-instr-seq-borrow instrs 4)
-        [(Gep dst (Var src) (I64 offset) _)
-          (and (= dst 3) (= src 1) (= offset 0))]
-        [_ false])
-      (match (ir.compiler-ir-instr-seq-borrow instrs 5)
-        [(Load dst (Var src) _) (and (= dst 4) (= src 3))]
-        [_ false])
-      (match (ir.compiler-ir-instr-seq-borrow instrs 6)
-        [(Return (Some (Var value))) (= value 4)]
-        [_ false]))))
 
 (define (opt-count-mov-i64-value-blocks
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -51370,7 +50802,8 @@
       (opt.opt-affine-env-new 1100 (__tl_make-array bool 1100))]
     [other : opt.OptAffineEnv
       (opt.opt-affine-env-new 4 (__tl_make-array bool 4))]
-    [empty : opt.OptAffineEnv (init)]
+    [empty : opt.OptAffineEnv
+      (opt.opt-affine-env-new 0 (__tl_make-array bool 0))]
     [binds : i64 0]
     (when
       (not
@@ -57113,6 +56546,7 @@
     (opt.opt-load-copy-instr-seq-rewrite!
       type-segment-bases
       hs
+      true
       (opt.opt-load-cse-state-with-caps-and-facts
         (profile_state.compiler-profile-state-metrics
           (profile_state.compiler-profile-state-new))
@@ -68103,7 +67537,7 @@ return 0" true)
       [(not (= (opt-fz-preheader-loads hoisted) 1)) 1]
       [(not (= (opt-fz-body-loads hoisted) 1)) 2]
       ;; with the element-only tier open the length load follows it out (see
-      ;; the IAG-2 PRESSURE GATE note)
+      ;; the IAG-2 HANDLE ADMISSION note)
       [(not (= (opt-fz-preheader-loads followed) 2)) 3]
       [(not (= (opt-fz-body-loads followed) 0)) 4]
       ;; a callee that writes the global's storage refuses the whole chain
@@ -70585,6 +70019,120 @@ return 0" true)
     42
     "a callee the call-memory fixpoint proves writes no global storage stops blocking cell promotion, and a memory-clean one is admitted under the live-in budget; an unresolved callee, a GlobalAddr argument, and a memory-clean callee in an over-budget loop each still refuse"))
 
+;; --- the cell-arithmetic pressure gate ---------------------------------------
+;;
+;; `%8 = add %1, @mr_b` in a loop that calls `mr_write_a` every trip: mr_b is
+;; outside the callee's cell-write row, so the add is invariant by the
+;; per-global answer alone, and moving it makes one more value live across the
+;; whole loop. In a quiet loop it leaves. With twelve more values defined
+;; before the loop and read on every trip (the opt-lp-pressure builders), the
+;; loop's integer peak already fills the register pool, so the copy would only
+;; spill and the add stays (opt-licm-global-value-invariant?).
+(define (opt-lpc-tail-instrs [symbols : OptMrTestSymbols]) : ir.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (BinOp 8 (Add) (Var 1) (Global symbols.b) (I64))
+    (opt-test-instr-seq-prepend
+      (Call 11 symbols.write-a Nil (I64))
+      (opt-test-instr-seq-prepend
+        (BinOp 9 (Add) (Var 8) (Var 4) (I64))
+        (opt-licm-loop-finish-instrs)))))
+
+(define (opt-lpc-blocks [symbols : OptMrTestSymbols] [pressured? : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "body:
+           jump loop
+         exit:
+           return %9")
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (if pressured?
+        (opt-test-instrs-with-tail
+          (opt-lp-pressure-entry-defs
+            (opt-lp-pressure-live-in-floor)
+            (opt-lp-pressure-live-in-ceiling))
+          (ir.CompilerIrInstr.Mov 3 (I64 0) (I64)))
+        (irt.instrs "%3 = mov 0 : i64
+           jump loop")))
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "loop")
+      (opt-test-instrs-with-tail
+        (if pressured?
+          (opt-lp-pressure-body-uses
+            (opt-lp-pressure-live-in-floor)
+            (opt-lp-pressure-live-in-ceiling)
+            4
+            (opt-lpc-tail-instrs symbols))
+          (opt-lpc-tail-instrs symbols))
+        (irt.instr "%4 = phi [%3, entry], [%5, body] : i64")))))
+
+(define (opt-lpc-licm
+  [cells : (& cells opt.OptGlobalCellSummary)]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "licm_pressure")
+        (opt-licm-params)
+        (I64)
+        64
+        (clone blocks)
+        Ordinary)]
+    (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& (opt.opt-cfg-context-build blocks))
+      false
+      (& (opt_i64_i64_map.with-capacity 1))
+      (& (opt_i64_i64_map.with-capacity 1))
+      cells
+      false
+      (& func))
+      [(Result next _) (opt.opt-function-blocks next)])))
+
+;; Does block `label` hold the instruction defining `dst`?
+(define (opt-lpc-defines?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]
+  [dst : i64]) : bool
+  (match (opt.opt-cfg-find-block blocks label)
+    [(Some block)
+      (match block
+        [(Block _ instrs)
+          (let
+            [found : bool false]
+            (for [index
+              (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+              (when
+                (=
+                  (ir.compiler-ir-instr-dst
+                    (ir.compiler-ir-instr-seq-borrow instrs index))
+                  dst)
+                (set! found true)))
+            found)])]
+    [(No) false]))
+
+(define (compiler-optimize-licm-cell-arith-pressure-self-test) : i64
+  (let
+    [symbols : OptMrTestSymbols (opt-mr-test-symbols)]
+    [cells : opt.OptGlobalCellSummary (opt-mr-test-cells symbols)]
+    [quiet : ir.CompilerIrBlockList
+      (opt-lpc-licm (& cells) (opt-lpc-blocks symbols false))]
+    [pressured : ir.CompilerIrBlockList
+      (opt-lpc-licm (& cells) (opt-lpc-blocks symbols true))]
+    (cond
+      [(not (opt-lpc-defines? (& quiet) (ir.compiler-ir-label "entry") 8)) 1]
+      [(opt-lpc-defines? (& quiet) (ir.compiler-ir-label "loop") 8) 2]
+      [(opt-lpc-defines? (& pressured) (ir.compiler-ir-label "entry") 8) 3]
+      [(not (opt-lpc-defines? (& pressured) (ir.compiler-ir-label "loop") 8)) 4]
+      [else 42])))
+
+(test
+  licm-cell-arith-pressure
+  (test.assert-i64-eq
+    (compiler-optimize-licm-cell-arith-pressure-self-test)
+    42
+    "an add whose global operand is invariant only by the per-global cell-write answer leaves a quiet loop, and stays in the same loop once twelve more values live across it fill the integer register pool"))
+
 (test
   licm-global-cell-mod-ref
   (test.assert-i64-eq
@@ -70606,15 +70154,15 @@ return 0" true)
     42
     "the descriptor HANDLE a global's inline cell holds leaves a loop that calls an unknown callee every trip, and the length load behind it stays inside because the descriptor proofs still refuse that callee -- while an element-only callee lets the length load follow it out; a callee that writes that global's storage through a mutable reference parameter refuses the chain, the same callee leaves a different global's chain hoistable, and an indirect call or an absent storage table refuses it"))
 
-;; --- LICM-PART: the header hoist under the budget -----------------------------
+;; --- LICM-PART: the header hoist is not priced by the loop's live values ------
 ;;
 ;; Three chains (`gep @g, 0` / handle / `gep, 1` / length, as opt-og-loop-blocks
 ;; spells one) off `og_a`, `og_b` and `og_c`, with `og_a` named by two more
 ;; literal-offset geps and `og_b` by one more, in a loop that calls `plain`
-;; every trip and reads `live` parameters besides. The gate priced the whole
-;; set: live-in + 3 against twelve. With ten live-ins nothing fit and every
-;; handle stayed; the budget now takes the two most-referenced handles out and
-;; leaves `og_c`'s where it was. With three live-ins all three fit, as before.
+;; every trip and reads `live` parameters besides. A hoisted handle that spills
+;; is reloaded where the loop loaded it before, so the loop's own pressure does
+;; not price it (opt-licm-global-header-admit): all three handles leave at ten
+;; live values, at eleven and at five alike.
 (define (opt-lpa-params [live : i64]) : ir.CompilerIrParamSeq
   (opt-lpa-params-from live (irt.params "cond=%0:bool")))
 
@@ -70710,25 +70258,20 @@ return 0" true)
     [symbols : OptOgTestSymbols (opt-og-test-symbols)]
     [cells : opt.OptGlobalCellSummary
       (opt-og-cells symbols (opt-og-base-functions symbols))]
-    ;; ten live-ins (eight parameters, the branch flag and the counter) leave
-    ;; room for two under the twelve-word budget
-    [partial : ir.CompilerIrBlockList
+    ;; ten live values (eight parameters, the branch flag and the counter)
+    [ten : ir.CompilerIrBlockList
       (opt-lpa-licm-late symbols 8 (opt.compiler-opt-global-shared-view cells))]
-    ;; eleven leave room for one: the most-referenced, og_a
-    [one : ir.CompilerIrBlockList
+    [eleven : ir.CompilerIrBlockList
       (opt-lpa-licm-late symbols 9 (opt.compiler-opt-global-shared-view cells))]
-    ;; five leave room for all three
-    [whole : ir.CompilerIrBlockList (opt-lpa-licm-late symbols 3 cells)]
+    [five : ir.CompilerIrBlockList (opt-lpa-licm-late symbols 3 cells)]
     (cond
-      ;; og_a's and og_b's handles leave; og_c's stays with every length load
-      [(not (= (opt-fz-preheader-loads partial) 2)) 1]
-      [(not (= (opt-fz-body-loads partial) 4)) 2]
-      ;; room for one: og_a's handle alone
-      [(not (= (opt-fz-preheader-loads one) 1)) 3]
-      [(not (= (opt-fz-body-loads one) 5)) 4]
-      ;; the whole set fits: all three handles leave
-      [(not (= (opt-fz-preheader-loads whole) 3)) 5]
-      [(not (= (opt-fz-body-loads whole) 3)) 6]
+      ;; every handle leaves and every length load stays, whatever the count
+      [(not (= (opt-fz-preheader-loads ten) 3)) 1]
+      [(not (= (opt-fz-body-loads ten) 3)) 2]
+      [(not (= (opt-fz-preheader-loads eleven) 3)) 3]
+      [(not (= (opt-fz-body-loads eleven) 3)) 4]
+      [(not (= (opt-fz-preheader-loads five) 3)) 5]
+      [(not (= (opt-fz-body-loads five) 3)) 6]
       [else 42])))
 
 (test
@@ -70736,7 +70279,116 @@ return 0" true)
   (test.assert-i64-eq
     (compiler-optimize-licm-global-header-partial-self-test)
     42
-    "a loop whose live-ins leave the header-hoist budget room for two of its three global handles takes the two most-referenced ones out and keeps the third's chain inside, where the whole set was refused before; with room for one the most-referenced handle alone leaves, and with room for all three every handle does"))
+    "a loop takes all three of its global descriptor handles out whether ten, eleven or five values are live in it: a hoisted handle that spills is reloaded where the loop loaded it, so the loop's pressure does not price it"))
+
+;; --- LICM-PART: more eligible handles than the register pool ----------------
+;;
+;; Sixteen Vec globals `pk_0` .. `pk_15`, one handle load each, in a loop that
+;; calls `pk_plain` every trip, with `pk_0` named by two more literal-offset
+;; geps. Sixteen handles do not fit the fourteen-register pool, so the loop
+;; takes out fourteen, the most-referenced first: pk_0 leaves, and two handle
+;; loads stay.
+(define (opt-pk-symbol [at : i64]) : i64
+  (opt-test-symbol (str_cat.str-cat "pk_" (string.int->string at))))
+
+(define (opt-pk-globals [count : i64]) : ir.CompilerIrGlobalSeq
+  (let
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity count)]
+    (for [at (iterator.range 0 count)]
+      (opt-test-global-builder-push!
+        (&mut builder)
+        (opt-pk-symbol at)
+        (DynArray 0)
+        (I64 at)))
+    (ir.compiler-ir-global-builder-to-seq builder)))
+
+(define (opt-pk-functions) : ir.CompilerIrFunctionSeq
+  (ir.compiler-ir-function-seq-prepend
+    (&
+      (opt-mr-one-block-function
+        (opt-test-symbol "pk_plain")
+        (opt-mr-return-zero)))
+    (& (ir.compiler-ir-function-seq-empty))))
+
+;; One `gep @pk_<at>, 0` / handle load pair per global, from var `first` on.
+(define (opt-pk-chains
+  [at : i64]
+  [count : i64]
+  [first : i64]
+  [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (if (>= at count)
+    tail
+    (opt-test-instr-seq-prepend
+      (Gep first (Global (opt-pk-symbol at)) (I64 0) (U8))
+      (opt-test-instr-seq-prepend
+        (Load (+ first 1) (Var first) (DynArray 0))
+        (opt-pk-chains (+ at 1) count (+ first 2) tail)))))
+
+(define (opt-pk-loop-blocks [count : i64]) : ir.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-pk-chains
+      0
+      count
+      6
+      (opt-lpa-extra-gep
+        50
+        (opt-pk-symbol 0)
+        (opt-lpa-extra-gep
+          51
+          (opt-pk-symbol 0)
+          (opt-test-instr-seq-prepend
+            (opt-fz-call-instr 52 (opt-test-symbol "pk_plain"))
+            (opt-licm-loop-finish-instrs)))))
+    52))
+
+(define (compiler-optimize-licm-global-header-pool-self-test) : i64
+  (let
+    [count : i64 16]
+    [globals : ir.CompilerIrGlobalSeq (opt-pk-globals count)]
+    [functions : ir.CompilerIrFunctionSeq (opt-pk-functions)]
+    [cells : opt.OptGlobalCellSummary
+      (opt-test-global-obj-attach
+        (opt-pk-globals count)
+        (& functions)
+        64
+        (opt.opt-global-cell-summary-build
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& globals)
+          (& functions)))]
+    [blocks : ir.CompilerIrBlockList (opt-pk-loop-blocks count)]
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "licm_pool")
+        (opt-licm-params)
+        (I64)
+        64
+        (clone blocks)
+        Ordinary)]
+    [after : ir.CompilerIrBlockList
+      (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt.opt-cfg-context-build blocks))
+        false
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& cells)
+        true
+        (& func))
+        [(Result next _) (opt.opt-function-blocks next)])]
+    (cond
+      [(not (= (opt-fz-preheader-loads (& after)) 14)) 1]
+      [(not (= (opt-fz-body-loads (clone after)) 2)) 2]
+      ;; the most-referenced global is among the fourteen
+      [(not (opt-lpc-defines? (& after) (ir.compiler-ir-label "entry") 7)) 3]
+      [else 42])))
+
+(test
+  licm-global-header-pool-cap
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-header-pool-self-test)
+    42
+    "a loop that references sixteen hoistable global descriptor handles takes out the register pool's worth, fourteen, most-referenced first, and leaves two handle loads inside"))
 
 ;; --- LICM-GDP: an element store through a global array's data pointer ---------
 ;;
@@ -71096,6 +70748,356 @@ return 0" true)
     (compiler-optimize-vt-trace-reason-self-test)
     42
     "the clause the versioner records for `--trace-passes` names the decision: `ok` for a versioned loop, `guard:derived-zero` for a body whose derivation proves nothing, `shape:not-a-counter` for a loop test the recovery cannot read, `shape:no-check` for a body with nothing to remove, `shape:step-not-unit` for a descending counter of magnitude two, `guard:floor` for a call-carrying clone that owes more removals than it has, and `shape:already-versioned` for the fast clone a versioning leaves behind"))
+
+;; --- latch polarity ------------------------------------------------------------
+;;
+;; The loop test may close the back edge from either arm. `branch c, <loop>,
+;; done` continues where `c` holds, so the compare is read as written; `branch c,
+;; done, <loop>` continues where it FAILS, so the counter is read from its exact
+;; negation (ge reads lt, le reads gt, lt reads ge) and `gt` -- whose negation
+;; would be `le`, which neither versioner admits -- is refused. An unsigned
+;; compare is refused whatever the op: its negation is exact as a predicate, but
+;; every range the recovery derives is signed i64 arithmetic.
+;;
+;; The negation decides the DIRECTION, and the direction must be the one the
+;; step walks: a self-loop latch read as ascending needs an increment, and one
+;; read as descending a decrement. A counter that walks away from the end its
+;; latch tests never reaches it, so it has no trip range and no clone.
+;;
+;; The fixtures below state only what each case is about: the latch line
+;; (`op counter, bound : ty`), the optional in-loop definition of the bound, and
+;; the branch's arm order.
+(define (opt-bce-lp-branch-text [loop-label : String] [flipped? : bool]) : String
+  (if flipped?
+    (str_cat.str-cat "  branch %7, done, " loop-label)
+    (str_cat.str-cat "  branch %7, " loop-label ", done")))
+
+(define (opt-bce-lp-latch-text [op : String] [ty : String] [bound : String]) : String
+  (str_cat.str-cat "  %7 = " op " %5, " bound " : " ty))
+
+;; A single-block counted self-loop: one counter phi, one check on it, the
+;; increment, the latch compare and the self-branch. The exit reads the counter
+;; through a one-input phi.
+(define (opt-bce-lp-sb-function
+  [op : String]
+  [latch-ty : String]
+  [bound : String]
+  [extra : String]
+  [flipped? : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @lp(a=%0:i64, n=%1:i64) -> i64 vars 12 {\nentry:\n  jump loop\nloop:\n  %3 = phi [0, entry], [%5, loop] : i64\n  bounds_check %3, %1 message \"lp_ok0\"\n  %5 = add %3, 1 : i64\n"
+      extra
+      (str_cat.str-cat (opt-bce-lp-latch-text op latch-ty bound) "\n")
+      (opt-bce-lp-branch-text "loop" flipped?)
+      "\ndone:\n  %8 = phi [%3, loop] : i64\n  return %8\n}\n")))
+
+;; The DESCENDING mirror of it: the counter walks down from a parameter to
+;; `floor` on a `ge` latch over the TRUE arm, the direction its step walks. It
+;; reads two arrays, because a descending counter keeps the guard's two-check
+;; floor (ALIAS-1): its bound is the synthesized `seed + 1`, which no dominating
+;; branch has decided, so one removal does not repay the guard.
+(define (opt-bce-lp-sb-down-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @lpd(a=%0:i64, n=%1:i64, floor=%2:i64, m=%4:i64) -> i64 vars 12 {
+entry:
+  jump loop
+loop:
+  %3 = phi [%0, entry], [%5, loop] : i64
+  bounds_check %3, %1 message \"lp_ok0\"
+  bounds_check %3, %4 message \"lp_ok1\"
+  %5 = sub %3, 1 : i64
+  %7 = ge %5, %2 : i64
+  branch %7, loop, done
+done:
+  %8 = phi [%3, loop] : i64
+  return %8
+}
+"))
+
+;; The same loop over two blocks: the header holds the phi and the check and the
+;; latch holds the increment, the compare and the branch.
+(define (opt-bce-lp-mb-function
+  [op : String]
+  [latch-ty : String]
+  [bound : String]
+  [extra : String]
+  [flipped? : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @lp(a=%0:i64, n=%1:i64) -> i64 vars 12 {\nentry:\n  jump body\nbody:\n  %3 = phi [0, entry], [%5, latch] : i64\n  bounds_check %3, %1 message \"lp_ok0\"\n  jump latch\nlatch:\n  %5 = add %3, 1 : i64\n"
+      extra
+      (str_cat.str-cat (opt-bce-lp-latch-text op latch-ty bound) "\n")
+      (opt-bce-lp-branch-text "body" flipped?)
+      "\ndone:\n  %8 = phi [%3, latch] : i64\n  return %8\n}\n")))
+
+;; The DESCENDING mirror of the multi-block fixture.
+(define (opt-bce-lp-mb-down-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @lpd(a=%0:i64, n=%1:i64, floor=%2:i64) -> i64 vars 12 {
+entry:
+  jump body
+body:
+  %3 = phi [%0, entry], [%5, latch] : i64
+  bounds_check %3, %1 message \"lp_ok0\"
+  jump latch
+latch:
+  %5 = sub %3, 1 : i64
+  %7 = lt %5, %2 : i64
+  branch %7, done, body
+done:
+  %8 = phi [%3, latch] : i64
+  return %8
+}
+"))
+
+(define (opt-bce-lp-reason [func : (& ir.CompilerIrFunction)]) : i64
+  (opt.opt-bce-version-reason-probe (- 0 1) func))
+
+(define (opt-bce-lp-versioned [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrBlockList
+  (let
+    [versioned : ir.CompilerIrFunction (opt.opt-bce-version-function func)]
+    (opt.opt-function-blocks (& versioned))))
+
+;; The checks the versioning left in `fast-label`'s clone, or -1 when the
+;; versioning did not apply.
+(define (opt-bce-lp-fast-checks
+  [func : (& func ir.CompilerIrFunction)]
+  [fast-label : String]) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-bce-lp-versioned func)]
+    (opt-bce-version-test-block-checks
+      (& blocks)
+      (ir.compiler-ir-label fast-label))))
+
+;; Does `label-text`'s block end in a branch to exactly these two arms? The fast
+;; clone's own branch must keep the ORIGINAL'S polarity: which arm continues the
+;; loop decides where the clone's exit goes.
+(define (opt-bce-lp-branch-is?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label-text : String]
+  [then-text : String]
+  [else-text : String]) : bool
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label-text))
+    [(No) false]
+    [(Some block)
+      (match block
+        [(Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              false
+              (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
+                [(Branch _ then-label else-label)
+                  (and
+                    (= then-label (ir.compiler-ir-label then-text))
+                    (= else-label (ir.compiler-ir-label else-text)))]
+                [_ false])))])]))
+
+(define (compiler-optimize-bce-latch-polarity-self-test) : i64
+  (let
+    [sb-flip : ir.CompilerIrBlockList
+      (opt-bce-lp-versioned
+        (& (opt-bce-lp-sb-function "ge" "i64" "%0" "" true)))]
+    [sb-up : ir.CompilerIrBlockList
+      (opt-bce-lp-versioned
+        (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" false)))]
+    [sb-down : ir.CompilerIrBlockList
+      (opt-bce-lp-versioned (& (opt-bce-lp-sb-down-function)))]
+    (cond
+      ;; A flipped latch whose negation is ASCENDING (ge -> lt) walks the way
+      ;; the increment does, so it versions.
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "ge" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-ok)))
+        1]
+      [(not
+          (=
+            (opt-bce-lp-fast-checks
+              (& (opt-bce-lp-sb-function "ge" "i64" "%0" "" true))
+              "loop__bce_fast")
+            0))
+        2]
+      ;; ...and its clone continues on the arm the ORIGINAL continued on: `done`
+      ;; is the TRUE arm here, so the clone's own branch is `c, done, fast`. The
+      ;; other order would run one trip and then leave, or never leave at all.
+      [(not
+          (opt-bce-lp-branch-is?
+            (& sb-flip)
+            "loop__bce_fast"
+            "done"
+            "loop__bce_fast"))
+        3]
+      ;; The TRUE-arm control is read as written and keeps its own arms.
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" false)))
+            (opt.opt-bce-reason-ok)))
+        4]
+      [(not
+          (opt-bce-lp-branch-is?
+            (& sb-up)
+            "loop__bce_fast"
+            "loop__bce_fast"
+            "done"))
+        5]
+      ;; A flipped `lt` negates to `ge`: a DESCENDING direction the increment
+      ;; cannot walk, so no clone is built at all.
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-step)))
+        6]
+      [(not
+          (=
+            (opt-bce-lp-fast-checks
+              (& (opt-bce-lp-sb-function "lt" "i64" "%0" "" true))
+              "loop__bce_fast")
+            (- 0 1)))
+        7]
+      ;; ...as `le` (negation `gt`), the other descending direction
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "le" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-step)))
+        8]
+      ;; a flipped `gt` would need `le`, which has no direction here
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "gt" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-latch-form)))
+        9]
+      ;; an unsigned compare's negation is not the signed predicate
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-sb-function "ge" "u64" "%0" "" true)))
+            (opt.opt-bce-reason-latch-form)))
+        10]
+      ;; the DESCENDING self-loop: a `ge` latch over a decrement, which is the
+      ;; direction that step walks
+      [(not
+          (=
+            (opt-bce-lp-reason (& (opt-bce-lp-sb-down-function)))
+            (opt.opt-bce-reason-ok)))
+        11]
+      [(not
+          (opt-bce-lp-branch-is?
+            (& sb-down)
+            "loop__bce_fast"
+            "loop__bce_fast"
+            "done"))
+        12]
+      ;; a bound COPIED in the loop from a value the loop does not define
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-sb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %0 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-ok)))
+        13]
+      ;; ...but not one copied from a value the loop DOES define
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-sb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %5 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-bound-not-invariant)))
+        14]
+      ;; the multi-block scan reads the same negations
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "ge" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-ok)))
+        15]
+      [(not
+          (=
+            (opt-bce-lp-fast-checks
+              (& (opt-bce-lp-mb-function "ge" "i64" "%0" "" true))
+              "body__bce_fast")
+            0))
+        16]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "lt" "i64" "%0" "" false)))
+            (opt.opt-bce-reason-ok)))
+        17]
+      ;; a flipped `lt` asks the multi-block recovery for `ge`, a DESCENDING
+      ;; direction the increment cannot walk
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "lt" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        18]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "le" "i64" "%0" "" true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        19]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (& (opt-bce-lp-mb-function "ge" "u64" "%0" "" true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        20]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-mb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %0 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-ok)))
+        21]
+      [(not
+          (=
+            (opt-bce-lp-reason
+              (&
+                (opt-bce-lp-mb-function
+                  "ge"
+                  "i64"
+                  "%9"
+                  "  %9 = mov %5 : i64\n"
+                  true)))
+            (opt.opt-bce-reason-not-a-counter)))
+        22]
+      ;; the DESCENDING multi-block mirror: a flipped `lt` over a decrement
+      [(not
+          (=
+            (opt-bce-lp-reason (& (opt-bce-lp-mb-down-function)))
+            (opt.opt-bce-reason-ok)))
+        23]
+      [else 42])))
+
+(test
+  bce-version-latch-polarity
+  (test.assert-i64-eq
+    (compiler-optimize-bce-latch-polarity-self-test)
+    42
+    "a latch that closes the back edge from its FALSE arm versions off the compare's exact negation -- `ge` as `lt`, `le` as `gt`, `lt` as `ge` -- in the self-loop and multi-block scans alike, and the TRUE-arm spelling is unchanged; `gt`, whose negation `le` neither scan admits, and every unsigned compare, whose negation is not the signed predicate the trip range is stated in, are refused; and a bound COPIED in the loop counts as invariant only when the copy reads a value the loop does not define"))
 
 (test
   len-eq-static-length-equality-families
@@ -77288,9 +77290,12 @@ return 0" true)
 ;; What the join becomes depends on the two values. A bool home is a full
 ;; register holding 0 or 1 (every compare is materialised `setcc; movzbq`), so
 ;; `phi [1, taken], [0, untaken]` IS the condition zero-extended and lowers to a
-;; single `movzbq`; the reversed pair is that cast with an `xor $1` over it.
-;; Anything else stays a `Select`. Arms holding INSTRUCTIONS are still refused:
-;; the pass never moves work above the branch, so it never speculates.
+;; single `movzbq`. The reversed pair spells `not c`: when `c` is the comparison
+;; the source branched on, read by nothing else, the pass flips its predicate
+;; and emits that same cast, so the negation costs one `setcc` instead of a
+;; materialised bool plus `xor $1`. Anything else stays a `Select`. Arms holding
+;; INSTRUCTIONS are still refused: the pass never moves work above the branch,
+;; so it never speculates.
 (define (opt-ifc-instr-kind [instr : (& ir.CompilerIrInstr)]) : i64
   (match instr
     [(Cast _ _ _ _) 1]
@@ -77299,6 +77304,8 @@ return 0" true)
     [(BinOp _ op _ _ _)
       (match op
         [(BitXor) 4]
+        [(Lt) 6]
+        [(Ge) 7]
         [_ 0])]
     [(Mov _ _ _) 5]
     [_ 0]))
@@ -77370,7 +77377,7 @@ return 0" true)
   (I64 value))
 
 ;; (a) The four-block diamond with literal arms. `flip` reverses the pair, so
-;; `(if c 1 0)` becomes `(if c 0 1)` and the cast picks up its `xor $1`.
+;; `(if c 1 0)` becomes `(if c 0 1)`: the negation the inverted predicate spells.
 (define (opt-ifc-diamond-blocks [flip : bool]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks
     (opt-nn-block
@@ -77486,6 +77493,25 @@ return 0" true)
        %11 = phi [%23, then], [%1, else] : i64
        return %11"))
 
+;; (g) The reversed pair whose comparison the join READS as well. The predicate
+;; flips only while the comparison has no other reader -- an in-place flip would
+;; change the value that reader sees -- so this join keeps the materialised bool
+;; and its `xor $1`.
+(define (opt-ifc-read-again-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %10 = lt %0, %1 : i64
+       branch %10, then, else
+     then:
+       jump merge
+     else:
+       jump merge
+     merge:
+       %11 = phi [0, then], [1, else] : i64
+       %12 = cast %10 : bool to i64
+       %13 = add %11, %12 : i64
+       return %13"))
+
 ;; Returns 42 only when every conversion and every refusal holds.
 (define (compiler-optimize-if-convert-self-test) : i64
   (let
@@ -77498,49 +77524,64 @@ return 0" true)
       (opt-ifc-run (opt-ifc-working-arm-blocks))]
     [vars : ir.CompilerIrBlockList (opt-ifc-run (opt-ifc-var-arms-blocks))]
     [legacy : ir.CompilerIrBlockList (opt-ifc-run (opt-ifc-legacy-blocks))]
+    [read-again : ir.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-read-again-blocks))]
     (cond
       ;; (a) `phi [1, then], [0, else]` is the condition itself: one cast, no
-      ;; select, no phi, and no negation over it.
+      ;; select, no phi, no negation, and the predicate untouched.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 1) 1)) 1]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 3) 0)) 2]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 2) 0)) 3]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 4) 0)) 4]
-      ;; ... and the reversed pair is that cast with one `xor $1` over it.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 1) 1)) 5]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 4) 1)) 6]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 3) 0)) 7]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 2) 0)) 8]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 6) 1)) 5]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view ones) 7) 0)) 6]
+      ;; ... and the reversed pair is that cast over the inverted predicate.
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 1) 1)) 7]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 4) 0)) 8]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 3) 0)) 9]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 2) 0)) 10]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 7) 1)) 11]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view zeros) 6) 0)) 12]
       ;; (b) the triangle: one arm block, the other edge the source's own.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 1) 1))
-        9]
+        13]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 3) 0))
-        10]
+        14]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view triangle) 2) 0))
-        11]
+        15]
       ;; (c) the merge laid out between the arms converts identically.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view scattered) 1) 1))
-        12]
+        16]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view scattered) 3) 0))
-        13]
+        17]
       ;; (d) an arm holding an instruction is refused outright: the phi, and
       ;; the branch that feeds it, are still there.
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 3) 1))
-        14]
+        18]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 1) 0))
-        15]
+        19]
       [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view working) 2) 0))
-        16]
+        20]
       ;; (e) the pre-packet shape still converts, and still to a select. The
       ;; outer diamond's arms compute, so only the inner join folds: one select
       ;; and the outer phi are what remain.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 2) 1)) 17]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 3) 1)) 18]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 1) 0)) 19]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 2) 1)) 21]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 3) 1)) 22]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view legacy) 1) 0)) 23]
       ;; (f) the same two computed vars on a newly visible join stay a branch:
       ;; the select is not widened past the shapes it already covered.
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 2) 0)) 20]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 1) 0)) 21]
-      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 3) 1)) 22]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 2) 0)) 24]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 1) 0)) 25]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view vars) 3) 1)) 26]
+      ;; (g) a comparison the join also reads keeps its predicate: the
+      ;; materialised bool and its `xor $1` are still there, and the source's
+      ;; own comparison is still the untouched `lt`.
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 4) 1))
+        27]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 6) 1))
+        28]
+      [(not (= (opt-ifc-count (ir.compiler-ir-block-list-view read-again) 7) 0))
+        29]
       [else 42])))
 
 (test
@@ -77548,7 +77589,7 @@ return 0" true)
   (test.assert-i64-eq
     (compiler-optimize-if-convert-self-test)
     42
-    "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension (0/1 as that cast under an xor); computed vars still fold to a select and an arm holding an instruction is still refused"))
+    "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension, with the reversed pair flipping a single-use comparison's predicate instead of paying an xor; computed vars still fold to a select, a comparison the join also reads is never flipped, and an arm holding an instruction is still refused"))
 
 ;; --- T2-2: load-CSE precision (MF-1 keys, MF-4 call filtering, MF-5 cells) ---
 ;;
@@ -83153,31 +83194,6 @@ return 0" true)
         (Err)))
     (Err)))
 
-(define (opt-aggregate-allocation-candidates
-  [type-segment-bases : i64]
-  [program : ir.CompilerIrProgram]) : opt_aggregate_candidate_vec.Vec
-  (match program
-    [(Program _ functions _ _authority)
-      (opt-aggregate-allocation-candidates-functions
-        type-segment-bases
-        functions)]))
-
-(define (opt-aggregate-candidate-list-count
-  [candidates : (& candidates opt_aggregate_candidate_vec.Vec)]) : i64
-  (opt_aggregate_candidate_vec.len (& candidates)))
-
-(define (opt-aggregate-pointer-list-count
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : i64
-  (opt_aggregate_pointer_vec.len (& ptrs)))
-
-(define (opt-aggregate-access-list-load-count
-  [accesses : opt_aggregate_access_vec.Vec]) : i64
-  (opt.opt-aggregate-access-list-load-count-from (& accesses) 0))
-
-(define (opt-aggregate-access-list-store-count
-  [accesses : opt_aggregate_access_vec.Vec]) : i64
-  (opt.opt-aggregate-access-list-store-count-from (& accesses) 0))
-
 (define (opt-cfg-index-rpo-label
   [index : (& index opt.OptCfgIndex)]
   [slot : i64]) : i64
@@ -83662,21 +83678,6 @@ return 0" true)
     profile-state
     (opt.opt-load-cse-table-cap-for-size instr-count)
     (opt.opt-load-cse-kinds-cap-for-size instr-count)))
-
-(define (opt-aggregate-allocation-candidates-functions
-  [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]) : opt_aggregate_candidate_vec.Vec
-  (let
-    [out : opt_aggregate_candidate_vec.Vec
-      (opt_aggregate_candidate_vec.with-capacity 0)]
-    (for [index (iterator.range 0 functions.len)]
-      (opt.opt-aggregate-candidate-list-append!
-        (&mut out)
-        (&
-          (opt.opt-aggregate-allocation-candidates-function
-            type-segment-bases
-            (& (array-ref functions.slots index))))))
-    out))
 
 (define (opt-var-defs-index-params!
   [params : ir.CompilerIrParamSeq]
@@ -84513,14 +84514,6 @@ return 0" true)
     (compiler-optimize-spans-self-test)
     42
     "compiler-optimize-spans-self-test")
-  (test.assert-i64-eq
-    (compiler-optimize-aggregate-candidate-self-test)
-    42
-    "compiler-optimize-aggregate-candidate-self-test")
-  (test.assert-i64-eq
-    (compiler-optimize-aggregate-promote-self-test)
-    42
-    "compiler-optimize-aggregate-promote-self-test")
   (test.assert-i64-eq
     (compiler-optimize-aggregate-split-self-test)
     42

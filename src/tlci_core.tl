@@ -688,6 +688,9 @@
   ;; Pop a size expression and a type value and push the make-array node the
   ;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
   compiler-comptime-host-callback-expr-make-array
+  ;; Pop a size expression and a type value and push the fixed-length
+  ;; make-array node the parser produces for `(make-array T N)`.
+  compiler-comptime-host-callback-expr-fixed-make-array
   ;; Comptime reflection and literal construction for computed transformer
   ;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
   ;; string of a type operand against caller bytes and returns 1/0 as data (a
@@ -830,7 +833,7 @@
   ;; operand's produced type, and operand-type-key-eq compares a type
   ;; operand's canonical key. expr-cast pops the type value then the operand
   ;; expression and pushes the cast node the parser produces. expr-init pops
-  ;; one type value and pushes the typed `(init : T)` node. The embedded image
+  ;; one type value and pushes the typed Init node. The embedded image
   ;; and its consumer are always the same source-bound binary.
   compiler-comptime-host-callback-operand-expr-type-kind-eq
   compiler-comptime-host-callback-operand-type-key-eq

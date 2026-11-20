@@ -1913,6 +1913,36 @@
                 (compiler-comptime-host-replace-expr! 2 node))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
+;; make-array: pop the size expression and the element type value and push
+;; the fixed-array node, matching the interpreted quote (the type passes
+;; through by identity).
+(define (compiler-comptime-host-callback-expr-fixed-make-array
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (if (< compiler-comptime-host-stack-len 2)
+      tlci.tlci-host-callback-status-bad-request
+      (let
+        [type-value : ctfe_support.CompilerCtfeValue
+          (compiler-comptime-host-stack-value 2)]
+        [size-node : i64 (compiler-comptime-host-stack-node 1)]
+        (if (< size-node 0)
+          tlci.tlci-host-callback-status-bad-request
+          (match type-value
+            [(Type ty)
+              (let
+                [node : i64
+                  (ast.ast-expr-fixed-make-array-with-cells
+                    (compiler-comptime-host-pool-cell-address 0)
+                    (compiler-comptime-host-pool-cell-address 1)
+                    (& ty)
+                    size-node)]
+                (compiler-comptime-host-replace-expr! 2 node))]
+            [_ tlci.tlci-host-callback-status-bad-request]))))))
+
 ;; Reflection: 1/0 as data when the type operand's kind string matches
 ;; the caller bytes (the same ctfe mapping interpretation uses); negative
 ;; reports a bad request without touching session state.
@@ -2137,8 +2167,8 @@
                   (& ty)))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
-;; expr-init: pop a type value and push the typed `(init : T)` node produced by
-;; the parser. Contextual `(init)` remains outside the native template subset.
+;; expr-init: pop a type value and push the typed Init node produced by
+;; the parser. Contextual Init remains outside the native template subset.
 (define (compiler-comptime-host-callback-expr-init
   [session : i64]
   [_arg-a : i64]
@@ -5737,7 +5767,7 @@
   (let
     [batch : CompilerComptimeHostBatch
       (CompilerComptimeHostBatch base len 0 true)]
-    [resolved : (Array i64 64) (init : (Array i64 64))]
+    [resolved : (Array i64 64) (make-array i64 64)]
     [name-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
     [index : i64 0]
     (when

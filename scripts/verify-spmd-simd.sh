@@ -19,6 +19,13 @@ set -eu
 # trap-path programs (bounds, shift and selector traps in every mode) are
 # tests/spmd/simd.cases, run afterwards by scripts/verify-codegen-cases.sh.
 #
+# A forced-SDE duplicate run (TYPELISP_SIMD_MODE_FILTER=avx512, set by
+# scripts/ci-verify.sh) repeats only the AVX-512 route: every other mode
+# compiles and executes exactly as the ordinary gate already did. It builds and
+# runs only the selected modes, takes the scalar reference from the ordinary
+# run's workdir (TYPELISP_SPMD_SIMD_NATIVE_ROOT), and fails closed when that
+# reference is missing or the filter selects no case.
+#
 # Usage:
 #   scripts/verify-spmd-simd.sh
 #   TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
@@ -113,9 +120,25 @@ verify_spmd_short_tail_benchmark_shape() {
 
 verify_spmd_short_tail_benchmark_shape
 
-WORKDIR="$ROOT/target/spmd-simd-verify"
+WORKDIR=${TYPELISP_SPMD_SIMD_WORKDIR:-$ROOT/target/spmd-simd-verify}
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+WORKDIR=$(CDPATH= cd -- "$WORKDIR" && pwd)
+
+# A filtered run selects only the modes whose route differs under the forced
+# policy, so its scalar reference is the ordinary run's native receipt.
+NATIVE_WORKDIR=${TYPELISP_SPMD_SIMD_NATIVE_ROOT:-$ROOT/target/spmd-simd-verify}
+if [ -n "${SIMD_MODE_FILTER:-}" ]; then
+    [ -d "$NATIVE_WORKDIR" ] || {
+        echo "spmd-simd: the ordinary run's workdir is missing: $NATIVE_WORKDIR" >&2
+        exit 1
+    }
+    NATIVE_WORKDIR=$(CDPATH= cd -- "$NATIVE_WORKDIR" && pwd)
+    [ "$NATIVE_WORKDIR" != "$WORKDIR" ] || {
+        echo "spmd-simd: the filtered run's workdir must differ from the ordinary run's: $WORKDIR" >&2
+        exit 1
+    }
+fi
 
 
 # SPMD corpus: each program's exit code is computed by a SIMD-lowered `foreach`
@@ -317,6 +340,32 @@ run_spmd_mode() {
     printf '%s\n' "$mode_code" > "$mode_exit"
 }
 
+# Print the scalar exit status the ordinary run recorded for $1. A filtered
+# run repeats only the modes whose route differs, so the reference is read
+# rather than rebuilt; a missing, malformed or failed receipt fails closed
+# instead of comparing against nothing.
+spmd_scalar_reference() {
+    _sr_tag=$(printf '%s' "$1" | sed 's#[/.]#_#g')
+    _sr_exit="$NATIVE_WORKDIR/$_sr_tag.scalar.exit"
+    _sr_err="$NATIVE_WORKDIR/$_sr_tag.scalar.err"
+    [ -f "$_sr_exit" ] && [ -f "$_sr_err" ] || {
+        echo "spmd-simd: the ordinary run recorded no scalar reference for $1 ($_sr_exit)" >&2
+        return 1
+    }
+    [ ! -s "$_sr_err" ] || {
+        echo "spmd-simd: the ordinary run's scalar reference for $1 wrote stderr: $_sr_err" >&2
+        return 1
+    }
+    _sr_code=$(tr -d '\r\n' < "$_sr_exit")
+    case "$_sr_code" in
+        '' | *[!0-9]*)
+            echo "spmd-simd: the ordinary run's scalar exit for $1 is not a status: '$_sr_code'" >&2
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$_sr_code"
+}
+
 # Compile $1 at backend mode $2; sets `mode_code` to the compiler exit status
 # and writes stdout/stderr to <tag>.<mode>.compile.{out,err} under WORKDIR.
 compile_spmd_mode() {
@@ -336,6 +385,7 @@ compile_spmd_mode() {
     set -e
 }
 
+SIMD_MODE_SELECTED=0
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
     if [ ! -f "$prog" ]; then
@@ -344,20 +394,30 @@ while IFS= read -r prog; do
         continue
     fi
 
-    # scalar is the always-run reference.
-    run_spmd_mode "$prog" scalar
-    scalar_code=$mode_code
-    if [ -s "$mode_err" ]; then
-        echo "[spmd-simd] $prog scalar build/run error:" >&2
-        sed 's/^/    /' "$mode_err" >&2
-        echo "$prog scalar" >> "$FAILURES"
-        continue
+    if simd_mode_selected scalar; then
+        SIMD_MODE_SELECTED=$((SIMD_MODE_SELECTED + 1))
+        # scalar is the always-run reference.
+        run_spmd_mode "$prog" scalar
+        scalar_code=$mode_code
+        if [ -s "$mode_err" ]; then
+            echo "[spmd-simd] $prog scalar build/run error:" >&2
+            sed 's/^/    /' "$mode_err" >&2
+            echo "$prog scalar" >> "$FAILURES"
+            continue
+        fi
+        echo "[spmd-simd] $prog scalar -> $scalar_code"
+    else
+        scalar_code=$(spmd_scalar_reference "$prog") || exit 1
+        echo "[spmd-simd] $prog scalar -> $scalar_code (ordinary run reference)"
     fi
-    echo "[spmd-simd] $prog scalar -> $scalar_code"
 
     for pair in "avx2 avx2" "avx512 avx512"; do
         mode=${pair%% *}
         isa=${pair##* }
+        if ! simd_mode_selected "$mode"; then
+            continue
+        fi
+        SIMD_MODE_SELECTED=$((SIMD_MODE_SELECTED + 1))
         if expected_diag=$(spmd_mode_expected_compile_diagnostic "$prog" "$mode"); then
             compile_spmd_mode "$prog" "$mode"
             if [ "$mode_code" = 0 ]; then
@@ -391,6 +451,11 @@ while IFS= read -r prog; do
         fi
     done
 done < "$CORPUS"
+
+if [ -n "${SIMD_MODE_FILTER:-}" ] && [ "$SIMD_MODE_SELECTED" -eq 0 ]; then
+    echo "spmd-simd: TYPELISP_SIMD_MODE_FILTER=$SIMD_MODE_FILTER selected no corpus mode" >&2
+    exit 1
+fi
 
 # Codegen shapes and trap paths: tests/spmd/simd.cases.
 if ! TYPELISP_BIN=$COMPILER CODEGEN_CASES_WORKDIR="$WORKDIR/cases" \

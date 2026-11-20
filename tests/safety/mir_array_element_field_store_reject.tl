@@ -12,7 +12,7 @@
 (define (main) : i64
   (let
     [p : P (P 1 2)]
-    [items : (__tl_dyn-array (Item p)) (init : (__tl_dyn-array (Item p)))]
+    [items : (__tl_dyn-array (Item p)) (__tl_make-array)]
     (begin
       (__tl_array-push! items (Item (& p.l)))
       (set! (array-ref items 0).cell (& p.r))

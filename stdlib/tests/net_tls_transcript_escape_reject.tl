@@ -1,3 +1,4 @@
+(import stdlib.io)
 (import stdlib.net.tls_transcript as transcript)
 
 (define (main) : i64
@@ -5,13 +6,12 @@
     [state : transcript.TlsTranscript
       (match (transcript.new (transcript.default-limits))
         [(TlsTranscriptNewOk value) value]
-        [_ (init : transcript.TlsTranscript)])]
+        [_ (io.panic "valid transcript limits")])]
+    ;; Built outside the arena: a value made inside it carries its region.
+    [boundary : transcript.TlsTranscriptBoundary
+      (transcript.ThroughServerHello)]
     [escaped : transcript.TlsTranscriptHashResult
-      (with-arena
-        scratch
-        (transcript.snapshot-boundary
-          (& state)
-          (clone (transcript.ThroughServerHello))))]
+      (with-arena scratch (transcript.snapshot-boundary (& state) boundary))]
     (match escaped
       [(TlsTranscriptHashOk value)
         (match (transcript.boundary-digest

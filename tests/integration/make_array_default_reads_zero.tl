@@ -1,8 +1,8 @@
 ;# make-array must hand back default-valued elements without any explicit init.
 ;#
 ;# The compiler drops explicit "fill the array I just allocated with its own
-;# default" loops (packet Z1) because `lower-make-array-zero-fill-supported?`
-;# lowers those allocations to `tl_array_zero`, so the slots are already the
+;# default" loops (packet Z1) because an allocation whose element type the ZII
+;# classifier (`tc-type-zii-class`) admits lowers to `tl_array_zero`, so the slots are already the
 ;# all-zero default. This fixture pins that contract for the element shapes the
 ;# dropped loops relied on -- i64, bool, a fieldless-tag-0 enum -- and for an
 ;# enum whose tag-0 variant carries zero-default fields (an i64 and a struct of

@@ -24,9 +24,12 @@ BOUNDED_POOL_LABEL=integration
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-integration.sh [--backend-cmp-mem-fold-parity-only | --self-test-batch-observability | --self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --self-test-path-normalization | --validate-manifest-only]
+usage: scripts/verify-integration.sh [--shard NAME] [--backend-cmp-mem-fold-parity-only | --self-test-batch-observability | --self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --self-test-path-normalization | --validate-manifest-only]
 
 Runs manifest-driven native integration tests.
+--shard NAME runs one shard of the corpus (see integration_shards): its batch
+groups only, staged in its own work root, so CI can run the shards as separate
+gates on one host. Without it the whole corpus runs in one work root.
 --backend-cmp-mem-fold-parity-only runs the opt0/opt2 backend memory-fold
 runtime-parity matrix without building the rest of the integration corpus.
 --self-test-batch-observability exercises the batch sentinel selection and
@@ -42,6 +45,85 @@ CRLF normalization without invoking a compiler or native toolchain.
 EOF
 }
 
+# The corpus runs as shards, one gate each: name|work root suffix|batch groups.
+# A shard lists its heaviest group first, so the batch pool's longest chunk
+# starts on an idle worker instead of trailing the queue. The `-` suffix marks
+# the canonical shard: it keeps target/integration-verify/HOST/, which later
+# gates reuse, and runs every host-level check that needs that root or an
+# already-built default-level corpus binary (the host fixture corpora, the
+# Windows runner differential).
+integration_shards() {
+    cat <<'EOF'
+default|-|stage-stdlib embedded
+opt-levels|-opt-levels|stage-stdlib-opt0 stage-stdlib-opt1 stage-stdlib-opt2 embedded-opt0 embedded-opt1 embedded-opt2
+EOF
+}
+
+# integration_resolve_shard NAME: set INTEGRATION_BATCH_GROUPS (the groups this
+# run compiles, stages and runs), INTEGRATION_ALL_GROUPS (every group a shard
+# names), INTEGRATION_SHARD_SUFFIX and INTEGRATION_SHARD_CANONICAL. An empty
+# NAME is the whole corpus in one work root. A group named by two shards is
+# refused here and integration_select_shard refuses a manifest group that no
+# shard names, so a new batch group cannot fall out of CI.
+integration_resolve_shard() {
+    _shard_want=${1:-}
+    _shard_all=
+    _shard_sel=
+    _shard_suffix=
+    _shard_canonical=0
+    _shard_canonicals=0
+    _shard_matched=0
+    while IFS='|' read -r _shard_name _shard_root _shard_groups; do
+        case "$_shard_name" in
+            "" | \#*) continue ;;
+        esac
+        case "$_shard_root" in
+            -) _shard_canonicals=$((_shard_canonicals + 1)) ;;
+        esac
+        for _shard_group in $_shard_groups; do
+            case " $_shard_all " in
+                *" $_shard_group "*)
+                    echo "integration shard $_shard_name repeats batch group: $_shard_group" >&2
+                    return 1
+                    ;;
+            esac
+            _shard_all="$_shard_all $_shard_group"
+        done
+        if [ "$_shard_name" = "$_shard_want" ]; then
+            _shard_matched=1
+            _shard_sel=" $_shard_groups"
+            case "$_shard_root" in
+                -)
+                    _shard_suffix=
+                    _shard_canonical=1
+                    ;;
+                *) _shard_suffix=$_shard_root ;;
+            esac
+        fi
+    done <<EOF
+$(integration_shards)
+EOF
+    # The canonical (`-`) shard keeps the historical work root the host fixture
+    # corpora and the Windows runner differential need, so the table must name
+    # exactly one; zero or two would silently drop or duplicate those checks.
+    if [ "$_shard_canonicals" -ne 1 ]; then
+        echo "integration_shards: expected exactly one canonical ('-') shard, found $_shard_canonicals" >&2
+        return 1
+    fi
+    if [ -z "$_shard_want" ]; then
+        _shard_sel=$_shard_all
+        _shard_canonical=1
+    elif [ "$_shard_matched" -eq 0 ]; then
+        echo "unknown integration shard: $_shard_want" >&2
+        echo "expected one of: $(integration_shards | awk -F '|' '!/^#/ {printf "%s ", $1}')" >&2
+        return 1
+    fi
+    INTEGRATION_BATCH_GROUPS=${_shard_sel# }
+    INTEGRATION_ALL_GROUPS=${_shard_all# }
+    INTEGRATION_SHARD_SUFFIX=$_shard_suffix
+    INTEGRATION_SHARD_CANONICAL=$_shard_canonical
+}
+
 SELF_TEST_BATCH_OBSERVABILITY=0
 SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=0
 SELF_TEST_SIGNAL_NOTICE_CAPTURE=0
@@ -52,6 +134,14 @@ BACKEND_CMP_MEM_FOLD_PARITY_ONLY=0
 # Each self-test runs as its own gate beside the corpus, so it keeps its own
 # work root; the corpus root holds artifacts later gates reuse.
 WORK_SUFFIX=
+# `--shard NAME` carries its value, so it is read before the single-option
+# cases below, which then see what follows it.
+INTEGRATION_SHARD_NAME=
+if [ "${1:-}" = --shard ]; then
+    [ "$#" -ge 2 ] || { usage; exit 2; }
+    INTEGRATION_SHARD_NAME=$2
+    shift 2
+fi
 case "${1:-}" in
     "")
         ;;
@@ -99,6 +189,14 @@ esac
 if [ "$#" -ne 0 ]; then
     usage
     exit 2
+fi
+if [ -n "$INTEGRATION_SHARD_NAME" ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 1 ]; then
+    echo "[integration] --shard runs a corpus shard, not a self-test mode" >&2
+    exit 2
+fi
+integration_resolve_shard "$INTEGRATION_SHARD_NAME" || exit 2
+if [ -n "$INTEGRATION_SHARD_NAME" ]; then
+    WORK_SUFFIX=$INTEGRATION_SHARD_SUFFIX
 fi
 
 HOST_OS=linux
@@ -193,22 +291,37 @@ run_linux_manifest_program() {
 
     ci_timing_set_now_ms
     _run_started=$CI_TIMING_NOW_MS
-    sh -c '
-        _deadline=$1
-        shift
-        set +e
-        timeout --signal=KILL "$_deadline" sh -c '\''
+    # A deadline that owns the case's process group. GNU timeout returns 137
+    # and kills the group; uutils timeout 0.10 returns 124 and leaves the
+    # group's descendants, so the shell takes the deadline itself.
+    # The subshell's stderr silenced the shell's job notice when the deadline
+    # kills the background case; its case's own streams stay explicit files.
+    _rc=0
+    (
+        setsid sh -c '
             _stdout=$1
             _stderr=$2
             shift 2
-            exec "$@" > "$_stdout" 2> "$_stderr"
-        '\'' typelisp-integration-case "$@"
-        _rc=$?
-        exit "$_rc"
-    ' typelisp-integration-run \
-        "$INTEGRATION_CASE_TIMEOUT_SECONDS" "$_stdout" "$_stderr" "$_bin" "$@" \
-        2> "$_run_shell_stderr"
-    _rc=$?
+            ( exec "$@" ) > "$_stdout" 2> "$_stderr"
+        ' typelisp-integration-case "$_stdout" "$_stderr" "$_bin" "$@" \
+            2> "$_run_shell_stderr" &
+        _case_pid=$!
+        (
+            _ticks=0
+            _limit=$((INTEGRATION_CASE_TIMEOUT_SECONDS * 20))
+            while [ "$_ticks" -lt "$_limit" ]; do
+                sleep 0.05
+                _ticks=$((_ticks + 1))
+            done
+            kill -KILL "-$_case_pid" 2>/dev/null || true
+        ) &
+        _case_watchdog=$!
+        _case_status=0
+        wait "$_case_pid" || _case_status=$?
+        kill "$_case_watchdog" 2>/dev/null || true
+        wait "$_case_watchdog" 2>/dev/null || true
+        exit "$_case_status"
+    ) 2>/dev/null || _rc=$?
     ci_timing_set_now_ms
     case_timed_out=0
     if [ "$_rc" -eq 137 ] &&
@@ -262,19 +375,34 @@ fi
 
 MANIFEST="$ROOT/tests/integration/native.manifest"
 WORKDIR="$ROOT/target/integration-verify/$HOST_OS$WORK_SUFFIX"
+_work_root_owned=0
 case "$WORKDIR" in
     "$ROOT/target/integration-verify/"linux | "$ROOT/target/integration-verify/"windows | \
-        "$ROOT/target/integration-verify/"linux-self-test-* | "$ROOT/target/integration-verify/"windows-self-test-*) ;;
-    *) echo "FAIL: unowned integration scratch root: $WORKDIR" >&2; exit 1 ;;
+        "$ROOT/target/integration-verify/"linux-self-test-* | "$ROOT/target/integration-verify/"windows-self-test-*)
+        _work_root_owned=1 ;;
 esac
+if [ "$_work_root_owned" -eq 0 ] && [ -n "$INTEGRATION_SHARD_SUFFIX" ] &&
+    [ "$WORKDIR" = "$ROOT/target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX" ]; then
+    _work_root_owned=1
+fi
+if [ "$_work_root_owned" -eq 0 ]; then
+    echo "FAIL: unowned integration scratch root: $WORKDIR" >&2
+    exit 1
+fi
 [ ! -L "$WORKDIR" ] || exit 1
 rm -rf -- "${WORKDIR:?}"
 mkdir -p "$WORKDIR"
 source_location_self_test "$WORKDIR/source-location-self-test"
-# This host's rows of the shared manifest, one per name and opt level.
-NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
-awk -v host="$HOST_OS" -f "$ROOT/scripts/expand-integration-manifest.awk" "$MANIFEST" \
-    > "$NORMALIZED_MANIFEST"
+# This host's rows of the shared manifest, one per name and opt level, in this
+# shard's own work root: a shard stages, compiles and runs its rows under
+# target/integration-verify/HOST<shard suffix>, the spelling the compiler and a
+# manifest's $SRC placeholder use, so two shards never share a staged case.
+# validate_manifest below checks every row of them; integration_select_shard
+# derives the rows this shard runs.
+HOST_MANIFEST="$WORKDIR/manifest.normalized"
+awk -v host="$HOST_OS" -v work_root="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX" \
+    -f "$ROOT/scripts/expand-integration-manifest.awk" "$MANIFEST" \
+    > "$HOST_MANIFEST"
 
 # Batch chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
 # TYPELISP_INTEGRATION_WORKERS compiler processes at once (1-3, default 2), each
@@ -298,7 +426,6 @@ INTEGRATION_POOL_DIR=
 INTEGRATION_POOL_WALL_MS=0
 INTEGRATION_POOL_PEAK_BYTES=0
 INTEGRATION_POOL_PEAK_LABEL=
-INTEGRATION_BATCH_GROUPS='embedded stage-stdlib embedded-opt0 stage-stdlib-opt0 embedded-opt1 stage-stdlib-opt1 embedded-opt2 stage-stdlib-opt2'
 
 # A default-level group keeps the compiler's default argv. Pinned groups carry
 # their explicit level through both the batch and standalone assembly oracle.
@@ -732,7 +859,7 @@ integration_windows_register_plan() {
         [ -n "$_plan_source" ] || continue
         _plan_case_path=${_plan_source%/*}
         _plan_case=${_plan_case_path##*/}
-        _plan_expected_source="target/integration-verify/windows/$_plan_case/$_plan_case.tl"
+        _plan_expected_source="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$_plan_case/$_plan_case.tl"
         if [ "$_plan_source" != "$_plan_expected_source" ]; then
             echo "FAIL: Windows COFF plan source is outside its validated case path: $_plan_source" >&2
             return 1
@@ -1055,7 +1182,7 @@ validate_windows_manifest_assembly_requirements() {
             }
             exit failed
         }
-    ' "$_requirements" "$_assertions" "$NORMALIZED_MANIFEST"
+    ' "$_requirements" "$_assertions" "$HOST_MANIFEST"
 }
 
 validate_manifest() {
@@ -1069,11 +1196,12 @@ validate_manifest() {
         > "$_catalog" || return 1
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
-        "$_catalog" "$NORMALIZED_MANIFEST" || return 1
+        "$_catalog" "$HOST_MANIFEST" || return 1
     # The other host's rows are validated too and cover their own sources.
     _other_host=windows
     [ "$HOST_OS" = linux ] || _other_host=linux
-    awk -v host="$_other_host" -f "$ROOT/scripts/expand-integration-manifest.awk" \
+    awk -v host="$_other_host" -v work_root="target/integration-verify/$_other_host" \
+        -f "$ROOT/scripts/expand-integration-manifest.awk" \
         "$MANIFEST" > "$WORKDIR/manifest.$_other_host" || return 1
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known.$_other_host" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
@@ -1936,6 +2064,55 @@ manifest_row_split_opt_level() {
     esac
 }
 
+# The batch group of a normalized manifest row: the embedded payload or the
+# staged on-disk stdlib layout, plus the row's pinned optimization level. Sets
+# MANIFEST_ROW_GROUP from the same two fields integration_shards partitions,
+# so a row's group and its shard can never disagree.
+manifest_row_batch_group() {
+    MANIFEST_ROW_GROUP=embedded
+    case "$MANIFEST_ROW_EXTRA" in
+        stage-stdlib | stage-stdlib+expected-stderr:*) MANIFEST_ROW_GROUP=stage-stdlib ;;
+    esac
+    [ -z "$MANIFEST_ROW_OPT_LEVEL" ] ||
+        MANIFEST_ROW_GROUP="$MANIFEST_ROW_GROUP-opt$MANIFEST_ROW_OPT_LEVEL"
+}
+
+# Select this shard's rows: the batch pre-pass, the staged tree, the case loop
+# and the summary all read NORMALIZED_MANIFEST, which holds exactly the rows of
+# INTEGRATION_BATCH_GROUPS. Every other row still runs in the shard that names
+# its group. A row whose group no shard names fails the run, so a group added
+# to tests/integration/native.manifest cannot leave CI, and the manifest
+# validation above still checks every row of both hosts.
+integration_select_shard() {
+    NORMALIZED_MANIFEST="$WORKDIR/manifest.selected"
+    SHARD_CASES="$WORKDIR/shard-cases.txt"
+    : > "$SHARD_CASES" || return 1
+    while IFS='|' read -r _sel_name _sel_source _sel_want _sel_stdout _sel_args _sel_deps _sel_extra _sel_suite || [ -n "$_sel_name" ]; do
+        case "$_sel_name" in
+            "" | \#*) continue ;;
+        esac
+        manifest_row_split_opt_level "${_sel_extra:-}" || return 1
+        manifest_row_batch_group
+        case " $INTEGRATION_ALL_GROUPS " in
+            *" $MANIFEST_ROW_GROUP "*) ;;
+            *)
+                echo "integration batch group '$MANIFEST_ROW_GROUP' of $_sel_name belongs to no shard" >&2
+                echo "add it to integration_shards in $0" >&2
+                return 1
+                ;;
+        esac
+        case " $INTEGRATION_BATCH_GROUPS " in
+            *" $MANIFEST_ROW_GROUP "*) ;;
+            *) continue ;;
+        esac
+        printf '%s\n' "$_sel_name" >> "$SHARD_CASES" || return 1
+    done < "$HOST_MANIFEST" || return 1
+    # Copy the selected rows byte for byte: the readers below depend on the
+    # field layout the expansion emitted.
+    awk -F '|' 'FILENAME == ARGV[1] { keep[$1]; next } ($1 in keep)' \
+        "$SHARD_CASES" "$HOST_MANIFEST" > "$NORMALIZED_MANIFEST" || return 1
+}
+
 
 # Emit one chunk list per group from the staged cases.
 integration_batch_queue() {
@@ -1947,16 +2124,12 @@ integration_batch_queue() {
             "" | \#*) continue ;;
         esac
         manifest_row_split_opt_level "${_b_extra:-}" || return 1
-        _b_opt_level=$MANIFEST_ROW_OPT_LEVEL
-        _b_group=embedded
-        case "$MANIFEST_ROW_EXTRA" in
-            stage-stdlib | stage-stdlib+expected-stderr:*) _b_group=stage-stdlib ;;
-        esac
-        [ -z "$_b_opt_level" ] || _b_group="$_b_group-opt$_b_opt_level"
+        manifest_row_batch_group
+        _b_group=$MANIFEST_ROW_GROUP
         _b_list="$WORKDIR/batch-$_b_group.list"
         # Relative to ROOT, which is the working directory: the compiler reads
         # these out of a file, so no shell path translation happens on Windows.
-        _b_rel="target/integration-verify/$HOST_OS/$_b_name/$_b_name"
+        _b_rel="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$_b_name/$_b_name"
         if [ "$HOST_OS" = windows ]; then
             _b_force=
             if windows_manifest_assembly_reason "$_b_name" > /dev/null; then
@@ -2254,10 +2427,10 @@ EOF
     INTEGRATION_BATCH_SIZE=2
     integration_batch_queue
     printf '%s\n' \
-        'batch-embedded-1|4096' 'batch-embedded-2|4096' \
-        'batch-stage-stdlib-1|4096' 'batch-embedded-opt0-1|4096' \
-        'batch-stage-stdlib-opt0-1|4096' 'batch-embedded-opt1-1|4096' \
-        'batch-embedded-opt2-1|4096' 'batch-stage-stdlib-opt2-1|4096' \
+        'batch-stage-stdlib-1|4096' 'batch-embedded-1|4096' \
+        'batch-embedded-2|4096' 'batch-stage-stdlib-opt0-1|4096' \
+        'batch-stage-stdlib-opt2-1|4096' 'batch-embedded-opt0-1|4096' \
+        'batch-embedded-opt1-1|4096' 'batch-embedded-opt2-1|4096' \
         > "$_dir/levels.expected.queue"
     if ! cmp -s "$_dir/levels.expected.queue" "$_dir/batch-pool.queue" ||
         [ -s "$_dir/batch-stage-stdlib-opt1.list" ] ||
@@ -3922,8 +4095,9 @@ run_preparation_failure_self_test() (
             if (seen[id]++ || $4 != ($3 == "success" ? 0 : 1)) fail("wrong status or duplicate case")
             cases++
             path = root "/" id "/stderr"
-            diagnostic = ($3 == "self-test" ? "FAIL: staging helper rejected an empty plan" :
-                ($3 == "invalid-result-plan" ? "FAIL: invalid Windows COFF result plan" : ""))
+            diagnostic = ""
+            if ($3 == "self-test") diagnostic = "FAIL: staging helper rejected an empty plan"
+            else if ($3 == "invalid-result-plan") diagnostic = "FAIL: invalid Windows COFF result plan"
             if (diagnostic != "") {
                 found = 0
                 while ((rc = (getline line < path)) > 0) if (index(line, diagnostic)) found = 1
@@ -3997,6 +4171,7 @@ fi
 awk -f "$ROOT/tests/integration/wide_struct_literal_decls.awk" > "$WORKDIR/wide_struct_literal_decls.tl"
 mv "$WORKDIR/wide_struct_literal_decls.tl" "$ROOT/tests/integration/wide_struct_literal_decls.tl"
 
+ci_timing_run manifest shard integration_select_shard || exit 1
 ci_timing_run manifest validate validate_manifest
 if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
     echo "integration manifest validation passed for $HOST_OS"
@@ -4036,7 +4211,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     # that spelling in the abort-site descriptors an expected-stderr pins, so a
     # standalone compile has to name the case the same way. The runner's working
     # directory is ROOT.
-    work_src_rel="target/integration-verify/$HOST_OS/$name/$name.tl"
+    work_src_rel="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX/$name/$name.tl"
 
     # integration_stage_corpus staged this case's source and dependencies.
     case_dir="$WORKDIR/$name"
@@ -4312,8 +4487,12 @@ if [ "$HOST_OS" = windows ] && [ "$WINDOWS_MANIFEST_QUEUED" -gt 0 ]; then
     if ! windows_run_manifest_queue; then
         exit 1
     fi
-    if ! windows_runner_differential_self_test; then
-        exit 1
+    # The differential compares three already-built default-level corpus
+    # binaries, so the canonical shard that stages them runs it for the host.
+    if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
+        if ! windows_runner_differential_self_test; then
+            exit 1
+        fi
     fi
     windows_assert_queued_cases
     if [ "$failed" -eq 0 ]; then
@@ -4368,13 +4547,26 @@ assert_frontend_smoke_timing_rows() {
     fi
 }
 
-assert_frontend_smoke_timing_rows
+# The compile-once suite is a case of the canonical shard, which also runs the
+# host fixture corpora and the Windows runner differential. Require its manifest
+# row so deleting or renaming it fails CI, then check the timing rows it wrote.
+if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
+    grep -q '^compiler_frontend_smoke_suite|' "$HOST_MANIFEST" || {
+        echo "FAIL: $HOST_MANIFEST has no compiler_frontend_smoke_suite row" >&2
+        exit 1
+    }
+    assert_frontend_smoke_timing_rows
+fi
 
-if [ "$HOST_OS" = linux ]; then
-    run_linux_fixture_cases
-else
-    run_backend_cmp_mem_fold_parity_fixtures
-    run_windows_backend_fixtures
+# The host fixture corpora publish into the canonical work root, which is the
+# shard other gates read, so exactly that shard runs them.
+if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
+    if [ "$HOST_OS" = linux ]; then
+        run_linux_fixture_cases
+    else
+        run_backend_cmp_mem_fold_parity_fixtures
+        run_windows_backend_fixtures
+    fi
 fi
 
 echo "[integration] compile processes: $INTEGRATION_BATCH_CHUNKS batch chunk(s)"     "+ $INTEGRATION_STANDALONE_COMPILES standalone,"     "$INTEGRATION_BATCHED_CASES case(s) served from a batch"

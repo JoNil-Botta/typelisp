@@ -1056,6 +1056,40 @@
         (embedded-native-template-push! ops ops-count op "0" "0" "0")
         (+ inner-opened 1)))))
 
+;; Emit the op chain for one `make-array` template node: the element type,
+;; then the size expression, then the callback that rebuilds the parser's
+;; matching array node. `callback` selects the fixed-length or runtime-sized
+;; node kind. Returns the opened op-let count, or -1 when an operand is
+;; outside the supported subset.
+(define (embedded-native-template-make-array-ops
+  [context : (& context TlciNativeSourceContext)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [elem-type-id : i64]
+  [size-node : i64]
+  [callback : String]
+  [ops : (&mut ops (__tl_dyn-array String))]
+  [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
+  (let
+    [type-opened : i64
+      (embedded-native-template-type-ops
+        context
+        params
+        (compiler_ast_types.ast-node-pool-context-type-get
+          context.pools
+          elem-type-id)
+        ops
+        ops-count)]
+    (if (< type-opened 0)
+      -1
+      (let
+        [size-opened : i64
+          (embedded-native-template-ops context params size-node ops ops-count)]
+        (if (< size-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push! ops ops-count callback "0" "0" "0")
+            (+ type-opened size-opened 1)))))))
+
 ;; Emit the op chain that pushes exactly one session-stack value for one
 ;; quasiquoted template node, mirroring the interpreted quote's reconstruction
 ;; of calls, if/begin/binary/unary forms, literals, plain symbols, unquoted
@@ -1991,7 +2025,7 @@
                   "0"
                   "0")
                 (+ value-opened type-opened 1))))))]
-    ;; Typed `(init : T)`: quote the annotation as a type value, then let the
+    ;; Typed Init: quote the annotation as a type value, then let the
     ;; host reconstruct the same Init node as interpreted quasiquote. Refs
     ;; #5606.
     [(Init maybe-ty-id)
@@ -2148,37 +2182,23 @@
                   "0")
                 (+ target-opened value-opened 1))))))]
     [(MakeArray elem-type-id size-node)
-      (let
-        [type-opened : i64
-          (embedded-native-template-type-ops
-            context
-            params
-            (compiler_ast_types.ast-node-pool-context-type-get
-              context.pools
-              elem-type-id)
-            ops
-            ops-count)]
-        (if (< type-opened 0)
-          -1
-          (let
-            [size-opened : i64
-              (embedded-native-template-ops
-                context
-                params
-                size-node
-                ops
-                ops-count)]
-            (if (< size-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-make-array)
-                  "0"
-                  "0"
-                  "0")
-                (+ type-opened size-opened 1))))))]
+      (embedded-native-template-make-array-ops
+        context
+        params
+        elem-type-id
+        size-node
+        (tlci_core.tlci-host-callback-name expr-make-array)
+        ops
+        ops-count)]
+    [(FixedMakeArray elem-type-id size-node)
+      (embedded-native-template-make-array-ops
+        context
+        params
+        elem-type-id
+        size-node
+        (tlci_core.tlci-host-callback-name expr-fixed-make-array)
+        ops
+        ops-count)]
     [_
       (embedded-native-fallback-opened
         (str_cat.str-cat

@@ -1,3 +1,4 @@
+;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_tlci_native_producer_tests.tl - the producer's `run-ops` batching:
 ;; which op lines become batch tokens and how the status chain renders a run
 ;; of them. The host side of the batch format is covered by

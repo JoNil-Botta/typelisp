@@ -583,6 +583,18 @@
           `(,hook ,value-type ,value))]
       [_
         (match value-kind
+          ["box"
+            (let
+              [element-type : comptime.Expr (box-element-type value-type)]
+              [element-alias : String
+                (comptime.string-append nested-alias-text "_box")]
+              `(let
+                [__serialize_value ,value]
+                (stdlib.serialize.encode-value
+                  ,format-expr
+                  ,element-type
+                  ,(comptime.expr-var element-alias)
+                  (deref __serialize_value))))]
           ["struct"
             (let
               [nested-encode : comptime.Expr
@@ -759,6 +771,18 @@
           `(,hook ,value-type ,value ,err-ctor))]
       [_
         (match value-kind
+          ["box"
+            (let
+              [element-type : comptime.Expr (box-element-type value-type)]
+              [element-alias : String
+                (comptime.string-append nested-alias-text "_box")]
+              `(box
+                (stdlib.serialize.decode-value
+                  ,format-expr
+                  ,element-type
+                  ,(comptime.expr-var element-alias)
+                  ,value
+                  ,err-ctor)))]
           ["struct"
             (let
               [nested-decode : comptime.Expr
@@ -791,7 +815,8 @@
                   (return (,err-ctor "serialize: sequence length mismatch"))
                   unit)
                 (let
-                  [__serialize_out : ,value-type (init : ,value-type)]
+                  [__serialize_out : ,value-type
+                    (make-array ,element-type ,length-expr)]
                   [__serialize_i : i64 0]
                   (while (< __serialize_i ,length-expr)
                     (let
@@ -988,14 +1013,13 @@
       (comptime.comptime-error
         "serialize: field accumulator index must be an integer literal")]))
 
-;: Emit decode logic for one struct field.
+;: Emit the decoded value expression for one struct field.
 ;: `value` is evaluated once per field; see `decode-tuple-items`.
 (defmacro (decode-field
   [format : Module]
   [T : type]
   [index-expr : comptime.Expr]
   [value : comptime.Expr]
-  [out : comptime.Expr]
   [err-ctor : comptime.Expr]) : comptime.Expr
   (match index-expr
     [(comptime.Expr.Int index)
@@ -1011,57 +1035,67 @@
             (comptime.int->string index))]
         [format-expr : comptime.Expr
           (comptime.expr-var (comptime.module-name format))]
-        [decoded-expr : comptime.Expr
-          `(let
-            [__serialize_decoded_field
-              (stdlib.serialize.decode-value
-                ,format-expr
-                ,field-type
-                ,(comptime.expr-var nested-alias-text)
-                __serialize_field
-                ,err-ctor)]
-            __serialize_decoded_field)]
-        [set-expr : comptime.Expr
-          (comptime.expr-struct-set out field-name decoded-expr)]
         `(let
           [__serialize_field
             (,field-value-hook ,value ,field-key-expr ,err-ctor)]
-          ,set-expr))]
+          (stdlib.serialize.decode-value
+            ,format-expr
+            ,field-type
+            ,(comptime.expr-var nested-alias-text)
+            __serialize_field
+            ,err-ctor)))]
     [_
       (comptime.comptime-error
         "serialize: decode field index must be an integer literal")]))
 
 ;: Emit recursive decode logic for all struct fields.
+;: Each field binds a fresh local in declaration order and the recursion
+;: finishes with the struct constructor call. `names` accumulates those locals
+;: at comptime; the first failed field returns before later fields run.
 (defmacro (decode-fields
   [format : Module]
   [T : type]
   [index-expr : comptime.Expr]
   [value : comptime.Expr]
-  [out : comptime.Expr]
-  [err-ctor : comptime.Expr]) : comptime.Expr
+  [err-ctor : comptime.Expr]
+  [names : comptime.Expr ...]) : comptime.Expr
   (match index-expr
     [(comptime.Expr.Int index)
       (if (>= index (struct-field-count T))
-        `unit
+        (let
+          [constructor : comptime.Expr
+            (comptime.module-value-expr
+              (type-nominal-module T)
+              (type-nominal-name T))]
+          `(,constructor ,@names))
         (let
           [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
           [format-expr : comptime.Expr
             (comptime.expr-var (comptime.module-name format))]
-          `(begin
-            (stdlib.serialize.decode-field
-              ,format-expr
-              ,T
-              ,(comptime.expr-int index)
-              ,value
-              ,out
-              ,err-ctor)
-            (stdlib.serialize.decode-fields
+          [field-name : String
+            (comptime.syntax-name-fresh
+              (comptime.string-append
+                "__serialize_f"
+                (comptime.int->string index)))]
+          [field-local : comptime.Expr (comptime.expr-var field-name)]
+          [rest : comptime.Expr
+            `(stdlib.serialize.decode-fields
               ,format-expr
               ,T
               ,next-index
               ,value
-              ,out
-              ,err-ctor))))]
+              ,err-ctor
+              ,@names
+              ,field-local)]
+          (comptime.expr-let-scope
+            field-name
+            `(stdlib.serialize.decode-field
+              ,format-expr
+              ,T
+              ,(comptime.expr-int index)
+              ,value
+              ,err-ctor)
+            rest)))]
     [_
       (comptime.comptime-error
         "serialize: decode fields index must be an integer literal")]))
@@ -1094,6 +1128,15 @@
     [format-expr : comptime.Expr
       (comptime.expr-var (comptime.module-name format))]
     (match value-kind
+      ["box"
+        (let
+          [element-type : comptime.Expr (box-element-type value-type)]
+          [element-alias : String
+            (comptime.string-append nested-alias-text "_box")]
+          `(stdlib.serialize.nested-import-for-type
+            ,format-expr
+            ,element-type
+            ,(comptime.expr-var element-alias)))]
       ["struct"
         `(import (stdlib.serialize.serialize ,format-expr ,value-type) as ,nested-alias)]
       ["array"
@@ -1360,10 +1403,16 @@
               [extra-decls-hook : comptime.Expr
                 (comptime.module-hook format "extra-decls")]
               [type-name : String (type-nominal-name T)]
+              [constructor-module : String (type-nominal-module T)]
+              [constructor-import : comptime.Expr
+                (if (string.eq constructor-module "")
+                  `(begin)
+                  `(import ,(comptime.expr-var constructor-module)))]
               `(begin
                 (module ,module-name-expr)
                 (import stdlib.serialize)
                 (import ,format-module-expr as __serialize_format)
+                ,constructor-import
                 (stdlib.serialize.nested-imports ,format-module-expr ,T 0)
                 (defenum Result
                   (Ok ,T)
@@ -1388,24 +1437,23 @@
                       0
                       value)))
                 ;; `decode` owns `value`; every view below reads only that
-                ;; parameter, and no view outlives the call.
+                ;; parameter, and no view outlives the call. Fields are decoded
+                ;; into fresh locals and passed straight to the constructor, so
+                ;; no placeholder value is ever invented.
                 (define (decode [value : ,value-type]) : Result
                   (,expect-object-hook
                     (unsafe
                       (stdlib.serialize.serialize-shared-view value))
                     ,(comptime.expr-string type-name)
                     ,err-ctor)
-                  (let
-                    [__serialize_out : ,T (init : ,T)]
+                  (,ok-ctor
                     (stdlib.serialize.decode-fields
                       ,format-module-expr
                       ,T
                       0
                       (unsafe
                         (stdlib.serialize.serialize-shared-view value))
-                      __serialize_out
-                      ,err-ctor)
-                    (,ok-ctor __serialize_out)))
+                      ,err-ctor)))
                 (,extra-decls-hook ,T)))]
           [_
             (let

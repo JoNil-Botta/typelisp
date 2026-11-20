@@ -14,6 +14,7 @@
       (Ok ,T)
       (Err String))
     (define (make) : ,T
+      ;; lint-allow: removed-init -- Preserve Init syntax coverage until #7951.
       (init : ,T))))
 
 (defmacro (profile-replay-nested [T : type] [index-expr : Expr]) : Decls

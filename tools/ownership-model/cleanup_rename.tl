@@ -164,7 +164,7 @@
                     (core.ownership-charge!
                       (&mut bytes)
                       65536
-                      (string.string-length (& owner.source.path)))
+                      owner.source.path.bytes)
                     (core.ownership-charge!
                       (&mut bytes)
                       65536

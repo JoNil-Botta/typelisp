@@ -47,6 +47,12 @@
 ;; only -- so this is a read-only dependency on the allocator's own facts, not a
 ;; layering inversion in the pipeline.
 (import compiler_regalloc as reg)
+
+;; LICM's loop pressure estimate (opt-licm-loop-int-pressure) reads the
+;; allocator's own edge-precise liveness and the ABI's register counts, so the
+;; peak it prices is the one the allocator will see.
+(import compiler_liveness as opt_liveness)
+(import compiler_abi as cabi)
 (import compiler_float as cfloat)
 (import stdlib.arena)
 (import stdlib.hash)
@@ -666,45 +672,10 @@
           unit))
       func]))
 
-(defenum OptAggregatePointer
-  (Pointer i64 i64))
-
-(import (vector.vector OptAggregatePointer core) as opt_aggregate_pointer_vec)
-
-(defenum OptAggregateAccess
-  (Store i64 ast.AstType)
-  (Load i64 i64 ast.AstType))
-
-(import (vector.vector OptAggregateAccess core) as opt_aggregate_access_vec)
-
-(defenum OptAggregateAllocCandidate
-  (Candidate
-    i64
-    ast.AstType
-    i64
-    opt_aggregate_pointer_vec.Vec
-    opt_aggregate_access_vec.Vec))
-
-(import (vector.vector OptAggregateAllocCandidate core) as opt_aggregate_candidate_vec)
-
 (defenum OptMaybeAggregateAlloc
   (No)
   (Some i64 ast.AstType i64))
 
-(defenum OptAggregateScanResult
-  (Ok opt_aggregate_pointer_vec.Vec opt_aggregate_access_vec.Vec)
-  (Reject))
-
-(defenum OptAggregatePromoteSlot
-  (Slot i64 i64))
-
-(import (vector.vector OptAggregatePromoteSlot core) as opt_aggregate_promote_slot_vec)
-
-(defenum OptAggregatePromoteBuild
-  (Build opt_aggregate_promote_slot_vec.Vec i64))
-
-(define opt-aggregate-list-initial-capacity : i64
-  4)
 (define compiler-optimize-level-default : i64
   1)
 
@@ -1153,11 +1124,12 @@
   (Cons i64 ir.CompilerIrValue ast.AstType (Box OptConstEnv))
   (Shadow i64 (Box OptConstEnv)))
 
-(define (opt-const-unbind [env : (& env OptConstEnv)] [var : i64]) : OptConstEnv
+;; Both take the env by value: the new entry owns it as its tail.
+(define (opt-const-unbind [env : OptConstEnv] [var : i64]) : OptConstEnv
   (Shadow var (box env)))
 
 (define (opt-const-bind
-  [env : (& env OptConstEnv)]
+  [env : OptConstEnv]
   [var : i64]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]) : OptConstEnv
@@ -2487,7 +2459,7 @@
   (Result OptConstEnv ir.CompilerIrInstr))
 
 (define (opt-invalidate-addr-of
-  [env : (& env OptConstEnv)]
+  [env : OptConstEnv]
   [dst : i64]
   [src : i64]
   [instr : ir.CompilerIrInstr]) : OptInstrResult
@@ -2731,9 +2703,7 @@
           [(None) env])
         instr)]))
 
-(define (opt-strength-instr
-  [env : (& env OptConstEnv)]
-  [instr : ir.CompilerIrInstr]) : OptInstrResult
+(define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
     [(Mov dst value ty)
       (match (opt-resolve-known env (& value) ty)
@@ -3815,11 +3785,10 @@
     pools
     (owned_view.compiler-owned-reference-shared-view items)))
 
-;; --- aggregate allocation candidate analysis --------------------------------
+;; --- aggregate allocation classification ------------------------------------
 ;;
-;; This is intentionally analysis-only. It recognizes heap aggregate allocations
-;; that stay local to a function and records the constant-offset derived pointers
-;; plus load/store accesses that a later scalar-replacement slice can consume.
+;; Recognizes the heap aggregate allocations the scalar-replacement slice
+;; (`aggregate_split`) admits: fixed Struct/Enum/Tuple/Array shapes only.
 (define (opt-aggregate-fixed-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)
@@ -3850,677 +3819,6 @@
         (No))]
     [_ (No)]))
 
-(define (opt-aggregate-pointer-list-lookup-from
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [var : i64]
-  [index : i64]) : option_i64.Option
-  (if (< index 0)
-    (None)
-    (match (opt_aggregate_pointer_vec.get
-      (& ptrs)
-      index
-      (OptAggregatePointer.Pointer 0 0))
-      [(Pointer ptr-var offset)
-        (if (= ptr-var var)
-          (Some offset)
-          (opt-aggregate-pointer-list-lookup-from ptrs var (- index 1)))])))
-
-(define (opt-aggregate-pointer-list-lookup
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [var : i64]) : option_i64.Option
-  (opt-aggregate-pointer-list-lookup-from
-    ptrs
-    var
-    (- (opt_aggregate_pointer_vec.len (& ptrs)) 1)))
-
-(define (opt-aggregate-value-offset
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [value : (& value ir.CompilerIrValue)]) : option_i64.Option
-  (match value
-    [(Var var)
-      (if (= var base)
-        (Some 0)
-        (opt-aggregate-pointer-list-lookup ptrs var))]
-    [_ (None)]))
-
-(define (opt-aggregate-value-has-pointer?
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [value : (& value ir.CompilerIrValue)]) : bool
-  (match (opt-aggregate-value-offset base ptrs value)
-    [(Some _) true]
-    [(None) false]))
-
-(define (opt-aggregate-use-has-pointer?
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [_role : ir.CompilerIrOperandRole]
-  [found : bool]
-  [value : ir.CompilerIrValue]) : bool
-  (or found (opt-aggregate-value-has-pointer? base ptrs value)))
-
-(define (opt-aggregate-raw-var-is-pointer?
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]
-  [var : i64]) : bool
-  (or
-    (= var base)
-    (match (opt-aggregate-pointer-list-lookup ptrs var)
-      [(Some _) true]
-      [(None) false])))
-
-;; The indirect calls and the register-group ops are not scanned.
-(define (opt-aggregate-instr-has-pointer?
-  [instr : (& instr ir.CompilerIrInstr)]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (match instr
-    [(AddrOf _ src _storage-words)
-      (opt-aggregate-raw-var-is-pointer? base ptrs src)]
-    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (Pack _ _ _)
-         (Word _ _ _ _))
-      false]
-    [_
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        false
-        opt-aggregate-use-has-pointer?
-        base
-        ptrs)]))
-
-(define (opt-aggregate-instrs-touch-candidate?
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
-    (or
-      (let
-        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-        (opt-aggregate-instr-has-pointer? instr base ptrs))
-      (opt-aggregate-instrs-touch-candidate? instrs (+ index 1) base ptrs))))
-
-(define (opt-aggregate-instr-known-safe?
-  [instr : (& instr ir.CompilerIrInstr)]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (match instr
-    [(Call dst name _ _)
-      (and
-        (= dst base)
-        (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc))]
-    [(Gep _ src offset _)
-      (match (opt-aggregate-value-offset base ptrs src)
-        [(Some _)
-          (match offset
-            [(I64 _) true]
-            [_ false])]
-        [(None) false])]
-    [(Load _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
-    [(or (StorePtr ptr value _) (StoreOwned ptr value _))
-      (and
-        (opt-aggregate-value-has-pointer? base ptrs ptr)
-        (not (opt-aggregate-value-has-pointer? base ptrs value)))]
-    [(CopyBytes _ _ _) false]
-    [_ false]))
-
-(define (opt-aggregate-instr-crosses-unknown-effect?
-  [instr : (& ir.CompilerIrInstr)]
-  [base : i64]
-  [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
-  (if (opt-aggregate-instr-known-safe? instr base ptrs)
-    false
-    (ir.compiler-ir-effect-invalidates-cse? (ir.compiler-ir-instr-effect instr))))
-
-(define (opt-aggregate-scan-store
-  [type-segment-bases : i64]
-  [base : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [ptrs : (& opt_aggregate_pointer_vec.Vec)]
-  [accesses : opt_aggregate_access_vec.Vec]
-  [ptr : (& ir.CompilerIrValue)]
-  [value : (& ir.CompilerIrValue)]
-  [store-ty : ast.AstType]) : OptAggregateScanResult
-  (match (opt-aggregate-value-offset base ptrs ptr)
-    [(Some offset)
-      (if (opt-aggregate-value-has-pointer? base ptrs value)
-        (Reject)
-        (begin
-          (opt_aggregate_access_vec.push-ref!
-            (&mut accesses)
-            (OptAggregateAccess.Store offset store-ty))
-          (opt-aggregate-scan-instrs
-            type-segment-bases
-            base
-            ty
-            size
-            instrs
-            (+ index 1)
-            (owned_view.compiler-owned-reference-shared-view ptrs)
-            accesses
-            true)))]
-    [(None)
-      (if (or
-        (opt-aggregate-value-has-pointer? base ptrs value)
-        (opt-aggregate-instrs-touch-candidate? instrs (+ index 1) base ptrs))
-        (Reject)
-        (opt-aggregate-scan-instrs
-          type-segment-bases
-          base
-          ty
-          size
-          instrs
-          (+ index 1)
-          (owned_view.compiler-owned-reference-shared-view ptrs)
-          accesses
-          true))]))
-
-(define (opt-aggregate-scan-instrs
-  [type-segment-bases : i64]
-  [base : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [ptrs-input : opt_aggregate_pointer_vec.Vec]
-  [accesses-input : opt_aggregate_access_vec.Vec]
-  [seen-alloc : bool]) : OptAggregateScanResult
-  (let
-    [ptrs : opt_aggregate_pointer_vec.Vec ptrs-input]
-    [accesses : opt_aggregate_access_vec.Vec accesses-input]
-    (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-      (if seen-alloc
-        (Ok ptrs accesses)
-        (Reject))
-      (let
-        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-        (if (not seen-alloc)
-          (match (opt-aggregate-direct-alloc instr)
-            [(Some dst alloc-ty alloc-size)
-              (if (and
-                (= dst base)
-                (= alloc-size size)
-                (opt-type-eq type-segment-bases alloc-ty ty))
-                (opt-aggregate-scan-instrs
-                  type-segment-bases
-                  base
-                  ty
-                  size
-                  instrs
-                  (+ index 1)
-                  ptrs
-                  accesses
-                  true)
-                (opt-aggregate-scan-instrs
-                  type-segment-bases
-                  base
-                  ty
-                  size
-                  instrs
-                  (+ index 1)
-                  ptrs
-                  accesses
-                  false))]
-            [(No)
-              (opt-aggregate-scan-instrs
-                type-segment-bases
-                base
-                ty
-                size
-                instrs
-                (+ index 1)
-                ptrs
-                accesses
-                false)])
-          (match (compiler-opt-global-shared-view instr)
-            [(Gep dst src offset _)
-              (match (opt-aggregate-value-offset base ptrs src)
-                [(Some base-offset)
-                  (match offset
-                    [(I64 field-offset)
-                      (opt_aggregate_pointer_vec.push-ref!
-                        (&mut ptrs)
-                        (OptAggregatePointer.Pointer
-                          dst
-                          (+ base-offset field-offset)))
-                      (opt-aggregate-scan-instrs
-                        type-segment-bases
-                        base
-                        ty
-                        size
-                        instrs
-                        (+ index 1)
-                        ptrs
-                        accesses
-                        true)]
-                    [_ (Reject)])]
-                [(None)
-                  (if (opt-aggregate-value-has-pointer? base ptrs offset)
-                    (Reject)
-                    (opt-aggregate-scan-instrs
-                      type-segment-bases
-                      base
-                      ty
-                      size
-                      instrs
-                      (+ index 1)
-                      ptrs
-                      accesses
-                      true))])]
-            [(Load dst src load-ty)
-              (match (opt-aggregate-value-offset base ptrs src)
-                [(Some offset)
-                  (opt_aggregate_access_vec.push-ref!
-                    (&mut accesses)
-                    (OptAggregateAccess.Load
-                      dst
-                      offset
-                      (ast.ty-node-persist load-ty)))
-                  (opt-aggregate-scan-instrs
-                    type-segment-bases
-                    base
-                    ty
-                    size
-                    instrs
-                    (+ index 1)
-                    ptrs
-                    accesses
-                    true)]
-                [(None)
-                  (if (opt-aggregate-instrs-touch-candidate?
-                    instrs
-                    (+ index 1)
-                    base
-                    ptrs)
-                    (Reject)
-                    (opt-aggregate-scan-instrs
-                      type-segment-bases
-                      base
-                      ty
-                      size
-                      instrs
-                      (+ index 1)
-                      ptrs
-                      accesses
-                      true))])]
-            [(or (StorePtr ptr value store-ty) (StoreOwned ptr value store-ty))
-              (opt-aggregate-scan-store
-                type-segment-bases
-                base
-                ty
-                size
-                instrs
-                index
-                (& ptrs)
-                accesses
-                (& ptr)
-                (& value)
-                (ast.ty-node-persist store-ty))]
-            [_
-              (if (opt-aggregate-instr-has-pointer? instr base ptrs)
-                (Reject)
-                (if (and
-                  (opt-aggregate-instr-crosses-unknown-effect?
-                    (& instr)
-                    base
-                    ptrs)
-                  (opt-aggregate-instrs-touch-candidate?
-                    instrs
-                    (+ index 1)
-                    base
-                    ptrs))
-                  (Reject)
-                  (opt-aggregate-scan-instrs
-                    type-segment-bases
-                    base
-                    ty
-                    size
-                    instrs
-                    (+ index 1)
-                    ptrs
-                    accesses
-                    true)))]))))))
-
-(define (opt-aggregate-classify-one
-  [type-segment-bases : i64]
-  [base : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [start : i64]) : OptAggregateScanResult
-  (opt-aggregate-scan-instrs
-    type-segment-bases
-    base
-    ty
-    size
-    instrs
-    start
-    (opt_aggregate_pointer_vec.with-capacity
-      opt-aggregate-list-initial-capacity)
-    (opt_aggregate_access_vec.with-capacity opt-aggregate-list-initial-capacity)
-    false))
-
-(define (opt-aggregate-candidates-from-instrs
-  [type-segment-bases : i64]
-  [scan : (& ir.CompilerIrInstrSeq)]
-  [candidates : (& opt_aggregate_candidate_vec.Vec)]) : opt_aggregate_candidate_vec.Vec
-  (let
-    [index : i64 0]
-    (opt-aggregate-candidates-from-instrs-at
-      type-segment-bases
-      scan
-      index
-      (owned_view.compiler-owned-reference-shared-view candidates))))
-
-(define (opt-aggregate-candidates-from-instrs-at
-  [type-segment-bases : i64]
-  [scan : (& scan ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [candidates-input : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
-  (let
-    [candidates : opt_aggregate_candidate_vec.Vec candidates-input]
-    (if (>= index (ir.compiler-ir-instr-seq-count scan))
-      candidates
-      (let
-        [instr (ir.compiler-ir-instr-seq-borrow scan index)]
-        (match (opt-aggregate-direct-alloc instr)
-          [(Some base ty size)
-            (match (opt-aggregate-classify-one
-              type-segment-bases
-              base
-              (& ty)
-              size
-              scan
-              index)
-              [(Ok ptrs accesses)
-                (opt_aggregate_candidate_vec.push-ref!
-                  (&mut candidates)
-                  (OptAggregateAllocCandidate.Candidate
-                    base
-                    ty
-                    size
-                    ptrs
-                    accesses))
-                (opt-aggregate-candidates-from-instrs-at
-                  type-segment-bases
-                  scan
-                  (+ index 1)
-                  candidates)]
-              [(Reject)
-                (opt-aggregate-candidates-from-instrs-at
-                  type-segment-bases
-                  scan
-                  (+ index 1)
-                  candidates)])]
-          [(No)
-            (opt-aggregate-candidates-from-instrs-at
-              type-segment-bases
-              scan
-              (+ index 1)
-              candidates)])))))
-
-(define (opt-aggregate-append-blocks!
-  [blocks : (& ir.CompilerIrBlockList)]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match blocks
-    [(Array seq)
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (for [index (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-borrow seq index)
-            [(Block _ instrs)
-              (ir.compiler-ir-instr-builder-append-seq-range!
-                builder
-                instrs
-                0
-                (ir.compiler-ir-instr-seq-count instrs))])))]))
-
-(define (opt-aggregate-flatten-blocks [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrInstrSeq
-  (let
-    [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity
-        (ir.compiler-ir-block-list-instruction-count blocks))]
-    (opt-aggregate-append-blocks! blocks (&mut builder))
-    (ir.compiler-ir-instr-builder-to-seq builder)))
-
-(define (opt-aggregate-allocation-candidates-function
-  [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]) : opt_aggregate_candidate_vec.Vec
-  (match func
-    [(Function _ _ _ _ blocks _)
-      (opt-aggregate-candidates-from-instrs
-        type-segment-bases
-        (& (opt-aggregate-flatten-blocks (& blocks)))
-        (&
-          (opt_aggregate_candidate_vec.with-capacity
-            opt-aggregate-list-initial-capacity)))]))
-
-(define (opt-aggregate-candidate-list-append!
-  [left : (&mut left opt_aggregate_candidate_vec.Vec)]
-  [right : (& opt_aggregate_candidate_vec.Vec)]) : unit
-  (let
-    [right-count : i64 (opt_aggregate_candidate_vec.len right)]
-    (for [i (iterator.range 0 right-count)]
-      (opt_aggregate_candidate_vec.push-ref!
-        left
-        (compiler-opt-borrowed-array-element-shared-view
-          (opt_aggregate_candidate_vec.slots right)
-          i)))
-    unit))
-
-(define (opt-aggregate-access-list-load-count-from
-  [accesses : (& opt_aggregate_access_vec.Vec)]
-  [index : i64]) : i64
-  (if (>= index (opt_aggregate_access_vec.len accesses))
-    0
-    (+
-      (match (opt_aggregate_access_vec.get
-        accesses
-        index
-        (OptAggregateAccess.Store 0 (Unit)))
-        [(Load _ _ _) 1]
-        [_ 0])
-      (opt-aggregate-access-list-load-count-from accesses (+ index 1)))))
-
-(define (opt-aggregate-access-list-store-count-from
-  [accesses : (& opt_aggregate_access_vec.Vec)]
-  [index : i64]) : i64
-  (if (>= index (opt_aggregate_access_vec.len accesses))
-    0
-    (+
-      (match (opt_aggregate_access_vec.get
-        accesses
-        index
-        (OptAggregateAccess.Store 0 (Unit)))
-        [(Store _ _) 1]
-        [_ 0])
-      (opt-aggregate-access-list-store-count-from accesses (+ index 1)))))
-
-;; --- aggregate stack promotion ----------------------------------------------
-;;
-;; Reuse the non-escaping aggregate classifier, but keep this first promotion
-;; slice conservative: only fixed handle-shaped structs/enums/tuples are moved
-;; onto local frame storage. Dynamic arrays and array payloads stay heap-backed.
-;;
-;; The backend frame model exposes 8-byte slots. To preserve positive byte
-;; offsets from the aggregate base, the address points at the lowest-addressed
-;; reserved slot; offset +8 then walks back toward earlier reserved slots.
-(define (opt-aggregate-stack-promote-type? [ty : (& ast.AstType)]) : bool
-  (match ty
-    [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)) true]
-    [_ false]))
-
-(define (opt-aggregate-stack-promote-instr-candidate?
-  [instr : ir.CompilerIrInstr]) : bool
-  (match (opt-aggregate-direct-alloc instr)
-    [(Some _ ty _) (opt-aggregate-stack-promote-type? (& ty))]
-    [(No) false]))
-
-(define (opt-aggregate-stack-promote-block-candidate?
-  [block : (& block ir.CompilerIrBlock)]) : bool
-  (match block
-    [(Block _ instrs)
-      (opt-instrs-any? instrs opt-aggregate-stack-promote-instr-candidate?)]))
-
-(define (opt-aggregate-stack-promote-blocks-have-candidate?
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
-  (opt-blocks-any? blocks opt-aggregate-stack-promote-instr-candidate?))
-
-(define (opt-aggregate-stack-slot-count [size : i64]) : i64
-  (if (< size 1)
-    1
-    (/ (+ size 7) 8)))
-
-(define (opt-aggregate-promote-build
-  [candidates : opt_aggregate_candidate_vec.Vec]
-  [next-frame : i64]) : OptAggregatePromoteBuild
-  (let
-    [candidate-slots : (&
-      candidates
-      (__tl_dyn-array OptAggregateAllocCandidate))
-      (opt_aggregate_candidate_vec.slots (& candidates))]
-    [candidate-count : i64 (opt_aggregate_candidate_vec.len (& candidates))]
-    [promote-slots : opt_aggregate_promote_slot_vec.Vec
-      (opt_aggregate_promote_slot_vec.with-capacity
-        opt-aggregate-list-initial-capacity)]
-    [frame : i64 next-frame]
-    (for [index (iterator.range 0 candidate-count)]
-      (match (owned_view.compiler-owned-element-view candidate-slots index)
-        [(Candidate base ty size _ _)
-          (if (opt-aggregate-stack-promote-type? (& ty))
-            (let
-              [slot-count : i64 (opt-aggregate-stack-slot-count size)]
-              [storage : i64 (+ frame (- slot-count 1))]
-              (opt_aggregate_promote_slot_vec.push-ref!
-                (&mut promote-slots)
-                (OptAggregatePromoteSlot.Slot base storage))
-              (+= frame slot-count))
-            unit)]))
-    (Build promote-slots frame)))
-
-(define (opt-aggregate-promote-lookup-from
-  [slot-list : (& slot-list opt_aggregate_promote_slot_vec.Vec)]
-  [base : i64]) : option_i64.Option
-  (for [index
-    (iterator.range 0 (opt_aggregate_promote_slot_vec.len (& slot-list)))]
-    (match (opt_aggregate_promote_slot_vec.get
-      (& slot-list)
-      index
-      (OptAggregatePromoteSlot.Slot 0 0))
-      [(Slot found storage) (when (= found base) (return (Some storage)))]))
-  (None))
-
-(define (opt-aggregate-promote-lookup
-  [slots : (& slots opt_aggregate_promote_slot_vec.Vec)]
-  [base : i64]) : option_i64.Option
-  (opt-aggregate-promote-lookup-from slots base))
-
-;; Dense forward rebuild of one block under the slot plan: a promotable direct
-;; alloc becomes one consecutive `alloc` per reserved frame slot (ending at
-;; `storage`), followed by `addr_of base storage`. This is the same contiguous
-;; reservation shape emitted by lowering; every other instr is kept. Blocks
-;; without a stack-promotable alloc, or whose allocs all escaped the slot plan,
-;; keep the ORIGINAL block value by reference.
-(define (opt-aggregate-promote-alloc-run!
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [storage : i64]
-  [ty : (& ast.AstType)]
-  [size : i64]) : unit
-  (let
-    [slot-count : i64 (opt-aggregate-stack-slot-count size)]
-    (for [slot (iterator.range (+ (- storage slot-count) 1) (+ storage 1))]
-      (ir.compiler-ir-instr-builder-push!
-        builder
-        (ir.CompilerIrInstr.Alloc
-          slot
-          (owned_view.compiler-owned-reference-shared-view ty))))))
-
-(define (opt-aggregate-promote-block
-  [slots : (& slots opt_aggregate_promote_slot_vec.Vec)]
-  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (match (& block)
-    [(Block label instrs)
-      (if (not (opt-aggregate-stack-promote-block-candidate? block))
-        block
-        (let
-          [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-          [builder : ir.CompilerIrInstrBuilder
-            (ir.compiler-ir-instr-builder-with-capacity count)]
-          [changed : bool false]
-          (for [index (iterator.range 0 count)]
-            (let
-              [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-              (match (opt-aggregate-direct-alloc instr)
-                [(Some base ty size)
-                  (match (opt-aggregate-promote-lookup slots base)
-                    [(Some storage)
-                      (opt-aggregate-promote-alloc-run!
-                        (&mut builder)
-                        storage
-                        (& ty)
-                        size)
-                      (ir.compiler-ir-instr-builder-push!
-                        (&mut builder)
-                        (ir.CompilerIrInstr.AddrOf
-                          base
-                          storage
-                          (opt-aggregate-stack-slot-count size)))
-                      (set! changed true)]
-                    [(None)
-                      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])]
-                [(No) (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])))
-          (if changed
-            (Block label (ir.compiler-ir-instr-builder-to-seq builder))
-            block)))]))
-
-(define (opt-aggregate-promote-blocks
-  [slots : (& slots opt_aggregate_promote_slot_vec.Vec)]
-  [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (match blocks
-    ;; Dense driver: scan the block sequence in place and write a dense output
-    ;; sequence. opt-aggregate-promote-block keeps blocks it does not rewrite by
-    ;; reference, so unchanged blocks are never re-sequenced.
-    [(Array seq)
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [out : (__tl_dyn-array ir.CompilerIrBlock)
-          (__tl_make-array ir.CompilerIrBlock count)]
-        (for [index (iterator.range 0 count)]
-          (set!
-            (array-ref out index)
-            (opt-aggregate-promote-block
-              slots
-              (ir.compiler-ir-block-seq-ref seq index))))
-        (Array (ir.CompilerIrBlockSeq out count)))]))
-
-(define (opt-aggregate-stack-promote-function
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
-      (if (opt-aggregate-stack-promote-blocks-have-candidate? blocks)
-        (match (opt-aggregate-promote-build
-          (opt-aggregate-allocation-candidates-function
-            type-segment-bases
-            (& func))
-          frame)
-          [(Build slots promoted-frame)
-            (if (= (opt_aggregate_promote_slot_vec.len (& slots)) 0)
-              func
-              (Function
-                name
-                params
-                ret-ty
-                promoted-frame
-                (opt-aggregate-promote-blocks slots (& blocks))
-                function-abi))])
-        func)]))
-
 ;; --- aggregate word split (aggregate_split) ---------------------------------
 ;;
 ;; SROA-2. Forwarding a field load from the last DOMINATING store leaves a
@@ -4535,9 +3833,9 @@
 ;; THE ADMISSION RULE.
 ;;
 ;; ROOT. Either the `Alloc`-run + `AddrOf` inline storage the lowerer emits
-;; (`lower-reserve-inline-storage`, which aggregate stack promotion reproduces
-;; instruction for instruction), or the `tl_alloc` call `opt-aggregate-direct-
-;; alloc` already recognizes. The reserved run must end at the `addr_of`'s slot,
+;; (`lower-reserve-inline-storage`), or the `tl_alloc` call that
+;; `opt-aggregate-direct-alloc` recognizes. The reserved run must end at the
+;; `addr_of`'s slot,
 ;; carry one type, and hold at most `opt-aggregate-split-word-limit` words.
 ;;
 ;; POINTER SET. The transitive closure of the root under `gep <literal> : u8`
@@ -4574,9 +3872,8 @@
 ;; carry them -- so a `copy_bytes` over such a word refuses the candidate
 ;; (`access:copy-lanes`).
 ;;
-;; HANDLES. The stack-promotion classifier's "handle-shaped" note
-;; (`opt-aggregate-stack-promote-type?`) means "a fixed Struct/Enum/Tuple", not
-;; "holds an owning handle": this language has no implicit destructor walk, and
+;; HANDLES. "A fixed Struct/Enum/Tuple" is not "holds an owning handle": this
+;; language has no implicit destructor walk, and
 ;; every ownership edge is an explicit `store_owned` instruction or an explicit
 ;; destroy CALL. The rule this pass states is therefore: an ownership-edge
 ;; instruction that touches the allocation refuses it (it is not one of the
@@ -4947,8 +4244,7 @@
 ;; The reserved-slot run an `addr_of` completes: walk back, never past the
 ;; block start, while the instruction is an `alloc` of the same type whose
 ;; destination is the next slot down. That is exactly the contiguous
-;; reservation `lower-reserve-inline-storage` and
-;; `opt-aggregate-promote-alloc-run!` emit.
+;; reservation `lower-reserve-inline-storage` emits.
 (define (opt-aggregate-split-run-count
   [type-segment-bases : i64]
   [flat : (& flat OptSplitFlat)]
@@ -22338,7 +21634,11 @@
   ;; LICM-PART: WHICH globals it may take a handle out for -- every eligible
   ;; one when the whole set fits the budget, the most-referenced ones that do
   ;; when it does not (opt-licm-global-header-admit).
-  (header-admit opt_i64_i64_map.Map))
+  (header-admit opt_i64_i64_map.Map)
+  ;; Whether the loop has room in the integer register pool for one more
+  ;; loop-spanning value: the price a `Global` operand of a scalar arm pays
+  ;; under the per-global answer (opt-licm-global-value-invariant?).
+  (cell-room? bool))
 
 (define (opt-licm-global-facts
   [clean? : bool]
@@ -22346,7 +21646,8 @@
   [mask : i64]
   [obj-mask : i64]
   [header-hoist? : bool]
-  [header-admit : opt_i64_i64_map.Map]) : OptLicmGlobalFacts
+  [header-admit : opt_i64_i64_map.Map]
+  [cell-room? : bool]) : OptLicmGlobalFacts
   (let
     [mod-ref : OptGlobalModRef cells.mod-ref]
     [obj : OptGlobalModRef cells.obj-mod-ref]
@@ -22357,7 +21658,8 @@
       obj.index
       obj-mask
       header-hoist?
-      header-admit)))
+      header-admit
+      cell-room?)))
 
 ;; LICM-PART: is `name` one of the globals this loop takes a handle out for?
 (define (opt-licm-global-header-admitted?
@@ -22389,7 +21691,10 @@
       (or
         (not (opt-used-contains loop-defs var))
         (opt-used-contains hoisted var))]
-    [(Global name) (opt-licm-global-facts-invariant? facts name)]
+    [(Global name)
+      (or
+        facts.clean?
+        (and facts.cell-room? (opt-licm-global-facts-invariant? facts name)))]
     [_ true]))
 
 (define (opt-licm-global-values-invariant?
@@ -23458,19 +22763,16 @@
 ;; trade, and it is priced HERE by the gate IAG-2 already owns rather than by a
 ;; second one. `opt-licm-global-header-value?` is the predicate the Gep arm's
 ;; IAG-2 disjunct asks of this very operand: the loop writes neither g's cell
-;; nor g's storage (the per-global rows), and `header-hoist?` -- the live-in
-;; budget of opt-licm-global-header-hoist? -- has admitted this loop for taking
-;; a handle out.
+;; nor g's storage (the per-global rows), and `header-hoist?` -- the
+;; admission of opt-licm-global-header-hoist?, capped at the register pool --
+;; has admitted this loop for taking a handle out.
 ;;
-;; Two wider readings are losses:
-;;
-;;   * accepting EVERY class opt-licm-header-slot-ptr-kind? names -- which adds
-;;     P16's `LocalObject`/`LocalSlot` frame words -- lets locally allocated
-;;     Vec chains all leave their loops at once, and the function spills what
-;;     it was holding in registers. Only the global head is admitted here; a
-;;     frame object's field keeps its classification;
-;;   * admitting the global head with NO pressure gate costs spills that the
-;;     `header-hoist?` question removes.
+;; One wider reading is a loss: accepting EVERY class
+;; opt-licm-header-slot-ptr-kind? names -- which adds P16's
+;; `LocalObject`/`LocalSlot` frame words -- lets locally allocated Vec chains
+;; all leave their loops at once, and the function spills what it was holding
+;; in registers. Only the global head is admitted here; a frame object's field
+;; keeps its classification.
 ;;
 ;; The gate still lets out a few chains that are net losses, accepted against
 ;; the larger wins. Pricing the arm at the chain's three words instead of the
@@ -28072,7 +27374,7 @@
 (define (opt-licm-chain-live-in-budget) : i64
   12)
 
-;; --- IAG-2 PRESSURE GATE ------------------------------------------------------
+;; --- IAG-2 HANDLE ADMISSION ---------------------------------------------------
 ;;
 ;; WHAT THIS GATE PRICES, and what it does NOT. It admits ONE value per global:
 ;; the descriptor handle `load (gep @g, 0)` reads out of the cell. Whether that
@@ -28082,7 +27384,7 @@
 ;; the loop's callees that this per-global proof neither answers nor replaces.
 ;; So an unknown callee splits the chain by itself (the handle leaves, the
 ;; length stays), and an element-only callee lets the whole chain out. The
-;; budget therefore charges one word.
+;; pool cap therefore counts one word per handle.
 ;;
 ;; WHY NOT THREE, AND WHY THE SPLIT IS NOT ENFORCED. Enforcing the split --
 ;; hoist the handle, hold the length and data loads in the loop whatever the
@@ -28096,11 +27398,18 @@
 ;; link-time address, so the chain is one load shorter than the one P18
 ;; priced.
 ;;
-;; WHY TWELVE. The budget is the shared chain budget, for the same
-;; reason (opt-licm-chain-live-in-budget): a value live across a call
-;; can only live in the callee-saved GP file, and twelve is where that file
-;; plus the frame staging the register allocator now keeps in registers stops
-;; paying.
+;; WHY NO PRESSURE PRICE. A hoisted handle is one more value live across the
+;; loop, but it is a LOAD: if the allocator spills it, each use reloads it from
+;; the frame where the loop used to reload it from the cell, so even a loop
+;; whose integer peak already exceeds the register pool pays about what it paid
+;; before. Pricing the handle against the loop's peak (opt-licm-loop-int-pressure
+;; against opt-licm-int-register-pool) refuses exactly the loops whose hoists
+;; pay most -- graph walks over several global Vecs, peaking at 15 to 20 live
+;; integer values. What IS priced is a hoist that removes no load: arithmetic
+;; over a cell the loop does not write (opt-licm-global-value-invariant?,
+;; against the loop's peak).
+;; The one cap left is the pool itself: a loop never takes out more handles
+;; than there are integer registers, the most-referenced first.
 ;;
 ;; Two further conditions. `late?` keeps the
 ;; hoist out of the pre-BCE run, where moving a descriptor address can hide the
@@ -28110,8 +27419,288 @@
 (define (opt-licm-global-header-words) : i64
   1)
 
-(define (opt-licm-global-header-live-in-budget) : i64
-  (opt-licm-chain-live-in-budget))
+;; The integer registers the allocator homes values in on the fixed Linux ABI
+;; it plans against: the caller-saved and the callee-saved GP files (9 + 5).
+;; %rsp is the stack and %rbp is left out, as it is the frame pointer whenever
+;; a frame is kept.
+(define (opt-licm-int-register-pool) : i64
+  (+
+    (cabi.compiler-abi-caller-saved-gp-register-count (Linux) (Internal))
+    (cabi.compiler-abi-callee-saved-gp-register-count (Linux) (Internal))))
+
+;; Does `var` compete for an integer register? The allocator's own
+;; register-eligibility rule with floats excluded; a var with no recorded type
+;; is counted.
+(define (opt-licm-int-pressure-var?
+  [types : (& types OptSsaVarTypes)]
+  [var : i64]) : bool
+  (match (opt-ssa-var-types-lookup types var)
+    [(Some ty)
+      (and
+        (reg.compiler-reg-register-eligible-type? (& ty))
+        (not (reg.compiler-reg-float-type? (& ty))))]
+    [(No) true]))
+
+;; One LICM run's pressure scratch for one function, built on the first loop
+;; that needs an estimate and grown only when loop-scope promotion has minted
+;; vars past it: `int?` is opt-licm-int-pressure-var? per var, `live` the walk's
+;; set, and `touched` the vars the current block's walk set (slot 0 holds the
+;; count), so a block clears what it set instead of every var.
+(defstruct OptLicmPressureScratch
+  (int? (__tl_dyn-array bool))
+  (live (__tl_dyn-array bool))
+  (touched (__tl_dyn-array i64)))
+
+(define (opt-licm-pressure-scratch-empty) : OptLicmPressureScratch
+  (OptLicmPressureScratch
+    (__tl_make-array bool 0)
+    (__tl_make-array bool 0)
+    (__tl_make-array i64 1)))
+
+(define (opt-licm-pressure-scratch-ready!
+  [memo : (&mut memo (__tl_dyn-array OptLicmPressureScratch))]
+  [types : (& types OptSsaVarTypes)]
+  [vars : i64]) : unit
+  (let
+    [have : i64
+      (let
+        [current (& (array-ref memo 0))]
+        (array-length current.int?))]
+    (when
+      (< have vars)
+      (let
+        [int? : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+        (let
+          [current (& (array-ref memo 0))]
+          (for [var (iterator.range 0 have)]
+            (set! (array-ref int? var) (array-ref current.int? var))))
+        (for [var (iterator.range have vars)]
+          (set! (array-ref int? var) (opt-licm-int-pressure-var? types var)))
+        (set!
+          (array-ref memo 0)
+          (OptLicmPressureScratch
+            int?
+            (__tl_make-array bool vars)
+            (__tl_make-array i64 (+ vars 1))))))))
+
+;; Mark `var` live; answers the live count after.
+(define (opt-licm-pressure-add!
+  [scratch : (&mut scratch OptLicmPressureScratch)]
+  [count : i64]
+  [var : i64]) : i64
+  (if (or
+    (< var 0)
+    (>= var (array-length scratch.live))
+    (not (array-ref scratch.int? var))
+    (array-ref scratch.live var))
+    count
+    (let
+      [slot : i64 (+ (array-ref scratch.touched 0) 1)]
+      (set! (array-ref scratch.live var) true)
+      (set! (array-ref scratch.touched 0) slot)
+      (when
+        (< slot (array-length scratch.touched))
+        (set! (array-ref scratch.touched slot) var))
+      (+ count 1))))
+
+;; Clear what the block's walk set. A walk that set more vars than `touched`
+;; holds (an SSA body sets each var at most once) clears them all.
+(define (opt-licm-pressure-clear!
+  [scratch : (&mut scratch OptLicmPressureScratch)]) : unit
+  (let
+    [count : i64 (array-ref scratch.touched 0)]
+    (if (< count (array-length scratch.touched))
+      (for [slot (iterator.range 1 (+ count 1))]
+        (set! (array-ref scratch.live (array-ref scratch.touched slot)) false))
+      (for [var (iterator.range 0 (array-length scratch.live))]
+        (set! (array-ref scratch.live var) false)))
+    (set! (array-ref scratch.touched 0) 0)))
+
+(define (opt-licm-pressure-remove!
+  [scratch : (&mut scratch OptLicmPressureScratch)]
+  [count : i64]
+  [var : i64]) : i64
+  (if (or
+    (< var 0)
+    (>= var (array-length scratch.live))
+    (not (array-ref scratch.live var)))
+    count
+    (begin
+      (set! (array-ref scratch.live var) false)
+      (- count 1))))
+
+;; Mark every var of `set` live, one bitset word at a time; answers the count
+;; after, starting from `count`.
+(define (opt-licm-pressure-add-set!
+  [scratch : (&mut scratch OptLicmPressureScratch)]
+  [count : i64]
+  [set : (& set opt_liveness.CompilerLiveI64Set)]) : i64
+  (let
+    [total : i64 count]
+    (for [word-index
+      (iterator.range 0 (opt_liveness.compiler-live-set-word-count set))]
+      (let
+        [word : i64
+          (opt_liveness.compiler-live-set-word-at-bounded set word-index)]
+        (when
+          (not (= word 0))
+          (for [bit (iterator.range 0 64)]
+            (when
+              (not (= (bit-and word (shl 1 bit)) 0))
+              (set!
+                total
+                (opt-licm-pressure-add! scratch total (+ (* word-index 64) bit))))))))
+    total))
+
+;; Walk one block bottom-up from its live-out set and answer the largest live
+;; count at any point. A def leaves the set above its instruction and the
+;; instruction's uses join it; phi inputs are not uses here (they are live out
+;; of their own predecessors, which is what edge-precise liveness says). The
+;; set is cleared on the way out, so the scratch array is all-false again.
+(define (opt-licm-pressure-block-peak
+  [scratch : (&mut scratch OptLicmPressureScratch)]
+  [live-out : (& live-out opt_liveness.CompilerLiveI64Set)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [count : i64 (opt-licm-pressure-add-set! scratch 0 live-out)]
+    [peak : i64 count]
+    [index : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+    (while (>= index 0)
+      (let
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+        [dst : i64 (ir.compiler-ir-instr-dst (& instr))]
+        ;; A def nobody reads still takes a register at its own instruction.
+        (when
+          (and
+            (>= dst 0)
+            (< dst (array-length scratch.live))
+            (array-ref scratch.int? dst)
+            (not (array-ref scratch.live dst))
+            (>= count peak))
+          (set! peak (+ count 1)))
+        (set! count (opt-licm-pressure-remove! scratch count dst))
+        (let
+          [id-count : i64
+            (opt_liveness.compiler-live-instr-use-ids-nophi! (& instr))]
+          (if (< id-count 0)
+            (let
+              [uses : opt_liveness.CompilerLiveI64Set
+                (opt_liveness.compiler-live-instr-uses-nophi (& instr))]
+              (set! count (opt-licm-pressure-add-set! scratch count (& uses))))
+            (let
+              [ids : (__tl_dyn-array i64)
+                (opt_liveness.compiler-live-instr-ids)]
+              (for [k (iterator.range 0 id-count)]
+                (set!
+                  count
+                  (opt-licm-pressure-add! scratch count (array-ref ids k)))))))
+        (when (> count peak) (set! peak count))
+        (-= index 1)))
+    (opt-licm-pressure-clear! scratch)
+    peak))
+
+;; The loop's integer register pressure: the most integer-register values live
+;; at once at any instruction of the body, over the function's edge-precise
+;; liveness (the analysis the scalar allocator itself runs). `vars` bounds the
+;; function's var ids.
+;; Would the cell-arithmetic price be asked at all? Only a scalar arm of
+;; opt-licm-candidate? reads `cell-room?`, and only for a `Global` operand the
+;; loop's cell-write row leaves out; a body with no such operand never asks,
+;; so its loop skips the estimate.
+(define (opt-licm-cell-operand-free?
+  [index : (& index opt_i64_i64_map.Map)]
+  [cell-writes : i64]
+  [value : (& value ir.CompilerIrValue)]) : bool
+  (match value
+    [(Global name)
+      (not (opt-global-mod-ref-mask-may-write? index cell-writes name))]
+    [_ false]))
+
+(define (opt-licm-cell-arith-instr?
+  [index : (& index opt_i64_i64_map.Map)]
+  [cell-writes : i64]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(or (Mov _ src _) (Cast _ src _ _) (Bitcast _ src _ _) (Word _ src _ _)
+         (UnOp _ _ src _) (Splat _ src _ _))
+      (opt-licm-cell-operand-free? index cell-writes src)]
+    [(BinOp _ _ lhs rhs _)
+      (or
+        (opt-licm-cell-operand-free? index cell-writes lhs)
+        (opt-licm-cell-operand-free? index cell-writes rhs))]
+    [(VectorBinOp payload-box)
+      (or
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).lhs))
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).rhs)))]
+    [(VectorCompare payload-box)
+      (or
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).lhs))
+        (opt-licm-cell-operand-free?
+          index
+          cell-writes
+          (& (deref payload-box).rhs)))]
+    [_ false]))
+
+(define (opt-licm-cell-arith-body?
+  [cells : (& cells OptGlobalCellSummary)]
+  [cell-writes : i64]
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : bool
+  (let
+    [mod-ref (& cells.mod-ref)]
+    (match body-blocks
+      [(Array seq)
+        (for [position (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq position)
+            [(Block _ instrs)
+              (for [at
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (when
+                  (opt-licm-cell-arith-instr?
+                    (& mod-ref.index)
+                    cell-writes
+                    (ir.compiler-ir-instr-seq-borrow instrs at))
+                  (return true)))]))
+        false])))
+
+(define (opt-licm-loop-int-pressure
+  [memo : (&mut memo (__tl_dyn-array OptLicmPressureScratch))]
+  [types : (& types OptSsaVarTypes)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
+  [vars : i64]) : i64
+  (let
+    [_ready : unit (opt-licm-pressure-scratch-ready! memo types vars)]
+    [scratch (&mut (array-ref memo 0))]
+    [liveness : opt_liveness.CompilerFunctionLiveness
+      (opt_liveness.compiler-live-analyze-block-bounds-edge-precise blocks vars)]
+    [peak : i64 0]
+    (match body-blocks
+      [(Array seq)
+        (for [position (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq position)
+            [(Block label instrs)
+              (match (opt_liveness.compiler-live-function-find-block
+                (& liveness)
+                label)
+                [(Some block)
+                  (let
+                    [block-peak : i64
+                      (opt-licm-pressure-block-peak
+                        scratch
+                        (& block.live-out)
+                        (& instrs))]
+                    (when (> block-peak peak) (set! peak block-peak)))]
+                [(No) unit])]))])
+    peak))
 
 ;; How many distinct globals this loop would take a handle out for: those the
 ;; two rows prove it writes no storage of.
@@ -28146,16 +27735,12 @@
             count
             (+ count 1))))]))
 
-;; The globals the budget is charged for: those that actually HEAD a chain
-;; here, i.e. appear as the base of a literal-offset `Gep`. A global that only
-;; rides a call's argument list -- `f(.., @g, ..)` -- creates no preheader
-;; value and must not be charged for one; charging it would push a loop that
-;; passes globals to calls over the budget and refuse the hoist outright.
-;;
-;; The walk spans the loop BODY and its PREHEADER, so the gate keeps giving the
-;; same answer once it has fired: after the first round the `gep @g, 0` that
-;; names g has MOVED to the preheader, and a count that stopped seeing it there
-;; would price a loop whose handles are already out as if it had none.
+;; The globals the hoist could take a handle out for: those that actually HEAD a
+;; chain here, i.e. appear as the base of a literal-offset `Gep` in the loop
+;; BODY -- the same set opt-licm-global-header-admit chooses from. A global that
+;; only rides a call's argument list -- `f(.., @g, ..)` -- creates no preheader
+;; value and is not counted, and neither is a handle an earlier round already
+;; moved to the preheader: it has nothing left to admit.
 (define (opt-licm-global-header-refs-instr
   [scan : OptGlobalCellScan]
   [instr : (& ir.CompilerIrInstr)]) : OptGlobalCellScan
@@ -28198,32 +27783,21 @@
         rest)]))
 
 (define (opt-licm-global-header-refs
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [preheader : i64]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : OptLabelSet
   (let
     [body-scan : OptGlobalCellScan
       (opt-licm-global-header-refs-blocks
         (opt-global-cell-scan-new)
         (ir.compiler-ir-block-list-view body-blocks))]
-    (match (opt-cfg-find-block blocks preheader)
-      [(No) body-scan.ref-list]
-      [(Some block)
-        (match block
-          [(Block _ instrs)
-            (opt-licm-global-header-refs-seq
-              body-scan
-              instrs
-              0
-              (ir.compiler-ir-instr-seq-count instrs)).ref-list])])))
+    body-scan.ref-list))
 
-;; Developer-only observability for the header hoist's budget arithmetic, one
+;; Developer-only observability for the header hoist's admission, one
 ;; line per loop, on the same flag `--trace-passes` sets and suppressed in the
 ;; inliner's throwaway measurement runs exactly as the pass tracer is. Ordinary
 ;; compilation never reaches the print.
 (define (opt-licm-global-header-trace!
   [header : i64]
-  [live-in : i64]
+  [refs : i64]
   [count : i64]
   [admitted? : bool]) : unit
   (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
@@ -28231,12 +27805,12 @@
       (str_cat.str-cat
         "optimizer-iag2|"
         (ir.compiler-ir-label-text header)
-        "|live-in="
-        (string.int->string live-in)
         "|globals="
+        (string.int->string refs)
+        "|taken="
         (string.int->string count)
-        "|budget="
-        (string.int->string (opt-licm-global-header-live-in-budget))
+        "|pool="
+        (string.int->string (opt-licm-int-register-pool))
         (if admitted?
           "|admitted\n"
           "|refused\n")))
@@ -28248,11 +27822,9 @@
 ;; preconditions byte- and allocation-identical.
 (define (opt-licm-global-header-count
   [cells : (& cells OptGlobalCellSummary)]
-  [preheader : i64]
   [clean? : bool]
   [cell-writes : i64]
   [obj-writes : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : i64
   (if (opt-global-mod-ref-any? obj-writes)
     0
@@ -28261,19 +27833,15 @@
       clean?
       cell-writes
       obj-writes
-      (opt-licm-global-header-refs blocks preheader body-blocks)
+      (opt-licm-global-header-refs body-blocks)
       0)))
 
-;; LICM-PART: the globals this loop takes a handle out for, chosen under the
-;; budget instead of refused as a block. The gate above admitted the WHOLE
-;; eligible set or none of it; a loop whose live-ins already sit near the
-;; budget therefore kept every rip-relative handle reload it had, however
-;; hot, because the count of everything referenced did not fit. What fits is
-;; taken: every eligible global when `live-in + n` is within the budget, else
-;; the `budget - live-in` most-referenced ones (ties to the lower symbol id),
-;; none when the loop's own live-ins already fill it. Reference counts are the
-;; literal-offset geps off the global in the body and the preheader -- the
-;; preheader so the answer stays stable once a handle has moved out.
+;; LICM-PART: the globals this loop takes a handle out for: every eligible
+;; global the body references when they fit the register pool, else the
+;; pool's worth of most-referenced ones (ties to the lower symbol id).
+;; Reference counts are the literal-offset geps off the global in the body; a
+;; handle an earlier round already moved has no body reference left and needs
+;; no admission.
 (defstruct OptLicmHeaderAdmitScan
   (counts opt_i64_i64_map.Map)
   (ids OptLabelSet))
@@ -28448,32 +28016,17 @@
 
 (define (opt-licm-global-header-admit
   [cells : (& cells OptGlobalCellSummary)]
-  [preheader : i64]
   [clean? : bool]
   [cell-writes : i64]
   [obj-writes : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
-  [live-in : i64]
-  [budget : i64]) : opt_i64_i64_map.Map
+  [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : opt_i64_i64_map.Map
   (if (opt-global-mod-ref-any? obj-writes)
     (opt_i64_i64_map.with-capacity 1)
     (let
-      [body-scan : OptLicmHeaderAdmitScan
+      [scan : OptLicmHeaderAdmitScan
         (opt-licm-header-admit-scan-blocks
           (OptLicmHeaderAdmitScan (opt_i64_i64_map.with-capacity 8) (Nil))
           (ir.compiler-ir-block-list-view body-blocks))]
-      [scan : OptLicmHeaderAdmitScan
-        (match (opt-cfg-find-block blocks preheader)
-          [(No) body-scan]
-          [(Some block)
-            (match block
-              [(Block _ instrs)
-                (opt-licm-header-admit-scan-seq
-                  body-scan
-                  instrs
-                  0
-                  (ir.compiler-ir-instr-seq-count instrs))])])]
       [eligible : OptLabelSet
         (opt-licm-header-admit-eligible
           cells
@@ -28483,30 +28036,24 @@
           scan.ids
           (Nil))]
       [n : i64 (opt-licm-header-admit-len eligible 0)]
-      [room : i64 (- budget live-in)]
-      (if (<= (+ live-in (* n (opt-licm-global-header-words))) budget)
+      [pool : i64 (opt-licm-int-register-pool)]
+      (if (<= (* n (opt-licm-global-header-words)) pool)
         (opt-licm-header-admit-all eligible (opt_i64_i64_map.with-capacity 8))
         (opt-licm-header-admit-pick
           scan.counts
           eligible
-          (/ room (opt-licm-global-header-words))
+          (/ pool (opt-licm-global-header-words))
           (opt_i64_i64_map.with-capacity 8))))))
 
 (define (opt-licm-global-header-hoist?
   [header : i64]
   [side-exit-kind : i64]
-  [count : i64]
-  [live-in : i64]) : bool
+  [header-count : i64]
+  [count : i64]) : bool
   (let
-    [admitted? : bool
-      (and
-        (not (= side-exit-kind 1))
-        (> count 0)
-        (<=
-          (+ live-in (* count (opt-licm-global-header-words)))
-          (opt-licm-global-header-live-in-budget)))]
-    (if (> count 0)
-      (opt-licm-global-header-trace! header live-in count admitted?)
+    [admitted? : bool (and (not (= side-exit-kind 1)) (> count 0))]
+    (if (> header-count 0)
+      (opt-licm-global-header-trace! header header-count count admitted?)
       unit)
     admitted?))
 
@@ -28565,9 +28112,10 @@
 ;;                                        which the header hoist declines.
 ;;   iag2:no-refs                         the loop references no global whose storage
 ;;                                        the two rows prove it does not write.
-;;   iag2:live-in-budget:<live-in>+<n>    opt-licm-global-header-hoist?'s budget
-;;                                        refused (live-in plus one word per global
-;;                                        against opt-licm-global-header-live-in-budget).
+;;   iag2:pool:<n>                        the loop references more eligible globals
+;;                                        than opt-licm-int-register-pool, and this
+;;                                        one is not among the most-referenced that
+;;                                        the hoist takes (opt-licm-global-header-admit).
 ;;   header-load-safe:call:<blame>        opt-licm-store-summary-header-load-safe? is
 ;;                                        false because of a call.
 ;;   header-load-safe:store:<blame>       ... because of a header-or-unknown store.
@@ -28809,16 +28357,15 @@
                 rest)))])]))
 
 ;; The context one loop hands the walk. It is the same set of facts
-;; opt-licm-candidate? is called with, plus the three loop-site numbers whose
-;; arithmetic the reasons quote (side-exit kind, live-in count, header-ref
-;; count); bundling them keeps the walk's own arity at the traversal state.
+;; opt-licm-candidate? is called with, plus the two loop-site numbers the
+;; reasons quote (side-exit kind, header-ref count); bundling them keeps the
+;; walk's own arity at the traversal state.
 (defstruct OptLicmRefuseCtx
   (type-segment-bases i64)
   (types OptSsaVarTypes)
   (ptrs OptLicmPtrEnv)
   (globals OptLicmGlobalFacts)
   (store-summary OptLicmStoreSummary)
-  (legacy-store-summary OptLicmStoreSummary)
   ;; The composed body summary BEFORE the return-shaped side-exit poison is
   ;; folded in. The poison is a profitability verdict spelled as a fake
   ;; header-or-unknown store, so blaming a store for it would name an
@@ -28835,7 +28382,6 @@
   (mem-clean-call? bool)
   (any-call? bool)
   (side-exit-kind i64)
-  (live-in i64)
   (header-count i64)
   (header i64)
   ;; #7992/#8085: a load is also kept when its word may not be readable at the
@@ -28912,13 +28458,7 @@
       [(= ctx.side-exit-kind 1) "iag2:side-exit-return"]
       [(= ctx.header-count 0) "iag2:no-refs"]
       [else
-        (str_cat.str-cat
-          (str_cat.str-cat
-            (str_cat.str-cat
-              "iag2:live-in-budget:"
-              (string.int->string ctx.live-in))
-            "+")
-          (string.int->string ctx.header-count))])))
+        (str_cat.str-cat "iag2:pool:" (string.int->string ctx.header-count))])))
 
 ;; Does the program carry IAG-2's storage table at all? A program that does not
 ;; seeds every loop at "may write any storage", so no per-global answer exists
@@ -29239,7 +28779,6 @@
   [ptrs : OptLicmPtrEnv]
   [globals : OptLicmGlobalFacts]
   [store-summary : OptLicmStoreSummary]
-  [legacy-store-summary : OptLicmStoreSummary]
   [raw-legacy-summary : OptLicmStoreSummary]
   [direct-call-clean : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
@@ -29247,7 +28786,6 @@
   [mem-clean-call? : bool]
   [any-call? : bool]
   [side-exit-kind : i64]
-  [live-in : i64]
   [header-count : i64]
   [header : i64]
   [map-capacity : i64]
@@ -29262,7 +28800,6 @@
           ptrs
           globals
           store-summary
-          legacy-store-summary
           raw-legacy-summary
           direct-call-clean
           cells
@@ -29272,7 +28809,6 @@
           mem-clean-call?
           any-call?
           side-exit-kind
-          live-in
           header-count
           header
           deref-site))
@@ -29297,6 +28833,8 @@
   [direct-call-clean : (& opt_i64_i64_map.Map)]
   [global-cells : (& OptGlobalCellSummary)]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
+  ;; The function's pressure scratch (OptLicmPressureScratch).
+  [pressure : (&mut pressure (__tl_dyn-array OptLicmPressureScratch))]
   [late? : bool]
   ;; #7992: the function's element-bound facts (opt-licm-deref-facts).
   [deref-facts : OptLicmDerefFacts]
@@ -29428,24 +28966,35 @@
         [header-count : i64
           (opt-licm-global-header-count
             global-cells
-            preheader
             globals-clean?
             cell-writes
             obj-writes
-            blocks
             body-blocks)]
-        ;; LICM-PART: the handles this loop takes out under the budget.
+        ;; The loop's integer peak, the price of moving arithmetic over a cell
+        ;; that only the per-global answer proves invariant
+        ;; (opt-licm-global-value-invariant?). Measured only for a loop that
+        ;; answer applies to: not globals-clean, and a cell-write row that does
+        ;; not name every cell.
+        [cell-pressure : i64
+          (if (and
+            (not globals-clean?)
+            (not (opt-global-mod-ref-any? cell-writes))
+            (opt-licm-cell-arith-body? global-cells cell-writes (& body-blocks)))
+            (opt-licm-loop-int-pressure
+              pressure
+              types
+              (& blocks)
+              (& body-blocks)
+              (array-ref frame-cell 0))
+            0)]
+        ;; LICM-PART: the handles this loop takes out under the pool.
         [header-admit : opt_i64_i64_map.Map
           (opt-licm-global-header-admit
             global-cells
-            preheader
             globals-clean?
             cell-writes
             obj-writes
-            blocks
-            body-blocks
-            loop-live-in
-            (opt-licm-global-header-live-in-budget))]
+            body-blocks)]
         [globals : OptLicmGlobalFacts
           (opt-licm-global-facts
             globals-clean?
@@ -29455,9 +29004,10 @@
             (opt-licm-global-header-hoist?
               (opt-natural-loop-header loop)
               side-exit-kind
-              (opt_i64_i64_map.len (& header-admit))
-              loop-live-in)
-            header-admit)]
+              header-count
+              (opt_i64_i64_map.len (& header-admit)))
+            header-admit
+            (< cell-pressure (opt-licm-int-register-pool)))]
         [globals-promote-clean? : bool
           (and
             globals-clean-relaxed?
@@ -29560,7 +29110,6 @@
                   ptrs
                   globals
                   store-summary
-                  legacy-store-summary
                   raw-legacy-summary
                   (owned_view.compiler-owned-reference-shared-view
                     direct-call-clean)
@@ -29569,7 +29118,6 @@
                   store-state.mem-clean-call?
                   any-call?
                   side-exit-kind
-                  loop-live-in
                   header-count
                   (opt-natural-loop-header loop)
                   map-capacity
@@ -29737,6 +29285,7 @@
   [direct-call-clean : (& opt_i64_i64_map.Map)]
   [global-cells : (& OptGlobalCellSummary)]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
+  [pressure : (&mut pressure (__tl_dyn-array OptLicmPressureScratch))]
   [late? : bool]
   [deref-facts : (& OptLicmDerefFacts)]
   [guard-plans : (& (__tl_dyn-array opt_licm_guard_plan_vec.Vec))]
@@ -29759,6 +29308,7 @@
           direct-call-clean
           global-cells
           frame-cell
+          pressure
           late?
           (owned_view.compiler-owned-reference-shared-view deref-facts)
           guard-plans
@@ -29775,6 +29325,7 @@
             direct-call-clean
             global-cells
             frame-cell
+            pressure
             late?
             deref-facts
             guard-plans
@@ -29979,6 +29530,8 @@
               [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
               [guard-plans : (__tl_dyn-array opt_licm_guard_plan_vec.Vec)
                 (__tl_make-array (opt_licm_guard_plan_vec.with-capacity 0))]
+              [pressure : (__tl_dyn-array OptLicmPressureScratch)
+                (__tl_make-array (opt-licm-pressure-scratch-empty))]
               (match (opt-licm-apply-loops
                 type-segment-bases
                 sources
@@ -29987,6 +29540,7 @@
                 direct-call-clean
                 global-cells
                 (&mut frame-cell)
+                (&mut pressure)
                 late?
                 (& deref-facts)
                 (& guard-plans)
@@ -41129,9 +40683,9 @@
       (opt-bool-branch-defs-fill-blocks! defs rest)]))
 
 ;; `OptBoolBranchDef.No` is the fieldless tag-0 variant, so its representation is
-;; all-zero bytes and `__tl_make-array` already produces it for every slot -- see
-;; `lower-make-array-zero-fill-enum-supported?`, which admits exactly the enums
-;; whose first variant carries no fields. Every private `(__tl_dyn-array E)` in
+;; all-zero bytes and `__tl_make-array` already produces it for every slot -- the
+;; ZII classifier `tc-type-zii-class` admits every enum whose first variant
+;; carries no fields. Every private `(__tl_dyn-array E)` in
 ;; this file built by `__tl_make-array` for such an `E` therefore starts out
 ;; uniformly tag-0, and a
 ;; pass that writes that same variant over the whole array is a pure repeat of
@@ -53084,7 +52638,8 @@
 (define (opt-bounds-dom-nonneg-fuel) : i64
   8)
 
-;; The phis the current proof has entered, innermost first.
+;; The phis the current proof has entered, innermost first. Entering a phi
+;; conses onto a clone of the borrowed list (its length is bounded by the fuel).
 (defenum OptNonnegPhis
   (Nil)
   (Cons i64 (Box OptNonnegPhis)))
@@ -53249,7 +52804,7 @@
             (opt-bounds-dom-nonneg-inputs?
               env
               cmp-facts
-              (& (Cons var (box phis)))
+              (& (Cons var (box (clone (deref phis)))))
               inputs
               fuel))]
         [_ false])]
@@ -54076,7 +53631,7 @@
             (opt-bounds-dom-induct-inputs?
               env
               cmp-facts
-              (& (Cons var (box phis)))
+              (& (Cons var (box (clone (deref phis)))))
               label
               nonneg?
               below?
@@ -60160,7 +59715,9 @@
             (ir.compiler-ir-instr-seq-borrow instrs index)
             (ir.compiler-ir-instr-seq-borrow instrs (+ index 1)))))
         [(Result next-fold folded)
-          (match (opt-strength-instr strength-state folded)
+          (match (opt-strength-instr
+            (compiler-opt-global-shared-view strength-state)
+            folded)
             [(Result next-strength strengthened)
               (match (opt-cse-instr
                 type-segment-bases
@@ -60252,9 +59809,13 @@
         (opt-slice-word-copy-value? hs offset))]
     [_ false]))
 
+;; `load-cse?` false skips the load-CSE step of the walk for a block on which
+;; it cannot rewrite anything (opt-block-load-cse-may-fire?); the Slice-word
+;; CSE and copy propagation still run.
 (define (opt-load-copy-instr-seq-rewrite!
   [type-segment-bases : i64]
   [hs : (& hs OptLoadHeaderSet)]
+  [load-cse? : bool]
   [state : OptLoadCseState]
   [words : (&mut words OptExprTable)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
@@ -60281,16 +59842,20 @@
               (if (opt-slice-word-copy-use? hs word-rewritten)
                 (opt-copy-subst-instr (& copy-state) word-rewritten)
                 word-rewritten)]
-            (match (opt-load-cse-dispatch
-              type-segment-bases
-              (&mut no-canon)
-              hs
-              false
-              sources
-              call-memory
-              cells
-              (compiler-opt-global-shared-view load-state)
-              load-input)
+            [load-view : OptLoadCseState
+              (compiler-opt-global-shared-view load-state)]
+            (match (if load-cse?
+              (opt-load-cse-dispatch
+                type-segment-bases
+                (&mut no-canon)
+                hs
+                false
+                sources
+                call-memory
+                cells
+                load-view
+                load-input)
+              (OptLoadCseResult.Result load-view load-input))
               [(Result next-load loaded)
                 (match (opt-copy-instr (& copy-state) (& loaded))
                   [(Result next-copy rewritten)
@@ -60839,12 +60404,69 @@
 (define (opt-block-scan-skippable?
   [scan-work : (__tl_dyn-array i64)]
   [block : (& ir.CompilerIrBlock)]) : bool
+  (= (opt-block-scan-mask scan-work block) 0))
+
+;; The pre-scan's stage mask for one block: 0 when no stage can fire, else the
+;; bits of the stages that may (see opt-block-fold-scan). Bit 1 means "unknown,
+;; run every stage": an over-long block, or a length-zero work array.
+(define (opt-block-scan-mask
+  [scan-work : (__tl_dyn-array i64)]
+  [block : (& ir.CompilerIrBlock)]) : i64
   (if (= (array-length scan-work) 0)
-    false
+    1
     (match block
       [(Block _ instrs)
         (+= opt-fold-scan-tag 1)
-        (= (opt-block-fold-scan scan-work opt-fold-scan-tag (& instrs)) 0)])))
+        (opt-block-fold-scan scan-work opt-fold-scan-tag (& instrs))])))
+
+;; Whether a stage whose fire bits are `bits` may rewrite a block of `mask`.
+;; Each bit states that stage's own fire rule on the block's input, and no
+;; earlier stage creates what a later gated stage acts on, so a stage whose
+;; bits are clear is a no-op on the block whichever other stages fire.
+(define (opt-block-scan-may-fire? [mask : i64] [bits : i64]) : bool
+  (not (= (bit-and mask (bit-or 1 bits)) 0)))
+
+;; Fold/strength/CSE fire bits: a constant seed (2) or a duplicate key (4).
+(define (opt-block-fold-cse-may-fire? [mask : i64]) : bool
+  (opt-block-scan-may-fire? mask 6))
+
+;; Load-CSE rewrites a Load (bit 16: a Load plus another Load/StorePtr/CopyBytes)
+;; or, through GSF-1, a read of a global cell behind a global `Store` in the same
+;; block. Bit 16 does not count that `Store`, so check for one. The earlier
+;; stages create neither: fold, strength and CSE rewrite an instruction into a
+;; Mov or an op over the same operands, and dead-store only deletes StorePtrs.
+(define (opt-block-load-cse-may-fire?
+  [mask : i64]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
+  (or
+    (opt-block-scan-may-fire? mask 16)
+    (let
+      [found : bool false]
+      [index : i64 0]
+      (while (and (not found) (< index instrs.len))
+        (match (& (array-ref instrs.slots index))
+          [(Store _ _ _) (set! found true)]
+          [_ unit])
+        (+= index 1))
+      found)))
+
+;; Bounds-check elimination fire bit: two or more BoundsChecks (64).
+(define (opt-block-bounds-may-fire? [mask : i64]) : bool
+  (opt-block-scan-may-fire? mask 64))
+
+;; The fold stage's store count (capped at 128, the dead-store table size) when
+;; the stage is skipped and so leaves the block as it is.
+(define (opt-block-store-count [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [count : i64 0]
+    (for [index (iterator.range 0 instrs.len)]
+      (match (& (array-ref instrs.slots index))
+        [(or (StorePtr _ _ _) (StoreOwned _ _ _))
+          (if (< count 128)
+            (+= count 1)
+            unit)]
+        [_ unit]))
+    count))
 
 (define (optimize-block-hs-full
   [profile-state : profile_state.CompilerProfileMetrics]
@@ -60855,6 +60477,7 @@
   [load-kinds : (& OptLoadPtrKinds)]
   [load-facts : (& OptAliasFacts)]
   [tables : (&mut tables OptBlockExprTables)]
+  [mask : i64]
   [block : (& ir.CompilerIrBlock)]) : ir.CompilerIrBlock
   (match (owned_view.compiler-owned-reference-shared-view block)
     [(Block label instrs)
@@ -60871,12 +60494,15 @@
         ;; that sequence in place. Fold runs ONCE: it is a single forward pass
         ;; that binds every folded result into its env, so over the block it
         ;; already reaches a fixpoint and a second fold would change nothing.
+        ;; A stage the pre-scan `mask` rules out for this block is skipped.
         (set!
           store-capacity
-          (opt-fold-strength-cse-instr-seq-rewrite!
-            type-segment-bases
-            (&mut tables.exprs)
-            (compiler-opt-global-shared-view work)))
+          (if (opt-block-fold-cse-may-fire? mask)
+            (opt-fold-strength-cse-instr-seq-rewrite!
+              type-segment-bases
+              (&mut tables.exprs)
+              (compiler-opt-global-shared-view work))
+            (opt-block-store-count (& work))))
         (set!
           work
           (opt-dead-store-instr-seq-known-with-kinds
@@ -60889,6 +60515,7 @@
         (opt-load-copy-instr-seq-rewrite!
           type-segment-bases
           hs
+          (opt-block-load-cse-may-fire? mask (& work))
           (opt-load-cse-empty-state-for-size-with-kinds
             profile-state
             (ir.compiler-ir-instr-seq-count work)
@@ -60896,7 +60523,9 @@
             (owned_view.compiler-owned-reference-shared-view load-facts))
           (&mut tables.words)
           (compiler-opt-global-shared-view work))
-        (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work))
+        (when
+          (opt-block-bounds-may-fire? mask)
+          (opt-bounds-instr-seq-rewrite! type-segment-bases (&mut work)))
         (Block label work))]))
 
 (define (optimize-block-hs-with-kinds
@@ -60911,18 +60540,21 @@
   [scan-work : (__tl_dyn-array i64)]
   [tables : (&mut tables OptBlockExprTables)]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
-  (if (opt-block-scan-skippable? scan-work (& block))
-    block
-    (optimize-block-hs-full
-      profile-state
-      pools
-      type-segment-bases
-      hs
-      dead-kinds
-      load-kinds
-      (& (optimize-block-entry-facts block entry-label seed-facts))
-      tables
-      (& block))))
+  (let
+    [mask : i64 (opt-block-scan-mask scan-work (& block))]
+    (if (= mask 0)
+      block
+      (optimize-block-hs-full
+        profile-state
+        pools
+        type-segment-bases
+        hs
+        dead-kinds
+        load-kinds
+        (& (optimize-block-entry-facts block entry-label seed-facts))
+        tables
+        mask
+        (& block)))))
 
 (define (optimize-block-entry-facts
   [block : (& block ir.CompilerIrBlock)]
@@ -75585,7 +75217,19 @@
             (or counter.sub? (> counter.step 0))
             ;; I64 only: the guard reasons in SIGNED 64-bit arithmetic, so
             ;; narrow (wrapping) and unsigned counters are out of scope.
-            (opt-induction-i64-type? counter.ity))
+            (opt-induction-i64-type? counter.ity)
+            ;; The step's SIGN must be the direction the latch states. Mode 0 is
+            ;; the ascending `inext < bound`, modes 1 and 2 the descending
+            ;; `inext >= floor` and `inext > floor`
+            ;; (opt-bce-version-shape-counter), and the derivations below are
+            ;; handed the executed values as the interval [seed, bound) or
+            ;; [bound, seed] accordingly. A counter that walks away from the end
+            ;; its latch tests never reaches it: the interval would be the wrong
+            ;; half of the number line, so the loop has no trip range and is not
+            ;; a counter here.
+            (if (= mode 0)
+              (not counter.sub?)
+              counter.sub?))
           (opt-bce-version-shape-phi
             blocks
             label
@@ -75604,6 +75248,34 @@
         [else (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
     [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))]))
 
+;; The self-loop latch's MODE -- 0 `Lt` (ascending exclusive), 1 `Ge`
+;; (descending inclusive), 2 `Gt` (descending exclusive) -- read as written, or
+;; through the compare's exact negation when the block branches to itself on its
+;; FALSE arm: `!(a lt b)` is `a ge b`, `!(a gt b)` is `a le b`, `!(a ge b)` is
+;; `a lt b`, and `!(a le b)` would need `a gt b`, which has no mode here. -1
+;; refuses, and `negated?` keeps the two spellings of one test on one table.
+(define (opt-bce-version-latch-mode
+  [op : (& ir.CompilerIrBinOp)]
+  [negated? : bool]) : i64
+  (match op
+    [(Lt)
+      (if negated?
+        1
+        0)]
+    [(Le)
+      (if negated?
+        2
+        (- 0 1))]
+    [(Ge)
+      (if negated?
+        0
+        1)]
+    [(Gt)
+      (if negated?
+        (- 0 1)
+        2)]
+    [_ (- 0 1)]))
+
 ;; The latch `inext < bound`, or ALIAS-1's two latch forms of a DESCENDING
 ;; counter, `next >= floor` and `next > floor`, all in the operand order
 ;; `counter <op> invariant`. `bound` still names the invariant the latch
@@ -75614,6 +75286,22 @@
 ;; `Gt` is admitted with the SAME interval as `Ge`: it executes at
 ;; [bound + 1, seed], a subset, so a guard derived over [bound, seed] is
 ;; stronger than necessary and never weaker.
+;;
+;; `negated?` is the latch branch's polarity (opt-bce-version-block-shape): the
+;; block branches to itself on its FALSE arm, so the loop continues where the
+;; compare FAILS and the direction is the one its exact negation reads --
+;; `!(a ge b)` is `a lt b`, `!(a le b)` is `a gt b`, `!(a lt b)` is `a ge b`.
+;; `!(a gt b)` would need `a le b`, which has no direction below, exactly as
+;; `(Le)` has none of its own. An UNSIGNED compare negates just as exactly, but
+;; every range here is signed 64-bit arithmetic, so its negation is not the
+;; predicate this recovery would then derive from; float compares have no exact
+;; negation at all (NaN). The positive spelling needs no such test: the counter
+;; phi is I64, and the compare's operands are the phi's type.
+;;
+;; The bound is read as the loop-INVARIANT value it names, through in-loop
+;; copies of a value the loop does not define (`%t = mov %n` with `%n` outside),
+;; which is opt-bce-version-invariant-operand -- the resolution the offset
+;; recovery below uses, and the value the guard, running before the loop, names.
 (define (opt-bce-version-shape-counter
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : i64]
@@ -75621,7 +75309,8 @@
   [phi-count : i64]
   [last : i64]
   [cond-var : i64]
-  [defs : (& opt_i64_i64_map.Map)]) : OptUnrollMaybeShape
+  [defs : (& opt_i64_i64_map.Map)]
+  [negated? : bool]) : OptUnrollMaybeShape
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
@@ -75629,33 +75318,42 @@
     (if (< cond-index 0)
       (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
       (match (ir.compiler-ir-instr-seq-borrow instrs cond-index)
-        [(BinOp _ cmp-op cmp-lhs cmp-rhs _)
-          (let
-            [mode : i64
-              (match cmp-op
-                [(Lt) 0]
-                [(Ge) 1]
-                [(Gt) 2]
-                [_ (- 0 1)])]
-            (if (< mode 0)
-              (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
-              (match cmp-lhs
-                [(Var cmp-src)
-                  (if (opt-unroll-invariant-bound? defs cmp-rhs)
-                    (opt-bce-version-shape-step
-                      blocks
-                      label
+        [(BinOp _ cmp-op cmp-lhs cmp-rhs ty)
+          (if (and negated? (not (opt-bce-version-cond-signed-type? (& ty))))
+            (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
+            (let
+              [mode : i64 (opt-bce-version-latch-mode (& cmp-op) negated?)]
+              (if (< mode 0)
+                (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
+                (match cmp-lhs
+                  [(Var cmp-src)
+                    (match (opt-bce-version-invariant-operand
                       instrs
                       phi-count
                       last
-                      cond-var
-                      cond-index
-                      (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
-                      (& cmp-rhs)
-                      mode)
-                    (opt-bce-trace-refuse-shape
-                      (opt-bce-reason-bound-not-invariant)))]
-                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])))]
+                      defs
+                      (& cmp-rhs))
+                      [(No)
+                        (opt-bce-trace-refuse-shape
+                          (opt-bce-reason-bound-not-invariant))]
+                      [(Some bound)
+                        (opt-bce-version-shape-step
+                          blocks
+                          label
+                          instrs
+                          phi-count
+                          last
+                          cond-var
+                          cond-index
+                          (opt-unroll-resolve-copy
+                            instrs
+                            phi-count
+                            last
+                            cmp-src
+                            16)
+                          (& bound)
+                          mode)])]
+                  [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))]))))]
         [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))]))))
 
 ;; The body clauses of the single-block shape, as the code of the FIRST one
@@ -75697,12 +75395,18 @@
             [(Branch cond then-label else-label)
               (match cond
                 [(Var cond-var)
-                  (if (and (= then-label label) (not (= else-label label)))
+                  (if (or
+                    (and (= then-label label) (not (= else-label label)))
+                    (and (= else-label label) (not (= then-label label))))
                     ;; A self-branching block on a Var condition IS the loop
                     ;; this scan examines; every verdict from here on is a
-                    ;; decision about it and earns a trace line. The size test
-                    ;; is the body reason's, so a three-instruction self-loop
-                    ;; is reported rather than silently skipped.
+                    ;; decision about it and earns a trace line. Either arm may
+                    ;; close the back edge and the OTHER one leaves the loop;
+                    ;; which arm leaves it decides whether the compare is read
+                    ;; as written or through its exact negation
+                    ;; (opt-bce-version-shape-counter). The size test is the
+                    ;; body reason's, so a three-instruction self-loop is
+                    ;; reported rather than silently skipped.
                     (let
                       [_examined : unit (opt-bce-trace-examined!)]
                       [last : i64 (- count 1)]
@@ -75727,7 +75431,8 @@
                               (& instrs.slots)
                               0
                               (+ last 1)
-                              (opt_i64_i64_map.with-capacity 32))))
+                              (opt_i64_i64_map.with-capacity 32)))
+                          (= else-label label))
                         (opt-bce-trace-refuse-shape reason)))
                     (No))]
                 [_ (No)])]
@@ -75939,10 +75644,25 @@
         [others : OptUnrollPhiList shape.others]
         [pred-label : i64 shape.pred-label]
         [cond-var : i64 shape.cond-var]
-        [exit-label : i64
+        [then-label
+          : i64
+          ;; The shape's branch may close the back edge from either one of its
+          ;; arms (opt-bce-version-shape-counter). Everything below -- the exit
+          ;; label and the fast clone's OWN branch -- reads the same arm the
+          ;; original does: a clone that swapped them would exit where the
+          ;; original loops and loop where it exits.
+          (match (ir.compiler-ir-instr-seq-borrow instrs last)
+            [(Branch _ then-label _) then-label]
+            [_ label])]
+        [else-label : i64
           (match (ir.compiler-ir-instr-seq-borrow instrs last)
             [(Branch _ _ else-label) else-label]
             [_ label])]
+        [continues-on-true? : bool (= then-label label)]
+        [exit-label : i64
+          (if continues-on-true?
+            else-label
+            then-label)]
         [guard-label : i64
           (ir.compiler-ir-label
             (&
@@ -76105,8 +75825,12 @@
                     (&mut fast-builder)
                     (ir.CompilerIrInstr.Branch
                       (opt-unroll-subst-value (& remap) (Var cond-var))
-                      fast-label
-                      exit-label))]
+                      (if continues-on-true?
+                        fast-label
+                        exit-label)
+                      (if continues-on-true?
+                        exit-label
+                        fast-label)))]
                 [fast-block : ir.CompilerIrBlock
                   (Block
                     fast-label
@@ -76274,7 +75998,7 @@
             frame)])]))
 
 ;; Cheap prescan: a candidate is a self-loop block that starts with a Phi,
-;; ends with a self-branch, and contains a BoundsCheck.
+;; ends with a branch on either arm back to itself, and contains a BoundsCheck.
 (define (opt-bce-version-block-candidate? [block : (& ir.CompilerIrBlock)]) : bool
   (match block
     [(Block label instrs)
@@ -76285,9 +76009,9 @@
           (match (ir.compiler-ir-instr-seq-borrow instrs 0)
             [(Phi _ _ _)
               (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
-                [(Branch _ true-label _)
+                [(Branch _ true-label false-label)
                   (and
-                    (= true-label label)
+                    (or (= true-label label) (= false-label label))
                     (>= (opt-bce-version-check-count instrs 0 (- count 1) 0) 1))]
                 [_ false])]
             [_ false])))]))
@@ -76422,10 +76146,11 @@
 ;; and the scan offers flat loops before nests so an inner loop that can
 ;; version on its own always gets the slot first.
 ;;
-;; cond-var, exit-label of a latch branch.
+;; cond-var, exit-label and whether the loop continues on the branch's FALSE
+;; arm, of a latch branch.
 (defenum OptBceMbMaybeLatch
   (No)
-  (Some i64 i64))
+  (Some i64 i64 bool))
 
 ;; iphi, seed, inext, bound, step (the counter's literal step), delta and
 ;; wrap-step (the shifted-limit pair documented at opt-bce-mb-counter-k-max's
@@ -76903,11 +76628,24 @@
               acc)]))]))
 
 ;; --- shape scan ---------------------------------------------------------------
-;; The latch must end `Branch c header exit` with the exit outside the loop.
+;;
+;; The latch ends on the loop test, so it closes the back edge from one arm and
+;; leaves the loop from the other, `Branch c header exit` or `Branch c exit
+;; header`. The second spelling is a real shape and not a different one: a
+;; rotation or a flag exit that swaps the arms leaves the very same test, and
+;; reading it needs the compare's NEGATION (`c` holds where the loop exits, so
+;; the loop continues where `c` fails). `flipped-ok?` decides whether the caller
+;; reads that spelling; `negated?` reports which one was found, and the counter
+;; recovery below reads the compare accordingly.
+;;
+;; The readers written for `Branch c header exit` alone -- the unroller, the hoist
+;; and the bound tightening all read `inext <op> bound` as the CONTINUING test --
+;; pass false and keep the arm they were written for.
 (define (opt-bce-mb-latch-branch
   [block : (& block ir.CompilerIrBlock)]
   [header : i64]
-  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
+  [body-labels : OptLabelSet]
+  [flipped-ok? : bool]) : OptBceMbMaybeLatch
   (match block
     [(Block _ instrs)
       (let
@@ -76918,11 +76656,17 @@
             [(Branch cond then-label else-label)
               (match cond
                 [(Var cond-var)
-                  (if (and
-                    (= then-label header)
-                    (not (opt-label-contains body-labels else-label)))
-                    (Some cond-var else-label)
-                    (No))]
+                  (cond
+                    [(and
+                        (= then-label header)
+                        (not (opt-label-contains body-labels else-label)))
+                      (Some cond-var else-label false)]
+                    [(and
+                        flipped-ok?
+                        (= else-label header)
+                        (not (opt-label-contains body-labels then-label)))
+                      (Some cond-var then-label true)]
+                    [else (No)])]
                 [_ (No)])]
             [_ (No)])))]))
 
@@ -77025,9 +76769,10 @@
                       next-chain)]
                   [_ (No)])))])])))
 
-;; The branch step: take this block as the compare when exactly its TRUE arm
-;; continues the loop and the condition recovers the counter; otherwise keep
-;; walking whichever single arm stays inside.
+;; The branch step: take this block as the compare when exactly ONE arm
+;; continues the loop and the condition recovers the counter in that arm's
+;; reading -- the TRUE arm's compare as written, the FALSE arm's as its exact
+;; negation; otherwise keep walking whichever single arm stays inside.
 (define (opt-bce-mb-chain-branch
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
@@ -77052,7 +76797,8 @@
               defs
               latch
               preheader
-              cond-var)
+              cond-var
+              false)
               [(Some iphi seed inext bound step delta wrap offset interval?)
                 ;; the compare's continuing successor must lead OUT of the
                 ;; chain, or it does not start the covered region
@@ -77092,20 +76838,58 @@
               then-label
               fuel
               chain)])]
-      ;; an exiting branch whose FALSE arm continues cannot be the `iphi <
-      ;; bound` test (the recovery reads the true arm as the continuing one),
-      ;; so it is just another guard on the way in
+      ;; an exiting branch whose FALSE arm continues is the same test with its
+      ;; arms exchanged (`Branch c exit body`), so its counter is recovered from
+      ;; the compare's exact NEGATION. A condition that is not a counter (a flag
+      ;; test, an equality) recovers nothing, and the branch is then just
+      ;; another guard on the way in, exactly as before.
       [(and else-in? (not then-in?))
-        (opt-bce-mb-chain-walk
-          blocks
-          body-blocks
-          defs
-          body-labels
-          latch
-          preheader
-          else-label
-          fuel
-          chain)]
+        (match cond
+          [(Var cond-var)
+            (match (opt-bce-mb-counter-top
+              body-blocks
+              defs
+              latch
+              preheader
+              cond-var
+              true)
+              [(Some iphi seed inext bound step delta wrap offset interval?)
+                (if (opt-label-contains chain else-label)
+                  (No)
+                  (Some
+                    (Some
+                      iphi
+                      seed
+                      inext
+                      bound
+                      step
+                      delta
+                      wrap
+                      offset
+                      interval?)
+                    chain))]
+              [(No)
+                (opt-bce-mb-chain-walk
+                  blocks
+                  body-blocks
+                  defs
+                  body-labels
+                  latch
+                  preheader
+                  else-label
+                  fuel
+                  chain)])]
+          [_
+            (opt-bce-mb-chain-walk
+              blocks
+              body-blocks
+              defs
+              body-labels
+              latch
+              preheader
+              else-label
+              fuel
+              chain)])]
       [else (No)])))
 
 ;; The latch of the top-tested family closes the back edge and nothing else:
@@ -77442,6 +77226,13 @@
 ;; one every index recovery uses -- walking through the increment is exactly
 ;; what makes the do-while's `inext + k` and the top-tested `iphi + k` one
 ;; statement -- and it stops at the phi, which is not a literal-addend link.
+;;
+;; The bound is read as the loop-INVARIANT value it names, through in-loop
+;; copies of a value the loop does not define (`%t = mov %n` with `%n` outside):
+;; the copy writes `%n` on every trip, so every reading of `%t` is a reading of
+;; `%n`, and `%n` is what the guard -- which runs before the loop -- can name.
+;; opt-bce-mb-invariant-operand is that resolution, shared with the offset
+;; recovery below.
 (define (opt-bce-mb-counter-compare
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
@@ -77452,37 +77243,38 @@
   [descending? : bool]
   [shift : i64]
   [bottom? : bool]) : OptBceMbMaybeCounter
-  (if (not (opt-unroll-invariant-bound? defs cmp-rhs))
-    (No)
-    (match (opt-bce-mb-strided-peel body-blocks cmp-lhs 0 8)
-      [(No) (No)]
-      [(Some core k)
-        (match (opt-bce-mb-counter-from-phi
-          body-blocks
-          latch
-          preheader
-          core
-          cmp-rhs
-          descending?
-          shift
-          k
-          bottom?
-          (& (I64 0)))
-          [(Some iphi seed inext bound step delta wrap offset interval?)
-            (Some iphi seed inext bound step delta wrap offset interval?)]
-          ;; VT-1: the same test written over `offset + i`.
-          [(No)
-            (opt-bce-mb-counter-offset-compare
-              body-blocks
-              defs
-              latch
-              preheader
-              core
-              cmp-rhs
-              descending?
-              shift
-              k
-              bottom?)])])))
+  (match (opt-bce-mb-invariant-operand body-blocks defs cmp-rhs)
+    [(No) (No)]
+    [(Some bound)
+      (match (opt-bce-mb-strided-peel body-blocks cmp-lhs 0 8)
+        [(No) (No)]
+        [(Some core k)
+          (match (opt-bce-mb-counter-from-phi
+            body-blocks
+            latch
+            preheader
+            core
+            (& bound)
+            descending?
+            shift
+            k
+            bottom?
+            (& (I64 0)))
+            [(Some iphi seed inext bound step delta wrap offset interval?)
+              (Some iphi seed inext bound step delta wrap offset interval?)]
+            ;; VT-1: the same test written over `offset + i`.
+            [(No)
+              (opt-bce-mb-counter-offset-compare
+                body-blocks
+                defs
+                latch
+                preheader
+                core
+                (& bound)
+                descending?
+                shift
+                k
+                bottom?)])])]))
 
 ;; --- the loop test written over an offset counter -------------------------------
 ;;
@@ -77641,78 +77433,124 @@
   (Ascending i64)
   (Descending))
 
-(define (opt-bce-mb-counter-direction [op : (& ir.CompilerIrBinOp)]) : OptBceMbCounterDirection
+;; `negated?` reads the table through the compare's EXACT NEGATION, which is
+;; what a latch that exits where the compare holds states (see
+;; opt-bce-mb-latch-branch): `!(a lt b)` is `a ge b`, `!(a ge b)` is `a lt b`,
+;; `!(a gt b)` is `a le b`, and `!(a le b)` would need `a gt b`, the order
+;; that stays absent above. One table, read either way, so the two spellings
+;; of a test can never disagree.
+(define (opt-bce-mb-counter-direction
+  [op : (& ir.CompilerIrBinOp)]
+  [negated? : bool]) : OptBceMbCounterDirection
   (match op
-    [(Lt) (Ascending 0)]
-    [(Le) (Ascending 1)]
-    [(Ge) (Descending)]
+    [(Lt)
+      (if negated?
+        (Descending)
+        (Ascending 0))]
+    [(Le)
+      (if negated?
+        (No)
+        (Ascending 1))]
+    [(Ge)
+      (if negated?
+        (Ascending 0)
+        (Descending))]
+    [(Gt)
+      (if negated?
+        (Ascending 1)
+        (No))]
     [_ (No)]))
 
 ;; The compare of `cond-var`, dispatched on its direction. `bottom?` says which
 ;; form the caller found it in: the latch branch of a do-while, or the entry
-;; guard chain of a top-tested loop.
+;; guard chain of a top-tested loop. `negated?` says the branch exits where
+;; this compare holds (see opt-bce-mb-latch-branch), so the direction is the one
+;; its EXACT NEGATION reads: `!(a ge b)` is `a lt b`, `!(a gt b)` is `a le b`,
+;; `!(a lt b)` is `a ge b`, and `!(a le b)` would need `a gt b`, which has no
+;; direction above -- exactly as `(le)` has none of its own.
+;;
+;; The compare's operand type must be the SIGNED i64 the trip range is stated
+;; in. Unsigned order negates just as exactly, but the range, the limit and the
+;; no-wrap conjunct around it are all signed arithmetic, so an unsigned compare's
+;; negation is not the predicate this recovery would then derive from; float
+;; compares have no exact negation at all (NaN). The positive spellings never
+;; needed the test -- the counter phi is I64, and the compare's operands are the
+;; phi's type -- and it stays off that path unchanged.
 (define (opt-bce-mb-counter-of-cond
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
   [cond-var : i64]
-  [bottom? : bool]) : OptBceMbMaybeCounter
+  [bottom? : bool]
+  [negated? : bool]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-find-def
     (ir.compiler-ir-block-list-view body-blocks)
     cond-var)
     [(No) (No)]
     [(Some instr)
       (match instr
-        [(BinOp _ cmp-op cmp-lhs cmp-rhs _)
-          (match (opt-bce-mb-counter-direction (& cmp-op))
-            [(No) (No)]
-            [(Ascending shift)
-              (opt-bce-mb-counter-compare
-                body-blocks
-                defs
-                latch
-                preheader
-                (& cmp-lhs)
-                (& cmp-rhs)
-                false
-                shift
-                bottom?)]
-            [(Descending)
-              (opt-bce-mb-counter-compare
-                body-blocks
-                defs
-                latch
-                preheader
-                (& cmp-lhs)
-                (& cmp-rhs)
-                true
-                0
-                bottom?)])]
+        [(BinOp _ cmp-op cmp-lhs cmp-rhs ty)
+          (if (and negated? (not (opt-bce-version-cond-signed-type? (& ty))))
+            (No)
+            (let
+              [direction : OptBceMbCounterDirection
+                (opt-bce-mb-counter-direction (& cmp-op) negated?)]
+              (match direction
+                [(No) (No)]
+                [(Ascending shift)
+                  (opt-bce-mb-counter-compare
+                    body-blocks
+                    defs
+                    latch
+                    preheader
+                    (& cmp-lhs)
+                    (& cmp-rhs)
+                    false
+                    shift
+                    bottom?)]
+                [(Descending)
+                  (opt-bce-mb-counter-compare
+                    body-blocks
+                    defs
+                    latch
+                    preheader
+                    (& cmp-lhs)
+                    (& cmp-rhs)
+                    true
+                    0
+                    bottom?)])))]
         [_ (No)])]))
 
-;; The latch compare of a do-while loop.
+;; The latch compare of a do-while loop. `negated?` is the latch branch's
+;; polarity (opt-bce-mb-latch-branch).
 (define (opt-bce-mb-counter-step
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
-  [cond-var : i64]) : OptBceMbMaybeCounter
+  [cond-var : i64]
+  [negated? : bool]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-counter-of-cond
     body-blocks
     defs
     latch
     preheader
     cond-var
-    true)
+    true
+    negated?)
     [(No)
-      (opt-bce-mb-interval-counter
-        body-blocks
-        defs
-        latch
-        preheader
-        cond-var
-        true)]
+      ;; The interval recovery reads the compare as the CONTINUING test, so a
+      ;; flipped latch is not its shape.
+      (if negated?
+        (No)
+        (opt-bce-mb-interval-counter
+          body-blocks
+          defs
+          latch
+          preheader
+          cond-var
+          true))]
     [(Some iphi seed inext bound step delta wrap offset interval?)
       (Some iphi seed inext bound step delta wrap offset interval?)]))
 
@@ -77723,22 +77561,26 @@
   [defs : (& defs opt_i64_i64_map.Map)]
   [latch : i64]
   [preheader : i64]
-  [cond-var : i64]) : OptBceMbMaybeCounter
+  [cond-var : i64]
+  [negated? : bool]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-counter-of-cond
     body-blocks
     defs
     latch
     preheader
     cond-var
-    false)
+    false
+    negated?)
     [(No)
-      (opt-bce-mb-interval-counter
-        body-blocks
-        defs
-        latch
-        preheader
-        cond-var
-        false)]
+      (if negated?
+        (No)
+        (opt-bce-mb-interval-counter
+          body-blocks
+          defs
+          latch
+          preheader
+          cond-var
+          false))]
     [(Some iphi seed inext bound step delta wrap offset interval?)
       (if (< step 0)
         (No)
@@ -78527,7 +78369,11 @@
                 (opt-bce-mb-collect-defs
                   (ir.compiler-ir-block-list-view body-blocks)
                   (opt_i64_i64_map.with-capacity 64))]
-              (match (opt-bce-mb-latch-branch latch-block header body-labels)
+              (match (opt-bce-mb-latch-branch
+                latch-block
+                header
+                body-labels
+                true)
                 [(No)
                   (opt-bce-mb-loop-shape-top
                     blocks
@@ -78541,7 +78387,7 @@
                     inner
                     region?
                     nested-entry?)]
-                [(Some cond-var _)
+                [(Some cond-var _ negated?)
                   (match (opt-bce-mb-loop-shape-finish
                     blocks
                     header
@@ -78560,7 +78406,8 @@
                       defs
                       latch
                       pred
-                      cond-var))
+                      cond-var
+                      negated?))
                     [(Some shape) (Some shape)]
                     ;; a latch branch that closes the back edge but does NOT
                     ;; carry the counter compare (a bottom-tested flag test) is
@@ -85785,9 +85632,9 @@
   (match (opt-cfg-find-block blocks latch)
     [(No) (- 0 1)]
     [(Some latch-block)
-      (match (opt-bce-mb-latch-branch latch-block header body-labels)
+      (match (opt-bce-mb-latch-branch latch-block header body-labels false)
         [(No) (- 0 1)]
-        [(Some cond-var _) cond-var])]))
+        [(Some cond-var _ _) cond-var])]))
 
 (defenum OptBceHoistResult
   (No)
@@ -85964,7 +85811,13 @@
   [latch : i64]
   [preheader : i64]
   [cond-var : i64]) : OptBceTightenCounter
-  (match (opt-bce-mb-counter-step body-blocks defs latch preheader cond-var)
+  (match (opt-bce-mb-counter-step
+    body-blocks
+    defs
+    latch
+    preheader
+    cond-var
+    false)
     [(Some iphi seed _ _ step delta _ offset interval?)
       (if (and
         (not interval?)
@@ -86499,7 +86352,7 @@
   (match (opt-cfg-find-block blocks latch)
     [(No) (No)]
     [(Some latch-block)
-      (opt-bce-mb-latch-branch latch-block header body-labels)]))
+      (opt-bce-mb-latch-branch latch-block header body-labels false)]))
 
 ;; ADMISSION: a counted loop that CONTAINS ANOTHER LOOP and CALLS OUT of its
 ;; body, which is the only class the trade pays in.
@@ -86563,7 +86416,7 @@
                   latch
                   body-labels)
                   [(No) (No)]
-                  [(Some cond-var exit-label)
+                  [(Some cond-var exit-label _)
                     (match (opt-cfg-find-block blocks header)
                       [(No) (No)]
                       [(Some header-block)
@@ -87650,9 +87503,10 @@
                   (match (opt-bce-mb-latch-branch
                     latch-block
                     header
-                    body-labels)
+                    body-labels
+                    false)
                     [(No) (No)]
-                    [(Some cond-var exit-label)
+                    [(Some cond-var exit-label _)
                       (let
                         [defs : opt_i64_i64_map.Map
                           (opt-bce-mb-collect-defs
@@ -87670,7 +87524,8 @@
                             defs
                             latch
                             pred
-                            cond-var)
+                            cond-var
+                            false)
                           cond-var
                           exit-label))])])))])]))
 
@@ -91665,7 +91520,6 @@
   (target i64)
   (blocks ir.CompilerIrBlockList)
   (instrs ir.CompilerIrInstrSeq)
-  (terminator-index i64)
   (last-barrier i64)
   (defs (__tl_dyn-array i64))
   (all-defs (__tl_dyn-array i64))
@@ -92928,7 +92782,6 @@
           target
           blocks
           instrs
-          terminator-index
           last-barrier
           defs
           all-defs
@@ -95731,14 +95584,51 @@
       [(and (= true-bit 0) (= false-bit 1)) 2]
       [else 0])))
 
+;; The reversed pair spells `not c`. When `c` is the comparison the source
+;; branched on -- the instruction directly above the retired branch, read by
+;; nothing else -- the negation is free: flip the predicate and emit the
+;; forwarded pair's single cast. That costs `cmp; setcc; movzbq` against
+;; `cmp; setcc; movzbq; xor $1` on the same operands, one instruction per
+;; execution of the source block, and it needs no widened temp var.
+;;
+;; A comparison with any other reader keeps its predicate: flipping it in place
+;; would change what that reader sees, so those joins keep the `xor $1`. Float
+;; predicates never flip either (`not (a < b)` is not `a >= b` under NaN).
+(defenum OptIfConvertNegation
+  (Keep)
+  (Flip ir.CompilerIrInstr))
+
+(define (opt-if-convert-negation
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [count : i64]
+  [uses : (& uses (__tl_dyn-array i64))]
+  [condition-var : i64]) : OptIfConvertNegation
+  (if (or
+    (< count 2)
+    (< condition-var 0)
+    (>= condition-var (array-length uses))
+    (not (= (array-ref uses condition-var) 1)))
+    (Keep)
+    (match (ir.compiler-ir-instr-seq-ref instrs (- count 2))
+      [(BinOp dst op lhs rhs ty)
+        (if (and
+          (= dst condition-var)
+          (opt-invertible-compare-op? (& op))
+          (not (opt-float-type? ty)))
+          (Flip
+            (ir.CompilerIrInstr.BinOp dst (opt-invert-compare-op op) lhs rhs ty))
+          (Keep))]
+      [_ (Keep)])))
+
 ;; The instruction (or pair) that reproduces `phi [on-true, taken],
 ;; [on-false, untaken]` at the end of the source block. The constant forms are
 ;; the point of the pass: a bool home is a full register holding 0 or 1 (the
 ;; backend materialises every compare as `setcc; movzbq`), so `cast %c : bool ->
 ;; i64` IS the value the diamond was branching to build, and it lowers to a
-;; single `movzbq`. The negated pair costs one extra `xor $1` over a fresh var
-;; -- still two instructions against the diamond's compare, branch, move and
-;; jump. Everything else falls back to the Select the pass has always emitted.
+;; single `movzbq`. The negated pair reaches here as form 1 too when
+;; `opt-if-convert-negation` flipped the source's predicate; only a comparison
+;; the pass cannot flip pays the `xor $1` over a fresh var. Everything else
+;; falls back to the Select the pass has always emitted.
 (define (opt-if-convert-emit!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
@@ -95795,6 +95685,7 @@
   [index : (& index OptCfgIndex)]
   [blocks : ir.CompilerIrBlockSeq]
   [facts : (__tl_dyn-array OptIfConvertBlockFact)]
+  [uses : (& uses (__tl_dyn-array i64))]
   [frame-cell : (&mut frame-cell (__tl_dyn-array i64))]
   [id : i64]) : bool
   (let
@@ -95907,6 +95798,27 @@
                                             condition-var))))
                                     (return false))
                                   (let
+                                    [negation : OptIfConvertNegation
+                                      (if (= form 2)
+                                        (opt-if-convert-negation
+                                          source-instrs
+                                          source.count
+                                          uses
+                                          condition-var)
+                                        (Keep))]
+                                    ;; A flipped predicate IS the branch's own
+                                    ;; comparison, so the builder takes the
+                                    ;; block up to it and the rewritten compare
+                                    ;; takes its place; the join is then the
+                                    ;; forwarded pair's single cast.
+                                    [kept : i64
+                                      (match negation
+                                        [(Flip _) (- source.count 2)]
+                                        [(Keep) (- source.count 1)])]
+                                    [join-form : i64
+                                      (match negation
+                                        [(Flip _) 1]
+                                        [(Keep) form])]
                                     [source-builder : ir.CompilerIrInstrBuilder
                                       (ir.compiler-ir-instr-builder-with-capacity
                                         (+ source.count 2))]
@@ -95917,11 +95829,17 @@
                                       (&mut source-builder)
                                       source-instrs
                                       0
-                                      (- source.count 1))
+                                      kept)
+                                    (match negation
+                                      [(Flip instr)
+                                        (ir.compiler-ir-instr-builder-push!
+                                          (&mut source-builder)
+                                          instr)]
+                                      [(Keep) unit])
                                     (opt-if-convert-emit!
                                       (&mut source-builder)
                                       frame-cell
-                                      form
+                                      join-form
                                       dst
                                       condition-var
                                       (& on-true)
@@ -96016,6 +95934,11 @@
                   ;; same merge as one at the end of the function. The index also
                   ;; carries the predecessor rows the arm rail needs.
                   [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
+                  ;; Flipping a negated pair's predicate is only sound while the
+                  ;; comparison has no other reader, so the pass carries one
+                  ;; function-wide use count for it.
+                  [uses : (__tl_dyn-array i64)
+                    (opt-collect-blocks-uses-array frame (& blocks))]
                   ;; A negated constant join mints one var for the zero-extended
                   ;; condition, so the frame counter is carried in a cell and
                   ;; written back into the rewritten function.
@@ -96034,6 +95957,7 @@
                           index
                           (compiler-opt-global-shared-view seq)
                           (compiler-opt-global-shared-view facts)
+                          (& uses)
                           (&mut frame-cell)
                           read)
                           (set! changed true)
@@ -101964,7 +101888,7 @@
 ;; The context a fresh state carries until a stage builds one. Nothing reads it
 ;; while `ctx-valid?` is false.
 (define opt-pass-no-context : OptCfgContext
-  (init))
+  (opt-cfg-context-empty))
 
 (define (opt-pass-state
   [type-segment-bases : i64]
@@ -102401,20 +102325,11 @@
               (opt-pass-params s)
               (opt-pass-blocks s)))
           s))]
-    [s
-      (opt-stage
-        "stack_promote"
-        (opt-pass-with-cfg-func
-          (&
-            (opt-aggregate-stack-promote-function
-              type-segment-bases
-              (opt-pass-func s)))
-          s))]
-    ;; SROA-2: the word split runs on the post-promotion blocks and before
+    ;; SROA-2: the word split runs after slot forwarding and before
     ;; rotation/`ssa`, so the scalar mem2reg below builds the phis the
     ;; per-arm word stores need. It mints word vars, so every pass underneath
-    ;; reads ITS frame, not the promoted one. It is not in the priced
-    ;; pipeline (see opt-aggregate-split-function).
+    ;; reads ITS frame. It is not in the priced pipeline (see
+    ;; opt-aggregate-split-function).
     [s
       (opt-stage
         "aggregate_split"
@@ -103274,15 +103189,6 @@
               (opt-pass-frame s)
               (opt-pass-params s)
               (opt-pass-blocks s)))
-          s))]
-    [s
-      (opt-stage
-        "stack_promote"
-        (opt-pass-with-cfg-func
-          (&
-            (opt-aggregate-stack-promote-function
-              type-segment-bases
-              (opt-pass-func s)))
           s))]
     [used : (__tl_dyn-array i64) (opt-used-array-new (opt-pass-frame s))]
     [s
@@ -108800,18 +108706,7 @@
       (if (< id np)
         (opt-inline-clone-arg-at sa id)
         (Var (opt-inline-rebase-var id np base)))]
-    [(Global name) (Global (ir.compiler-ir-symbol-clone name))]
-    [(GlobalAddr name) (GlobalAddr (ir.compiler-ir-symbol-clone name))]
-    [(Function name) (Function (ir.compiler-ir-symbol-clone name))]
-    [(I64 n) (I64 n)]
-    [(F64 bits) (F64 bits)]
-    [(Bool b) (Bool b)]
-    [(Char c) (Char c)]
-    [(String s) (String (string.copy s))]
-    [(Bytes s) (Bytes (string.copy s))]
-    [(RuntimeGlobal init) (RuntimeGlobal (ir.compiler-ir-symbol-clone init))]
-    [(StaticArray s) (StaticArray (string.copy s))]
-    [(Unit) (Unit)]))
+    [_ (ir.compiler-ir-clone-value v)]))
 
 (define (opt-inline-remap-container-value
   [sa : ir.CompilerIrCallArgs]
@@ -129388,13 +129283,6 @@
         ;; never consults epochs, so every root it records is epoch 0.
         (opt-alias-mark-unique (& facts) dst 0)
         blocker)]))
-
-(define (opt-scratch-state-facts
-  [state : OptScratchScopeState]
-  [facts : OptAliasFacts]) : OptScratchScopeState
-  (match state
-    [(State allocs bytes roots _ blocker)
-      (State allocs bytes roots facts blocker)]))
 
 ;; Whether a value of type `ty` can hold an address: everything but the signed
 ;; and narrow integers, floats, bool and char (`u64` is the IR's raw-pointer

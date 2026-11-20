@@ -1,30 +1,127 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-public-tools.sh - the public CLI surface of TYPELISP_BIN: the
-# tests/cli/public-*.cases transcripts, package artifact freshness, the LSP and
-# REPL corpora of tests/public-tools, and the metadata-bearing SPEC.md examples.
+# verify-public-tools.sh - parts of the public CLI surface of TYPELISP_BIN.
+# scripts/ci-gates.tsv runs each part as its own gate, so the pool schedules
+# them side by side instead of one 35+ minute gate:
+#
+#   affected-map       the tests/cli/ci-affected map audit (Linux)
+#   cli-transcripts-1  the tests/cli/public-*.cases transcripts, groups 1 to 3;
+#   cli-transcripts-2  together they cover every public-*.cases file exactly
+#   cli-transcripts-3  once (cli_transcripts_inventory)
+#   corpora            package artifact freshness, the LSP and REPL corpora of
+#                      tests/public-tools, and the SPEC.md metadata examples
+#
 # A crash is a compiler bug: every invocation runs once (no retries).
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# Audit every Linux PR, including changes outside the selector's own inputs.
-case "$(uname -s)" in
-    Linux*)
-        echo "[public-tools] ci-affected map freshness"
-        scripts/ci-affected.sh --self-test
-        ;;
-esac
+usage() {
+    cat >&2 <<'EOF'
+usage: scripts/verify-public-tools.sh PART
+PART is one of the gate parts of scripts/ci-gates.tsv: affected-map,
+cli-transcripts-1, cli-transcripts-2, cli-transcripts-3 or corpora.
+EOF
+    exit 2
+}
+
+[ "$#" -eq 1 ] || usage
+PART=$1
 
 GATE_FAIL_PREFIX='FAIL: '
 . "$ROOT/scripts/lib-gate.sh"
-gate_compiler
-gate_compiler_absolute
-gate_require_compiler
-export TYPELISP_BIN="$COMPILER"
 
-scripts/verify-codegen-cases.sh tests/cli/public-*.cases
+# Every part but affected-map runs the compiler under test as TYPELISP_BIN;
+# affected-map reads scripts/ and the inventory tables only, so its gate names
+# no compiler and starts beside the bootstrap.
+require_compiler() {
+    gate_compiler
+    gate_compiler_absolute
+    gate_require_compiler
+    export TYPELISP_BIN="$COMPILER"
+}
+
+# Audit every Linux PR, including changes outside the selector's own inputs.
+verify_affected_map() {
+    case "$(uname -s)" in
+        Linux*)
+            echo "[public-tools] ci-affected map freshness"
+            scripts/ci-affected.sh --self-test
+            ;;
+    esac
+}
+
+# The transcript groups, cut by measured cost. The runner keeps one work
+# directory per case file under target/codegen-cases/, so no two groups share
+# one and the parts need no lock.
+cli_transcripts_files() {
+    case "$1" in
+        1)
+            printf '%s\n' \
+                tests/cli/public-test.cases \
+                tests/cli/public-test-selected-import.cases \
+                tests/cli/public-arena-early-exits.cases \
+                tests/cli/public-arena-end-operator.cases \
+                tests/cli/public-git.cases \
+                tests/cli/public-inline-dispatch.cases \
+                tests/cli/public-package-dispatch.cases \
+                tests/cli/public-matrix.cases \
+                tests/cli/public-dispatch-library.cases
+            ;;
+        2)
+            printf '%s\n' \
+                tests/cli/public-package.cases \
+                tests/cli/public-cond-diagnostics.cases
+            ;;
+        3)
+            printf '%s\n' \
+                tests/cli/public-check.cases \
+                tests/cli/public-fmt-doc.cases \
+                tests/cli/public-lint.cases \
+                tests/cli/public-help.cases \
+                tests/cli/public-lsp.cases \
+                tests/cli/public-expand.cases \
+                tests/cli/public-test-name.cases
+            ;;
+        *) usage ;;
+    esac
+}
+
+# The groups replaced one tests/cli/public-*.cases glob, so a transcript file
+# that joins no group must fail here instead of leaving CI silently.
+cli_transcripts_inventory() {
+    for _cli_file in tests/cli/public-*.cases; do
+        _cli_parts=$({ cli_transcripts_files 1; cli_transcripts_files 2; cli_transcripts_files 3; } |
+            grep -cxF "$_cli_file" || true)
+        [ "$_cli_parts" = 1 ] ||
+            fail "$_cli_file belongs to $_cli_parts transcript groups; a public-*.cases file belongs to exactly one cli-transcripts part"
+    done
+}
+
+verify_cli_transcripts() {
+    cli_transcripts_inventory
+    require_compiler
+    set -f
+    # shellcheck disable=SC2046
+    scripts/verify-codegen-cases.sh $(cli_transcripts_files "$1")
+    set +f
+}
+
+if [ "$PART" != corpora ]; then
+    case "$PART" in
+        affected-map) verify_affected_map ;;
+        cli-transcripts-1 | cli-transcripts-2 | cli-transcripts-3)
+            verify_cli_transcripts "${PART#cli-transcripts-}" ;;
+        *) usage ;;
+    esac
+    echo "public tool verification passed"
+    exit 0
+fi
+
+# The corpora part is the series below: everything the single gate ran after
+# its transcripts, unchanged and in the same order.
+require_compiler
 
 echo "[public-tools] package artifact freshness"
 sh scripts/verify-package-artifact-freshness.sh

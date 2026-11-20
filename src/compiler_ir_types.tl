@@ -5648,9 +5648,28 @@
 (define (compiler-ir-blocks-expose-frame-at?
   [blocks : (& blocks CompilerIrBlockList)]
   [label : i64]) : bool
-  (if (or
-    (not (compiler-ir-blocks-expose-frame? blocks))
-    (not (compiler-ir-blocks-capture-frame? blocks)))
+  (compiler-ir-blocks-expose-frame-at-given?
+    blocks
+    (compiler-ir-blocks-frame-may-escape? blocks)
+    label))
+
+;; The whole-function half of compiler-ir-blocks-expose-frame-at?: some
+;; instruction creates a frame address and some use may carry one out of the
+;; activation. It depends only on `blocks`, so a caller asking for several
+;; sites of one function may compute it once.
+(define (compiler-ir-blocks-frame-may-escape?
+  [blocks : (& blocks CompilerIrBlockList)]) : bool
+  (and
+    (compiler-ir-blocks-expose-frame? blocks)
+    (compiler-ir-blocks-capture-frame? blocks)))
+
+;; compiler-ir-blocks-expose-frame-at? with its whole-function half,
+;; `may-escape?`, already computed for `blocks`.
+(define (compiler-ir-blocks-expose-frame-at-given?
+  [blocks : (& blocks CompilerIrBlockList)]
+  [may-escape? : bool]
+  [label : i64]) : bool
+  (if (not may-escape?)
     false
     (match blocks
       [(CompilerIrBlockList.Array seq)
@@ -8248,11 +8267,6 @@
     [(or (Pure) (MemoryRead)) false]
     [(or (CpuProbe) (MemoryWrite) (ControlFlow) (Unknown)) true]))
 
-(define (compiler-ir-effect-invalidates-cse? [effect : CompilerIrEffect]) : bool
-  (match effect
-    [(Pure) false]
-    [_ true]))
-
 ;; Runtime call semantics are keyed by the source-symbol identities installed
 ;; alongside the active interner. Generated or hygienic symbols with identical
 ;; display text are ordinary unknown calls.
@@ -8621,9 +8635,7 @@
 ;; POD snapshots use the same canonical path IDs and spans as instruction
 ;; locations. No AST node, provenance composite, or frontend arena is retained.
 (defstruct CompilerSpmdMacroFrame
-  (name-id i64)
-  (invocation CompilerSourceLocation)
-  (origin-path-id i64))
+  (name-id i64))
 
 (defstruct CompilerSpmdDecision
   (site CompilerSpmdSiteId)
@@ -8636,8 +8648,7 @@
   (primary CompilerSourceLocation)
   (actionable CompilerSourceLocation)
   (frame-start i64)
-  (frame-count i64)
-  (frames-truncated bool))
+  (frame-count i64))
 
 (define compiler-spmd-max-macro-frames : i64
   8)
@@ -8898,26 +8909,28 @@
         (compiler-spmd-decisions-escape spmd))]))
 
 (define (compiler-source-spans-instr-entry-array-lookup-location
-  [slots : (& (__tl_dyn-array CompilerSourceSpansInstrEntry))]
+  [slots : (& slots (__tl_dyn-array CompilerSourceSpansInstrEntry))]
   [index : i64]
   [function : i64]
   [id : i64]
   [kind : i32]) : CompilerMaybeSourceLocation
-  (if (< index 0)
-    (No)
-    (let
-      [span-entry : CompilerSourceSpansInstrEntry (array-ref slots index)]
-      (if (and
-        (= span-entry.id id)
-        (= span-entry.function.value function)
-        (= span-entry.kind kind))
-        (Some (CompilerSourceLocation span-entry.path-id span-entry.span))
-        (compiler-source-spans-instr-entry-array-lookup-location
-          slots
-          (- index 1)
-          function
-          id
-          kind)))))
+  ;; Newest to oldest from `index`, so the most recent binding wins.
+  (let
+    [at : i64 index]
+    (while (>= at 0)
+      (let
+        [span-entry : (& slots CompilerSourceSpansInstrEntry)
+          (& (array-ref slots at))]
+        (when
+          (and
+            (= span-entry.id id)
+            (= span-entry.function.value function)
+            (= span-entry.kind kind))
+          (let
+            [hit : CompilerSourceSpansInstrEntry (array-ref slots at)]
+            (return (Some (CompilerSourceLocation hit.path-id hit.span)))))
+        (-= at 1)))
+    (No)))
 
 (define (compiler-source-spans-instr-entry-list-lookup
   [entries : (& CompilerSourceSpansInstrEntryList)]

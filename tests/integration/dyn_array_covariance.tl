@@ -30,7 +30,8 @@
 (define (main) : i64
   (let
     [first : String "echo"]
-    [words : (Words first) (Words (init : (__tl_dyn-array (& first str))))]
+    [words : (Words first)
+      (Words (ann (__tl_make-array) : (__tl_dyn-array (& first str))))]
     (__tl_array-push! words.items (& first))
     (let
       [second : String "hello"]

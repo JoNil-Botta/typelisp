@@ -46,9 +46,9 @@
     p.x))
 (define (tagged [owner : (& owner i64)]) : (TaggedPair owner)
   (TaggedPair 1))
-(defmacro (empty [T : type (:kind c-function)]) : Expr
+(defmacro (empty [T : type (:kind c-function)]) : Expr ;; lint-allow: removed-init
   `(init : ,T))
-(defmacro (pointer [T : type]) : Expr
+(defmacro (pointer [T : type]) : Expr ;; lint-allow: removed-init
   `(init : (CFunc nullable (-> ,T ,T))))
 (defmacro (null-value [T : type (:kind c-function)]) : Expr
   `(ptr-null : ,T))
@@ -635,9 +635,9 @@
         "lint_driver_unused_variable.tl"
         "(defmacro (emit [quoted-only : Expr] [used-macro : Expr]) : Expr
   `(quoted-only ,used-macro))
-(defmacro (unused-type [T : type]) : Expr
+(defmacro (unused-type [T : type]) : Expr ;; lint-allow: removed-init
   `(init : i64))
-(defmacro (delayed-type [T : type]) : Expr
+(defmacro (delayed-type [T : type]) : Expr ;; lint-allow: removed-init
   ``(init : ,T))
 (define (lambda-case) : i64
   (let

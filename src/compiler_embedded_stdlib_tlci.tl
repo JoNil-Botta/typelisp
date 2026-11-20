@@ -154,9 +154,8 @@
   -1)
 (define compiler-embedded-stdlib-tlci-group-cache-raw : i64
   0)
-(define compiler-embedded-stdlib-tlci-group-cache-holder : (__tl_dyn-array
-    (__tl_dyn-array u8))
-  (__tl_make-array (__tl_dyn-array u8) 0))
+(define compiler-embedded-stdlib-tlci-group-cache : (__tl_dyn-array u8)
+  (__tl_make-array u8 0))
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 
@@ -289,7 +288,7 @@
       (return
         (Ok
           (tlci.tlci-slice-bytes
-            (& (array-ref compiler-embedded-stdlib-tlci-group-cache-holder 0))
+            (& compiler-embedded-stdlib-tlci-group-cache)
             0
             raw-limit))))
     (match (in-arena

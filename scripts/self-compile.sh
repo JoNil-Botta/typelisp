@@ -13,8 +13,12 @@ set -eu
 #              environment reuse key).
 #   check      PR CI, after ci-verify: gate the PR's own cost
 #              M(T) - M(B), T the tested merge and B its first parent, at
-#              TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM (5000). M(B) is B's
-#              main reference after API-verified provenance and an identical
+#              TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM (5000) less the
+#              class-M bound (1000). That bound is headroom: a landing may
+#              add interaction A up to it, so an undeclared PR within the PR
+#              window lands inside the ledger's landed window unless main's
+#              cost moved between its base and its parent. M(B) is B's main
+#              reference after API-verified provenance and an identical
 #              identity, or B measured in place on this runner.
 #   reference  Main push workflow: publish this commit's gate record.
 #   ledger     Main push workflow: compare the landed merge with its PR's
@@ -94,6 +98,9 @@ SC_POLL_SECONDS=$(sc_decimal "$SC_POLL_SECONDS")
 case "$SC_TOLERANCE_PPM" in
     "" | *[!0-9]*) sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: $SC_TOLERANCE_PPM" ;;
 esac
+[ "$SC_TOLERANCE_PPM" -gt "$SC_CLASS_M_FAIL_PPM" ] ||
+    sc_fail "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must exceed the class-M bound ($SC_CLASS_M_FAIL_PPM ppm): $SC_TOLERANCE_PPM"
+sc_pr_gate_ppm_set
 
 # --- identity ------------------------------------------------------------------
 
@@ -661,7 +668,7 @@ sc_cmd_check() {
     echo "[self-compile]   tested merge T $_scc_t = base B $_scc_b + head H $_scc_h"
     echo "[self-compile]   M(T) $(sc_record_get "$_scc_out/head.tsv" ir_count)"
     echo "[self-compile]   M(B) $(sc_record_get "$_scc_out/base.tsv" ir_count) from $_scc_source"
-    echo "[self-compile]   own cost $(sc_signed "$_scc_own_ir") Ir ($_scc_ppm ppm); declared $_scc_declared; tolerance $SC_TOLERANCE_PPM ppm"
+    echo "[self-compile]   own cost $(sc_signed "$_scc_own_ir") Ir ($_scc_ppm ppm); declared $_scc_declared; tolerance $SC_PR_GATE_PPM ppm"
     echo "[self-compile]   status $_scc_status; routing $_scc_routing"
     [ -f "$_scc_out/reference-rejected.tsv" ] &&
         echo "[self-compile]   rejected reference value, for comparison: $(sc_record_get "$_scc_out/reference-rejected.tsv" ir_count)"
@@ -674,7 +681,7 @@ sc_cmd_check() {
     sc_summary "| M(B) | $(sc_record_get "$_scc_out/base.tsv" ir_count), $_scc_source |"
     sc_summary "| own cost | $(sc_signed "$_scc_own_ir") Ir, $_scc_ppm ppm |"
     sc_summary "| declared | $_scc_declared |"
-    sc_summary "| status | $_scc_status (tolerance $SC_TOLERANCE_PPM ppm) |"
+    sc_summary "| status | $_scc_status (tolerance $SC_PR_GATE_PPM ppm) |"
     sc_summary "| routing | $_scc_routing |"
     sc_summary "| harness change | $_scc_procedure_change |"
     if [ "$_scc_procedure_change" = yes ]; then
@@ -690,7 +697,7 @@ sc_cmd_check() {
     case "$_scc_status" in
         ok | declared-ok) ;;
         *)
-            sc_annotate error "$_scc_status: own cost $(sc_signed "$_scc_own_ir") Ir ($_scc_ppm ppm) against $SC_TOLERANCE_PPM ppm"
+            sc_annotate error "$_scc_status: own cost $(sc_signed "$_scc_own_ir") Ir ($_scc_ppm ppm) against $SC_PR_GATE_PPM ppm"
             _scc_rc=1
             ;;
     esac

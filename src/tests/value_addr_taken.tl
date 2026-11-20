@@ -225,9 +225,12 @@
       false
       (& func))
       [(Result next _) next])
-    (opt.opt-induction-function
+    (match (opt.opt-induction-function-with-context-result
       (ast.ast-node-pool-reader-type-segment-bases)
-      (& func))))
+      (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+      false
+      (& func))
+      [(Result next _) next])))
 
 (test
   value-gate-induction

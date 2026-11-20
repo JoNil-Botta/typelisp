@@ -15340,49 +15340,77 @@
     [key : i64 (tc-declared-name-key ctx env name)]
     (if (< key 0)
       -1
-      (let
-        [moved : i64 (tc-move-value-symbol-handle-id ctx name)]
-        [handle : i64
-          (if (csym.compiler-symbols-handle-found? moved)
-            moved
-            (csym.compiler-symbols-lookup-value-id-or
-              (tc-context-symbols ctx)
-              key
-              (csym.compiler-symbols-missing-handle)))]
-        (if (and
-          (csym.compiler-symbols-handle-found? handle)
-          (or
-            (=
-              (csym.compiler-symbol-handle-kind handle)
-              (csym.compiler-symbol-kind-function-define))
-            (=
-              (csym.compiler-symbol-handle-kind handle)
-              (csym.compiler-symbol-kind-extern))))
-          (csym.compiler-symbol-handle-index handle)
-          -1)))))
+      (tc-declared-symbol-index ctx name key))))
+
+;; The symbol index of the function definition or extern the declared-name key
+;; `key` denotes for `name`, or -1, once the key is known
+;; (`tc-declared-name-key`, or a lookup of the same name that already resolved
+;; it). One value-map lookup, no name resolution.
+(define (tc-declared-symbol-index [ctx : TcContext] [name : i64] [key : i64]) : i64
+  (if (< key 0)
+    -1
+    (let
+      [moved : i64 (tc-move-value-symbol-handle-id ctx name)]
+      [handle : i64
+        (if (csym.compiler-symbols-handle-found? moved)
+          moved
+          (csym.compiler-symbols-lookup-value-id-or
+            (tc-context-symbols ctx)
+            key
+            (csym.compiler-symbols-missing-handle)))]
+      (if (and
+        (csym.compiler-symbols-handle-found? handle)
+        (or
+          (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-function-define))
+          (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-extern))))
+        (csym.compiler-symbol-handle-index handle)
+        -1))))
+
+;; True for the types a safe arena end can have: it is a function, so a value
+;; of any other type denotes no end.
+(define (tc-callable-type? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Func _ _) true]
+    [(ast.AstType.CFunc _ _) true]
+    [(ast.AstType.Invalidate _ _) true]
+    [(ast.AstType.Var _) true]
+    [_ false]))
+
+;; True when `name` resolves to no top-level declaration: it is a lexical
+;; local, or an unqualified import two modules provide.
+(define (tc-declared-name-unresolved?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : bool
+  (or
+    (and
+      (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
+      (tc-name-lexically-bound-id? env name))
+    (match (tc-unqualified-import-ambiguity-message ctx env name)
+      [(TcMaybeString.Some _) true]
+      [(TcMaybeString.No) false])))
 
 ;; The lookup key of the top-level declaration `name` resolves to, or -1 for
 ;; a lexical local, an ambiguous unqualified import or no declaration. A
 ;; macro-hygiene name resolves in its definition context, so a name is
 ;; identified by what it denotes, never by how the source spells it.
 (define (tc-declared-name-key [ctx : TcContext] [env : TcTypeEnv] [name : i64]) : i64
-  (if (and
-    (not (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
-    (tc-name-lexically-bound-id? env name))
+  (if (tc-declared-name-unresolved? ctx env name)
     -1
-    (match (tc-unqualified-import-ambiguity-message ctx env name)
-      [(TcMaybeString.Some _) -1]
-      [(TcMaybeString.No)
-        (match (tc-source-name-lookup-key-with-field-check-lookup
-          ctx
-          env
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)
-          name
-          false)
-          [(TcNameLookup.Err _) -1]
-          [(TcNameLookup.Ok _ key) key])])))
+    (match (tc-source-name-lookup-key-with-field-check-lookup
+      ctx
+      env
+      (tc-hygiene-name-text-id-for-session
+        (tc-context-structural-session ctx)
+        name)
+      name
+      false)
+      [(TcNameLookup.Err _) -1]
+      [(TcNameLookup.Ok _ key) key])))
 
 (define (tc-selected-call-type-ok? [ctx : TcContext] [ty : ast.AstType]) : bool
   (let
@@ -17687,12 +17715,18 @@
                     (= arg-count 1)
                     (tc-selected-safe-spawn-call? ctx env func-id (&mut callee)))
                   TcSelectedCallTarget.Spawn]
-                ;; The definition or extern this name denotes, looked up once
-                ;; (-1: none, a call through a value).
+                ;; The definition or extern this name denotes, resolved once
+                ;; with the builtin classification above (-1: none, a call
+                ;; through a value). A runtime identity classifies with
+                ;; shadowing off, so it resolves its own.
                 [else
                   (let
                     [declared : i64
-                      (tc-selected-call-declared-function ctx env raw-name)]
+                      (if (tc-runtime-identity-head?
+                        (tc-context-structural-session ctx)
+                        raw-name)
+                        (tc-selected-call-declared-function ctx env raw-name)
+                        builtin.declared)]
                     (cond
                       [(< declared 0)
                         (tc-selected-indirect-target ctx env func-id)]
@@ -61330,12 +61364,18 @@
     [(= kind (tc-arena-safe-call-kind-destroy)) 12]
     [else 0]))
 
-;; The symbol indices of `stdlib.arena`'s `phase`, `rewind-safe!` and
-;; `destroy-safe!` (-1 when absent), read from the value map of the stamp
-;; below (`tc-arena-safe-declarations-refresh!`).
+;; The symbol handles and indices of `stdlib.arena`'s `phase`, `rewind-safe!`
+;; and `destroy-safe!` (missing and -1 when absent), read from the value map of
+;; the stamp below (`tc-arena-safe-declarations-refresh!`).
 (define tc-arena-safe-stamp-owner : i64
   0)
 (define tc-arena-safe-stamp-generation : i64
+  -1)
+(define tc-arena-safe-phase-handle : i64
+  -1)
+(define tc-arena-safe-rewind-handle : i64
+  -1)
+(define tc-arena-safe-destroy-handle : i64
   -1)
 (define tc-arena-safe-phase-index : i64
   -1)
@@ -61344,17 +61384,18 @@
 (define tc-arena-safe-destroy-index : i64
   -1)
 
-;; The symbol index of `stdlib.arena`'s definition named `base`, or -1.
-(define (tc-arena-safe-declaration-index [ctx : TcContext] [base : i64]) : i64
-  (let
-    [handle : i64
-      (csym.compiler-symbols-lookup-value-id-or
-        (tc-context-symbols ctx)
-        (tc-module-name-id-by-id cbi.compiler-builtin-id-arena-module base)
-        (csym.compiler-symbols-missing-handle))]
-    (if (csym.compiler-symbols-handle-found? handle)
-      (csym.compiler-symbol-handle-index handle)
-      -1)))
+;; The value-map handle of `stdlib.arena`'s definition named `base`.
+(define (tc-arena-safe-declaration-handle [ctx : TcContext] [base : i64]) : i64
+  (csym.compiler-symbols-lookup-value-id-or
+    (tc-context-symbols ctx)
+    (tc-module-name-id-by-id cbi.compiler-builtin-id-arena-module base)
+    (csym.compiler-symbols-missing-handle)))
+
+;; The symbol index of `handle`, or -1.
+(define (tc-arena-safe-handle-index [handle : i64]) : i64
+  (if (csym.compiler-symbols-handle-found? handle)
+    (csym.compiler-symbol-handle-index handle)
+    -1))
 
 ;; Reads the safe arena operations' indices again when the context's value map
 ;; is another incarnation or has grown since they were read.
@@ -61369,20 +61410,29 @@
       (set! tc-arena-safe-stamp-owner stamp.owner)
       (set! tc-arena-safe-stamp-generation stamp.generation)
       (set!
-        tc-arena-safe-phase-index
-        (tc-arena-safe-declaration-index
+        tc-arena-safe-phase-handle
+        (tc-arena-safe-declaration-handle
           ctx
           cbi.compiler-builtin-id-arena-phase-base))
       (set!
-        tc-arena-safe-rewind-index
-        (tc-arena-safe-declaration-index
+        tc-arena-safe-rewind-handle
+        (tc-arena-safe-declaration-handle
           ctx
           cbi.compiler-builtin-id-arena-rewind-safe-base))
       (set!
-        tc-arena-safe-destroy-index
-        (tc-arena-safe-declaration-index
+        tc-arena-safe-destroy-handle
+        (tc-arena-safe-declaration-handle
           ctx
-          cbi.compiler-builtin-id-arena-destroy-safe-base)))))
+          cbi.compiler-builtin-id-arena-destroy-safe-base))
+      (set!
+        tc-arena-safe-phase-index
+        (tc-arena-safe-handle-index tc-arena-safe-phase-handle))
+      (set!
+        tc-arena-safe-rewind-index
+        (tc-arena-safe-handle-index tc-arena-safe-rewind-handle))
+      (set!
+        tc-arena-safe-destroy-index
+        (tc-arena-safe-handle-index tc-arena-safe-destroy-handle)))))
 
 ;; The safe arena operation callee `name` denotes: the phase, rewind or
 ;; destroy definition of `stdlib.arena`, decided by the declaration the name
@@ -61394,22 +61444,68 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]) : i64
+  (if (tc-arena-safe-declarations-absent? ctx)
+    (tc-arena-safe-call-kind-none)
+    (tc-arena-safe-call-kind-declared
+      ctx
+      (tc-selected-call-declared-function ctx env name))))
+
+;; The safe arena end the declared-name key `key` of `name` denotes, or none
+;; (`tc-declared-name-key`): one value-map probe against the three handles
+;; `tc-arena-safe-declarations-refresh!` cached, so a read that already
+;; resolved `key` never resolves the name again. A lexical local or an
+;; ambiguous unqualified import denotes no declaration, which only a probe
+;; that matched has to establish.
+(define (tc-arena-safe-end-kind-of-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [key : i64]) : i64
   (tc-arena-safe-declarations-refresh! ctx)
-  (if (and
+  (let
+    [handle : i64
+      (if (< key 0)
+        (csym.compiler-symbols-missing-handle)
+        (csym.compiler-symbols-lookup-value-id-or
+          (tc-context-symbols ctx)
+          key
+          (csym.compiler-symbols-missing-handle)))]
+    [kind : i64
+      (cond
+        [(not (csym.compiler-symbols-handle-found? handle))
+          (tc-arena-safe-call-kind-none)]
+        [(= handle tc-arena-safe-rewind-handle)
+          (tc-arena-safe-call-kind-rewind)]
+        [(= handle tc-arena-safe-destroy-handle)
+          (tc-arena-safe-call-kind-destroy)]
+        [(= handle tc-arena-safe-phase-handle) (tc-arena-safe-call-kind-phase)]
+        [else (tc-arena-safe-call-kind-none)])]
+    (if (and
+      (or
+        (= kind (tc-arena-safe-call-kind-rewind))
+        (= kind (tc-arena-safe-call-kind-destroy)))
+      (tc-declared-name-unresolved? ctx env name))
+      (tc-arena-safe-call-kind-none)
+      kind)))
+
+;; The safe arena operation `declared` denotes, or none.
+(define (tc-arena-safe-call-kind-declared [ctx : TcContext] [declared : i64]) : i64
+  (tc-arena-safe-declarations-refresh! ctx)
+  (cond
+    [(< declared 0) (tc-arena-safe-call-kind-none)]
+    [(= declared tc-arena-safe-phase-index) (tc-arena-safe-call-kind-phase)]
+    [(= declared tc-arena-safe-rewind-index) (tc-arena-safe-call-kind-rewind)]
+    [(= declared tc-arena-safe-destroy-index) (tc-arena-safe-call-kind-destroy)]
+    [else (tc-arena-safe-call-kind-none)]))
+
+;; True when `stdlib.arena` declares none of the safe operations, so no name
+;; can denote one.
+(define (tc-arena-safe-declarations-absent? [ctx : TcContext]) : bool
+  (tc-arena-safe-declarations-refresh! ctx)
+  (and
     (< tc-arena-safe-phase-index 0)
     (< tc-arena-safe-rewind-index 0)
-    (< tc-arena-safe-destroy-index 0))
-    (tc-arena-safe-call-kind-none)
-    (let
-      [declared : i64 (tc-selected-call-declared-function ctx env name)]
-      (cond
-        [(< declared 0) (tc-arena-safe-call-kind-none)]
-        [(= declared tc-arena-safe-phase-index) (tc-arena-safe-call-kind-phase)]
-        [(= declared tc-arena-safe-rewind-index)
-          (tc-arena-safe-call-kind-rewind)]
-        [(= declared tc-arena-safe-destroy-index)
-          (tc-arena-safe-call-kind-destroy)]
-        [else (tc-arena-safe-call-kind-none)]))))
+    (< tc-arena-safe-destroy-index 0)))
 
 (define (tc-arena-owner-kind-none) : i64
   0)
@@ -66442,6 +66538,9 @@
   (name String)
   (name-id i64)
   (lookup-id i64)
+  ;; The definition or extern the head denotes, or -1: the arena arm below and
+  ;; the call target dispatch both read it, so a call resolves it once.
+  (declared i64)
   ;; The builtin arm this call takes; zero is the ordinary call path.
   (arm i64)
   (arena-owner-kind i64)
@@ -66486,20 +66585,26 @@
         [else raw-text])]
     [lookup-id : i64
       (tc-call-builtin-lookup-id ctx env (tc-global-shared-view name) name-id)]
-    ;; Decided from the definition the head resolves to, so a macro-hygiene
-    ;; name of a safe arena operation dispatches as the operation (#9041).
-    [arena-arm : i64
-      (tc-arena-safe-call-arm (tc-arena-safe-call-kind-id ctx env raw-name))]
     (if (or
       (< name-id 0)
       (csym.compiler-composite-triple-key-id? lookup-id)
       (tc-call-variant-name-id? ctx name-id))
-      (begin
+      (let
+        ;; No name test classifies this head, so the declaration decides it.
+        [declared : i64 (tc-selected-call-declared-function ctx env raw-name)]
+        ;; Decided from the definition the head resolves to, so a macro-hygiene
+        ;; name of a safe arena operation dispatches as the operation (#9041).
+        [arena-arm : i64
+          (tc-arena-safe-call-arm
+            (if runtime-head?
+              (tc-arena-safe-call-kind-id ctx env raw-name)
+              (tc-arena-safe-call-kind-declared ctx declared)))]
         (when runtime-head? (set! tc-builtin-classify-unshadowed? false))
         (TcCallBuiltinName
           name
           name-id
           lookup-id
+          declared
           arena-arm
           (tc-arena-owner-kind-none)
           TcSliceViewCallKind.None))
@@ -66532,7 +66637,6 @@
                 (not (tc-source-value-bound-id? ctx env name-id)))
               8]
             [(not (= arena-owner-kind (tc-arena-owner-kind-none))) 9]
-            [(> arena-arm 0) arena-arm]
             [(and
                 (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
                 (not (tc-source-value-bound-id? ctx env name-id)))
@@ -66571,12 +66675,29 @@
                 (not (tc-source-value-bound-id? ctx env name-id)))
               23]
             [else 0])]
+        ;; Only a head the name tests leave unclassified can be a safe arena
+        ;; operation, so only that one resolves its declaration, and the call
+        ;; target dispatch reads it back instead of resolving it again.
+        [declared : i64
+          (if (= arm 0)
+            (tc-selected-call-declared-function ctx env raw-name)
+            -1)]
+        [arena-arm : i64
+          (if (= arm 0)
+            (tc-arena-safe-call-arm
+              (if runtime-head?
+                (tc-arena-safe-call-kind-id ctx env raw-name)
+                (tc-arena-safe-call-kind-declared ctx declared)))
+            0)]
         (when runtime-head? (set! tc-builtin-classify-unshadowed? false))
         (TcCallBuiltinName
           name
           name-id
           lookup-id
-          arm
+          declared
+          (if (> arena-arm 0)
+            arena-arm
+            arm)
           arena-owner-kind
           slice-call-kind)))))
 
@@ -89289,90 +89410,91 @@
   [name : i64]
   [name-text : String]
   [direct-call-target : bool]) : ResultTcBinding
-  (when
-    (not direct-call-target)
-    (let
-      [kind : i64 (tc-arena-safe-call-kind-id ctx env name)]
-      (when
-        (or
-          (= kind (tc-arena-safe-call-kind-rewind))
-          (= kind (tc-arena-safe-call-kind-destroy)))
-        (return (ResultTcBinding.Err (tc-arena-end-value-message kind))))))
   (if (tc-type-env-scoped-identity-exhausted? env)
     (ResultTcBinding.Fault typed.TypedError.Exhausted)
     (if (tc-hygiene-global-name-id? (tc-context-structural-session ctx) name)
-      (tc-binding-unrepresented
-        (let
-          [global-id : i64
-            (macro-hygiene-global-source-name-id-or
-              (tc-context-structural-session ctx)
-              name
-              -1)]
-          (if (< global-id 0)
-            (ResultTcType.Err
-              (str_cat.str-cat
-                "typecheck: macro hygiene source id unavailable: "
-                name-text))
-            (if (macro-hygiene-global-id?
-              (tc-context-structural-session ctx)
-              name)
-              (let
-                [module-id : i64
-                  (macro-hygiene-global-module-id
+      (begin
+        (when
+          (not direct-call-target)
+          (let
+            [kind : i64 (tc-arena-safe-call-kind-id ctx env name)]
+            (when
+              (or
+                (= kind (tc-arena-safe-call-kind-rewind))
+                (= kind (tc-arena-safe-call-kind-destroy)))
+              (return (ResultTcBinding.Err (tc-arena-end-value-message kind))))))
+        (tc-binding-unrepresented
+          (let
+            [global-id : i64
+              (macro-hygiene-global-source-name-id-or
+                (tc-context-structural-session ctx)
+                name
+                -1)]
+            (if (< global-id 0)
+              (ResultTcType.Err
+                (str_cat.str-cat
+                  "typecheck: macro hygiene source id unavailable: "
+                  name-text))
+              (if (macro-hygiene-global-id?
+                (tc-context-structural-session ctx)
+                name)
+                (let
+                  [module-id : i64
+                    (macro-hygiene-global-module-id
+                      (tc-context-structural-session ctx)
+                      name)]
+                  (if (macro-hygiene-global-legacy-id?
                     (tc-context-structural-session ctx)
-                    name)]
-                (if (macro-hygiene-global-legacy-id?
-                  (tc-context-structural-session ctx)
-                  name)
-                  (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                    (match (tc-lookup-hygiene-global-visible-id
+                    name)
+                    (if (tc-hygiene-global-binding-unsafe-id? env global-id)
+                      (match (tc-lookup-hygiene-global-visible-id
+                        ctx
+                        env
+                        global-id)
+                        [(ResultTcType.Ok ty)
+                          (tc-unsafe-callable-use
+                            ctx
+                            env
+                            (ci.intern-str global-id)
+                            ty
+                            direct-call-target)]
+                        [(ResultTcType.Err message) (ResultTcType.Err message)])
+                      (tc-lookup-hygiene-global-visible-id ctx env global-id))
+                    (tc-lookup-hygiene-context-global-visible-id-mode
                       ctx
                       env
-                      global-id)
-                      [(ResultTcType.Ok ty)
-                        (tc-unsafe-callable-use
-                          ctx
-                          env
-                          (ci.intern-str global-id)
-                          ty
-                          direct-call-target)]
-                      [(ResultTcType.Err message) (ResultTcType.Err message)])
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id))
-                  (tc-lookup-hygiene-context-global-visible-id-mode
-                    ctx
-                    env
-                    (macro-decl-module-display module-id)
-                    module-id
-                    global-id
-                    direct-call-target)))
-              (match (tc-hygiene-global-decode name-text)
-                [(TcHygieneGlobalName.Legacy global-name)
-                  (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                    (match (tc-lookup-hygiene-global-visible-id
+                      (macro-decl-module-display module-id)
+                      module-id
+                      global-id
+                      direct-call-target)))
+                (match (tc-hygiene-global-decode name-text)
+                  [(TcHygieneGlobalName.Legacy global-name)
+                    (if (tc-hygiene-global-binding-unsafe-id? env global-id)
+                      (match (tc-lookup-hygiene-global-visible-id
+                        ctx
+                        env
+                        global-id)
+                        [(ResultTcType.Ok ty)
+                          (tc-unsafe-callable-use
+                            ctx
+                            env
+                            global-name
+                            ty
+                            direct-call-target)]
+                        [(ResultTcType.Err message) (ResultTcType.Err message)])
+                      (tc-lookup-hygiene-global-visible-id ctx env global-id))]
+                  [(TcHygieneGlobalName.Context module _)
+                    (tc-lookup-hygiene-context-global-visible-id-mode
                       ctx
                       env
-                      global-id)
-                      [(ResultTcType.Ok ty)
-                        (tc-unsafe-callable-use
-                          ctx
-                          env
-                          global-name
-                          ty
-                          direct-call-target)]
-                      [(ResultTcType.Err message) (ResultTcType.Err message)])
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id))]
-                [(TcHygieneGlobalName.Context module _)
-                  (tc-lookup-hygiene-context-global-visible-id-mode
-                    ctx
-                    env
-                    module
-                    (let
-                      [module-id : i64 (ci.intern-qualified-module-id name)]
-                      (if (< module-id 0)
-                        cbi.compiler-builtin-id-fix-empty
-                        module-id))
-                    global-id
-                    direct-call-target)])))))
+                      module
+                      (let
+                        [module-id : i64 (ci.intern-qualified-module-id name)]
+                        (if (< module-id 0)
+                          cbi.compiler-builtin-id-fix-empty
+                          module-id))
+                      global-id
+                      direct-call-target)]))))))
       (match (tc-source-name-lookup-key-with-field-check-lookup
         ctx
         env
@@ -89387,6 +89509,22 @@
                 lookup-id)]
             (match (tc-lookup-binding-selected-id env key key key true)
               [(ResultTcBinding.Ok ty unsafe origin)
+                ;; The safe arena ends are functions, so a value of any other
+                ;; type denotes none: only a callable type reads the
+                ;; declaration the lookup above already resolved, and that
+                ;; costs one probe of the cached declarations, never a second
+                ;; name resolution.
+                (when
+                  (and (not direct-call-target) (tc-callable-type? (& ty)))
+                  (let
+                    [kind : i64
+                      (tc-arena-safe-end-kind-of-key ctx env name lookup-id)]
+                    (when
+                      (or
+                        (= kind (tc-arena-safe-call-kind-rewind))
+                        (= kind (tc-arena-safe-call-kind-destroy)))
+                      (return
+                        (ResultTcBinding.Err (tc-arena-end-value-message kind))))))
                 (match (if (tc-bare-variant-name-gate? ctx name)
                   (tc-bare-variant-unexpected-check
                     ctx

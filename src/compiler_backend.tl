@@ -5408,30 +5408,6 @@
           (Err (compiler-backend-mask-home-unavailable role))])]
     [(No) (Err (compiler-backend-mask-home-unavailable role))]))
 
-(define (compiler-backend-mask-var-stack-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [var : i64]
-  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
-  (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
-    [(Some location)
-      (match location
-        [(Spill offset)
-          (Some
-            (compiler-backend-frame-offset-with-backend-state
-              backend-state
-              offset))]
-        [_ No])]
-    [(No) (Some (compiler-backend-slot-with-backend-state backend-state var))]))
-
-(define (compiler-backend-mask-value-stack-operand
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [value : compiler_ir_types.CompilerIrValue]
-  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
-  (match value
-    [(Var var)
-      (compiler-backend-mask-var-stack-operand assignments var backend-state)]
-    [_ No]))
-
 (define (compiler-backend-mask-spill-scratch [_index : i64]) : String
   "%k7")
 
@@ -5470,7 +5446,7 @@
   [backend-state : CompilerBackendState]) : ResultBackendMaskUse
   (match value
     [(Var var)
-      (match (compiler-backend-mask-var-stack-operand
+      (match (compiler-backend-vector-var-stack-operand
         assignments
         var
         backend-state)
@@ -5497,7 +5473,10 @@
   [role : String]
   [scratch : String]
   [backend-state : CompilerBackendState]) : ResultBackendReg
-  (match (compiler-backend-mask-var-stack-operand assignments dst backend-state)
+  (match (compiler-backend-vector-var-stack-operand
+    assignments
+    dst
+    backend-state)
     [(Some _) (Ok scratch)]
     [(No) (compiler-backend-mask-var-reg backend-state assignments dst role)]))
 
@@ -5507,7 +5486,10 @@
   [lanes : i64]
   [reg : String]
   [backend-state : CompilerBackendState]) : String
-  (match (compiler-backend-mask-var-stack-operand assignments dst backend-state)
+  (match (compiler-backend-vector-var-stack-operand
+    assignments
+    dst
+    backend-state)
     [(Some operand) (compiler-backend-mask-store-stack-asm lanes reg operand)]
     [(No) ""]))
 
@@ -5568,9 +5550,10 @@
     [(F32) "vmaskmovps"]
     [_ ""]))
 
-(define (compiler-backend-avx2-vector-binop-mnemonic
+(define (compiler-backend-vector-binop-mnemonic
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
-  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [avx512? : bool]) : String
   (match op
     [(Add)
       (match elem-ty
@@ -5592,6 +5575,10 @@
         [_ ""])]
     [(Mul)
       (match elem-ty
+        [(or (I64) (U64))
+          (if avx512?
+            "vpmullq"
+            "")]
         [(or (I32) (U32)) "vpmulld"]
         [(or (I16) (U16)) "vpmullw"]
         [(F64) "vmulpd"]
@@ -5601,24 +5588,61 @@
       (match elem-ty
         [(or (I64) (U64)) "vpsllvq"]
         [(or (I32) (U32)) "vpsllvd"]
+        [(or (I16) (U16))
+          (if avx512?
+            "vpsllvw"
+            "")]
         [_ ""])]
     [(Shr _)
       (match elem-ty
+        [(I64)
+          (if avx512?
+            "vpsravq"
+            "")]
         [(U64) "vpsrlvq"]
         [(I32) "vpsravd"]
         [(U32) "vpsrlvd"]
+        [(I16)
+          (if avx512?
+            "vpsravw"
+            "")]
+        [(U16)
+          (if avx512?
+            "vpsrlvw"
+            "")]
         [_ ""])]
     [(BitAnd)
       (match elem-ty
-        [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8)) "vpand"]
+        [(or (I64) (U64))
+          (if avx512?
+            "vpandq"
+            "vpand")]
+        [(or (I32) (U32) (I16) (U16) (I8) (U8))
+          (if avx512?
+            "vpandd"
+            "vpand")]
         [_ ""])]
     [(BitOr)
       (match elem-ty
-        [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8)) "vpor"]
+        [(or (I64) (U64))
+          (if avx512?
+            "vporq"
+            "vpor")]
+        [(or (I32) (U32) (I16) (U16) (I8) (U8))
+          (if avx512?
+            "vpord"
+            "vpor")]
         [_ ""])]
     [(BitXor)
       (match elem-ty
-        [(or (I64) (U64) (I32) (U32) (I16) (U16) (I8) (U8)) "vpxor"]
+        [(or (I64) (U64))
+          (if avx512?
+            "vpxorq"
+            "vpxor")]
+        [(or (I32) (U32) (I16) (U16) (I8) (U8))
+          (if avx512?
+            "vpxord"
+            "vpxor")]
         [_ ""])]
     [_ ""]))
 
@@ -5675,23 +5699,25 @@
       [(or (Shl _) (Shr _)) true]
       [_ false])))
 
-(define (compiler-backend-word-vector-shift-mnemonic
+(define (compiler-backend-narrow-vector-shift-mnemonic
   [op : compiler_ir_types.CompilerIrBinOp]
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match op
     [(Shl _) "vpsllvd"]
     [(Shr _)
       (match elem-ty
-        [(I16) "vpsravd"]
-        [(U16) "vpsrlvd"]
+        [(or (I16) (I8)) "vpsravd"]
+        [(or (U16) (U8)) "vpsrlvd"]
         [_ ""])]
     [_ ""]))
 
-(define (compiler-backend-word-vector-widen-mnemonic
+(define (compiler-backend-narrow-vector-widen-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match elem-ty
     [(I16) "vpmovsxwd"]
     [(U16) "vpmovzxwd"]
+    [(I8) "vpmovsxbd"]
+    [(U8) "vpmovzxbd"]
     [_ ""]))
 
 ;; AVX2 has no per-word variable shift. Widen the low and high 128-bit word
@@ -5716,8 +5742,8 @@
       (let
         [elem-ty (compiler_ast_types.AstType.I32)]
         (compiler-backend-vector-move-for-width "ymm" elem-ty))]
-    [widen : String (compiler-backend-word-vector-widen-mnemonic elem-ty)]
-    [shift : String (compiler-backend-word-vector-shift-mnemonic op elem-ty)]
+    [widen : String (compiler-backend-narrow-vector-widen-mnemonic elem-ty)]
+    [shift : String (compiler-backend-narrow-vector-shift-mnemonic op elem-ty)]
     [tmp0 : String "%ymm0"]
     [tmp1 : String "%ymm1"]
     (match (compiler-backend-vector-register-use
@@ -5881,25 +5907,6 @@
               [(Err message) (compiler-backend-instr-error instr-diag message)])])]
       [(Err message) (compiler-backend-instr-error instr-diag message)])))
 
-(define (compiler-backend-byte-vector-shift-mnemonic
-  [op : compiler_ir_types.CompilerIrBinOp]
-  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
-  (match op
-    [(Shl _) "vpsllvd"]
-    [(Shr _)
-      (match elem-ty
-        [(I8) "vpsravd"]
-        [(U8) "vpsrlvd"]
-        [_ ""])]
-    [_ ""]))
-
-(define (compiler-backend-byte-vector-widen-mnemonic
-  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
-  (match elem-ty
-    [(I8) "vpmovsxbd"]
-    [(U8) "vpmovzxbd"]
-    [_ ""]))
-
 ;; x86 has no per-byte variable shift. Widen four byte groups to dwords, use
 ;; the native dword shift, then pack the low byte of every result. The pack is
 ;; exact rather than saturating because each dword is masked to 0..255 first.
@@ -5931,8 +5938,8 @@
       (let
         [elem-ty (compiler_ast_types.AstType.I32)]
         (compiler-backend-vector-move-for-width width elem-ty))]
-    [widen : String (compiler-backend-byte-vector-widen-mnemonic elem-ty)]
-    [shift : String (compiler-backend-byte-vector-shift-mnemonic op elem-ty)]
+    [widen : String (compiler-backend-narrow-vector-widen-mnemonic elem-ty)]
+    [shift : String (compiler-backend-narrow-vector-shift-mnemonic op elem-ty)]
     [tmp0 : String
       (if avx512
         "%zmm0"
@@ -7439,8 +7446,8 @@
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
   (match mode
-    [(Avx512) (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-    [_ (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]))
+    [(Avx512) (compiler-backend-vector-binop-mnemonic op elem-ty true)]
+    [_ (compiler-backend-vector-binop-mnemonic op elem-ty false)]))
 
 (define (compiler-backend-vector-move-for-width
   [width : (& width str)]
@@ -7844,68 +7851,6 @@
                       backend-state)))]
               [(Err message) (Err (box message))])])]
       [(Err message) (Err (box message))])))
-
-(define (compiler-backend-avx512-vector-binop-mnemonic
-  [op : (& op compiler_ir_types.CompilerIrBinOp)]
-  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
-  (match op
-    [(Add)
-      (match elem-ty
-        [(or (I64) (U64)) "vpaddq"]
-        [(or (I32) (U32)) "vpaddd"]
-        [(or (I16) (U16)) "vpaddw"]
-        [(or (I8) (U8)) "vpaddb"]
-        [(F64) "vaddpd"]
-        [(F32) "vaddps"]
-        [_ ""])]
-    [(Sub)
-      (match elem-ty
-        [(or (I64) (U64)) "vpsubq"]
-        [(or (I32) (U32)) "vpsubd"]
-        [(or (I16) (U16)) "vpsubw"]
-        [(or (I8) (U8)) "vpsubb"]
-        [(F64) "vsubpd"]
-        [(F32) "vsubps"]
-        [_ ""])]
-    [(Mul)
-      (match elem-ty
-        [(or (I64) (U64)) "vpmullq"]
-        [(or (I32) (U32)) "vpmulld"]
-        [(or (I16) (U16)) "vpmullw"]
-        [(F64) "vmulpd"]
-        [(F32) "vmulps"]
-        [_ ""])]
-    [(Shl _)
-      (match elem-ty
-        [(or (I64) (U64)) "vpsllvq"]
-        [(or (I32) (U32)) "vpsllvd"]
-        [(or (I16) (U16)) "vpsllvw"]
-        [_ ""])]
-    [(Shr _)
-      (match elem-ty
-        [(I64) "vpsravq"]
-        [(U64) "vpsrlvq"]
-        [(I32) "vpsravd"]
-        [(U32) "vpsrlvd"]
-        [(I16) "vpsravw"]
-        [(U16) "vpsrlvw"]
-        [_ ""])]
-    [(BitAnd)
-      (match elem-ty
-        [(or (I64) (U64)) "vpandq"]
-        [(or (I32) (U32) (I16) (U16) (I8) (U8)) "vpandd"]
-        [_ ""])]
-    [(BitOr)
-      (match elem-ty
-        [(or (I64) (U64)) "vporq"]
-        [(or (I32) (U32) (I16) (U16) (I8) (U8)) "vpord"]
-        [_ ""])]
-    [(BitXor)
-      (match elem-ty
-        [(or (I64) (U64)) "vpxorq"]
-        [(or (I32) (U32) (I16) (U16) (I8) (U8)) "vpxord"]
-        [_ ""])]
-    [_ ""]))
 
 (define (compiler-backend-avx512-vector-compare-mnemonic
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
@@ -9718,12 +9663,12 @@
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (>
       (string.string-length
-        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty))
+        (compiler-backend-vector-binop-mnemonic op elem-ty true))
       0)
     (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
       (>
         (string.string-length
-          (compiler-backend-avx2-vector-binop-mnemonic op elem-ty))
+          (compiler-backend-vector-binop-mnemonic op elem-ty false))
         0)
       false)))
 
@@ -11717,7 +11662,7 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
   [backend-state : CompilerBackendState]) : bool
-  (match (compiler-backend-mask-value-stack-operand
+  (match (compiler-backend-vector-value-stack-operand
     assignments
     value
     backend-state)
@@ -11728,7 +11673,10 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [backend-state : CompilerBackendState]) : bool
-  (match (compiler-backend-mask-var-stack-operand assignments dst backend-state)
+  (match (compiler-backend-vector-var-stack-operand
+    assignments
+    dst
+    backend-state)
     [(Some _) true]
     [(No) false]))
 
@@ -20279,108 +20227,175 @@
             elem-ty
             backend-state))))))
 
-(define (compiler-backend-avx2-vector-reduce-horizontal-asm
+(define (compiler-backend-vector-reduce-horizontal-asm
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [mnemonic : String]
-  [ymm : String]
-  [xmm : String]
+  [wide-reg : String]
+  [mid-reg : String]
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
   [acc-xmm : String]
+  [acc-ymm : String]
   [scratch-xmm : String]
-  [mask-xmm : String]) : String
-  (match elem-ty
-    [(F32)
-      (str_cat.str-cat
+  [mask-xmm : String]
+  [wide? : bool]) : String
+  (let
+    [lane-sum?
+      (match (& op)
+        [(Sum) true]
+        [_ false])]
+    [extract-src : String
+      (if wide?
+        (compiler-backend-global-shared-view acc-ymm)
+        (compiler-backend-global-shared-view wide-reg))]
+    [extract-dst : String
+      (if wide?
+        (compiler-backend-global-shared-view scratch-xmm)
+        (compiler-backend-global-shared-view acc-xmm))]
+    [lane-src : String
+      (if wide?
+        (compiler-backend-global-shared-view acc-xmm)
+        (compiler-backend-global-shared-view mid-reg))]
+    (match elem-ty
+      [(F32)
         (str_cat.str-cat
-          "    vextractf128 $1, "
-          ymm
-          ", "
-          acc-xmm
-          "\n    "
-          mnemonic
-          " "
-          acc-xmm
-          ", "
-          xmm
-          ", "
-          acc-xmm
-          "\n")
-        (str_cat.str-cat
-          "    vshufps $78, "
-          acc-xmm
-          ", "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vshufps $177, "
-          acc-xmm
-          ", "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    vaddss "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"))]
-    [(F64)
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextractf128 $1, "
-          ymm
-          ", "
-          acc-xmm
-          "\n    "
-          mnemonic
-          " "
-          acc-xmm
-          ", "
-          xmm
-          ", "
-          acc-xmm
-          "\n")
-        (str_cat.str-cat
-          "    vunpckhpd "
-          acc-xmm
-          ", "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    vaddsd "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"))]
-    [(I64)
-      (match op
-        [(Sum)
-          (str_cat.str-cat
+          (if wide?
             (str_cat.str-cat
-              "    vextracti128 $1, "
-              ymm
+              "    vextractf32x8 $1, "
+              wide-reg
               ", "
-              acc-xmm
+              acc-ymm
               "\n    "
               mnemonic
               " "
-              acc-xmm
+              acc-ymm
               ", "
-              xmm
+              mid-reg
+              ", "
+              acc-ymm
+              "\n")
+            "")
+          (str_cat.str-cat
+            "    vextractf128 $1, "
+            extract-src
+            ", "
+            extract-dst
+            "\n    "
+            mnemonic
+            " "
+            extract-dst
+            ", "
+            lane-src
+            ", "
+            acc-xmm
+            "\n")
+          (str_cat.str-cat
+            "    vshufps $78, "
+            acc-xmm
+            ", "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
+            mnemonic
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
+            "")
+          (str_cat.str-cat
+            "    vshufps $177, "
+            acc-xmm
+            ", "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    vaddss "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"))]
+      [(F64)
+        (str_cat.str-cat
+          (if wide?
+            (str_cat.str-cat
+              "    vextractf64x4 $1, "
+              wide-reg
+              ", "
+              acc-ymm
+              "\n    "
+              mnemonic
+              " "
+              acc-ymm
+              ", "
+              mid-reg
+              ", "
+              acc-ymm
+              "\n")
+            "")
+          (str_cat.str-cat
+            "    vextractf128 $1, "
+            extract-src
+            ", "
+            extract-dst
+            "\n    "
+            mnemonic
+            " "
+            extract-dst
+            ", "
+            lane-src
+            ", "
+            acc-xmm
+            "\n"
+            "")
+          (str_cat.str-cat
+            "    vunpckhpd "
+            acc-xmm
+            ", "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    vaddsd "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"))]
+      [(I64)
+        (if (or wide? lane-sum?)
+          (str_cat.str-cat
+            (if wide?
+              (str_cat.str-cat
+                "    vextracti64x4 $1, "
+                wide-reg
+                ", "
+                acc-ymm
+                "\n    "
+                mnemonic
+                " "
+                acc-ymm
+                ", "
+                mid-reg
+                ", "
+                acc-ymm
+                "\n")
+              "")
+            (str_cat.str-cat
+              "    vextracti128 $1, "
+              extract-src
+              ", "
+              extract-dst
+              "\n    "
+              mnemonic
+              " "
+              extract-dst
+              ", "
+              lane-src
               ", "
               acc-xmm
               "\n")
@@ -20398,28 +20413,27 @@
               ", "
               acc-xmm
               "\n"
-              ""))]
-        [_
+              ""))
           (let
             [high-compare-left : String
-              (match op
-                [(Min) (owned_view.compiler-owned-shared-view acc-xmm)]
-                [_ (owned_view.compiler-owned-shared-view xmm)])]
+              (match (& op)
+                [(Min) (compiler-backend-global-shared-view acc-xmm)]
+                [_ (compiler-backend-global-shared-view mid-reg)])]
             [high-compare-right : String
-              (match op
-                [(Min) (owned_view.compiler-owned-shared-view xmm)]
-                [_ (owned_view.compiler-owned-shared-view acc-xmm)])]
+              (match (& op)
+                [(Min) (compiler-backend-global-shared-view mid-reg)]
+                [_ (compiler-backend-global-shared-view acc-xmm)])]
             [lane-compare-left : String
-              (match op
-                [(Min) (owned_view.compiler-owned-shared-view scratch-xmm)]
-                [_ (owned_view.compiler-owned-shared-view acc-xmm)])]
+              (match (& op)
+                [(Min) (compiler-backend-global-shared-view scratch-xmm)]
+                [_ (compiler-backend-global-shared-view acc-xmm)])]
             [lane-compare-right : String
-              (match op
-                [(Min) (owned_view.compiler-owned-shared-view acc-xmm)]
-                [_ (owned_view.compiler-owned-shared-view scratch-xmm)])]
+              (match (& op)
+                [(Min) (compiler-backend-global-shared-view acc-xmm)]
+                [_ (compiler-backend-global-shared-view scratch-xmm)])]
             (str_cat.str-cat
               "    vextracti128 $1, "
-              ymm
+              wide-reg
               ", "
               acc-xmm
               "\n    vpcmpgtq "
@@ -20433,7 +20447,7 @@
               ", "
               acc-xmm
               ", "
-              xmm
+              mid-reg
               ", "
               acc-xmm
               "\n    vpsrldq $8, "
@@ -20455,54 +20469,82 @@
               ", "
               acc-xmm
               "\n"
-              ""))])]
-    [(I32)
-      (str_cat.str-cat
+              "")))]
+      [(I32)
         (str_cat.str-cat
-          "    vextracti128 $1, "
-          ymm
-          ", "
-          acc-xmm
-          "\n    "
-          mnemonic
-          " "
-          acc-xmm
-          ", "
-          xmm
-          ", "
-          acc-xmm
-          "\n")
-        (str_cat.str-cat
-          "    vpsrldq $8, "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vpsrldq $4, "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          ""))]
-    [_ ""]))
+          (if wide?
+            (str_cat.str-cat
+              "    vextracti64x4 $1, "
+              wide-reg
+              ", "
+              acc-ymm
+              "\n    "
+              mnemonic
+              " "
+              acc-ymm
+              ", "
+              mid-reg
+              ", "
+              acc-ymm
+              "\n")
+            "")
+          (str_cat.str-cat
+            "    vextracti128 $1, "
+            extract-src
+            ", "
+            extract-dst
+            "\n    "
+            mnemonic
+            " "
+            extract-dst
+            ", "
+            lane-src
+            ", "
+            acc-xmm
+            "\n"
+            "")
+          (str_cat.str-cat
+            "    vpsrldq $8, "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
+            mnemonic
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
+            "")
+          (str_cat.str-cat
+            "    vpsrldq $4, "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
+            mnemonic
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
+            ""))]
+      [(or (I16) (U16) (I8) (U8))
+        (if wide?
+          (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
+            mnemonic
+            wide-reg
+            mid-reg
+            elem-ty
+            acc-xmm
+            acc-ymm
+            scratch-xmm)
+          "")]
+      [_ ""])))
 
 (define (compiler-backend-emit-avx2-vector-reduce
   [type-segment-bases : i64]
@@ -20588,15 +20630,17 @@
                     (Ok
                       (str_cat.str-cat
                         src-asm
-                        (compiler-backend-avx2-vector-reduce-horizontal-asm
+                        (compiler-backend-vector-reduce-horizontal-asm
                           op
                           mnemonic
                           ymm
                           xmm
                           elem-ty
                           (compiler-backend-global-shared-view acc-xmm)
+                          ""
                           scratch-xmm
-                          mask-xmm)
+                          mask-xmm
+                          false)
                         (compiler-backend-vector-reduce-store-scalar
                           assignments
                           dst
@@ -20690,240 +20734,6 @@
           scratch-xmm)]
       [_ ""])))
 
-(define (compiler-backend-avx512-vector-reduce-horizontal-asm
-  [mnemonic : String]
-  [zmm : String]
-  [ymm : String]
-  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
-  [acc-xmm : (& acc-xmm str)]
-  [acc-ymm : String]
-  [scratch-xmm : String]) : String
-  (match elem-ty
-    [(F32)
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextractf32x8 $1, "
-          zmm
-          ", "
-          acc-ymm
-          "\n    "
-          mnemonic
-          " "
-          acc-ymm
-          ", "
-          ymm
-          ", "
-          acc-ymm
-          "\n")
-        (str_cat.str-cat
-          "    vextractf128 $1, "
-          acc-ymm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vshufps $78, "
-          acc-xmm
-          ", "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vshufps $177, "
-          acc-xmm
-          ", "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    vaddss "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"))]
-    [(F64)
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextractf64x4 $1, "
-          zmm
-          ", "
-          acc-ymm
-          "\n    "
-          mnemonic
-          " "
-          acc-ymm
-          ", "
-          ymm
-          ", "
-          acc-ymm
-          "\n")
-        (str_cat.str-cat
-          "    vextractf128 $1, "
-          acc-ymm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vunpckhpd "
-          acc-xmm
-          ", "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    vaddsd "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"))]
-    [(I64)
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextracti64x4 $1, "
-          zmm
-          ", "
-          acc-ymm
-          "\n    "
-          mnemonic
-          " "
-          acc-ymm
-          ", "
-          ymm
-          ", "
-          acc-ymm
-          "\n")
-        (str_cat.str-cat
-          "    vextracti128 $1, "
-          acc-ymm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vpsrldq $8, "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          ""))]
-    [(I32)
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextracti64x4 $1, "
-          zmm
-          ", "
-          acc-ymm
-          "\n    "
-          mnemonic
-          " "
-          acc-ymm
-          ", "
-          ymm
-          ", "
-          acc-ymm
-          "\n")
-        (str_cat.str-cat
-          "    vextracti128 $1, "
-          acc-ymm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vpsrldq $8, "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          "")
-        (str_cat.str-cat
-          "    vpsrldq $4, "
-          acc-xmm
-          ", "
-          scratch-xmm
-          "\n    "
-          mnemonic
-          " "
-          scratch-xmm
-          ", "
-          acc-xmm
-          ", "
-          acc-xmm
-          "\n"
-          ""))]
-    [(or (I16) (U16) (I8) (U8))
-      (compiler-backend-avx512-vector-reduce-narrow-horizontal-asm
-        mnemonic
-        zmm
-        ymm
-        elem-ty
-        acc-xmm
-        acc-ymm
-        scratch-xmm)]
-    [_ ""]))
-
 (define (compiler-backend-emit-avx512-vector-reduce
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -20984,14 +20794,17 @@
                     (Ok
                       (str_cat.str-cat
                         src-asm
-                        (compiler-backend-avx512-vector-reduce-horizontal-asm
+                        (compiler-backend-vector-reduce-horizontal-asm
+                          op
                           mnemonic
                           zmm
                           ymm
                           elem-ty
-                          acc-xmm
+                          (compiler-backend-global-shared-view acc-xmm)
                           acc-ymm
-                          scratch-xmm)
+                          scratch-xmm
+                          ""
+                          true)
                         (compiler-backend-vector-reduce-store-scalar
                           assignments
                           dst
@@ -42985,37 +42798,20 @@
       [(No)
         (Ok (compiler-backend-slot-with-backend-state backend-state var-id))])))
 
-(define (compiler-backend-emit-phi-temp-slot-save-reg
+(define (compiler-backend-emit-phi-temp-slot-move-reg
   [operand : String]
   [mnemonic : String]
   [slot-index : i64]
+  [restore? : bool]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
-    "    "
-    mnemonic
-    " "
-    operand
-    ", "
-    (compiler-backend-cycle-temp-slot-with-backend-state
-      backend-state
-      slot-index)
-    "\n"))
-
-(define (compiler-backend-emit-phi-temp-slot-restore-reg
-  [operand : String]
-  [mnemonic : String]
-  [slot-index : i64]
-  [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
-    "    "
-    mnemonic
-    " "
-    (compiler-backend-cycle-temp-slot-with-backend-state
-      backend-state
-      slot-index)
-    ", "
-    operand
-    "\n"))
+  (let
+    [slot : String
+      (compiler-backend-cycle-temp-slot-with-backend-state
+        backend-state
+        slot-index)]
+    (if restore?
+      (str_cat.str-cat "    " mnemonic " " slot ", " operand "\n")
+      (str_cat.str-cat "    " mnemonic " " operand ", " slot "\n"))))
 
 (define (compiler-backend-phi-temp-gp-scratch
   [backend-state : CompilerBackendState]) : String
@@ -43025,58 +42821,46 @@
     "%r10"
     backend-state))
 
-(define (compiler-backend-emit-phi-temp-slot-save-gp
+(define (compiler-backend-emit-phi-temp-slot-move-gp
   [operand : String]
   [slot-index : i64]
+  [restore? : bool]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-peephole-register-operand? operand)
-    (compiler-backend-emit-phi-temp-slot-save-reg
+    (compiler-backend-emit-phi-temp-slot-move-reg
       operand
       "movq"
       slot-index
+      restore?
       backend-state)
     (let
       [scratch : String (compiler-backend-phi-temp-gp-scratch backend-state)]
+      [slot : String
+        (compiler-backend-cycle-temp-slot-with-backend-state
+          backend-state
+          slot-index)]
       (compiler-backend-emergency-wrap
-        (str_cat.str-cat
-          "    movq "
-          operand
-          ", "
-          scratch
-          "\n    movq "
-          scratch
-          ", "
-          (compiler-backend-cycle-temp-slot-with-backend-state
-            backend-state
-            slot-index)
-          "\n")
-        backend-state))))
-
-(define (compiler-backend-emit-phi-temp-slot-restore-gp
-  [operand : String]
-  [slot-index : i64]
-  [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-peephole-register-operand? operand)
-    (compiler-backend-emit-phi-temp-slot-restore-reg
-      operand
-      "movq"
-      slot-index
-      backend-state)
-    (let
-      [scratch : String (compiler-backend-phi-temp-gp-scratch backend-state)]
-      (compiler-backend-emergency-wrap
-        (str_cat.str-cat
-          "    movq "
-          (compiler-backend-cycle-temp-slot-with-backend-state
-            backend-state
-            slot-index)
-          ", "
-          scratch
-          "\n    movq "
-          scratch
-          ", "
-          operand
-          "\n")
+        (if restore?
+          (str_cat.str-cat
+            "    movq "
+            slot
+            ", "
+            scratch
+            "\n    movq "
+            scratch
+            ", "
+            operand
+            "\n")
+          (str_cat.str-cat
+            "    movq "
+            operand
+            ", "
+            scratch
+            "\n    movq "
+            scratch
+            ", "
+            slot
+            "\n"))
         backend-state))))
 
 (define (compiler-backend-phi-float-temp-scratch
@@ -43085,67 +42869,56 @@
     [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
     (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2" backend-state)))
 
-(define (compiler-backend-emit-phi-float-temp-save
+(define (compiler-backend-emit-phi-float-temp-move
   [operand : String]
   [ty : compiler_ast_types.AstType]
+  [restore? : bool]
   [backend-state : CompilerBackendState]) : String
   (let
     [mnemonic : String (compiler-backend-float-move ty)]
     (if (compiler-backend-peephole-register-operand? operand)
-      (compiler-backend-emit-phi-temp-slot-save-reg
+      (compiler-backend-emit-phi-temp-slot-move-reg
         operand
         mnemonic
         0
+        restore?
         backend-state)
       (let
         [scratch : String
           (compiler-backend-phi-float-temp-scratch backend-state)]
-        (str_cat.str-cat
-          "    "
-          mnemonic
-          " "
-          operand
-          ", "
-          scratch
-          "\n    "
-          mnemonic
-          " "
-          scratch
-          ", "
-          (compiler-backend-cycle-temp-slot-with-backend-state backend-state 0)
-          "\n")))))
+        [slot : String
+          (compiler-backend-cycle-temp-slot-with-backend-state backend-state 0)]
+        (if restore?
+          (str_cat.str-cat
+            "    "
+            mnemonic
+            " "
+            slot
+            ", "
+            scratch
+            "\n    "
+            mnemonic
+            " "
+            scratch
+            ", "
+            operand
+            "\n")
+          (str_cat.str-cat
+            "    "
+            mnemonic
+            " "
+            operand
+            ", "
+            scratch
+            "\n    "
+            mnemonic
+            " "
+            scratch
+            ", "
+            slot
+            "\n"))))))
 
-(define (compiler-backend-emit-phi-float-temp-restore
-  [operand : String]
-  [ty : compiler_ast_types.AstType]
-  [backend-state : CompilerBackendState]) : String
-  (let
-    [mnemonic : String (compiler-backend-float-move ty)]
-    (if (compiler-backend-peephole-register-operand? operand)
-      (compiler-backend-emit-phi-temp-slot-restore-reg
-        operand
-        mnemonic
-        0
-        backend-state)
-      (let
-        [scratch : String
-          (compiler-backend-phi-float-temp-scratch backend-state)]
-        (str_cat.str-cat
-          "    "
-          mnemonic
-          " "
-          (compiler-backend-cycle-temp-slot-with-backend-state backend-state 0)
-          ", "
-          scratch
-          "\n    "
-          mnemonic
-          " "
-          scratch
-          ", "
-          operand
-          "\n")))))
-
-(define (compiler-backend-emit-phi-group-word-save
+(define (compiler-backend-emit-phi-group-word-move
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
@@ -43153,6 +42926,7 @@
   [vars : i64]
   [ty : compiler_ast_types.AstType]
   [program-index : CompilerBackendProgramIndex]
+  [restore? : bool]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [operand
@@ -43170,57 +42944,21 @@
         ty
         index)
         (if (compiler-backend-peephole-register-operand? operand)
-          (compiler-backend-emit-phi-temp-slot-save-reg
+          (compiler-backend-emit-phi-temp-slot-move-reg
             operand
             "movq"
             index
+            restore?
             backend-state)
-          (compiler-backend-emit-phi-temp-slot-save-gp
+          (compiler-backend-emit-phi-temp-slot-move-gp
             operand
             index
+            restore?
             backend-state))
-        (compiler-backend-emit-phi-temp-slot-save-gp
+        (compiler-backend-emit-phi-temp-slot-move-gp
           operand
           index
-          backend-state)))))
-
-(define (compiler-backend-emit-phi-group-word-restore
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [var : i64]
-  [index : i64]
-  [vars : i64]
-  [ty : compiler_ast_types.AstType]
-  [program-index : CompilerBackendProgramIndex]
-  [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (let
-    [operand
-      (try
-        (compiler-backend-group-word-operand-with-backend-state
-          assignments
-          var
-          index
-          vars
-          backend-state))]
-    (Ok
-      (if (compiler-backend-group-word-sse?
-        type-segment-bases
-        program-index
-        ty
-        index)
-        (if (compiler-backend-peephole-register-operand? operand)
-          (compiler-backend-emit-phi-temp-slot-restore-reg
-            operand
-            "movq"
-            index
-            backend-state)
-          (compiler-backend-emit-phi-temp-slot-restore-gp
-            operand
-            index
-            backend-state))
-        (compiler-backend-emit-phi-temp-slot-restore-gp
-          operand
-          index
+          restore?
           backend-state)))))
 
 (define (compiler-backend-emit-phi-temp-save
@@ -43237,7 +42975,7 @@
     (let
       [w0
         (try
-          (compiler-backend-emit-phi-group-word-save
+          (compiler-backend-emit-phi-group-word-move
             type-segment-bases
             assignments
             dst
@@ -43245,10 +42983,11 @@
             vars
             (compiler-backend-global-shared-view ty)
             program-index
+            false
             backend-state))]
       [w1
         (try
-          (compiler-backend-emit-phi-group-word-save
+          (compiler-backend-emit-phi-group-word-move
             type-segment-bases
             assignments
             dst
@@ -43256,6 +42995,7 @@
             vars
             ty
             program-index
+            false
             backend-state))]
       (Ok (str_cat.str-cat w0 w1)))
     (let
@@ -43264,8 +43004,16 @@
           (compiler-backend-phi-temp-home-operand assignments dst backend-state))]
       (Ok
         (if (compiler-backend-float-type? ty)
-          (compiler-backend-emit-phi-float-temp-save operand ty backend-state)
-          (compiler-backend-emit-phi-temp-slot-save-gp operand 0 backend-state))))))
+          (compiler-backend-emit-phi-float-temp-move
+            operand
+            ty
+            false
+            backend-state)
+          (compiler-backend-emit-phi-temp-slot-move-gp
+            operand
+            0
+            false
+            backend-state))))))
 
 ;; Restore reverses the word order (word1 then word0), using fixed frame slots
 ;; rather than %rsp pushes.
@@ -43283,7 +43031,7 @@
     (let
       [w1
         (try
-          (compiler-backend-emit-phi-group-word-restore
+          (compiler-backend-emit-phi-group-word-move
             type-segment-bases
             assignments
             dst
@@ -43291,10 +43039,11 @@
             vars
             (compiler-backend-global-shared-view ty)
             program-index
+            true
             backend-state))]
       [w0
         (try
-          (compiler-backend-emit-phi-group-word-restore
+          (compiler-backend-emit-phi-group-word-move
             type-segment-bases
             assignments
             dst
@@ -43302,6 +43051,7 @@
             vars
             ty
             program-index
+            true
             backend-state))]
       (Ok (str_cat.str-cat w1 w0)))
     (let
@@ -43310,13 +43060,15 @@
           (compiler-backend-phi-temp-home-operand assignments dst backend-state))]
       (Ok
         (if (compiler-backend-float-type? ty)
-          (compiler-backend-emit-phi-float-temp-restore
+          (compiler-backend-emit-phi-float-temp-move
             operand
             ty
+            true
             backend-state)
-          (compiler-backend-emit-phi-temp-slot-restore-gp
+          (compiler-backend-emit-phi-temp-slot-move-gp
             operand
             0
+            true
             backend-state))))))
 
 ;; #phi-temp-reg save/restore: stage the cycle-entry dst's old value in a free GP
@@ -75398,26 +75150,20 @@
       floats
       (text_buf.append buf "    .section .rodata\n"))))
 
-(define (compiler-backend-emit-f64-sign-bit-rodata-into
+(define (compiler-backend-emit-float-sign-bit-rodata-into
   [enabled : bool]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  [buf : text_buf.TextBuf]
+  [f64? : bool]) : text_buf.TextBuf
   (if enabled
     (text_buf.append
       (text_buf.append
         (text_buf.append buf "    .section .rodata\n    .balign 16\n")
-        (compiler-backend-f64-sign-bit-label))
-      ":\n    .quad 0x8000000000000000\n    .quad 0\n")
-    buf))
-
-(define (compiler-backend-emit-f32-sign-bit-rodata-into
-  [enabled : bool]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if enabled
-    (text_buf.append
-      (text_buf.append
-        (text_buf.append buf "    .section .rodata\n    .balign 16\n")
-        (compiler-backend-f32-sign-bit-label))
-      ":\n    .quad 0x80000000\n    .quad 0\n")
+        (if f64?
+          (compiler-backend-f64-sign-bit-label)
+          (compiler-backend-f32-sign-bit-label)))
+      (if f64?
+        ":\n    .quad 0x8000000000000000\n    .quad 0\n"
+        ":\n    .quad 0x80000000\n    .quad 0\n"))
     buf))
 
 ;; ============================================================================
@@ -78558,13 +78304,15 @@ tl_shared_object_init:
             [float-literals-buf : text_buf.TextBuf
               (compiler-backend-emit-float-rodata-into floats bytes-buf)]
             [f64-buf : text_buf.TextBuf
-              (compiler-backend-emit-f64-sign-bit-rodata-into
+              (compiler-backend-emit-float-sign-bit-rodata-into
                 uses-f64-neg
-                float-literals-buf)]
+                float-literals-buf
+                true)]
             [f32-buf : text_buf.TextBuf
-              (compiler-backend-emit-f32-sign-bit-rodata-into
+              (compiler-backend-emit-float-sign-bit-rodata-into
                 uses-f32-neg
-                f64-buf)]
+                f64-buf
+                false)]
             [lane-id-buf : text_buf.TextBuf
               (compiler-backend-emit-lane-id-rodata-into
                 uses-avx2-i64-lane-id
@@ -82550,12 +82298,16 @@ tl_shared_object_init:
           (compiler-backend-global-array-element-shared-view slots index))))
     out))
 
-(define (compiler-backend-object-f64-sign-bit
+(define (compiler-backend-object-sign-bit
   [parts : object_target.CompilerBackendObjectTargetParts]
-  [enabled : bool]) : object_target.CompilerBackendObjectTargetParts
+  [enabled : bool]
+  [f64? : bool]) : object_target.CompilerBackendObjectTargetParts
   (if enabled
     (let
-      [symbol : String (compiler-backend-f64-sign-bit-label)]
+      [symbol : String
+        (if f64?
+          (compiler-backend-f64-sign-bit-label)
+          (compiler-backend-f32-sign-bit-label))]
       (object_target.compiler-backend-object-add-rodata
         (object_target.compiler-backend-object-add-rodata
           (object_target.compiler-backend-object-add-rodata
@@ -82567,28 +82319,10 @@ tl_shared_object_init:
                 (Data))
               (Align 16))
             (Label symbol))
-          (I64 -9223372036854775808))
-        (I64 0)))
-    parts))
-
-(define (compiler-backend-object-f32-sign-bit
-  [parts : object_target.CompilerBackendObjectTargetParts]
-  [enabled : bool]) : object_target.CompilerBackendObjectTargetParts
-  (if enabled
-    (let
-      [symbol : String (compiler-backend-f32-sign-bit-label)]
-      (object_target.compiler-backend-object-add-rodata
-        (object_target.compiler-backend-object-add-rodata
-          (object_target.compiler-backend-object-add-rodata
-            (object_target.compiler-backend-object-add-rodata
-              (object_target.compiler-backend-object-symbol-local-section
-                parts
-                (compiler-backend-global-shared-view symbol)
-                (Rodata)
-                (Data))
-              (Align 16))
-            (Label symbol))
-          (I64 2147483648))
+          (I64
+            (if f64?
+              -9223372036854775808
+              2147483648)))
         (I64 0)))
     parts))
 
@@ -82928,8 +82662,8 @@ tl_shared_object_init:
     [seed : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-runtime-symbols
         (compiler-backend-object-externs
-          (compiler-backend-object-f32-sign-bit
-            (compiler-backend-object-f64-sign-bit
+          (compiler-backend-object-sign-bit
+            (compiler-backend-object-sign-bit
               (compiler-backend-object-floats
                 (compiler-backend-object-bytes
                   (compiler-backend-object-strings
@@ -82953,8 +82687,10 @@ tl_shared_object_init:
                   bytes
                   0)
                 floats)
-              uses-f64-neg)
-            uses-f32-neg)
+              uses-f64-neg
+              true)
+            uses-f32-neg
+            false)
           externs
           plan
           runtime-index

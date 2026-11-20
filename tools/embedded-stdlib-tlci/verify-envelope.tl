@@ -1,5 +1,4 @@
 ;; Prove that the deployment envelope expands to the exact ordinary TLCI bytes.
-(import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_embedded_stdlib_tlci_frames as frames)
 (import stdlib.byte_buf)
 (import tlci_core as tlci)
@@ -26,26 +25,28 @@
   (match (frames.compiler-embedded-stdlib-tlci-frames-parse envelope 268435456)
     [(Err _) false]
     [(Ok catalog)
-      ;; Alter the authenticated checksum binding, then one meaningful bit of
-      ;; each endpoint frame. None may produce a valid ordinary catalog.
+      ;; Case 0 breaks the first frame's checksum, case 1 a byte of the first
+      ;; group's token stream, and case 2 the last frame's checksum. None may
+      ;; produce a valid ordinary catalog.
       (for [case (iterator.range 0 3)]
         (let
           [changed : (__tl_dyn-array u8)
             (clone (view.compiler-owned-reference-shared-view envelope))]
           [record : i64
             (frames.compiler-embedded-stdlib-tlci-frames-record
+              catalog
               (if (= case 2)
                 (- catalog.count 1)
                 0))]
           [offset : i64
-            (if (= case 0)
-              (+ record 40)
-              (tlci.tlci-read-u64 envelope (+ record 16)))]
+            (if (= case 1)
+              catalog.index-end
+              (+ record 40))]
           (set!
             (array-ref changed offset)
             (cast (bit-xor (cast (array-ref changed offset) : i64) 128) : u8))
           (when
-            (= case 0)
+            (= case 1)
             (tlci.tlci-set-u64!
               (&mut changed)
               60
@@ -68,28 +69,16 @@
       [raw : (__tl_dyn-array u8) (byte_buf.to-array (io.read-file (io.arg 1)))]
       [envelope : (__tl_dyn-array u8)
         (byte_buf.to-array (io.read-file (io.arg 2)))]
-      (match (if (codec.compiler-embedded-stdlib-tlci-codec-prefix?
+      (match (frames.compiler-embedded-stdlib-tlci-frames-expand
         (& envelope)
-        (frames.compiler-embedded-stdlib-tlci-frames-prefix))
-        (frames.compiler-embedded-stdlib-tlci-frames-expand
-          (& envelope)
-          268435456)
-        (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-          (& envelope)
-          268435456)
-          [(Ok bytes) (tlci.ResultTlciBytes.Ok bytes)]
-          [(Err message) (tlci.ResultTlciBytes.Err message)]))
+        268435456)
         [(Err message)
           (io.print-error (str_cat.str-cat message "\n"))
           1]
         [(Ok expanded)
           (if (and
             (embedded-stdlib-tlci-envelope-eq? (& raw) (& expanded))
-            (if (codec.compiler-embedded-stdlib-tlci-codec-prefix?
-              (& envelope)
-              (frames.compiler-embedded-stdlib-tlci-frames-prefix))
-              (embedded-stdlib-tlci-indexed-integrity-ok? (& envelope))
-              true))
+            (embedded-stdlib-tlci-indexed-integrity-ok? (& envelope)))
             0
             (begin
               (io.print-error

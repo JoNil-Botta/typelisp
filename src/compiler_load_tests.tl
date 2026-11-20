@@ -18,7 +18,7 @@
 (import (hashmap.hashmap i64 i64) as load_i64_i64_map)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
-(import compiler_ctfe as ctfe)
+(import compiler_lzss as lzss)
 (import compiler_embedded_stdlib as ces)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -517,9 +517,7 @@
             (match (ast.ty-node-get elem-id)
               [(U8) true]
               [_ false])
-            (string.eq
-              bytes
-              (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2 (& want-source))))]
+            (string.eq bytes (lzss.compiler-lzss-encode (& want-source))))]
         [_ false])]
     [_ false]))
 

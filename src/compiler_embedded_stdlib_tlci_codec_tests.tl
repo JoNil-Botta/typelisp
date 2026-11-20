@@ -1,560 +1,286 @@
-;; Focused malformed-frame coverage for the TLCI-only deployment envelope.
-(import stdlib.iterator)
-(import compiler_embedded_stdlib_tlci_codec as codec)
-(import compiler_embedded_stdlib_tlci_encoder as encoder)
-(import stdlib.byte_buf_core)
+;; Catalog envelope coverage: the stored model parse, the group index, the
+;; grouped decode path, and malformed or truncated envelopes.
 (import stdlib.string)
+(import stdlib.byte_buf_core as buf)
+(import compiler_embedded_stdlib_tlci_codec as codec)
+(import compiler_embedded_stdlib_tlci_frames as frames)
+(import compiler_lzss as lzss)
+(import tlci_core as tlci)
 
-(define (tlci-codec-test-write-i64-le!
-  [payload : (&mut payload (__tl_dyn-array u8))]
-  [start : i64]
-  [value : i64]) : unit
-  (for [index (iterator.range 0 8)]
-    (set!
-      (array-ref payload (+ start index))
-      (cast (bit-and (shr value (* index 8)) 255) : u8))))
-
-(define (tlci-codec-test-base-payload [raw-len : i64] [bit-len : i64]) : (__tl_dyn-array
-    u8)
+;; A frame image with the TLCI header shape the index records checksums for.
+;; Its body repeats itself, so the token stream really carries matches.
+(define (tlci-codec-test-source [tag : i64]) : (__tl_dyn-array u8)
   (let
-    [prefix : String (codec.compiler-embedded-stdlib-tlci-codec-prefix)]
-    [prefix-len : i64 (string.string-length prefix)]
-    [bit-bytes : i64
-      (+
-        (/ bit-len 8)
-        (if (= (% bit-len 8) 0)
-          0
-          1))]
-    [payload : (__tl_dyn-array u8)
-      (__tl_make-array u8 (+ prefix-len (+ 16 (+ 4369 bit-bytes))))]
-    (for [index (iterator.range 0 prefix-len)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 320)]
+    [index : i64 0]
+    (while (< index 320)
       (set!
-        (array-ref payload index)
-        (cast (string.string-ref prefix index) : u8)))
-    (tlci-codec-test-write-i64-le! (&mut payload) prefix-len raw-len)
-    (tlci-codec-test-write-i64-le! (&mut payload) (+ prefix-len 8) bit-len)
-    payload))
+        (array-ref bytes index)
+        (if (< index 64)
+          (cast (% (+ (* index 7) tag) 251) : u8)
+          (cast (% (+ (* (% (- index 64) 37) 11) tag) 97) : u8)))
+      (set! index (+ index 1)))
+    (tlci.tlci-set-u64! (&mut bytes) 48 (+ 100 tag))
+    bytes))
 
-(define (tlci-codec-test-main-start) : i64
-  (+
-    (string.string-length (codec.compiler-embedded-stdlib-tlci-codec-prefix))
-    16))
+(define (tlci-codec-test-model) : lzss.CompilerLzssModel
+  (lzss.compiler-lzss-model-from-spec (& lzss.compiler-lzss-fixed-spec)))
 
-(define (tlci-codec-test-distance-start) : i64
-  (+ (tlci-codec-test-main-start) 257))
+(define (tlci-codec-test-bytes->string [bytes : (& bytes (__tl_dyn-array u8))]) : String
+  (tlci.tlci-bytes->string bytes 0 (array-length bytes)))
 
-(define (tlci-codec-test-length-start) : i64
-  (+ (tlci-codec-test-distance-start) 4096))
-
-(define (tlci-codec-test-match-payload
-  [raw-len : i64]
-  [bit-len : i64]
-  [first : i64]
-  [second : i64]) : (__tl_dyn-array u8)
+(define (tlci-codec-test-encode-group
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [model : (& model lzss.CompilerLzssModel)]) : String
   (let
-    [payload : (__tl_dyn-array u8)
-      (tlci-codec-test-base-payload raw-len bit-len)]
-    [main-start : i64 (tlci-codec-test-main-start)]
-    [distance-start : i64 (tlci-codec-test-distance-start)]
-    [length-start : i64 (tlci-codec-test-length-start)]
-    [bit-start : i64 (+ length-start 16)]
-    [bit-bytes : i64
+    [text : String (tlci-codec-test-bytes->string bytes)]
+    [tokens : (__tl_dyn-array lzss.CompilerLzssToken)
+      (lzss.compiler-lzss-tokenize (& text) model)]
+    [writer : lzss.CompilerLzssWriter (lzss.compiler-lzss-writer)]
+    (lzss.compiler-lzss-emit (& text) (& tokens) model (&mut writer))
+    (lzss.compiler-lzss-finish-writer (&mut writer))))
+
+;; Two frames in two groups: the fixed model is stored verbatim, group 0 holds
+;; frame 0 alone and group 1 the second frame.
+(define (tlci-codec-test-envelope) : (__tl_dyn-array u8)
+  (let
+    [model : lzss.CompilerLzssModel (tlci-codec-test-model)]
+    [first : (__tl_dyn-array u8) (tlci-codec-test-source 0)]
+    [second : (__tl_dyn-array u8) (tlci-codec-test-source 1)]
+    [first-stream : String (tlci-codec-test-encode-group (& first) (& model))]
+    [second-stream : String (tlci-codec-test-encode-group (& second) (& model))]
+    [groups : i64 (codec.compiler-embedded-stdlib-tlci-codec-group-count 2)]
+    [directory : i64
+      (codec.compiler-embedded-stdlib-tlci-codec-directory groups)]
+    [record-bytes : i64
+      (codec.compiler-embedded-stdlib-tlci-codec-record-bytes)]
+    [name : String "stdlib/string"]
+    [name-bytes : i64 (string.string-length (& name))]
+    [index-end : i64 (+ (+ directory (* 2 record-bytes)) name-bytes)]
+    [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
+    (buf.byte-buf-builder-append-string
+      (&mut out)
+      (codec.compiler-embedded-stdlib-tlci-codec-prefix))
+    (tlci.tlci-push-u64!
+      (&mut out)
+      (+ (array-length first) (array-length second)))
+    (tlci.tlci-push-u64! (&mut out) index-end)
+    (tlci.tlci-push-u64! (&mut out) 2)
+    (tlci.tlci-push-u64! (&mut out) 0)
+    (tlci.tlci-push-u64!
+      (&mut out)
       (+
-        (/ bit-len 8)
-        (if (= (% bit-len 8) 0)
-          0
-          1))]
-    ;; A, B, C, match are the four two-bit canonical main symbols.
-    (set! (array-ref payload (+ main-start 65)) (cast 2 : u8))
-    (set! (array-ref payload (+ main-start 66)) (cast 2 : u8))
-    (set! (array-ref payload (+ main-start 67)) (cast 2 : u8))
-    (set! (array-ref payload (+ main-start 256)) (cast 2 : u8))
-    ;; Distance symbols 0/2 and length symbols 0/1 form complete one-bit trees.
-    (set! (array-ref payload distance-start) (cast 1 : u8))
-    (set! (array-ref payload (+ distance-start 2)) (cast 1 : u8))
-    (set! (array-ref payload length-start) (cast 1 : u8))
-    (set! (array-ref payload (+ length-start 1)) (cast 1 : u8))
-    (if (> bit-bytes 0)
-      (set! (array-ref payload bit-start) (cast first : u8))
-      unit)
-    (if (> bit-bytes 1)
-      (set! (array-ref payload (+ bit-start 1)) (cast second : u8))
-      unit)
-    payload))
+        (string.string-length (& first-stream))
+        (string.string-length (& second-stream))))
+    (tlci.tlci-push-u64! (&mut out) groups)
+    (buf.byte-buf-builder-append-string
+      (&mut out)
+      (tlci-codec-test-spec-string))
+    ;; Group table: (stream off, stream len, raw off, raw len).
+    (tlci.tlci-push-u64! (&mut out) 0)
+    (tlci.tlci-push-u64! (&mut out) (string.string-length (& first-stream)))
+    (tlci.tlci-push-u64! (&mut out) 0)
+    (tlci.tlci-push-u64! (&mut out) (array-length first))
+    (tlci.tlci-push-u64! (&mut out) (string.string-length (& first-stream)))
+    (tlci.tlci-push-u64! (&mut out) (string.string-length (& second-stream)))
+    (tlci.tlci-push-u64! (&mut out) (array-length first))
+    (tlci.tlci-push-u64! (&mut out) (array-length second))
+    ;; Frame records: name off, name len, raw off, raw len, group, checksum.
+    (tlci.tlci-push-u64! (&mut out) (+ directory (* 2 record-bytes)))
+    (tlci.tlci-push-u64! (&mut out) 0)
+    (tlci.tlci-push-u64! (&mut out) 0)
+    (tlci.tlci-push-u64! (&mut out) (array-length first))
+    (tlci.tlci-push-u64! (&mut out) 0)
+    (tlci.tlci-push-u64! (&mut out) 100)
+    (tlci.tlci-push-u64! (&mut out) (+ directory (* 2 record-bytes)))
+    (tlci.tlci-push-u64! (&mut out) name-bytes)
+    (tlci.tlci-push-u64! (&mut out) (array-length first))
+    (tlci.tlci-push-u64! (&mut out) (array-length second))
+    (tlci.tlci-push-u64! (&mut out) 1)
+    (tlci.tlci-push-u64! (&mut out) 101)
+    (buf.byte-buf-builder-append-string (&mut out) (string.copy (& name)))
+    (buf.byte-buf-builder-append-string (&mut out) first-stream)
+    (buf.byte-buf-builder-append-string (&mut out) second-stream)
+    (let
+      [bytes : (__tl_dyn-array u8) (buf.byte-buf-builder-to-array (& out))]
+      (tlci.tlci-set-u64!
+        (&mut bytes)
+        60
+        (frames.compiler-embedded-stdlib-tlci-frames-index-hash
+          (& bytes)
+          index-end))
+      bytes)))
 
-(define (tlci-codec-test-literal-payload
-  [raw-len : i64]
-  [bit-len : i64]
-  [first : i64]) : (__tl_dyn-array u8)
-  (let
-    [payload : (__tl_dyn-array u8)
-      (tlci-codec-test-base-payload raw-len bit-len)]
-    [main-start : i64 (tlci-codec-test-main-start)]
-    [bit-start : i64 (+ (tlci-codec-test-length-start) 16)]
-    (set! (array-ref payload (+ main-start 65)) (cast 1 : u8))
-    (set! (array-ref payload (+ main-start 66)) (cast 1 : u8))
-    (if (> bit-len 0)
-      (set! (array-ref payload bit-start) (cast first : u8))
-      unit)
-    payload))
-
-(define (tlci-codec-test-append-zero [payload : (__tl_dyn-array u8)]) : (__tl_dyn-array
+(define (tlci-codec-test-copy [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
     u8)
   (let
-    [length : i64 (array-length payload)]
-    [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ length 1))]
-    (for [index (iterator.range 0 length)]
-      (set! (array-ref out index) (array-ref payload index)))
-    out))
-
-(define (tlci-codec-test-take [payload : (__tl_dyn-array u8)] [length : i64]) : (__tl_dyn-array
-    u8)
-  (let
-    [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-    (for [index (iterator.range 0 length)]
-      (set! (array-ref out index) (array-ref payload index)))
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
+    [index : i64 0]
+    (while (< index (array-length bytes))
+      (set! (array-ref out index) (array-ref bytes index))
+      (set! index (+ index 1)))
     out))
 
 (define (tlci-codec-test-rejects?
-  [payload : (__tl_dyn-array u8)]
-  [raw-limit : i64]
-  [expected : String]) : bool
-  (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-    (& payload)
-    raw-limit)
-    [(Err message) (string.eq message expected)]
-    [(Ok _) false]))
+  [payload : (& payload (__tl_dyn-array u8))]
+  [raw-limit : i64]) : bool
+  (match (frames.compiler-embedded-stdlib-tlci-frames-parse payload raw-limit)
+    [(Ok _) false]
+    [(Err _) true]))
 
-(define (tlci-codec-self-test-status) : i64
-  (cond
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-match-payload 6 10 27 128)]
-          (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-            (& payload)
-            64)
-            [(Ok bytes)
-              (and
-                (= (array-length bytes) 6)
-                (= (array-ref bytes 0) (cast 65 : u8))
-                (= (array-ref bytes 3) (cast 65 : u8))
-                (= (array-ref bytes 5) (cast 67 : u8)))]
-            [(Err _) false])))
-      1]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-literal-payload 1 1 0)]
-          (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-            (& payload)
-            64)
-            [(Ok bytes)
-              (and
-                (= (array-length bytes) 1)
-                (= (array-ref bytes 0) (cast 65 : u8)))]
-            [(Err _) false])))
-      2]
-    [(not
-        (tlci-codec-test-rejects?
-          (__tl_make-array 0)
-          64
-          "embedded stdlib tlci envelope: bad prefix or version"))
-      3]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-match-payload 6 10 27 128)]
-          (set! (array-ref payload 0) (cast 0 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: bad prefix or version")))
-      4]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-match-payload 6 10 27 128)]
-          (set!
-            (array-ref
-              payload
-              (+
-                (string.string-length
-                  (codec.compiler-embedded-stdlib-tlci-codec-prefix))
-                7))
-            (cast 128 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: raw length overflows i64")))
-      5]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-match-payload 6 10 27 128)
-          5
-          "embedded stdlib tlci envelope: raw length exceeds consumer limit"))
-      6]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-append-zero
-            (tlci-codec-test-match-payload 6 10 27 128))
-          64
-          "embedded stdlib tlci envelope: trailing compressed bytes"))
-      7]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-match-payload 6 10 27 129)
-          64
-          "embedded stdlib tlci envelope: nonzero padding bits"))
-      8]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-literal-payload 1 1 0)]
-          (set!
-            (array-ref payload (+ (tlci-codec-test-main-start) 65))
-            (cast 32 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: invalid huffman code length")))
-      9]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-literal-payload 1 1 0)]
-          (set!
-            (array-ref payload (+ (tlci-codec-test-main-start) 67))
-            (cast 1 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: oversubscribed huffman table")))
-      10]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-literal-payload 1 1 0)]
-          (set!
-            (array-ref payload (+ (tlci-codec-test-main-start) 65))
-            (cast 2 : u8))
-          (set!
-            (array-ref payload (+ (tlci-codec-test-main-start) 66))
-            (cast 2 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: incomplete huffman table")))
-      11]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-match-payload 6 10 27 128)]
-          (set!
-            (array-ref payload (tlci-codec-test-distance-start))
-            (cast 0 : u8))
-          (set!
-            (array-ref payload (+ (tlci-codec-test-distance-start) 2))
-            (cast 0 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: missing match huffman table")))
-      12]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-match-payload 6 1 0 0)
-          64
-          "embedded stdlib tlci envelope: truncated huffman code"))
-      13]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-match-payload 3 4 224 0)
-          64
-          "embedded stdlib tlci envelope: backreference before output"))
-      14]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-match-payload 2 6 48 0)
-          64
-          "embedded stdlib tlci envelope: backreference exceeds output"))
-      15]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-literal-payload 1 2 0)
-          64
-          "embedded stdlib tlci envelope: trailing huffman bits"))
-      16]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-match-payload 6 10 27 128)]
-          (set!
-            (array-ref
-              payload
-              (+
-                (string.string-length
-                  (codec.compiler-embedded-stdlib-tlci-codec-prefix))
-                15))
-            (cast 128 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: bit length overflows i64")))
-      17]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-match-payload 6 10 27 128)]
-          (tlci-codec-test-rejects?
-            (tlci-codec-test-take
-              payload
-              (+
-                (string.string-length
-                  (codec.compiler-embedded-stdlib-tlci-codec-prefix))
-                8))
-            64
-            "embedded stdlib tlci envelope: truncated header")))
-      18]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-match-payload 6 10 27 128)]
-          [truncated-length : i64 (- (array-length payload) 1)]
-          (tlci-codec-test-rejects?
-            (tlci-codec-test-take payload truncated-length)
-            64
-            "embedded stdlib tlci envelope: truncated bitstream")))
-      19]
-    [(not
-        (let
-          [payload : (__tl_dyn-array u8)
-            (tlci-codec-test-literal-payload 1 1 0)]
-          (set!
-            (array-ref payload (tlci-codec-test-distance-start))
-            (cast 1 : u8))
-          (set!
-            (array-ref payload (+ (tlci-codec-test-distance-start) 1))
-            (cast 1 : u8))
-          (set!
-            (array-ref payload (tlci-codec-test-length-start))
-            (cast 1 : u8))
-          (set!
-            (array-ref payload (+ (tlci-codec-test-length-start) 1))
-            (cast 1 : u8))
-          (tlci-codec-test-rejects?
-            payload
-            64
-            "embedded stdlib tlci envelope: unexpected match huffman table")))
-      20]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-match-payload 6 10 27 128)
-          -1
-          "embedded stdlib tlci envelope: invalid raw length limit"))
-      21]
-    [(not
-        (tlci-codec-test-rejects?
-          (tlci-codec-test-literal-payload 0 0 0)
-          64
-          "embedded stdlib tlci envelope: nonempty tables for empty output"))
-      22]
-    [else 0]))
-
-(test
-  compiler-embedded-stdlib-tlci-bounded-envelope
-  (if (= (tlci-codec-self-test-status) 0)
-    unit
-    (string.tl_oob_abort)))
-
-;; Round trip through the build-time encoder: a byte run (distance-1 matches), a
-;; period-7 pattern (every match nearer than a word), a period-8 one (exactly a
-;; word back), pseudo-random literals and a long repeated block, ending on a
-;; match, so the decoder's word copies, byte copies and tails all run.
-(define (tlci-codec-test-round-trip-source) : String
+(define (tlci-codec-test-model-rejects? [spec : (& spec str)]) : bool
   (let
-    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    [state : i64 12345]
-    (for [i (iterator.range 0 300)]
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 97 : u8)))
-    (for [i (iterator.range 0 700)]
-      (byte_buf_core.byte-buf-builder-push
-        (&mut out)
-        (cast (+ 65 (% i 7)) : u8)))
-    (for [i (iterator.range 0 800)]
-      (byte_buf_core.byte-buf-builder-push
-        (&mut out)
-        (cast (+ 48 (% i 8)) : u8)))
-    (for [i (iterator.range 0 2000)]
-      (set! state (+ (* state 6364136223846793005) 1442695040888963407))
-      (byte_buf_core.byte-buf-builder-push
-        (&mut out)
-        (cast (bit-and (shr state 33) 255) : u8)))
-    (for [i (iterator.range 0 3000)]
-      (byte_buf_core.byte-buf-builder-push
-        (&mut out)
-        (cast (+ 32 (% (* i 37) 91)) : u8)))
-    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+    [lengths : (__tl_dyn-array i64) (lzss.compiler-lzss-spec-lengths spec)]
+    (match (lzss.compiler-lzss-model-check (& lengths))
+      [(lzss.CompilerLzssCheck.Ok _) false]
+      [(lzss.CompilerLzssCheck.Err _) true])))
 
-(test
-  compiler-embedded-stdlib-tlci-round-trip
+;; A stored model that claims no code, an over-long code, or more code space
+;; than a prefix code allows is rejected before anything decodes.
+(define (tlci-codec-test-spec-edited [first : char] [second : char]) : String
   (let
-    [source : String (tlci-codec-test-round-trip-source)]
-    (match (encoder.compiler-embedded-stdlib-tlci-encoder-encode
-      (string.copy source))
-      [(Err _) (string.tl_oob_abort)]
-      [(Ok encoded)
-        (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-          (& encoded)
-          1048576)
-          [(Err _) (string.tl_oob_abort)]
-          [(Ok decoded)
-            (let
-              [n : i64 (string.string-length source)]
-              [i : i64 0]
-              [same : bool (= (array-length decoded) n)]
-              (while (and same (< i n))
-                (when
-                  (!=
-                    (array-ref decoded i)
-                    (cast (string.string-ref source i) : u8))
-                  (set! same false))
-                (+= i 1))
-              (if same
-                unit
-                (string.tl_oob_abort)))])])))
-
-(import compiler_embedded_stdlib_tlci_frames as frames)
-
-;; Three small synthetic frames exercise the index independently of decoding.
-;; Real TLCI bodies and complete reconstruction are checked by verify-envelope.
-(define (tlci-frames-test-index) : (__tl_dyn-array u8)
-  (let
-    [payload : (__tl_dyn-array u8) (__tl_make-array u8 4586)]
-    [prefix : String (frames.compiler-embedded-stdlib-tlci-frames-prefix)]
-    (for [index (iterator.range 0 (string.string-length prefix))]
+    [spec : String (tlci-codec-test-spec-string)]
+    [bytes : (__tl_dyn-array u8)
+      (__tl_make-array u8 (string.string-length (& spec)))]
+    [index : i64 0]
+    (while (< index (array-length bytes))
       (set!
-        (array-ref payload index)
-        (cast (string.string-ref prefix index) : u8)))
-    (tlci-codec-test-write-i64-le! (&mut payload) 36 528)
-    (tlci-codec-test-write-i64-le! (&mut payload) 44 4583)
-    (tlci-codec-test-write-i64-le! (&mut payload) 52 3)
-    (for [index (iterator.range 0 3)]
-      (let
-        [record : i64 (+ 4437 (* index 48))]
-        (tlci-codec-test-write-i64-le!
-          (&mut payload)
-          record
-          (+
-            4581
-            (if (= index 2)
-              1
-              0)))
-        (tlci-codec-test-write-i64-le!
-          (&mut payload)
-          (+ record 8)
-          (if (= index 0)
-            0
-            1))
-        (tlci-codec-test-write-i64-le!
-          (&mut payload)
-          (+ record 16)
-          (+ 4583 index))
-        (tlci-codec-test-write-i64-le! (&mut payload) (+ record 24) 176)
-        (tlci-codec-test-write-i64-le! (&mut payload) (+ record 32) 1)))
-    (set! (array-ref payload 4581) (cast 97 : u8))
-    (set! (array-ref payload 4582) (cast 98 : u8))
-    (tlci-codec-test-write-i64-le!
-      (&mut payload)
-      60
-      (frames.compiler-embedded-stdlib-tlci-frames-index-hash (& payload) 4583))
-    payload))
-
-(test
-  compiler-embedded-stdlib-tlci-indexed-lookup
-  (let
-    [payload : (__tl_dyn-array u8) (tlci-frames-test-index)]
-    (match (frames.compiler-embedded-stdlib-tlci-frames-parse (& payload) 1024)
-      [(Err _) (string.tl_oob_abort)]
-      [(Ok catalog)
-        (unless
-          (and
-            (= catalog.count 3)
-            (= catalog.raw-len 528)
-            (=
-              (frames.compiler-embedded-stdlib-tlci-frames-find
-                (& payload)
-                catalog
-                "a")
-              1)
-            (=
-              (frames.compiler-embedded-stdlib-tlci-frames-find
-                (& payload)
-                catalog
-                "b")
-              2)
-            (=
-              (frames.compiler-embedded-stdlib-tlci-frames-find
-                (& payload)
-                catalog
-                "missing")
-              -1))
-          (string.tl_oob_abort))])))
-
-(test
-  compiler-embedded-stdlib-tlci-indexed-malformed
-  (for [case (iterator.range 0 16)]
+        (array-ref bytes index)
+        (cast (string.string-ref (& spec) index) : u8))
+      (set! index (+ index 1)))
+    (set! (array-ref bytes 0) (cast first : u8))
+    (set! (array-ref bytes 1) (cast second : u8))
     (let
-      [payload : (__tl_dyn-array u8) (tlci-frames-test-index)]
-      (cond
-        [(= case 0) (set! (array-ref payload 0) (cast 0 : u8))]
-        [(= case 1) (tlci-codec-test-write-i64-le! (&mut payload) 44 -1)]
-        [(= case 2)
-          (tlci-codec-test-write-i64-le! (&mut payload) 52 9223372036854775807)]
-        [(= case 3) (tlci-codec-test-write-i64-le! (&mut payload) 52 0)]
-        [(= case 4) (tlci-codec-test-write-i64-le! (&mut payload) 36 527)]
-        [(= case 5) (tlci-codec-test-write-i64-le! (&mut payload) 4437 0)]
-        [(= case 6) (tlci-codec-test-write-i64-le! (&mut payload) 4445 1)]
-        [(= case 7) (tlci-codec-test-write-i64-le! (&mut payload) 4453 4582)]
-        [(= case 8) (tlci-codec-test-write-i64-le! (&mut payload) 4461 175)]
-        [(= case 9) (tlci-codec-test-write-i64-le! (&mut payload) 4469 0)]
-        [(= case 10)
-          (tlci-codec-test-write-i64-le!
-            (&mut payload)
-            4469
-            9223372036854775807)]
-        [(= case 11) (set! (array-ref payload 4585) (cast 1 : u8))]
-        [(= case 12) (set! (array-ref payload 4582) (cast 97 : u8))]
-        [(= case 13)
-          (set! (array-ref payload 4581) (cast 98 : u8))
-          (set! (array-ref payload 4582) (cast 97 : u8))]
-        [(= case 14) (set! (array-ref payload 68) (cast 1 : u8))]
-        [else (set! (array-ref payload 60) (cast 0 : u8))])
-      (when
-        (< case 14)
-        (tlci-codec-test-write-i64-le!
-          (&mut payload)
-          60
-          (frames.compiler-embedded-stdlib-tlci-frames-index-hash
-            (& payload)
-            4583)))
+      [text : String (tlci.tlci-bytes->string (& bytes) 0 (array-length bytes))]
+      text)))
+
+(define (tlci-codec-test-spec-string) : String
+  (string.copy (& lzss.compiler-lzss-fixed-spec)))
+
+(define (tlci-codec-test-model-validation-ok?) : bool
+  (let
+    [good : String (tlci-codec-test-spec-string)]
+    [no-code : String (tlci-codec-test-spec-edited 'A' 'B')]
+    [too-long : String (tlci-codec-test-spec-edited 'P' 'B')]
+    [crowded : String (tlci-codec-test-spec-edited 'B' 'B')]
+    (and
+      (not (tlci-codec-test-model-rejects? (& good)))
+      (tlci-codec-test-model-rejects? (& no-code))
+      (tlci-codec-test-model-rejects? (& too-long))
+      (tlci-codec-test-model-rejects? (& crowded)))))
+
+(define (tlci-codec-test-frames-ok?) : bool
+  (let
+    [payload : (__tl_dyn-array u8) (tlci-codec-test-envelope)]
+    [catalog
       (match (frames.compiler-embedded-stdlib-tlci-frames-parse
         (& payload)
-        1024)
-        [(Err _) unit]
-        [(Ok _) (string.tl_oob_abort)]))))
+        268435456)
+        [(Ok catalog) catalog]
+        [(Err _) (return false)])]
+    [model
+      (match (codec.compiler-embedded-stdlib-tlci-codec-model (& payload))
+        [(Ok model) model]
+        [(Err _) (return false)])]
+    [first
+      (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+        (& payload)
+        catalog
+        0
+        0
+        (& model))
+        [(Ok bytes) bytes]
+        [(Err _) (return false)])]
+    [second
+      (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+        (& payload)
+        catalog
+        1
+        0
+        (& model))
+        [(Ok bytes) bytes]
+        [(Err _) (return false)])]
+    [want-first : (__tl_dyn-array u8) (tlci-codec-test-source 0)]
+    [want-second : (__tl_dyn-array u8) (tlci-codec-test-source 1)]
+    (and
+      (= catalog.count 2)
+      (= catalog.groups 2)
+      (= (array-length first) (array-length want-first))
+      (= (array-length second) (array-length want-second))
+      (=
+        (frames.compiler-embedded-stdlib-tlci-frames-find
+          (& payload)
+          catalog
+          (& (string.copy "stdlib/string")))
+        1))))
+
+(define (tlci-codec-status) : i64
+  (let
+    [payload : (__tl_dyn-array u8) (tlci-codec-test-envelope)]
+    (when (not (tlci-codec-test-model-validation-ok?)) (return 1))
+    (when (not (tlci-codec-test-frames-ok?)) (return 2))
+    ;; A wrong marker, a bad frame count, an unwritable group range and a
+    ;; re-hashed but corrupted index are all rejected.
+    (let
+      [broken : (__tl_dyn-array u8) (tlci-codec-test-copy (& payload))]
+      (set! (array-ref broken 0) (cast 88 : u8))
+      (when (not (tlci-codec-test-rejects? (& broken) 268435456)) (return 3)))
+    (let
+      [broken : (__tl_dyn-array u8) (tlci-codec-test-copy (& payload))]
+      (tlci.tlci-set-u64! (&mut broken) 52 0)
+      (when (not (tlci-codec-test-rejects? (& broken) 268435456)) (return 4)))
+    (let
+      [broken : (__tl_dyn-array u8) (tlci-codec-test-copy (& payload))]
+      (tlci.tlci-set-u64! (&mut broken) 76 3)
+      (when (not (tlci-codec-test-rejects? (& broken) 268435456)) (return 5)))
+    (let
+      [broken : (__tl_dyn-array u8) (tlci-codec-test-copy (& payload))]
+      (tlci.tlci-set-u64! (&mut broken) 60 12345)
+      (when (not (tlci-codec-test-rejects? (& broken) 268435456)) (return 6)))
+    ;; The first group's raw length must not exceed the group's bytes.
+    (let
+      [broken : (__tl_dyn-array u8) (tlci-codec-test-copy (& payload))]
+      [group-table : i64
+        (codec.compiler-embedded-stdlib-tlci-codec-group-table)]
+      (tlci.tlci-set-u64! (&mut broken) (+ group-table 24) 4096)
+      (when (not (tlci-codec-test-rejects? (& broken) 268435456)) (return 7)))
+    ;; A checksum that no longer matches its frame fails the frame decode.
+    (let
+      [broken : (__tl_dyn-array u8) (tlci-codec-test-copy (& payload))]
+      [directory : i64 (codec.compiler-embedded-stdlib-tlci-codec-directory 2)]
+      [catalog
+        (match (frames.compiler-embedded-stdlib-tlci-frames-parse
+          (& broken)
+          268435456)
+          [(Ok catalog) catalog]
+          [(Err _) (return 8)])]
+      (tlci.tlci-set-u64! (&mut broken) (+ directory 40) 7)
+      (tlci.tlci-set-u64!
+        (&mut broken)
+        60
+        (frames.compiler-embedded-stdlib-tlci-frames-index-hash
+          (& broken)
+          catalog.index-end))
+      (let
+        [model
+          (match (codec.compiler-embedded-stdlib-tlci-codec-model (& broken))
+            [(Ok model) model]
+            [(Err _) (return 9)])]
+        (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+          (& broken)
+          catalog
+          0
+          0
+          (& model))
+          [(Ok bytes)
+            (when (= (tlci.tlci-read-u64 (& bytes) 48) 7) (return 10))]
+          [(Err _) unit])))
+    ;; A consumer raw limit below the envelope's raw length rejects first.
+    (when (not (tlci-codec-test-rejects? (& payload) 8)) (return 11))
+    0))
 
 (test
-  compiler-embedded-stdlib-tlci-indexed-truncations
-  (let
-    [whole : (__tl_dyn-array u8) (tlci-frames-test-index)]
-    (for [length (iterator.range 0 (array-length whole))]
-      (let
-        [payload : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-        (for [index (iterator.range 0 length)]
-          (set! (array-ref payload index) (array-ref whole index)))
-        (match (frames.compiler-embedded-stdlib-tlci-frames-parse
-          (& payload)
-          1024)
-          [(Err _) unit]
-          [(Ok _) (string.tl_oob_abort)])))))
+  compiler-embedded-stdlib-tlci-payload-codec
+  (if (= (tlci-codec-status) 0)
+    unit
+    (string.tl_oob_abort)))

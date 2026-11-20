@@ -4,7 +4,7 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
-(import compiler_ctfe as ctfe)
+(import compiler_lzss as lzss)
 (import compiler_diagnostic as diag)
 (import compiler_embedded_stdlib as embedded)
 (import stdlib.io)
@@ -62,8 +62,7 @@
                         bytes
                         (match kind
                           [(LzssString)
-                            (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2
-                              (& contents))]
+                            (lzss.compiler-lzss-encode (& contents))]
                           [_ contents]))]
                     [_ false]))]))]
         [(DefMacro _ name params (String) body)

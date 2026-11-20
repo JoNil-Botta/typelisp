@@ -108706,18 +108706,7 @@
       (if (< id np)
         (opt-inline-clone-arg-at sa id)
         (Var (opt-inline-rebase-var id np base)))]
-    [(Global name) (Global (ir.compiler-ir-symbol-clone name))]
-    [(GlobalAddr name) (GlobalAddr (ir.compiler-ir-symbol-clone name))]
-    [(Function name) (Function (ir.compiler-ir-symbol-clone name))]
-    [(I64 n) (I64 n)]
-    [(F64 bits) (F64 bits)]
-    [(Bool b) (Bool b)]
-    [(Char c) (Char c)]
-    [(String s) (String (string.copy s))]
-    [(Bytes s) (Bytes (string.copy s))]
-    [(RuntimeGlobal init) (RuntimeGlobal (ir.compiler-ir-symbol-clone init))]
-    [(StaticArray s) (StaticArray (string.copy s))]
-    [(Unit) (Unit)]))
+    [_ (ir.compiler-ir-clone-value v)]))
 
 (define (opt-inline-remap-container-value
   [sa : ir.CompilerIrCallArgs]

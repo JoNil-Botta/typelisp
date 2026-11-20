@@ -10,7 +10,9 @@ set -eu
 # target/size-vs-clang/results.tsv, then print the geomean ratios for opt2:-Os
 # and opt2:-O2 plus the five largest -Os ratios. A pair whose build or strip
 # fails is skipped with a note on stderr; the script is a local measurement, not
-# a CI gate.
+# a CI gate. clang links glibc dynamically and TypeLisp links statically with
+# its own runtime, so each ratio includes that fixed runtime floor (about 14 KB
+# for clang, 17 KB for TypeLisp on an empty program).
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

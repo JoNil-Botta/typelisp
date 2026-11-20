@@ -298,17 +298,15 @@
         (& payload.embedded-stdlib-tlci-bytes)
         catalog
         group
-        0
+        raw-limit
         (& (array-ref compiler-embedded-stdlib-tlci-model 0))))
       [(Err message) (Err message)]
       [(Ok bytes)
-        (set!
-          (array-ref compiler-embedded-stdlib-tlci-group-cache-holder 0)
-          (clone bytes))
+        (set! compiler-embedded-stdlib-tlci-group-cache (clone bytes))
         (set! compiler-embedded-stdlib-tlci-group-cache-group group)
         (set!
           compiler-embedded-stdlib-tlci-group-cache-raw
-          (array-length bytes))
+          (array-length compiler-embedded-stdlib-tlci-group-cache))
         (Ok bytes)])))
 
 ;; Frame `index`, expanded from its group and checked against the record's

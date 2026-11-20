@@ -26,6 +26,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
+(import stdlib.io)
 
 ;; Native-comptime session cells are process-global owner slots. Read-only
 ;; callbacks intentionally share their live contents; make that shallow view
@@ -155,7 +156,7 @@
   0)
 (define compiler-embedded-stdlib-tlci-group-cache-holder : (__tl_dyn-array
     (__tl_dyn-array u8))
-  (__tl_make-array (__tl_dyn-array u8) 1))
+  (__tl_make-array (__tl_dyn-array u8) 0))
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 

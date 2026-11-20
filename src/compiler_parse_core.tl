@@ -1889,12 +1889,6 @@
 
 ;; Serial standalone adapters. Production consumers pass the parser capability
 ;; from their cfgs or checked context and returned runs retain that same owner.
-(define (compiler-parse-semantic-origin-run-key-slot [key : i64] [slot : i64]) : CompilerParseMaybeSemanticOriginRun
-  (compiler-parse-semantic-origin-run-key-slot-in-state
-    (compiler-parse-control-from-cfg (sym_i64_env.sym-i64-empty))
-    key
-    slot))
-
 (define (compiler-parse-semantic-origin-run-in-state
   [control : i64]
   [decls : (& decls ast.AstDeclList)]

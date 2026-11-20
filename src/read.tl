@@ -876,14 +876,6 @@
     [(List start length _) (sp-node-items start length)]
     [_ (sp-node-items 0 0)]))
 
-;; Like `spanned-sexpr-items`, but a bracket list's children count too, as in
-;; `sexpr-view`.
-(define (sexpr-items [s : SpannedSexpr]) : (& program (Slice SpannedSexpr))
-  (match s
-    [(List start length _) (sp-node-items start length)]
-    [(BracketList start length _) (sp-node-items start length)]
-    [_ (sp-node-items 0 0)]))
-
 (define (spanned-sexpr-span [s : SpannedSexpr]) : token.SourceSpan
   (match s
     [(Int _ _ span) span]

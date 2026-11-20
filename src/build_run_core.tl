@@ -83,9 +83,6 @@
     (Windows)
     (Linux)))
 
-(define (source-tool-default-target-name) : String
-  (source-tool-target-name (source-tool-default-target)))
-
 (define (source-tool-backend-target [target : target_cfg.CompilerTargetCfg]) : backend.CompilerBackendTarget
   (match target
     [(Linux) (Linux)]

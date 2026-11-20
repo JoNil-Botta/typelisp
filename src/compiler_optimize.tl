@@ -130026,13 +130026,6 @@
         (opt-alias-mark-unique (& facts) dst 0)
         blocker)]))
 
-(define (opt-scratch-state-facts
-  [state : OptScratchScopeState]
-  [facts : OptAliasFacts]) : OptScratchScopeState
-  (match state
-    [(State allocs bytes roots _ blocker)
-      (State allocs bytes roots facts blocker)]))
-
 ;; Whether a value of type `ty` can hold an address: everything but the signed
 ;; and narrow integers, floats, bool and char (`u64` is the IR's raw-pointer
 ;; word). Reading an address back as such a scalar is type punning only unsafe

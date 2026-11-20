@@ -33416,14 +33416,13 @@
     (in-arena
       (compiler-backend-state-lazy-table-arena-ensure! state)
       (unsafe
-        (begin
-          (set!
-            (deref data).copy-thunks
-            (backend_string_i64_map.with-capacity 512))
-          (set!
-            (deref data).copy-thunk-bodies
-            (__tl_make-array String compiler-backend-copy-thunk-capacity))
-          (set! (deref data).copy-thunk-count 0))))))
+        (set!
+          (deref data).copy-thunks
+          (backend_string_i64_map.with-capacity 512))
+        (set!
+          (deref data).copy-thunk-bodies
+          (__tl_make-array String compiler-backend-copy-thunk-capacity))
+        (set! (deref data).copy-thunk-count 0)))))
 
 (define (compiler-backend-copy-thunk-frame-base? [base : (& base str)]) : bool
   (or
@@ -33485,26 +33484,24 @@
           [index : i64 (compiler-backend-state-copy-thunk-count backend-state)]
           [bodies : (__tl_dyn-array String)
             (compiler-backend-state-copy-thunk-bodies backend-state)]
-          (begin
-            (if (> (array-length bodies) 0)
-              (set! (array-ref bodies index) body)
-              (let
-                [fresh : (__tl_dyn-array String)
-                  (__tl_make-array String compiler-backend-copy-thunk-capacity)]
-                (begin
-                  (set! (array-ref fresh index) body)
-                  (compiler-backend-state-set-copy-thunk-bodies!
-                    backend-state
-                    fresh))))
-            (backend_string_i64_map.insert-ref!
-              (&mut seen)
-              (compiler-backend-global-shared-view key)
-              index)
-            (compiler-backend-state-set-copy-thunks! backend-state seen)
-            (compiler-backend-state-set-copy-thunk-count!
-              backend-state
-              (+ index 1))
-            (str_cat.str-cat "tl_copy_chunks_" (string.int->string index))))])))
+          (if (> (array-length bodies) 0)
+            (set! (array-ref bodies index) body)
+            (let
+              [fresh : (__tl_dyn-array String)
+                (__tl_make-array String compiler-backend-copy-thunk-capacity)]
+              (set! (array-ref fresh index) body)
+              (compiler-backend-state-set-copy-thunk-bodies!
+                backend-state
+                fresh)))
+          (backend_string_i64_map.insert-ref!
+            (&mut seen)
+            (compiler-backend-global-shared-view key)
+            index)
+          (compiler-backend-state-set-copy-thunks! backend-state seen)
+          (compiler-backend-state-set-copy-thunk-count!
+            backend-state
+            (+ index 1))
+          (str_cat.str-cat "tl_copy_chunks_" (string.int->string index)))])))
 
 ;; The emission's thunk text, in registration order, as a run of leaf
 ;; functions in the ordinary executable section. Debug/backtrace emissions
@@ -33520,24 +33517,22 @@
       [bodies : (__tl_dyn-array String)
         (compiler-backend-state-copy-thunk-bodies program-index.backend-state)]
       [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "    .text\n")]
-      (begin
-        (for [index
-          (iterator.range
-            0
-            (compiler-backend-state-copy-thunk-count
-              program-index.backend-state))]
-          (set!
-            buf
+      (for [index
+        (iterator.range
+          0
+          (compiler-backend-state-copy-thunk-count program-index.backend-state))]
+        (set!
+          buf
+          (text_buf.append
             (text_buf.append
               (text_buf.append
-                (text_buf.append
-                  (text_buf.append buf "tl_copy_chunks_")
-                  (string.int->string index))
-                ":\n")
-              (str_cat.str-cat
-                (owned_view.compiler-owned-element-view (& bodies) index)
-                "    ret\n"))))
-        (text_buf.render buf)))))
+                (text_buf.append buf "tl_copy_chunks_")
+                (string.int->string index))
+              ":\n")
+            (str_cat.str-cat
+              (owned_view.compiler-owned-element-view (& bodies) index)
+              "    ret\n"))))
+      (text_buf.render buf))))
 
 ;; GAP2a: `dst-bias` is a constant displacement added to every DST chunk
 ;; address (src addresses stay at `offset`). A fused Gep+CopyBytes folds its

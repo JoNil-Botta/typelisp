@@ -33350,8 +33350,14 @@
 ;; spellings) are refused: chunk addresses are emitted before the rsp-rebase
 ;; pass rewrites the function's frame references, so those displacements are
 ;; not final here and a thunk could not carry them.
+;;
+;; The threshold trades text bytes against two instructions of run-time
+;; overhead per executed site (`call` plus the thunk's `ret`): a longer run
+;; saves more inline bytes per call and is executed no more often, so the
+;; chosen value is the smallest run whose byte saving still pays for those two
+;; instructions across a whole program.
 (define compiler-backend-copy-thunk-min-bytes : i64
-  32)
+  64)
 
 ;; Provisioned thunk table size. Past it, copies stay inline: the cap keeps
 ;; the per-emission table a fixed allocation and the decision local.
@@ -33506,27 +33512,25 @@
     (let
       [bodies : (__tl_dyn-array String)
         (compiler-backend-state-copy-thunk-bodies program-index.backend-state)]
-      (let
-        [buf : text_buf.TextBuf
-          (text_buf.append (text_buf.empty) "    .text\n")]
-        (begin
-          (for [index
-            (iterator.range
-              0
-              (compiler-backend-state-copy-thunk-count
-                program-index.backend-state))]
-            (set!
-              buf
+      [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "    .text\n")]
+      (begin
+        (for [index
+          (iterator.range
+            0
+            (compiler-backend-state-copy-thunk-count
+              program-index.backend-state))]
+          (set!
+            buf
+            (text_buf.append
               (text_buf.append
                 (text_buf.append
-                  (text_buf.append
-                    (text_buf.append buf "tl_copy_chunks_")
-                    (string.int->string index))
-                  ":\n")
-                (str_cat.str-cat
-                  (owned_view.compiler-owned-element-view (& bodies) index)
-                  "    ret\n"))))
-          (text_buf.render buf))))))
+                  (text_buf.append buf "tl_copy_chunks_")
+                  (string.int->string index))
+                ":\n")
+              (str_cat.str-cat
+                (owned_view.compiler-owned-element-view (& bodies) index)
+                "    ret\n"))))
+        (text_buf.render buf)))))
 
 ;; GAP2a: `dst-bias` is a constant displacement added to every DST chunk
 ;; address (src addresses stay at `offset`). A fused Gep+CopyBytes folds its

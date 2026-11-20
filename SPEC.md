@@ -1883,7 +1883,9 @@ the fields of a constructor, and an expected or annotated type all join: the
 result has the shape of the expected type (or of the other inputs) and every
 arena region of its inputs, scalars included. `(clone x)` inside an arena is
 allocated there and carries the active region, not `x`'s. Only the explicit
-clone-out forms, `with-escape` and `with-scratch`, remove a tag. A reference's
+clone-out forms, `with-escape` and `with-scratch`, drop the source's place: the
+clone-out result is a fresh allocation in the arena active around the form, so
+it names that region, and none when no scoped arena is active. A reference's
 lifetime on a view (see below) is not arena provenance: the borrow it records is
 checked as a loan, and a Copy value read through it may be joined at its plain
 type.
@@ -7055,7 +7057,8 @@ an owner region, as inside `with-arena`. The region is never a branded or
 owned scratch arena's own region, which outlives the rewind. Unlike a
 `with-arena` body, a body allocation may be passed by value to an ordinary
 function; the callee-store rule below covers what that callee does with it.
-The form's result still leaves cloned, without region tags.
+The form's result still leaves cloned into the arena active around the form, so
+it names that region, and no region when no scoped arena is active.
 
 **Callee stores under a scoped arena (#8681, #8692, #8805, #8815):** a function
 allocates in whatever arena is active at its call. Inside `with-arena`,

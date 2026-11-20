@@ -122,7 +122,7 @@ stage2-examples	linux-2	windows-2
 stage2-benchmark-comparison-correctness	linux-2	windows-2
 linux-self-compile-measurement	linux-2	-
 stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux-2	-
-stage2-native-integration-corpus-opt-levels	linux-2	windows-1
+stage2-native-integration-corpus-opt-levels	linux-1	windows-1
 stage2-addr-taken-matrix	linux-1	-
 stage2-sde-fallback-gang-width	linux-2	windows-1
 stage2-cli-host-action-smoke	linux-2	-

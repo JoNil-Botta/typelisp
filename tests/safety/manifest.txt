@@ -1617,11 +1617,11 @@ arena_invalidate_independent_ref_reject|check-fail|tests/safety/arena_invalidate
 arena_invalidate_independent_ref_other_defined|run-exit|tests/safety/arena_invalidate_independent_ref_other_defined.tl|42|-
 # A call result that can hold a handle copied from an owner, or from a handle
 # or reference to one, passed to a parameter reaching a bare `arena.Arena` ends
-# with the owner; a function or fixed-array result is rejected (#8173).
+# with the owner; a function or fixed-array result carries it too (#8173).
 arena_bare_handle_return_reject|check-fail|tests/safety/arena_bare_handle_return_reject.tl|-|use of moved value `t`
 arena_bare_handle_struct_reject|check-fail|tests/safety/arena_bare_handle_struct_reject.tl|-|use of moved value `h`
-arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|this call's result type cannot carry the region of the arena owner passed to it
-arena_bare_handle_array_reject|check-fail|tests/safety/arena_bare_handle_array_reject.tl|-|this call's result type cannot carry the region of the arena owner passed to it
+arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|use of moved value `f`
+arena_bare_handle_array_reject|check-fail|tests/safety/arena_bare_handle_array_reject.tl|-|use of moved value `xs`
 arena_bare_handle_ref_reject|check-fail|tests/safety/arena_bare_handle_ref_reject.tl|-|use of moved value `t`
 arena_bare_handle_chain_reject|check-fail|tests/safety/arena_bare_handle_chain_reject.tl|-|use of moved value `u`
 arena_bare_handle_return_defined|run-exit|tests/safety/arena_bare_handle_return_defined.tl|42|-

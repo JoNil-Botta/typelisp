@@ -10904,7 +10904,8 @@
       (tc-cleanup-owner-marker-for? marker.name-id marker.ty slot.name-id))))
 
 ;; Phase region `phase` ends: it is a phase of one of `owners`, or the rewound
-;; `region` (-1 for none) or a phase nested in it.
+;; `region` (-1 for none) or a phase taken after it
+;; (`tc-phase-taken-after-region?`).
 (define (tc-selected-phase-ends?
   [env : TcTypeEnv]
   [phase : i64]
@@ -10919,7 +10920,7 @@
         (tc-arena-region-owned-by-id? env (tc-name-id-list-head cursor) phase)
         (set! found true))
       (set! cursor (tc-name-id-list-rest cursor)))
-    found))
+    (or found (tc-phase-taken-after-region? env phase region))))
 
 ;; Scoped slot `index` is a phase token whose phase ends
 ;; (`tc-selected-phase-ends?`). A token's type carries no region: its phase is
@@ -37677,6 +37678,15 @@
     (tc-type-env-structural-session env)
     (TokenRegionMarker token-id)))
 
+;; The phase region token `token-id` was taken under: its owner's current phase
+;; then, or the owner itself for the first phase (`tc-bind-arena-phase-token`).
+(define (tc-arena-phase-token-parent-region-marker-id
+  [env : TcTypeEnv]
+  [token-id : i64]) : i64
+  (tc-arena-phase-record-id
+    (tc-type-env-structural-session env)
+    (TokenParentRegionMarker token-id)))
+
 (define (tc-qualified-name-key-id [module-id : i64] [base-id : i64]) : i64
   (csym.compiler-symbol-module-key-id-by-id module-id base-id))
 
@@ -37711,24 +37721,62 @@
     owner-id
     region-id))
 
-;; A phase taken while another phase of `owner-id` is current is nested in it
-;; (`tc-arena-region-owned-by-id?`): its mark is at or after that phase's mark.
+;; A phase taken while another phase of `owner-id` is current records it as its
+;; parent (`tc-selected-phase-ends?`): rewinding that phase ends this one too.
 (define (tc-bind-arena-phase-token
   [env : TcTypeEnv]
   [token-id : i64]
   [owner-id : i64]) : TcTypeEnv
   (let
     [region-id : i64 (tc-arena-phase-region-id env owner-id token-id)]
+    [parent-region-id : i64 (tc-current-arena-owner-region env owner-id)]
     (tc-bind-id
       (tc-bind-id
         (tc-bind-id
-          env
+          (tc-bind-id
+            env
+            (tc-arena-phase-token-parent-region-marker-id env token-id)
+            (Var parent-region-id))
           (tc-arena-phase-current-region-marker-id env owner-id)
           (Var region-id))
         (tc-arena-phase-token-owner-marker-id env token-id)
         (Var owner-id))
       (tc-arena-phase-token-region-marker-id env token-id)
       (Var region-id))))
+
+;; The phase region the phase `phase` was taken under, or -1: the owner itself
+;; (a first phase) or not a phase region at all.
+(define (tc-phase-parent-region-id [env : TcTypeEnv] [phase : i64]) : i64
+  (match (cis.intern-structural-session-arena-phase-record-for-raw
+    (tc-type-env-structural-session env)
+    phase)
+    [(Some (Region _ token))
+      (match (tc-env-marker-type
+        env
+        (tc-arena-phase-token-parent-region-marker-id env token))
+        [(Some (Var parent)) parent]
+        [_ -1])]
+    [_ -1]))
+
+;; Phase `phase` was taken after `region` was its owner's current phase, under
+;; a phase that was: a rewind of `region` ends it too (#9480).
+(define (tc-phase-taken-after-region?
+  [env : TcTypeEnv]
+  [phase : i64]
+  [region : i64]) : bool
+  (if (< region 0)
+    false
+    (let
+      [cursor : i64 (tc-phase-parent-region-id env phase)]
+      [depth : i64 0]
+      [ended? : bool false]
+      (while (and (>= cursor 0) (not ended?) (< depth 64))
+        (if (= cursor region)
+          (set! ended? true)
+          (begin
+            (set! cursor (tc-phase-parent-region-id env cursor))
+            (set! depth (+ depth 1)))))
+      ended?)))
 
 ;; Threshold compaction (`tc-env-compact-local-if-threshold`) can put a
 ;; transparent cache layer between a token's own binding and its markers. Such
@@ -40430,6 +40478,8 @@
 (define (tc-type-collect-regions [ty : ast.AstType]) : TcNameIdList
   (tc-type-collect-regions-into ty Nil))
 
+;; A region of `regions` ends with `owner`: it is `owner`, a phase of it, or a
+;; phase taken after the phase `owner` (`tc-phase-taken-after-region?`).
 (define (tc-region-list-contains-arena-owner?
   [env : TcTypeEnv]
   [regions : TcNameIdList]
@@ -40438,9 +40488,13 @@
     [cursor : TcNameIdList regions]
     [found : bool false]
     (while (and (not found) (not (tc-name-id-list-empty? cursor)))
-      (if (tc-arena-region-owned-by-id? env owner (tc-name-id-list-head cursor))
-        (set! found true)
-        unit)
+      (let
+        [region : i64 (tc-name-id-list-head cursor)]
+        (if (or
+          (tc-arena-region-owned-by-id? env owner region)
+          (tc-phase-taken-after-region? env region owner))
+          (set! found true)
+          unit))
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
 
@@ -62315,7 +62369,6 @@
     (< tc-arena-safe-phase-index 0)
     (< tc-arena-safe-rewind-index 0)
     (< tc-arena-safe-destroy-index 0)))
-
 
 (define (tc-arena-owner-kind-none) : i64
   0)

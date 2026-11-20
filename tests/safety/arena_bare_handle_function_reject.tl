@@ -1,6 +1,5 @@
-;; #8173: a closure returned through a bare `arena.Arena` parameter could keep
-;; a branded owner's handle, and a function result cannot carry the owner's
-;; brand, so the call is rejected.
+;; #8173: a closure returned through a bare `arena.Arena` parameter keeps the
+;; owner's brand, so the end of the owner reaches the closure.
 (import stdlib.arena)
 (import stdlib.string)
 

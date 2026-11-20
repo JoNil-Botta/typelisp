@@ -1,5 +1,5 @@
-;; #8173: a fixed-array result cannot carry the owner's region yet, so a call
-;; that could return a copy of the owner's handle in one is rejected.
+;; #8173: a fixed-array result of a call through a bare `arena.Arena` formal
+;; carries the owner's region, so the end of the owner reaches it.
 (import stdlib.arena)
 
 (define (one [a : arena.Arena]) : (Array arena.Arena 1)
@@ -11,4 +11,4 @@
     [xs (one s)]
     (begin
       (arena.destroy-safe! s)
-      42)))
+      (array-length (& xs)))))

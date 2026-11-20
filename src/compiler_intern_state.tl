@@ -115,7 +115,8 @@
   (Region i64 i64)
   (CurrentRegionMarker i64)
   (TokenOwnerMarker i64)
-  (TokenRegionMarker i64))
+  (TokenRegionMarker i64)
+  (TokenParentRegionMarker i64))
 
 (defstruct InternArenaPhaseIdentity
   (value i64))
@@ -1413,6 +1414,12 @@
         handle
         3
         token-id
+        0)]
+    [(TokenParentRegionMarker token-id)
+      (intern-structural-session-arena-phase-identity-for-components
+        handle
+        4
+        token-id
         0)]))
 
 (define (intern-structural-session-arena-phase-record
@@ -1442,6 +1449,7 @@
             [(= role 1) (Some (CurrentRegionMarker first-id))]
             [(= role 2) (Some (TokenOwnerMarker first-id))]
             [(= role 3) (Some (TokenRegionMarker first-id))]
+            [(= role 4) (Some (TokenParentRegionMarker first-id))]
             [else No]))))))
 
 (define (intern-structural-session-arena-phase-record-for-raw

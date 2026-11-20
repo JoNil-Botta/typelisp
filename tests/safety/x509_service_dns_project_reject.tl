@@ -5,7 +5,7 @@
   (let
     [name : x509.ServiceDnsName (x509.ServiceDnsName "example.test")]
     [references : x509.ServiceReferences (x509.service-references-new)]
-    [certificate : x509.Certificate (init : x509.Certificate)]
+    [certificate : x509.Certificate (x509.empty-certificate)]
     (set! name.canonical "192.0.2.1")
     (set! (array-ref references.values 0) (x509.Dns name))
     (set! references.length 1)

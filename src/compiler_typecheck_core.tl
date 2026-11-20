@@ -87581,24 +87581,33 @@
       (tc-not-zii-reason-text reason)
       "); construct the elements explicitly")))
 
-;; `make-array` / `__tl_make-array` element check. A type the classifier
-;; rejects is reported with its reason; every other type keeps the init rules,
-;; which still validate the value-fill element types (String, dynamic buffers,
-;; boxes), so the classifier never admits a type those rules reject.
+;; `make-array` / `__tl_make-array` element check. A foreign opaque element is
+;; a representation error, reported as `init` reports it, rather than a
+;; zero-initialization reason. A type the classifier rejects is reported with
+;; its reason; every other type keeps the init rules, which still validate the
+;; value-fill element types (String, dynamic buffers, boxes), so the classifier
+;; never admits a type those rules reject.
 (define (tc-make-array-element-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
   [elem : ast.AstType]) : ResultTcUnit
-  (match (tc-type-zii-class ctx (tc-global-shared-view elem))
-    [(NotZii reason)
-      (if (tc-not-zii-reason-rejects? reason)
-        (Err
-          (tc-make-array-not-zii-message
-            ctx
-            (tc-global-shared-view elem)
-            reason))
-        (tc-init-type-supported ctx env elem))]
-    [(Zii) (tc-init-type-supported ctx env elem)]))
+  (let
+    [_
+      (try
+        (tc-opaque-representation-ok
+          ctx
+          (tc-global-shared-view elem)
+          "cannot initialize the"))]
+    (match (tc-type-zii-class ctx (tc-global-shared-view elem))
+      [(NotZii reason)
+        (if (tc-not-zii-reason-rejects? reason)
+          (Err
+            (tc-make-array-not-zii-message
+              ctx
+              (tc-global-shared-view elem)
+              reason))
+          (tc-init-type-supported ctx env elem))]
+      [(Zii) (tc-init-type-supported ctx env elem)])))
 
 (define (tc-make-array-zero-literal-length?
   [expr-bases : i64]

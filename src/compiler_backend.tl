@@ -66748,15 +66748,47 @@
               (set! (deref data).sweep-win64-arr (__tl_make-array i64 cap))
               (set! (deref data).sweep-em-lo-arr (__tl_make-array i64 cap))
               (set! (deref data).sweep-em-hi-arr (__tl_make-array i64 cap))
-              (set! (deref data).sweep-addr-rbp (__tl_make-array i64 cap))
-              (set! (deref data).sweep-addr-ext (__tl_make-array i64 cap))
-              (set! (deref data).sweep-addr-start-arr (__tl_make-array i64 cap))
-              (set! (deref data).sweep-addr-len-arr (__tl_make-array i64 cap))
               (set!
                 (deref data).sweep-sym-bytes
                 (__tl_make-array
                   u8
                   compiler-backend-sweep-initial-bytes-capacity)))))))))
+
+;; Initial capacity of the address-extent tables. They are allocated on the
+;; first recorded frame address, not with the per-function table, so a program
+;; that never takes a frame address pays nothing for them.
+(define compiler-backend-sweep-addr-initial-capacity : i64
+  16)
+
+(define (compiler-backend-sweep-addr-ensure!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]) : unit
+  (let
+    [data : (MutPtr CompilerBackendStreamStateData)
+      (compiler-backend-stream-state-ptr stream)]
+    (unsafe
+      (if (> (array-length (deref data).sweep-addr-rbp) 0)
+        unit
+        (let
+          [owner : arena.Arena
+            (compiler-backend-state-lazy-table-arena-ensure! backend-state)]
+          [frames : i64 (array-length (deref data).sweep-sym-off)]
+          [frame-cap : i64
+            (if (> frames 0)
+              frames
+              compiler-backend-sweep-initial-capacity)]
+          (in-arena
+            owner
+            (let
+              [cap : i64 compiler-backend-sweep-addr-initial-capacity]
+              (set! (deref data).sweep-addr-rbp (__tl_make-array i64 cap))
+              (set! (deref data).sweep-addr-ext (__tl_make-array i64 cap))
+              (set!
+                (deref data).sweep-addr-start-arr
+                (__tl_make-array i64 frame-cap))
+              (set!
+                (deref data).sweep-addr-len-arr
+                (__tl_make-array i64 frame-cap)))))))))
 
 (define (compiler-backend-sweep-table-grow!
   [backend-state : CompilerBackendState]
@@ -66785,14 +66817,6 @@
             [win64-arr : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
             [em-lo-arr : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
             [em-hi-arr : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-            [addr-cap : i64
-              (if (< (array-length data.sweep-addr-rbp) new-cap)
-                new-cap
-                (array-length data.sweep-addr-rbp))]
-            [addr-rbp : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
-            [addr-ext : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
-            [addr-start : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
-            [addr-len : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
             (for [i (iterator.range 0 data.sweep-count)]
               (set! (array-ref sym-off i) (array-ref data.sweep-sym-off i))
               (set! (array-ref sym-len i) (array-ref data.sweep-sym-len i))
@@ -66810,20 +66834,36 @@
             (set! data.sweep-win64-arr win64-arr)
             (set! data.sweep-em-lo-arr em-lo-arr)
             (set! data.sweep-em-hi-arr em-hi-arr)
-            (for [i (iterator.range 0 data.sweep-addr-count)]
-              (set! (array-ref addr-rbp i) (array-ref data.sweep-addr-rbp i))
-              (set! (array-ref addr-ext i) (array-ref data.sweep-addr-ext i)))
-            (for [i (iterator.range 0 data.sweep-count)]
-              (set!
-                (array-ref addr-start i)
-                (array-ref data.sweep-addr-start-arr i))
-              (set!
-                (array-ref addr-len i)
-                (array-ref data.sweep-addr-len-arr i)))
-            (set! data.sweep-addr-rbp addr-rbp)
-            (set! data.sweep-addr-ext addr-ext)
-            (set! data.sweep-addr-start-arr addr-start)
-            (set! data.sweep-addr-len-arr addr-len)
+            (if (> (array-length data.sweep-addr-rbp) 0)
+              (let
+                [addr-cap : i64
+                  (if (< (array-length data.sweep-addr-rbp) new-cap)
+                    new-cap
+                    (array-length data.sweep-addr-rbp))]
+                [addr-rbp : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
+                [addr-ext : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
+                [addr-start : (__tl_dyn-array i64)
+                  (__tl_make-array i64 addr-cap)]
+                [addr-len : (__tl_dyn-array i64) (__tl_make-array i64 addr-cap)]
+                (for [i (iterator.range 0 data.sweep-addr-count)]
+                  (set!
+                    (array-ref addr-rbp i)
+                    (array-ref data.sweep-addr-rbp i))
+                  (set!
+                    (array-ref addr-ext i)
+                    (array-ref data.sweep-addr-ext i)))
+                (for [i (iterator.range 0 data.sweep-count)]
+                  (set!
+                    (array-ref addr-start i)
+                    (array-ref data.sweep-addr-start-arr i))
+                  (set!
+                    (array-ref addr-len i)
+                    (array-ref data.sweep-addr-len-arr i)))
+                (set! data.sweep-addr-rbp addr-rbp)
+                (set! data.sweep-addr-ext addr-ext)
+                (set! data.sweep-addr-start-arr addr-start)
+                (set! data.sweep-addr-len-arr addr-len))
+              unit)
             (compiler-backend-stream-state-data-set! stream data)
             true))))))
 
@@ -66946,6 +66986,7 @@
       (compiler-backend-state-stream-state backend-state)]
     [_storage : unit
       (compiler-backend-sweep-storage-ensure! backend-state stream)]
+    [_addr : unit (compiler-backend-sweep-addr-ensure! backend-state stream)]
     [data : (MutPtr CompilerBackendStreamStateData)
       (compiler-backend-stream-state-ptr stream)]
     (unsafe
@@ -67055,16 +67096,19 @@
               0))
           (set! (array-ref (deref current).sweep-em-lo-arr idx) em-lo)
           (set! (array-ref (deref current).sweep-em-hi-arr idx) em-hi)
-          (set!
-            (array-ref (deref current).sweep-addr-start-arr idx)
-            (deref current).sweep-addr-flushed)
-          (set!
-            (array-ref (deref current).sweep-addr-len-arr idx)
-            (if (deref current).sweep-addr-overflow
-              0
-              (-
-                (deref current).sweep-addr-count
-                (deref current).sweep-addr-flushed)))
+          (if (> (array-length (deref current).sweep-addr-start-arr) 0)
+            (begin
+              (set!
+                (array-ref (deref current).sweep-addr-start-arr idx)
+                (deref current).sweep-addr-flushed)
+              (set!
+                (array-ref (deref current).sweep-addr-len-arr idx)
+                (if (deref current).sweep-addr-overflow
+                  0
+                  (-
+                    (deref current).sweep-addr-count
+                    (deref current).sweep-addr-flushed))))
+            unit)
           (set!
             (deref current).sweep-addr-flushed
             (deref current).sweep-addr-count)
@@ -68111,8 +68155,12 @@
                     (array-ref (deref data).sweep-em-lo-arr cursor)
                     (array-ref (deref data).sweep-em-hi-arr cursor)
                     (= (array-ref (deref data).sweep-win64-arr cursor) 1)
-                    (array-ref (deref data).sweep-addr-start-arr cursor)
-                    (array-ref (deref data).sweep-addr-len-arr cursor))
+                    (if (> (array-length (deref data).sweep-addr-start-arr) 0)
+                      (array-ref (deref data).sweep-addr-start-arr cursor)
+                      0)
+                    (if (> (array-length (deref data).sweep-addr-len-arr) 0)
+                      (array-ref (deref data).sweep-addr-len-arr cursor)
+                      0))
                   (+= cursor 1)
                   (set! i rend))
                 (+= i 1))))

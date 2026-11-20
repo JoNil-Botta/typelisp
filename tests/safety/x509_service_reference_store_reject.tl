@@ -15,7 +15,7 @@
             (x509.service-identity-default-limits))
           unit]))
     (let
-      [certificate : x509.Certificate (init : x509.Certificate)]
+      [certificate : x509.Certificate (x509.empty-certificate)]
       (match (x509.service-identity
         (& certificate)
         (& references)

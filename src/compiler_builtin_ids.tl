@@ -2078,11 +2078,6 @@
   (set! compiler-builtin-pool-len -1)
   (set! compiler-builtin-parse-initialized false))
 
-(define (compiler-builtin-resolve-name [insert-missing : bool] [name : String]) : i64
-  (if insert-missing
-    (ci.intern-source-slice name 0 (ci.intern-private-string-length name))
-    (io.panic "compiler builtin IDs must be installed with their intern table")))
-
 (defmacro (compiler-builtin-ctfe [spelling : comptime.Expr]) : i64
   `(compiler-builtin-ctfe-ref (compiler-builtin-ctfe-slot ,spelling)))
 

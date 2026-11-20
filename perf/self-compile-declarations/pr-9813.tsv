@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-5620.190	ZII classifier: String-bearing aggregates whose nested nominals the old share-safe predicate mis-resolved now get the hoisted shared fill instead of the per-element init loop; local measurement 110,145,098,956 -> 109,526,062,530 Ir at main 40d616378

@@ -26,7 +26,7 @@
 (test
   by-value-array-parameter-writes-stay-in-the-callee
   (let
-    [path : (Array u16 64) (init : (Array u16 64))]
+    [path : (Array u16 64) (make-array u16 64)]
     (set! (array-ref path 0) (cast 67 : u16))
     (set! (array-ref path 1) (cast 58 : u16))
     (test.assert-i64-eq (append-suffix path 2) 0 "first call sees a NUL")

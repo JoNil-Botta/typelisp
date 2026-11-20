@@ -604,7 +604,7 @@
 
 (define (compiler-reg-move-builder-empty) : CompilerRegMoveBuilder
   (let
-    [index : reg_i64_i64_map.Map (init)]
+    [index : reg_i64_i64_map.Map (reg_i64_i64_map.new)]
     (CompilerRegMoveBuilder
       (compiler-reg-move-seq-empty)
       index
@@ -2626,25 +2626,6 @@
               (set! (array-ref ends var) point)
               unit)))
         unit))))
-
-(define (compiler-reg-low-bit-index [bits : i64]) : i64
-  (let
-    [value : i64 bits]
-    [offset : i64 0]
-    (when
-      (= (bit-and value 0xffffffff) 0)
-      (set! value (shr value 32))
-      (+= offset 32))
-    (when
-      (= (bit-and value 0xffff) 0)
-      (set! value (shr value 16))
-      (+= offset 16))
-    (when (= (bit-and value 0xff) 0) (set! value (shr value 8)) (+= offset 8))
-    (when (= (bit-and value 0xf) 0) (set! value (shr value 4)) (+= offset 4))
-    (when (= (bit-and value 0x3) 0) (set! value (shr value 2)) (+= offset 2))
-    (if (= (bit-and value 0x1) 0)
-      (+ offset 1)
-      offset)))
 
 ;; Live-set and greedy-occupancy words use only their low 32 bits. Isolate the
 ;; lowest set bit and map its 32-bit De Bruijn product to the bit index. This

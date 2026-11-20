@@ -9,8 +9,7 @@
 (define (main) : i64
   (let
     [value : i64 41]
-    [items : (__tl_dyn-array (Item value))
-      (init : (__tl_dyn-array (Item value)))]
+    [items : (__tl_dyn-array (Item value)) (__tl_make-array)]
     (begin
       (__tl_array-push! items (Item (& value)))
       (bump (&mut value))

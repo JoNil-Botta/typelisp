@@ -791,6 +791,7 @@
                   (return (,err-ctor "serialize: sequence length mismatch"))
                   unit)
                 (let
+                  ;; lint-allow: removed-init -- #7948 owns explicit serialization construction.
                   [__serialize_out : ,value-type (init : ,value-type)]
                   [__serialize_i : i64 0]
                   (while (< __serialize_i ,length-expr)
@@ -1396,6 +1397,7 @@
                     ,(comptime.expr-string type-name)
                     ,err-ctor)
                   (let
+                    ;; lint-allow: removed-init -- #7948 owns explicit serialization construction.
                     [__serialize_out : ,T (init : ,T)]
                     (stdlib.serialize.decode-fields
                       ,format-module-expr

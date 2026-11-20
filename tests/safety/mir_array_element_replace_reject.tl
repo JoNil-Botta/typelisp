@@ -8,7 +8,7 @@
 (define (main) : i64
   (let
     [p : P (P 1 2)]
-    [refs : (__tl_dyn-array (& p i64)) (init : (__tl_dyn-array (& p i64)))]
+    [refs : (__tl_dyn-array (& p i64)) (__tl_make-array)]
     (begin
       (__tl_array-push! refs (& p.l))
       (let

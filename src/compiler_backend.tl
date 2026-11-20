@@ -7792,8 +7792,15 @@
                       elem-ty
                       dst-reg
                       backend-state)))]
-              [(Err message) (Err (box message))])])]
-      [(Err message) (Err (box message))])))
+              [(Err message)
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      message)))])])]
+      [(Err message)
+        (Err
+          (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-avx512-mask-copy
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -7842,8 +7849,15 @@
                       lanes
                       dst-reg
                       backend-state)))]
-              [(Err message) (Err (box message))])])]
-      [(Err message) (Err (box message))])))
+              [(Err message)
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      message)))])])]
+      [(Err message)
+        (Err
+          (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-avx512-vector-binop-mnemonic
   [op : (& op compiler_ir_types.CompilerIrBinOp)]
@@ -39615,88 +39629,10 @@
   [_program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-call-arg-space-from target))
 
-;; Number of 8-byte STACK slots a Windows call's args occupy, mirroring
-;; emit-call-args exactly. A register-group value takes two consecutive arg slots:
-;; it stays in registers only when both fit (position+2 <= 4), otherwise the whole
-;; group spills to two stack words (a group straddling the 4-register boundary
-;; wastes the lone remaining register, per the System V whole-aggregate rule we
-;; reuse for internal self-calls). Scalars take one slot, on the stack past the
-;; four register positions. Sizing the outgoing area by actual stack words (not
-;; positions-past-4) keeps a boundary group's second word inside the reservation.
-(define (compiler-backend-windows-stack-word-count
-  [type-segment-bases : i64]
-  [convention : compiler_abi.CompilerCallConvention]
-  [args : compiler_ir_types.CompilerIrCallArgs]
-  [types : compiler_ast_types.AstTypeList]
-  [arg-index : i64]
-  [position : i64]
-  [stack-words : i64]
-  [program-index : CompilerBackendProgramIndex]) : i64
-  (if (>=
-    arg-index
-    (compiler-backend-call-args-count
-      (compiler-backend-global-shared-view args)))
-    stack-words
-    (let
-      [arg-ty : compiler_ast_types.AstType
-        (if (< arg-index (compiler_ast_types.ast-type-list-len (& types)))
-          (compiler_ast_types.ast-type-segment-bases-get
-            type-segment-bases
-            (compiler_ast_types.ast-type-list-get
-              (& types)
-              arg-index
-              (compiler_ast_types.ast-type-id-fallback)))
-          (I64))]
-      (if (compiler-backend-group-type? type-segment-bases program-index arg-ty)
-        (compiler-backend-windows-stack-word-count
-          type-segment-bases
-          convention
-          args
-          types
-          (+ arg-index 1)
-          (+ position 2)
-          ;; both halves fit in the 4 Windows int arg registers (rcx,rdx,r8,r9)?
-          (if (<=
-            (+ position 2)
-            (compiler_abi.compiler-abi-gp-arg-register-count Windows convention))
-            stack-words
-            (+ stack-words 2))
-          program-index)
-        (compiler-backend-windows-stack-word-count
-          type-segment-bases
-          convention
-          args
-          types
-          (+ arg-index 1)
-          (+ position 1)
-          (if (<
-            position
-            (compiler_abi.compiler-abi-gp-arg-register-count Windows convention))
-            stack-words
-            (+ stack-words 1))
-          program-index)))))
-
 (define (compiler-backend-windows-words-stack-space [stack-words : i64]) : i64
   (if (> stack-words 0)
     (compiler-backend-round-up-16 (* stack-words 8))
     0))
-
-(define (compiler-backend-windows-stack-arg-space
-  [type-segment-bases : i64]
-  [convention : compiler_abi.CompilerCallConvention]
-  [args : compiler_ir_types.CompilerIrCallArgs]
-  [types : compiler_ast_types.AstTypeList]
-  [program-index : CompilerBackendProgramIndex]) : i64
-  (compiler-backend-windows-words-stack-space
-    (compiler-backend-windows-stack-word-count
-      type-segment-bases
-      convention
-      args
-      types
-      0
-      0
-      0
-      program-index)))
 
 ;; The actual System V outgoing stack-arg space for a named non-C-ABI call.
 ;; Used to size the prologue frame's reserved outgoing region so calls need no
@@ -90491,20 +90427,22 @@ tl_shared_object_init:
           stream
           (compiler-backend-global-shared-view records))]
       [finished : CompilerBackendPeepholeSweepChunkState
-        (in-arena
-          home-arena
-          (let
-            [_probes : unit
-              (unsafe
-                ;; unsafe: records grows in home-arena, which outlives every use of it
+        (unsafe
+          ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
+          ;; result from naming a caller region; the state it returns lives in
+          ;; that arena, whose owner outlives every use of it
+          (in-arena
+            (arena.Arena (arena.raw-handle home-arena))
+            (let
+              [_probes : unit
                 (compiler-backend-expand-stack-probes!
                   backend-state
-                  (&mut records)))]
-            [kept : String (compiler-backend-peephole-records-render records)]
-            (CompilerBackendPeepholeSweepChunkState
-              (text_buf.append state.out kept)
-              (text_buf.empty)
-              cursor)))]
+                  (&mut records))]
+              [kept : String (compiler-backend-peephole-records-render records)]
+              (CompilerBackendPeepholeSweepChunkState
+                (text_buf.append state.out kept)
+                (text_buf.empty)
+                cursor))))]
       [_carry-home : unit
         (compiler-backend-assembly-stream-carry-home-current! stream home-arena)]
       (compiler-backend-peephole-records-retire! stream)

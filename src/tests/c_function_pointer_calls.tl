@@ -1,3 +1,4 @@
+;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 (import compiler_typecheck_api as tc_api)
 (import compiler_diagnostic as diagnostic)
 (import stdlib.string)
@@ -80,7 +81,7 @@
   (let [entries : (__tl_dyn-array Table) (__tl_make-array Table 1)]
        [table : Table (array-ref entries 0)]
     (table.entry 41)))"
-      "init cannot create a non-null C function pointer")
+      "make-array element type Table is not zero-initializable (reason: non-null-cfunc)")
     "zero-filled aggregate arrays cannot manufacture checked code pointers"))
 
 (test

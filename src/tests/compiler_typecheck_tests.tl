@@ -1603,6 +1603,246 @@
       2
       1)))
 
+(define (compiler-typecheck-zii-class-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct Point (x i32) (y i64))
+(defenum Slot (Empty) (Filled i64))
+(defenum Cell (At i64 Point) (Gap))
+(defenum Named (Label String) (Nothing))
+(defenum Boxed (Holder (Box i64)) (Nothing))
+(defstruct Raw (:repr c) (x i64))
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct ZScalars
+  (a i8) (b i16) (c i32) (d i64) (e u8) (f u16) (g u32) (h u64)
+  (i f32) (j f64) (k bool) (l char) (m unit))
+(defstruct ZPtrs (p (Ptr i64)) (q (MutPtr u8)) (c (CFunc nullable (-> i64 i64))))
+(defstruct ZNested (t (Tuple i64 (Tuple bool char))) (a (Array Point 3)) (s Slot) (c Cell))
+(defstruct HStr (s String) (n i64))
+(defstruct HDyn (d (__tl_dyn-array i64)))
+(defstruct HBox (b (Box i64)))
+(defstruct HFn (f (-> i64)))
+(defstruct HNonNull (c (CFunc non-null (-> i64 i64))))
+(defstruct HStrFn (s String) (f (-> i64)))
+(defstruct HStrBox (s String) (b (Box i64)))
+(defstruct HArrStr (a (Array String 2)) (n i64))
+(defstruct HNamed (e Named))
+(defstruct HBoxed (e Boxed))
+(defstruct HRaw (r Raw))
+(defstruct Loop (x i64) (next Loop))")
+
+(define (compiler-typecheck-zii-class-name [class : tc_core.TcZiiClass]) : String
+  (match class
+    [(Zii) "zii"]
+    [(NotZii reason) (tc_core.tc-not-zii-reason-text reason)]))
+
+;; `ty` classifies as `want`, and make-array's element check accepts it exactly
+;; when the init rules do: the classifier neither admits a type those rules
+;; reject nor rejects one they admit.
+(define (compiler-typecheck-zii-probe-ok?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [want : String]) : bool
+  (let
+    [class : String
+      (compiler-typecheck-zii-class-name
+        (tc_core.tc-type-zii-class ctx (clone ty)))]
+    [init-ok : bool
+      (match (tc_core.tc-init-type-supported
+        ctx
+        (tc_core.tc-empty-type-env)
+        (tc_core.tc-global-shared-view ty))
+        [(Ok) true]
+        [(Err _) false])]
+    [element-ok : bool
+      (match (tc_core.tc-make-array-element-ok
+        ctx
+        (tc_core.tc-empty-type-env)
+        ty)
+        [(Ok) true]
+        [(Err _) false])]
+    (if (and (string.eq class want) (= init-ok element-ok))
+      true
+      (io.panic
+        (str_cat.str-cat
+          "typecheck: zii probe wanted "
+          want
+          ", got "
+          class
+          (if (= init-ok element-ok)
+            ""
+            "; make-array and init acceptance differ"))))))
+
+(define (compiler-typecheck-zii-struct-probe-ok?
+  [ctx : tc_core.TcContext]
+  [program : (& program ast.AstProgram)]
+  [name : String]
+  [want : String]) : bool
+  (compiler-typecheck-zii-probe-ok?
+    ctx
+    (Struct (compiler-typecheck-fixture-nominal-id program name))
+    want))
+
+(define (compiler-typecheck-zii-class-ok?) : bool
+  (tc_core.tc-agg-caches-reset!)
+  (match (parser.parse-ast-source (& (compiler-typecheck-zii-class-source)))
+    [(Ok program)
+      (match (csym.build-compiler-symbols program)
+        [(Ok symbols)
+          (match (csym.build-compiler-registries program)
+            [(Ok registries)
+              (let
+                [ctx : tc_core.TcContext
+                  (tc_core.tc-context-new
+                    (ast.ast-global-shared-view program)
+                    symbols
+                    registries
+                    ""
+                    cbi.compiler-builtin-id-fix-empty
+                    (ast.ast-node-pool-context-capture-active))]
+                (and
+                  (compiler-typecheck-zii-probe-ok? ctx (I64) "zii")
+                  (compiler-typecheck-zii-probe-ok? ctx (U8) "zii")
+                  (compiler-typecheck-zii-probe-ok? ctx (F64) "zii")
+                  (compiler-typecheck-zii-probe-ok? ctx (Char) "zii")
+                  (compiler-typecheck-zii-probe-ok?
+                    ctx
+                    (String)
+                    "string-handle")
+                  (compiler-typecheck-zii-probe-ok? ctx (Never) "never")
+                  (compiler-typecheck-zii-probe-ok? ctx (Expr) "syntax-value")
+                  (compiler-typecheck-zii-probe-ok?
+                    ctx
+                    (ExprList)
+                    "syntax-value")
+                  (compiler-typecheck-zii-probe-ok?
+                    ctx
+                    (Struct -1)
+                    "unsupported")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "ZScalars"
+                    "zii")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "ZPtrs"
+                    "zii")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "ZNested"
+                    "zii")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HStr"
+                    "string-handle")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HDyn"
+                    "dynamic-buffer")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HBox"
+                    "box")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HFn"
+                    "function")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HNonNull"
+                    "non-null-cfunc")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HStrFn"
+                    "function")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HStrBox"
+                    "box")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HArrStr"
+                    "string-handle")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HNamed"
+                    "string-handle")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HBoxed"
+                    "box")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "Raw"
+                    "repr-c")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "HRaw"
+                    "repr-c")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "FileHandle"
+                    "cleanup-owner")
+                  (compiler-typecheck-zii-struct-probe-ok?
+                    ctx
+                    (& program)
+                    "Loop"
+                    "unsupported")))]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
+
+(define (compiler-typecheck-make-array-zii-diagnostics-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      "(defstruct Callback (f (-> i64)))
+(define (main) : i64
+  (let [items : (__tl_dyn-array Callback) (__tl_make-array Callback 2)] 0))"
+      "typecheck: make-array element type Callback is not zero-initializable (reason: function); construct the elements explicitly")
+    (compiler-typecheck-error-ok?
+      "(define (main [n : i64]) : i64
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array (& n i64) 2)] 0))"
+      "typecheck: make-array element type (& n i64) is not zero-initializable (reason: reference); construct the elements explicitly")
+    (compiler-typecheck-error-ok?
+      "(defstruct Table (entry (CFunc non-null (-> i64 i64))))
+(define (main) : i64
+  (let [items : (__tl_dyn-array Table) (__tl_make-array Table 2)] 0))"
+      "typecheck: make-array element type Table is not zero-initializable (reason: non-null-cfunc); construct the elements explicitly")
+    (compiler-typecheck-error-ok?
+      "(defstruct Raw (:repr c) (x i64))
+(define (main) : i64
+  (let [items : (__tl_dyn-array Raw) (__tl_make-array Raw 2)] 0))"
+      "typecheck: make-array element type Raw is not zero-initializable (reason: repr-c); construct the elements explicitly")
+    (compiler-typecheck-error-ok?
+      "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (main) : i64
+  (let [items : (Array FileHandle 2) (make-array FileHandle 2)] 0))"
+      "typecheck: make-array element type FileHandle is not zero-initializable (reason: cleanup-owner); construct the elements explicitly")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (let [items : (Array (-> i64) 2) (make-array (-> i64) 2)] 0))"
+      "typecheck: make-array element type (->  i64) is not zero-initializable (reason: function); construct the elements explicitly")))
+
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and
     (compiler-typecheck-repr-c-aligned-layout-ok?)
@@ -2865,6 +3105,8 @@
 (define (main) : i64 (d/get))"
       "typecheck: slash-qualified name d/get is no longer supported; use d.get")
     (compiler-typecheck-repr-c-tests-ok?)
+    (compiler-typecheck-zii-class-ok?)
+    (compiler-typecheck-make-array-zii-diagnostics-ok?)
     (compiler-typecheck-inline-layout-tests-ok?)))
 
 (define (compiler-typecheck-with-escape-string-source) : String

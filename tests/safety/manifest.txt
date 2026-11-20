@@ -2915,8 +2915,9 @@ region_helper_store_reject_windows|check-fail-windows|tests/safety/region_helper
 # A callee allocates in the arena active at its call (#8681, #8692, #8805, #8815):
 # under a scoped arena, a call whose callee may store an allocation into a
 # global, or through an argument into outer storage, is rejected once every
-# body is checked. A bare arena.Arena parameter's allocation cannot leave the
-# call (#8173). The _ok rows are the shapes that stay valid.
+# body is checked. Growing a container stores a fresh buffer whatever the
+# element type is (#9806). A bare arena.Arena parameter's allocation cannot
+# leave the call (#8173). The _ok rows are the shapes that stay valid.
 arena_store_callee_global_in_arena_reject|check-fail|tests/safety/arena_store_callee_global_in_arena_reject.tl|tests/safety/arena_store_callee_global_in_arena_reject.tl:15:20|error[E0205]: typecheck: cannot call `stash` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
 arena_store_callee_global_reject|check-fail|tests/safety/arena_store_callee_global_reject.tl|tests/safety/arena_store_callee_global_reject.tl:12:22|error[E0205]: typecheck: cannot call `stash` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
 arena_store_callee_mut_param_reject|check-fail|tests/safety/arena_store_callee_mut_param_reject.tl|tests/safety/arena_store_callee_mut_param_reject.tl:14:28|error[E0205]: typecheck: cannot call `put` here: it allocates in the active arena and may store an allocation through this argument, which would outli
@@ -2934,6 +2935,7 @@ arena_store_local_function_argument_reject|check-fail|tests/safety/arena_store_l
 arena_store_closure_capture_reject|check-fail|tests/safety/arena_store_closure_capture_reject.tl|tests/safety/arena_store_closure_capture_reject.tl:14:24|error[E0205]: typecheck: cannot call `<indirect call/lambda>` here: it allocates in the active arena and may store an allocation through this argument
 arena_store_explicit_arena_outside_value_reject|check-fail|tests/safety/arena_store_explicit_arena_outside_value_reject.tl|tests/safety/arena_store_explicit_arena_outside_value_reject.tl:22:22|error[E0205]: typecheck: cannot call `add-fact` here: it allocates in the active arena and may store an allocation into a global, which would outlive 
 arena_store_explicit_arena_result_reject|check-fail|tests/safety/arena_store_explicit_arena_result_reject.tl|tests/safety/arena_store_explicit_arena_result_reject.tl:18:22|error[E0205]: typecheck: cannot call `keep!` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
+arena_store_outer_array_growth_reject|check-fail|tests/safety/arena_store_outer_array_growth_reject.tl|tests/safety/arena_store_outer_array_growth_reject.tl:5:3|error[E0205]: typecheck: cannot store region-tagged value into the array this push grows; region value would escape
 arena_bare_param_branded_caller_reject|check-fail|tests/safety/arena_bare_param_branded_caller_reject.tl|tests/safety/arena_bare_param_branded_caller_reject.tl:9:3|error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
 arena_bare_param_callee_store_reject|check-fail|tests/safety/arena_bare_param_callee_store_reject.tl|tests/safety/arena_bare_param_callee_store_reject.tl:15:15|error[E0205]: typecheck: cannot call `keep` here: it allocates in the active arena and may store an allocation through this argument, which would outl
 arena_bare_param_return_reject|check-fail|tests/safety/arena_bare_param_return_reject.tl|tests/safety/arena_bare_param_return_reject.tl:10:3|error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
@@ -2944,6 +2946,8 @@ arena_store_scalar_through_mut_ok|run-exit|tests/safety/arena_store_scalar_throu
 arena_store_scratch_local_container_ok|run-exit|tests/safety/arena_store_scratch_local_container_ok.tl|42|-
 arena_store_unsafe_exempt_ok|run-exit|tests/safety/arena_store_unsafe_exempt_ok.tl|42|-
 arena_store_explicit_arena_ok|run-exit|tests/safety/arena_store_explicit_arena_ok.tl|42|-
+arena_store_local_array_growth_ok|run-exit|tests/safety/arena_store_local_array_growth_ok.tl|42|-
+arena_store_outer_array_slot_ok|run-exit|tests/safety/arena_store_outer_array_slot_ok.tl|42|-
 arena_bare_param_scalar_ok|run-exit|tests/safety/arena_bare_param_scalar_ok.tl|42|-
 region_right_operand_plain_left_ok|check-ok|tests/safety/region_right_operand_plain_left_ok.tl|-|-
 region_aggregate_in_active_region_ok|check-ok|tests/safety/region_aggregate_in_active_region_ok.tl|-|-

@@ -89918,6 +89918,24 @@
                 "array"))]
           (Ok (Unit)))))))
 
+;; Growing a dynamic array reallocates its buffer in the arena active at the
+;; push (SPEC 3.9). That buffer is an allocation of the active region, so the
+;; array's own storage must name it: growing a place that outlives the arena
+;; would leave it pointing at memory the arena reclaims, whatever the element
+;; type it holds. A push is the only primitive that regrows a buffer.
+(define (tc-array-growth-ok
+  [env : TcTypeEnv]
+  [array-ty : ast.AstType]
+  [elem-ty : ast.AstType]) : ResultTcUnit
+  (match (tc-active-region env)
+    [(No) ResultTcUnit.Ok]
+    [(Some region)
+      (tc-ensure-region-value-can-flow-into
+        env
+        array-ty
+        (tc-tag-region region (ast.ast-ty-dyn-array (& elem-ty)))
+        "the array this push grows")]))
+
 (define (tc-tuple-set-element-type
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
@@ -91136,16 +91154,24 @@
         [receiver (try (tc-array-push-receiver ctx array-ty))]
         (match receiver
           [(TcArrayReceiver container-ty elem-ty)
-            (tc-array-mutation-value
-              ctx
-              env
-              array
-              container-ty
-              elem-ty
-              value
-              (tc-kind-message
-                (TypeMismatch)
-                "typecheck: __tl_array-push! value type mismatch"))]))]
+            (let
+              [grown-array : ast.AstType (clone container-ty)]
+              [grown-elem : ast.AstType (clone elem-ty)]
+              (match (tc-array-mutation-value
+                ctx
+                env
+                array
+                container-ty
+                elem-ty
+                value
+                (tc-kind-message
+                  (TypeMismatch)
+                  "typecheck: __tl_array-push! value type mismatch"))
+                [(ResultTcType.Err message) (Err message)]
+                [(ResultTcType.Ok pushed)
+                  (match (tc-array-growth-ok env grown-array grown-elem)
+                    [(ResultTcUnit.Ok) (Ok pushed)]
+                    [(ResultTcUnit.Err message) (Err message)])]))]))]
     [(StringRef str-box index-box)
       (let
         [str-ty (try (tc-expr-id ctx env str-box))]

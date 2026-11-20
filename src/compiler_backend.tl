@@ -83677,17 +83677,16 @@ tl_shared_object_init:
     (if (> (string.string-length problem) 0)
       (ResultCompilerBackendObject.Err
         (compiler-backend-return-storage-authority-diagnostic problem))
-      (begin
-        (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
-          backend-state
-          (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-          program
-          target
-          mode
-          spans
-          emit-entry
-          crt-entry
-          profile-state)))))
+      (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+        backend-state
+        (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
+        program
+        target
+        mode
+        spans
+        emit-entry
+        crt-entry
+        profile-state))))
 
 (define (compiler-backend-emit-program-object-image-target
   [program : compiler_ir_types.CompilerIrProgram]

@@ -245,24 +245,32 @@ st_gate() {
             "$(sc_record_get "$_d/gate.tsv" within_runner_variation_bound)"
     }
     st_eq "own zero" "$(_st_gate 116113939859 none)" "ok routine yes"
+    st_eq "PR gate records its own window" "$(sc_record_get "$_d/gate.tsv" tolerance_ppm)" 4000
     st_eq "own +1000 is the variation bound" "$(_st_gate 116113940859 none)" "ok routine yes"
     st_eq "own +1001" "$(_st_gate 116113940860 none)" "ok routine no"
-    st_eq "own at +edge" "$(_st_gate 116694509558 none)" "ok routine no"
-    st_eq "own past +edge" "$(_st_gate 116694509559 none)" "REGRESSION non-routine no"
-    st_eq "own past -edge" "$(_st_gate 115533370159 none)" "IMPROVEMENT explain-improvement no"
-    st_eq "own at -edge" "$(_st_gate 115533370160 none)" "ok routine no"
+    # 4000 ppm of 116113939859 is 464455759.436 Ir: the PR window is the
+    # 5000 ppm landed window less the 1000 ppm class-M bound.
+    st_eq "own at +edge" "$(_st_gate 116578395618 none)" "ok routine no"
+    st_eq "own past +edge" "$(_st_gate 116578395619 none)" "REGRESSION routine no"
+    st_eq "own past -edge" "$(_st_gate 115649484099 none)" "IMPROVEMENT routine no"
+    st_eq "own at -edge" "$(_st_gate 115649484100 none)" "ok routine no"
     # +63.7% declared as 637000 ppm: center 116113939859 * 1.637 = 190078519549.183
     st_eq "declared large cost" "$(_st_gate 190078519549 637000)" "declared-ok non-routine no"
     st_eq "declared mismatch" "$(_st_gate 190078519549 600000)" "DECLARATION-MISMATCH non-routine no"
     st_eq "declared improvement" "$(_st_gate 108113939859 -68900)" "declared-ok explain-improvement no"
     st_eq "small declaration" "$(_st_gate 116113939859 100)" "declared-ok routine yes"
     # The declared window's own boundary, at exact counts: base 1e6, declared
-    # 1000 ppm, so own 6000 Ir is exactly 5000 ppm from the declaration.
+    # 1000 ppm, so own 5000 Ir is exactly 4000 ppm from the declaration.
     st_record "$_d/base.tsv" ir_count=1000000
-    st_eq "declared window edge" "$(_st_gate 1006000 1000)" "declared-ok non-routine no"
-    st_eq "declared window past the edge" "$(_st_gate 1006001 1000)" "DECLARATION-MISMATCH non-routine no"
-    st_eq "declared window lower edge" "$(_st_gate 996000 1000)" "declared-ok routine no"
-    st_eq "declared window past the lower edge" "$(_st_gate 995999 1000)" "DECLARATION-MISMATCH routine no"
+    st_eq "declared window edge" "$(_st_gate 1005000 1000)" "declared-ok routine no"
+    st_eq "declared window past the edge" "$(_st_gate 1005001 1000)" "DECLARATION-MISMATCH non-routine no"
+    st_eq "declared window lower edge" "$(_st_gate 997000 1000)" "declared-ok routine no"
+    st_eq "declared window past the lower edge" "$(_st_gate 996999 1000)" "DECLARATION-MISMATCH routine no"
+    # A PR that could fail the landed window on main is caught here: its own
+    # cost plus interaction A (at most 1000 ppm) would exceed 5000 ppm.
+    st_eq "own +4500 undeclared is a regression" "$(_st_gate 1004500 none)" "REGRESSION routine no"
+    st_eq "own +3900 undeclared is ok" "$(_st_gate 1003900 none)" "ok routine no"
+    st_eq "own +4729 declared" "$(_st_gate 1004729 4729)" "declared-ok routine no"
 }
 
 st_declarations() {
@@ -659,6 +667,14 @@ st_ledger() {
     st_entry "$_d/window" "$_P" 100500000001 mt=100500000001 mb="$_P"
     st_eq "landed gate window breach" "$(st_entry_says "$_d/window")" "S numerical-failure landed-gate-window"
     st_eq "landed cost above +5000 ppm is non-routine" "$(sc_record_get "$_d/window/entry.tsv" routing)" non-routine
+    # The landed window is unchanged: it still accepts +4999 and +5000 ppm,
+    # while the PR gate now stops at +4000 ppm.
+    st_entry "$_d/window-in" "$_P" 100499900000
+    st_eq "landed gate window accepts +4999 ppm" "$(st_entry_says "$_d/window-in")" "S ok -"
+    st_entry "$_d/window-edge" "$_P" 100500000000
+    st_eq "landed gate window accepts +5000 ppm" "$(st_entry_says "$_d/window-edge")" "S ok -"
+    st_entry "$_d/window-over" "$_P" 100500100000
+    st_eq "landed gate window rejects +5001 ppm" "$(st_entry_says "$_d/window-over")" "S numerical-failure landed-gate-window"
     st_entry "$_d/window-declared" "$_P" 100700000000 mt=100700000000 mb="$_P" declared=7000
     st_eq "declared landed cost within its window" "$(st_entry_says "$_d/window-declared")" "S ok -"
     st_entry "$_d/binary" "$_P" 100000050000

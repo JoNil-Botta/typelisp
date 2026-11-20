@@ -47,13 +47,17 @@ SC_HARNESS_LOG=self_compile-compile_cli_opt1-1.cachegrind.out
 SC_PROCEDURE_FILES="scripts/measure-instruction-counts.sh scripts/lib-benchmark.sh"
 
 # Tolerance and bounds. TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM keeps its name
-# and 5000 ppm default from the retired checked-row gate.
+# and 5000 ppm default from the retired checked-row gate. The landed window
+# uses it as is; the PR gate is narrower by the class-M bound, so a PR that
+# passes it cannot fail the landed window when its landing adds interaction A
+# up to that bound.
 SC_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
 SC_RUNNER_VARIATION_IR=1000
 SC_CLASS_S_WARN_IR=1000
 SC_CLASS_S_FAIL_IR=10000
 SC_CLASS_M_WARN_IR=10000
 SC_CLASS_M_FAIL_PPM=1000
+SC_PR_GATE_PPM=$((SC_TOLERANCE_PPM - SC_CLASS_M_FAIL_PPM))
 
 # Reuse key and measurement identity: two measurements may be subtracted only
 # when every one of these fields is equal (D-C15 amendment 4). The kernel is
@@ -432,6 +436,9 @@ sc_declaration_diff_check() {
 
 # sc_gate_decide HEAD_REC BASE_REC DECLARED  ->  writes key/value lines:
 # own, ppm, status, routing. DECLARED is `none` or a finite signed decimal.
+# The window is SC_PR_GATE_PPM, narrower than the landed window by the class-M
+# bound: a landing can add interaction A up to that bound, so a PR that passes
+# here stays inside SC_TOLERANCE_PPM when it lands.
 sc_gate_decide() {
     _sgd_now=$(sc_record_get "$1" ir_count)
     _sgd_base=$(sc_record_get "$2" ir_count)
@@ -439,7 +446,7 @@ sc_gate_decide() {
     _sgd_declared=$3
     _sgd_d=$_sgd_declared
     [ "$_sgd_d" = none ] && _sgd_d=0
-    _sgd_window=$(sc_window "$_sgd_own" "$_sgd_base" "$_sgd_d" "$SC_TOLERANCE_PPM")
+    _sgd_window=$(sc_window "$_sgd_own" "$_sgd_base" "$_sgd_d" "$SC_PR_GATE_PPM")
     if [ "$_sgd_window" = in ]; then
         _sgd_status=ok
         [ "$_sgd_declared" != none ] && _sgd_status=declared-ok
@@ -475,7 +482,7 @@ sc_gate_decide() {
     sc_record_line own "$_sgd_own"
     sc_record_line own_ppm "$(sc_ppm_display "$_sgd_own" "$_sgd_base")"
     sc_record_line declared_ppm "$_sgd_declared"
-    sc_record_line tolerance_ppm "$SC_TOLERANCE_PPM"
+    sc_record_line tolerance_ppm "$SC_PR_GATE_PPM"
     sc_record_line status "$_sgd_status"
     sc_record_line routing "$_sgd_routing"
     sc_record_line within_runner_variation_bound "$_sgd_variation"
@@ -670,7 +677,8 @@ sc_ledger_entry() {
     sc_record_line pair_identity "$(sc_record_get "$_sle_dir/landed.tsv" info.kernel 2>/dev/null || echo unknown)|$(sc_record_get "$_sle_dir/landed.tsv" key.valgrind)|$(sc_record_get "$_sle_dir/landed.tsv" key.as)|$(sc_record_get "$_sle_dir/landed.tsv" procedure)"
 
     # Landed gate window, for every merge with a step: the merge as it landed
-    # against its parent, with the PR's honoured declaration or 0.
+    # against its parent, with the PR's honoured declaration or 0. This is the
+    # full SC_TOLERANCE_PPM; the PR gate is narrower (SC_PR_GATE_PPM).
     _sle_declared=none
     if [ -f "$_sle_dir/pr.tsv" ]; then
         _sle_declared=$(sc_record_get "$_sle_dir/pr.tsv" declared_ppm 2>/dev/null || echo none)

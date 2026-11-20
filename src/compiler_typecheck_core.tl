@@ -10513,9 +10513,10 @@
 
 ;; `with-scratch` and `with-escape` (SPEC clone-out): legacy typing decides
 ;; the result (the body's value with its scratch regions erased, a supported
-;; clone-out type). The body is an ordinary block whose value is consumed by
-;; the clone-out; the result is a fresh value. A `with-escape` scratch owner
-;; is read through a borrow, never moved.
+;; clone-out type, tagged with the region active outside the form because the
+;; clone is a fresh allocation there). The body is an ordinary block whose
+;; value is consumed by the clone-out; the result is a fresh value. A
+;; `with-escape` scratch owner is read through a borrow, never moved.
 (define (tc-infer-selected-scratch
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -88946,7 +88947,10 @@
             (tc-clone-root-collection-note!
               ctx
               (tc-global-shared-view clone-ty))
-            (Ok clone-ty))
+            ;; The clone lands in the arena active outside the form, so it
+            ;; carries that region: a clone out of a scratch region into an
+            ;; enclosing `with-arena` must not read as untagged.
+            (Ok (tc-tag-active-region env clone-ty)))
           (Err (tc-with-escape-unsupported-message ctx body-ty))))
       (Err
         (tc-kind-message
@@ -88964,7 +88968,9 @@
       (let
         [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
         (tc-clone-root-collection-note! ctx (tc-global-shared-view clone-ty))
-        (Ok clone-ty))
+        ;; Same as `tc-clone-call`: the clone-out allocates in the arena
+        ;; active outside the form (SPEC 3.4.1) and carries its region.
+        (Ok (tc-tag-active-region env clone-ty)))
       (Err (tc-with-scratch-unsupported-message ctx body-ty)))))
 
 (define (tc-in-arena-owner

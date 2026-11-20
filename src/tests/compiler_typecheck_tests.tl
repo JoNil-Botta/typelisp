@@ -3125,13 +3125,25 @@
     [scratch : Arena (arena-make)]
     (with-escape scratch 40 42)))"))
     (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))
+    ;; The clone-out lands in the arena active around the form, so inside
+    ;; `with-arena r` the result carries r: used there it checks, and returned
+    ;; from the form it is a region escape.
     (compiler-typecheck-ok?
+      (compiler-typecheck-with-arena-source
+        "(define (main) : i64
+  (let
+    [scratch : Arena (arena-make)]
+    (with-arena r
+      (with-escape scratch (string.int->string 42))
+      0)))"))
+    (compiler-typecheck-error-ok?
       (compiler-typecheck-with-arena-source
         "(define (main) : String
   (let
     [scratch : Arena (arena-make)]
     (with-arena r
-      (with-escape scratch (string.int->string 42)))))"))
+      (with-escape scratch (string.int->string 42)))))")
+      "typecheck: region-tagged value cannot escape with-arena 'r'")
     (compiler-typecheck-ok?
       (compiler-typecheck-with-arena-source
         "(define (main) : (__tl_dyn-array i64)

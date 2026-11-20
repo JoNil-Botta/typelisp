@@ -4693,7 +4693,12 @@
     [inner-markers : tc_core.TcTypeEnv
       (tc_core.tc-bind-arena-phase-token shadow token-b owner-b)]
     [inner : tc_core.TcTypeEnv (tc_core.tc-bind-id inner-markers token-b (I64))]
-    [inner-region : i64 (tc_core.tc-arena-phase-region-id base owner-b token-b)]
+    ;; The inner phase was taken while `shadow`'s was current, so its id carries
+    ;; that parent: read it from the binding, not from `base`.
+    [inner-region : i64
+      (match (tc_core.tc-arena-phase-token-region-active inner token-b)
+        [(Some region) region]
+        [_ -1])]
     [deep : tc_core.TcTypeEnv
       (tc-type-env-bind-many
         inner

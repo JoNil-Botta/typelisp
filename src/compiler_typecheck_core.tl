@@ -37676,13 +37676,34 @@
   (cis.intern-arena-phase-identity-raw
     (cis.intern-structural-session-arena-phase-identity session record)))
 
+;; The region the phase `token-id` binds under `owner-id` while the phase region
+;; `parent-region-id` is the owner's current one: `(Region owner-id binder)`, the
+;; binder being `(PhaseBinder token-id parent-region-id)`. A phase taken after
+;; another phase of the same owner is another id, so one id never needs two
+;; parents, and the parent is part of the identity: a value's region tag can be
+;; read back after the binder's scope closed.
+(define (tc-arena-phase-region-id-under
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [token-id : i64]
+  [parent-region-id : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session env)]
+    [binder : i64
+      (tc-arena-phase-record-id session (PhaseBinder token-id parent-region-id))]
+    (tc-arena-phase-record-id session (Region owner-id binder))))
+
+;; The phase region `token-id` binds under `owner-id` now.
 (define (tc-arena-phase-region-id
   [env : TcTypeEnv]
   [owner-id : i64]
   [token-id : i64]) : i64
-  (tc-arena-phase-record-id
-    (tc-type-env-structural-session env)
-    (Region owner-id token-id)))
+  (tc-arena-phase-region-id-under
+    env
+    owner-id
+    token-id
+    (tc-current-arena-owner-region env owner-id)))
 
 (define (tc-arena-phase-current-region-marker-id
   [env : TcTypeEnv]
@@ -37704,15 +37725,6 @@
   (tc-arena-phase-record-id
     (tc-type-env-structural-session env)
     (TokenRegionMarker token-id)))
-
-;; The phase region token `token-id` was taken under: its owner's current phase
-;; then, or the owner itself for the first phase (`tc-bind-arena-phase-token`).
-(define (tc-arena-phase-token-parent-region-marker-id
-  [env : TcTypeEnv]
-  [token-id : i64]) : i64
-  (tc-arena-phase-record-id
-    (tc-type-env-structural-session env)
-    (TokenParentRegionMarker token-id)))
 
 (define (tc-qualified-name-key-id [module-id : i64] [base-id : i64]) : i64
   (csym.compiler-symbol-module-key-id-by-id module-id base-id))
@@ -37756,14 +37768,10 @@
   [owner-id : i64]) : TcTypeEnv
   (let
     [region-id : i64 (tc-arena-phase-region-id env owner-id token-id)]
-    [parent-region-id : i64 (tc-current-arena-owner-region env owner-id)]
     (tc-bind-id
       (tc-bind-id
         (tc-bind-id
-          (tc-bind-id
-            env
-            (tc-arena-phase-token-parent-region-marker-id env token-id)
-            (Var parent-region-id))
+          env
           (tc-arena-phase-current-region-marker-id env owner-id)
           (Var region-id))
         (tc-arena-phase-token-owner-marker-id env token-id)
@@ -37771,19 +37779,23 @@
       (tc-arena-phase-token-region-marker-id env token-id)
       (Var region-id))))
 
-;; The phase region the phase `phase` was taken under, or -1: the owner itself
-;; (a first phase) or not a phase region at all.
+;; The phase region `phase` was taken under, or -1: the owner itself (a first
+;; phase) or not a phase binder's region at all. Read from the record, so it
+;; outlives the binder's scope.
 (define (tc-phase-parent-region-id [env : TcTypeEnv] [phase : i64]) : i64
-  (match (cis.intern-structural-session-arena-phase-record-for-raw
-    (tc-type-env-structural-session env)
-    phase)
-    [(Some (Region _ token))
-      (match (tc-env-marker-type
-        env
-        (tc-arena-phase-token-parent-region-marker-id env token))
-        [(Some (Var parent)) parent]
-        [_ -1])]
-    [_ -1]))
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session env)]
+    (match (cis.intern-structural-session-arena-phase-record-for-raw
+      session
+      phase)
+      [(Some (Region _ binder))
+        (match (cis.intern-structural-session-arena-phase-record-for-raw
+          session
+          binder)
+          [(Some (PhaseBinder _ parent)) parent]
+          [_ -1])]
+      [_ -1])))
 
 ;; Phase `phase` was taken after `region` was its owner's current phase, under
 ;; a phase that was: a rewind of `region` ends it too (#9480).
@@ -37795,14 +37807,16 @@
     false
     (let
       [cursor : i64 (tc-phase-parent-region-id env phase)]
-      [depth : i64 0]
+      [seen : TcNameIdList Nil]
       [ended? : bool false]
-      (while (and (>= cursor 0) (not ended?) (< depth 64))
+      (while (and
+        (>= cursor 0)
+        (not ended?)
+        (not (tc-name-id-list-contains seen cursor)))
+        (set! seen (tc-name-id-list-add seen cursor))
         (if (= cursor region)
           (set! ended? true)
-          (begin
-            (set! cursor (tc-phase-parent-region-id env cursor))
-            (set! depth (+ depth 1)))))
+          (set! cursor (tc-phase-parent-region-id env cursor))))
       ended?)))
 
 ;; Threshold compaction (`tc-env-compact-local-if-threshold`) can put a

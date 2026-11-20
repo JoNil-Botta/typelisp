@@ -144,6 +144,18 @@
 ;; * Loaded entry records, liveness cells and failure messages live here.
 ;;   Executable mappings and their catalog indexes are still released at pass
 ;;   close; compressed bytes are static and decoded entry bytes are transient.
+;; The most recently expanded catalog group. Requests for one group repeat
+;; (a compile resolves several entries of it), so keeping that single window
+;; makes them a slice; a different group replaces it, and it is dropped with
+;; the session. One group is about a twelfth of the catalog, far below the
+;; compile-profile live-drift budget.
+(define compiler-embedded-stdlib-tlci-group-cache-group : i64
+  -1)
+(define compiler-embedded-stdlib-tlci-group-cache-raw : i64
+  0)
+(define compiler-embedded-stdlib-tlci-group-cache-holder : (__tl_dyn-array
+    (__tl_dyn-array u8))
+  (__tl_make-array (__tl_dyn-array u8) 1))
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 
@@ -400,6 +412,9 @@
 
 ;; Called before `owner` is destroyed.
 (define (compiler-embedded-stdlib-tlci-forget-decoded! [owner : i64]) : unit
+  ;; The cached group belongs to the session arena, so it goes with the session.
+  (set! compiler-embedded-stdlib-tlci-group-cache-group -1)
+  (set! compiler-embedded-stdlib-tlci-group-cache-raw 0)
   (if (and (> owner 0) (= compiler-embedded-stdlib-tlci-decoded-owner owner))
     (set! compiler-embedded-stdlib-tlci-decoded-owner 0)
     unit))

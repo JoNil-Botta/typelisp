@@ -31,7 +31,7 @@ every operand helper, every head, and every separator at once.
 | `compiler-backend-address-add-byte-offset` | `disp == 0` returns the address unchanged; otherwise `int->string`, then the `addr[0] == '('` test choosing `disp(addr)` over `disp+addr` |
 | `compiler-backend-frame-offset-render` / `compiler-backend-slot-with-backend-state` / `-stack-memory-operand` | a memory operand as `str-cat` of the decimal displacement and the parenthesised base, including a displacement that is spelled `0` |
 | the `movq` / `leaq` / `cmpq` / `jmp` / `call` emitters (`"    movq " src ", " dst "\n"`, `"    jmp " target "\n"`, `compiler-backend-emit-load-var-into`, `compiler-backend-abort-site-load-arg0`, the `.globl` / `.quad` / `.type` / `.size` directive emitters) | the exact part structure of each line: a head carrying the indent and the trailing space, operands separated by `", "`, a final `"\n"` |
-| `str_cat.str-cat` → `str-cat-scoped` (`stdlib/str_cat_runtime.tl`) | called, not reimplemented: two to five operands expand to `string.concat3/4/5(-borrowed)`, six or more to `str-cat-pack-new` + `str-cat-pack-part!` + `str-cat-concat-packed` |
+| `str_cat.str-cat` → `str-cat-scoped` (`stdlib/str_cat_runtime.tl`) | called, not reimplemented: two to five operands expand to `string.concat3/4/5(-borrowed)`, six or more to `str-cat-pack`'s one borrowed fixed array of the operands passed to `concat-all` |
 | `string.concat3-borrowed` / `-concat5-borrowed` / `concat-all` (`stdlib/string.tl`) | sum the lengths, return `""` when the total is zero, one bump allocation, one word-then-tail copy per part |
 | `string.int->string`, `-negative-digit-count`, `-write-negative-digits!` | the comparison ladder for the digit count and the negative-value digit loop (`next = cursor / 10`, `digit = next * 10 - cursor`), ported byte for byte into C — no `snprintf` |
 | `string.eq` | length, then pointer identity, then whole words and the tail |
@@ -64,8 +64,8 @@ input recovered from the output, and the self-check proves it.
   the backend.
 - `str-cat`'s two expansions are both exercised: three- and five-part lines take
   the direct `concat3`/`concat5` helpers, while a `disp(base,index,scale)`
-  address (seven parts) and a three-operand line (seven parts) take the packed
-  path through `str-cat-pack-new` and `concat-all`.
+  address (seven parts) and a three-operand line (seven parts) take the parts
+  array path through `str-cat-pack` and `concat-all`.
 
 **Dropped, and why the kept part is what is measured.**
 

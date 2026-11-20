@@ -43,7 +43,7 @@ benchmark/typelisp/sccp_lattice	552190560
 benchmark/c-scalar/sccp_lattice	400603743
 benchmark/typelisp/regalloc_greedy	566100694
 benchmark/c-scalar/regalloc_greedy	404020976
-benchmark/typelisp/asm_render	660210126
+benchmark/typelisp/asm_render	660159286
 benchmark/c-scalar/asm_render	644231941
 benchmark/typelisp/pure_call_join	154501094
 benchmark/c-scalar/pure_call_join	218406456

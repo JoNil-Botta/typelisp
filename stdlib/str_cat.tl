@@ -48,6 +48,12 @@
 
 (cfg
   test
+  (define (str-cat-order-operand) : String
+    (set! str-cat-evaluation-count (+ str-cat-evaluation-count 1))
+    (string.int->string str-cat-evaluation-count)))
+
+(cfg
+  test
   (define (str-cat-scoped-region-ok?) : bool
     (with-arena
       frame
@@ -181,12 +187,92 @@
         (if (string.eq (str-cat-borrowed-input (& borrowed)) "borrowed!")
           (set! score (+ score 1))
           unit))
+      ;; Six or more operands build one borrowed fixed array of the parts; each
+      ;; operand is evaluated once, left to right, and moves as it did before.
+      (let
+        [long-a : String "foo"]
+        [long-b : String "bar"]
+        [long-empty : String ""]
+        (set!
+          score
+          (+
+            score
+            (str-cat-api-eq
+              (str_cat_runtime.str-cat
+                (string.copy (& long-a))
+                ":"
+                (string.copy (& long-b))
+                ":"
+                (string.int->string 6)
+                ":!")
+              "foo:bar:6:!")))
+        (set!
+          score
+          (+
+            score
+            (str-cat-api-eq
+              (str_cat_runtime.str-cat
+                (string.copy (& long-a))
+                "-"
+                (string.copy (& long-empty))
+                "-"
+                (string.copy (& long-b))
+                "-"
+                (string.int->string 7))
+              "foo--bar-7")))
+        (set!
+          score
+          (+
+            score
+            (str-cat-api-eq
+              (str_cat_runtime.str-cat
+                "0"
+                (string.copy (& long-a))
+                "2"
+                "3"
+                "4"
+                "5"
+                "6"
+                "7"
+                "8"
+                "9"
+                "10"
+                "11"
+                "12"
+                "13"
+                (string.copy (& long-empty))
+                "15"
+                (string.int->string 16)
+                "17"
+                "18"
+                "19")
+              "0foo23456789101112131516171819"))))
+      (set! str-cat-evaluation-count 0)
+      (let
+        [ordered : String
+          (str_cat_runtime.str-cat-scoped
+            (str-cat-order-operand)
+            (str-cat-order-operand)
+            (str-cat-order-operand)
+            (str-cat-order-operand)
+            (str-cat-order-operand)
+            (str-cat-order-operand))]
+        (if (and (string.eq ordered "123456") (= str-cat-evaluation-count 6))
+          (set! score (+ score 1))
+          unit))
+      (let
+        [moved : String "moved"]
+        [long : String (str_cat_runtime.str-cat moved "-" "a" "b" "c" "d" "e")]
+        (set! moved (string.copy (& long)))
+        (if (string.eq moved "moved-abcde")
+          (set! score (+ score 1))
+          unit))
       score)))
 
 (cfg
   test
   (define (str-cat-test-main) : i64
-    (if (= (str-cat-api-checks) 12)
+    (if (= (str-cat-api-checks) 17)
       42
       1)))
 

@@ -553,6 +553,7 @@ borrow_temporary_let_reject|check-fail|tests/safety/borrow_temporary_let_reject.
 borrow_temporary_match_scrutinee_reject|check-fail|tests/safety/borrow_temporary_match_scrutinee_reject.tl|-|typecheck: a borrowed temporary must be a direct function-call argument
 borrow_temporary_named_lifetime_reject|check-fail|tests/safety/borrow_temporary_named_lifetime_reject.tl|-|typecheck: a borrowed temporary has no lifetime to name
 borrow_temporary_moved_operand_reject|check-fail|tests/safety/borrow_temporary_moved_operand_reject.tl|-|use of moved value `name`
+str_cat_long_operand_move_reject|check-fail|tests/safety/str_cat_long_operand_move_reject.tl|-|use of moved value `name`
 borrow_temporary_cleanup_early_exit_reject|check-fail|tests/safety/borrow_temporary_cleanup_early_exit_reject.tl|-|skip the cleanup of this borrowed cleanup-owning temporary
 borrow_temporary_cleanup_aggregate_reject|check-fail|tests/safety/borrow_temporary_cleanup_aggregate_reject.tl|-|a borrowed temporary that holds a cleanup-owning value must itself declare a cleanup function
 # A body whose only borrows are arguments of calls that keep no borrow past the

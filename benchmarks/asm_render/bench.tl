@@ -18,8 +18,8 @@
 ;#     compiler-backend-address-add-byte-offset
 ;#     compiler-backend-frame-offset-render / -stack-memory-operand
 ;#     compiler-backend-append-located-instr  (body chunk -> module TextBuf)
-;#   stdlib/str_cat_runtime.tl  str-cat / str-cat-scoped / str-cat-pack-new /
-;#     str-cat-pack-part! / str-cat-concat-packed -- called, not reimplemented
+;#   stdlib/str_cat_runtime.tl  str-cat / str-cat-scoped / str-cat-pack
+;#     -- called, not reimplemented
 ;#   stdlib/string.tl  concat3/4/5-borrowed, concat-all, int->string and its
 ;#     digit-count ladder and negative-digit writer
 ;#   stdlib/text_buf.tl  append / render and the chunk store growth policy

@@ -4034,7 +4034,8 @@
 (define (compiler-ctfe-lzss-roundtrip-ok?) : bool
   (and
     (= (compiler-ctfe-lzss-roundtrip-length "") 0)
-    (= (compiler-ctfe-lzss-roundtrip-length "ab") 3)
+    ;; Two literals under the v3 fixed model: two bytes, no flag byte.
+    (= (compiler-ctfe-lzss-roundtrip-length "ab") 2)
     (let
       [lazy : i64
         (compiler-ctfe-lzss-roundtrip-length "abcZbcdefghijk_abcdefghijk")]

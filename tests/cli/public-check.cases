@@ -1,5 +1,5 @@
 # Public check/compile basics, clean, and doctest and inline-test typechecking
-# in normal commands (gate stage2-public-tool-surface).
+# in normal commands (gate stage2-public-tool-cli-transcripts-3).
 do none
 target -
 opt -

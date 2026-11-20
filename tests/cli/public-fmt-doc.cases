@@ -1,5 +1,5 @@
 # The formatter golden corpus, and the doc and doctest commands (gate
-# stage2-public-tool-surface).
+# stage2-public-tool-cli-transcripts-3).
 do none
 target -
 opt -

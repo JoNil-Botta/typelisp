@@ -1,5 +1,5 @@
 # Public CLI usage, version, per-command help and explain (gate
-# stage2-public-tool-surface). Run by scripts/verify-public-tools.sh.
+# stage2-public-tool-cli-transcripts-3). Run by scripts/verify-public-tools.sh.
 do none
 target -
 opt -

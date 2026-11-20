@@ -121,16 +121,21 @@ execute the SPMD, lane/broadcast, package and cross-mode suites under SDE: the
 same four commands with `TYPELISP_AVX512_EXECUTION=sde`, each under its own
 8192 MiB cap and `target/sde-fallback-<suite>.memory` report. Each gate needs
 the ordinary gate(s) of its suite, so it overwrites their native observations
-only after they were consumed. The forced SPMD gate writes
-`target/spmd-simd-verify-sde`, which the forced cross-mode gate reads, so it
-runs beside the ordinary cross-mode gate without disturbing the native
-observations that gate consumes; the package gate holds `spmd-package`; the
-forced cross-mode gate also needs the forced SPMD gate because it validates
-that gate's SDE receipts. Hosts without native support already use SDE in the
-canonical gates; there each gate passes as not applicable only after proving
-that the ordinary route for AVX-512 is SDE, and a failed ISA detection fails
-it. Thus both operating systems exercise the fallback on every required run,
-while native dispatch and execution coverage is retained. A local run without
+only after they were consumed. Because the forced policy moves only AVX-512
+executions, each gate sets `TYPELISP_SIMD_MODE_FILTER=avx512`: the suite builds
+and runs only the AVX-512 cases, while every other mode's compile and run is
+left to the ordinary gate it would repeat unchanged. The forced SPMD gate
+writes `target/spmd-simd-verify-sde` with those AVX-512 observations, takes its
+scalar reference from the ordinary run's root, and the forced cross-mode gate
+reads native observations from that same ordinary root, so it runs beside the
+ordinary cross-mode gate without disturbing the native observations that gate
+consumes; the package gate holds `spmd-package`; the forced cross-mode gate
+also needs the forced SPMD gate because it validates that gate's SDE
+receipts. Hosts without native support already use SDE in the canonical gates;
+there each gate passes as not applicable only after proving that the ordinary
+route for AVX-512 is SDE, and a failed ISA detection fails it. Thus both
+operating systems exercise the fallback on every required run, while native
+dispatch and execution coverage is retained. A local run without
 `TYPELISP_SDE_BIN` reports each forced-SDE suite as unavailable, as the other
 harnesses report unavailable execution; `CI=true` requires them.
 
@@ -185,10 +190,10 @@ the exact PR head; only a push to main can publish releases.
 | Check the shared IR dependency boundary | `verify-core-ir-dependencies.sh` (canonical resolved closure, explicit module policy, source and fact-stream fixtures; bounded on both hosts) |
 | Check process-tree memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`), `verify-windows-memory-limit.ps1` (covers `run-bounded-process.ps1`) |
 | Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog), `check-compiler-state-schema.sh` (packed compiler state stays behind its schema's typed accessors), `check-shared-view-count.sh` (the `*-shared-view` call count may only fall, against `shared-view-baseline.tsv`; it also reports, without gating, the count weighted by the call sites of the function or macro that holds each view, with thin wrappers transparent so a copy weighs the same inside an accessor or at its call sites) |
-| Check public CLI behavior | `verify-public-tools.sh`, `verify-selfhost-cli-build-run.sh`, `check-stage1-wrapper.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`) |
+| Check public CLI behavior | `verify-public-tools.sh` (`affected-map`, `cli-transcripts-1` to `cli-transcripts-3` and `corpora`, one gate per part; the transcript parts are the `tests/cli/public-*.cases` transcripts in three balanced groups), `verify-selfhost-cli-build-run.sh`, `check-stage1-wrapper.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`) |
 | Check application workflows | `verify-app-corpus.sh` (the projects and scenario manifest in `tests/apps/`; see `tests/apps/README.md`) |
 | Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-stdlib-tlci-identity-differential.sh` (all embedded identities; called by compile-profile), `verify-embedded-stdlib-tlci-resources.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh`, `verify-package-surface-tlci.sh` |
-| Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh` (`tests/codegen/native-link.cases`), `verify-native-link-windows.sh`, `verify-win64-seh-unwind.sh` (Windows unwind rows and a virtual unwind through framed prologues, `tests/fixtures/win64-seh/`), `verify-fs-rooted-linux.sh`, `verify-process-runtime-linux.sh` |
+| Check native behavior | `verify-integration.sh` (the native manifest corpus, one gate per `--shard` row; `integration_shards` in the script), `verify-native-link-linux.sh` (`tests/codegen/native-link.cases`), `verify-native-link-windows.sh`, `verify-win64-seh-unwind.sh` (Windows unwind rows and a virtual unwind through framed prologues, `tests/fixtures/win64-seh/`), `verify-fs-rooted-linux.sh`, `verify-process-runtime-linux.sh` |
 | Check codegen shape and parity | `verify-cross-mode-differential.sh` (budgeted cross-gate semantic/ABI witnesses), `verify-codegen-cases.sh` (table-driven compile/run/asm-shape cases and CLI transcripts in `tests/codegen/` and `tests/cli/`), `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
 | Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-codegen-cases.sh tests/spmd/gang-width.cases` |
 | Check ISPC corpus contracts | `verify-codegen-cases.sh tests/codegen/ispc.cases` (one gate per case) |
@@ -304,12 +309,39 @@ never run at once:
 A gate whose work files are private to it needs no lock. When one script
 serves several gates, each mode keeps its own work directory where it can:
 `verify-codegen-cases.sh --only`, `run-optimization-benchmarks.sh
---tl-opt-level`, and the `verify-integration.sh`, `check-tl-format.sh` and
-`verify-cross-mode-differential.sh` self-tests. That matters beyond collisions:
+--tl-opt-level`, the `verify-integration.sh`, `check-tl-format.sh` and
+`verify-cross-mode-differential.sh` self-tests, and the integration corpus's
+`--shard` rows (see below). That matters beyond collisions:
 the cross-mode differential reuses artifacts the integration corpus leaves in
 `target/integration-verify/<host>/`, so no other gate may reset that
 directory. A generated input that several gates write whole through a
 temporary file and `mv` is safe to share.
+
+The public tool surface is such a family. `verify-public-tools.sh` takes one
+part per gate: `affected-map` (the `ci-affected.sh --self-test` audit, which
+names no compiler, so it starts beside the bootstrap and runs on Linux only),
+the three `cli-transcripts-*` groups, and `corpora` (package artifact
+freshness, the LSP and REPL corpora, and the `SPEC.md` metadata examples in
+series). The transcript groups list their case files instead of globbing
+them, and every part checks that the three groups still cover each
+`tests/cli/public-*.cases` file exactly once, so a new transcript file fails
+the gate until it joins a group. No lock is needed: `verify-codegen-cases.sh`
+keeps a work directory per case file, and `corpora` still runs the
+`run-corpus.sh` modes in series as one gate.
+
+The native integration corpus is one gate per shard of `integration_shards` in
+`verify-integration.sh`: a shard is a list of the manifest's batch groups, and
+it compiles, stages and runs only those rows in a work root of its own. Shards
+run as separate gates so the scheduler gives each its own pool, and the table
+refuses a group that two shards own or none does, so a new batch group cannot
+fall out of CI. The `default` shard keeps the historical
+`target/integration-verify/<host>/` path, because the cross-mode differential
+reads the cases and the host fixture corpora publish there, and it runs every
+host-level check that needs those default-level binaries (the fixture corpora
+and the Windows queued/one-shot runner differential); the other shards stage
+under `target/integration-verify/<host><shard suffix>/`. Every shard validates
+the whole host manifest, and lists its heaviest group first so the batch pool's
+longest chunk starts on an idle worker.
 
 `verify-cross-mode-differential.sh` and its manifest are described under
 [Cross-mode differential corpus](../docs/testing-and-bootstrap.md#cross-mode-differential-corpus).
@@ -484,6 +516,12 @@ clang at `-O0` and `-O2` -- records the fastest of `--runs` builds and its peak
 RSS per leg in `target/compile-vs-clang/results.tsv`, and prints the geomean
 TypeLisp/clang time and peak-memory ratios for `opt1:-O0` and `opt2:-O2`.
 
+`scripts/benchmark-size-vs-clang.sh` is the size lane's counterpart. It builds
+the same pairs at `--opt-level 2` and with clang at `-Os` and `-O2`, strips all
+three binaries, records their byte sizes and TypeLisp/clang ratios in
+`target/size-vs-clang/results.tsv`, and prints the geomean `opt2:-Os` and
+`opt2:-O2` ratios plus the five largest `-Os` ratios.
+
 ## Moving a script
 
 Before moving or deleting a script:
@@ -519,11 +557,12 @@ declaration is stale, when a host has more than two lanes, or when
 `SC_CI_JOB_NAME` (`lib-self-compile.sh`) does not name the lane that runs
 `linux-self-compile-measurement`. Every lane and aggregator runs it, so a new
 `ci-gates.tsv` row needs a lane before CI can pass. `ci-lane.sh setup LANE`
-gives the workflow a lane's gates and needs. Lane `linux-1` holds only
-build-invariance, its bootstrap and the opt2-CLI regression that needs it, so
-no other gate can run beside the build-invariance pool there: in that hosted
-lane only, `TYPELISP_BUILD_INVARIANCE_WORKERS=3` (per-chunk caps and the pool
-budget unchanged). Local runs keep their own worker settings.
+gives the workflow a lane's gates and needs. `ci-lane.sh setup` grants the
+three-worker build-invariance pool only to a lane that holds nothing else;
+under this layout lane `linux-1` also carries the gates the replay moved
+beside it, so build-invariance runs at the default two workers (per-chunk
+caps and the pool budget unchanged). Local runs keep their own worker
+settings.
 
 Each lane seals a receipt into its compiler stage envelope: its plan, its
 `--gates` request, every planned gate's result (`ci-verify.sh` writes

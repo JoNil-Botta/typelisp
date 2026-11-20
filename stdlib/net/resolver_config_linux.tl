@@ -32,7 +32,8 @@
 
 ;: Read one bounded chunk in a scratch arena, copy its live bytes into the
 ;: preallocated outer buffer, and reclaim all temporary I/O allocations.
-;: Mutating only byte/scalar places cannot retain scratch-owned storage.
+;: Mutating only byte/scalar places cannot retain scratch-owned storage; the
+;: step itself is built from those scalars after the arena ends.
 (define (read-step!
   [out : (&mut out byte_buf.ByteBuf)]
   [handle : io.FileHandle]
@@ -43,25 +44,35 @@
       (if (< remaining 8192)
         remaining
         8192)]
+    [failed? : bool false]
+    [failure : i64 0]
+    [count : i64 0]
+    [eof : bool false]
     (with-arena
       scratch
       (match (read handle requested)
-        [(ErrIoRead error) (ConfigReadFailure (host-error-code (& error)))]
+        [(ErrIoRead error)
+          (set! failed? true)
+          (set! failure (host-error-code (& error)))]
         [(OkIoRead chunk)
-          (let
-            [count : i64 (byte_buf.len (& chunk.bytes))]
-            (if (or (< count 0) (> count requested))
-              (ConfigReadFailure 5)
-              (let
-                [index : i64 0]
-                [old-length : i64 (byte_buf.len out)]
-                (while (< index count)
-                  (set!
-                    (array-ref out.slots (+ old-length index))
-                    (byte_buf.ref (& chunk.bytes) index))
-                  (set! index (+ index 1)))
-                (set! out.len (+ old-length count))
-                (ConfigReadProgress count chunk.eof))))]))))
+          (set! count (byte_buf.len (& chunk.bytes)))
+          (if (or (< count 0) (> count requested))
+            (begin
+              (set! failed? true)
+              (set! failure 5))
+            (let
+              [index : i64 0]
+              [old-length : i64 (byte_buf.len out)]
+              (while (< index count)
+                (set!
+                  (array-ref out.slots (+ old-length index))
+                  (byte_buf.ref (& chunk.bytes) index))
+                (set! index (+ index 1)))
+              (set! out.len (+ old-length count))
+              (set! eof chunk.eof)))]))
+    (if failed?
+      (ConfigReadFailure failure)
+      (ConfigReadProgress count eof))))
 
 ;: Read an already-open source through injected file operations. This owns
 ;: exactly one close, including every failure path.

@@ -10,8 +10,7 @@
 (define (main) : i64
   (let
     [pair : Pair (Pair 1 41)]
-    [refs : (__tl_dyn-array (& pair i64))
-      (init : (__tl_dyn-array (& pair i64)))]
+    [refs : (__tl_dyn-array (& pair i64)) (__tl_make-array)]
     (begin
       (__tl_array-push! refs (& pair.a))
       (set! (array-ref refs 0) (& pair.b))

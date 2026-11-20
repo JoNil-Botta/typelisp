@@ -342,27 +342,24 @@
     (test.assert-i64-eq
       (count (& out) 1)
       1
-      "divrem clears stale function taint")
-    (taint! 24 (& blocks))
+      "divrem reads the installed set rather than the stale taint")
     (let
-      [out
-        (opt.opt-const-global-mul-shift-final
-          (& (constants))
-          (mul-function false))]
+      [func (mul-function false)]
+      [_addr-taken (install! (& func))]
+      [out (opt.opt-const-global-mul-shift-final (& (constants)) func)]
       (test.assert-i64-eq
         (count (& out) 2)
         1
-        "mul_shift clears stale function taint"))
-    (taint! 24 (& blocks))
+        "mul_shift reads the installed set rather than the stale taint"))
     (let
       [func (call-function false)]
+      [_addr-taken (install! (& func))]
       [out (opt.opt-pure-call-dedupe-function (& (call-memory)) (& func))]
       (test.assert-i64-eq
         (count (& out) 3)
         1
-        "pure-call clears stale function taint"))
+        "pure-call reads the installed set rather than the stale taint"))
     (for [kind (iterator.range 0 2)]
-      (taint! 24 (& blocks))
       (let
         [out
           (loop-run
@@ -372,7 +369,7 @@
               (loop-function 0 false)))]
         (test.assert-true
           (> (opt.opt-function-frame (& out)) 24)
-          "loop pass clears stale function taint")))))
+          "a loop pass reads the installed set rather than the stale taint")))))
 
 ;; The other storage object must not turn off unrelated rewrites.
 (test
@@ -439,6 +436,7 @@
       (reset!)
       (let
         [func (scalar-function (= kind 1) mode)]
+        [_addr-taken (install! (& func))]
         [_valid (valid! (& func))]
         [out
           (if (= kind 1)
@@ -675,14 +673,13 @@
       1
       "no Mul leaves the function unchanged")
     (let
-      [clean
-        (opt.opt-const-global-mul-shift-final
-          (& (constants))
-          (mul-function false))]
+      [func (mul-function false)]
+      [_addr-taken (install! (& func))]
+      [clean (opt.opt-const-global-mul-shift-final (& (constants)) func)]
       (test.assert-i64-eq
         (count (& clean) 2)
         1
-        "next Mul candidate installs its own set"))
+        "next Mul candidate reads the installed set"))
     (taint! 8 (& old-blocks))
     (let
       [func

@@ -1272,16 +1272,20 @@
   [call-memory : opt_i64_i64_map.Map]
   [cells : opt.OptGlobalCellSummary]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (opt.opt-gvn-blocks-with-context-and-call-memory-result
-    profile-state
-    type-segment-bases
-    (& context)
-    (& params)
-    (& call-memory)
-    cells
-    0
-    (& blocks))
-    [(Result out-blocks _) out-blocks]))
+  (let
+    ;; A raw pass fixture is off-pipeline: it installs the set for the body it
+    ;; hands the pass.
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 0 (& blocks))]
+    (match (opt.opt-gvn-blocks-with-context-and-call-memory-result
+      profile-state
+      type-segment-bases
+      (& context)
+      (& params)
+      (& call-memory)
+      cells
+      0
+      (& blocks))
+      [(Result out-blocks _) out-blocks])))
 
 (define (opt-gvn-blocks
   [type-segment-bases : i64]
@@ -45499,6 +45503,7 @@
 (test
   gep-offset-exit-gep-base-must-reach-preheader
   (for [mode (iterator.range 0 2)]
+    (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "entry:\nreturn")))
     (opt.opt-loop-taint-install! 0 (& (irt.blocks "entry:\nreturn")))
     (let
       [after? : bool (= mode 1)]
@@ -47130,6 +47135,10 @@
           7
           (clone blocks)
           Ordinary)]
+      [_addr-taken : unit
+        (opt.opt-function-addr-taken-install!
+          (opt.opt-function-frame function)
+          (& (opt.opt-function-blocks function)))]
       [rewritten : ir.CompilerIrFunction
         (opt.opt-gep-split-function
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -79515,6 +79524,11 @@ done:
     [cells : opt.OptGlobalCellSummary
       (owned_view.compiler-owned-reference-shared-view cells)]
     [inner : ir.CompilerIrFunction (opt-guard-sink-test-function name blocks)]
+    ;; A raw pass fixture is off-pipeline: it installs the set for its own body.
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt.opt-function-frame inner)
+        (& (opt.opt-function-blocks inner)))]
     [func
       (match (opt.opt-guard-sink-function-with-context-result
         (& cells)
@@ -83641,7 +83655,10 @@ done:
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt.compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
+      ;; A raw pass fixture is off-pipeline: it installs the set for the body it
+      ;; hands the pass.
+      (opt.opt-function-addr-taken-install! frame (& blocks))
       (opt.opt-global-value-number-function-with-context
         type-segment-bases
         (& (opt.opt-cfg-context-build blocks))

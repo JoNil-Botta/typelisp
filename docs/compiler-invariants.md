@@ -2193,7 +2193,9 @@ constant fact naming such a var, as destination or source.
   slot despite its direct-use interval ending. Inline `Alloc` ranges retain
   the separate storage-lifetime proof used by inline-storage coloring.
 
-#8190 tracks making this one pass-wide rule with an adversarial matrix.
+#8190 tracks making this one pass-wide rule with an adversarial matrix:
+`tests/addr-taken-matrix/` holds the programs and the
+`stage2-addr-taken-matrix` gate runs each at opt0, opt1 and opt2.
 
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,

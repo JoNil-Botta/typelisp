@@ -21212,13 +21212,6 @@
 (define opt-function-addr-taken : OptFunctionAddrTaken
   (OptFunctionAddrTaken (__tl_make-array bool 0) (opt_dense_i64_vec.new)))
 
-;; The address-taken marks a stage passes `opt-instr-effect` when it has not
-;; installed the set for its own function: they mark nothing, so the stage
-;; keeps the IR's form-only effect classes. Reading `opt-function-addr-taken`
-;; there would read another function's set, from storage already reclaimed.
-(define opt-addr-taken-none : (__tl_dyn-array bool)
-  (__tl_make-array bool 0))
-
 ;; Whether the installed set is stale for the blocks a reader is about to read,
 ;; and how many vars it marks. The first is what a reader refreshes; the second
 ;; lets a stage that can delete an `addr_of` skip that invalidation for a
@@ -21359,9 +21352,28 @@
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (and
     (> (array-length marks) 0)
-    (match (opt-instr-def-var instr)
-      [(Some dst) (opt-addr-taken-var? marks dst)]
-      [(None) false])))
+    (opt-addr-taken-var? marks (ir.compiler-ir-instr-dst instr))))
+
+(define (opt-addr-taken-use-marked?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [_role : ir.CompilerIrOperandRole]
+  [found : bool]
+  [value : ir.CompilerIrValue]) : bool
+  (or found (opt-addr-taken-value? marks (& value))))
+
+;; Whether `instr` names an address-taken var as an operand: that operand
+;; loads the var's storage, so a store through its address is not dead before
+;; it and may not move past it.
+(define (opt-addr-taken-read?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (and
+    (> (array-length marks) 0)
+    (ir.compiler-ir-instr-fold-uses
+      (owned_view.compiler-owned-reference-shared-view instr)
+      false
+      opt-addr-taken-use-marked?
+      marks)))
 
 ;; The installed marks may only be read once a refresh or install made them
 ;; this function's; the count is safe to read always.
@@ -21372,8 +21384,7 @@
     (opt-addr-taken-def? (& opt-function-addr-taken.marks) instr)))
 
 ;; The effect of `instr` in a function whose address-taken vars `marks` marks:
-;; the function's installed `opt-function-addr-taken.marks`, or
-;; `opt-addr-taken-none` in a stage that installed none.
+;; supplied by its stage or by the caller of a program-wide summary.
 ;; `compiler-ir-instr-effect` classifies an instruction by its form alone, so it
 ;; calls a def of a local `Pure`; an address-taken local lives in memory, so a
 ;; def of one is a store to that memory (#8514, #8785). Every effect query in this file goes through here;
@@ -23664,6 +23675,7 @@
     (opt-licm-store-summary-call-or-unknown)))
 
 (define (opt-licm-store-state-instr
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [state : (& OptLicmStoreState)]
@@ -23680,6 +23692,13 @@
           state
           (owned_view.compiler-owned-reference-shared-view instr))
         (owned_view.compiler-owned-reference-shared-view state))]
+    (when
+      (opt-addr-taken-def? marks instr)
+      (set!
+        provenance
+        (opt-licm-store-state-add-summary
+          provenance
+          (opt-licm-store-summary-frame-store))))
     (match (owned_view.compiler-owned-reference-shared-view instr)
       [(or (Call _ name args _) (TailCall name args _))
         (opt-licm-store-state-direct-call
@@ -23739,6 +23758,7 @@
             [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
       [(StoreOwned ptr value ty)
         (opt-licm-store-state-instr
+          marks
           type-segment-bases
           types
           (& provenance)
@@ -23861,21 +23881,17 @@
             (opt-licm-store-summary-element-only-store
               (opt-licm-element-class-any))))]
       [_
-        (opt-licm-store-state-add-summary
-          ;; Everything the arms above do not name: the effect classification
-          ;; decides both the store summary and the cell-write mask, and the
-          ;; two agree by construction (see opt-global-mod-ref-effect-mask).
-          (opt-licm-store-state-add-obj-writes
-            (opt-licm-store-state-add-cell-writes
-              provenance
-              (opt-global-mod-ref-effect-mask
-                (opt-instr-effect (& opt-addr-taken-none) instr)))
-            (opt-global-mod-ref-effect-mask
-              (opt-instr-effect (& opt-addr-taken-none) instr)))
-          (opt-licm-store-summary-from-effect
-            (opt-instr-effect (& opt-addr-taken-none) instr)))])))
+        (let
+          [effect (opt-instr-effect marks instr)]
+          [mask (opt-global-mod-ref-effect-mask effect)]
+          (opt-licm-store-state-add-summary
+            (opt-licm-store-state-add-obj-writes
+              (opt-licm-store-state-add-cell-writes provenance mask)
+              mask)
+            (opt-licm-store-summary-from-effect effect)))])))
 
 (define (opt-licm-store-state-instr-seq-from
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -23891,6 +23907,7 @@
       (set!
         out
         (opt-licm-store-state-instr
+          marks
           type-segment-bases
           types
           (& out)
@@ -23901,6 +23918,7 @@
     out))
 
 (define (opt-licm-store-state-instr-seq
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -23909,6 +23927,7 @@
   [track-provenance? : bool]
   [state : (& OptLicmStoreState)]) : OptLicmStoreState
   (opt-licm-store-state-instr-seq-from
+    marks
     type-segment-bases
     types
     instrs
@@ -23919,6 +23938,7 @@
     (owned_view.compiler-owned-reference-shared-view state)))
 
 (define (opt-licm-store-state-blocks
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [types : (& types OptSsaVarTypes)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -23932,6 +23952,7 @@
       (match block
         [(Block _ instrs)
           (opt-licm-store-state-blocks
+            marks
             type-segment-bases
             types
             rest
@@ -23939,6 +23960,7 @@
             global-cells
             track-provenance?
             (opt-licm-store-state-instr-seq
+              marks
               type-segment-bases
               types
               (& instrs)
@@ -24084,6 +24106,10 @@
         [direct-call-clean (opt_i64_i64_map.with-capacity 1)]
         [global-cells (opt-global-cell-summary-empty)]
         (opt-licm-store-state-blocks
+          (&
+            (opt-addr-taken-marks-blocks
+              (+ 1 (opt-sccp-max-var-blocks blocks -1))
+              blocks))
           type-segment-bases
           types
           (ir.compiler-ir-block-list-view blocks)
@@ -29090,6 +29116,8 @@
   (match (opt-natural-loop-preheader loop)
     [(Some preheader)
       (let
+        [_addr-taken : unit
+          (opt-addr-taken-refresh! (array-ref frame-cell 0) (& blocks))]
         [body-blocks : ir.CompilerIrBlockList
           (opt-natural-loop-current-body-blocks loop blocks)]
         [map-capacity : i64 (opt-licm-body-map-capacity (& body-blocks))]
@@ -29097,6 +29125,7 @@
           (opt-licm-loop-defs (& body-blocks) map-capacity)]
         [store-state : OptLicmStoreState
           (opt-licm-store-state-blocks
+            (& opt-function-addr-taken.marks)
             type-segment-bases
             types
             (ir.compiler-ir-block-list-view body-blocks)
@@ -58269,6 +58298,7 @@
   [len-eq : (& OptLenEqUse)]
   [blocks : (& ir.CompilerIrBlockList)]) : OptBoundsDomResult
   (let
+    [_addr-taken : unit (opt-addr-taken-refresh! frame blocks)]
     [sources : OptValueSources (opt-bounds-dom-sources params blocks)]
     [copies : opt_i64_i64_map.Map
       (opt-bounds-dom-copies-add-blocks
@@ -60716,6 +60746,7 @@
         (set!
           work
           (opt-dead-store-instr-seq-known-with-kinds
+            (& opt-function-addr-taken.marks)
             (compiler-opt-global-shared-view profile-state)
             type-segment-bases
             hs
@@ -80648,7 +80679,7 @@
 (define (opt-bce-mb-pair-barrier? [instr : (& ir.CompilerIrInstr)]) : bool
   (or
     (ir.compiler-ir-effect-has-side-effect?
-      (opt-instr-effect (& opt-addr-taken-none) instr))
+      (opt-instr-effect (& opt-function-addr-taken.marks) instr))
     ;; SafeDiv/SafeMod and checked scalar shifts can abort even though their
     ;; value-producing effect class is Pure.
     (match instr
@@ -94076,7 +94107,7 @@
       [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
       [_
         (opt-global-mod-ref-effect-mask
-          (opt-instr-effect (& opt-addr-taken-none) instr))])))
+          (opt-instr-effect (& opt-function-addr-taken.marks) instr))])))
 
 ;; The global STORAGE one instruction may write (IAG-2's row).
 (define (opt-guard-sink-instr-obj-mask
@@ -94085,15 +94116,19 @@
   (let
     [obj (& cells.obj-mod-ref)]
     (match instr
+      ;; A call result in an address-taken local is a store to that local;
+      ;; every other form's def is classified by `opt-instr-effect` below.
       [(or (Call _ name _ _) (TailCall name _ _))
-        (opt-global-mod-ref-call-mask obj name)]
+        (if (opt-addr-taken-write? instr)
+          (opt-global-mod-ref-any)
+          (opt-global-mod-ref-call-mask obj name))]
       [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
       [(Store name _ _)
         (if obj.built?
           (opt-global-mod-ref-cell-bit obj.index name)
           (opt-global-mod-ref-any))]
       [_
-        (match (opt-instr-effect (& opt-addr-taken-none) instr)
+        (match (opt-instr-effect (& opt-function-addr-taken.marks) instr)
           [(or (Pure) (MemoryRead) (ControlFlow)) 0]
           [_ (opt-global-mod-ref-any)])])))
 
@@ -94102,7 +94137,7 @@
   (match instr
     [(or (TailCall _ _ _) (TailCallIndirect _ _ _)) true]
     [_
-      (match (opt-instr-effect (& opt-addr-taken-none) instr)
+      (match (opt-instr-effect (& opt-function-addr-taken.marks) instr)
         [(or (Pure) (MemoryRead) (ControlFlow)) false]
         [_ true])]))
 
@@ -96458,7 +96493,7 @@
   (let
     [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
     (match (compiler-opt-global-shared-view instr)
-      [(Alloc _ _) true]
+      [(Alloc _ _) (not (opt-addr-taken-write? instr))]
       [(or (StorePtr ptr _ ty) (StoreOwned ptr _ ty))
         (match ptr
           [(Var ptr-var)
@@ -96477,7 +96512,7 @@
                 (opt-ctor-fwd-ranges-disjoint? offset width dest-off dest-size)))]
           [_ false])]
       [_
-        (match (opt-instr-effect (& opt-addr-taken-none) (& instr))
+        (match (opt-instr-effect (& opt-function-addr-taken.marks) (& instr))
           [(Pure) true]
           [_ false])])))
 
@@ -97269,13 +97304,15 @@
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (if (not (opt-ctor-fwd-blocks-have-candidate? blocks))
     blocks
-    (opt-ctor-adopt-function-blocks
-      type-segment-bases
-      frame
-      params
-      (opt-ctor-fwd-blocks
-        (& (opt-collect-blocks-uses-array frame blocks))
-        (& blocks)))))
+    (begin
+      (opt-addr-taken-refresh! frame (& blocks))
+      (opt-ctor-adopt-function-blocks
+        type-segment-bases
+        frame
+        params
+        (opt-ctor-fwd-blocks
+          (& (opt-collect-blocks-uses-array frame blocks))
+          (& blocks))))))
 
 ;; --- G1b: call-slot forwarding (SRET<-call) ----------------------------------
 ;;
@@ -97741,6 +97778,11 @@
   [dest-size : i64]) : bool
   (let
     [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+    (when
+      (or
+        (opt-addr-taken-write? (& instr))
+        (opt-addr-taken-read? (& opt-function-addr-taken.marks) (& instr)))
+      (return false))
     (match (compiler-opt-global-shared-view instr)
       [(ir.CompilerIrInstr.Alloc _ _) true]
       [(ir.CompilerIrInstr.AddrOf _ _ _) true]
@@ -97822,7 +97864,7 @@
       [(ir.CompilerIrInstr.CallIndirect _ _ args _)
         (opt-slot-fwd-call-args-underived? derived args)]
       [_
-        (match (opt-instr-effect (& opt-addr-taken-none) instr)
+        (match (opt-instr-effect (& opt-function-addr-taken.marks) instr)
           [(ir.CompilerIrEffect.Pure) true]
           [_ false])])))
 
@@ -98143,6 +98185,7 @@
           opt-slot-fwd-block-candidate?)))
       blocks
       (let
+        [_addr-taken : unit (opt-addr-taken-refresh! frame (& blocks))]
         [uses : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame (& blocks))]
         [derived : (__tl_dyn-array bool) (__tl_make-array bool frame)]
@@ -105749,12 +105792,28 @@
         (opt-callgraph-row-insert! targets start callee))]
     [(None) unit]))
 
+;; The summary index owns one row per function. Unmarked rows share one empty
+;; array. Replace a row at its first AddrOf before setting any bit in it.
+(define (opt-program-mark-local!
+  [rows : (&mut rows (__tl_dyn-array (__tl_dyn-array bool)))]
+  [slot : i64]
+  [frame : i64]
+  [src : i64]) : unit
+  (when
+    (and (>= src 0) (< src frame))
+    (when
+      (= (array-length (array-ref rows slot)) 0)
+      (set! (array-ref rows slot) (__tl_make-array bool frame)))
+    (set! (array-ref (array-ref rows slot) src) true)))
+
 ;; Deliberately call-only: address-taken function values are reachability roots,
 ;; but they are not direct call-graph edges for the inliner. `direct-only?`
 ;; keeps the plain `Call`/`TailCall` edges alone, the graph the whole-program
 ;; summaries close over (OptProgramIndex).
 (define (opt-callgraph-instr!
   [index : (& index OptFunctionIndex)]
+  [marks : (&mut marks (__tl_dyn-array (__tl_dyn-array bool)))]
+  [frame : i64]
   [direct-only? : bool]
   [targets : (&mut targets opt_dense_i64_vec.Vec)]
   [seen : (&mut seen (__tl_dyn-array i64))]
@@ -105762,6 +105821,8 @@
   [stamp : i64]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
+    [(AddrOf _ src _)
+      (when direct-only? (opt-program-mark-local! marks (- stamp 1) frame src))]
     [(or (Call _ name _ _) (TailCall name _ _))
       (opt-callgraph-add-callee! index targets seen start stamp name)]
     [(CallCAbiStoreResult payload-box)
@@ -105780,22 +105841,31 @@
 
 (define (opt-callgraph-build-with
   [index : (& index OptFunctionIndex)]
+  [marks : (&mut marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [direct-only? : bool]) : OptCallGraph
   (let
     [count : i64 (opt-function-index-count index)]
     [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     [targets : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+    [unmarked : (__tl_dyn-array bool) (__tl_make-array bool 0)]
     [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (for [slot (iterator.range 0 count)]
       (let
         [start : i64 (opt_dense_i64_vec.len (& targets))]
         (set! (array-ref offsets slot) start)
         (match (opt-function-index-at-slot index slot)
-          [(Function _ _ _ _ blocks _)
+          [(Function _ _ _ frame blocks _)
+            (when
+              direct-only?
+              (set!
+                (array-ref marks slot)
+                (compiler-opt-global-shared-view unmarked)))
             (opt-blocks-visit
               blocks
               opt-callgraph-instr!
               index
+              marks
+              frame
               direct-only?
               (&mut targets)
               (&mut seen)
@@ -105831,7 +105901,10 @@
     low))
 
 (define (opt-callgraph-build [index : (& index OptFunctionIndex)]) : OptCallGraph
-  (opt-callgraph-build-with index false))
+  (opt-callgraph-build-with
+    index
+    (&mut (__tl_make-array (__tl_dyn-array bool) 0))
+    false))
 
 (define (opt-inline-census-capacity [index : (& index OptFunctionIndex)]) : i64
   (opt-function-index-capacity (opt-function-index-count index)))
@@ -118641,15 +118714,18 @@
 (defstruct OptProgramIndex
   (functions OptFunctionIndex)
   (calls OptCallGraph)
-  (scc OptSccResult))
+  (scc OptSccResult)
+  (local-marks (__tl_dyn-array (__tl_dyn-array bool))))
 
 (define (opt-program-index-build
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramIndex
   (let
     [index : OptFunctionIndex (opt-function-index-build functions)]
-    [calls : OptCallGraph (opt-callgraph-build-with index true)]
+    [marks : (__tl_dyn-array (__tl_dyn-array bool))
+      (__tl_make-array (__tl_dyn-array bool) functions.len)]
+    [calls : OptCallGraph (opt-callgraph-build-with index (&mut marks) true)]
     [scc : OptSccResult (opt-scc-compute calls)]
-    (OptProgramIndex index calls scc)))
+    (OptProgramIndex index calls scc marks)))
 
 ;; --- extern effect identities -------------------------------------------------
 ;;
@@ -118732,16 +118808,19 @@
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramFacts
   (let
     [count : i64 (opt-function-seq-count functions)]
+    [index : OptProgramIndex
+      (if (<= count (opt-summary-function-limit))
+        (opt-program-index-build functions)
+        (opt-program-index-empty))]
     [disqualified : OptGlobalDisqualifications
       (opt-const-globals-disqualified
+        (&mut index)
         (opt-function-index-capacity count)
         functions)]
     (match disqualified
       [(OptGlobalDisqualifications disq addr-taken)
         (OptProgramFacts
-          (if (<= count (opt-summary-function-limit))
-            (opt-program-index-build functions)
-            (opt-program-index-empty))
+          index
           disq
           (opt-global-cell-scan-functions
             (& (opt-global-cell-scan-new))
@@ -119402,6 +119481,7 @@
       [_ (opt-call-memory-summary-add-root-write summary params root)])))
 
 (define (opt-call-memory-candidate-instr
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
   [params : ir.CompilerIrParamSeq]
@@ -119441,11 +119521,18 @@
         (& args))]
     [(Alloc _ _) summary]
     [_
-      (match (opt-instr-effect (& opt-addr-taken-none) (& instr))
+      (match (opt-instr-effect marks (& instr))
         [(or (Pure) (MemoryRead) (ControlFlow)) summary]
+        ;; The store forms above account for their external effects. A write
+        ;; introduced only by the destination slot stays in this activation.
+        [(MemoryWrite)
+          (if (opt-addr-taken-def? marks (& instr))
+            summary
+            (opt-call-memory-summary-add-unknown summary))]
         [_ (opt-call-memory-summary-add-unknown summary)])]))
 
 (define (opt-call-memory-candidate-blocks
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [summary : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
@@ -119457,6 +119544,7 @@
     (owned_view.compiler-owned-reference-shared-view blocks)
     summary
     opt-call-memory-candidate-instr
+    marks
     type-segment-bases
     summaries
     (owned_view.compiler-owned-reference-shared-view params)
@@ -119498,6 +119586,7 @@
   (opt-blocks-any? blocks opt-call-memory-instr-writes-memory?))
 
 (define (opt-call-memory-function-candidate
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [summaries : (& summaries opt_i64_i64_map.Map)]
@@ -119506,6 +119595,7 @@
     [(Function _ params _ _ blocks _)
       (if (not (opt-call-memory-blocks-need-roots? summaries blocks))
         (opt-call-memory-candidate-blocks
+          marks
           type-segment-bases
           0
           summaries
@@ -119517,6 +119607,7 @@
           [sources : OptValueSources
             (opt-call-memory-sources (& params) blocks)]
           (opt-call-memory-candidate-blocks
+            marks
             type-segment-bases
             0
             summaries
@@ -119549,12 +119640,14 @@
   0)
 
 (define (opt-call-memory-candidate-verdict
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [summaries : (& summaries opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : i64
   (if (= opt-call-memory-scratch 0)
     (opt-call-memory-function-candidate
+      marks
       type-segment-bases
       descriptor-globals
       summaries
@@ -119567,6 +119660,7 @@
       [mark : i64 (arena.tl_region_mark)]
       [verdict : i64
         (opt-call-memory-function-candidate
+          marks
           type-segment-bases
           descriptor-globals
           summaries
@@ -119779,6 +119873,7 @@
                   [_seen : unit (set! (array-ref computed-at slot) tick)]
                   [row : i64
                     (opt-call-memory-candidate-verdict
+                      (& (array-ref index.local-marks slot))
                       type-segment-bases
                       descriptor-globals
                       rows
@@ -119861,15 +119956,49 @@
       (&mut out))
     out))
 
+(define (opt-const-globals-disq-with-marks
+  [marks : (&mut marks (__tl_dyn-array (__tl_dyn-array bool)))]
+  [slot : i64]
+  [frame : i64]
+  [scan : OptGlobalDisqualifications]
+  [instr : ir.CompilerIrInstr]) : OptGlobalDisqualifications
+  (match (& instr)
+    [(AddrOf _ src _) (opt-program-mark-local! marks slot frame src)]
+    [_ unit])
+  (opt-const-globals-disq-instr scan instr))
+
 (define (opt-const-globals-disqualified
+  [index : (&mut index OptProgramIndex)]
   [capacity : i64]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptGlobalDisqualifications
-  (opt-functions-fold
-    functions
-    (OptGlobalDisqualifications
-      (opt_i64_i64_map.with-capacity capacity)
-      (opt_i64_i64_map.with-capacity capacity))
-    opt-const-globals-disq-instr))
+  (let
+    [scan
+      (OptGlobalDisqualifications
+        (opt_i64_i64_map.with-capacity capacity)
+        (opt_i64_i64_map.with-capacity capacity))]
+    (if (<= functions.len (opt-summary-function-limit))
+      (opt-functions-fold functions scan opt-const-globals-disq-instr)
+      (let
+        [unmarked : (__tl_dyn-array bool) (__tl_make-array bool 0)]
+        (set!
+          index.local-marks
+          (__tl_make-array (__tl_dyn-array bool) functions.len))
+        (for [slot (iterator.range 0 functions.len)]
+          (match (ir.compiler-ir-function-seq-borrow functions slot)
+            [(Function _ _ _ frame blocks _)
+              (set!
+                (array-ref index.local-marks slot)
+                (compiler-opt-global-shared-view unmarked))
+              (set!
+                scan
+                (opt-blocks-fold
+                  blocks
+                  scan
+                  opt-const-globals-disq-with-marks
+                  (&mut index.local-marks)
+                  slot
+                  frame))]))
+        scan))))
 
 ;; An ordinary operand only earns substitution when it fits a signed 32-bit
 ;; immediate, so
@@ -121112,6 +121241,7 @@
 ;; The build writes no module state, so nothing else can point into the
 ;; scratch.
 (define (opt-cl-build-in-scratch
+  [local-marks : (& local-marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
@@ -121134,6 +121264,7 @@
             globals
             (&
               (opt-global-snapshot-normalize-functions
+                local-marks
                 (& summaries)
                 call-memory
                 (OptGlobalSnapshotPolicy false false)
@@ -121180,6 +121311,7 @@
             (opt-const-divisors-build globals facts.disq))]
         [lengths : OptConstLengths
           (opt-cl-build-in-scratch
+            (& facts.index.local-marks)
             type-segment-bases
             globals
             reachable-functions
@@ -122201,6 +122333,7 @@
 ;; Internal callees contribute through the call-graph closure. External calls
 ;; seed their re-entry effect here so it propagates through internal callers.
 (define (opt-global-mod-ref-instr-mask
+  [marks : (& marks (__tl_dyn-array bool))]
   [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [mask : i64]
@@ -122217,9 +122350,7 @@
       ;; than `Unknown`; its target is a function of this program, so name it
       ;; here.
       [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
-      [_
-        (opt-global-mod-ref-effect-mask
-          (opt-instr-effect (& opt-addr-taken-none) (& instr)))])))
+      [_ (opt-global-mod-ref-effect-mask (opt-instr-effect marks (& instr)))])))
 
 ;; Every function's row: its own writes, closed over its direct calls.
 (define (opt-global-mod-ref-writes
@@ -122238,6 +122369,7 @@
               blocks
               (cast 0 : i64)
               opt-global-mod-ref-instr-mask
+              (& (array-ref program.local-marks slot))
               program
               index))]))
     (opt-program-closed-rows-map program (&mut rows) 0 capacity)))
@@ -122942,6 +123074,7 @@
 
 ;; One instruction's OWN storage writes, callees excluded.
 (define (opt-global-obj-instr-own-mask
+  [marks : (& marks (__tl_dyn-array bool))]
   [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : (& owners opt_i64_i64_map.Map)]
@@ -122958,11 +123091,10 @@
         0
         (opt-external-call-write-mask name))]
     [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
-    [_
-      (opt-global-mod-ref-effect-mask
-        (opt-instr-effect (& opt-addr-taken-none) instr))]))
+    [_ (opt-global-mod-ref-effect-mask (opt-instr-effect marks instr))]))
 
 (define (opt-global-obj-own-instr!
+  [marks : (& marks (__tl_dyn-array bool))]
   [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : OptGlobalObjOwners]
@@ -122990,7 +123122,7 @@
     (opt-global-obj-escape-refs! refs.ref-list escaped index)
     (bit-or
       mask
-      (opt-global-obj-instr-own-mask program index owners.map (& instr)))))
+      (opt-global-obj-instr-own-mask marks program index owners.map (& instr)))))
 
 ;; --- pass 0: what every call site passes to every parameter ------------------
 ;;
@@ -123148,6 +123280,7 @@
                   blocks
                   (cast 0 : i64)
                   opt-global-obj-own-instr!
+                  (& (array-ref program.local-marks slot))
                   program
                   index
                   (compiler-opt-global-shared-view owners)
@@ -127623,10 +127756,12 @@
     [_ false]))
 
 (define (opt-global-snapshot-entry-killed?
+  [marks : (& marks (__tl_dyn-array bool))]
   [cell : (& cell OptGlobalCellSummary)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]
   [entry : (& entry OptCopyEntry)]) : bool
+  (when (opt-addr-taken-def? marks instr) (return true))
   (match entry
     [(Copy _ (Global name))
       (match instr
@@ -127648,10 +127783,11 @@
                 cell.mod-ref.index
                 (opt-global-mod-ref-call-mask (& cell.mod-ref) target)
                 name)))]
-        [_ (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)])]
+        [_ (opt-alias-instr-clears-all? marks instr)])]
     [_ true]))
 
 (define (opt-global-snapshot-filter
+  [marks : (& marks (__tl_dyn-array bool))]
   [cell : (& cell OptGlobalCellSummary)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]
@@ -127662,6 +127798,7 @@
       (< first env.len)
       (not
         (opt-global-snapshot-entry-killed?
+          marks
           cell
           call-memory
           instr
@@ -127675,7 +127812,12 @@
           (let
             [entry (& (array-ref env.slots index))]
             (unless
-              (opt-global-snapshot-entry-killed? cell call-memory instr entry)
+              (opt-global-snapshot-entry-killed?
+                marks
+                cell
+                call-memory
+                instr
+                entry)
               (match entry
                 [(Copy dst (Global name))
                   (set!
@@ -127708,6 +127850,7 @@
 ;; The caller has proved every use is a Gep; count only uses the same block's
 ;; forwarding environment can replace, stopping before its first write barrier.
 (define (opt-global-snapshot-complete?
+  [marks : (& marks (__tl_dyn-array bool))]
   [cell : (& cell OptGlobalCellSummary)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [policy : OptGlobalSnapshotPolicy]
@@ -127730,6 +127873,7 @@
             [_ false])]
         (when
           (opt-global-snapshot-entry-killed?
+            marks
             cell
             call-memory
             (& instr)
@@ -127753,6 +127897,7 @@
 ;; policy; the frozen priced pipeline omits this normalization. Analysis-only
 ;; views may also forward immediately and never replace emitted input.
 (define (opt-global-snapshot-seq
+  [marks : (& marks (__tl_dyn-array bool))]
   [cell : (& cell OptGlobalCellSummary)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [sources : (& sources OptValueSources)]
@@ -127776,13 +127921,18 @@
           [_barrier : unit
             (set!
               env
-              (opt-global-snapshot-filter cell call-memory (& instr) env))]
+              (opt-global-snapshot-filter marks cell call-memory (& instr) env))]
           [_delayed-barrier : unit
             (when
               policy.defer?
               (set!
                 delayed
-                (opt-global-snapshot-filter cell call-memory (& instr) delayed)))]
+                (opt-global-snapshot-filter
+                  marks
+                  cell
+                  call-memory
+                  (& instr)
+                  delayed)))]
           [boundary? : bool
             (match (& instr)
               [(or (Call _ _ _ _) (TailCall _ _ _) (Store _ _ _)) true]
@@ -127797,6 +127947,7 @@
                 [(Mov dst (Global name) _)
                   (when
                     (and
+                      (not (opt-addr-taken-var? marks dst))
                       (opt-gvn-stable-var? sources dst)
                       (>= dst 0)
                       (< dst (array-length uses))
@@ -127808,6 +127959,7 @@
                           (or
                             (not policy.complete?)
                             (opt-global-snapshot-complete?
+                              marks
                               cell
                               call-memory
                               policy
@@ -127882,53 +128034,50 @@
       cell
       uses)))
 
+;; The caller has found a candidate capture in this function.
 (define (opt-global-snapshot-function
+  [marks : (& marks (__tl_dyn-array bool))]
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [policy : OptGlobalSnapshotPolicy]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(Function name params ret-ty frame blocks function-abi)
-      (if (not
-        (opt-blocks-any?
-          blocks
-          opt-global-snapshot-candidate?
-          (& summaries.global-cell)))
-        (Function name params ret-ty frame blocks function-abi)
-        (let
-          [sources : OptValueSources
-            (opt-bounds-dom-sources (& params) (& blocks))]
-          [uses : (__tl_dyn-array i64)
-            (opt-collect-blocks-uses-array frame (& blocks))]
-          [gep-uses : (__tl_dyn-array i64) (opt-used-array-new frame)]
-          [_gep-uses : unit
-            (opt-blocks-visit
-              blocks
-              opt-global-snapshot-count-geps!
-              (compiler-opt-global-shared-view gep-uses))]
-          [normalized : ir.CompilerIrBlockList
-            (opt-blocks-map-seq
-              blocks
-              opt-global-snapshot-seq
-              (& summaries.global-cell)
-              call-memory
-              (& sources)
-              (& uses)
-              (& gep-uses)
-              policy)]
-          ;; A dead capture is no longer a cell read. Remove it before promotion
-          ;; counts references, so rematerialization cannot create profitability.
-          (Function
-            name
-            params
-            ret-ty
-            frame
-            (opt-blocks-map-seq
-              normalized
-              opt-global-snapshot-prune-seq
-              (& summaries.global-cell)
-              (& (opt-collect-blocks-uses-array frame (& normalized))))
-            function-abi)))]))
+      (let
+        [sources : OptValueSources
+          (opt-bounds-dom-sources (& params) (& blocks))]
+        [uses : (__tl_dyn-array i64)
+          (opt-collect-blocks-uses-array frame (& blocks))]
+        [gep-uses : (__tl_dyn-array i64) (opt-used-array-new frame)]
+        [_gep-uses : unit
+          (opt-blocks-visit
+            blocks
+            opt-global-snapshot-count-geps!
+            (compiler-opt-global-shared-view gep-uses))]
+        [normalized : ir.CompilerIrBlockList
+          (opt-blocks-map-seq
+            blocks
+            opt-global-snapshot-seq
+            marks
+            (& summaries.global-cell)
+            call-memory
+            (& sources)
+            (& uses)
+            (& gep-uses)
+            policy)]
+        ;; A dead capture is no longer a cell read. Remove it before promotion
+        ;; counts references, so rematerialization cannot create profitability.
+        (Function
+          name
+          params
+          ret-ty
+          frame
+          (opt-blocks-map-seq
+            normalized
+            opt-global-snapshot-prune-seq
+            (& summaries.global-cell)
+            (& (opt-collect-blocks-uses-array frame (& normalized))))
+          function-abi))]))
 
 ;; Load each hoistable global's cell once at entry and rewrite its uses. The
 ;; pass is a no-op (returning the function by reference) when the program has
@@ -127943,13 +128092,20 @@
   [input : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (let
     [func : ir.CompilerIrFunction
-      (if summaries.priced?
+      (if (or
+        summaries.priced?
+        (not (opt-global-snapshot-function-candidate? (& summaries) (& input))))
         input
-        (opt-global-snapshot-function
-          (& summaries)
-          (& summaries.global-cell.call-memory)
-          (OptGlobalSnapshotPolicy false true)
-          input))]
+        (begin
+          (opt-addr-taken-refresh!
+            (opt-function-frame input)
+            (& (opt-function-blocks input)))
+          (opt-global-snapshot-function
+            (& opt-function-addr-taken.marks)
+            (& summaries)
+            (& summaries.global-cell.call-memory)
+            (OptGlobalSnapshotPolicy false true)
+            input)))]
     (match (compiler-opt-global-shared-view func)
       [(Function name params ret-ty frame blocks function-abi)
         (let
@@ -129065,7 +129221,7 @@
   [marks : (& marks (__tl_dyn-array bool))]
   [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
-    [(Alloc _ _) false]
+    [(Alloc _ _) (opt-addr-taken-def? marks instr)]
     [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
          (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
          (TailCall _ _ _) (TailCallIndirect _ _ _))
@@ -129156,9 +129312,10 @@
 ;; unknown instructions still clear every fact; load GVN uses the provenance-
 ;; preserving transfer defined beside its pointer-kind model below.
 (define (opt-alias-update-facts
+  [marks : (& marks (__tl_dyn-array bool))]
   [facts : (& OptAliasFacts)]
   [instr : (& ir.CompilerIrInstr)]) : OptAliasFacts
-  (if (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)
+  (if (opt-alias-instr-clears-all? marks instr)
     (opt-alias-empty)
     (opt-alias-update-value-facts facts instr 0)))
 
@@ -133376,23 +133533,29 @@
               (+= write 1))])))
     (OptDeadStoreSet slots write)))
 
-(define (opt-dead-store-other-keeps-pending? [instr : (& ir.CompilerIrInstr)]) : bool
+(define (opt-dead-store-other-keeps-pending?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(Alloc _ _) true]
     [_
-      (if (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)
+      (if (opt-alias-instr-clears-all? marks instr)
         false
-        (match (opt-instr-effect (& opt-addr-taken-none) instr)
+        (match (opt-instr-effect marks instr)
           [(Pure) true]
           [_ false]))]))
 
 (define (opt-dead-store-step
+  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [pending : OptDeadStoreSet]
   [kinds : (& kinds OptLoadPtrKinds)]
   [dead : (&mut dead (__tl_dyn-array i64))]
   [index : i64]
   [instr : (& instr ir.CompilerIrInstr)]) : OptDeadStoreSet
+  (when
+    (or (opt-addr-taken-def? marks instr) (opt-addr-taken-read? marks instr))
+    (return (opt-dead-store-set-clear pending)))
   (let
     [after-memory : OptDeadStoreSet
       (match (owned_view.compiler-owned-reference-shared-view instr)
@@ -133419,7 +133582,7 @@
                 ty)))]
         [(CopyBytes _ _ _) (opt-dead-store-set-clear pending)]
         [_
-          (if (opt-dead-store-other-keeps-pending? instr)
+          (if (opt-dead-store-other-keeps-pending? marks instr)
             pending
             (opt-dead-store-set-clear pending))])]
     (match (opt-instr-def-var instr)
@@ -133444,6 +133607,7 @@
     (set! instrs.len write)))
 
 (define (opt-dead-store-instr-seq-known-with-kinds
+  [marks : (& marks (__tl_dyn-array bool))]
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [hs : (& hs OptLoadHeaderSet)]
@@ -133468,6 +133632,7 @@
             (set!
               pending
               (opt-dead-store-step
+                marks
                 type-segment-bases
                 pending
                 kinds
@@ -134600,6 +134765,7 @@
   false)
 
 (define (opt-global-snapshot-normalize-functions
+  [local-marks : (& local-marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [policy : OptGlobalSnapshotPolicy]
@@ -134615,7 +134781,12 @@
         (ir.compiler-ir-function-builder-push!
           (&mut builder)
           (if (opt-global-snapshot-function-candidate? summaries (& func))
-            (opt-global-snapshot-function summaries call-memory policy func)
+            (opt-global-snapshot-function
+              (& (array-ref local-marks slot))
+              summaries
+              call-memory
+              policy
+              func)
             func))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
@@ -134637,6 +134808,7 @@
 ;; intermediate block lists are dead once the copy is made. A function without
 ;; a candidate is kept as is.
 (define (opt-global-snapshot-normalize-functions-retained
+  [local-marks : (& local-marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [pools : ast.AstNodePoolContext]
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -134655,7 +134827,12 @@
             [rewritten : ir.CompilerIrFunction
               (in-arena
                 scratch
-                (opt-global-snapshot-function summaries call-memory policy func))]
+                (opt-global-snapshot-function
+                  (& (array-ref local-marks slot))
+                  summaries
+                  call-memory
+                  policy
+                  func))]
             [kept : ir.CompilerIrFunction
               (ir.compiler-ir-clone-function pools (& rewritten))]
             (arena.rewind-safe! phase)
@@ -134683,6 +134860,7 @@
     (let
       [summaries (opt-program-summaries-empty)]
       (opt-global-snapshot-normalize-functions-retained
+        (& index.local-marks)
         pools
         (& summaries)
         (& opt-pure-call-inline-memory)
@@ -135150,7 +135328,9 @@
                 (set! cur (Nil))
                 (ir.compiler-ir-instr-builder-push! (&mut builder) instr)))]
           [_
-            (if (opt-alias-instr-clears-all? (& opt-addr-taken-none) (& instr))
+            (if (opt-alias-instr-clears-all?
+              (& opt-function-addr-taken.marks)
+              (& instr))
               (set! cur (Nil))
               unit)
             (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])))
@@ -135307,7 +135487,7 @@
               [_
                 (when
                   (opt-alias-instr-clears-all?
-                    (& opt-addr-taken-none)
+                    addr-taken
                     (ir.compiler-ir-instr-seq-borrow instrs i))
                   (return false))])
             ;; Any definition of an address-taken var is a store to its
@@ -136473,7 +136653,9 @@
       (opt-load-gvn-loop-safe-instr? hs blocks (& (StorePtr ptr value ty)))]
     [(or (Store _ _ _) (VectorStore _) (PredicatedStore _) (CopyBytes _ _ _))
       false]
-    [_ (not (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr))]))
+    [_
+      (not
+        (opt-alias-instr-clears-all? (& opt-function-addr-taken.marks) instr))]))
 
 ;; Scan the loop body's blocks.
 (define (opt-load-gvn-loop-safe-blocks?
@@ -136551,7 +136733,9 @@
     [(or (StorePtr _ _ _) (StoreOwned _ _ _) (Store _ _ _) (VectorStore _)
          (PredicatedStore _) (CopyBytes _ _ _))
       false]
-    [_ (not (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr))]))
+    [_
+      (not
+        (opt-alias-instr-clears-all? (& opt-function-addr-taken.marks) instr))]))
 
 (define (opt-load-gvn-loop-store-free-instr-seq?
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
@@ -137461,12 +137645,13 @@
   [cells : (& cells OptGlobalCellSummary)]
   [global : i64]
   [instr : (& ir.CompilerIrInstr)]) : bool
+  (when (opt-addr-taken-write? instr) (return true))
   (match instr
     [(Store name _ _) (= (ir.compiler-ir-symbol-id name) global)]
     [(or (Call _ name _ _) (TailCall name _ _))
       (opt-load-cell-call-writes-cell? call-memory cells global name)]
     [(or (StorePtr _ _ _) (StoreOwned _ _ _)) false]
-    [_ (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)]))
+    [_ (opt-alias-instr-clears-all? (& opt-function-addr-taken.marks) instr)]))
 
 (define (opt-load-cell-region-clear?
   [call-memory : (& call-memory opt_i64_i64_map.Map)]

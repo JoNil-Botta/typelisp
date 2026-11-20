@@ -1448,7 +1448,19 @@
 
 (test
   switch-copy-env-indexed-semantics
+  ;; The copy facts a prefix records depend on the function's address-taken
+  ;; facts, which the pass installs before it folds any prefix. This walk of
+  ;; the env is a raw one, so the test installs them itself: no var these
+  ;; assertions name is marked here.
   (let
+    [unmarked : ir.CompilerIrBlockList
+      (unsafe
+        ;; unsafe: interned names live in the persistent intern arena, not this one
+        (irt.blocks
+          "entry:
+                       %1 = addr_of %0
+                       return %0"))]
+    [_func-facts : unit (opt.opt-function-addr-taken-install! 128 (& unmarked))]
     [env : opt.OptSwitchCopyEnv (Empty)]
     (test.assert-i64-eq
       (opt.opt-switch-copy-env-resolve env 12)
@@ -1499,7 +1511,46 @@
     (test.assert-i64-eq
       (opt.opt-switch-copy-env-resolve env 70)
       70
-      "a non-copy destination redefinition drops its stale fact")))
+      "a non-copy destination redefinition drops its stale fact"))
+  ;; A store or a call through the exposed address redefines an address-taken
+  ;; var without naming it as a dst, so no `Mov` naming one on either side is a
+  ;; fact: the copy it describes keeps looking live while the storage changes.
+  (let
+    [taken-source : ir.CompilerIrBlockList
+      (unsafe
+        ;; unsafe: interned names live in the persistent intern arena, not this one
+        (irt.blocks
+          "entry:
+                       %0 = addr_of %7
+                       return %0"))]
+    [_source-facts : unit
+      (opt.opt-function-addr-taken-install! 128 (& taken-source))]
+    [source-env : opt.OptSwitchCopyEnv
+      (opt.opt-switch-copy-env-note
+        (Empty)
+        (& (irt.instr "%64 = mov %7 : i64")))]
+    (test.assert-i64-eq
+      (opt.opt-switch-copy-env-resolve source-env 64)
+      64
+      "an address-taken source records no copy fact"))
+  (let
+    [taken-dest : ir.CompilerIrBlockList
+      (unsafe
+        ;; unsafe: interned names live in the persistent intern arena, not this one
+        (irt.blocks
+          "entry:
+                       %0 = addr_of %70
+                       return %0"))]
+    [_dest-facts : unit
+      (opt.opt-function-addr-taken-install! 128 (& taken-dest))]
+    [dest-env : opt.OptSwitchCopyEnv
+      (opt.opt-switch-copy-env-note
+        (Empty)
+        (& (irt.instr "%70 = mov %9 : i64")))]
+    (test.assert-i64-eq
+      (opt.opt-switch-copy-env-resolve dest-env 70)
+      70
+      "an address-taken destination records no copy fact")))
 
 ;; A total, order-free reading of one pointer-provenance class, so the test
 ;; below can assert the class a var carries as a single integer.
@@ -83680,12 +83731,17 @@ done:
     [(Result rewritten _) rewritten]))
 
 (define (opt-switch-form-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt.opt-switch-form-function-pass
-    (opt.compiler-opt-global-shared-view func))
-    [(Result next changed)
-      (if changed
-        next
-        func)]))
+  (match (opt.compiler-opt-global-shared-view func)
+    [(Function _ _ _ frame blocks _)
+      ;; A raw pass fixture is off-pipeline: it installs the set for the body it
+      ;; hands the pass.
+      (opt.opt-function-addr-taken-install! frame (& blocks))
+      (match (opt.opt-switch-form-function-pass
+        (opt.compiler-opt-global-shared-view func))
+        [(Result next changed)
+          (if changed
+            next
+            func)])]))
 
 (define (opt-gvn-scope-changes-count [changes : opt.OptGvnScopeChanges]) : i64
   (opt_dense_i64_vec.len (& changes.buckets)))
@@ -85672,6 +85728,11 @@ return 3
 e:
 return 4
 }")]
+    (match (opt.compiler-opt-global-shared-view func)
+      [(Function _ _ _ frame blocks _)
+        ;; A raw pass fixture is off-pipeline: it installs the set for the body
+        ;; it hands the pass.
+        (opt.opt-function-addr-taken-install! frame (& blocks))])
     (match (opt.opt-switch-form-function-pass func)
       [(Result _ changed?) (test.assert-true changed? "switch boundary ran")]))
   ;; The public unroller can receive an unverified input independently of the

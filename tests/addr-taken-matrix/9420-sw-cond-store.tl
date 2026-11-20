@@ -10,7 +10,7 @@
       (unsafe
         (ptr-addr-of v))]
     [c : i64 v]
-    [z : i64
+    [_z : i64
       (if (= (io.arg-count) 1)
         (begin
           (unsafe

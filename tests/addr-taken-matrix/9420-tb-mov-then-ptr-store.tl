@@ -1,8 +1,6 @@
 ;; jump threading: the constant flag def and the store through &f share a block,
 ;; so the last-def walk sees the Mov and not the aliasing store.
 ;; Expected exit 41 at --opt-level 0, 1 and 2.
-(import stdlib.io)
-
 (define (main) : i64
   (let
     [f : bool true]

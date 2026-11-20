@@ -22,8 +22,7 @@
 
 (define (dynamic-array-literal-init-score) : i64
   (let
-    ;; lint-allow: removed-init -- Preserve Init syntax coverage until #7951.
-    [items : (__tl_dyn-array i64) (__tl_make-array (init) 5)]
+    [items : (__tl_dyn-array i64) (__tl_make-array 0 5)]
     (+ (array-length items) (+ (array-ref items 0) (array-ref items 1)))))
 
 (define (dynamic-array-literal-empty-score) : i64

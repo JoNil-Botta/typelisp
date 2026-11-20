@@ -1546,7 +1546,6 @@
           (ctfe 115 "array-ref")
           (ctfe 116 "array-push!")
           (ctfe 117 "string-ref" repeat)
-          (ctfe 118 "init")
           (ctfe 119 "ptr-null")
           (ctfe 120 ":")
           (ctfe 121 "if")

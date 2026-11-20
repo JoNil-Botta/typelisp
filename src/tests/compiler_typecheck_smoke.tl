@@ -1,4 +1,3 @@
-;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_typecheck_smoke.tl - Runnable smoke for the typechecker self-tests.
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
@@ -662,7 +661,7 @@
   (and
     (tc_tests.compiler-typecheck-ok?
       "(define (main [n : i64]) : unit
-  (let [items : (__tl_dyn-array (& n i64)) (init : (__tl_dyn-array (& n i64)))] unit))")
+  (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array)] unit))")
     (tc_tests.compiler-typecheck-ok?
       "(define (main [n : i64]) : unit
   (let
@@ -823,10 +822,6 @@
   (take ro rw))")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [raw : bytes]) : unit unit)"
-      (compiler-typecheck-bytes-policy-message))
-    (tc_tests.compiler-typecheck-error-ok?
-      "(define (main) : unit
-  (let [raw : bytes (init : bytes)] unit))"
       (compiler-typecheck-bytes-policy-message))
     (tc_tests.compiler-typecheck-error-ok?
       "(defstruct BadBytes (payload bytes))
@@ -1495,11 +1490,13 @@
 (defmacro (init-user [T : type]) : Module
   `(begin
     (module generated.init_nested_root)
-    (define (make) : ,T
-      (init : ,T))))
+    (define (make [value : ,T]) : ,T
+      value)))
 (import (init-user InitPerson) as init_user)
 (define (main) : i64
-  (let [person : InitPerson (init_user.make)] person.home.zip))")
+  (let
+    [person : InitPerson (init_user.make (InitPerson (InitAddress 1 \"\")))]
+    person.home.zip))")
       "typecheck: module macro identity generated init nested root failed")
     (compiler-typecheck-smoke-require
       (tc_tests.compiler-typecheck-ok?
@@ -1513,8 +1510,8 @@
     (defenum Result
       (Ok ,T)
       (Err String))
-    (define (make) : ,T
-      (init : ,T))))
+    (define (make [value : ,T]) : ,T
+      value)))
 (defmacro (replay-nested [T : type] [index-expr : Expr]) : Decls
   (match index-expr
     [(Expr.Int index)
@@ -1719,7 +1716,6 @@
   `(begin
     (define (typed-id [v : ,T]) : ,T
       (let [x : ,T v] (ann x : ,T)))
-    (define (typed-init) : ,T (init : ,T))
     (define (typed-array [v : ,T]) : (__tl_dyn-array ,T)
       (let [items : (__tl_dyn-array ,T) (__tl_make-array ,T 1)]
         (begin

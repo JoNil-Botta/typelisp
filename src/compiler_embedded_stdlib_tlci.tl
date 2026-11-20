@@ -2249,26 +2249,6 @@
                   (& ty)))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
-;; expr-init: pop a type value and push the typed Init node produced by
-;; the parser. Contextual Init remains outside the native template subset.
-(define (compiler-comptime-host-callback-expr-init
-  [session : i64]
-  [_arg-a : i64]
-  [_arg-b : i64]
-  [_arg-c : i64]) : i64
-  (compiler-comptime-host-status-callback
-    session
-    (if (< compiler-comptime-host-stack-len 1)
-      tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-stack-value 1)
-        [(Type ty)
-          (compiler-comptime-host-replace-expr!
-            1
-            (ast.ast-expr-init-with-pools
-              (compiler-comptime-host-session-pools)
-              ty))]
-        [_ tlci.tlci-host-callback-status-bad-request]))))
-
 (define (compiler-comptime-host-callback-expr-bool-literal
   [session : i64]
   [arg-a : i64]

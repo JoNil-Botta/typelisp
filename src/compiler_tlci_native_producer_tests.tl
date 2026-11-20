@@ -1,4 +1,3 @@
-;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_tlci_native_producer_tests.tl - the producer's `run-ops` batching:
 ;; which op lines become batch tokens and how the status chain renders a run
 ;; of them. The host side of the batch format is covered by
@@ -303,7 +302,7 @@
     "(defmacro (entry [value : Expr]) : Expr `("
     callee
     " ,value))\n"
-    "(defmacro (typed [T : type]) : Expr `(init : ("
+    "(defmacro (typed [T : type]) : Expr `(cast 0 : ("
     wrapper
     " ,T)))\n"
     "(defmacro (unsupported [value : Expr]) : Expr (unknown-source-helper value))\n"))
@@ -384,7 +383,7 @@
                     producer.embedded-stdlib-tlci-native-report-count
                     0)
                   2
-                  "the expression and typed-init entries are native")
+                  "the expression and typed-cast entries are native")
                 (ProducerOwnerFixture
                   context
                   names
@@ -406,7 +405,7 @@
       (match (producer.embedded-stdlib-tlci-unwrap-expr
         (& fixture.context)
         template)
-        [(Init annotation) annotation]
+        [(Cast _ annotation) annotation]
         [_ -1])]
     [_ -1]))
 
@@ -440,7 +439,7 @@
       "the decoy has the same expression ID")
     (test.assert-true
       (>= (producer-owner-annotation (& a)) 0)
-      "typed init has a pooled annotation")
+      "typed cast has a pooled annotation")
     (test.assert-i64-eq
       (producer-owner-annotation (& a))
       (producer-owner-annotation (& b))

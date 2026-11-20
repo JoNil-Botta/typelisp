@@ -1,4 +1,3 @@
-;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_typecheck_tests.tl - Self-tests for the compiler typechecker API.
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
@@ -1843,6 +1842,45 @@
   (let [items : (Array (-> i64) 2) (make-array (-> i64) 2)] 0))"
       "typecheck: make-array element type (->  i64) is not zero-initializable (reason: function); construct the elements explicitly")))
 
+;; Every element type the removed `(init)` forms used to build a value for is
+;; now built through `make-array`: a ZII element zero-fills, and a String,
+;; dynamic-buffer or box element gets its shared value fill. A value fill whose
+;; contents have no zero value is rejected with the contents' reason.
+(define (compiler-typecheck-make-array-zero-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(defstruct Point (x i64) (flag bool))
+(defenum Maybe (None) (Some i64))
+(define (main) : i64
+  (let
+    [ints : (Array i64 2) (make-array i64 2)]
+    [flags : (Array bool 2) (make-array bool 2)]
+    [chars : (Array char 2) (make-array char 2)]
+    [texts : (Array String 2) (make-array String 2)]
+    [ptrs : (Array (Ptr i64) 2) (make-array (Ptr i64) 2)]
+    [buffers : (Array (__tl_dyn-array i64) 2) (make-array (__tl_dyn-array i64) 2)]
+    [tuples : (Array (Tuple i64 String) 2) (make-array (Tuple i64 String) 2)]
+    [fixed : (Array (Array i64 2) 2) (make-array (Array i64 2) 2)]
+    [points : (Array Point 2) (make-array Point 2)]
+    [boxes : (Array (Box Point) 3) (make-array (Box Point) 3)]
+    [maybes : (Array Maybe 2) (make-array Maybe 2)]
+    (+ (array-ref ints 0)
+      (+ (match (array-ref maybes 0) [(Some v) v] [(None) 0])
+        (tuple-ref (array-ref tuples 0) 0)))))")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (let [items : (Array (Box (-> i64 i64)) 2) (make-array (Box (-> i64 i64)) 2)] 0))"
+      "typecheck: make-array element type (-> i64 i64) is not zero-initializable (reason: unsupported); construct the elements explicitly")
+    (compiler-typecheck-error-ok?
+      "(defstruct Raw (:repr c) (x i64))
+(define (main) : i64
+  (let [items : (Array (Box Raw) 2) (make-array (Box Raw) 2)] 0))"
+      "typecheck: make-array element type Raw is not zero-initializable (reason: repr-c); construct the elements explicitly")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (let [items : (Array (Box (CFunc non-null (-> i64 i64))) 2) (make-array (Box (CFunc non-null (-> i64 i64))) 2)] 0))"
+      "typecheck: make-array element type (CFunc non-null (-> i64 i64)) is not zero-initializable (reason: non-null-cfunc); construct the elements explicitly")))
+
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and
     (compiler-typecheck-repr-c-aligned-layout-ok?)
@@ -3523,72 +3561,6 @@
 (define (main [p : (MutPtr Point)]) : Point
   (unsafe (deref p)))"
       (tc_core.tc-raw-deref-whole-message))))
-
-(define (compiler-typecheck-init-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(defstruct Point (x i64) (flag bool))
-(defenum Maybe (None) (Some i64))
-(define (main) : i64
-  (let
-    [n : i64 (init : i64)]
-    [flag : bool (init : bool)]
-    [text : String (init : String)]
-    [items : (__tl_dyn-array i64) (init : (__tl_dyn-array i64))]
-    [tupled : (Tuple i64 bool) (init : (Tuple i64 bool))]
-    [fixed : (Array i64 2) (init : (Array i64 2))]
-    [point : Point (init : Point)]
-    [maybe : Maybe (init : Maybe)]
-    [boxed : (Box i64) (init : (Box i64))]
-    (+ n (+ point.x (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (deref boxed)))))))")
-    (compiler-typecheck-ok?
-      "(defstruct Point (x i64) (flag bool))
-(defenum Maybe (None) (Some i64))
-(define zero : i64 (init))
-(define (take [n : i64]) : i64 n)
-(define (return-init) : i64 (init))
-(define (point-x [p : Point]) : i64 p.x)
-(define (main) : i64
-  (let
-    [n : i64 (init)]
-    [items : (__tl_dyn-array i64) (init)]
-    [fixed : (Array i64 2) (array (init) 5)]
-    [point : Point (Point (init) (init))]
-    [maybe : Maybe (Some (init))]
-    (begin
-      (set! (array-ref fixed 0) (init))
-      (__tl_array-push! items (init))
-      (+ zero
-        (+ n
-          (+ (return-init)
-            (+ (take (init))
-              (+ (point-x (init))
-                (+ point.x
-                  (+ (array-ref fixed 0)
-                    (match maybe [(Some v) v] [(None) 0])))))))))))")
-    (compiler-typecheck-error-ok?
-      "(define (main) : (-> i64) (init : (-> i64)))"
-      "typecheck: init unsupported type (->  i64)")
-    (compiler-typecheck-error-ok?
-      "(define (main) : (-> i64) (init))"
-      "typecheck: init unsupported type (->  i64)")
-    (compiler-typecheck-error-ok?
-      "(define (main) : i64 (let [n (init)] n))"
-      "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")
-    (compiler-typecheck-error-ok?
-      "(defstruct Raw (:repr c) (x i64))
-(define (main) : Raw (init : Raw))"
-      "typecheck: init supports only default-layout structs")
-    (compiler-typecheck-error-ok?
-      "(define (main [r : (& n i64)]) : (& n i64) (init : (& n i64)))"
-      "typecheck: init unsupported type (& n i64)")
-    (compiler-typecheck-error-ok?
-      "(define (close-fd [fd : i64]) : unit unit)
-(defstruct FileHandle
-  (:cleanup cleanup-file-handle)
-  (fd i64 (:cleanup close-fd)))
-(define (main) : FileHandle (init : FileHandle))"
-      "typecheck: init does not support cleanup-owning aggregate FileHandle")))
 
 (define (compiler-typecheck-region-tests-ok?) : bool
   (and
@@ -6964,7 +6936,7 @@
     (compiler-typecheck-ok?
       "(define (f) : i64
   (let
-    [items : (__tl_dyn-array i64) (__tl_make-array (init) 7)]
+    [items : (__tl_dyn-array i64) (__tl_make-array 0 7)]
     (+ (array-ref items 0) (array-ref items 1))))")
     (compiler-typecheck-ok?
       "(define (f) : i64
@@ -12273,9 +12245,9 @@
   (if (compiler-typecheck-raw-deref-field-tests-ok?)
     unit
     (io.panic "typecheck: raw-pointer field place tests failed"))
-  (if (compiler-typecheck-init-tests-ok?)
+  (if (compiler-typecheck-make-array-zero-tests-ok?)
     unit
-    (io.panic "typecheck: init tests failed"))
+    (io.panic "typecheck: make-array zero tests failed"))
   (if (compiler-typecheck-result-try-tests-ok?)
     unit
     (io.panic "typecheck: result try tests failed"))

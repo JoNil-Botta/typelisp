@@ -50,7 +50,7 @@ bodies below. Grouped names are exact `AstExpr` variants.
 | `PtrNullCheck`, `PtrAddrOf`, `PtrRead`, `PtrWrite`, `PtrOffset`, `PtrCast`, `PtrToInt`, `IntToPtr` | Inline pointer-family behavior remains; the dispatcher arms are its only implementation. Coordinate #7725/#7844 when extracting it. |
 | `Spanned`, `MacroExpansion` | Small provenance/unwrapping routes back to the dispatcher. |
 | `Literal`, `BinaryData`, `SpmdProgramIndex`, `SpmdProgramCount` | Small value selection plus existing `lower-materialize-at-expr`. |
-| `Init`, `FixedMakeArray` | Select the expected type and route to `lower-init-expr`. |
+| `FixedMakeArray` | Route the fixed-array make-array type to `lower-init-expr`. |
 | `Var` | Small dotted-field rewrite or `lower-var-or-nullary-variant-id` route. |
 | `Ann`, `Cast`, `Borrow` | Small operand-resolution wrappers around existing expected-value, cast and borrow helpers. |
 | `Call`, `Lambda`, `Let`, `Begin`, `Unsafe` | Unpack children/bindings and route to `lower-call`, `lower-lambda`, `lower-let-bindings`, or `lower-begin-expected`; unsafe entry changes the type environment. Direct and indirect calls share one lowering per ABI (`lower-c-abi-call-values`, `lower-internal-call-values`, `lower-call-values`) through a `LowerCallTarget`. |

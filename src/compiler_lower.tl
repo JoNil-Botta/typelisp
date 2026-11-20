@@ -11539,9 +11539,9 @@
         [inner : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools inner-box)]
         (lower-reach-expr pools all-functions names state inner))]
-    [(or (Literal _) (TypeLiteral _) (Init _) (Quote _) (Quasiquote _) (Break)
-         (Continue) (PtrNull _) (BinaryData _) (SpmdProgramIndex)
-         (SpmdProgramCount) (ProgramArgc) (ProgramArgv) (ProgramEnvp))
+    [(or (Literal _) (TypeLiteral _) (Quote _) (Quasiquote _) (Break) (Continue)
+         (PtrNull _) (BinaryData _) (SpmdProgramIndex) (SpmdProgramCount)
+         (ProgramArgc) (ProgramArgv) (ProgramEnvp))
       state]
     [(Var name) (lower-reach-add-source-id all-functions names state name)]
     [(Binary _ lhs-box rhs-box)
@@ -26895,7 +26895,6 @@
             [(ast.AstExpr.Borrow mutable? _ _) (not mutable?)]
             [(ast.AstExpr.StructGet _ _) true]
             [(ast.AstExpr.TypeLiteral _) true]
-            [(ast.AstExpr.Init _) true]
             [(ast.AstExpr.PtrNull _) true]
             [(ast.AstExpr.PtrNullCheck _) true]
             [_ false])]
@@ -29831,32 +29830,50 @@
             [(Err message) (Err message)]))]
       [(Err message) (Err (box (lower-diagnostic message)))])))
 
-(define (lower-init-expr-list-from-types
+;; Zero value of each type in `types`, in order. The aggregate constructors
+;; below and `make-array`, whose element init still needs one zero value per
+;; element, are the remaining callers (#7961 removes them).
+(define (lower-init-value-seq-from-types
   [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]) : ast.AstExprList
-  (lower-init-expr-list-from-types-at ctx (& types) 0))
-
-(define (lower-init-expr-list-from-types-at
-  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [types : (& types ast.AstTypeList)]
-  [index : i64]) : ast.AstExprList
+  [origin : ast.AstExpr]) : ResultLowerArgs
+  (lower-init-value-seq-from-types-at ctx state env type-env types 0 origin))
+
+(define (lower-init-value-seq-from-types-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [origin : ast.AstExpr]) : ResultLowerArgs
   (if (>= index (ast.ast-type-list-len types))
-    (ast.ast-expr-list-new)
+    (ResultLowerArgs.Ok state (ir.compiler-ir-value-seq-empty))
     (let
-      [head : ast.AstType
+      [ty : ast.AstType
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (ast.ast-expr-cons
-        (ast.ast-expr-init head)
-        (& (lower-init-expr-list-from-types-at ctx types (+ index 1)))))))
-
-(define (lower-init-expr-list-repeat [ty : ast.AstType] [count : i64]) : ast.AstExprList
-  (if (<= count 0)
-    (ast.ast-expr-list-new)
-    (ast.ast-expr-cons
-      (ast.ast-expr-init (lower-global-shared-view ty))
-      (& (lower-init-expr-list-repeat ty (- count 1))))))
+      [origin-copy : ast.AstExpr (clone origin)]
+      (match (lower-init-expr ctx state env type-env (clone ty) origin ty)
+        [(Ok (Expr value-state value _))
+          (match (lower-init-value-seq-from-types-at
+            ctx
+            value-state
+            env
+            type-env
+            types
+            (+ index 1)
+            origin-copy)
+            [(Ok rest-state rest-values)
+              (ResultLowerArgs.Ok
+                rest-state
+                (lower-value-seq-prepend-one value rest-values))]
+            [(Err message) (ResultLowerArgs.Err message)])]
+        [(Err message) (ResultLowerArgs.Err message)]))))
 
 (define (lower-init-scalar
   [ctx : tc_core.TcContext]
@@ -29872,7 +29889,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [struct-name : String]
-  [struct-ty : ast.AstType]) : ResultLowerExpr
+  [struct-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
   (let
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
@@ -29896,19 +29914,23 @@
                 (lower-struct-constructor-field-types-for-result
                   field-ctx
                   (lower-global-shared-view struct-ty)
-                  fields))]
-            (lower-construct-struct
+                  (lower-global-shared-view fields)))]
+            (match (lower-init-value-seq-from-types
               ctx
               state
               env
               type-env
-              struct-name
-              (lower-struct-type-handle-or
-                ctx
-                struct-ty
-                (csym.compiler-symbols-missing-handle))
-              (lower-init-expr-list-from-types ctx field-types)
-              struct-ty))]
+              (& field-types)
+              origin)
+              [(Ok args-state values)
+                (lower-construct-struct-inline-from-values
+                  field-ctx
+                  args-state
+                  struct-name
+                  values
+                  fields
+                  struct-ty)]
+              [(Err message) (Err message)]))]
         [(Err message) (Err (box (lower-diagnostic message)))]))))
 
 (define (lower-init-enum
@@ -29917,7 +29939,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [enum-name : String]
-  [enum-ty : ast.AstType]) : ResultLowerExpr
+  [enum-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
   (let
     [field-ctx : tc_core.TcContext
       (lower-context-with-nominal-owner-module-id
@@ -29962,16 +29985,24 @@
                           (lower-global-shared-view enum-ty)
                           (csym.compiler-symbols-missing-handle))]
                       (if (csym.compiler-symbols-handle-found? handle)
-                        (lower-construct-enum-with-name
+                        (match (lower-init-value-seq-from-types
                           ctx
                           state
                           env
                           type-env
-                          lookup-name
-                          handle
-                          (lower-init-expr-list-from-types ctx payload-types)
-                          enum-name
-                          enum-ty)
+                          (& payload-types)
+                          origin)
+                          [(Ok args-state values)
+                            (lower-construct-enum-inline-from-values
+                              ctx
+                              args-state
+                              lookup-name
+                              handle
+                              values
+                              payload-types
+                              enum-name
+                              enum-ty)]
+                          [(Err message) (Err message)])
                         (Err
                           (box
                             (lower-diagnostic
@@ -29980,163 +30011,162 @@
                                 lookup-name))))))])))])]
       [(Err message) (Err (box (lower-diagnostic message)))])))
 
-(define (lower-init-struct-into
+;; Store the zero values of a tuple's element types at their field offsets in
+;; the tuple's reserved inline storage.
+(define (lower-init-tuple-store-elems-at
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [dst : ir.CompilerIrValue]
-  [struct-name : String]
-  [struct-ty : ast.AstType]) : ResultLowerState
-  (let
-    [field-ctx : tc_core.TcContext
-      (lower-context-with-nominal-owner-module-id
-        ctx
-        (lower-struct-type-name-id-or struct-ty -1))]
-    (if (lower-struct-repr-c-id?
-      field-ctx
-      (lower-struct-type-name-id-or struct-ty -1))
-      (Err
-        (box
-          (lower-diagnostic "lower: init supports only default-layout structs")))
-      (match (lower-struct-fields-id
-        field-ctx
-        (lower-struct-type-name-id-or struct-ty -1)
-        (lower-global-shared-view struct-name))
-        [(Ok fields)
-          (let
-            [field-types : ast.AstTypeList
-              (tc_core.tc-resolve-type-list
-                field-ctx
-                (lower-struct-constructor-field-types-for-result
-                  field-ctx
-                  (lower-global-shared-view struct-ty)
-                  fields))]
-            (lower-construct-struct-into
-              ctx
-              state
-              env
-              type-env
-              (LowerStoreDestination.FixedAddress dst)
-              struct-name
-              (lower-struct-type-handle-or
-                ctx
-                struct-ty
-                (csym.compiler-symbols-missing-handle))
-              (lower-init-expr-list-from-types ctx field-types)
-              struct-ty))]
-        [(Err message) (Err (box (lower-diagnostic message)))]))))
-
-(define (lower-init-enum-into
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [dst : ir.CompilerIrValue]
-  [enum-name : String]
-  [enum-ty : ast.AstType]) : ResultLowerState
-  (let
-    [field-ctx : tc_core.TcContext
-      (lower-context-with-nominal-owner-module-id
-        ctx
-        (lower-enum-type-name-id-or enum-ty -1))]
-    (match (tc_core.tc-enum-decl-id
-      field-ctx
-      (lower-enum-type-name-id-or enum-ty -1))
-      [(Ok decl)
-        (match decl
-          [(TcEnumDecl _ variants)
-            (if (ast.ast-variant-def-list-empty? (& variants))
-              (Err
-                (box
-                  (lower-diagnostic
-                    "lower: init requires enum with at least one variant")))
-              (let
-                [variant : ast.AstVariantDef
-                  (ast.ast-variant-def-list-get
-                    (& variants)
-                    0
-                    (ast.ast-variant-def-fallback))]
-                (match variant
-                  [(Def variant-name fields _)
-                    (let
-                      [lookup-name : String
-                        (tc_core.tc-variant-name-for-enum
-                          (lower-global-shared-view enum-name)
-                          (tc_core.tc-env-key-name-text variant-name))]
-                      [payload-types : ast.AstTypeList
-                        (tc_core.tc-resolve-type-list
-                          field-ctx
-                          (lower-enum-constructor-fields-for-result
-                            field-ctx
-                            (lower-global-shared-view enum-ty)
-                            fields))]
-                      [handle : i64
-                        (lower-variant-constructor-handle-id-or
-                          ctx
-                          (tc_core.tc-env-key-name-text variant-name)
-                          variant-name
-                          (lower-global-shared-view enum-ty)
-                          (csym.compiler-symbols-missing-handle))]
-                      (if (csym.compiler-symbols-handle-found? handle)
-                        (lower-construct-enum-with-name-into
-                          ctx
-                          state
-                          env
-                          type-env
-                          (LowerStoreDestination.FixedAddress dst)
-                          lookup-name
-                          handle
-                          (lower-init-expr-list-from-types ctx payload-types)
-                          enum-name
-                          enum-ty)
-                        (Err
-                          (box
-                            (lower-diagnostic
-                              (str_cat.str-cat
-                                "lower: unknown variant "
-                                lookup-name))))))])))])]
-      [(Err message) (Err (box (lower-diagnostic message)))])))
-
-(define (lower-init-expr-into
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [dst : ir.CompilerIrValue]
-  [ty : ast.AstType]
+  [types : (& types ast.AstTypeList)]
+  [base : (& base ir.CompilerIrValue)]
+  [index : i64]
+  [cursor : i64]
   [origin : ast.AstExpr]) : ResultLowerState
-  (let
-    [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (match (& resolved)
-      [(or (Struct name) (StructArgs name _))
-        (lower-init-struct-into
+  (if (>= index (ast.ast-type-list-len types))
+    (Ok state)
+    (let
+      [ty : ast.AstType
+        (tc_core.tc-context-type-get
           ctx
-          state
-          env
-          type-env
-          dst
-          (tc_core.tc-nominal-name-id-display name)
-          resolved)]
-      [(or (Enum name) (EnumArgs name _))
-        (lower-init-enum-into
-          ctx
-          state
-          env
-          type-env
-          dst
-          (tc_core.tc-nominal-name-id-display name)
-          resolved)]
-      [_
-        (Err
-          (box
-            (lower-diagnostic-at-expr
-              ctx
-              origin
-              (str_cat.str-cat
-                "lower: init unsupported type "
-                (tc_core.tc-type-render resolved)))))])))
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      [resolved : ast.AstType (tc_core.tc-resolve-type ctx (clone ty))]
+      [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+      [size : i64 (lower-type-size ctx resolved)]
+      [origin-copy : ast.AstExpr (clone origin)]
+      (match (lower-init-expr ctx state env type-env (clone ty) origin ty)
+        [(Ok (Expr elem-state elem-value _))
+          (lower-init-tuple-store-elems-at
+            ctx
+            (if (> size 0)
+              (lower-store-inline-value-at-offset
+                ctx
+                elem-state
+                base
+                offset
+                elem-value
+                resolved
+                size)
+              elem-state)
+            env
+            type-env
+            types
+            base
+            (+ index 1)
+            (+ offset size)
+            origin-copy)]
+        [(Err message) (Err message)]))))
+
+(define (lower-init-tuple
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [types : (& types ast.AstTypeList)]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-reserve-inline-storage
+    state
+    (lower-type-list-storage-size ctx types)
+    result-ty)
+    [(Expr base-state base _)
+      (match (lower-init-tuple-store-elems-at
+        ctx
+        base-state
+        env
+        type-env
+        types
+        (& base)
+        0
+        0
+        origin)
+        [(Ok final-state) (Ok (Expr final-state base result-ty))]
+        [(Err message) (Err message)])]))
+
+;; Store `count` zero element values at `index * elem-size` in the fixed
+;; array's reserved inline storage.
+(define (lower-init-array-store-elems-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [elem-ty : ast.AstType]
+  [elem-size : i64]
+  [count : i64]
+  [base : (& base ir.CompilerIrValue)]
+  [index : i64]
+  [offset : i64]
+  [origin : ast.AstExpr]) : ResultLowerState
+  (if (>= index count)
+    (Ok state)
+    (let
+      [origin-copy : ast.AstExpr (clone origin)]
+      (match (lower-init-expr
+        ctx
+        state
+        env
+        type-env
+        (clone elem-ty)
+        origin
+        (clone elem-ty))
+        [(Ok (Expr elem-state elem-value _))
+          (lower-init-array-store-elems-at
+            ctx
+            (if (> elem-size 0)
+              (lower-store-inline-value-at-offset
+                ctx
+                elem-state
+                base
+                offset
+                elem-value
+                (clone elem-ty)
+                elem-size)
+              elem-state)
+            env
+            type-env
+            elem-ty
+            elem-size
+            count
+            base
+            (+ index 1)
+            (+ offset elem-size)
+            origin-copy)]
+        [(Err message) (Err message)]))))
+
+(define (lower-init-array
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [elem-ty : ast.AstType]
+  [count : i64]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (if (< count 0)
+    (Err
+      (box
+        (lower-diagnostic "lower: init fixed array length must be non-negative")))
+    (let
+      [elem-size : i64 (lower-type-size ctx elem-ty)]
+      (match (lower-reserve-inline-storage
+        state
+        (lower-type-size ctx result-ty)
+        result-ty)
+        [(Expr base-state base _)
+          (match (lower-init-array-store-elems-at
+            ctx
+            base-state
+            env
+            type-env
+            elem-ty
+            elem-size
+            count
+            (& base)
+            0
+            0
+            origin)
+            [(Ok final-state) (Ok (Expr final-state base result-ty))]
+            [(Err message) (Err message)])]))))
 
 (define (lower-init-expr
   [ctx : tc_core.TcContext]
@@ -30194,32 +30224,44 @@
             (I64)
             (Literal (ast.ast-lit-int 0))
             origin)]
-        [(Box elem) (lower-box ctx state env type-env (Init elem) expr-ty)]
-        [(Tuple elems)
-          (lower-tuple
-            ctx
-            state
-            env
-            type-env
-            (lower-init-expr-list-from-types ctx (deref elems))
-            expr-ty
-            origin)]
-        [(Array elem count)
-          (if (< count 0)
-            (Err
-              (box
-                (lower-diagnostic
-                  "lower: init fixed array length must be non-negative")))
-            (lower-array-literal
+        [(Box elem)
+          (let
+            [elem-ty : ast.AstType (tc_core.tc-context-type-get ctx elem)]
+            (match (lower-init-expr
               ctx
               state
               env
               type-env
-              (lower-init-expr-list-repeat
-                (tc_core.tc-context-type-get ctx elem)
-                count)
-              expr-ty
-              origin))]
+              (clone elem-ty)
+              origin
+              elem-ty)
+              [(Ok (Expr inner-state inner-value inner-ty))
+                (lower-box-hold-value
+                  ctx
+                  inner-state
+                  inner-value
+                  inner-ty
+                  expr-ty)]
+              [(Err message) (Err message)]))]
+        [(Tuple elems)
+          (lower-init-tuple
+            ctx
+            state
+            env
+            type-env
+            (& (deref elems))
+            expr-ty
+            origin)]
+        [(Array elem count)
+          (lower-init-array
+            ctx
+            state
+            env
+            type-env
+            (tc_core.tc-context-type-get ctx elem)
+            count
+            expr-ty
+            origin)]
         [(or (Struct name) (StructArgs name _))
           (lower-init-struct
             ctx
@@ -30227,7 +30269,8 @@
             env
             type-env
             (tc_core.tc-nominal-name-id-display name)
-            resolved)]
+            resolved
+            origin)]
         [(or (Enum name) (EnumArgs name _))
           (lower-init-enum
             ctx
@@ -30235,7 +30278,8 @@
             env
             type-env
             (tc_core.tc-nominal-name-id-display name)
-            resolved)]
+            resolved
+            origin)]
         [_
           (Err
             (box
@@ -31302,14 +31346,6 @@
       (let
         [expr-ty (try (lower-lookup-type-id ctx type-cache env type-env name))]
         (Ok (tc_core.tc-type-without-regions expr-ty)))]
-    [(Init maybe-ty-id)
-      (match (ast.ast-maybe-type-from-id-with-pools
-        (& (tc_core.tc-context-pools ctx))
-        maybe-ty-id)
-        [(Some ty)
-          (Ok
-            (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty)))]
-        [(No) (Err "lower: contextual init requires an expected type")])]
     [(or (Ann _ ty-id) (Cast _ ty-id))
       (Ok
         (tc_core.tc-type-without-regions
@@ -32559,20 +32595,6 @@
       (lower-materialize-at-expr ctx state (I64 0) expr-ty origin)]
     [(SpmdProgramCount)
       (lower-materialize-at-expr ctx state (I64 1) expr-ty origin)]
-    [(Init maybe-ty-id)
-      (match (ast.ast-maybe-type-from-id-with-pools
-        (& (tc_core.tc-context-pools ctx))
-        maybe-ty-id)
-        [(Some ty) (lower-init-expr ctx state env type-env ty origin expr-ty)]
-        [(No)
-          (lower-init-expr
-            ctx
-            state
-            env
-            type-env
-            (lower-global-shared-view expr-ty)
-            origin
-            expr-ty)])]
     [(Var name)
       (if (tc_core.tc-dotted-local-field-name-id? type-env name)
         (match (tc_core.tc-dotted-local-field-expr-id type-env name)
@@ -33697,21 +33719,6 @@
       (let
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box-get ctx state env type-env inner expected-ty))]
-    [(Init maybe-ty-id)
-      (match (ast.ast-maybe-type-from-id-with-pools
-        (& (tc_core.tc-context-pools ctx))
-        maybe-ty-id)
-        [(No)
-          (lower-init-expr
-            ctx
-            state
-            env
-            type-env
-            (lower-global-shared-view expected-ty)
-            origin
-            expected-ty)]
-        [(Some _)
-          (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
     [(Call func-box _)
       (let
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
@@ -34249,54 +34256,60 @@
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr inner-state inner-value inner-ty)
-          (match (lower-reserve-heap-storage
-            inner-state
-            (lower-type-size ctx inner-ty)
-            result-ty
-            (lower-tl-alloc-symbol))
-            [(LowerExpr.Expr base-state base _)
-              ;; A register-resident inner value is a word; store it
-              ;; scalar into the box rather than byte-copying from a pointer.
-              (if (and
-                (lower-type-inline-storage? ctx inner-ty)
-                (not (lower-type-register-resident? ctx inner-ty)))
-                (match (lower-inline-aggregate-copy-size ctx inner-ty)
-                  [(ResultLowerSize.Ok size)
-                    (ResultLowerExpr.Ok
-                      (LowerExpr.Expr
-                        (lower-copy-bytes
-                          base-state
-                          (lower-global-shared-view base)
-                          0
-                          inner-value
-                          0
-                          size)
-                        base
-                        result-ty))]
-                  [(ResultLowerSize.Err message)
-                    (ResultLowerExpr.Err (box (lower-diagnostic message)))])
-                (if (lower-type-register-group? ctx inner-ty)
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr
-                      (lower-store-group-at-ptr
-                        ctx
-                        base-state
-                        (lower-global-shared-view base)
-                        inner-value
-                        inner-ty)
-                      base
-                      result-ty))
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr
-                      (lower-store-at-offset
-                        base-state
-                        base
-                        0
-                        inner-value
-                        inner-ty)
-                      base
-                      result-ty))))])])]
+          (lower-box-hold-value ctx inner-state inner-value inner-ty result-ty)])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
+;; Store an already-lowered value in fresh heap storage and return the box.
+;; `make-array`'s zero element for `(Box T)` reaches this without an inner
+;; expression to lower (#7961).
+(define (lower-box-hold-value
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [inner-value : ir.CompilerIrValue]
+  [inner-ty : ast.AstType]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage
+    state
+    (lower-type-size ctx inner-ty)
+    result-ty
+    (lower-tl-alloc-symbol))
+    [(LowerExpr.Expr base-state base _)
+      ;; A register-resident inner value is a word; store it
+      ;; scalar into the box rather than byte-copying from a pointer.
+      (if (and
+        (lower-type-inline-storage? ctx inner-ty)
+        (not (lower-type-register-resident? ctx inner-ty)))
+        (match (lower-inline-aggregate-copy-size ctx inner-ty)
+          [(ResultLowerSize.Ok size)
+            (ResultLowerExpr.Ok
+              (LowerExpr.Expr
+                (lower-copy-bytes
+                  base-state
+                  (lower-global-shared-view base)
+                  0
+                  inner-value
+                  0
+                  size)
+                base
+                result-ty))]
+          [(ResultLowerSize.Err message)
+            (ResultLowerExpr.Err (box (lower-diagnostic message)))])
+        (if (lower-type-register-group? ctx inner-ty)
+          (ResultLowerExpr.Ok
+            (LowerExpr.Expr
+              (lower-store-group-at-ptr
+                ctx
+                base-state
+                (lower-global-shared-view base)
+                inner-value
+                inner-ty)
+              base
+              result-ty))
+          (ResultLowerExpr.Ok
+            (LowerExpr.Expr
+              (lower-store-at-offset base-state base 0 inner-value inner-ty)
+              base
+              result-ty))))]))
 
 (define (lower-deref-from-expected-receiver
   [ctx : tc_core.TcContext]
@@ -40086,32 +40099,6 @@
           [(Err message) (Err (box (lower-diagnostic message)))])
         (No)))))
 
-(define (lower-direct-init-into
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [dst : ir.CompilerIrValue]
-  [maybe-ty : ast.AstMaybeType]
-  [result-ty : ast.AstType]
-  [origin : ast.AstExpr]) : LowerMaybeDirectStore
-  (match maybe-ty
-    [(No)
-      (lower-direct-store-result
-        (lower-init-expr-into ctx state env type-env dst result-ty origin))]
-    [(Some ty)
-      (let
-        [resolved-init : ast.AstType
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))]
-        [resolved-result : ast.AstType
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-resolve-type ctx result-ty))]
-        (if (tc_core.tc-type-eq resolved-init resolved-result)
-          (lower-direct-store-result
-            (lower-init-expr-into ctx state env type-env dst ty origin))
-          (No)))]))
-
 (define (lower-direct-store-rhs-into
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -40135,21 +40122,6 @@
             inner
             result-ty
             origin))]
-      [(Init maybe-ty-id)
-        (match dst
-          [(Place _) (No)]
-          [(FixedAddress address)
-            (lower-direct-init-into
-              ctx
-              state
-              env
-              type-env
-              address
-              (ast.ast-maybe-type-from-id-with-pools
-                (& (tc_core.tc-context-pools ctx))
-                maybe-ty-id)
-              result-ty
-              origin)])]
       [(Call func-box args)
         (let
           [func : ast.AstExpr (lower-context-expr-get ctx func-box)]

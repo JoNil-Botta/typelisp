@@ -961,6 +961,9 @@
       (lower_tests.compiler-lower-make-array-init-source))
     (io.panic "lower: __tl_make-array init smoke mismatch"))
   (unless
+    (lower_tests.compiler-lower-make-array-zero-shape-ok?)
+    (io.panic "lower: make-array zero aggregate smoke mismatch"))
+  (unless
     (lower_tests.compiler-lower-dyn-array-literal-shape-ok?)
     (io.panic "lower: dynamic array literal smoke mismatch"))
   (unless
@@ -988,7 +991,7 @@
     (lower_tests.compiler-lower-static-array-global-shape-ok?)
     (io.panic "lower: static array global smoke mismatch"))
   (unless
-    (lower_tests.compiler-lower-function-value-contextual-init-ok?)
+    (lower_tests.compiler-lower-function-value-contextual-call-ok?)
     (io.panic "lower: contextual function value smoke mismatch"))
   (unless
     (lower_tests.compiler-lower-noncapturing-lambda-tests-ok?)
@@ -1000,9 +1003,6 @@
     (lower_tests.compiler-lower-ok?
       (lower_tests.compiler-lower-aggregate-source))
     (io.panic "lower: aggregate smoke mismatch"))
-  (unless
-    (lower_tests.compiler-lower-ok? (lower_tests.compiler-lower-init-source))
-    (io.panic "lower: init smoke mismatch"))
   (unless
     (lower_tests.compiler-lower-tuple-shape-ok?)
     (io.panic "lower: tuple smoke mismatch"))

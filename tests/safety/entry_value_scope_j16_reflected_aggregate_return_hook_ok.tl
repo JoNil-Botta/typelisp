@@ -18,9 +18,8 @@
       (comptime.expr-call
         (comptime.module-hook (type-nominal-module U) "make")
         (comptime.expr-list-empty)))
-    (define (make) : ,T
-      ;; lint-allow: removed-init -- generated default for a generic T; no constructor exists.
-      (init : ,T))
+    (define (make [value : ,T]) : ,T
+      value)
     (define (call-it) : ,T
       (invoke ,T))))
 

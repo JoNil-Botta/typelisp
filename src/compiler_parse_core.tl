@@ -3332,7 +3332,10 @@
 (define (compiler-parse-tag-expr-type-literal) : i64
   249)
 
-(define (compiler-parse-tag-expr-init) : i64
+;; `init` was removed as a form; the tag only classifies `(init)` and
+;; `(init : T)` so the parser can name their replacement. `(init arg ...)`
+;; remains an ordinary call.
+(define (compiler-parse-tag-expr-retired-init) : i64
   288)
 
 (define (compiler-parse-tag-expr-spmd-reduce) : i64
@@ -4168,7 +4171,10 @@
         (compiler-parse-tag-expr-type-literal)))
     (set!
       out
-      (compiler-parse-dispatch-bind out "init" (compiler-parse-tag-expr-init)))
+      (compiler-parse-dispatch-bind
+        out
+        "init"
+        (compiler-parse-tag-expr-retired-init)))
     (set!
       out
       (compiler-parse-dispatch-bind out "try" (compiler-parse-tag-expr-try)))
@@ -8709,24 +8715,11 @@
           (MalformedForm)
           "parse: ptr-null expects (ptr-null : T) with a pointer type T"))]))
 
-;; `(init : T)` carries an explicit target type. Bare `(init)` is contextual
-;; and must be checked/lowered in a position with an expected type.
-(define (parse-ast-init
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view rest)
-    [(List (slice) _) (Ok (ast.ast-expr-init-contextual-with-pools pools))]
-    [(List (slice colon ty) _)
-      (if (sexpr-colon? colon)
-        (let
-          [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
-          (Ok (ast.ast-expr-init-with-pools pools parsed-ty)))
-        (Err (parse-kind-message (MalformedForm) "parse: expected ':' in init")))]
-    [_
-      (Err
-        ;; lint-allow: removed-init -- Preserve the syntax diagnostic until #7951.
-        (parse-kind-message (MalformedForm) "parse: init expects (init : T)"))]))
+;; Both removed spellings, `(init)` and `(init : T)`, report one diagnostic
+;; naming the replacement. `(init arg ...)` is an ordinary call.
+(define (parse-ast-retired-init-error) : ResultAstExpr
+  (Err
+    "parse: init was removed; use (T ...), (make-array T n), (__tl_make-array), or pass a T in"))
 
 ;; `(ptr-null? p)` - a single pointer operand.
 (define (parse-ast-ptr-null-check
@@ -9766,8 +9759,6 @@
       (parse-ast-xgetbv dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-syscall))
       (parse-ast-syscall dispatch pools rest)]
-    [(= tag (compiler-parse-tag-expr-init))
-      (parse-ast-init dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null))
       (parse-ast-ptr-null dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))
@@ -9790,13 +9781,13 @@
             (compiler-parse-dispatch-tag
               dispatch
               (ci.intern-syntax-id-value op))
-            (compiler-parse-tag-expr-init))
+            (compiler-parse-tag-expr-retired-init))
           (match (reader.spanned-sexpr-view rest)
             [(List (slice first & _) _)
               (if (sexpr-colon? first)
-                (parse-ast-init dispatch pools rest)
+                (parse-ast-retired-init-error)
                 (parse-ast-call dispatch pools head rest))]
-            [(List (slice) _) (parse-ast-init dispatch pools rest)]
+            [(List (slice) _) (parse-ast-retired-init-error)]
             [_ (parse-ast-call dispatch pools head rest)])]
         [else
           (let

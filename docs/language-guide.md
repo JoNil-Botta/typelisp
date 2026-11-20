@@ -50,9 +50,9 @@ struct/enum fields, and (optionally) `let` bindings.
 (while (> answer 0) (set! answer (- answer 1)))
 (begin (when (< answer 0) (return 0)) answer)
 
-;; Casts and zero/identity initialization
+;; Casts and zeroed arrays
 (cast 300 : u8)
-(let [n : i64 (init)]
+(let [n : i64 0]
   [items : (Array i64 4) (make-array i64 4)]
   (+ n (+ (length items) (array-ref items 0))))
 ```
@@ -60,8 +60,8 @@ struct/enum fields, and (optionally) `let` bindings.
 `cast` supports the full scalar numeric matrix: integer/char widening,
 narrowing, and truncation; `f64` <-> `f32` precision changes; and
 integer/char <-> float conversions (float -> integer truncates toward zero).
-`(init : T)` constructs a valid initialized value for supported `T`;
-contextual `(init)` works where an expected type is known.
+`(make-array T n)` hands out zeroed fixed-array storage; other values are
+written out with a `(T ...)` constructor or a literal.
 
 ### Types
 

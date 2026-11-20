@@ -1,4 +1,3 @@
-;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import stdlib.iterator)
 (import compiler_lower as lower)
@@ -1081,12 +1080,12 @@
     (install! replacement)
     (+ (invoke 43) 0)))")
 
-(define (compiler-lower-function-value-contextual-init-source) : String
+(define (compiler-lower-function-value-contextual-call-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : i64
   (let
     [f : (-> i64 i64) inc]
-    (f (init))))")
+    (f 41)))")
 
 (define (compiler-lower-noncapturing-lambda-value-source) : String
   "(define (get-fn) : (-> i64 i64)
@@ -2822,6 +2821,21 @@
     [items : (__tl_dyn-array String) (__tl_make-array String n)]
     (array-length items)))")
 
+;; `make-array` builds each fixed element through the private init rules: a
+;; tuple element stores its fields inline, a box element allocates its own
+;; element, and an enum element stores tag 0.
+(define (compiler-lower-make-array-zero-source) : String
+  "(defstruct Point (x i64) (flag bool))
+(defenum Maybe (None) (Some i64))
+(define (main) : i64
+  (let
+    [tuples : (Array (Tuple i64 String) 2) (make-array (Tuple i64 String) 2)]
+    [boxes : (Array (Box Point) 3) (make-array (Box Point) 3)]
+    [maybes : (Array Maybe 2) (make-array Maybe 2)]
+    (+ (tuple-ref (array-ref tuples 0) 0)
+      (+ (match (array-ref maybes 0) [(Some v) v] [(None) 0])
+        (deref (array-ref boxes 0)).x))))")
+
 (define (compiler-lower-dyn-array-literal-source) : String
   "(define dyn-array-literal-trace : i64 0)
 (define (side [value : i64]) : i64
@@ -3236,29 +3250,6 @@
   (Pair (Point x (+ x 1))))
 (define (main) : i64
   (get-y (make-point 20 22)))")
-
-(define (compiler-lower-init-source) : String
-  "(defstruct Point (x i64) (flag bool))
-(defenum Maybe (None) (Some i64))
-(define (take [n : i64]) : i64 n)
-(define (main) : i64
-  (let
-    [n : i64 (init : i64)]
-    [flag : bool (init)]
-    [ch : char (init)]
-    [text : String (init)]
-    [ptr : (Ptr i64) (init)]
-    [items : (__tl_dyn-array i64) (init)]
-    [tupled : (Tuple i64 bool) (init)]
-    [fixed : (Array i64 2) (array (init) 2)]
-    [point : Point (init)]
-    [constructed : Point (Point (init) (init))]
-    [maybe : Maybe (init)]
-    [boxed : (Box i64) (init)]
-    [called : i64 (take (init))]
-    (begin
-      (set! (array-ref fixed 0) (init))
-      (+ n (+ called (+ point.x (+ constructed.x (+ (tuple-ref tupled 0) (+ (array-ref fixed 0) (deref boxed))))))))))")
 
 ;; Tuple construction + ref lowering: `(tuple true 42)` reserves
 ;; struct-shaped aggregate storage and stores each element at its field offset;
@@ -3878,10 +3869,6 @@
   (begin
     (set! h.wide (Wide 1 2 3))
     0))
-(define (direct-init [h : (&mut h Holder)]) : i64
-  (begin
-    (set! h.wide (init : Wide))
-    0))
 (define (direct-dyn-array [items : (__tl_dyn-array Wide)] [i : i64]) : unit
   (set! (array-ref items i) (Wide 4 5 6)))
 (define (direct-fixed-array [items : (Array Wide 2)] [i : i64]) : unit
@@ -4107,7 +4094,6 @@
         ;; is a deferred destination: its address is resolved only after the
         ;; constructor's operands run, so a relocating operand is harmless.
         (= (lower-test-count functions "direct-field" (CopyBytes)) 0)
-        (= (lower-test-count functions "direct-init" (CopyBytes)) 0)
         (= (lower-test-count functions "direct-dyn-array" (CopyBytes)) 0)
         (= (lower-test-count functions "direct-fixed-array" (CopyBytes)) 0)
         (> (lower-test-count functions "direct-fixed-literal" (CopyBytes)) 0))]
@@ -8500,6 +8486,21 @@
         (> (lower-test-functions-call-count functions "tl_alloc") 0))]
     [_ false]))
 
+;; A `make-array` element that is not ZII is built element by element: two
+;; tuple elements store their fields, three box elements each get their own
+;; allocation, and the enum array alone zero-fills.
+(define (compiler-lower-make-array-zero-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-make-array-zero-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-function-call-count functions "main" "tl_alloc") 3)
+        (= (lower-test-count functions "main" (CopyBytes)) 2)
+        (= (lower-test-function-call-count functions "main" "tl_array_zero") 0)
+        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0)
+        (> (lower-test-count functions "main" (StorePtr)) 0))]
+    [_ false]))
+
 (define (compiler-lower-dyn-array-literal-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-dyn-array-literal-source)))
@@ -8763,10 +8764,10 @@
         [_ false])]
     [_ false]))
 
-(define (compiler-lower-function-value-contextual-init-ok?) : bool
+(define (compiler-lower-function-value-contextual-call-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source
-      (compiler-lower-function-value-contextual-init-source)))
+      (compiler-lower-function-value-contextual-call-source)))
     [(Some functions)
       (and
         (= (lower-test-count functions "main" (IndirectTailCall)) 1)

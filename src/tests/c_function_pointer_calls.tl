@@ -1,4 +1,3 @@
-;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 (import compiler_typecheck_api as tc_api)
 (import compiler_diagnostic as diagnostic)
 (import stdlib.string)
@@ -58,21 +57,25 @@
   c-function-initialization-preserves-nullability
   (test.assert-true
     (c-function-call-checks?
-      "(define (empty) : (CFunc nullable (-> i64 i64)) (init : (CFunc nullable (-> i64 i64))))")
-    "nullable C function pointer initializes to null")
+      "(define (main) : i64
+  (let [hooks : (Array (CFunc nullable (-> i64 i64)) 2) (make-array (CFunc nullable (-> i64 i64)) 2)] 0))")
+    "zero-filled nullable C function pointers are null")
   (test.assert-true
     (c-function-call-checks?
-      "(define (empty) : (CFunc unsafe-nullable (-> i64 i64)) (init : (CFunc unsafe-nullable (-> i64 i64))))")
-    "null initialization preserves unsafe mode")
+      "(define (main) : i64
+  (let [hooks : (Array (CFunc unsafe-nullable (-> i64 i64)) 2) (make-array (CFunc unsafe-nullable (-> i64 i64)) 2)] 0))")
+    "null zero fill preserves unsafe mode")
   (test.assert-true
     (c-function-call-error?
-      "(define (empty) : (CFunc non-null (-> i64 i64)) (init : (CFunc non-null (-> i64 i64))))"
-      "init cannot create a non-null C function pointer")
-    "init cannot establish non-nullness")
+      "(define (main) : i64
+  (let [hooks : (Array (CFunc non-null (-> i64 i64)) 2) (make-array (CFunc non-null (-> i64 i64)) 2)] 0))"
+      "make-array element type (CFunc non-null (-> i64 i64)) is not zero-initializable (reason: non-null-cfunc)")
+    "zero fill cannot manufacture a checked code pointer")
   (test.assert-true
     (c-function-call-error?
-      "(define (empty) : (CFunc unsafe-non-null (-> i64 i64)) (unsafe (init : (CFunc unsafe-non-null (-> i64 i64)))))"
-      "init cannot create a non-null C function pointer")
+      "(define (main) : i64
+  (let [hooks : (Array (CFunc unsafe-non-null (-> i64 i64)) 2) (unsafe (make-array (CFunc unsafe-non-null (-> i64 i64)) 2))] 0))"
+      "make-array element type (CFunc unsafe-non-null (-> i64 i64)) is not zero-initializable (reason: non-null-cfunc)")
     "unsafe does not permit null proof fabrication")
   (test.assert-true
     (c-function-call-error?

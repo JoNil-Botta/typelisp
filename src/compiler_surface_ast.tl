@@ -67,6 +67,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 20: AstExpr tag 46 (`init`) is retired and no longer encoded or decoded
+  ;; (#7951).
+  ;;
   ;; 19: AstPattern tags 8, 9 and 10 add the `(or ...)` pattern and the
   ;; `(fields ...)` pattern with its `Field` entries (a name, then a
   ;; one-item list).
@@ -117,16 +120,16 @@
   ;; ids instead of recursive Nil/Cons wire tags.
   ;;
   ;; 2: eight AstExpr variants carry AstTypeIds instead of inline AstTypes, so
-  ;; their wire tags now reference the serialized type pool. `Init` similarly
-  ;; carries an AstMaybeTypeId sentinel. `Borrow` also narrowed in memory, but
-  ;; its wire representation remains the portable AstBorrowLifetime encoding:
-  ;; named lifetimes must not serialize producer-generation intern ids.
+  ;; their wire tags now reference the serialized type pool. `Borrow` narrowed
+  ;; in memory while its wire representation remains the portable
+  ;; AstBorrowLifetime encoding: named lifetimes must not serialize
+  ;; producer-generation intern ids.
   ;;
   ;; The payload is source-tree keyed and fail-closed (`compiler_driver_core.tl`
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  19)
+  20)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

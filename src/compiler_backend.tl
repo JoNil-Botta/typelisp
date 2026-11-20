@@ -73974,64 +73974,57 @@
 
 ;; Fold one byte range into a 64-bit mix. Whole words plus one overlapping last
 ;; word keep every byte in the mix without a bounds check per byte.
-(define (compiler-backend-icf-mix
-  [hash : i64]
-  [prime : i64]
+(define (compiler-backend-icf-mix-range
+  [digest : CompilerBackendIcfDigest]
   [text : (& text str)]
   [start : i64]
-  [count : i64]) : i64
+  [count : i64]) : CompilerBackendIcfDigest
   (if (<= count 0)
-    hash
+    digest
     (let
       [base : (Ptr u8)
         (unsafe
           (ptr-offset (string-data text) start))]
-      [mixed : i64 (bit-xor hash count)]
+      [head : i64 (bit-xor digest.head count)]
+      [tail : i64 (bit-xor digest.tail count)]
       (if (>= count 8)
         (unsafe
           (let
             [words : i64 (shr count 3)]
             [wide : (Ptr i64) (ptr-cast base : (Ptr i64))]
             [index : i64 0]
+            [word : i64 0]
             (begin
               (while (< index words)
-                (set!
-                  mixed
-                  (* (bit-xor mixed (ptr-read (ptr-offset wide index))) prime))
+                (set! word (ptr-read (ptr-offset wide index)))
+                (set! head (* (bit-xor head word) 1099511628211))
+                (set! tail (* (bit-xor tail word) 4294967311))
                 (set! index (+ index 1)))
-              (*
-                (bit-xor
-                  mixed
-                  (ptr-read
-                    (ptr-cast (ptr-offset base (- count 8)) : (Ptr i64))))
-                prime))))
+              (set!
+                word
+                (ptr-read (ptr-cast (ptr-offset base (- count 8)) : (Ptr i64))))
+              (CompilerBackendIcfDigest
+                (* (bit-xor head word) 1099511628211)
+                (* (bit-xor tail word) 4294967311)
+                digest.pinned))))
         (unsafe
           (let
             [index : i64 0]
             (begin
               (while (< index count)
-                (set!
-                  mixed
-                  (*
-                    (bit-xor
-                      mixed
-                      (cast (ptr-read (ptr-offset base index)) : i64))
-                    prime))
+                (let
+                  [byte : i64 (cast (ptr-read (ptr-offset base index)) : i64)]
+                  (begin
+                    (set! head (* (bit-xor head byte) 1099511628211))
+                    (set! tail (* (bit-xor tail byte) 4294967311))))
                 (set! index (+ index 1)))
-              mixed)))))))
+              (CompilerBackendIcfDigest head tail digest.pinned))))))))
 
-(define (compiler-backend-icf-mix-range
+(define (compiler-backend-icf-mix-view
   [digest : CompilerBackendIcfDigest]
-  [text : (& text str)]
-  [start : i64]
-  [count : i64]) : CompilerBackendIcfDigest
-  (CompilerBackendIcfDigest
-    (compiler-backend-icf-mix digest.head 1099511628211 text start count)
-    (compiler-backend-icf-mix digest.tail 4294967311 text start count)
-    digest.pinned))
+  [text : (& text str)]) : CompilerBackendIcfDigest
+  (compiler-backend-icf-mix-range digest text 0 (__tl_string_length text)))
 
-;; Fold one integer. The label renumbering needs no string for its slot: the fold
-;; of `.Lc<n>` is the fold of the marker plus the number.
 (define (compiler-backend-icf-mix-word
   [digest : CompilerBackendIcfDigest]
   [value : i64]) : CompilerBackendIcfDigest
@@ -74039,11 +74032,6 @@
     (* (bit-xor digest.head (+ value 1812433253)) 1099511628211)
     (* (bit-xor digest.tail (+ value 2654435761)) 4294967311)
     digest.pinned))
-
-(define (compiler-backend-icf-mix-view
-  [digest : CompilerBackendIcfDigest]
-  [text : (& text str)]) : CompilerBackendIcfDigest
-  (compiler-backend-icf-mix-range digest text 0 (__tl_string_length text)))
 
 ;; The offset just past `.Lf<digits>_` when TOKEN is one of this function's own
 ;; labels, and -1 otherwise. Only the scope is recognized: every other `.L`
@@ -74204,7 +74192,13 @@
                         (set! counted end)))
                     unit))
                 unit)
-              (if (and boundary (= code 95))
+              (if (and
+                boundary
+                (= code 95)
+                (>= (- length hit) 4)
+                (= (__tl_string_ref text (+ hit 1)) 't')
+                (= (__tl_string_ref text (+ hit 2)) 'l')
+                (= (__tl_string_ref text (+ hit 3)) '_'))
                 (let
                   [end : i64
                     (compiler-backend-icf-token-end text (+ hit 1) length)]
@@ -74249,20 +74243,11 @@
               (set! scan (+ hit 1))
               (set! dot (string.index-of-byte text scan (cast '.' : u8)))
               (set! under (string.index-of-byte text scan (cast '_' : u8))))))
-        (CompilerBackendIcfDigest
-          (compiler-backend-icf-mix
-            digest.head
-            1099511628211
-            text
-            copied
-            (- length copied))
-          (compiler-backend-icf-mix
-            digest.tail
-            4294967311
-            text
-            copied
-            (- length copied))
-          pinned)))))
+        (compiler-backend-icf-mix-range
+          (CompilerBackendIcfDigest digest.head digest.tail pinned)
+          text
+          copied
+          (- length copied))))))
 
 (define (compiler-backend-icf-bucket-match
   [state : (& state CompilerBackendIcfState)]
@@ -74337,12 +74322,20 @@
 
 ;; "" keeps the chunk. Anything else replaces it, so the caller never has to know
 ;; whether this chunk is a kept body or a merged-away alias.
+;; Merging a body only pays for the bodies a program repeats: a body this large
+;; is written once. Bounding the work here keeps the pass off the long tail
+;; without changing which repeats are found.
+(define (compiler-backend-icf-body-limit) : i64
+  8192)
+
 (define (compiler-backend-icf-decide
   [state : (&mut state CompilerBackendIcfState)]
   [home : arena.Arena]
   [text : (& text str)]
   [symbol : (& symbol str)]) : String
-  (if (not state.enabled)
+  (if (or
+    (not state.enabled)
+    (> (__tl_string_length text) (compiler-backend-icf-body-limit)))
     ""
     (let
       ;; Map growth and every retained key must land in the home arena: the

@@ -423,8 +423,7 @@
       (set! index (+ index 1)))
     lengths))
 
-(define (compiler-lzss-model-from-lengths
-  [lengths : (__tl_dyn-array i64)]) : CompilerLzssModel
+(define (compiler-lzss-model-from-lengths [lengths : (__tl_dyn-array i64)]) : CompilerLzssModel
   (let
     [contexts : i64 (compiler-lzss-contexts)]
     [main-symbols : i64 (compiler-lzss-main-symbols)]
@@ -452,7 +451,11 @@
         (* context main-symbols)
         main-symbols)
       (set! context (+ context 1)))
-    (compiler-lzss-fill-codes! (& lengths) (&mut codes) length-start length-symbols)
+    (compiler-lzss-fill-codes!
+      (& lengths)
+      (&mut codes)
+      length-start
+      length-symbols)
     (set! context 0)
     (while (< context buckets)
       (compiler-lzss-fill-codes!
@@ -498,8 +501,7 @@
         dist-lookup))))
 
 (define (compiler-lzss-model-from-spec [spec : (& spec str)]) : CompilerLzssModel
-  (compiler-lzss-model-from-lengths
-    (compiler-lzss-spec-lengths spec)))
+  (compiler-lzss-model-from-lengths (compiler-lzss-spec-lengths spec)))
 
 ;; The model every source frame is coded under, built once per process.
 (define compiler-lzss-fixed-model : CompilerLzssModel
@@ -750,7 +752,6 @@
   [model : (& model CompilerLzssModel)]) : String
   (let
     [window : i64 (compiler-lzss-window)]
-    [main-base : i64 (compiler-lzss-main-symbols)]
     [reps : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [out-index : i64 out-start]
     [end : i64 (+ out-start raw-len)]
@@ -849,9 +850,11 @@
                 (when
                   (or (> distance out-index) (> distance window))
                   (return "compiler lzss: backreference before output"))
-                (set! move kind)
-                (while (> move 1)
-                  (set! (array-ref reps (- move 1)) (array-ref reps (- move 2)))
+                ;; The used repeat moves to the front; the ones before it shift
+                ;; back, exactly as the tokenizer leaves them.
+                (set! move (- kind 1))
+                (while (> move 0)
+                  (set! (array-ref reps move) (array-ref reps (- move 1)))
                   (set! move (- move 1)))
                 (set! (array-ref reps 0) distance)])
             (compiler-lzss-copy-match! data out-index distance length)
@@ -1424,9 +1427,7 @@
     (unsafe
       (string-from-bytes
         (ptr-cast
-          (ptr-offset
-            (ptr-cast (__tl_array-data view) : (Ptr u8))
-            start)
+          (ptr-offset (ptr-cast (__tl_array-data view) : (Ptr u8)) start)
           : (Ptr u8))
         count))))
 

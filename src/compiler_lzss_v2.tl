@@ -519,7 +519,9 @@
     (set! reader.count (+ reader.count 8))))
 
 ;; The next `n` bits (at most 48), zero-filled past the end of the stream.
-(define (compiler-lzss-peek [reader : (& reader CompilerLzssV2Reader)] [n : i64]) : i64
+(define (compiler-lzss-peek
+  [reader : (& reader CompilerLzssV2Reader)]
+  [n : i64]) : i64
   (if (>= reader.count n)
     (bit-and (shr reader.buf (- reader.count n)) (- (shl 1 n) 1))
     (bit-and (shl reader.buf (- n reader.count)) (- (shl 1 n) 1))))

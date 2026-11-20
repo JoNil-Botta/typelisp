@@ -39,7 +39,8 @@
   [images : (& images (__tl_dyn-array (__tl_dyn-array u8)))]
   [lengths : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (let
-    [source : String (compiler-embedded-stdlib-tlci-frames-stream-source images)]
+    [source : String
+      (compiler-embedded-stdlib-tlci-frames-stream-source images)]
     [model : lzss.CompilerLzssModel
       (lzss.compiler-lzss-model-from-lengths (clone lengths))]
     [counts : encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies
@@ -57,7 +58,6 @@
   [names : (& names (__tl_dyn-array String))]) : ResultCompilerEmbeddedStdlibTlciFramesBuild
   (let
     [count : i64 (array-length images)]
-    [main-symbols : i64 (lzss.compiler-lzss-main-symbols)]
     [frequencies : encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies
       (encoder.compiler-embedded-stdlib-tlci-encoder-frequencies)]
     [raw-total : i64 0]
@@ -80,7 +80,9 @@
       [source : String
         (compiler-embedded-stdlib-tlci-frames-stream-source images)]
       [tokens : (__tl_dyn-array lzss.CompilerLzssToken)
-        (lzss.compiler-lzss-tokenize (& source) (& lzss.compiler-lzss-fixed-model))]
+        (lzss.compiler-lzss-tokenize
+          (& source)
+          (& lzss.compiler-lzss-fixed-model))]
       (encoder.compiler-embedded-stdlib-tlci-encoder-count!
         (&mut frequencies)
         (& source)
@@ -97,19 +99,17 @@
         (compiler-embedded-stdlib-tlci-frames-refine images first-lengths)]
       [lengths
         (compiler-embedded-stdlib-tlci-frames-refine images refined-once)]
-      [spec
-        (encoder.compiler-embedded-stdlib-tlci-encoder-spec (& lengths))]
+      [spec (encoder.compiler-embedded-stdlib-tlci-encoder-spec (& lengths))]
       [model : lzss.CompilerLzssModel
         (lzss.compiler-lzss-model-from-lengths (clone lengths))]
       [record-bytes : i64
-          (frames.compiler-embedded-stdlib-tlci-frames-record-bytes)]
-        [directory : i64
-          (frames.compiler-embedded-stdlib-tlci-frames-directory)]
-        [index-end : i64 (+ (+ directory (* count record-bytes)) name-bytes)]
-        [name-cursor : i64 (+ directory (* count record-bytes))]
-        [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
-        [writer : lzss.CompilerLzssWriter (lzss.compiler-lzss-writer)]
-        [raw-offset : i64 0]
+        (frames.compiler-embedded-stdlib-tlci-frames-record-bytes)]
+      [directory : i64 (frames.compiler-embedded-stdlib-tlci-frames-directory)]
+      [index-end : i64 (+ (+ directory (* count record-bytes)) name-bytes)]
+      [name-cursor : i64 (+ directory (* count record-bytes))]
+      [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
+      [writer : lzss.CompilerLzssWriter (lzss.compiler-lzss-writer)]
+      [raw-offset : i64 0]
       (buf.byte-buf-builder-append-string
         (&mut out)
         (frames.compiler-embedded-stdlib-tlci-frames-prefix))
@@ -160,7 +160,10 @@
       (let
         [stream : String (lzss.compiler-lzss-finish-writer (&mut writer))]
         ;; The header records the stream length before the stream is appended.
-        (tlci.tlci-set-u64! (&mut out.slots) 68 (string.string-length (& stream)))
+        (tlci.tlci-set-u64!
+          (&mut out.slots)
+          68
+          (string.string-length (& stream)))
         (buf.byte-buf-builder-append-string (&mut out) stream))
       (let
         [bytes : (__tl_dyn-array u8) (buf.byte-buf-builder-to-array (& out))]
@@ -251,8 +254,9 @@
             (& images)
             (& sorted)))]
       [packed
-        (match
-          (compiler-embedded-stdlib-tlci-frames-encode (& images) (& sorted))
+        (match (compiler-embedded-stdlib-tlci-frames-encode
+          (& images)
+          (& sorted))
           [(Ok empty packed) packed]
           [(Err message) (return (Err message))])]
       (Ok ordinary packed))))

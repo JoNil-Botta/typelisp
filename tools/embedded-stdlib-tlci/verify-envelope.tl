@@ -1,5 +1,4 @@
 ;; Prove that the deployment envelope expands to the exact ordinary TLCI bytes.
-(import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_embedded_stdlib_tlci_frames as frames)
 (import stdlib.byte_buf)
 (import tlci_core as tlci)
@@ -37,10 +36,12 @@
               (if (= case 2)
                 (- catalog.count 1)
                 0))]
+          ;; Case 0 breaks the checksum word of the first frame; the other
+          ;; cases break the first byte of the shared token stream.
           [offset : i64
             (if (= case 0)
               (+ record 40)
-              (tlci.tlci-read-u64 envelope (+ record 16)))]
+              catalog.index-end)]
           (set!
             (array-ref changed offset)
             (cast (bit-xor (cast (array-ref changed offset) : i64) 128) : u8))

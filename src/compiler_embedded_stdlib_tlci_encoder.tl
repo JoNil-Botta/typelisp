@@ -4,7 +4,6 @@
 ;; symbol frequencies; the lengths below turn those into the envelope's stored
 ;; model, which compiler_lzss then uses to code the whole stream.
 (import stdlib.string)
-(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf_core as buf)
 (import compiler_lzss as lzss)
 (import compiler_abort as abort)
@@ -24,7 +23,8 @@
     (__tl_make-array i64 (lzss.compiler-lzss-length-symbols))
     (__tl_make-array
       i64
-      (* (lzss.compiler-lzss-length-buckets)
+      (*
+        (lzss.compiler-lzss-length-buckets)
         (lzss.compiler-lzss-distance-symbols)))))
 
 (define (compiler-embedded-stdlib-tlci-encoder-bump
@@ -35,14 +35,12 @@
 ;; Count the symbols of one frame's tokens, with the literal context of each
 ;; token read from the frame's own bytes.
 (define (compiler-embedded-stdlib-tlci-encoder-count!
-  [frequencies : (&mut frequencies CompilerEmbeddedStdlibTlciEncoderFrequencies)]
+  [frequencies
+    : (&mut frequencies CompilerEmbeddedStdlibTlciEncoderFrequencies)]
   [source : (& str)]
   [tokens : (& tokens (__tl_dyn-array lzss.CompilerLzssToken))]) : unit
   (let
     [main-base : i64 (lzss.compiler-lzss-main-symbols)]
-    [distance-base : i64
-      (* (lzss.compiler-lzss-length-buckets)
-        (lzss.compiler-lzss-distance-symbols))]
     [count : i64 (array-length tokens)]
     [index : i64 0]
     [position : i64 0]
@@ -64,7 +62,8 @@
           (compiler-embedded-stdlib-tlci-encoder-bump
             (&mut frequencies.length)
             (lzss.compiler-lzss-length-slot token.length))
-          (when (= token.symbol (lzss.compiler-lzss-match-new))
+          (when
+            (= token.symbol (lzss.compiler-lzss-match-new))
             (compiler-embedded-stdlib-tlci-encoder-bump
               (&mut frequencies.dist)
               (+
@@ -110,22 +109,22 @@
         [second : i64 -1]
         [cursor : i64 0]
         (while (< cursor next)
-          (when (array-ref alive cursor)
-            (if
-              (or
-                (= first -1)
-                (< (array-ref weight cursor) (array-ref weight first)))
+          (when
+            (array-ref alive cursor)
+            (if (or
+              (= first -1)
+              (< (array-ref weight cursor) (array-ref weight first)))
               (begin
                 (set! second first)
                 (set! first cursor))
-              (if
-                (or
-                  (= second -1)
-                  (< (array-ref weight cursor) (array-ref weight second)))
+              (if (or
+                (= second -1)
+                (< (array-ref weight cursor) (array-ref weight second)))
                 (set! second cursor)
                 unit)))
           (set! cursor (+ cursor 1)))
-        (set! (array-ref weight next)
+        (set!
+          (array-ref weight next)
           (+ (array-ref weight first) (array-ref weight second)))
         (set! (array-ref parent first) next)
         (set! (array-ref parent second) next)
@@ -151,7 +150,8 @@
       [total : i64 0]
       (set! index 0)
       (while (< index n)
-        (when (> (array-ref lengths index) max-bits)
+        (when
+          (> (array-ref lengths index) max-bits)
           (set! (array-ref lengths index) max-bits))
         (set! index (+ index 1)))
       (set! index 0)
@@ -168,22 +168,20 @@
                 (< (array-ref lengths cursor) max-bits)
                 (or
                   (= pick -1)
-                  (<
-                    (array-ref weight cursor)
-                    (array-ref weight pick))))
+                  (< (array-ref weight cursor) (array-ref weight pick))))
               (set! pick cursor))
             (set! cursor (+ cursor 1)))
-          (when (= pick -1)
+          (when
+            (= pick -1)
             (abort.compiler-abort
               "tl: embedded stdlib tlci encoder: cannot limit code lengths\n"))
-          (-= total
-            (shl 1 (- (- max-bits (array-ref lengths pick)) 1)))
-          (set! (array-ref lengths pick)
-            (+ (array-ref lengths pick) 1))))
+          (-= total (shl 1 (- (- max-bits (array-ref lengths pick)) 1)))
+          (set! (array-ref lengths pick) (+ (array-ref lengths pick) 1))))
       lengths)))
 
 (define (compiler-embedded-stdlib-tlci-encoder-lengths
-  [frequencies : (& frequencies CompilerEmbeddedStdlibTlciEncoderFrequencies)]) : (__tl_dyn-array i64)
+  [frequencies : (& frequencies CompilerEmbeddedStdlibTlciEncoderFrequencies)]) : (__tl_dyn-array
+    i64)
   (let
     [contexts : i64 (lzss.compiler-lzss-contexts)]
     [main-symbols : i64 (lzss.compiler-lzss-main-symbols)]
@@ -193,9 +191,7 @@
     [length-start : i64 (* contexts main-symbols)]
     [distance-start : i64 (+ length-start length-symbols)]
     [lengths : (__tl_dyn-array i64)
-      (__tl_make-array
-        i64
-        (+ distance-start (* buckets distance-symbols)))]
+      (__tl_make-array i64 (+ distance-start (* buckets distance-symbols)))]
     [context : i64 0]
     (while (< context contexts)
       (let

@@ -31,7 +31,6 @@
 (import (vector.vector String) as svec)
 (import compiler_embedded_stdlib as ces)
 (import compiler_lzss as lzss)
-(import compiler_ctfe as ctfe)
 (import stdlib.string)
 (import stdlib.string_utf8 as utf8)
 (import stdlib.str_cat_runtime as str_cat)

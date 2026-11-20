@@ -142,7 +142,12 @@ function finish_payload() {
 }
 # --- bit reader ---------------------------------------------------------------
 function next_bit(    b) {
-    if (bit_pos >= compressed_bytes * 8) fail("truncated bitstream")
+    if (bit_pos >= compressed_bytes * 8) {
+        # The frame may simply need the next byte; the caller restores its
+        # state and waits. A stream that really ends here fails in END.
+        truncated = 1
+        return 0
+    }
     b = int(body[int(bit_pos / 8)] / (2 ^ (7 - bit_pos % 8))) % 2
     bit_pos++
     return b
@@ -203,28 +208,57 @@ function context_of(position,    previous) {
 # Decode whole tokens while the stream holds more than any single token needs,
 # so a frame can be resumed as its bytes arrive. Returns 1 when the body is
 # complete, 0 when more bytes are needed, and fails on a broken stream.
-function decode_available(    symbol_, kind, slot, extra, match_len, distance, dslot, i) {
-    # One token needs at most 15 + 15 + 5 + 15 + 22 bits; below that the frame
-    # waits for more bytes instead of half-decoding one.
-    while (position < raw_len &&
-           (compressed_bytes * 8 - bit_pos >= 72 ||
-            (final_pass && compressed_bytes * 8 > bit_pos))) {
+function decode_available(    symbol_, kind, slot, extra, match_len, distance, dslot, i, saved) {
+    # Decode one token at a time from a checkpoint: a token that runs past the
+    # bytes received so far is undone and retried when the next byte arrives.
+    while (position < raw_len) {
+        saved_position = position
+        saved_bits = bit_pos
+        saved_rep0 = rep[0]; saved_rep1 = rep[1]
+        saved_rep2 = rep[2]; saved_rep3 = rep[3]
+        truncated = 0
         symbol_ = read_symbol(context_of(position))
+        if (truncated) {
+            position = saved_position
+            bit_pos = saved_bits
+            rep[0] = saved_rep0; rep[1] = saved_rep1
+            rep[2] = saved_rep2; rep[3] = saved_rep3
+            return 0
+        }
         if (symbol_ < 256) {
             out[position] = symbol_
             position++
             continue
         }
-        if (symbol_ > 260) fail("invalid match symbol")
+        if (symbol_ >= 262) fail("invalid match symbol")
         kind = symbol_ - 256
+        if (kind == 5) {
+            # A repeat-0 match of length one carries no length or distance.
+            distance = rep[0]
+            if (distance <= 0 || distance > position || distance > window)
+                fail("backreference before output")
+            out[position] = out[position - distance]
+            position++
+            continue
+        }
         slot = read_symbol(16)
         extra = take_bits(length_extra(slot))
+        if (truncated) {
+            position = saved_position
+            bit_pos = saved_bits
+            return 0
+        }
         match_len = length_base(slot) + extra
-        if (match_len < min_match || match_len > max_match) fail("invalid match match_len")
-        if (position + match_len > raw_len) fail("token exceeds raw match_len")
+        if (match_len < min_match || match_len > max_match) fail("invalid match length")
+        if (position + match_len > raw_len) fail("token exceeds raw length")
         if (kind == 0) {
             dslot = read_symbol(17 + length_bucket(match_len))
             distance = distance_base(dslot) + take_bits(distance_extra(dslot))
+            if (truncated) {
+                position = saved_position
+                bit_pos = saved_bits
+                return 0
+            }
         } else
             distance = rep[kind - 1]
         if (distance <= 0 || distance > position || distance > window)
@@ -266,7 +300,7 @@ function decode_available(    symbol_, kind, slot, extra, match_len, distance, d
             if (byte >= 48 && byte <= 57) {
                 digit = byte - 48
                 if (raw_len > int((binary_size * 2064 - digit) / 10))
-                    fail("impossible raw match_len")
+                    fail("impossible raw length")
                 raw_len = raw_len * 10 + digit
                 header_digits++
             } else if (byte == 0 && header_digits == 0) {
@@ -283,7 +317,7 @@ function decode_available(    symbol_, kind, slot, extra, match_len, distance, d
                 rep[0] = 1; rep[1] = 1; rep[2] = 1; rep[3] = 1
                 if (raw_len == 0) finish_payload()
                 else mode = "v3"
-            } else fail("malformed raw match_len")
+            } else fail("malformed raw length")
         } else if (mode == "v3") {
             body[compressed_bytes++] = byte
             if (compressed_bytes > binary_size - frame_start)

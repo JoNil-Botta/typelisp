@@ -517,9 +517,7 @@
             (match (ast.ty-node-get elem-id)
               [(U8) true]
               [_ false])
-            (string.eq
-              bytes
-              (lzss.compiler-lzss-encode (& want-source))))]
+            (string.eq bytes (lzss.compiler-lzss-encode (& want-source))))]
         [_ false])]
     [_ false]))
 

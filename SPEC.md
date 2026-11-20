@@ -4022,17 +4022,24 @@ definition before typechecking, lowering, and codegen.
 
 The compiler-owned `(include-str-lzss name "path")` form is the compressed
 runtime-static sibling of `include-str` and `include-bin`. It uses the same
-explicit input and path-resolution rules, deterministically LZSS-compresses
+explicit input and path-resolution rules, deterministically LZ77-compresses
 the file's bytes at the loader boundary, and defines an opaque static
 `name : (__tl_dyn-array u8)`. The bounded binary-data payload starts with the
-compiler-owned `__typelisp_embedded_stdlib_lzss_v2__` marker, the decimal
-uncompressed byte length and a newline, followed by the token stream coded
-under one fixed canonical Huffman model (a literal-or-match symbol, then for a
-match a distance bucket with extra bits and a length symbol), most significant
-bit first and zero-padded to a byte. The model's code lengths are part of the
-compiler, so a payload carries no tables. The decoder also accepts the earlier
-`__typelisp_embedded_stdlib_lzss_v1__` envelope, whose token stream is uncoded,
-so a payload built by an older compiler stays readable.
+compiler-owned `__typelisp_embedded_stdlib_tlss_v3__` marker, the decimal
+uncompressed byte length and a newline, followed by one token stream, most
+significant bit first and zero-padded to a byte. A token is a symbol of the
+literal-context model for the current output position: byte values are
+literals, and four further symbols start a match with a new distance or with
+repeat distance 0..3, or a repeat-0 match of length one; a match carries a
+length symbol and its extra bits, plus a distance bucket and its extra bits for
+a new distance. The model is 16 literal contexts (a fixed eight-way class of
+the previous output byte times the low bit of the output position), one length
+ladder and four distance ladders, each Canonical Huffman code limited to 15
+bits. The code lengths are part of the compiler, so a payload carries no
+tables, and the trained model only affects the ratio: any input stays
+decodable. A compiler built by a previous release carries the earlier v1/v2
+envelopes, so the decoder also reads those until that release is superseded;
+this compiler only writes v3.
 
 - A `path` that does not end in `.tl` is compressed exactly. Like
   `include-bin`, and unlike `include-str`, the input is never decoded or
@@ -4052,10 +4059,16 @@ so a payload built by an older compiler stays readable.
 This form exists for compiler-owned payload tables: the compiler embeds its
 stdlib source table through it. The embedded stdlib therefore carries no
 inline tests; those compile only under `--cfg test` from the repository
-sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is embedded with `include-bin`
-instead, as a compiler-owned TLCH envelope that carries the image's LZSS token
-stream in canonical Huffman form and is expanded back to the exact `.tlci`
-bytes on demand.
+sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is
+embedded with `include-bin` instead, as a compiler-owned catalog envelope
+(`__typelisp_embedded_stdlib_tlci_v3__`): a header with the total raw length,
+index end, frame count, index hash and stream length; one stored model in the
+same code-lengths form as the fixed model; an index of 48-byte frame records
+with names; and one token stream that expands to every frame's `.tlci` bytes
+back to back. The stream is one window, so a match may reach into the frames
+before it, and the whole image is expanded once per process and then sliced by
+frame; `inspect embedded:stdlib.tlci` re-aggregates those frames into the
+canonical `.tlci` image.
 
 #### 4.4.8 `(include-str-comptime name "path")` - compile-time text input
 

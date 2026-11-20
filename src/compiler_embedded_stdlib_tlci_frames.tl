@@ -235,7 +235,8 @@
         (unless
           (= (tlci.tlci-read-u64 (& bytes) 48) expected)
           (return
-            (Err "embedded stdlib tlci frames: frame checksum identity mismatch")))
+            (Err
+              "embedded stdlib tlci frames: frame checksum identity mismatch")))
         (set! (array-ref images index) bytes)))
     (Ok images)))
 
@@ -247,7 +248,11 @@
       (try (compiler-embedded-stdlib-tlci-frames-parse payload raw-limit))]
     [model (try (codec.compiler-embedded-stdlib-tlci-codec-model payload))]
     [images
-      (try (compiler-embedded-stdlib-tlci-frames-decode-images payload catalog (& model)))]
+      (try
+        (compiler-embedded-stdlib-tlci-frames-decode-images
+          payload
+          catalog
+          (& model)))]
     [names : (__tl_dyn-array String)
       (__tl_make-array String (- catalog.count 1))]
     (for [index (iterator.range 0 (- catalog.count 1))]

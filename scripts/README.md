@@ -153,8 +153,8 @@ license, so local users should review that license before running the fetcher.
 
 ## Core development loop
 
-`analyze-stage0-size.sh BINARY` decodes v1 and fixed-Huffman v2 LZSS frames
-directly from the linked binary. It requires exact equality with the source
+`analyze-stage0-size.sh BINARY` decodes the version-3 payload frames directly
+from the linked binary. It requires exact equality with the source
 declarations: the embedded-stdlib manifests plus all top-level
 `include-str-lzss` declarations in the production `src/*.tl` modules. The
 inventory is conservative: a declaration in an unlinked module fails the
@@ -164,15 +164,16 @@ fail explicitly. `--compiler-sources "file ..."`
 can specify a known source set for a different compiler, together with
 `--embedded-stdlib "file ..."`. The report lists declaration categories and
 input paths; its aggregate LZSS byte totals include every counted stream,
-including the executable-template catalog. TLCH/TLCI accounting and the
+including the executable-template catalog. Catalog-envelope accounting and the
 existing stdlib file buckets remain separate.
 
 Use the source checkout that built the binary. An older binary with a
 different declaration set (such as the 8d29 seed, whose catalog was not
 compressed) fails with an explicit expected/found count diagnostic against
-current sources. V1 framing remains supported when its declaration inventory
-matches. `verify-stage0-lzss-scanner.sh` covers both formats, malformed and
-truncated frames, and declaration/count/path failures. The required size gate
+current sources. A binary built by an older compiler carries the earlier
+framing, and the analyzer rejects it with the same expected/found diagnostic. `verify-stage0-lzss-scanner.sh` derives its fixtures from the compiler it
+runs, and covers malformed and truncated frames, catalog envelopes, and
+declaration/count/path failures. The required size gate
 runs these fixtures and the analyzer on the already bootstrapped compiler on
 Linux and Windows, without building another compiler. Payload/publication
 changes also trigger the Bootstrap Stage0 build, smoke and fixpoint jobs on

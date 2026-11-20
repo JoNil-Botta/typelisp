@@ -1,9 +1,7 @@
 ;; Payload codec coverage: the fixed model, the coding ladders, byte-exact
 ;; round trips and the rejection of malformed or truncated frames.
-(import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.byte_buf_core)
-(import stdlib.str_cat_runtime as str_cat)
 (import compiler_lzss as lzss)
 
 ;; Every table of the fixed model is a complete prefix code: each symbol has a
@@ -24,9 +22,7 @@
         (cond
           [(<= length 0) (set! ok false)]
           [(> length (lzss.compiler-lzss-max-code-bits)) (set! ok false)]
-          [else
-            (+= sum
-              (shl 1 (- (lzss.compiler-lzss-max-code-bits) length)))]))
+          [else (+= sum (shl 1 (- (lzss.compiler-lzss-max-code-bits) length)))]))
       (set! index (+ index 1)))
     (and ok (<= sum limit))))
 
@@ -37,11 +33,9 @@
     [contexts : i64 (lzss.compiler-lzss-contexts)]
     [main-symbols : i64 (lzss.compiler-lzss-main-symbols)]
     [length-start : i64 (* contexts main-symbols)]
-    [distance-start : i64
-      (+ length-start (lzss.compiler-lzss-length-symbols))]
+    [distance-start : i64 (+ length-start (lzss.compiler-lzss-length-symbols))]
     [context : i64 0]
-    [ok : bool
-      (= (array-length lengths) (lzss.compiler-lzss-model-spec-bytes))]
+    [ok : bool (= (array-length lengths) (lzss.compiler-lzss-model-spec-bytes))]
     (while (and ok (< context contexts))
       (unless
         (compiler-lzss-test-kraft-ok?
@@ -50,7 +44,8 @@
           main-symbols)
         (set! ok false))
       (set! context (+ context 1)))
-    (when ok
+    (when
+      ok
       (unless
         (compiler-lzss-test-kraft-ok?
           (& lengths)
@@ -62,8 +57,7 @@
       (unless
         (compiler-lzss-test-kraft-ok?
           (& lengths)
-          (+ distance-start
-            (* context (lzss.compiler-lzss-distance-symbols)))
+          (+ distance-start (* context (lzss.compiler-lzss-distance-symbols)))
           (lzss.compiler-lzss-distance-symbols))
         (set! ok false))
       (set! context (+ context 1)))
@@ -111,7 +105,8 @@
     ok))
 
 ;; --- frame fixtures ---------------------------------------------------------
-(define (compiler-lzss-test-bytes-of [text : (& text str)]) : (__tl_dyn-array u8)
+(define (compiler-lzss-test-bytes-of [text : (& text str)]) : (__tl_dyn-array
+    u8)
   (let
     [n : i64 (string.string-length text)]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
@@ -231,15 +226,15 @@
     [text : String (string.int->string raw)]
     [digits : i64 (string.string-length (& text))]
     [end : i64 prefix-len]
-    (while
-      (and
-        (< end (array-length packed))
-        (>= (cast (array-ref packed end) : i64) 48)
-        (<= (cast (array-ref packed end) : i64) 57))
+    (while (and
+      (< end (array-length packed))
+      (>= (cast (array-ref packed end) : i64) 48)
+      (<= (cast (array-ref packed end) : i64) 57))
       (set! end (+ end 1)))
     (let
       [tail : i64 (- (array-length packed) end)]
-      [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ prefix-len digits tail))]
+      [out : (__tl_dyn-array u8)
+        (__tl_make-array u8 (+ prefix-len digits tail))]
       [index : i64 0]
       (while (< index prefix-len)
         (set! (array-ref out index) (array-ref packed index))
@@ -303,7 +298,8 @@
       [(not
           (let
             [payload : String (lzss.compiler-lzss-encode (& repeat))]
-            [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+            [packed : (__tl_dyn-array u8)
+              (compiler-lzss-test-bytes-of (& payload))]
             (compiler-lzss-test-rejects? packed 8)))
         15]
       [else 0])))

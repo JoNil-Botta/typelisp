@@ -12,8 +12,6 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
 (import stdlib.arena)
-(import stdlib.byte_buf_core)
-(import compiler_lzss as lzss)
 (import compiler_ast_types as ast)
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import compiler_builtin_ids as cbi)

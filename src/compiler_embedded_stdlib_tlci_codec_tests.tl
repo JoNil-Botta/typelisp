@@ -33,8 +33,7 @@
   [source : (& source (__tl_dyn-array u8))]
   [model : (& model lzss.CompilerLzssModel)]) : String
   (let
-    [text : String
-      (tlci.tlci-bytes->string source 0 (array-length source))]
+    [text : String (tlci.tlci-bytes->string source 0 (array-length source))]
     [tokens : (__tl_dyn-array lzss.CompilerLzssToken)
       (lzss.compiler-lzss-tokenize (& text) model)]
     [writer : lzss.CompilerLzssWriter (lzss.compiler-lzss-writer)]
@@ -49,7 +48,8 @@
     [raw : i64 (array-length source)]
     [directory : i64 (codec.compiler-embedded-stdlib-tlci-codec-directory)]
     [record : i64 directory]
-    [index-end : i64 (+ record (codec.compiler-embedded-stdlib-tlci-codec-record-bytes))]
+    [index-end : i64
+      (+ record (codec.compiler-embedded-stdlib-tlci-codec-record-bytes))]
     [stream : String (tlci-codec-test-encode-stream source model)]
     [stream-bytes : i64 (string.string-length (& stream))]
     [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
@@ -61,7 +61,9 @@
     (tlci.tlci-push-u64! (&mut out) 1)
     (tlci.tlci-push-u64! (&mut out) 0)
     (tlci.tlci-push-u64! (&mut out) stream-bytes)
-    (buf.byte-buf-builder-append-string (&mut out) (string.copy (& lzss.compiler-lzss-fixed-spec)))
+    (buf.byte-buf-builder-append-string
+      (&mut out)
+      (string.copy (& lzss.compiler-lzss-fixed-spec)))
     ;; The single record: no name, the whole stream as frame zero.
     (tlci.tlci-push-u64! (&mut out) index-end)
     (tlci.tlci-push-u64! (&mut out) 0)
@@ -116,9 +118,7 @@
       (set! (array-ref cut index) (array-ref payload index)))
     ;; The index survives a truncated stream, so parse succeeds and the
     ;; expansion must fail.
-    (match (frames.compiler-embedded-stdlib-tlci-frames-parse
-      (& cut)
-      268435456)
+    (match (frames.compiler-embedded-stdlib-tlci-frames-parse (& cut) 268435456)
       [(Err _) true]
       [(Ok catalog)
         (match (frames.compiler-embedded-stdlib-tlci-frames-decode-images
@@ -153,9 +153,9 @@
         (& payload)
         (codec.compiler-embedded-stdlib-tlci-codec-prefix))
       (return 1))
-    (unless (and (= catalog.count 1) (= (array-length images) 1))
-      (return 2))
-    (unless (= (array-length (array-ref images 0)) (array-length source))
+    (unless (and (= catalog.count 1) (= (array-length images) 1)) (return 2))
+    (unless
+      (= (array-length (array-ref images 0)) (array-length source))
       (return 3))
     ;; The decoded frame must be the source byte for byte.
     (for [index (iterator.range 0 (array-length source))]

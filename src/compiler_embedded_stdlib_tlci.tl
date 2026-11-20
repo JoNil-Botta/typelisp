@@ -193,14 +193,6 @@
 (define compiler-embedded-stdlib-tlci-model : (__tl_dyn-array
     lzss.CompilerLzssModel)
   (__tl_make-array lzss.CompilerLzssModel 1))
-
-;; Group handles, filled on first use and dropped when the asking compile
-;; ends: the decoded bytes belong to that compile's arena, never to this module.
-(define compiler-embedded-stdlib-tlci-groups-cache : (__tl_dyn-array
-    (__tl_dyn-array u8))
-  (__tl_make-array (__tl_dyn-array u8) 0))
-(define compiler-embedded-stdlib-tlci-groups-ready : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
 (define compiler-embedded-stdlib-tlci-active : (__tl_dyn-array i64)
   (__tl_make-array i64 0))
 (define compiler-embedded-stdlib-tlci-active-count : i64
@@ -259,67 +251,33 @@
         (set! compiler-embedded-stdlib-tlci-table-owner owner)
         true))))
 
-;; Native macro images are read one group at a time: a request expands only the
-;; group its frame belongs to, and the handles last until the compile (or the
-;; owner) that asked for them ends, so the catalog never stays resident.
-(define (compiler-embedded-stdlib-tlci-groups-ensure!) : bool
-  (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
-    false
-    (if (> (array-length compiler-embedded-stdlib-tlci-groups-ready) 0)
-      true
-      (let
-        [catalog : frames.CompilerEmbeddedStdlibTlciFrames
-          (array-ref compiler-embedded-stdlib-tlci-frames 0)]
-        (set!
-          compiler-embedded-stdlib-tlci-groups-ready
-          (__tl_make-array i64 catalog.groups))
-        (set!
-          compiler-embedded-stdlib-tlci-groups-cache
-          (__tl_make-array (__tl_dyn-array u8) catalog.groups))
-        true))))
-
-;; One group's expanded bytes, decoded on first use.
+;; Native macro images are read one group at a time: a request expands the
+;; group its frame belongs to, and the bytes belong to the asking compile's
+;; arena, so this module never keeps the catalog resident.
 (define (compiler-embedded-stdlib-tlci-group-bytes [group : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
   (when
-    (not (compiler-embedded-stdlib-tlci-groups-ensure!))
+    (not (compiler-embedded-stdlib-tlci-frames-ensure!))
     (return (Err "embedded stdlib tlci: catalog unavailable")))
-  (when
-    (or
-      (< group 0)
-      (>= group (array-length compiler-embedded-stdlib-tlci-groups-ready)))
-    (return (Err "embedded stdlib tlci: invalid group")))
-  (if (= (array-ref compiler-embedded-stdlib-tlci-groups-ready group) 1)
-    (Ok (clone (array-ref compiler-embedded-stdlib-tlci-groups-cache group)))
-    (let
-      [catalog : frames.CompilerEmbeddedStdlibTlciFrames
-        (array-ref compiler-embedded-stdlib-tlci-frames 0)]
-      [bytes : (__tl_dyn-array u8)
-        (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group
-          (& payload.embedded-stdlib-tlci-bytes)
-          catalog
-          group
-          (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
-          [(Ok bytes) bytes]
-          [(Err message) (return (Err message))])]
-      [shared : (__tl_dyn-array u8) (clone bytes)]
-      (set! (array-ref compiler-embedded-stdlib-tlci-groups-cache group) shared)
-      (set! (array-ref compiler-embedded-stdlib-tlci-groups-ready group) 1)
-      (Ok bytes))))
+  (let
+    [catalog : frames.CompilerEmbeddedStdlibTlciFrames
+      (array-ref compiler-embedded-stdlib-tlci-frames 0)]
+    (when
+      (or (< group 0) (>= group catalog.groups))
+      (return (Err "embedded stdlib tlci: invalid group")))
+    (frames.compiler-embedded-stdlib-tlci-frames-decode-group
+      (& payload.embedded-stdlib-tlci-bytes)
+      catalog
+      group
+      (& (array-ref compiler-embedded-stdlib-tlci-model 0)))))
 
 ;; Frame `index`, expanded from its group and checked against the record's
 ;; checksum word.
 (define (compiler-embedded-stdlib-tlci-decode-frame [index : i64]) : (__tl_dyn-array
     u8)
   (when
-    (or
-      (< index 0)
-      (>= index (array-length compiler-embedded-stdlib-tlci-groups-ready)))
-    (when
-      (not (compiler-embedded-stdlib-tlci-groups-ensure!))
-      (return (__tl_make-array u8 0))))
-  (when
-    (>= index (array-length compiler-embedded-stdlib-tlci-groups-ready))
+    (not (compiler-embedded-stdlib-tlci-frames-ensure!))
     (return (__tl_make-array u8 0)))
+  (when (< index 0) (return (__tl_make-array u8 0)))
   (let
     [catalog : frames.CompilerEmbeddedStdlibTlciFrames
       (array-ref compiler-embedded-stdlib-tlci-frames 0)]
@@ -359,7 +317,7 @@
 (define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
   (if (or
     (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
-    (not (compiler-embedded-stdlib-tlci-groups-ensure!)))
+    (not (compiler-embedded-stdlib-tlci-frames-ensure!)))
     (__tl_make-array u8 0)
     (let
       [catalog : frames.CompilerEmbeddedStdlibTlciFrames
@@ -435,12 +393,6 @@
 
 ;; Called before `owner` is destroyed.
 (define (compiler-embedded-stdlib-tlci-forget-decoded! [owner : i64]) : unit
-  ;; Group handles point into the caller's compile arena, so they are dropped
-  ;; here, at the same boundary that releases the retained surface.
-  (set! compiler-embedded-stdlib-tlci-groups-ready (__tl_make-array i64 0))
-  (set!
-    compiler-embedded-stdlib-tlci-groups-cache
-    (__tl_make-array (__tl_dyn-array u8) 0))
   (if (and (> owner 0) (= compiler-embedded-stdlib-tlci-decoded-owner owner))
     (set! compiler-embedded-stdlib-tlci-decoded-owner 0)
     unit))

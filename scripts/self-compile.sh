@@ -496,8 +496,8 @@ sc_cmd_fallback() {
             _scf_status=1
     fi
     if [ "$_scf_status" -eq 0 ]; then
-        env -u TYPELISP_CI_TIMING TYPELISP_BIN="$_scf_seed" \
-            sh scripts/ci-verify.sh --gates bootstrap-fixpoint || _scf_status=1
+        env -u TYPELISP_CI_TIMING TYPELISP_BIN="$_scf_seed" sh scripts/ci-verify.sh --gates bootstrap-fixpoint ||
+            _scf_status=1
     fi
     # Overlay the head's harness after the base's own bootstrap, so the base
     # compiler is built entirely by the base's scripts.

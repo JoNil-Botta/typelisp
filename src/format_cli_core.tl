@@ -144,7 +144,14 @@
 ;; scratch state after each file so multi-file formatter invocations do not grow
 ;; the process-lifetime arena with the size of the whole corpus.
 (define (fmt-format-file-scoped [check : bool] [path : String]) : i64
-  (with-arena file-arena (fmt-format-file check path)))
+  (with-arena
+    file-arena
+    ;; The indirect-call union reaches optimizer globals only in some linked
+    ;; programs (the Windows target links a different set), and the formatter
+    ;; stores nothing into globals.
+    ;; lint-allow: unused-unsafe
+    (unsafe
+      (fmt-format-file check path))))
 
 (define (fmt-files-from [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
   (for [index (iterator.range 0 (fmt_svec.len (& paths)))]

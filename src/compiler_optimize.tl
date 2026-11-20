@@ -21210,6 +21210,13 @@
 (define opt-function-addr-taken : OptFunctionAddrTaken
   (OptFunctionAddrTaken (__tl_make-array bool 0) (opt_dense_i64_vec.new)))
 
+;; The address-taken marks a stage passes `opt-instr-effect` when it has not
+;; installed the set for its own function: they mark nothing, so the stage
+;; keeps the IR's form-only effect classes. Reading `opt-function-addr-taken`
+;; there would read another function's set, from storage already reclaimed.
+(define opt-addr-taken-none : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
+
 ;; One walk of the function: each `addr_of` source is marked and listed once.
 ;; The mark array is allocated at the first `addr_of`, so a function with none
 ;; allocates nothing and never scans its frame.
@@ -21284,7 +21291,7 @@
     [(slice) unit]
     [_ (opt-function-addr-taken-install! frame blocks)]))
 
-;; The address-taken refinement of `ir.compiler-ir-instr-effect`, which calls
+;; The address-taken refinement of `compiler-ir-instr-effect`, which calls
 ;; both of these forms `Pure`. An operand naming an address-taken var reads its
 ;; storage, as a `Global` operand reads its cell; a def of one writes that
 ;; storage, as a store through its address would.
@@ -21295,12 +21302,46 @@
       [(Var id) (opt-addr-taken-var? (& opt-function-addr-taken.marks) id)]
       [_ false])))
 
-(define (opt-addr-taken-write? [instr : (& instr ir.CompilerIrInstr)]) : bool
+(define (opt-addr-taken-def?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
   (and
-    (> (array-length opt-function-addr-taken.marks) 0)
+    (> (array-length marks) 0)
     (match (opt-instr-def-var instr)
-      [(Some dst) (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
+      [(Some dst) (opt-addr-taken-var? marks dst)]
       [(None) false])))
+
+(define (opt-addr-taken-write? [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (opt-addr-taken-def? (& opt-function-addr-taken.marks) instr))
+
+;; The effect of `instr` in a function whose address-taken vars `marks` marks:
+;; the function's installed `opt-function-addr-taken.marks`, or
+;; `opt-addr-taken-none` in a stage that installed none.
+;; `compiler-ir-instr-effect` classifies an instruction by its form alone, so it
+;; calls a def of a local `Pure`; an address-taken local lives in memory, so a
+;; def of one is a store to that memory (#8514, #8785). Every effect query in this file goes through here;
+;; `opt-instr-effect-sole-classifier` rejects any other caller.
+(define (opt-instr-effect
+  [marks : (& marks (__tl_dyn-array bool))]
+  [instr : (& instr ir.CompilerIrInstr)]) : ir.CompilerIrEffect
+  (let
+    [effect : ir.CompilerIrEffect (ir.compiler-ir-instr-effect instr)]
+    (if (= (array-length marks) 0)
+      effect
+      (opt-addr-taken-effect marks instr effect))))
+
+;; A def of an address-taken var writes its storage, whatever else the form
+;; does with memory.
+(define (opt-addr-taken-effect
+  [marks : (& marks (__tl_dyn-array bool))]
+  [instr : (& instr ir.CompilerIrInstr)]
+  [effect : ir.CompilerIrEffect]) : ir.CompilerIrEffect
+  (match effect
+    [(or (Pure) (MemoryRead))
+      (if (opt-addr-taken-def? marks instr)
+        (ir.CompilerIrEffect.MemoryWrite)
+        effect)]
+    [_ effect]))
 
 ;; The value-fact and loop transforms' address-taken gate (#9420). Div/rem
 ;; safety, global multiply-to-shift and pure-call dedupe gate each rewrite and
@@ -23629,10 +23670,11 @@
             (opt-licm-store-state-add-cell-writes
               provenance
               (opt-global-mod-ref-effect-mask
-                (ir.compiler-ir-instr-effect instr)))
-            (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr)))
+                (opt-instr-effect (& opt-addr-taken-none) instr)))
+            (opt-global-mod-ref-effect-mask
+              (opt-instr-effect (& opt-addr-taken-none) instr)))
           (opt-licm-store-summary-from-effect
-            (ir.compiler-ir-instr-effect instr)))])))
+            (opt-instr-effect (& opt-addr-taken-none) instr)))])))
 
 (define (opt-licm-store-state-instr-seq-from
   [type-segment-bases : i64]
@@ -50662,9 +50704,18 @@
   (opt-blocks-fold
     blocks
     (owned_view.compiler-owned-reference-shared-view acc)
-    opt-gvn-sources-instr))
+    opt-gvn-sources-instr
+    true))
 
+;; `addr-taken?`: whether an `addr_of` source counts as two sources. A store
+;; through its address changes it with no instruction naming it, so an
+;; address-taken var never holds one value (#8785). Call-memory roots count
+;; defs only. That is not exact: a pointer held in an address-taken local can
+;; be replaced through its address, so the root it names may change. It is
+;; conservative today only because callers treat every parameter as possibly
+;; aliasing any other.
 (define (opt-gvn-sources-instr
+  [addr-taken? : bool]
   [acc : OptValueSources]
   [instr : ir.CompilerIrInstr]) : OptValueSources
   (let
@@ -50674,6 +50725,12 @@
       (opt-gvn-record-candidate? (& instr))
       (set! out (opt-gvn-defs-add out (- 0 1))))
     (when (!= dst (- 0 1)) (set! out (opt-gvn-defs-add out dst)))
+    (when
+      addr-taken?
+      (match (& instr)
+        [(AddrOf _ src _)
+          (set! out (opt-gvn-defs-add (opt-gvn-defs-add out src) src))]
+        [_ unit]))
     out))
 
 ;; Candidate count shares the map's -1 no-destination sentinel. Var ids are
@@ -51177,6 +51234,8 @@
   [frame : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : OptLoadGvnResult
   (let
+    ;; The load walk's effect queries read the set (`opt-instr-effect`).
+    [_addr-taken : unit (opt-function-addr-taken-install! frame blocks)]
     [sources : OptValueSources
       (opt-gvn-sources-blocks
         blocks
@@ -57945,7 +58004,7 @@
       (opt-flag-facts-rewrite-blocks
         (&mut context.index)
         context.doms
-        (& (opt-bounds-dom-sources params frame blocks))
+        (& (opt-bounds-dom-sources params blocks))
         (owned_view.compiler-owned-reference-shared-view blocks))]
     (opt-bounds-dom-blocks-with-context-result-core
       type-segment-bases
@@ -57956,26 +58015,16 @@
       len-eq
       (& flagged))))
 
-;; The value sources every bounds_dom rule reads. Each address-taken var gets
-;; two more, so its count is never the single source `opt-gvn-stable-var?`
-;; accepts, even when no instruction defines it (#8672).
+;; The value sources every bounds_dom rule reads. `opt-gvn-sources-blocks`
+;; counts each `addr_of` source twice, so an address-taken var's count is never
+;; the single source `opt-gvn-stable-var?` accepts, even when no instruction
+;; defines it (#8672).
 (define (opt-bounds-dom-sources
   [params : (& ir.CompilerIrParamSeq)]
-  [frame : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : OptValueSources
-  (let
-    [marks : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
-    [sources : OptValueSources
-      (opt-gvn-sources-blocks
-        blocks
-        (& (opt-gvn-sources-params params (opt-value-sources-new))))]
-    [var : i64 0]
-    (while (< var (array-length marks))
-      (when
-        (array-ref marks var)
-        (set! sources (opt-gvn-defs-add (opt-gvn-defs-add sources var) var)))
-      (set! var (+ var 1)))
-    sources))
+  (opt-gvn-sources-blocks
+    blocks
+    (& (opt-gvn-sources-params params (opt-value-sources-new)))))
 
 (define (opt-bounds-dom-blocks-with-context-result-core
   [type-segment-bases : i64]
@@ -57986,7 +58035,7 @@
   [len-eq : (& OptLenEqUse)]
   [blocks : (& ir.CompilerIrBlockList)]) : OptBoundsDomResult
   (let
-    [sources : OptValueSources (opt-bounds-dom-sources params frame blocks)]
+    [sources : OptValueSources (opt-bounds-dom-sources params blocks)]
     [copies : opt_i64_i64_map.Map
       (opt-bounds-dom-copies-add-blocks
         sources
@@ -80364,7 +80413,8 @@
 
 (define (opt-bce-mb-pair-barrier? [instr : (& ir.CompilerIrInstr)]) : bool
   (or
-    (ir.compiler-ir-effect-has-side-effect? (ir.compiler-ir-instr-effect instr))
+    (ir.compiler-ir-effect-has-side-effect?
+      (opt-instr-effect (& opt-addr-taken-none) instr))
     ;; SafeDiv/SafeMod and checked scalar shifts can abort even though their
     ;; value-producing effect class is Pure.
     (match instr
@@ -90893,6 +90943,15 @@
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
         [cond-var : i64 (opt-cmp-dup-branch-cond instr)]
+        ;; A store through an `addr_of` address redefines its source with no
+        ;; instruction naming it, so an address-taken var is never a single
+        ;; definition a copy may re-read (#8785).
+        (match (& instr)
+          [(AddrOf _ src _)
+            (when
+              (and (>= src 0) (< src frame))
+              (set! (array-ref defs src) (+ (array-ref defs src) 2)))]
+          [_ unit])
         (match (opt-instr-def-var (& instr))
           [(Some dst)
             (when
@@ -93816,7 +93875,9 @@
       [(or (Call _ name _ _) (TailCall name _ _))
         (opt-global-mod-ref-call-mask mod-ref name)]
       [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
-      [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))])))
+      [_
+        (opt-global-mod-ref-effect-mask
+          (opt-instr-effect (& opt-addr-taken-none) instr))])))
 
 ;; The global STORAGE one instruction may write (IAG-2's row).
 (define (opt-guard-sink-instr-obj-mask
@@ -93833,7 +93894,7 @@
           (opt-global-mod-ref-cell-bit obj.index name)
           (opt-global-mod-ref-any))]
       [_
-        (match (ir.compiler-ir-instr-effect instr)
+        (match (opt-instr-effect (& opt-addr-taken-none) instr)
           [(or (Pure) (MemoryRead) (ControlFlow)) 0]
           [_ (opt-global-mod-ref-any)])])))
 
@@ -93842,7 +93903,7 @@
   (match instr
     [(or (TailCall _ _ _) (TailCallIndirect _ _ _)) true]
     [_
-      (match (ir.compiler-ir-instr-effect instr)
+      (match (opt-instr-effect (& opt-addr-taken-none) instr)
         [(or (Pure) (MemoryRead) (ControlFlow)) false]
         [_ true])]))
 
@@ -96219,7 +96280,7 @@
                 (opt-ctor-fwd-ranges-disjoint? offset width dest-off dest-size)))]
           [_ false])]
       [_
-        (match (ir.compiler-ir-instr-effect (& instr))
+        (match (opt-instr-effect (& opt-addr-taken-none) (& instr))
           [(Pure) true]
           [_ false])])))
 
@@ -97564,7 +97625,7 @@
       [(ir.CompilerIrInstr.CallIndirect _ _ args _)
         (opt-slot-fwd-call-args-underived? derived args)]
       [_
-        (match (ir.compiler-ir-instr-effect instr)
+        (match (opt-instr-effect (& opt-addr-taken-none) instr)
           [(ir.CompilerIrEffect.Pure) true]
           [_ false])])))
 
@@ -118791,9 +118852,11 @@
 (define (opt-call-memory-sources
   [params : (& ir.CompilerIrParamSeq)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : OptValueSources
-  (opt-gvn-sources-blocks
+  (opt-blocks-fold
     blocks
-    (& (opt-gvn-sources-params params (opt-value-sources-new)))))
+    (opt-gvn-sources-params params (opt-value-sources-new))
+    opt-gvn-sources-instr
+    false))
 
 (define (opt-call-memory-roots-with-sources
   [type-segment-bases : i64]
@@ -119138,7 +119201,7 @@
         (& args))]
     [(Alloc _ _) summary]
     [_
-      (match (ir.compiler-ir-instr-effect (& instr))
+      (match (opt-instr-effect (& opt-addr-taken-none) (& instr))
         [(or (Pure) (MemoryRead) (ControlFlow)) summary]
         [_ (opt-call-memory-summary-add-unknown summary)])]))
 
@@ -121910,7 +121973,8 @@
       ;; here.
       [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
       [_
-        (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect (& instr)))])))
+        (opt-global-mod-ref-effect-mask
+          (opt-instr-effect (& opt-addr-taken-none) (& instr)))])))
 
 ;; Every function's row: its own writes, closed over its direct calls.
 (define (opt-global-mod-ref-writes
@@ -122649,7 +122713,9 @@
         0
         (opt-external-call-write-mask name))]
     [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
-    [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
+    [_
+      (opt-global-mod-ref-effect-mask
+        (opt-instr-effect (& opt-addr-taken-none) instr))]))
 
 (define (opt-global-obj-own-instr!
   [program : (& program OptProgramIndex)]
@@ -127337,7 +127403,7 @@
                 cell.mod-ref.index
                 (opt-global-mod-ref-call-mask (& cell.mod-ref) target)
                 name)))]
-        [_ (opt-alias-instr-clears-all? instr)])]
+        [_ (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)])]
     [_ true]))
 
 (define (opt-global-snapshot-filter
@@ -127586,7 +127652,7 @@
         (Function name params ret-ty frame blocks function-abi)
         (let
           [sources : OptValueSources
-            (opt-bounds-dom-sources (& params) frame (& blocks))]
+            (opt-bounds-dom-sources (& params) (& blocks))]
           [uses : (__tl_dyn-array i64)
             (opt-collect-blocks-uses-array frame (& blocks))]
           [gep-uses : (__tl_dyn-array i64) (opt-used-array-new frame)]
@@ -128750,14 +128816,16 @@
 ;; call family is listed explicitly because a tail call carries a control-flow
 ;; IR effect yet still mutates memory; `Alloc` is excluded because it binds a
 ;; unique root instead of clearing.
-(define (opt-alias-instr-clears-all? [instr : (& ir.CompilerIrInstr)]) : bool
+(define (opt-alias-instr-clears-all?
+  [marks : (& marks (__tl_dyn-array bool))]
+  [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(Alloc _ _) false]
     [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
          (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
          (TailCall _ _ _) (TailCallIndirect _ _ _))
       true]
-    [_ (opt-alias-effect-clears-facts? (ir.compiler-ir-instr-effect instr))]))
+    [_ (opt-alias-effect-clears-facts? (opt-instr-effect marks instr))]))
 
 (define (opt-alias-update-gep
   [facts : (& OptAliasFacts)]
@@ -128845,7 +128913,7 @@
 (define (opt-alias-update-facts
   [facts : (& OptAliasFacts)]
   [instr : (& ir.CompilerIrInstr)]) : OptAliasFacts
-  (if (opt-alias-instr-clears-all? instr)
+  (if (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)
     (opt-alias-empty)
     (opt-alias-update-value-facts facts instr 0)))
 
@@ -133067,9 +133135,9 @@
   (match instr
     [(Alloc _ _) true]
     [_
-      (if (opt-alias-instr-clears-all? instr)
+      (if (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)
         false
-        (match (ir.compiler-ir-instr-effect instr)
+        (match (opt-instr-effect (& opt-addr-taken-none) instr)
           [(Pure) true]
           [_ false]))]))
 
@@ -134196,21 +134264,20 @@
           (ir.compiler-ir-symbol-id name)
           (& instr))
         instr)]
+    ;; Every other form, `Mov` among them. A `Mov` writes memory only when it
+    ;; defines an address-taken local, which makes it a store to that local
+    ;; (#8514); a write clears what the walk knows of memory.
     ;; GSF-1: a read of a global cell whose contents the walk knows reads
     ;; that value; the state steps as for the read it replaces, so `dst` keeps
     ;; its binding as a base addressing [g].
-    [(Mov dst src ty)
-      (Result
-        (opt-load-cse-state-step-other
-          type-segment-bases
-          canon
-          sources
-          hs
-          (compiler-opt-global-shared-view state)
-          (& instr))
-        (opt-load-cse-forward-cell (& state) instr))]
     [_
-      (if (opt-alias-instr-clears-all? (& instr))
+      (if (match (& instr)
+        [(Mov _ _ _)
+          (opt-addr-taken-def? (& opt-function-addr-taken.marks) (& instr))]
+        [_
+          (opt-alias-instr-clears-all?
+            (& opt-function-addr-taken.marks)
+            (& instr))])
         (Result
           (opt-load-cse-state-clear-for-memory
             type-segment-bases
@@ -134837,7 +134904,7 @@
                 (set! cur (Nil))
                 (ir.compiler-ir-instr-builder-push! (&mut builder) instr)))]
           [_
-            (if (opt-alias-instr-clears-all? (& instr))
+            (if (opt-alias-instr-clears-all? (& opt-addr-taken-none) (& instr))
               (set! cur (Nil))
               unit)
             (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])))
@@ -135014,6 +135081,7 @@
               [_
                 (when
                   (opt-alias-instr-clears-all?
+                    (& opt-addr-taken-none)
                     (ir.compiler-ir-instr-seq-borrow instrs i))
                   (return false))])
             ;; Any definition of an address-taken var is a store to its
@@ -136174,7 +136242,7 @@
       (opt-load-gvn-loop-safe-instr? hs blocks (& (StorePtr ptr value ty)))]
     [(or (Store _ _ _) (VectorStore _) (PredicatedStore _) (CopyBytes _ _ _))
       false]
-    [_ (not (opt-alias-instr-clears-all? instr))]))
+    [_ (not (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr))]))
 
 ;; Scan the loop body's blocks.
 (define (opt-load-gvn-loop-safe-blocks?
@@ -136252,7 +136320,7 @@
     [(or (StorePtr _ _ _) (StoreOwned _ _ _) (Store _ _ _) (VectorStore _)
          (PredicatedStore _) (CopyBytes _ _ _))
       false]
-    [_ (not (opt-alias-instr-clears-all? instr))]))
+    [_ (not (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr))]))
 
 (define (opt-load-gvn-loop-store-free-instr-seq?
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
@@ -137167,7 +137235,7 @@
     [(or (Call _ name _ _) (TailCall name _ _))
       (opt-load-cell-call-writes-cell? call-memory cells global name)]
     [(or (StorePtr _ _ _) (StoreOwned _ _ _)) false]
-    [_ (opt-alias-instr-clears-all? instr)]))
+    [_ (opt-alias-instr-clears-all? (& opt-addr-taken-none) instr)]))
 
 (define (opt-load-cell-region-clear?
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
@@ -139151,7 +139219,12 @@
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
   [var : i64]
   [fuel : i64]) : i64
-  (if (<= fuel 0)
+  ;; A copy of an address-taken var holds its value at the copy; a store
+  ;; through its address may have changed the var since, so the chain stops
+  ;; there.
+  (if (or
+    (<= fuel 0)
+    (opt-addr-taken-var? (& opt-function-addr-taken.marks) var))
     var
     (match (opt-bool-branch-def defs var)
       [(No) var]
@@ -139275,8 +139348,10 @@
 ;; The condition tree's LEAF vars -- what the fact's validity actually depends
 ;; on. Interior BinOp/UnOp/Cast nodes are recomputed from the leaves at the
 ;; dominated branch, so only a leaf being REDEFINED between the two branches
-;; can make the two conditions name different values. Returns the number
-;; written, or -1 when the tree is wider than the cap.
+;; can make the two conditions name different values. An address-taken leaf is
+;; redefined by any store through its address, which names no var, so a tree
+;; with one is refused (#8785). Returns the number written, or -1 when the tree
+;; is wider than the cap or is refused.
 (define (opt-guard-dedup-collect-leaves
   [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
   [leaves : (&mut leaves (__tl_dyn-array i64))]
@@ -139290,11 +139365,15 @@
         (let
           [root : i64
             (opt-guard-dedup-resolve-var defs var (opt-guard-dedup-eq-fuel))]
-          (match (if (<= fuel 0)
+          (match (if (or
+            (<= fuel 0)
+            (opt-addr-taken-var? (& opt-function-addr-taken.marks) root))
             (OptBoolBranchDef.No)
             (opt-bool-branch-def defs root))
             [(No)
-              (if (>= written (opt-guard-dedup-leaf-cap))
+              (if (or
+                (>= written (opt-guard-dedup-leaf-cap))
+                (opt-addr-taken-var? (& opt-function-addr-taken.marks) root))
                 (- 0 1)
                 (begin
                   (set! (array-ref leaves written) root)
@@ -139329,29 +139408,38 @@
       [_ written])))
 
 ;; Every instruction destination's block, as `block id + 1` (0 = a parameter or
-;; an id no instruction defines).
-(define (opt-guard-dedup-def-blocks-fill!
+;; an id no instruction defines). The same walk installs the function's
+;; address-taken set, which the leaf collection reads.
+(define (opt-guard-dedup-def-blocks-fill-installing!
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]
   [out : (&mut out (__tl_dyn-array i64))]) : unit
-  (for [id (iterator.range 0 block-count)]
-    (match (opt-cfg-index-block-in blocks index id)
-      [(No) unit]
-      [(Some block)
-        (match block
-          [(Block _ instrs)
-            (let
-              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-              (for [cursor (iterator.range 0 count)]
-                (let
-                  [dst : i64
-                    (let
-                      [instr (ir.compiler-ir-instr-seq-borrow instrs cursor)]
-                      (ir.compiler-ir-instr-dst instr))]
-                  (if (and (>= dst 0) (< dst (array-length out)))
-                    (set! (array-ref out dst) (+ id 1))
-                    unit))))])])))
+  (let
+    [scan : OptFunctionAddrTakenScan
+      (opt-function-addr-taken-scan-new (array-length out))]
+    (for [id (iterator.range 0 block-count)]
+      (match (opt-cfg-index-block-in blocks index id)
+        [(No) unit]
+        [(Some block)
+          (match block
+            [(Block _ instrs)
+              (let
+                [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                (for [cursor (iterator.range 0 count)]
+                  (let
+                    [dst : i64
+                      (let
+                        [instr (ir.compiler-ir-instr-seq-borrow instrs cursor)]
+                        (match instr
+                          [(AddrOf _ src _)
+                            (opt-function-addr-taken-scan-note! (&mut scan) src)]
+                          [_ unit])
+                        (ir.compiler-ir-instr-dst instr))]
+                    (if (and (>= dst 0) (< dst (array-length out)))
+                      (set! (array-ref out dst) (+ id 1))
+                      unit))))])]))
+    (opt-function-addr-taken-install-scan! scan)))
 
 ;; Does the dominating branch's fact still describe the SAME values where the
 ;; dominated branch reads them?
@@ -141182,7 +141270,7 @@
               [leaves : (__tl_dyn-array i64)
                 (__tl_make-array i64 (opt-guard-dedup-leaf-cap))]
               [_def-blocks : unit
-                (opt-guard-dedup-def-blocks-fill!
+                (opt-guard-dedup-def-blocks-fill-installing!
                   hoisted
                   index
                   block-count

@@ -431,6 +431,11 @@ licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0
 licm_addr_taken_local|all|0,1,2|tests/integration/licm_addr_taken_local.tl|42|-|-|-|-
 licm_addr_taken_reset|all|0,1,2|tests/integration/licm_addr_taken_reset.tl|42|-|-|-|-
 fold_addr_taken_local|all|0,1,2|tests/integration/fold_addr_taken_local.tl|42|-|-|-|-
+load_cse_addr_taken_set|all|0,1,2|tests/integration/load_cse_addr_taken_set.tl|42|-|-|-|-
+load_cse_addr_taken_typed_set|all|0,1,2|tests/integration/load_cse_addr_taken_typed_set.tl|42|-|-|-|-
+gvn_addr_taken_compare|all|0,1,2|tests/integration/gvn_addr_taken_compare.tl|42|-|-|-|-
+guard_dedup_addr_taken|all|0,1,2|tests/integration/guard_dedup_addr_taken.tl|42|-|-|-|-
+cmp_dup_addr_taken|all|0,1,2|tests/integration/cmp_dup_addr_taken.tl|42|-|-|-|-
 sink_addr_taken_ptr_write|all|0,1,2|tests/integration/sink_addr_taken_ptr_write.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
 sink_addr_taken_local|all|0,1,2|tests/integration/sink_addr_taken_local.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 addr_taken_frame_slots|all|0,1,2|tests/integration/addr_taken_frame_slots.tl|42|-|-|-|-

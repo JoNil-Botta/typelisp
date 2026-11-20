@@ -682,7 +682,7 @@
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [n : i64]) : unit
   (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array (& n i64) 0)] unit))"
-      "typecheck: init unsupported type (& n i64)")
+      "typecheck: make-array element type (& n i64) is not zero-initializable (reason: reference); construct the elements explicitly")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main) : unit
   (let [items : (__tl_dyn-array (& n i64)) (__tl_make-array (& n i64) 0)] unit))"

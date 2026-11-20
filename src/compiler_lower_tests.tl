@@ -8522,6 +8522,26 @@
         (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0))]
     [_ false]))
 
+(define (compiler-lower-make-array-nullable-cfunc-zero-fill-source) : String
+  "(defstruct Hooks (callback (CFunc nullable (-> i64 i64))) (count i64))
+(define (main [n : i64]) : i64
+  (let
+    [items : (__tl_dyn-array Hooks) (__tl_make-array Hooks n)]
+    (array-length items)))")
+
+(define (compiler-lower-make-array-nullable-cfunc-zero-fill-shape-ok?) : bool
+  ;; A null nullable C function pointer is all-zero bytes, so the ZII
+  ;; classifier admits an aggregate holding one and make-array zero-fills it
+  ;; instead of storing a shared null value per slot.
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      (compiler-lower-make-array-nullable-cfunc-zero-fill-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-function-call-count functions "main" "tl_array_zero") 1)
+        (= (lower-test-function-call-count functions "main" "tl_array_fill8") 0))]
+    [_ false]))
+
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)

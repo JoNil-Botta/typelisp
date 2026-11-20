@@ -610,6 +610,9 @@
       "tests/integration/with_escape_clone_out.tl")
     (selfhost-lint-path-suffix?
       path
+      "tests/integration/zii_zero_representation.tl")
+    (selfhost-lint-path-suffix?
+      path
       "tools/embedded-stdlib-tlci/prelude_surface_producer.tl")))
 
 (define (selfhost-lint-filter-derived-origins-from

@@ -87366,6 +87366,237 @@
     [_ (try (tc-init-type-supported ctx env (tc-global-shared-view resolved)))]
     (Ok (tc-tag-active-region env resolved))))
 
+;; Zero Is Initialization classifier (SPEC 5.12.1, "Zero value of each type"):
+;; whether the all-zero bytes of a runtime storage shape are a valid value of
+;; its type. It is the one rule `make-array` / `__tl_make-array` typechecking and
+;; lowering's zero-fill and shared-fill strategies ask.
+(defenum TcNotZiiReason
+  (StringHandle)
+  (DynBuffer)
+  (Box)
+  (Function)
+  (Reference)
+  (NonNullCFunc)
+  (Never)
+  (SyntaxValue)
+  (ReprC)
+  (CleanupOwner)
+  (Unsupported))
+
+(defenum TcZiiClass
+  (Zii)
+  (NotZii TcNotZiiReason))
+
+;; The stable reason token diagnostics and tests name.
+(define (tc-not-zii-reason-text [reason : TcNotZiiReason]) : String
+  (match reason
+    [(StringHandle) "string-handle"]
+    [(DynBuffer) "dynamic-buffer"]
+    [(Box) "box"]
+    [(Function) "function"]
+    [(Reference) "reference"]
+    [(NonNullCFunc) "non-null-cfunc"]
+    [(Never) "never"]
+    [(SyntaxValue) "syntax-value"]
+    [(ReprC) "repr-c"]
+    [(CleanupOwner) "cleanup-owner"]
+    [(Unsupported) "unsupported"]))
+
+;; An aggregate reports its highest-ranked reason. 0: the element still has a
+;; shared, allocation-free value fill (the empty string); 1: its value fill
+;; allocates (a box, a dynamic buffer); 2: make-array cannot initialize it.
+(define (tc-not-zii-reason-rank [reason : TcNotZiiReason]) : i64
+  (match reason
+    [(StringHandle) 0]
+    [(or (DynBuffer) (Box)) 1]
+    [_ 2]))
+
+(define (tc-not-zii-reason-rejects? [reason : TcNotZiiReason]) : bool
+  (= (tc-not-zii-reason-rank reason) 2))
+
+(define (tc-zii-class-rejects? [class : TcZiiClass]) : bool
+  (match class
+    [(Zii) false]
+    [(NotZii reason) (tc-not-zii-reason-rejects? reason)]))
+
+(define (tc-zii-class-join [left : TcZiiClass] [right : TcZiiClass]) : TcZiiClass
+  (match right
+    [(Zii) left]
+    [(NotZii right-reason)
+      (match left
+        [(Zii) right]
+        [(NotZii left-reason)
+          (if (>
+            (tc-not-zii-reason-rank right-reason)
+            (tc-not-zii-reason-rank left-reason))
+            right
+            left)])]))
+
+;; Finite layouts nest far less deeply; a deeper walk is a layout cycle, which
+;; has no zero value.
+(define (tc-zii-class-depth-limit) : i64
+  256)
+
+(define (tc-type-zii-class [ctx : TcContext] [ty : ast.AstType]) : TcZiiClass
+  (tc-type-zii-class-at ctx ty 0))
+
+(define (tc-type-zii-class-at
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [depth : i64]) : TcZiiClass
+  (let
+    [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (cond
+      [(> depth (tc-zii-class-depth-limit)) (NotZii (Unsupported))]
+      [(tc-integer-type? (tc-global-shared-view resolved)) (Zii)]
+      [(>= (tc-opaque-foreign-type-name ctx (tc-global-shared-view resolved)) 0)
+        (NotZii (Unsupported))]
+      [else
+        (match (tc-global-shared-view resolved)
+          [(or (F64) (F32) (Bool) (Char) (Unit) (Ptr _) (MutPtr _)) (Zii)]
+          [(CFunc _ mode)
+            (if (ast.ast-c-function-mode-nullable? mode)
+              (Zii)
+              (NotZii (NonNullCFunc)))]
+          [(String) (NotZii (StringHandle))]
+          [(DynArray _) (NotZii (DynBuffer))]
+          [(Box _) (NotZii (Box))]
+          [(Func _ _) (NotZii (Function))]
+          [(or (Ref _ _) (MutRef _ _)) (NotZii (Reference))]
+          [(Never) (NotZii (Never))]
+          [(or (Expr) (ExprList)) (NotZii (SyntaxValue))]
+          [(Tuple elems)
+            (let
+              [elem-types : ast.AstTypeList
+                (ast.ast-type-list-box-shared-view elems)]
+              (tc-type-list-zii-class ctx (& elem-types) depth))]
+          [(Array elem count)
+            (if (< count 0)
+              (NotZii (Unsupported))
+              (tc-type-zii-class-at
+                ctx
+                (tc-context-type-get ctx elem)
+                (+ depth 1)))]
+          [(or (Struct name) (StructArgs name _))
+            (tc-struct-zii-class ctx name resolved depth)]
+          [(or (Enum name) (EnumArgs name _))
+            (tc-enum-zii-class ctx name resolved depth)]
+          [_ (NotZii (Unsupported))])])))
+
+(define (tc-type-list-zii-class
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [depth : i64]) : TcZiiClass
+  (let
+    [class : TcZiiClass (Zii)]
+    (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+      (set!
+        class
+        (tc-zii-class-join
+          class
+          (tc-type-zii-class-at
+            ctx
+            (tc-context-type-get
+              ctx
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+            (+ depth 1))))
+      (when (tc-zii-class-rejects? class) (return class)))
+    class))
+
+;; A default-layout struct without cleanup is ZII when every field is.
+(define (tc-struct-zii-class
+  [ctx : TcContext]
+  [struct-name-id : i64]
+  [struct-ty : ast.AstType]
+  [depth : i64]) : TcZiiClass
+  (match (tc-struct-decl-id ctx struct-name-id)
+    [(Ok decl)
+      (match decl
+        [(TcStructDecl repr cleanup fields)
+          (cond
+            [(ast.ast-struct-repr-c? repr) (NotZii (ReprC))]
+            [(ast.ast-struct-cleanup? cleanup) (NotZii (CleanupOwner))]
+            [else
+              (let
+                [field-ctx : TcContext
+                  (tc-init-nominal-field-context-id ctx struct-name-id)]
+                [field-types : ast.AstTypeList
+                  (tc-init-struct-field-types-for-result
+                    field-ctx
+                    struct-name-id
+                    struct-ty
+                    fields)]
+                (tc-type-list-zii-class field-ctx (& field-types) depth))])])]
+    [(Err _) (NotZii (Unsupported))]))
+
+;; Tag 0 is the first declared variant, so an enum without cleanup is ZII when
+;; that variant's payload is (a fieldless first variant always is); payload
+;; bytes past its fields are don't-care.
+(define (tc-enum-zii-class
+  [ctx : TcContext]
+  [enum-name-id : i64]
+  [enum-ty : ast.AstType]
+  [depth : i64]) : TcZiiClass
+  (match (tc-enum-decl-id ctx enum-name-id)
+    [(Ok decl)
+      (match decl
+        [(TcEnumDecl cleanup variants)
+          (cond
+            [(ast.ast-enum-cleanup? cleanup) (NotZii (CleanupOwner))]
+            [(ast.ast-variant-def-list-empty? (& variants))
+              (NotZii (Unsupported))]
+            [else
+              (match (ast.ast-variant-def-list-get
+                (& variants)
+                0
+                (ast.ast-variant-def-fallback))
+                [(Def _ fields _)
+                  (let
+                    [field-ctx : TcContext
+                      (tc-init-nominal-field-context-id ctx enum-name-id)]
+                    [field-types : ast.AstTypeList
+                      (tc-init-enum-fields-for-result
+                        field-ctx
+                        enum-name-id
+                        enum-ty
+                        fields)]
+                    (tc-type-list-zii-class field-ctx (& field-types) depth))])])])]
+    [(Err _) (NotZii (Unsupported))]))
+
+(define (tc-make-array-not-zii-message
+  [ctx : TcContext]
+  [elem : ast.AstType]
+  [reason : TcNotZiiReason]) : String
+  (tc-kind-message
+    (match reason
+      [(CleanupOwner) (ResourceOwnership)]
+      [_ (TypeMismatch)])
+    (str_cat.str-cat
+      "typecheck: make-array element type "
+      (tc-type-render (tc-type-without-regions (tc-resolve-type ctx elem)))
+      " is not zero-initializable (reason: "
+      (tc-not-zii-reason-text reason)
+      "); construct the elements explicitly")))
+
+;; `make-array` / `__tl_make-array` element check. A type the classifier
+;; rejects is reported with its reason; every other type keeps the init rules,
+;; which still validate the value-fill element types (String, dynamic buffers,
+;; boxes), so the classifier never admits a type those rules reject.
+(define (tc-make-array-element-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [elem : ast.AstType]) : ResultTcUnit
+  (match (tc-type-zii-class ctx (tc-global-shared-view elem))
+    [(NotZii reason)
+      (if (tc-not-zii-reason-rejects? reason)
+        (Err
+          (tc-make-array-not-zii-message
+            ctx
+            (tc-global-shared-view elem)
+            reason))
+        (tc-init-type-supported ctx env elem))]
+    [(Zii) (tc-init-type-supported ctx env elem)]))
+
 (define (tc-make-array-zero-literal-length?
   [expr-bases : i64]
   [len : ast.AstExpr]) : bool
@@ -87402,7 +87633,14 @@
                 (tc-kind-message
                   (ComptimeConstraint)
                   "typecheck: make-array length must be a non-negative compile-time integer"))
-              (tc-init-expr ctx env (ast.ast-ty-array (& elem) count)))]
+              (let
+                [_
+                  (try
+                    (tc-make-array-element-ok
+                      ctx
+                      env
+                      (tc-global-shared-view elem)))]
+                (tc-init-expr ctx env (ast.ast-ty-array (& elem) count))))]
           [_
             (Err
               (tc-kind-message
@@ -89459,7 +89697,10 @@
             (let
               [_
                 (try
-                  (tc-init-type-supported ctx env (tc-global-shared-view elem)))]
+                  (tc-make-array-element-ok
+                    ctx
+                    env
+                    (tc-global-shared-view elem)))]
               (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem)))))]))]
     [(ArrayRef array-box index-box)
       (tc-selected-project

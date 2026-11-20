@@ -5694,6 +5694,52 @@ explicit constructors.
     (+ zero (+ p.x (array-ref xs 0)))))
 ```
 
+#### Zero value of each type
+
+A type is ZII (Zero Is Initialization) when the all-zero bit pattern of its
+storage is a valid value of the type. This is a representation fact, not a
+constructor: `make-array` and private `__tl_make-array` hand out zeroed
+storage for a ZII element type without running code per element. One compiler
+classifier decides it for every storage shape. It answers ZII or not ZII with
+a stable reason, and make-array typechecking and lowering share it.
+
+| Type shape | All-zero value | ZII |
+|------------|----------------|-----|
+| Signed/unsigned integers | numeric zero of that width | yes |
+| `f64`, `f32` | `0.0` | yes |
+| `bool` | `false` | yes |
+| `char` | NUL byte (`'\0'`) | yes |
+| `unit` | `unit` | yes |
+| `(Ptr T)`, `(MutPtr T)` | typed null raw pointer | yes |
+| `(CFunc nullable ...)`, `(CFunc unsafe-nullable ...)` | null C function pointer | yes |
+| `(CFunc non-null ...)`, `(CFunc unsafe-non-null ...)` | none | no: `non-null-cfunc` |
+| `(Tuple T0 T1 ...)` | every element zero | when every element type is ZII |
+| `(Array T N)` | every element zero | when `T` is ZII |
+| Default-layout `defstruct` without cleanup | every field zero | when every field type is ZII |
+| `defenum` without cleanup | tag 0, which is the first declared variant, with its payload fields zero; payload bytes past those fields are don't-care | when every payload field type of the first variant is ZII; a fieldless first variant always is |
+| `String` | none | no: `string-handle` (until strings use inline descriptors, #7962) |
+| `(__tl_dyn-array T)` | none | no: `dynamic-buffer` (until dynamic buffers use inline descriptors, #7963) |
+| `(Box T)` | none | no: `box` |
+| function and closure values | none | no: `function` |
+| references `(& r T)`, `(&mut r T)` | none | no: `reference` |
+| `never` | none | no: `never` |
+| `Expr`, `ExprList` | none | no: `syntax-value` |
+| `(:repr c)` structs | none | no: `repr-c` |
+| cleanup-owning structs and enums | none | no: `cleanup-owner` |
+| any other shape, including opaque aggregates outside their module family and layouts that fail finite-layout analysis | none | no: `unsupported` |
+
+An aggregate that is not ZII reports the reason of one of its parts. A part
+make-array rejects (any reason but `string-handle`, `dynamic-buffer` or `box`)
+takes precedence over `box` and `dynamic-buffer`, and those take precedence
+over `string-handle`. `make-array` and `__tl_make-array` reject an element type
+with any other reason, and the diagnostic names it:
+`make-array element type T is not zero-initializable (reason: function)`.
+Until #7962 and #7963, element types whose only reasons are `string-handle`,
+`dynamic-buffer` or `box` are still accepted: in each element, a `String` part
+starts as the empty string, a dynamic-buffer part as an empty buffer, a box
+part as its own allocation holding contents initialized the same way, and
+every other part as zero.
+
 ### 5.13 `(match scrutinee [pattern body...] ...)` — pattern matching
 
 - Each arm is a bracket form holding a pattern and one or more body
@@ -8266,7 +8312,7 @@ borrowed Slice reference forms described in section 3.2:
 
 | Builtin | Signature | Description |
 |---------|-----------|-------------|
-| `make-array` | `type comptime-i64 → (Array T N)` | Construct a fixed array whose non-negative compile-time length is `N`; every element is initialized under the same rules as `(init : (Array T N))` |
+| `make-array` | `type comptime-i64 → (Array T N)` | Construct a fixed array whose non-negative compile-time length is `N` as zeroed storage of the ZII element type `T` (§5.12.1, "Zero value of each type"); an element type that is not ZII is rejected with the classifier's reason, except the `string-handle`, `dynamic-buffer` and `box` cases that §5.12.1 still admits |
 | `length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Evaluate the receiver once; fixed arrays return constant `N`, while private dynamic buffers, borrowed Slices, and strings use their respective length representations |
 | `array-length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Array-only alias for `length`; fixed arrays return constant `N` |
 | `array-ref` | `(Array T N) i64 → T` / `(& r (Array T N)) i64 → T` / `(&mut r (Array T N)) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read/place projection through an owned fixed array, a supported reference, or a borrowed Slice receiver |

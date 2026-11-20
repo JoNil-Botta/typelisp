@@ -41397,9 +41397,9 @@
       (opt-bool-branch-defs-fill-blocks! defs rest)]))
 
 ;; `OptBoolBranchDef.No` is the fieldless tag-0 variant, so its representation is
-;; all-zero bytes and `__tl_make-array` already produces it for every slot -- see
-;; `lower-make-array-zero-fill-enum-supported?`, which admits exactly the enums
-;; whose first variant carries no fields. Every private `(__tl_dyn-array E)` in
+;; all-zero bytes and `__tl_make-array` already produces it for every slot -- the
+;; ZII classifier `tc-type-zii-class` admits every enum whose first variant
+;; carries no fields. Every private `(__tl_dyn-array E)` in
 ;; this file built by `__tl_make-array` for such an `E` therefore starts out
 ;; uniformly tag-0, and a
 ;; pass that writes that same variant over the whole array is a pure repeat of

@@ -42931,104 +42931,6 @@
           arr-value
           arr-ty))]))
 
-(define (lower-init-default-share-safe-type-list?
-  [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]) : bool
-  (lower-init-default-share-safe-type-list-at? ctx (& types)))
-
-(define (lower-init-default-share-safe-type-list-at?
-  [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]) : bool
-  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
-    (let
-      [head : ast.AstType
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (unless (lower-init-default-share-safe? ctx head) (return false))))
-  true)
-
-(define (lower-init-default-share-safe-struct?
-  [ctx : tc_core.TcContext]
-  [_ : String]
-  [struct-ty : ast.AstType]) : bool
-  (match (tc_core.tc-struct-decl-id
-    ctx
-    (lower-struct-type-name-id-or struct-ty -1))
-    [(Ok decl)
-      (match decl
-        [(TcStructDecl repr cleanup fields)
-          (if (ast.ast-struct-repr-c? repr)
-            false
-            (if (ast.ast-struct-cleanup? cleanup)
-              false
-              (let
-                [field-types : ast.AstTypeList
-                  (tc_core.tc-resolve-type-list
-                    ctx
-                    (lower-struct-constructor-field-types-for-result
-                      ctx
-                      struct-ty
-                      fields))]
-                (lower-init-default-share-safe-type-list? ctx field-types))))])]
-    [(Err _) false]))
-
-(define (lower-init-default-share-safe-enum?
-  [ctx : tc_core.TcContext]
-  [_ : String]
-  [enum-ty : ast.AstType]) : bool
-  (match (tc_core.tc-enum-decl-id ctx (lower-enum-type-name-id-or enum-ty -1))
-    [(Ok decl)
-      (match decl
-        [(TcEnumDecl cleanup variants)
-          (if (ast.ast-enum-cleanup? cleanup)
-            false
-            (if (ast.ast-variant-def-list-empty? (& variants))
-              false
-              (let
-                [variant : ast.AstVariantDef
-                  (ast.ast-variant-def-list-get
-                    (& variants)
-                    0
-                    (ast.ast-variant-def-fallback))]
-                (match variant
-                  [(Def _ fields _)
-                    (let
-                      [field-types : ast.AstTypeList
-                        (tc_core.tc-resolve-type-list
-                          ctx
-                          (lower-enum-constructor-fields-for-result
-                            ctx
-                            enum-ty
-                            fields))]
-                      (lower-init-default-share-safe-type-list? ctx field-types))]))))])]
-    [(Err _) false]))
-
-(define (lower-init-default-share-safe?
-  [ctx : tc_core.TcContext]
-  [ty : ast.AstType]) : bool
-  (let
-    [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
-      true
-      (match (lower-global-shared-view resolved)
-        [(or (F64) (F32) (Bool) (Char) (Unit) (String) (Ptr _) (MutPtr _)) true]
-        [(CFunc _ mode) (ast.ast-c-function-mode-nullable? mode)]
-        [(Tuple elems)
-          (lower-init-default-share-safe-type-list? ctx (deref elems))]
-        [(or (Struct name) (StructArgs name _))
-          (lower-init-default-share-safe-struct?
-            ctx
-            (tc_core.tc-nominal-name-id-display name)
-            resolved)]
-        [(or (Enum name) (EnumArgs name _))
-          (lower-init-default-share-safe-enum?
-            ctx
-            (tc_core.tc-nominal-name-id-display name)
-            resolved)]
-        [_ false]))))
-
 (define (lower-make-array-store-init-body
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -43255,6 +43157,25 @@
     (match lowered
       [(Expr done-state _ _) (Ok done-state)])))
 
+(define (lower-make-array-zero-fill?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-zii-class ctx ty)
+    [(Zii) true]
+    [(NotZii _) false]))
+
+;; The explicitly named shared-fill strategy for an element type that is not
+;; ZII: its init value is computed once and stored into every slot, which is
+;; sound only when that value owns no storage (the empty string shares one
+;; static literal; a box or dynamic buffer would alias one allocation).
+(define (lower-make-array-shared-fill?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-zii-class ctx ty)
+    [(Zii) true]
+    [(NotZii (StringHandle)) true]
+    [(NotZii _) false]))
+
 (define (lower-make-array-fill8-supported?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
@@ -43270,114 +43191,7 @@
       (or
         (not (lower-type-inline-storage? ctx resolved))
         (lower-type-register-resident? ctx resolved))
-      (lower-init-default-share-safe? ctx resolved))))
-
-(define (lower-make-array-zero-fill-supported?
-  [ctx : tc_core.TcContext]
-  [ty : ast.AstType]) : bool
-  (let
-    [resolved : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (if (tc_core.tc-integer-type? (lower-global-shared-view resolved))
-      true
-      (match (lower-global-shared-view resolved)
-        [(or (F64) (F32) (Bool) (Char) (Unit) (Ptr _) (MutPtr _)) true]
-        [(or (Struct _) (StructArgs _ _))
-          (lower-make-array-zero-fill-struct-supported? ctx resolved)]
-        [(or (Enum _) (EnumArgs _ _))
-          (lower-make-array-zero-fill-enum-supported? ctx resolved)]
-        [(Tuple elems)
-          (lower-make-array-zero-fill-type-list-supported? ctx (deref elems))]
-        [(Array elem _)
-          (lower-make-array-zero-fill-supported?
-            ctx
-            (tc_core.tc-context-type-get ctx elem))]
-        [_ false]))))
-
-;; Every type in `types` (starting at `index`) must have an all-zero-bytes
-;; default value. Used to decide whether make-array can zero its backing
-;; store instead of running the per-element default-init loop.
-(define (lower-make-array-zero-fill-type-list-supported?
-  [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]) : bool
-  (for [index (iterator.range 0 (ast.ast-type-list-len (& types)))]
-    (unless
-      (lower-make-array-zero-fill-supported?
-        ctx
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
-      (return false)))
-  true)
-
-;; A struct can be zero-filled when every field's default is all-zero bytes
-;; (default-layout only, mirroring lower-init-struct).
-(define (lower-make-array-zero-fill-struct-supported?
-  [ctx : tc_core.TcContext]
-  [struct-ty : ast.AstType]) : bool
-  (let
-    [field-ctx : tc_core.TcContext
-      (lower-context-with-nominal-owner-module-id
-        ctx
-        (lower-struct-type-name-id-or struct-ty -1))]
-    (if (lower-struct-repr-c-id?
-      field-ctx
-      (lower-struct-type-name-id-or struct-ty -1))
-      false
-      (match (lower-struct-fields-id
-        field-ctx
-        (lower-struct-type-name-id-or struct-ty -1)
-        (tc_core.tc-nominal-name-id-display
-          (lower-struct-type-name-id-or struct-ty -1)))
-        [(Ok fields)
-          (lower-make-array-zero-fill-type-list-supported?
-            field-ctx
-            (tc_core.tc-resolve-type-list
-              field-ctx
-              (lower-struct-constructor-field-types-for-result
-                field-ctx
-                struct-ty
-                fields)))]
-        [(Err _) false]))))
-
-;; An enum can be zero-filled when its default value is all-zero bytes. That
-;; default (`lower-init-enum`) is the first variant -- tag 0 -- built from each
-;; payload field's own default, so it is all-zero bytes exactly when every
-;; payload field type is zero-fillable; a fieldless first variant is the empty
-;; case. Payload bytes past the variant's fields are don't-care. (A payload
-;; field with a non-zero default, such as a String, keeps the init loop.)
-(define (lower-make-array-zero-fill-enum-supported?
-  [ctx : tc_core.TcContext]
-  [enum-ty : ast.AstType]) : bool
-  (let
-    [field-ctx : tc_core.TcContext
-      (lower-context-with-nominal-owner-module-id
-        ctx
-        (lower-enum-type-name-id-or enum-ty -1))]
-    (match (tc_core.tc-enum-decl-id
-      field-ctx
-      (lower-enum-type-name-id-or enum-ty -1))
-      [(Ok decl)
-        (match decl
-          [(TcEnumDecl _ variants)
-            (if (ast.ast-variant-def-list-empty? (& variants))
-              false
-              (match (ast.ast-variant-def-list-get
-                (& variants)
-                0
-                (ast.ast-variant-def-fallback))
-                [(Def _ fields _)
-                  (or
-                    (ast.ast-type-list-empty? (& fields))
-                    (lower-make-array-zero-fill-type-list-supported?
-                      field-ctx
-                      (tc_core.tc-resolve-type-list
-                        field-ctx
-                        (lower-enum-constructor-fields-for-result
-                          field-ctx
-                          enum-ty
-                          fields))))]))])]
-      [(Err _) false])))
+      (lower-make-array-shared-fill? ctx resolved))))
 
 (define (lower-make-array-zero-fill
   [state : LowerState]
@@ -43412,11 +43226,9 @@
   [origin : ast.AstExpr]) : ResultLowerState
   (cond
     [(= elem-size 0) (Ok state)]
-    [(lower-make-array-zero-fill-supported?
-        ctx
-        (lower-global-shared-view elem-ty))
+    [(lower-make-array-zero-fill? ctx (lower-global-shared-view elem-ty))
       (lower-make-array-zero-fill state buf-value byte-count)]
-    [(lower-init-default-share-safe? ctx (lower-global-shared-view elem-ty))
+    [(lower-make-array-shared-fill? ctx (lower-global-shared-view elem-ty))
       (let
         [lowered-init
           (try

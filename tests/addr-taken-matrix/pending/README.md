@@ -21,7 +21,6 @@ opt1/opt2 disagrees with it today:
 | `66-load-cse-two-sets` | 7/2/2 |
 | `69-load-cse-index` | 26/22/22 |
 | `70-load-cse-bound` | 40/37/37 |
-| `71-gap9-gep-fold` | 39/39/42 |
 | `78-load-cse-callee-read` | 6/2/2 |
 | `80-load-cse-ptr-returned` | 6/2/2 |
 | `84-call-arg-ptr-read` | 11/3/3 |
@@ -30,17 +29,14 @@ opt1/opt2 disagrees with it today:
 | `8785-cmp-dup` | 42/42/1 |
 | `8785-guard-dedup` | 42/42/2 |
 | `8785-gvn-compare` | 42/42/2 |
-| `91-gap9-gep-fold-callee` | 39/39/42 |
-| `95-gap9-gep-fold-plus2` | 40/40/42 |
-| `98-gap9-gep-fold-struct-base` | 39/39/42 |
 
 Shapes:
 
 - `00`, `52-70`, `78`, `80`, `84`, `101`, `8514-*`, `8785-*` forward a load or
   compute a fact from an address-taken local across a `set!` of that local or a
   call that writes through its address.
-- `57`, `71`, `91-98` fold a pointer displacement from the local reloaded after
-  a store through its address (opt2 only).
+- `57` folds a pointer displacement from the local reloaded after a store
+  through its address (opt2 only).
 
 A fix moves the files it repairs out of this directory and into
 `tests/addr-taken-matrix/`, where the gate then runs them; delete the row

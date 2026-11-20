@@ -1271,6 +1271,10 @@ mul_shift_addr_taken|all|0,1,2|tests/integration/mul_shift_addr_taken.tl|3|-|-|s
 pure_call_addr_taken|all|0,1,2|tests/integration/pure_call_addr_taken.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
 gep_offset_addr_taken|all|0,1,2|tests/integration/gep_offset_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 gep_offset_exit_base|all|0,1,2|tests/integration/gep_offset_exit_base.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+gep_fold_addr_taken_store|all|0,1,2|tests/integration/gep_fold_addr_taken_store.tl|39|-|-|-|-
+gep_fold_addr_taken_callee|all|0,1,2|tests/integration/gep_fold_addr_taken_callee.tl|39|-|-|-|-
+gep_fold_addr_taken_plus2|all|0,1,2|tests/integration/gep_fold_addr_taken_plus2.tl|40|-|-|-|-
+gep_fold_addr_taken_struct_base|all|0,1,2|tests/integration/gep_fold_addr_taken_struct_base.tl|39|-|-|-|-
 induction_addr_taken|all|0,1,2|tests/integration/induction_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 
 # Safety positive controls retain native writeback and bounds at every level.

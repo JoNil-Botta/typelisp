@@ -67751,7 +67751,9 @@
 ;;     another block, a bounds check, a phi input, a store value, a gep
 ;;     BASE -- keeps the add;
 ;;   * no def of j between the add and the last folded gep (linear in-block
-;;     execution then guarantees the gep reads the same j the add read);
+;;     execution then guarantees the gep reads the same j the add read), and
+;;     j is not address-taken in the function (a store or call through &j
+;;     redefines it without a direct def);
 ;;   * a candidate whose base j is ITSELF an elided candidate is dropped
 ;;     (its add is deleted, so the value would never exist).
 ;; The rewrite deletes the add, retargets the gep's index operand to j, and
@@ -68211,10 +68213,14 @@
     found))
 
 ;; Pass 3: totality (every use is a folded gep index), no def of the base
-;; inside the (add, last-gep] segment, and the base is not itself an elided
-;; candidate (two rounds cover the parallel-offset shape; deeper chains
-;; conservatively keep their adds).
+;; inside the (add, last-gep] segment, the base is not address-taken (a store
+;; or call through its address redefines it without a direct def), and the
+;; base is not itself an elided candidate (two rounds cover the
+;; parallel-offset shape; deeper chains conservatively keep their adds).
+;; The address-taken scan walks every instruction, so it runs only after the
+;; cheap direct-def checks leave at least one candidate.
 (define (compiler-backend-gep-fold-validate
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
   [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
   [uses : (__tl_dyn-array i64)]
   [cand-base : (&mut cand-base (__tl_dyn-array i64))]
@@ -68241,6 +68247,25 @@
           unit)
         unit)
       (+= v 1)))
+  (if (compiler-backend-gep-fold-any-valid? cand-base)
+    (let
+      ;; compiler-reg-ineligible-memory is the backend's address-taken owner;
+      ;; it also marks Alloc destinations, which is conservatively stronger.
+      [address-taken : compiler_liveness.CompilerLiveI64Set
+        (compiler_regalloc.compiler-reg-ineligible-memory
+          blocks
+          (compiler_liveness.compiler-live-set-empty))]
+      [v : i64 0]
+      (while (< v (array-length cand-base))
+        (if (>= (array-ref cand-base v) 0)
+          (if (compiler_liveness.compiler-live-set-contains?
+            (& address-taken)
+            (array-ref cand-base v))
+            (set! (array-ref cand-base v) (- 0 1))
+            unit)
+          unit)
+        (+= v 1)))
+    unit)
   (for [round (iterator.range 0 2)]
     (let
       [v : i64 0]
@@ -68501,6 +68526,7 @@
         (&mut gep-uses)
         (&mut gep-last))
       (compiler-backend-gep-fold-validate
+        (& blocks)
         (compiler-backend-global-shared-view barr)
         uses
         (&mut cand-base)

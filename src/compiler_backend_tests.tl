@@ -25883,9 +25883,11 @@ entry:
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
     (compiler-backend-mul-scale-add-shapes-ok?)
-    (compiler-backend-gep-fold-sub-shape-ok?)
-    (compiler-backend-gep-fold-zero-shape-ok?)
-    (compiler-backend-gep-fold-drift-detected-ok?)
+    (backend.backend-and4
+      (compiler-backend-gep-fold-sub-shape-ok?)
+      (compiler-backend-gep-fold-zero-shape-ok?)
+      (compiler-backend-gep-fold-address-taken-keeps-add-ok?)
+      (compiler-backend-gep-fold-drift-detected-ok?))
     (compiler-backend-scavenge-narrow-window-ok?)
     (compiler-backend-chained-gep-same-home-ok?)
     (compiler-backend-cmp-mem-fold-shapes-ok?)
@@ -26027,6 +26029,18 @@ entry:
                 (irt.instrs "%6 = mov %2 : i64")
                 (ir.compiler-ir-instr-seq-empty)))))))))
 
+;; An address-taken base must keep the offset add: a store or a call through
+;; `addr_of` the base redefines it without a direct def, so the gep cannot
+;; re-read the base for its displacement (#9420 GAP9).
+(define (compiler-backend-gep-fold-test-blocks-addr-taken) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (AddrOf 6 1 0)
+        (compiler-backend-gep-fold-test-entry-instrs
+          (compiler-backend-gep-fold-test-blocks false))))))
+
 (define (compiler-backend-gep-fold-test-entry-instrs
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrInstrSeq
   (match (ir.compiler-ir-block-list-view blocks)
@@ -26145,6 +26159,35 @@ entry:
                 (backend.compiler-backend-gep-fold-drift?
                   (backend.compiler-backend-state-function-state backend-state))))]
           [(Err _) false]))]
+    (backend.compiler-backend-gep-fold-disable!
+      (backend.compiler-backend-state-function-state backend-state))
+    result))
+
+;; An address-taken base keeps the add and the plain zero-displacement
+;; addressing; the fold must not re-read the base at the access.
+(define (compiler-backend-gep-fold-address-taken-keeps-add-ok?) : bool
+  (let
+    [backend-state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [folded : ir.CompilerIrBlockList
+      (backend.compiler-backend-gep-fold-blocks
+        (backend.compiler-backend-state-function-state backend-state)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        8
+        (compiler-backend-gep-fold-test-blocks-addr-taken))]
+    [result : bool
+      (if (state-gep-fold-ready backend-state)
+        false
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target-with-backend-state
+            (compiler-backend-gep-fold-test-entry-instrs folded)
+            (compiler-backend-gep-fold-test-assignments)
+            8
+            (backend.CompilerBackendTarget.Linux)
+            backend-state)
+          (has "    movq (%r12,%r8,8), %r14\n")
+          (lacks "8(%r12,%r8,8)")))]
     (backend.compiler-backend-gep-fold-disable!
       (backend.compiler-backend-state-function-state backend-state))
     result))

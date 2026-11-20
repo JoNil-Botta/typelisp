@@ -1,5 +1,8 @@
+;; #9420 GAP9: the backend gep displacement fold must refuse an address-taken
+;; base. A store through the base address redefines it between the offset add
+;; and the access, so folding the displacement would re-read the new value.
+;; Exits 39 at opt0/1/2 (opt0 is the oracle).
 ;; gep displacement from a pointer into a struct's array field.
-;; Expected exit 39 at --opt-level 0 (opt1 and opt2 exit 39 and 42 until the queued fix lands).
 (defstruct Row
   (items (Array i64 8)))
 

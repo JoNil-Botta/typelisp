@@ -1,5 +1,5 @@
 ;; gep displacement from an address-taken local stored through a callee.
-;; Expected exit 39 at --opt-level 0 (opt1 and opt2 exit 39 and 42 until the queued fix lands).
+;; Expected exit 39 at --opt-level 0, 1 and 2.
 (define (store4 [p : (MutPtr i64)])
   (unsafe
     (ptr-write! p 4)))

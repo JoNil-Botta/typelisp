@@ -525,11 +525,16 @@
   (group text_buf.TextBuf)
   (sweep-cursor i64))
 
+;; Opt2 argument-entry symbols, indexed by ordinary function slot.
+(defstruct CompilerBackendArgEntries
+  (symbols backend_string_i64_map.Map)
+  (function-count i64))
+
 ;; All mutable state that belongs to one assembly emission stream.  The opaque
 ;; one-word carrier below is passed explicitly through assembly, peephole and
 ;; sweep helpers; the backing cell is owned by its CompilerBackendState.
 (defstruct CompilerBackendStreamStateData
-  ;; Assembly stream (11 fields).
+  ;; Assembly stream (12 fields).
   (assembly-active bool)
   (assembly-raw-arena arena.Arena)
   (assembly-raw-mark arena.ArenaMark)
@@ -541,6 +546,7 @@
   (assembly-batch text_buf.TextBuf)
   (assembly-batch-count i64)
   (assembly-raw-ready bool)
+  (arg-entries i64)
   ;; Carry-safe label table (4 fields).
   (carry-safe-offsets (__tl_dyn-array i64))
   (carry-safe-lengths (__tl_dyn-array i64))
@@ -1762,6 +1768,7 @@
         (text_buf.empty)
         0
         false
+        0
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (__tl_make-array u8 0)
@@ -70646,26 +70653,29 @@
       [else (compiler-backend-swb-gp-pair-bit b1 b2)])))
 
 ;; The register file a stretch of emitted text names, as a bitmask.
-(define (compiler-backend-swb-text-reg-mask [text : (& text str)]) : i64
+(define (compiler-backend-swb-reg-mask-range
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
   (let
-    [n : i64 (string.string-length text)]
-    [data : (Ptr u8)
-      (unsafe
-        (string-data text))]
-    [i : i64 0]
+    [i : i64 start]
     [mask : i64 0]
-    (while (< i n)
+    (while (< i end)
       (let
-        [at : i64 (compiler-backend-peephole-scan-byte-range data i n 37)]
-        (if (>= at n)
-          (set! i n)
-          (let
-            [bit : i64 (compiler-backend-swb-reg-bit data at n)]
-            (if (>= bit 0)
-              (set! mask (bit-or mask (shl 1 bit)))
-              unit)
-            (set! i (+ at 1))))))
+        [at : i64 (compiler-backend-peephole-scan-byte-range data i end 37)]
+        (when (= at end) (return mask))
+        (let
+          [bit : i64 (compiler-backend-swb-reg-bit data at end)]
+          (when (>= bit 0) (set! mask (bit-or mask (shl 1 bit)))))
+        (set! i (+ at 1))))
     mask))
+
+(define (compiler-backend-swb-text-reg-mask [text : (& text str)]) : i64
+  (compiler-backend-swb-reg-mask-range
+    (unsafe
+      (string-data text))
+    0
+    (string.string-length text)))
 
 (define (compiler-backend-swb-line-names-mask?
   [data : (Ptr u8)]
@@ -78989,6 +78999,12 @@ tl_shared_object_init:
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (let
     [target : CompilerBackendTarget target-policy.target]
+    [_arg-entries : unit
+      (compiler-backend-arg-entry-prepare!
+        program-index
+        target
+        emit-entry
+        (& functions))]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions
         (compiler-backend-global-shared-view collections))]
@@ -94023,6 +94039,464 @@ tl_shared_object_init:
         true
         true))))
 
+;; One event per candidate move, plus each ordinary entry. Only one candidate
+;; at a call can match that callee's chosen pair, so selected events are
+;; already in splice order even though we find each call's moves backwards.
+(defstruct CompilerBackendArgEntryEvent
+  (callee i64)
+  (pair i64)
+  (move-start i64)
+  (move-end i64)
+  (call-start i64)
+  (call-end i64))
+
+(import (vector.vector CompilerBackendArgEntryEvent core) as arg_entry_events)
+
+(define (compiler-backend-arg-entry-enabled?
+  [backend-state : CompilerBackendState]
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]) : bool
+  (and
+    emit-entry
+    (compiler-backend-target-elf? target)
+    (compiler-backend-state-scalar-registers-enabled? backend-state)
+    (not (compiler-backend-state-shared-object-code-model? backend-state))
+    (not (compiler_ir_types.compiler-debug-info-enabled?))))
+
+(define (compiler-backend-arg-entry-prepare!
+  [index : CompilerBackendProgramIndex]
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]) : unit
+  (let
+    [stream : CompilerBackendStreamState
+      (compiler-backend-state-stream-state index.backend-state)]
+    (when
+      (and
+        (compiler-backend-arg-entry-enabled?
+          index.backend-state
+          target
+          emit-entry)
+        (compiler-backend-assembly-stream-active? stream))
+      (let
+        [symbols : backend_string_i64_map.Map
+          (backend_string_i64_map.with-capacity functions.len)]
+        (for [slot (iterator.range 0 functions.len)]
+          (match (compiler_ir_types.compiler-ir-function-seq-borrow
+            functions
+            slot)
+            [(Function name _ _ _ _ _)
+              (backend_string_i64_map.insert!
+                symbols
+                (compiler-backend-function-symbol-index index name)
+                slot)]))
+        (let
+          [metadata : (Box CompilerBackendArgEntries)
+            (box (CompilerBackendArgEntries symbols functions.len))]
+          ;; This box and its map live in the program emission arena. The
+          ;; finalizer clears the handle before that arena is released.
+          (unsafe
+            (set!
+              (deref (compiler-backend-stream-state-ptr stream)).arg-entries
+              (cast
+                (ptr-read (ptr-cast (ptr-addr-of metadata) : (Ptr u64)))
+                : i64))))))))
+
+;; Convert the peephole's dense GP index (which skips rsp/rbp) to the ABI id.
+(define (compiler-backend-arg-entry-reg-id [dense : i64]) : i64
+  (if (>= dense 4)
+    (+ dense 2)
+    dense))
+
+(define (compiler-backend-arg-entry-operand-reg
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [reg : i64 (compiler-backend-peephole-token-reg-index-range data start end)]
+    (if (< reg 0)
+      (compiler-backend-peephole-rmw-high-byte-reg-index data start end)
+      reg)))
+
+(define (compiler-backend-arg-entry-collect-call!
+  [data : (Ptr u8)]
+  [call-start : i64]
+  [call-end : i64]
+  [callee : i64]
+  [counts : (&mut counts (__tl_dyn-array u16))]
+  [best : (&mut best (__tl_dyn-array i64))]
+  [events : (&mut events arg_entry_events.Vec)]) : unit
+  (let
+    [end : i64 (- call-start 1)]
+    [reads : i64 0]
+    [writes : i64 0]
+    ;; Consecutive calls scan disjoint setup ranges. A call, label, directive
+    ;; or any instruction outside the explicit-destination subset stops us.
+    (while (> end 0)
+      (let
+        [start : i64 (compiler-backend-asm-prev-line-start data end)]
+        [ms : i64 (+ start 4)]
+        (unless
+          (and (< ms end) (compiler-backend-cold-prefix? data start end "    "))
+          (return unit))
+        (let
+          [me : i64 (compiler-backend-peephole-scan-byte-range data ms end 32)]
+          [movq? : bool (compiler-backend-peephole-range-eq? data ms me "movq")]
+          (unless
+            (or
+              movq?
+              (compiler-backend-peephole-mnemonic-single-dest?
+                data
+                ms
+                (- me ms)))
+            (return unit))
+          (let
+            [src-start : i64 (+ me 1)]
+            [comma : i64
+              (compiler-backend-peephole-find-comma-space-range
+                data
+                src-start
+                end)]
+            (unless (and (> comma src-start) (< (+ comma 2) end)) (return unit))
+            (let
+              [src : i64
+                (compiler-backend-arg-entry-operand-reg data src-start comma)]
+              [dst : i64
+                (compiler-backend-arg-entry-operand-reg data (+ comma 2) end)]
+              ;; Only register destinations: no stack/frame pointer changes or
+              ;; stack stores. XMM parks are untracked bare register sources.
+              (when
+                (or
+                  (< dst 0)
+                  (and
+                    (< src 0)
+                    (= (compiler-backend-peephole-byte-at data src-start) 37)))
+                (return unit))
+              (let
+                [dst-id : i64 (compiler-backend-arg-entry-reg-id dst)]
+                [dst-bit : i64 (shl 1 dst-id)]
+                (when
+                  (and
+                    movq?
+                    (compiler-backend-peephole-rmw-callee-saved-reg? src)
+                    (or (and (>= dst 1) (<= dst 2)) (and (>= dst 4) (<= dst 7)))
+                    (= (bit-and (bit-or reads writes) dst-bit) 0))
+                  (let
+                    [src-id : i64 (compiler-backend-arg-entry-reg-id src)]
+                    (when
+                      (= (bit-and writes (shl 1 src-id)) 0)
+                      (let
+                        ;; Dense columns are rcx, rdx, rsi, rdi, r8, r9;
+                        ;; rows are rbx, r12, r13, r14, r15.
+                        [pair : i64
+                          (+
+                            (*
+                              (if (= src 3)
+                                0
+                                (- src 9))
+                              6)
+                            (-
+                              dst
+                              (if (< dst 3)
+                                1
+                                2)))]
+                        [row : i64 (* callee 30)]
+                        [cell : i64 (+ row pair)]
+                        [previous : u16 (array-ref counts cell)]
+                        ;; Saturation keeps very large programs eligible.
+                        [count : u16
+                          (if (= previous 65535)
+                            previous
+                            (+ previous 1))]
+                        [winner : i64 (array-ref best callee)]
+                        (set! (array-ref counts cell) count)
+                        (when
+                          (or
+                            (> count (array-ref counts (+ row winner)))
+                            (and
+                              (= count (array-ref counts (+ row winner)))
+                              (< pair winner)))
+                          (set! (array-ref best callee) pair))
+                        (arg_entry_events.push-ref!
+                          events
+                          (CompilerBackendArgEntryEvent
+                            callee
+                            pair
+                            start
+                            (+ end 1)
+                            call-start
+                            call-end))))))
+                (set! writes (bit-or writes dst-bit))
+                ;; The destination is already in writes whether or not the
+                ;; instruction also reads it. This includes emergency
+                ;; restores from frame slots. Address base/index uses count.
+                (set!
+                  reads
+                  (bit-or
+                    reads
+                    (compiler-backend-swb-reg-mask-range data src-start comma)))
+                (set! end (- start 1))))))))))
+
+;; A quoted ELF-local name contains ':' which cannot occur in the backend's
+;; assembler identifiers. Keep it in the symbol table with a three-byte range
+;; so the public entry's address and size still describe only the original body.
+(define (compiler-backend-arg-entry-symbol [callee : i64]) : String
+  (str_cat.str-cat "\"__tl_arg_entry:" (string.int->string callee) "\""))
+
+;; The assembly chunks and their replacement buffer share the same home
+;; arena. The String header can therefore point directly into the immutable
+;; input chunk for as long as the output is live.
+(define (compiler-backend-arg-entry-append-range
+  [out : text_buf.TextBuf]
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : text_buf.TextBuf
+  (if (= start end)
+    out
+    (text_buf.append
+      out
+      (unsafe
+        (string-from-bytes (ptr-offset data start) (- end start))))))
+
+(define (compiler-backend-arg-entry-splice
+  [out : text_buf.TextBuf]
+  [asm : String]
+  [counts : (& counts (__tl_dyn-array u16))]
+  [best : (& best (__tl_dyn-array i64))]
+  [defined : (& defined (__tl_dyn-array bool))]
+  [events : (& events (Slice CompilerBackendArgEntryEvent))]) : text_buf.TextBuf
+  (let
+    [result : text_buf.TextBuf out]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& asm)))]
+    [copied : i64 0]
+    (for [event events]
+      (let
+        [pair : i64 (array-ref best event.callee)]
+        (when
+          (and
+            (array-ref defined event.callee)
+            (>= (array-ref counts (+ (* event.callee 30) pair)) 2)
+            (or (< event.pair 0) (= event.pair pair)))
+          (let
+            [entry : String (compiler-backend-arg-entry-symbol event.callee)]
+            (set!
+              result
+              (compiler-backend-arg-entry-append-range
+                result
+                data
+                copied
+                event.move-start))
+            (if (< event.pair 0)
+              (let
+                [src : i64 (/ pair 6)]
+                [dst : i64 (% pair 6)]
+                (text_buf.append!
+                  result
+                  (str_cat.str-cat
+                    "    .local "
+                    entry
+                    "\n"
+                    (compiler-backend-emit-function-type-directive
+                      (Linux)
+                      entry)
+                    entry
+                    ":\n    movq "
+                    (compiler_abi.compiler-abi-register-spelling
+                      (if (= src 0)
+                        compiler_abi.compiler-reg-id-rbx
+                        (+ compiler_abi.compiler-reg-id-r12 (- src 1))))
+                    ", "
+                    (compiler_abi.compiler-abi-register-spelling
+                      (+
+                        dst
+                        (if (< dst 2)
+                          1
+                          4)))
+                    "\n"
+                    (compiler-backend-emit-function-size-directive
+                      (Linux)
+                      entry)))
+                (set! copied event.move-start))
+              (begin
+                (set!
+                  result
+                  (compiler-backend-arg-entry-append-range
+                    result
+                    data
+                    event.move-end
+                    event.call-start))
+                (text_buf.append!
+                  result
+                  (str_cat.str-cat "    call " entry "\n"))
+                (set! copied event.call-end)))))))
+    (if (= copied 0)
+      (text_buf.append result asm)
+      (compiler-backend-arg-entry-append-range
+        result
+        data
+        copied
+        (string.string-length asm)))))
+
+(define (compiler-backend-arg-entry-scan-chunk!
+  [asm : String]
+  [symbols : (& symbols backend_string_i64_map.Map)]
+  [counts : (&mut counts (__tl_dyn-array u16))]
+  [best : (&mut best (__tl_dyn-array i64))]
+  [defined : (&mut defined (__tl_dyn-array bool))]
+  [events : (&mut events arg_entry_events.Vec)]) : unit
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& asm)))]
+    [end : i64 (string.string-length asm)]
+    [inside-function : bool false]
+    [start : i64 0]
+    (while (< start end)
+      (let
+        [stop : i64
+          (compiler-backend-peephole-scan-byte-range data start end 10)]
+        (cond
+          [(and
+              inside-function
+              (compiler-backend-cold-prefix? data start stop "    call "))
+            (match (backend_string_i64_map.get-borrowed
+              symbols
+              (string.slice-view (& asm) (+ start 9) (- stop (+ start 9))))
+              [(LookupFound callee)
+                (compiler-backend-arg-entry-collect-call!
+                  data
+                  start
+                  (+ stop 1)
+                  callee
+                  counts
+                  best
+                  events)]
+              [(LookupMissing) unit])]
+          [(compiler-backend-cold-prefix? data start stop "    .type ")
+            (set! inside-function false)
+            (let
+              [name-start : i64 (+ start 10)]
+              [name-end : i64 (- stop 10)]
+              [label : i64 (+ stop 1)]
+              [label-end : i64 (+ label (- name-end name-start))]
+              (when
+                (and
+                  (> name-end name-start)
+                  (< (+ label-end 1) end)
+                  (compiler-backend-peephole-range-eq?
+                    data
+                    name-end
+                    stop
+                    ",@function")
+                  (= (compiler-backend-peephole-byte-at data label-end) 58)
+                  (=
+                    (compiler-backend-peephole-byte-at data (+ label-end 1))
+                    10)
+                  (compiler-backend-peephole-ranges-eq?
+                    data
+                    name-start
+                    name-end
+                    data
+                    label
+                    label-end))
+                (match (backend_string_i64_map.get-borrowed
+                  symbols
+                  (string.slice-view (& asm) name-start (- name-end name-start)))
+                  [(LookupFound slot)
+                    (set! inside-function true)
+                    (set! (array-ref defined slot) true)
+                    (arg_entry_events.push-ref!
+                      events
+                      (CompilerBackendArgEntryEvent slot -1 label 0 0 0))]
+                  [(LookupMissing) unit])))]
+          [(compiler-backend-cold-prefix? data start stop "    .size ")
+            (set! inside-function false)]
+          [else unit])
+        (set! start (+ stop 1))))))
+
+(define (compiler-backend-arg-entry-optimize
+  [final : text_buf.TextBuf]
+  [metadata : CompilerBackendArgEntries]
+  [home : arena.Arena]) : text_buf.TextBuf
+  (let
+    [chunks : text_buf.TextBufChunkList final.chunks]
+    [chunk-count : i64 (text_buf.chunk-count (& chunks) 0)]
+    [items : (__tl_dyn-array String) (__tl_make-array String chunk-count)]
+    [event-ends : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+    [function-count : i64 metadata.function-count]
+    [best : (__tl_dyn-array i64) (__tl_make-array i64 function-count)]
+    [counts : (__tl_dyn-array u16) (__tl_make-array u16 (* function-count 30))]
+    [defined : (__tl_dyn-array bool) (__tl_make-array bool function-count)]
+    [events : arg_entry_events.Vec (arg_entry_events.new)]
+    (text_buf.chunks-fill-array-rev chunks (&mut items) (- chunk-count 1))
+    ;; The stream flushes whole function groups into individual chunks.
+    (for [i (iterator.range 0 chunk-count)]
+      (compiler-backend-arg-entry-scan-chunk!
+        (compiler-backend-global-array-element-shared-view items i)
+        (& metadata.symbols)
+        (&mut counts)
+        (&mut best)
+        (&mut defined)
+        (&mut events))
+      (set! (array-ref event-ends i) events.len))
+    (unsafe
+      (in-arena
+        (arena.Arena (arena.raw-handle home))
+        (let
+          [out : text_buf.TextBuf (text_buf.empty)]
+          [view : (& events (Slice CompilerBackendArgEntryEvent))
+            (arg_entry_events.view (& events))]
+          [start : i64 0]
+          (for [i (iterator.range 0 chunk-count)]
+            (let
+              [end : i64 (array-ref event-ends i)]
+              (set!
+                out
+                (compiler-backend-arg-entry-splice
+                  out
+                  (compiler-backend-global-array-element-shared-view items i)
+                  (& counts)
+                  (& best)
+                  (& defined)
+                  (slice-view view start (- end start))))
+              (set! start end)))
+          out)))))
+
+(cfg test (import stdlib.test))
+
+(test
+  arg-entry-emergency-restore-register-writes
+  (for [restore (iterator.range 0 3)]
+    (let
+      [register : String
+        (cond [(= restore 0) "%r10"] [(= restore 1) "%r12"] [else "%rdi"])]
+      [setup : String
+        (str_cat.str-cat
+          "    movq %r12, %rdi\n    movq 112(%rsp), "
+          register
+          "\n")]
+      [asm : String (str_cat.str-cat setup "    call target\n")]
+      [counts : (__tl_dyn-array u16) (__tl_make-array u16 30)]
+      [best : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [events : arg_entry_events.Vec (arg_entry_events.new)]
+      (compiler-backend-arg-entry-collect-call!
+        (unsafe
+          (string-data (& asm)))
+        (string.string-length setup)
+        (string.string-length asm)
+        0
+        (&mut counts)
+        (&mut best)
+        (&mut events))
+      (test.assert-i64-eq
+        events.len
+        (if (= restore 0)
+          1
+          0)
+        "a restore can be crossed only when it leaves both copy registers intact"))))
+
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
@@ -94087,16 +94561,37 @@ tl_shared_object_init:
                 false
                 false
                 profile-state))]
+          [stream-data : (MutPtr CompilerBackendStreamStateData)
+            (compiler-backend-stream-state-ptr stream)]
+          [arg-entries : i64
+            (unsafe
+              (deref stream-data).arg-entries)]
+          (unsafe
+            (set! (deref stream-data).arg-entries 0))
           (match emitted
             [(Ok _)
               (let
                 [final-home-arena : arena.Arena
                   (unsafe
-                    (deref (compiler-backend-stream-state-view stream)).assembly-home-arena)]
+                    (deref stream-data).assembly-home-arena)]
                 [final : text_buf.TextBuf
                   (compiler-backend-assembly-stream-finish!
                     backend-state
                     stream)]
+                (when
+                  (not (= arg-entries 0))
+                  (unsafe
+                    (arena.set! emit-arena))
+                  (set!
+                    final
+                    (compiler-backend-arg-entry-optimize
+                      final
+                      (unsafe
+                        (ptr-read
+                          (int->ptr
+                            (cast arg-entries : u64)
+                            : (Ptr CompilerBackendArgEntries))))
+                      final-home-arena)))
                 (unsafe
                   (arena.destroy emit-arena))
                 (unsafe

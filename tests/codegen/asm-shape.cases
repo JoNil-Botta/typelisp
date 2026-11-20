@@ -344,11 +344,14 @@ metric unnamed-pushed-csrs = 0
 # calls 16-byte aligned after the trim.
 case csr-census-loop
 source tests/integration/csr_census_loop.tl
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_csr_census_loop_ccl_probe,@function$~^_tl_csr_census_loop_ccl_probe:$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
 in fn _tl_csr_census_loop_ccl_census_blocks
 metric prologue-csrs >= 4
 metric unnamed-pushed-csrs = 0
 metric call-alignment:prologue = ok
-contains call _tl_csr_census_loop_ccl_probe
+match ^[[:space:]]+call {{entry}}$
 
 # W1-frame: the frame adjust follows what the function needs -- a tail-jump
 # forwarder owes nothing, an abort-only caller keeps its even push run but no
@@ -919,9 +922,12 @@ contains call tl_oob_abort
 # under register pressure, or with a writing callee, it is not.
 case licm-memclean-promote
 source tests/integration/licm_memclean_global_promote.tl
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_licm_memclean_global_promote_mix,@function$~^_tl_licm_memclean_global_promote_mix:$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
 in fn _tl_licm_memclean_global_promote_promoted_scan
 count-fixed = 1 _tl_licm_memclean_global_promote_gcell_a(%rip)
-contains call _tl_licm_memclean_global_promote_mix
+match ^[[:space:]]+call {{entry}}$
 in fn _tl_licm_memclean_global_promote_pressured_scan
 count-fixed = 2 _tl_licm_memclean_global_promote_gcell_b(%rip)
 contains call _tl_licm_memclean_global_promote_mix
@@ -967,8 +973,11 @@ not-match \(%rsp\)|\(%rbp\)
 # ...a handle argument too, and neither it nor %rdi is reloaded from a slot.
 case handle-arg-csr
 source tests/integration/handle_arg_csr.tl
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_handle_arg_csr_probe,@function$~^_tl_handle_arg_csr_probe:$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
 in fn _tl_handle_arg_csr_sum_args
-contains call _tl_handle_arg_csr_probe
+match ^[[:space:]]+call {{entry}}$
 match ^[[:space:]]+movq %rdi, %r(12|13|14|15|bx|bp)$
 capture home ^[[:space:]]*movq %rdi, %(r1[2-5]|rbx|rbp)$
 not-match ^[[:space:]]+movq [-0-9]*\((%rsp|%rbp)\), %{{home}}$
@@ -1858,3 +1867,46 @@ in fn _tl_addr_taken_stack_aggregates_scalar_case
 count >= 1 ^[[:space:]]+leaq [0-9]+\(%rsp\), %r
 count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$
 count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_read_slot
+
+# Two copies of the same saved value move ahead of a later argument setup.
+# The different saved register and the single-site callee keep normal calls.
+case arg-entry-linux
+source tests/fixtures/arg_entry.tl
+target linux-x86_64
+opt 2
+assemble
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_arg_entry_record,@function$~^_tl_arg_entry_record:$
+count = 1 ^[[:space:]]+\.local "__tl_arg_entry:[0-9]+"$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
+order {{entry}}: || movq %r12, %rdi || .size {{entry}}, . - {{entry}} || _tl_arg_entry_record:
+in fn main
+count = 3 ^[[:space:]]+call {{entry}}$
+count = 1 ^[[:space:]]+call _tl_arg_entry_record$
+order movq %r15, %rdi || movl $4, %esi || call _tl_arg_entry_record
+order movq %r12, %rdi || movl $7, %esi || call _tl_arg_entry_single
+order movq %r12, %rsi || movl $4, %edx || call *(%r10)
+
+case arg-entry-win64
+source tests/fixtures/arg_entry.tl
+target windows-x86_64
+opt 2
+assemble
+not-contains __tl_arg_entry:
+contains call _tl_arg_entry_record
+contains call _tl_arg_entry_single
+
+# A by-value array's lowered register copy can use the same alternate entry.
+case arg-entry-by-value-array
+source tests/fixtures/arg_entry_value.tl
+target linux-x86_64
+opt 2
+assemble
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_arg_entry_value_record,@function$~^_tl_arg_entry_value_record:$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
+order {{entry}}: || movq %r12, %rdi || .size {{entry}}, . - {{entry}} || _tl_arg_entry_value_record:
+in fn main
+count = 2 ^[[:space:]]+call {{entry}}$
+not-contains call _tl_arg_entry_value_record
+not-match ^[[:space:]]+movq %r12, %rdi$

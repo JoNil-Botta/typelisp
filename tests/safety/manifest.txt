@@ -1368,6 +1368,12 @@ with_owner_scope_fed_invalidate_reject|check-fail|tests/safety/with_owner_scope_
 arena_if_join_copy_out_reject|check-fail|tests/safety/arena_if_join_copy_out_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 arena_if_join_scalar_tag_reject|check-fail|tests/safety/arena_if_join_scalar_tag_reject.tl|-|region-tagged value cannot escape with-arena 'r'
 arena_if_join_struct_tag_reject|check-fail|tests/safety/arena_if_join_struct_tag_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+# #9834: mutable references are invariant in their referent at a join, and a
+# `&mut` of arena storage joins only with another `&mut` of the same region.
+arena_mut_ref_join_element_store_reject|check-fail|tests/safety/arena_mut_ref_join_element_store_reject.tl|-|if branches must match
+arena_mut_ref_join_push_reject|check-fail|tests/safety/arena_mut_ref_join_push_reject.tl|-|if branches must match
+arena_mut_ref_join_same_arena_ok|run-exit|tests/safety/arena_mut_ref_join_same_arena_ok.tl|42|-
+arena_mut_ref_join_store_reject|check-fail|tests/safety/arena_mut_ref_join_store_reject.tl|-|if branches must match
 # #9493: a `with` owner initialized by an if/match keeps its arms' region.
 with_owner_if_init_destroy_reject|check-fail|tests/safety/with_owner_if_init_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
 with_owner_if_init_rewind_reject|check-fail|tests/safety/with_owner_if_init_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `w` holds values from it

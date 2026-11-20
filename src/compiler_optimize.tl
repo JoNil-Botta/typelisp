@@ -3217,25 +3217,6 @@
       (compiler-opt-global-shared-view items))
     items))
 
-;; Vars whose storage an `addr_of` exposes (#7972). A store through that
-;; address redefines the var without any instruction naming it as a dst, so
-;; its single `mov` does not pin its value across the function: a pass that
-;; forwards values by def must neither forward it nor forward through it.
-;; LICM's scan builds the marks, so a function without an `addr_of` gets an
-;; empty array; every reader goes through the bounds-checked
-;; `opt-addr-taken-var?`, so that reads as nothing marked.
-(define (opt-addr-taken-vars
-  [vars : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array bool)
-  (let
-    [scan : OptFunctionAddrTakenScan
-      (OptFunctionAddrTakenScan
-        vars
-        (__tl_make-array bool 0)
-        (opt_dense_i64_vec.new))]
-    (opt-function-addr-taken-scan-blocks! (&mut scan) blocks)
-    scan.marks))
-
 (define (opt-addr-taken-var?
   [marks : (& marks (__tl_dyn-array bool))]
   [var : i64]) : bool
@@ -11583,7 +11564,9 @@
                 (= (array-length proof.memo) 0)
                 (set!
                   proof.marks
-                  (opt-addr-taken-vars (array-length defs.blocks) proof.body))
+                  (opt-addr-taken-marks-blocks
+                    (array-length defs.blocks)
+                    proof.body))
                 (set!
                   proof.memo
                   (__tl_make-array i64 (array-length defs.blocks))))
@@ -16658,17 +16641,24 @@
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (let
     [doms : OptDomInfo (__tl-project-field context doms)]
-    ;; Rewrites below never add or drop an `addr_of`, so one scan serves every
-    ;; fact table.
-    [addr-taken : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
+    ;; Rewrites below never add or drop an `addr_of`, so the pass manager's set
+    ;; serves every fact table.
     [copy-facts : OptGlobalFactTable
       (opt-global-fact-table
         type-segment-bases
-        (& (opt-global-facts-from-blocks (Copy) addr-taken blocks)))]
+        (&
+          (opt-global-facts-from-blocks
+            (Copy)
+            (& opt-function-addr-taken.marks)
+            blocks)))]
     [pack-word-facts : OptGlobalFactTable
       (opt-global-fact-table
         type-segment-bases
-        (& (opt-global-facts-from-blocks (PackWord) addr-taken blocks)))]
+        (&
+          (opt-global-facts-from-blocks
+            (PackWord)
+            (& opt-function-addr-taken.marks)
+            blocks)))]
     [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
     [copied : ir.CompilerIrBlockList
       (opt-global-copy-blocks
@@ -16680,13 +16670,21 @@
     [expr-facts : OptGlobalFactTable
       (opt-global-fact-table
         type-segment-bases
-        (& (opt-global-facts-from-blocks (Expr) addr-taken copied)))]
+        (&
+          (opt-global-facts-from-blocks
+            (Expr)
+            (& opt-function-addr-taken.marks)
+            copied)))]
     [cse : ir.CompilerIrBlockList
       (opt-global-cse-blocks type-segment-bases (& expr-facts) doms (& copied))]
     [cse-copy-facts : OptGlobalFactTable
       (opt-global-fact-table
         type-segment-bases
-        (& (opt-global-facts-from-blocks (Copy) addr-taken cse)))]
+        (&
+          (opt-global-facts-from-blocks
+            (Copy)
+            (& opt-function-addr-taken.marks)
+            cse)))]
     [cse-uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame cse)]
     (opt-global-copy-blocks
       (& cse-copy-facts)
@@ -16716,6 +16714,7 @@
     [(Ok)
       (match func
         [(Function name params ret-ty frame blocks function-abi)
+          (opt-function-addr-taken-install! frame (& blocks))
           (Function
             name
             params
@@ -21174,35 +21173,38 @@
             rest
             (opt-licm-collect-defs-instr-seq (& instrs) (& set)))])]))
 
-;; Address-taken locals of the function a pass is rewriting (#7974, #7973,
-;; #8913). A write through the address -- in a loop body, or in a callee handed
-;; the address -- redefines the var without naming it as a dst.
+;; Address-taken locals of the function the pipeline is rewriting (#7974,
+;; #7973, #8913). A write through the address -- in a loop body, or in a callee
+;; handed the address -- redefines the var without naming it as a dst.
+;;
+;; One set serves the whole function: the pass manager collects it when it makes
+;; the pipeline's state (`opt-pass-state`), every stage below reads that set
+;; (`opt-addr-taken-contract` records how), and a stage that can delete an
+;; `addr_of` reinstalls it from its own output (`opt-stage-effect`). Nothing
+;; inside a pipeline run creates an `addr_of` -- only the inliner's clone does,
+;; outside the pipeline -- so the set stays a superset of any rescan and only a
+;; stage that deletes one can make it stale. An off-pipeline entry that reads
+;; the set (a final pass, a test driver) installs it for its own function first
+;; (`opt-function-addr-taken-install!`).
 ;; - LICM counts every such var as defined in every loop
 ;;   (`opt-licm-loop-defs`): an instruction reading one is never invariant, a
 ;;   condition on one never unswitches, and an instruction writing one is never
-;;   hoisted (`opt-addr-taken-write?`). Each LICM function entry installs the
-;;   set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
-;;   before it examines one.
+;;   hoisted (`opt-addr-taken-write?`).
 ;; - Fold keeps no copy or constant fact naming one (`opt-copy-update-env`,
-;;   `opt-const-forget-addr-taken!`); `optimize-block-list-for-function-pass`
-;;   installs the set before its block walk.
+;;   `opt-const-forget-addr-taken!`).
 ;; - Code motion treats an operand naming one as a load of its storage
 ;;   (`opt-addr-taken-operand?`) and a def of one as a store
 ;;   (`opt-addr-taken-write?`). Successor sinking and store address sinking
 ;;   move such a read only past instructions a load may cross; successor
 ;;   sinking never clones a read or a def of one, neither guard sinking nor gep
 ;;   splitting moves or re-evaluates such a read, and load sinking stops a
-;;   moving load at a def of one. Each pass reads the set only for the function
-;;   it rewrites, collecting it in a walk it already makes or only once it has
-;;   a candidate.
+;;   moving load at a def of one.
 ;; - BCE versioning, its hoist and bound tightening, ubound, unrolling,
 ;;   fill/copy-call recognition and LFTR refuse a loop that reads or writes a
 ;;   tainted value, one a store can change through a pointer, and every loop of
 ;;   a function that branches on one (`opt-loop-tainted?`, #9420).
-;; Every reader runs after its own pass installed the set for the function it
-;; rewrites, so a set left from another function is never read. `ids` lists the
-;; marked vars, so a loop pays for the few there are rather than for the whole
-;; frame.
+;; `ids` lists the marked vars, so a loop pays for the few there are rather
+;; than for the whole frame.
 (defstruct OptFunctionAddrTaken
   (marks (__tl_dyn-array bool))
   (ids opt_dense_i64_vec.Vec))
@@ -21216,6 +21218,16 @@
 ;; there would read another function's set, from storage already reclaimed.
 (define opt-addr-taken-none : (__tl_dyn-array bool)
   (__tl_make-array bool 0))
+
+;; Whether the installed set is stale for the blocks a reader is about to read,
+;; and how many vars it marks. The first is what a reader refreshes; the second
+;; lets a stage that can delete an `addr_of` skip that invalidation for a
+;; function that has none -- the count (unlike `marks`, which lives in a
+;; rewindable arena region) is always safe to read.
+(define opt-function-addr-taken-stale? : bool
+  false)
+(define opt-function-addr-taken-count : i64
+  0)
 
 ;; One walk of the function: each `addr_of` source is marked and listed once.
 ;; The mark array is allocated at the first `addr_of`, so a function with none
@@ -21273,7 +21285,32 @@
 ;; Installs what a pass's own walk of the whole function collected.
 (define (opt-function-addr-taken-install-scan!
   [scan : OptFunctionAddrTakenScan]) : unit
-  (set! opt-function-addr-taken (OptFunctionAddrTaken scan.marks scan.ids)))
+  (set! opt-function-addr-taken (OptFunctionAddrTaken scan.marks scan.ids))
+  (set!
+    opt-function-addr-taken-count
+    (opt_dense_i64_vec.len (& opt-function-addr-taken.ids)))
+  (set! opt-function-addr-taken-stale? false))
+
+;; A stage that can delete an `addr_of` has just run. A test build keeps the
+;; set exact so `opt-stage`'s rescan can compare against it; an ordinary build
+;; defers the walk to the next stage that reads the set.
+(define (opt-addr-taken-stage-effect!
+  [frame : i64]
+  [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (when
+    (> opt-function-addr-taken-count 0)
+    (if (cfg test true false)
+      (opt-function-addr-taken-install! frame blocks)
+      (set! opt-function-addr-taken-stale? true))))
+
+;; Reinstall a set an `Effect` stage invalidated. Every reader that can run
+;; after one calls this first, so a run of such stages pays one walk in total.
+(define (opt-addr-taken-refresh!
+  [frame : i64]
+  [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (when
+    opt-function-addr-taken-stale?
+    (opt-function-addr-taken-install! frame blocks)))
 
 (define (opt-function-addr-taken-install!
   [frame : i64]
@@ -21283,13 +21320,16 @@
     (opt-function-addr-taken-scan-blocks! (&mut scan) blocks)
     (opt-function-addr-taken-install-scan! scan)))
 
-(define (opt-licm-addr-taken-install-for-loops!
+;; One body's set as an owned array, for a reader that runs outside a pipeline
+;; run: the installed set is only current -- and only alive -- inside one,
+;; since its arrays belong to that run's arena.
+(define (opt-addr-taken-marks-blocks
   [frame : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [loops : (& loops (Slice OptNaturalLoop))]) : unit
-  (match loops
-    [(slice) unit]
-    [_ (opt-function-addr-taken-install! frame blocks)]))
+  [blocks : (& ir.CompilerIrBlockList)]) : (__tl_dyn-array bool)
+  (let
+    [scan : OptFunctionAddrTakenScan (opt-function-addr-taken-scan-new frame)]
+    (opt-function-addr-taken-scan-blocks! (&mut scan) blocks)
+    scan.marks))
 
 ;; The address-taken refinement of `compiler-ir-instr-effect`, which calls
 ;; both of these forms `Pure`. An operand naming an address-taken var reads its
@@ -21297,7 +21337,7 @@
 ;; storage, as a store through its address would.
 (define (opt-addr-taken-operand? [value : (& value ir.CompilerIrValue)]) : bool
   (and
-    (> (array-length opt-function-addr-taken.marks) 0)
+    (> opt-function-addr-taken-count 0)
     (match value
       [(Var id) (opt-addr-taken-var? (& opt-function-addr-taken.marks) id)]
       [_ false])))
@@ -21311,8 +21351,12 @@
       [(Some dst) (opt-addr-taken-var? marks dst)]
       [(None) false])))
 
+;; The installed marks may only be read once a refresh or install made them
+;; this function's; the count is safe to read always.
 (define (opt-addr-taken-write? [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (opt-addr-taken-def? (& opt-function-addr-taken.marks) instr))
+  (and
+    (> opt-function-addr-taken-count 0)
+    (opt-addr-taken-def? (& opt-function-addr-taken.marks) instr)))
 
 ;; The effect of `instr` in a function whose address-taken vars `marks` marks:
 ;; the function's installed `opt-function-addr-taken.marks`, or
@@ -21342,6 +21386,135 @@
         (ir.CompilerIrEffect.MemoryWrite)
         effect)]
     [_ effect]))
+
+;; C11: the pass manager collects the set once per function (`opt-pass-state`)
+;; and every pass reads that one set, so each pipeline stage's relationship to
+;; it is one table row. `shared` reads the installed set; `taint` reads the
+;; loop-taint closure built from it; `effect` can delete an `addr_of` and so
+;; reinstalls the set from its own output (`opt-stage-effect`);
+;; `not-observable` neither reads the set nor can create or remove an
+;; `addr_of`, for the reason recorded. A test build checks every stage against
+;; this table and rescans the stage's output (`opt-stage`), so a missing row, a
+;; stage that creates an `addr_of`, and a stage that deletes one without
+;; reinstalling all fail.
+(cfg
+  test
+  (defenum OptAddrTakenContract
+    (Missing)
+    (Shared)
+    (Taint)
+    (Effect)
+    (NotObservable String)))
+
+(cfg
+  test
+  (define (opt-addr-taken-contract [pass : (& pass str)]) : OptAddrTakenContract
+    (cond
+      [(string.eq pass "fold") (Effect)]
+      [(string.eq pass "affine") (Shared)]
+      [(string.eq pass "ctor_fwd") (Effect)]
+      [(string.eq pass "slot_fwd") (Effect)]
+      [(string.eq pass "aggregate_split") (Effect)]
+      [(string.eq pass "counter_sink")
+        (NotObservable "reorders latch counters only")]
+      [(string.eq pass "rotation") (NotObservable "reorders register moves")]
+      [(string.eq pass "group_split")
+        (NotObservable
+          "splits group defs; an addr_of source is not a group def")]
+      [(string.eq pass "ssa")
+        (NotObservable "renames values, never an addr_of source")]
+      [(string.eq pass "global_cell") (Shared)]
+      [(string.eq pass "gvn") (Shared)]
+      [(string.eq pass "bounds_dom")
+        (NotObservable "counts addr_of sources from the blocks, not the set")]
+      [(string.eq pass "sccp") (NotObservable "folds constants and phis")]
+      [(string.eq pass "phi_cmp_fold")
+        (NotObservable "rewrites compares and phis")]
+      [(string.eq pass "bool_branch")
+        (NotObservable "rewrites branch conditions")]
+      [(string.eq pass "thread_branch") (NotObservable "retargets jumps")]
+      [(string.eq pass "cfg")
+        (NotObservable
+          "drops unreachable blocks; a dead addr_of mark is a safe superset")]
+      [(string.eq pass "bit_test") (NotObservable "rewrites bit tests")]
+      [(string.eq pass "switch") (NotObservable "rewrites switch dispatch")]
+      [(string.eq pass "preheaders")
+        (NotObservable "splits edges, moves instructions")]
+      [(string.eq pass "rotate_ssa") (NotObservable "rotates SSA form")]
+      [(string.eq pass "scratch_reset") (NotObservable "resets scratch slots")]
+      [(string.eq pass "dead_phi") (NotObservable "drops dead phis")]
+      [(string.eq pass "induction") (Taint)]
+      [(string.eq pass "flag_exit") (Taint)]
+      [(string.eq pass "fill_call") (Taint)]
+      [(string.eq pass "copy_call") (Taint)]
+      [(string.eq pass "unroll") (Taint)]
+      [(string.eq pass "load_combine") (NotObservable "merges loads")]
+      [(string.eq pass "lftr") (Taint)]
+      [(string.eq pass "post_lftr_licm") (Shared)]
+      [(string.eq pass "gep_offset") (Taint)]
+      [(string.eq pass "global_gvn") (Shared)]
+      [(string.eq pass "divrem_safety") (Taint)]
+      [(string.eq pass "bit_length")
+        (NotObservable "rewrites bit length idioms")]
+      [(string.eq pass "gep_split") (Shared)]
+      [(string.eq pass "cmp_sink") (NotObservable "sinks compares")]
+      [(string.eq pass "successor_sink") (Shared)]
+      [(string.eq pass "guard_sink") (Shared)]
+      [(string.eq pass "bool_branch_late")
+        (NotObservable "rewrites branch conditions")]
+      [(string.eq pass "ubound") (Taint)]
+      [(string.eq pass "dce") (Effect)]
+      [(string.eq pass "load_sink") (Shared)]
+      [else (Missing)])))
+
+(cfg
+  test
+  ;; Every stage must leave the installed set exactly equal to a fresh scan of
+  ;; the blocks it produced. A scan mark the set lacks is one the stage created
+  ;; (only the inliner's clone makes an `addr_of`, outside a pipeline); a set
+  ;; mark the scan lacks is an `addr_of` the stage deleted without reinstalling
+  ;; it (`opt-stage-effect`), whose stale superset would silently disable later
+  ;; rewrites.
+  (define (opt-addr-taken-check-stage!
+    [pass : String]
+    [frame : i64]
+    [blocks : (& ir.CompilerIrBlockList)]) : unit
+    (match (opt-addr-taken-contract (& pass))
+      [(Missing)
+        (opt-rewrite-ice!
+          (str_cat.str-cat
+            "optimizer: internal error: stage `"
+            (string.copy (& pass))
+            "` is missing from opt-addr-taken-contract"))]
+      [_
+        (let
+          [scan : OptFunctionAddrTakenScan
+            (opt-function-addr-taken-scan-new frame)]
+          [_walk : unit
+            (opt-function-addr-taken-scan-blocks! (&mut scan) blocks)]
+          [limit : i64
+            (if (> frame (array-length opt-function-addr-taken.marks))
+              frame
+              (array-length opt-function-addr-taken.marks))]
+          (for [var (iterator.range 0 limit)]
+            (let
+              [scanned : bool (opt-addr-taken-var? (& scan.marks) var)]
+              [installed : bool
+                (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)]
+              (when
+                (and scanned (not installed))
+                (opt-rewrite-ice!
+                  (str_cat.str-cat
+                    "optimizer: internal error: stage `"
+                    (string.copy (& pass))
+                    "` created addr_of")))
+              (when
+                (and installed (not scanned))
+                (opt-rewrite-ice!
+                  (str_cat.str-cat
+                    "optimizer: internal error: stage `"
+                    (string.copy (& pass))
+                    "` left a stale superset without refresh"))))))])))
 
 ;; The value-fact and loop transforms' address-taken gate (#9420). Div/rem
 ;; safety, global multiply-to-shift and pure-call dedupe gate each rewrite and
@@ -21454,7 +21627,7 @@
 (define (opt-loop-taint-install!
   [frame : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : unit
-  (opt-function-addr-taken-install! frame blocks)
+  (opt-addr-taken-refresh! frame blocks)
   (let
     [count : i64 (opt_dense_i64_vec.len (& opt-function-addr-taken.ids))]
     (set! opt-loop-taint-branches? false)
@@ -29524,11 +29697,13 @@
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
+          ;; LICM is also an off-pipeline entry (tests, final passes), so it
+          ;; installs the set for the function it rewrites, once it has a loop
+          ;; to examine.
           [_addr-taken : unit
-            (opt-licm-addr-taken-install-for-loops!
-              frame
-              (& blocks)
-              (opt_natural_loop_vec.view loops))]
+            (when
+              (> (opt_natural_loop_vec.len (& loops)) 0)
+              (opt-function-addr-taken-install! frame (& blocks)))]
           (if (not
             (if opt-licm-guard-on
               (opt-licm-guard-loops?
@@ -31222,11 +31397,6 @@
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
-          [_addr-taken : unit
-            (opt-licm-addr-taken-install-for-loops!
-              frame
-              (& blocks)
-              (opt_natural_loop_vec.view loops))]
           (match (opt-licm-unswitch-loops
             blocks
             context
@@ -51235,7 +51405,7 @@
   [blocks : (& ir.CompilerIrBlockList)]) : OptLoadGvnResult
   (let
     ;; The load walk's effect queries read the set (`opt-instr-effect`).
-    [_addr-taken : unit (opt-function-addr-taken-install! frame blocks)]
+    [_addr-taken : unit (opt-addr-taken-refresh! frame blocks)]
     [sources : OptValueSources
       (opt-gvn-sources-blocks
         blocks
@@ -59185,21 +59355,18 @@
 
 (defstruct OptAffineState
   (indices (__tl_dyn-array i64))
-  (bindings opt_affine_binding_vec.Vec)
-  ;; Address-taken vars (#7972): a store through the address redefines them
-  ;; without a def instruction, so no record is keyed by or based on one.
-  (addr-taken (__tl_dyn-array bool)))
+  (bindings opt_affine_binding_vec.Vec))
 
 (defenum OptAffineEnv
   (Dense (Box OptAffineState)))
 
-(define (opt-affine-env-new [frame : i64] [addr-taken : (__tl_dyn-array bool)]) : OptAffineEnv
+;; Address-taken vars (#7972): a store through the address redefines them
+;; without a def instruction, so no record is keyed by or based on one; the
+;; check reads the pass manager's set.
+(define (opt-affine-env-new [frame : i64]) : OptAffineEnv
   (Dense
     (box
-      (OptAffineState
-        (__tl_make-array i64 frame)
-        (opt_affine_binding_vec.new)
-        addr-taken))))
+      (OptAffineState (__tl_make-array i64 frame) (opt_affine_binding_vec.new)))))
 
 (define (opt-affine-env-opaque?
   [env : (& env OptAffineEnv)]
@@ -59208,11 +59375,11 @@
   (match env
     [(Dense state)
       (or
-        (opt-addr-taken-var? (deref state).addr-taken dst)
+        (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)
         (match rec
           [(No) false]
           [(or (AddC base _) (MulC base _ _))
-            (opt-addr-taken-var? (deref state).addr-taken base)]))]))
+            (opt-addr-taken-var? (& opt-function-addr-taken.marks) base)]))]))
 
 (define (opt-affine-env-clear [env : (& env OptAffineEnv)]) : OptAffineEnv
   (match (owned_view.compiler-owned-reference-shared-view env)
@@ -59651,9 +59818,10 @@
   (if (opt-affine-blocks-have-candidate?
     (ir.compiler-ir-block-list-view blocks))
     (begin
+      (opt-function-addr-taken-install! frame (& blocks))
       (opt-affine-fold-blocks-walk!
         (opt-collect-blocks-uses-array frame blocks)
-        (& (opt-affine-env-new frame (opt-addr-taken-vars frame blocks)))
+        (& (opt-affine-env-new frame))
         (ir.compiler-ir-block-list-view blocks))
       blocks)
     blocks))
@@ -59713,7 +59881,7 @@
                   (set! strength-state next-strength)
                   ;; Empty marks: the function takes no address.
                   (when
-                    (> (array-length opt-function-addr-taken.marks) 0)
+                    (> opt-function-addr-taken-count 0)
                     (opt-const-forget-addr-taken! (&mut fold-state))
                     (opt-const-forget-addr-taken! (&mut strength-state)))
                   (set! cse-state next-cse)
@@ -60651,7 +60819,7 @@
           (opt-load-kinds-dense-work-with-size frame)]
         ;; One pair of block CSE tables per pass, cleared by each block's walk.
         [tables : OptBlockExprTables (opt-block-expr-tables-new)]
-        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+        [_addr-taken : unit (opt-addr-taken-refresh! frame (& blocks))]
         [next : ir.CompilerIrBlockList
           (match (& blocks)
             [(Array seq)
@@ -69913,13 +70081,15 @@
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
-      (match (opt-unroll-function-with-context-result
-        type-segment-bases
-        (opt-cfg-context-build blocks)
-        false
-        (owned_view.compiler-owned-reference-shared-view func))
-        [(Result next _) next])]))
+    [(Function _ _ _ frame blocks _)
+      (let
+        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+        (match (opt-unroll-function-with-context-result
+          type-segment-bases
+          (opt-cfg-context-build blocks)
+          false
+          (owned_view.compiler-owned-reference-shared-view func))
+          [(Result next _) next]))]))
 
 ;; --- byte-compose -> wide-load combining (load_combine) ------------------------
 ;;
@@ -86832,15 +87002,17 @@
 ;; multi-block versioning behaves exactly as before for invariant lengths.
 (define (opt-bce-version-function [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
-      (match (opt-bce-version-function-with-context-result
-        (- 0 1)
-        (& (opt_i64_i64_map.with-capacity 1))
-        (& (opt_i64_i64_map.with-capacity 1))
-        (opt-cfg-context-build blocks)
-        false
-        (owned_view.compiler-owned-reference-shared-view func))
-        [(Result next _) next])]))
+    [(Function _ _ _ frame blocks _)
+      (let
+        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+        (match (opt-bce-version-function-with-context-result
+          (- 0 1)
+          (& (opt_i64_i64_map.with-capacity 1))
+          (& (opt_i64_i64_map.with-capacity 1))
+          (opt-cfg-context-build blocks)
+          false
+          (owned_view.compiler-owned-reference-shared-view func))
+          [(Result next _) next]))]))
 
 ;; Test-only driver: `opt-bce-version-function` with ONE loop's application
 ;; forced to fail verification (see `opt-bce-version-apply-verdict`). `probe`
@@ -86854,6 +87026,7 @@
   (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ frame blocks _)
       (let
+        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         [_taint : unit (opt-loop-taint-install! frame (& blocks))]
         [context : OptCfgContext (opt-cfg-context-build blocks)]
         (match (opt-verify-function-with-context func context)
@@ -86969,6 +87142,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ params _ frame blocks _)
       (let
+        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         [_taint : unit (opt-loop-taint-install! frame (& blocks))]
         [context : OptCfgContext
           (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
@@ -87020,15 +87194,17 @@
   [direct-call-clean : (& opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _)
-      (match (opt-bce-version-function-with-context-result
-        type-segment-bases
-        direct-call-clean
-        (& (opt_i64_i64_map.with-capacity 1))
-        (opt-cfg-context-build blocks)
-        false
-        (owned_view.compiler-owned-reference-shared-view func))
-        [(Result next _) next])]))
+    [(Function _ _ _ frame blocks _)
+      (let
+        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+        (match (opt-bce-version-function-with-context-result
+          type-segment-bases
+          direct-call-clean
+          (& (opt_i64_i64_map.with-capacity 1))
+          (opt-cfg-context-build blocks)
+          false
+          (owned_view.compiler-owned-reference-shared-view func))
+          [(Result next _) next]))]))
 
 ;; --- x2 unrolling for versioned conditional diamonds ---------------------------
 ;;
@@ -89520,35 +89696,30 @@
 ;; caller seeds params): a var with exactly one source has a single,
 ;; unchanging value wherever its def dominates, so an address derived from it
 ;; is the same at every use.
-;; Def counts per var, and the address-taken vars from the same walk.
+;; Def counts per var.
 (define (opt-gep-split-defs-instrs!
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [taken : (&mut taken OptFunctionAddrTakenScan)]) : unit
+  [counts : (&mut counts (__tl_dyn-array i64))]) : unit
   (unless
     (>= index (ir.compiler-ir-instr-seq-count instrs))
     (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (match (& instr)
-        [(AddrOf _ src _) (opt-function-addr-taken-scan-note! taken src)]
-        [_ unit])
       (match (opt-instr-def-var (& instr))
         [(Some dst) (set! (array-ref counts dst) (+ (array-ref counts dst) 1))]
         [(None) unit]))
-    (opt-gep-split-defs-instrs! instrs (+ index 1) counts taken)))
+    (opt-gep-split-defs-instrs! instrs (+ index 1) counts)))
 
 (define (opt-gep-split-defs-blocks!
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [taken : (&mut taken OptFunctionAddrTakenScan)]) : unit
+  [counts : (&mut counts (__tl_dyn-array i64))]) : unit
   (match blocks
     [(slice) unit]
     [(slice block & rest)
       (match block
         [(Block _ instrs)
-          (opt-gep-split-defs-instrs! (& instrs) 0 counts taken)
-          (opt-gep-split-defs-blocks! rest counts taken)])]))
+          (opt-gep-split-defs-instrs! (& instrs) 0 counts)
+          (opt-gep-split-defs-blocks! rest counts)])]))
 
 (define (opt-gep-split-seed-params!
   [params : (& ir.CompilerIrParamSeq)]
@@ -89681,7 +89852,7 @@
 
 ;; An operand naming an address-taken var is a load of its storage, which a
 ;; store may change between the Gep and a later use, so such a Gep is never
-;; re-evaluated there. `taken` holds the marks the defs walk collected.
+;; re-evaluated there. The marks are the pass manager's shared set.
 ;; Returns whether any candidate is left.
 (define (opt-gep-split-drop-addr-taken!
   [frame : i64]
@@ -90018,8 +90189,6 @@
         [memuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [chainuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-        [taken : OptFunctionAddrTakenScan
-          (opt-function-addr-taken-scan-new frame)]
         [bases : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue frame)]
         [offsets : (__tl_dyn-array ir.CompilerIrValue)
@@ -90037,8 +90206,7 @@
             (opt-gep-split-seed-params! (& params) (&mut defs))
             (opt-gep-split-defs-blocks!
               (ir.compiler-ir-block-list-view blocks)
-              (&mut defs)
-              (&mut taken)))]
+              (&mut defs)))]
         [_geps : unit
           (opt-gep-split-geps-blocks!
             type-segment-bases
@@ -90059,12 +90227,16 @@
             (& offsets)
             (- frame 1)
             false)]
+        ;; Also a public entry (tests call it directly); the set is read only
+        ;; once the pass has a candidate.
+        [_addr-taken : unit
+          (when any? (opt-function-addr-taken-install! frame (& blocks)))]
         (if (not
           (and
             any?
             (opt-gep-split-drop-addr-taken!
               frame
-              (& taken.marks)
+              (& opt-function-addr-taken.marks)
               (&mut cands)
               (& bases)
               (& offsets))))
@@ -90595,7 +90767,7 @@
   (if (not (opt-load-sink-blocks-want-pass? blocks))
     blocks
     (let
-      [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+      [_addr-taken : unit (opt-addr-taken-refresh! frame (& blocks))]
       (match (opt-load-sink-blocks-pass
         (& (opt-collect-blocks-uses-array frame blocks))
         blocks)
@@ -90761,8 +90933,7 @@
         (if (not wanted)
           blocks
           (let
-            [_addr-taken : unit
-              (opt-function-addr-taken-install! frame (& blocks))]
+            [_addr-taken : unit (opt-addr-taken-refresh! frame (& blocks))]
             [use-counts : (__tl_dyn-array i64)
               (opt-collect-blocks-uses-array frame blocks)]
             [out : (__tl_dyn-array ir.CompilerIrBlock)
@@ -92316,38 +92487,6 @@
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block _ instrs) (opt-successor-sink-fill-defs! frame instrs defs)])))]))
 
-;; The function-wide defs walk, which also installs the address-taken set: the
-;; pass reads both, and one walk serves them.
-(define (opt-successor-sink-fill-all-defs-installing!
-  [frame : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [defs : (&mut defs (__tl_dyn-array i64))]) : unit
-  (let
-    [scan : OptFunctionAddrTakenScan (opt-function-addr-taken-scan-new frame)]
-    (match blocks
-      [(Array seq)
-        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-          (match (ir.compiler-ir-block-seq-borrow seq i)
-            [(Block _ instrs)
-              (for [index
-                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-                (let
-                  [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-                  (match (& instr)
-                    [(AddrOf dst src _)
-                      (opt-function-addr-taken-scan-note! (&mut scan) src)
-                      (if (and (>= dst 0) (< dst frame))
-                        (set! (array-ref defs dst) (+ index 1))
-                        unit)]
-                    [_
-                      (match (opt-instr-def-var (& instr))
-                        [(Some dst)
-                          (if (and (>= dst 0) (< dst frame))
-                            (set! (array-ref defs dst) (+ index 1))
-                            unit)]
-                        [(None) unit])])))]))])
-    (opt-function-addr-taken-install-scan! scan)))
-
 (define (opt-successor-sink-loop-target?
   [index : (& index OptCfgIndex)]
   [loops : (& loops (Slice OptNaturalLoop))]
@@ -93159,7 +93298,7 @@
         cfg-context)]
     [all-defs : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [_all-defs : unit
-      (opt-successor-sink-fill-all-defs-installing! frame ready (&mut all-defs))]
+      (opt-successor-sink-fill-all-defs! frame (& ready) (&mut all-defs))]
     ;; `initial-uses` counted uses over `blocks` and is dead once the strip
     ;; decision is made, so it already is the count over `ready` whenever the
     ;; strip did not run.
@@ -93252,6 +93391,7 @@
       (match (compiler-opt-global-shared-view func)
         [(Function name params ret-ty frame blocks function-abi)
           (let
+            [_addr-taken : unit (opt-addr-taken-refresh! frame (& blocks))]
             [frame-cell : (__tl_dyn-array i64) (opt-used-array-new 1)]
             [_frame-init : unit (set! (array-ref frame-cell 0) frame)]
             [sink-result : OptSuccessorSinkBlocksResult
@@ -93776,23 +93916,18 @@
   [ptr-kind : (&mut ptr-kind (__tl_dyn-array i64))]
   [ptr-name : (&mut ptr-name (__tl_dyn-array i64))]
   [ptr-root : (&mut ptr-root (__tl_dyn-array i64))]
-  [taken : (&mut taken OptFunctionAddrTakenScan)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]) : unit
   (unless
     (>= index (ir.compiler-ir-instr-seq-count instrs))
     (let
       [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-      (match (& instr)
-        [(AddrOf _ src _) (opt-function-addr-taken-scan-note! taken src)]
-        [_ unit])
       (opt-guard-sink-note-ptr! frame ptr-kind ptr-name ptr-root (& instr)))
     (opt-guard-sink-note-ptrs-seq!
       frame
       ptr-kind
       ptr-name
       ptr-root
-      taken
       instrs
       (+ index 1))))
 
@@ -94734,7 +94869,6 @@
     [ptr-kind : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [ptr-name : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [ptr-root : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [taken : OptFunctionAddrTakenScan (opt-function-addr-taken-scan-new frame)]
     (for [id (iterator.range 0 count)]
       (set! (array-ref depth id) 0)
       (set! (array-ref blk-cell id) 0)
@@ -94748,7 +94882,6 @@
             (&mut ptr-kind)
             (&mut ptr-name)
             (&mut ptr-root)
-            (&mut taken)
             instrs
             0)
           (opt-guard-sink-fill-block-masks!
@@ -94759,7 +94892,6 @@
             (&mut blk-obj)
             (&mut blk-opaque)
             (&mut blk-call))]))
-    (opt-function-addr-taken-install-scan! taken)
     (let
       [natural-loops
         (opt-cfg-natural-loops-with-context
@@ -95285,6 +95417,8 @@
       (match (compiler-opt-global-shared-view func)
         [(Function name params ret-ty frame blocks function-abi)
           (let
+            [_addr-taken : unit
+              (opt-function-addr-taken-install! frame (& blocks))]
             [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [_frame-init : unit (set! (array-ref frame-cell 0) frame)]
             [result : OptBlockListPassResult
@@ -101852,14 +101986,29 @@
   [priced? : bool]
   [func : ir.CompilerIrFunction]
   [changed? : bool]) : OptPassState
-  (OptPassState
-    type-segment-bases
-    profile-state
-    priced?
-    func
-    (compiler-opt-global-shared-view opt-pass-no-context)
-    false
-    changed?))
+  ;; C11: the function's address-taken set is collected once for every stage
+  ;; below to read, instead of by each pass that needs it (about twenty walks
+  ;; per function per round before). It is collected lazily: the first stage
+  ;; that reads the set installs it (`opt-addr-taken-refresh!`), so a function
+  ;; whose stages never read it pays no walk at all. A stage that can delete an
+  ;; `addr_of` marks it stale (`opt-stage-effect`), and the next reader
+  ;; reinstalls it. A test build keeps it exact so every stage's rescan can
+  ;; compare against it.
+  (let
+    [frame : i64 (opt-function-frame func)]
+    [blocks : ir.CompilerIrBlockList (opt-function-blocks func)]
+    [_addr-taken : unit
+      (if (cfg test true false)
+        (opt-function-addr-taken-install! frame (& blocks))
+        (set! opt-function-addr-taken-stale? true))]
+    (OptPassState
+      type-segment-bases
+      profile-state
+      priced?
+      func
+      (compiler-opt-global-shared-view opt-pass-no-context)
+      false
+      changed?)))
 
 (defmacro (opt-pass-func [state : Expr]) : Expr
   `(compiler-opt-global-shared-view (__tl-project-field ,state func)))
@@ -101886,11 +102035,20 @@
       (opt-cfg-context-empty))))
 
 ;; Time the stage `next` computes, observe its output under `pass` and note its
-;; profile row.
+;; profile row. A test build also checks the address-taken contract row of the
+;; stage and rescans its output (`opt-addr-taken-check-stage!`).
 (defmacro (opt-stage [pass : Expr] [next : Expr]) : Expr
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [state : OptPassState (opt-verify-at ,pass ,next)]
+    [_addr-taken : unit
+      (cfg
+        test
+        (opt-addr-taken-check-stage!
+          ,pass
+          (opt-pass-frame state)
+          (& (opt-pass-blocks state)))
+        unit)]
     (opt-pass-observe state ,pass)
     (opt-pass-note state ,pass start-ms)
     state))
@@ -101900,8 +102058,31 @@
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [state : OptPassState (opt-verify-at ,pass ,next)]
+    [_addr-taken : unit
+      (cfg
+        test
+        (opt-addr-taken-check-stage!
+          ,pass
+          (opt-pass-frame state)
+          (& (opt-pass-blocks state)))
+        unit)]
     (opt-pass-note state ,pass start-ms)
     state))
+
+;; A stage that can delete an `addr_of` (an `Effect` row in
+;; `opt-addr-taken-contract`): the set the pipeline carries is reinstalled from
+;; the blocks the pass left, so the next stage reads the exact set and no stale
+;; superset can outlive the stage.
+(defmacro (opt-stage-effect [pass : Expr] [next : Expr]) : Expr
+  `(opt-stage
+    ,pass
+    (let
+      [staged : OptPassState ,next]
+      [_addr-taken : unit
+        (opt-addr-taken-stage-effect!
+          (opt-pass-frame staged)
+          (& (opt-pass-blocks staged)))]
+      staged)))
 
 ;; A pass the frozen priced pipeline does not run.
 (defmacro (opt-live-only [state : Expr] [next : Expr]) : Expr
@@ -102228,7 +102409,7 @@
               (opt-pass-blocks s))))
         s)]
     [s
-      (opt-stage
+      (opt-stage-effect
         "fold"
         (opt-pass-with-block-result
           (&
@@ -102261,7 +102442,7 @@
             s)
           s))]
     [s
-      (opt-stage
+      (opt-stage-effect
         "ctor_fwd"
         (opt-pass-with-blocks
           (&
@@ -102272,7 +102453,7 @@
               (opt-pass-blocks s)))
           s))]
     [s
-      (opt-stage
+      (opt-stage-effect
         "slot_fwd"
         (opt-pass-with-blocks
           (&
@@ -102287,7 +102468,7 @@
     ;; reads ITS frame. It is not in the priced pipeline (see
     ;; opt-aggregate-split-function).
     [s
-      (opt-stage
+      (opt-stage-effect
         "aggregate_split"
         (opt-live-only
           s
@@ -103051,7 +103232,7 @@
     ;; the copy behind as dead code -- which then reads as an impure link to
     ;; the classifier-chain pass and truncates a symbol-class bitmask chain.
     [s
-      (opt-stage
+      (opt-stage-effect
         "dce"
         (opt-pass-with-blocks
           (&
@@ -103101,7 +103282,7 @@
         (owned_view.compiler-owned-reference-shared-view func)
         false)]
     [s
-      (opt-stage
+      (opt-stage-effect
         "fold"
         (opt-pass-with-blocks
           (&
@@ -103126,7 +103307,7 @@
             s)
           s))]
     [s
-      (opt-stage
+      (opt-stage-effect
         "ctor_fwd"
         (opt-pass-with-blocks
           (&
@@ -103137,7 +103318,7 @@
               (opt-pass-blocks s)))
           s))]
     [s
-      (opt-stage
+      (opt-stage-effect
         "slot_fwd"
         (opt-pass-with-blocks
           (&
@@ -103178,7 +103359,7 @@
             pre-dce
             false)]
         [s
-          (opt-stage
+          (opt-stage-effect
             "dce"
             (opt-pass-with-blocks
               (& (opt-dce-block-list-array-in-place used (opt-pass-blocks s)))
@@ -103916,24 +104097,31 @@
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (opt-cmp-dup-function func)
     [(Function name params ret-ty frame blocks function-abi)
-      (if (<= frame (opt-function-frame func))
-        (Result func false)
-        (Result
-          (compiler-opt-debug-observe-function
-            type-segment-bases
-            "cmp_dup"
-            (Function
-              name
-              params
-              ret-ty
-              frame
-              (opt-load-sink-blocks
+      (let
+        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+        (if (<= frame (opt-function-frame func))
+          (Result func false)
+          (Result
+            (compiler-opt-debug-observe-function
+              type-segment-bases
+              "cmp_dup"
+              (Function
+                name
+                params
+                ret-ty
                 frame
-                (opt-store-addr-sink-blocks
-                  frame
-                  (opt-dce-block-list-array-fixpoint frame (& blocks) 8)))
-              function-abi))
-          true))]))
+                (let
+                  [swept : ir.CompilerIrBlockList
+                    (opt-dce-block-list-array-fixpoint frame (& blocks) 8)]
+                  ;; The sweep can delete an `addr_of`; the sinking below reads
+                  ;; the set for the blocks it left.
+                  [_addr-taken : unit
+                    (opt-function-addr-taken-install! frame (& swept))]
+                  (opt-load-sink-blocks
+                    frame
+                    (opt-store-addr-sink-blocks frame swept)))
+                function-abi))
+            true)))]))
 
 ;; The same jump-threading pass the fixpoint runs early, given one last look at
 ;; the straightened CFG. The exit-flag join it exists for is BUILT below its
@@ -120256,8 +120444,7 @@
   (lengths opt_i64_i64_map.Map)
   (has-literals bool)
   (sources OptValueSources)
-  (defs (__tl_dyn-array OptMaybeVarDef))
-  (marks (__tl_dyn-array bool)))
+  (defs (__tl_dyn-array OptMaybeVarDef)))
 
 ;; A data-slot load may hide behind copied descriptor values. This is only a
 ;; cheap candidate filter; every followed definition is proved again below.
@@ -120285,7 +120472,10 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [var : i64]) : OptMaybeInstr
   (if (not
-    (opt-descriptor-length-stable-var? (& facts.sources) (& facts.marks) var))
+    (opt-descriptor-length-stable-var?
+      (& facts.sources)
+      (& opt-function-addr-taken.marks)
+      var))
     (No)
     (match (opt-var-def-lookup (& facts.defs) var)
       [(No) (No)]
@@ -120432,7 +120622,7 @@
       (if (and
         facts.has-literals
         (opt-integer-type? (& ty))
-        (not (opt-addr-taken-var? (& facts.marks) dst)))
+        (not (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)))
         (match (opt-string-literal-load-value
           facts
           source-blocks
@@ -120480,6 +120670,8 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
+    ;; This is also a public entry that tests call directly.
+    [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
     [lengths (& summaries.const-lengths)]
     [initializer? : bool
       (opt_i64_i64_map.contains?
@@ -120557,14 +120749,12 @@
         geps
         false
         (opt-value-sources-new)
-        (__tl_make-array OptMaybeVarDef 0)
-        (__tl_make-array bool 0))
+        (__tl_make-array OptMaybeVarDef 0))
       (let
         [sources : OptValueSources
           (opt-gvn-sources-blocks
             blocks
             (& (opt-gvn-sources-params params (opt-value-sources-new))))]
-        [marks : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
         [defs : (__tl_dyn-array OptMaybeVarDef)
           (__tl_make-array OptMaybeVarDef frame)]
         (opt-var-defs-index-blocks!
@@ -120579,11 +120769,10 @@
             type-segment-bases
             (& literals)
             (& sources)
-            (& marks))
+            (& opt-function-addr-taken.marks))
           true
           sources
-          defs
-          marks)))))
+          defs)))))
 
 ;; Var -> immutable length for direct descriptor captures. The definition and
 ;; address-taken guards apply where the var is used as a gep base.
@@ -121235,6 +121424,9 @@
     func
     (match func
       [(Function name params ret-ty frame blocks function-abi)
+        ;; Also a public entry (tests call it directly): install before the
+        ;; taint gate reads the set.
+        (opt-function-addr-taken-install! frame (& blocks))
         (unless
           (opt-blocks-any? blocks opt-const-global-mul-shift-candidate-op?)
           (return (Function name params ret-ty frame blocks function-abi)))
@@ -134364,13 +134556,14 @@
     ;; must never point into an analysis or inline arena that can retire first.
     [builder (ir.compiler-ir-function-builder-with-capacity functions.len)]
     (for [slot (iterator.range 0 functions.len)]
-      (ir.compiler-ir-function-builder-push!
-        (&mut builder)
-        (opt-global-snapshot-function
-          summaries
-          call-memory
-          policy
-          (ir.compiler-ir-function-seq-ref functions slot))))
+      (let
+        [func : ir.CompilerIrFunction
+          (ir.compiler-ir-function-seq-ref functions slot)]
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (if (opt-global-snapshot-function-candidate? summaries (& func))
+            (opt-global-snapshot-function summaries call-memory policy func)
+            func))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
 ;; Whether FUNC has a capture `opt-global-snapshot-function` may rewrite.
@@ -135043,26 +135236,6 @@
 ;; The vars whose address the function takes (`AddrOf`'s source). A pointer
 ;; made by `ptr-addr-of` reads such a var's slot, so redefining it -- which
 ;; before SSA is a plain `Mov` -- writes memory a cached call may read.
-(define (opt-loop-call-addr-taken
-  [frame : i64]
-  [blocks : (& ir.CompilerIrBlockList)]) : (__tl_dyn-array bool)
-  (let
-    [taken : (__tl_dyn-array bool) (__tl_make-array bool (+ frame 1))]
-    [seq : ir.CompilerIrBlockSeq
-      (ir.compiler-ir-block-list-seq
-        (owned_view.compiler-owned-reference-shared-view blocks))]
-    (for [b (iterator.range 0 seq.len)]
-      (match (ir.compiler-ir-block-seq-borrow seq b)
-        [(Block _ instrs)
-          (for [i (iterator.range 0 instrs.len)]
-            (match (ir.compiler-ir-instr-seq-borrow instrs i)
-              [(AddrOf _ src _)
-                (when
-                  (and (>= src 0) (< src (array-length taken)))
-                  (set! (array-ref taken src) true))]
-              [_ unit]))]))
-    taken))
-
 (define (opt-loop-call-readonly?
   [memory : (& memory opt_i64_i64_map.Map)]
   [addr-taken : (& addr-taken (__tl_dyn-array bool))]
@@ -135816,6 +135989,9 @@
         (= (opt-pure-call-count-blocks memory blocks 0) 0))
         func
         (let
+          ;; This program-level phase runs outside any pipeline, so it installs
+          ;; the set for the function it rewrites.
+          [_addr-taken : unit (opt-function-addr-taken-install! frame blocks)]
           [context : OptCfgContext
             (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
           [loops : opt_natural_loop_vec.Vec
@@ -135827,7 +136003,7 @@
             functions
             memory
             defs
-            (& (opt-loop-call-addr-taken frame (& (opt-function-blocks func))))
+            (& opt-function-addr-taken.marks)
             (opt_natural_loop_vec.view loops))
             [(No) func]
             [(Some pre site at)
@@ -135898,6 +136074,8 @@
         2)
         func
         (let
+          [_addr-taken : unit
+            (opt-function-addr-taken-install! frame (& blocks))]
           [_taint : unit
             (when
               (opt-value-function-branches-tainted? frame (& blocks))

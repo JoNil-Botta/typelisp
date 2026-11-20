@@ -1,1 +1,1 @@
-self_compile/compile_cli_opt1	5346	payload: the catalog decoder and fixed-model build cost a fraction of a percent per compile, against a 418,424-byte stage0 file saving and 444,321 fewer stored payload bytes
+self_compile/compile_cli_opt1	9233	payload: the compress-on-include encoder and the catalog group decodes cost about a percent of a self-compile, against a 395,336-byte smaller stage0 file and 408,247 fewer stored payload bytes

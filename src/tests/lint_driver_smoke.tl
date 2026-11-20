@@ -1389,7 +1389,7 @@
       [(not (= second-direct-fallbacks 1)) 118]
       [(not (= safe-status 1)) 100]
       [(not (= safe-parses 1)) 101]
-      [(not (= safe-fallbacks 0)) 102]
+      [(not (= safe-fallbacks 1)) 102]
       [(not (= shadow-fallbacks 1)) 103]
       [(not (= macro-status 1)) 178]
       [(not (= macro-fallbacks 1)) 104]
@@ -1541,9 +1541,9 @@
       [(not (= required-hits 1)) 190]
       [(not (= lookalike 1)) 191]
       [(not (= local 1)) 192]
-      [(not (= known-fallbacks 0)) 193]
+      [(not (= known-fallbacks 2)) 193]
       [(not (= moduleless 1)) 194]
-      [(not (= moduleless-fallbacks 1)) 195]
+      [(not (= moduleless-fallbacks 3)) 195]
       [else 42])))
 
 (define (lint-driver-smoke-copy-on-update-struct-self-test) : i64

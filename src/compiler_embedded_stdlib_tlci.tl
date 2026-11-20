@@ -267,7 +267,9 @@
 ;; Native macro images are read one group at a time: a request expands the
 ;; group its frame belongs to, and the bytes belong to the asking compile's
 ;; arena, so this module never keeps the catalog resident.
-(define (compiler-embedded-stdlib-tlci-group-bytes [group : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
+(define (compiler-embedded-stdlib-tlci-group-bytes
+  [group : i64]
+  [raw-limit : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
   (when
     (not (compiler-embedded-stdlib-tlci-frames-ensure!))
     (return (Err "embedded stdlib tlci: catalog unavailable")))
@@ -280,10 +282,16 @@
     ;; The cached group answers every request in it, and a different group
     ;; replaces it, so repeated requests in one group cost a lookup.
     (when
-      (= group compiler-embedded-stdlib-tlci-group-cache-group)
+      (and
+        (= group compiler-embedded-stdlib-tlci-group-cache-group)
+        (>= compiler-embedded-stdlib-tlci-group-cache-raw raw-limit)
+        (> compiler-embedded-stdlib-tlci-group-cache-raw 0))
       (return
         (Ok
-          (clone (array-ref compiler-embedded-stdlib-tlci-group-cache-holder 0)))))
+          (tlci.tlci-slice-bytes
+            (& (array-ref compiler-embedded-stdlib-tlci-group-cache-holder 0))
+            0
+            raw-limit))))
     (match (in-arena
       (unsafe
         (arena.Arena compiler-embedded-stdlib-tlci-table-owner))
@@ -330,7 +338,8 @@
             index)]
         [group : (__tl_dyn-array u8)
           (match (compiler-embedded-stdlib-tlci-group-bytes
-            (frames.compiler-embedded-stdlib-tlci-frames-group-of index))
+            (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
+            (+ offset raw))
             [(Ok bytes) bytes]
             [(Err _) (return (__tl_make-array u8 0))])]
         [record : i64

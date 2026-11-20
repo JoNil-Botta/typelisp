@@ -1,5 +1,5 @@
 ;; gep displacement from a pointer into a struct's array field.
-;; Expected exit 39 at --opt-level 0 (opt1 and opt2 exit 39 and 42 until the queued fix lands).
+;; Expected exit 39 at --opt-level 0, 1 and 2.
 (defstruct Row
   (items (Array i64 8)))
 

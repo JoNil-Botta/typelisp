@@ -1239,7 +1239,16 @@
   (representation-type-stamp compiler_ast_types.AstMaybeTypePoolStamp)
   ;; The same immutable symbol index ordinary loads use, installed for this
   ;; emission. Operand folds and rematerialization must name the same cell.
-  (emission-symbols CompilerBackendEmissionSymbols))
+  (emission-symbols CompilerBackendEmissionSymbols)
+  ;; Copy thunks (see compiler-backend-copy-thunk-applies?): one table per
+  ;; emission. `copy-thunks` maps a chunk-run key to its thunk index, so a
+  ;; second site of the same shape emits a call instead of another inline
+  ;; sequence; `copy-thunk-bodies` holds that index's emitted instruction
+  ;; text, allocated on the first registration, and `copy-thunk-count` is the
+  ;; number of registered thunks and the next index.
+  (copy-thunks backend_string_i64_map.Map)
+  (copy-thunk-bodies (__tl_dyn-array String))
+  (copy-thunk-count i64))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1307,7 +1316,10 @@
         (compiler_diagnostic.compiler-advisory-sink-new)
         false
         (compiler_ast_types.AstMaybeTypePoolStamp.No)
-        CompilerBackendEmissionSymbols.None))
+        CompilerBackendEmissionSymbols.None
+        (backend_string_i64_map.with-capacity 1)
+        (__tl_make-array String 0)
+        0))
     (CompilerBackendState
       (cast
         (unsafe
@@ -1334,6 +1346,9 @@
       (set! (deref data).frame-offset-cache-epochs (__tl_make-array i64 0))
       (set! (deref data).immediate-cache-values (__tl_make-array String 0))
       (set! (deref data).immediate-cache-epochs (__tl_make-array i64 0))
+      (set! (deref data).copy-thunks (backend_string_i64_map.with-capacity 1))
+      (set! (deref data).copy-thunk-bodies (__tl_make-array String 0))
+      (set! (deref data).copy-thunk-count 0)
       (set! (deref data).function-state-address 0)
       (set! (deref data).stream-state-address 0)
       (set!
@@ -2877,8 +2892,21 @@
 ;; every local slot is addressed at a NEGATIVE displacement from %rsp.
 (define compiler-backend-function-bool-red-zone : i64
   17)
-(define compiler-backend-function-bool-count : i64
+
+;; True when this function's IR contains a RETURNING call (a call plus a
+;; syscall; the tail-call and abort families do not return here). Set once from
+;; the emitted block list before `compiler-backend-emit-blocks` runs, and read
+;; only by `compiler-backend-copy-thunk-applies?`: a copy may become a `call`
+;; to a shared thunk only where a returning call already exists. That is
+;; exactly the condition `compiler-backend-blocks-have-returning-call?` gives
+;; `fpo-bare-frame` and the final-text call census (`call-align-needed`), so a
+;; thunk call site can neither lose a red-zone frame (a red-zone frame is only
+;; chosen without a returning call) nor sit in a bare frameless leaf (a bare
+;; frame needs no returning call either, and frame > 0 pays the alignment pad).
+(define compiler-backend-function-bool-has-returning-call : i64
   18)
+(define compiler-backend-function-bool-count : i64
+  19)
 (define compiler-backend-function-string-shrinkwrap-bare-label : i64
   0)
 (define compiler-backend-function-string-abort-site-path : i64
@@ -33293,6 +33321,213 @@
     (not (= (% size 16) 0))
     (> size 0)))
 
+;; ===========================================================================
+;; Shared copy thunks
+;;
+;; A 16-byte chunk pair costs 8-12 bytes inline and the same few shapes
+;; (`(reg),%xmm2` then `%xmm2,(reg)`, `16(reg)` and `16(reg)`, ...) repeat all
+;; over a program. A chunk run at or above
+;; `compiler-backend-copy-thunk-min-bytes` therefore emits ONE 5-byte `call`
+;; to a thunk emitted once per emission, and the thunk holds exactly the
+;; inline `movups` sequence it replaces. The thunk is a leaf: it reads only
+;; its base registers, writes only the scratch xmm the inline pair already
+;; wrote, touches no flags, no GPR and no stack, and ends in `ret`. A call
+;; site therefore has the inline sequence's exact clobber set.
+;;
+;; A thunk is keyed by the chunk count, the src/dst base SPELLINGS, both
+;; displacements and the scratch xmm -- i.e. by the emitted text itself, so
+;; two sites share a thunk only where their inline bytes would be identical.
+;; The displacements ride the key instead of being adjusted at the call site:
+;; a site cannot adjust them without paying an instruction of its own.
+;;
+;; Where the call may go is a property of the CALLER's frame, not of the
+;; copy. `compiler-backend-copy-thunk-applies?` requires the function's IR to
+;; contain a returning call (see that flag's comment), so the final text keeps
+;; a returning call (the census behind `call-align-needed`), which is exactly
+;; what denies a red-zone frame and what makes `fpo-bare-frame` false -- so
+;; the hosting frame keeps `%rsp % 16 == 0` at this call the same way it
+;; already does at its own calls. Frame-base operands (`%rsp`/`%rbp`
+;; spellings) are refused: chunk addresses are emitted before the rsp-rebase
+;; pass rewrites the function's frame references, so those displacements are
+;; not final here and a thunk could not carry them.
+(define compiler-backend-copy-thunk-min-bytes : i64
+  32)
+
+;; Provisioned thunk table size. Past it, copies stay inline: the cap keeps
+;; the per-emission table a fixed allocation and the decision local.
+(define compiler-backend-copy-thunk-capacity : i64
+  8192)
+
+(define (compiler-backend-state-copy-thunks [state : CompilerBackendState]) : backend_string_i64_map.Map
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    data.copy-thunks))
+
+(define (compiler-backend-state-set-copy-thunks!
+  [state : CompilerBackendState]
+  [thunks : backend_string_i64_map.Map]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).copy-thunks thunks)))
+
+(define (compiler-backend-state-copy-thunk-bodies
+  [state : CompilerBackendState]) : (__tl_dyn-array String)
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    data.copy-thunk-bodies))
+
+(define (compiler-backend-state-set-copy-thunk-bodies!
+  [state : CompilerBackendState]
+  [bodies : (__tl_dyn-array String)]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).copy-thunk-bodies bodies)))
+
+(define (compiler-backend-state-copy-thunk-count [state : CompilerBackendState]) : i64
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    data.copy-thunk-count))
+
+(define (compiler-backend-state-set-copy-thunk-count!
+  [state : CompilerBackendState]
+  [count : i64]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).copy-thunk-count count)))
+
+;; A fresh emission starts with no thunks. Both tables are allocated in the
+;; state's own long-lived lazy arena: the emit-time arenas are rewound and
+;; replaced around program composition, so a table allocated in the arena that
+;; happens to be current here can be reused underneath the registry.
+(define (compiler-backend-copy-thunks-reset! [state : CompilerBackendState]) : unit
+  (let
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (in-arena
+      (compiler-backend-state-lazy-table-arena-ensure! state)
+      (unsafe
+        (begin
+          (set!
+            (deref data).copy-thunks
+            (backend_string_i64_map.with-capacity 512))
+          (set!
+            (deref data).copy-thunk-bodies
+            (__tl_make-array String compiler-backend-copy-thunk-capacity))
+          (set! (deref data).copy-thunk-count 0))))))
+
+(define (compiler-backend-copy-thunk-frame-base? [base : (& base str)]) : bool
+  (or
+    (compiler-backend-string-contains? base "%rsp")
+    (compiler-backend-string-contains? base "%rbp")))
+
+(define (compiler-backend-copy-thunk-applies?
+  [chunked : i64]
+  [src-reg : (& str)]
+  [dst-reg : (& str)]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    (>= chunked compiler-backend-copy-thunk-min-bytes)
+    (not (compiler_ir_types.compiler-debug-info-enabled?))
+    (compiler-backend-function-state-bool?
+      (compiler-backend-state-function-state backend-state)
+      compiler-backend-function-bool-has-returning-call)
+    (not (compiler-backend-copy-thunk-frame-base? src-reg))
+    (not (compiler-backend-copy-thunk-frame-base? dst-reg))
+    (<
+      (compiler-backend-state-copy-thunk-count backend-state)
+      compiler-backend-copy-thunk-capacity)))
+
+(define (compiler-backend-copy-thunk-key
+  [chunked : i64]
+  [src-reg : (& str)]
+  [dst-reg : (& str)]
+  [xmm-scratch : (& str)]
+  [offset : i64]
+  [dst-bias : i64]) : String
+  (str_cat.str-cat
+    (string.int->string chunked)
+    "|"
+    src-reg
+    "|"
+    dst-reg
+    "|"
+    (string.int->string offset)
+    "|"
+    (string.int->string dst-bias)
+    "|"
+    xmm-scratch))
+
+;; Register `key`'s thunk (its instruction text is `body`) and return the
+;; symbol to call. The index is the registration order, so the symbols and the
+;; emitted program text depend only on emission order.
+(define (compiler-backend-copy-thunk-register
+  [key : String]
+  [body : String]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [seen : backend_string_i64_map.Map
+      (compiler-backend-state-copy-thunks backend-state)]
+    (match (backend_string_i64_map.get-borrowed (& seen) (& key))
+      [(LookupFound index)
+        (str_cat.str-cat "tl_copy_chunks_" (string.int->string index))]
+      [(LookupMissing)
+        (let
+          [index : i64 (compiler-backend-state-copy-thunk-count backend-state)]
+          [bodies : (__tl_dyn-array String)
+            (compiler-backend-state-copy-thunk-bodies backend-state)]
+          (begin
+            (if (> (array-length bodies) 0)
+              (set! (array-ref bodies index) body)
+              (let
+                [fresh : (__tl_dyn-array String)
+                  (__tl_make-array String compiler-backend-copy-thunk-capacity)]
+                (begin
+                  (set! (array-ref fresh index) body)
+                  (compiler-backend-state-set-copy-thunk-bodies!
+                    backend-state
+                    fresh))))
+            (backend_string_i64_map.insert-ref!
+              (&mut seen)
+              (compiler-backend-global-shared-view key)
+              index)
+            (compiler-backend-state-set-copy-thunks! backend-state seen)
+            (compiler-backend-state-set-copy-thunk-count!
+              backend-state
+              (+ index 1))
+            (str_cat.str-cat "tl_copy_chunks_" (string.int->string index))))])))
+
+;; The emission's thunk text, in registration order, as a run of leaf
+;; functions in the ordinary executable section. Debug/backtrace emissions
+;; never register a thunk (`compiler-backend-copy-thunk-applies?`), so no
+;; `.cfi` or backtrace row describes code whose crash site has no source line.
+(define (compiler-backend-copy-thunk-text
+  [program-index : CompilerBackendProgramIndex]) : String
+  (if (<=
+    (compiler-backend-state-copy-thunk-count program-index.backend-state)
+    0)
+    ""
+    (let
+      [bodies : (__tl_dyn-array String)
+        (compiler-backend-state-copy-thunk-bodies program-index.backend-state)]
+      (let
+        [buf : text_buf.TextBuf
+          (text_buf.append (text_buf.empty) "    .text\n")]
+        (begin
+          (for [index
+            (iterator.range
+              0
+              (compiler-backend-state-copy-thunk-count
+                program-index.backend-state))]
+            (set!
+              buf
+              (text_buf.append
+                (text_buf.append
+                  (text_buf.append
+                    (text_buf.append buf "tl_copy_chunks_")
+                    (string.int->string index))
+                  ":\n")
+                (str_cat.str-cat
+                  (owned_view.compiler-owned-element-view (& bodies) index)
+                  "    ret\n"))))
+          (text_buf.render buf))))))
+
 ;; GAP2a: `dst-bias` is a constant displacement added to every DST chunk
 ;; address (src addresses stay at `offset`). A fused Gep+CopyBytes folds its
 ;; gep displacement here instead of `addq $disp` on a staged base copy, so a
@@ -33308,7 +33543,7 @@
 ;; address a fused gep element without materializing it. Any future use of
 ;; either parameter as a register (sizing it, comparing it to a home, emitting
 ;; it as an operand) must first reject the SIB form.
-(define (compiler-backend-emit-copy-bytes-chunks
+(define (compiler-backend-emit-copy-bytes-chunks-inline
   [type-segment-bases : i64]
   [dst-reg : String]
   [src-reg : String]
@@ -33339,7 +33574,7 @@
             (compiler-backend-global-shared-view dst-reg))
           "\n"
           "")
-        (compiler-backend-emit-copy-bytes-chunks
+        (compiler-backend-emit-copy-bytes-chunks-inline
           type-segment-bases
           dst-reg
           src-reg
@@ -33382,7 +33617,7 @@
             (+ dst-bias offset)
             (compiler-backend-global-shared-view dst-reg))
           "\n"
-          (compiler-backend-emit-copy-bytes-chunks
+          (compiler-backend-emit-copy-bytes-chunks-inline
             type-segment-bases
             dst-reg
             src-reg
@@ -33391,6 +33626,81 @@
             (+ offset chunk)
             (- remaining chunk)
             dst-bias))))))
+
+;; The copy emitter proper: the 16-byte chunk run becomes one `call` to a
+;; shared thunk where `compiler-backend-copy-thunk-applies?` allows it, and
+;; the sub-16-byte tail (if any) stays inline either way. `chunked` is the
+;; length of the run a thunk would carry.
+(define (compiler-backend-emit-copy-bytes-chunks
+  [type-segment-bases : i64]
+  [dst-reg : String]
+  [src-reg : String]
+  [gp-scratch : String]
+  [xmm-scratch : String]
+  [offset : i64]
+  [remaining : i64]
+  [dst-bias : i64]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [chunked : i64
+      (if (and (>= remaining 16) (> (string.string-length xmm-scratch) 0))
+        (* 16 (/ remaining 16))
+        0)]
+    (if (compiler-backend-copy-thunk-applies?
+      chunked
+      src-reg
+      dst-reg
+      backend-state)
+      (let
+        ;; The registry outlives this function and the emit-time arenas that
+        ;; host its texts, so the thunk body and the key are built in the
+        ;; state's own arena (see compiler-backend-copy-thunks-reset!).
+        [chunk-call : String
+          (in-arena
+            (compiler-backend-state-lazy-table-arena-ensure! backend-state)
+            (let
+              [body : String
+                (compiler-backend-emit-copy-bytes-chunks-inline
+                  type-segment-bases
+                  (compiler-backend-global-shared-view dst-reg)
+                  (compiler-backend-global-shared-view src-reg)
+                  (compiler-backend-global-shared-view gp-scratch)
+                  (compiler-backend-global-shared-view xmm-scratch)
+                  offset
+                  chunked
+                  dst-bias)]
+              [key : String
+                (compiler-backend-copy-thunk-key
+                  chunked
+                  (compiler-backend-global-shared-view src-reg)
+                  (compiler-backend-global-shared-view dst-reg)
+                  (compiler-backend-global-shared-view xmm-scratch)
+                  offset
+                  dst-bias)]
+              (str_cat.str-cat
+                "    call "
+                (compiler-backend-copy-thunk-register key body backend-state)
+                "\n")))]
+        (str_cat.str-cat
+          chunk-call
+          (compiler-backend-emit-copy-bytes-chunks-inline
+            type-segment-bases
+            (compiler-backend-global-shared-view dst-reg)
+            (compiler-backend-global-shared-view src-reg)
+            (compiler-backend-global-shared-view gp-scratch)
+            (compiler-backend-global-shared-view xmm-scratch)
+            (+ offset chunked)
+            (- remaining chunked)
+            dst-bias)))
+      (compiler-backend-emit-copy-bytes-chunks-inline
+        type-segment-bases
+        dst-reg
+        src-reg
+        gp-scratch
+        xmm-scratch
+        offset
+        remaining
+        dst-bias))))
 
 (define (compiler-backend-c-memory-stack-dst-address
   [base-offset : i64]
@@ -33619,7 +33929,8 @@
             copy-xmm
             0
             size
-            0))))))
+            0
+            backend-state))))))
 
 (define (compiler-backend-emit-copy-bytes
   [type-segment-bases : i64]
@@ -33918,7 +34229,8 @@
             size
             (if near?
               disp
-              0)))))))
+              0)
+            backend-state))))))
 
 ;; Dynamic-index fused Gep+CopyBytes. The element address still composes into
 ;; a scavenged scratch (the chunk copies need one persistent base register),
@@ -34061,7 +34373,8 @@
                 copy-xmm
                 0
                 size
-                0))))))))
+                0
+                backend-state))))))))
 
 ;; --- gep element addressing folded into the copy chunks --------------------
 ;; A fused Gep+CopyBytes need not COMPOSE the element address into a register
@@ -34269,7 +34582,8 @@
           copy-xmm
           src-disp
           size
-          (- 0 src-disp))))))
+          (- 0 src-disp)
+          backend-state)))))
 
 ;; Destination-side twin of the emitter above: the gep element is the copy
 ;; DESTINATION, so `dst-spelling` addresses the chunk STORES and the source
@@ -34348,7 +34662,8 @@
           copy-xmm
           0
           size
-          dst-disp)))))
+          dst-disp
+          backend-state)))))
 
 ;; Compose the dynamic gep element address into scav-base for the fused copy.
 ;; Direct forms read the operand homes only (leaq/addq never write them); the
@@ -72876,6 +73191,15 @@
             ;; into frame slots, and their references have to count.
             [_frame-slot-flag : unit
               (compiler-backend-frame-slot-referenced-reset! function-state)]
+            ;; Copy thunks: the fact that decides whether a copy may become a
+            ;; `call` (see compiler-backend-function-bool-has-returning-call).
+            [_copy-thunk-call-ok : unit
+              (compiler-backend-function-state-set-bool!
+                function-state
+                compiler-backend-function-bool-has-returning-call
+                (compiler-backend-blocks-have-returning-call?
+                  (compiler_ir_types.compiler-ir-block-list-view
+                    emit-blocks-list)))]
             [spills
               (try
                 (if identity-tail-forwarder?
@@ -79191,11 +79515,13 @@ tl_shared_object_init:
                           (text_buf.append
                             (text_buf.append
                               with-adapters
-                              (if emit-entry
-                                (compiler-backend-runtime-functions-for-target
-                                  target
-                                  runtime-features)
-                                ""))
+                              (str_cat.str-cat
+                                (compiler-backend-copy-thunk-text program-index)
+                                (if emit-entry
+                                  (compiler-backend-runtime-functions-for-target
+                                    target
+                                    runtime-features)
+                                  "")))
                             (cond
                               [(not emit-entry) ""]
                               [target-policy.shared-object
@@ -79289,6 +79615,7 @@ tl_shared_object_init:
       CompilerBackendEmissionSymbols.None)
     (compiler-backend-state-user-symbol-cache-reset! backend-state)
     (compiler-backend-state-slot-cache-reset! backend-state)
+    (compiler-backend-copy-thunks-reset! backend-state)
     (compiler-backend-peephole-carry-safe-reset-with-backend-state!
       backend-state
       (compiler-backend-state-stream-state backend-state))

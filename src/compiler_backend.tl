@@ -74373,10 +74373,9 @@
                   unit
                   (compiler-backend-icf-register state home digest symbol))
                 "")))]
-        (begin
-          (unsafe
-            (arena.set! previous))
-          replacement)))))
+        (unsafe
+          (arena.set! previous))
+        replacement))))
 
 (define (compiler-backend-emit-functions-buffer-raw-into
   [type-segment-bases : i64]
@@ -74640,14 +74639,13 @@
                     (& head)
                     (&
                       (compiler-backend-icf-function-symbol program-index func)))]
-                (begin
-                  (compiler-backend-assembly-stream-process-string!
-                    (if (< (__tl_string_length replacement) 1)
-                      head
-                      replacement)
-                    program-index.backend-state
-                    (compiler-backend-state-stream-state
-                      program-index.backend-state))))
+                (compiler-backend-assembly-stream-process-string!
+                  (if (< (__tl_string_length replacement) 1)
+                    head
+                    replacement)
+                  program-index.backend-state
+                  (compiler-backend-state-stream-state
+                    program-index.backend-state)))
               (compiler-backend-assembly-stream-rewind-raw!
                 (compiler-backend-state-stream-state
                   program-index.backend-state))

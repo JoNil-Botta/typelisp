@@ -1,6 +1,5 @@
 ;; Catalog envelope coverage: the stored model parse, the group index, the
 ;; grouped decode path, and malformed or truncated envelopes.
-(import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.byte_buf_core as buf)
 (import compiler_embedded_stdlib_tlci_codec as codec)

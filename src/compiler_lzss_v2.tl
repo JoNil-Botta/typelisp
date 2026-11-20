@@ -8,7 +8,6 @@
 ;; needs this reader.
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import compiler_owned_view as owned_view)
 
 (defenum CompilerLzssV2Frame
   (Err String)

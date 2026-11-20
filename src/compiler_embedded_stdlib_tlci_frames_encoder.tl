@@ -81,8 +81,6 @@
   [names : (& names (__tl_dyn-array String))]) : ResultCompilerEmbeddedStdlibTlciFramesBuild
   (let
     [count : i64 (array-length images)]
-    [frequencies : encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies
-      (encoder.compiler-embedded-stdlib-tlci-encoder-frequencies)]
     [raw-total : i64 0]
     [name-bytes : i64 0]
     [index : i64 0]

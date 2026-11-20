@@ -298,11 +298,13 @@
     [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog index)]
     (tlci.tlci-read-u64 payload (+ record 24))))
 
-;; Expand one group of frames.
-(define (compiler-embedded-stdlib-tlci-frames-decode-group
+;; Expand one group of frames, or only the prefix of it that ends at
+;; `raw-limit` (a caller that needs one early frame then pays for that frame).
+(define (compiler-embedded-stdlib-tlci-frames-decode-group-prefix
   [payload : (& payload (__tl_dyn-array u8))]
   [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
   [group : i64]
+  [raw-limit : i64]
   [model : (& model lzss.CompilerLzssModel)]) : ResultCompilerEmbeddedStdlibTlciFramesGroup
   (when
     (or (< group 0) (>= group catalog.groups))
@@ -312,18 +314,22 @@
     [stream : i64 (tlci.tlci-read-u64 payload record)]
     [stream-len : i64 (tlci.tlci-read-u64 payload (+ record 8))]
     [raw-group-len : i64 (tlci.tlci-read-u64 payload (+ record 24))]
+    [raw-needed : i64
+      (if (and (> raw-limit 0) (< raw-limit raw-group-len))
+        raw-limit
+        raw-group-len)]
     (when
       (> (+ stream stream-len) (- (array-length payload) catalog.index-end))
       (return (Err "embedded stdlib tlci frames: truncated group")))
     (match (codec.compiler-embedded-stdlib-tlci-codec-decode-group
       payload
       (+ catalog.index-end stream)
-      raw-group-len
+      raw-needed
       model)
       [(Err message) (Err message)]
       [(Ok bytes)
         (when
-          (!= (array-length bytes) raw-group-len)
+          (!= (array-length bytes) raw-needed)
           (return (Err "embedded stdlib tlci frames: group length mismatch")))
         (Ok bytes)])))
 
@@ -341,10 +347,11 @@
       (let
         [bytes
           (try
-            (compiler-embedded-stdlib-tlci-frames-decode-group
+            (compiler-embedded-stdlib-tlci-frames-decode-group-prefix
               payload
               catalog
               group
+              0
               model))]
         [first : i64 (compiler-embedded-stdlib-tlci-frames-group-first group)]
         [last : i64

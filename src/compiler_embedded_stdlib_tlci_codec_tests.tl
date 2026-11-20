@@ -183,18 +183,20 @@
         [(Ok model) model]
         [(Err _) (return false)])]
     [first
-      (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group
+      (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
         (& payload)
         catalog
+        0
         0
         (& model))
         [(Ok bytes) bytes]
         [(Err _) (return false)])]
     [second
-      (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group
+      (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
         (& payload)
         catalog
         1
+        0
         (& model))
         [(Ok bytes) bytes]
         [(Err _) (return false)])]
@@ -264,9 +266,10 @@
           (match (codec.compiler-embedded-stdlib-tlci-codec-model (& broken))
             [(Ok model) model]
             [(Err _) (return 9)])]
-        (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group
+        (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
           (& broken)
           catalog
+          0
           0
           (& model))
           [(Ok bytes)

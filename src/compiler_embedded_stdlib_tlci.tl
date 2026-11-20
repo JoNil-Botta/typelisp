@@ -254,7 +254,9 @@
 ;; Native macro images are read one group at a time: a request expands the
 ;; group its frame belongs to, and the bytes belong to the asking compile's
 ;; arena, so this module never keeps the catalog resident.
-(define (compiler-embedded-stdlib-tlci-group-bytes [group : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
+(define (compiler-embedded-stdlib-tlci-group-bytes
+  [group : i64]
+  [raw-limit : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
   (when
     (not (compiler-embedded-stdlib-tlci-frames-ensure!))
     (return (Err "embedded stdlib tlci: catalog unavailable")))
@@ -264,10 +266,11 @@
     (when
       (or (< group 0) (>= group catalog.groups))
       (return (Err "embedded stdlib tlci: invalid group")))
-    (frames.compiler-embedded-stdlib-tlci-frames-decode-group
+    (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
       (& payload.embedded-stdlib-tlci-bytes)
       catalog
       group
+      raw-limit
       (& (array-ref compiler-embedded-stdlib-tlci-model 0)))))
 
 ;; Frame `index`, expanded from its group and checked against the record's
@@ -284,11 +287,6 @@
     (if (>= index catalog.count)
       (__tl_make-array u8 0)
       (let
-        [group : (__tl_dyn-array u8)
-          (match (compiler-embedded-stdlib-tlci-group-bytes
-            (frames.compiler-embedded-stdlib-tlci-frames-group-of index))
-            [(Ok bytes) bytes]
-            [(Err _) (return (__tl_make-array u8 0))])]
         [offset : i64
           (frames.compiler-embedded-stdlib-tlci-frames-frame-offset
             (& payload.embedded-stdlib-tlci-bytes)
@@ -299,6 +297,14 @@
             (& payload.embedded-stdlib-tlci-bytes)
             catalog
             index)]
+        ;; Only the group's stream up to this frame's end is expanded, so a
+        ;; low frame costs its own bytes rather than the whole group.
+        [group : (__tl_dyn-array u8)
+          (match (compiler-embedded-stdlib-tlci-group-bytes
+            (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
+            (+ offset raw))
+            [(Ok bytes) bytes]
+            [(Err _) (return (__tl_make-array u8 0))])]
         [record : i64
           (frames.compiler-embedded-stdlib-tlci-frames-record catalog index)]
         [expected : i64

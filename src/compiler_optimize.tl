@@ -120689,8 +120689,9 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
-    ;; This is also a public entry that tests call directly.
-    [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+    ;; Raw callers install for their own body; inside a pipeline run the
+    ;; refresh keeps the pass manager's set.
+    [_addr-taken : unit (opt-addr-taken-refresh! frame (& blocks))]
     [lengths (& summaries.const-lengths)]
     [initializer? : bool
       (opt_i64_i64_map.contains?
@@ -120774,6 +120775,7 @@
           (opt-gvn-sources-blocks
             blocks
             (& (opt-gvn-sources-params params (opt-value-sources-new))))]
+        [_addr-taken : unit (opt-addr-taken-refresh! frame blocks)]
         [defs : (__tl_dyn-array OptMaybeVarDef)
           (__tl_make-array OptMaybeVarDef frame)]
         (opt-var-defs-index-blocks!

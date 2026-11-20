@@ -62951,7 +62951,7 @@
         (& summaries)
         (& (irt.params "overlap=%26:str, unknown=%35:str"))
         38
-        (opt-sl-test-blocks))]
+        (opt-test-addr-taken-blocks 38 (opt-sl-test-blocks)))]
     (cond
       [(not (= (opt-sl-test-folded (& rewritten) 2) 4)) 10]
       [(not (= (opt-sl-test-folded (& rewritten) 4) 9)) 20]
@@ -62992,7 +62992,7 @@
         (& summaries)
         (& (irt.params params))
         96
-        blocks)]
+        (opt-test-addr-taken-blocks 96 blocks))]
     [expected : ir.CompilerIrInstr (irt.instr expected-text)]
     (test.assert-true
       (=

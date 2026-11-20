@@ -182,7 +182,7 @@ the exact PR head; only a push to main can publish releases.
 | --- | --- |
 | Fetch the published seed | `fetch-stage0.sh` / `fetch-stage0.ps1` |
 | Build a successor compiler | `build-stage0.sh` |
-| Prove self-host and same-commit TLCI handoff convergence | `check-bootstrap-fixpoint.sh` |
+| Prove self-host and same-commit TLCI handoff convergence | `check-bootstrap-fixpoint.sh` (`TYPELISP_BOOTSTRAP_PHASE=compiler`, then `parity`) |
 | Run the complete local CI suite | `ci-verify.sh` |
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `verify-format-large-crlf.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |
@@ -231,7 +231,7 @@ sh scripts/ci-verify.sh --gates stage2-deterministic-assembly
 That example runs `bootstrap-fixpoint`, `stage2-selfhost-compile-manifest` and
 then the named gate. Empty, unknown, duplicate and other-host IDs fail before
 any gate starts. The seed is resolved only when the closure contains
-`bootstrap-fixpoint`. Unless the closure is the whole host inventory, the run
+`bootstrap-compiler`. Unless the closure is the whole host inventory, the run
 ends with `CI verification partial: ...`: it records no verification-complete
 timing row and never prints the success message.
 
@@ -267,7 +267,7 @@ Producers hand their outputs to later gates through plain path files under
 assembly, the compile-profile CLI). A gate receives an output only from a
 producer among its own `needs`; any other names a path that cannot exist, so a
 gate that uses an output without needing its producer fails in every run
-order. A `stage2` gate must need `bootstrap-fixpoint` and a `profile` gate
+order. A `stage2` gate must need `bootstrap-compiler` and a `profile` gate
 `stage2-compile-profile-verifier`. Consumers check that what they reuse exists
 and fail otherwise.
 
@@ -299,8 +299,8 @@ never run at once:
 
 | Lock | Shared path |
 | --- | --- |
-| `build-stamp` | `target/build-stage0/git-hash.txt` and `tree-hash.txt`, which compile with `compiler-build-identity` includes and root package builds rewrite (the CLI smoke poisons them on purpose) |
-| `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
+| `build-stamp` | `target/build-stage0/git-hash.txt` and `tree-hash.txt`, which compile with `compiler-build-identity` includes (the bootstrap parity recompile among them) and root package builds rewrite (the CLI smoke poisons them on purpose) |
+| `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include (the bootstrap parity recompile among them) and the image and resource gates rebuild in place |
 | `embedded-payload` | `target/embedded-stdlib-payload-verify/`, which the payload gate and the stdlib gate (through `verify-embedded-stdlib-payload.sh`) both reset |
 | `instruction-count` | `target/instruction-count-check/`, where the benchmark instruction-count gate (which resets it) and the `self_compile` gate both measure at their historical paths, because measured paths reach the counts |
 | `root-release` | `target/release/`, the root package build's output |
@@ -548,8 +548,10 @@ the scheduler, its memory admission, locks and dependency closure are the same
 as in a local full run, which is unchanged. Each lane bootstraps its own
 compiler from the published stage0; no compiler passes between jobs. A gate
 that a lane runs only because its owned gates need it is a duplicate, and
-`ci-lanes.tsv` must declare it (`OWNER+LANE`); today only `bootstrap-fixpoint`
-runs in both lanes of each host.
+`ci-lanes.tsv` must declare it (`OWNER+LANE`). `bootstrap-compiler` runs in both
+lanes of each host that way, and `bootstrap-fixpoint` is declared with `LANE!`:
+the lane requests it, so both runners of a host bootstrap and prove the fixpoint
+and the aggregator compares their converged compilers.
 
 `ci-lane.sh check` fails when a gate is unassigned, assigned twice, unknown or
 assigned to a host it does not run on, when a duplicate is undeclared or a

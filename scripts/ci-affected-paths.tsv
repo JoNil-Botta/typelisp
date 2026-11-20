@@ -3,7 +3,7 @@
 # Groups resolve through ci-affected-inputs.tsv. Unknown/unreviewed inputs fail to full.
 path	required	advisory	reason
 # Safety fixture owners for #8570, #8915 and #8897.
-@always	bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests	-	Shared local hygiene and documented-source content guard, with canonical producer dependencies.
+@always	bootstrap-compiler,bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests	-	Shared local hygiene and documented-source content guard, with canonical producer dependencies.
 src/tests/compiler_optimize_smoke.tl	stage2-opt2-built-cli-compile-cross-fixpoint-regression	@compiler	The numbered opt2 gate wrapper directly executes this optimizer smoke unit.
 src/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@compiler	Any compiler source can carry target references; source guards read source content and module paths directly.
 src/compiler_*	stage2-codegen-target-parity	@compiler	Compiler data and target references retain the target boundary check.

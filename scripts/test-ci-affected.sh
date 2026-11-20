@@ -439,7 +439,7 @@ for host in linux windows; do
         gate=${row##* }
         printf '%s\n' "$path" > "$work/paths"
         "$selector" --host "$host" --paths "$work/paths" > "$work/subset.ids"
-        "$ROOT/scripts/ci-verify.sh" --list-gates "$host" --gates "shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests,$gate" > "$work/subset.table"
+        "$ROOT/scripts/ci-verify.sh" --list-gates "$host" --gates "bootstrap-compiler,bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests,$gate" > "$work/subset.table"
         sed '1d' "$work/subset.table" | cut -f 1 > "$work/subset.expected"
         cmp "$work/subset.ids" "$work/subset.expected" || fail "wrong dependency closure: $path"
     done

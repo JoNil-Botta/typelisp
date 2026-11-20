@@ -11,6 +11,17 @@ set -eu
 # reused by every downstream gate. Same compile flags as the stage0 publication
 # build (build-stage0.sh).
 #
+# That compare is the whole compiler handoff: it decides which binary every
+# downstream gate runs, and nothing after it can change those bytes. The
+# embedded-provenance parity compile only feeds the lane's proof and the
+# converged compiler envelope, so
+# TYPELISP_BOOTSTRAP_PHASE=compiler stops right after the compare (and after
+# TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE / TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE are
+# written) and TYPELISP_BOOTSTRAP_PHASE=parity re-reads that workdir to build
+# the images and prove the parity. CI runs the two phases as two gates, so the
+# downstream gates start on the converged compiler while the proof finishes.
+# The default phase `all` runs both in one process, in the historical order.
+#
 # Set TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE / TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
 # to persist the stage1 / converged compiler paths for callers that reuse the
 # freshly bootstrapped compilers.
@@ -84,6 +95,20 @@ case "$BOOTSTRAP_TLCI_MUTATION" in
         exit 2
         ;;
 esac
+BOOTSTRAP_PHASE=${TYPELISP_BOOTSTRAP_PHASE:-all}
+case "$BOOTSTRAP_PHASE" in
+    all | compiler | parity) ;;
+    *)
+        echo "TYPELISP_BOOTSTRAP_PHASE must be all, compiler or parity" >&2
+        exit 2
+        ;;
+esac
+# Mutation mode keeps the single-process order: each stage's snapshot inspects
+# the image its own stage just built.
+if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ] && [ "$BOOTSTRAP_PHASE" != all ]; then
+    echo "TYPELISP_BOOTSTRAP_TLCI_MUTATION needs TYPELISP_BOOTSTRAP_PHASE=all" >&2
+    exit 2
+fi
 
 bootstrap_extra_cfg_args() {
     if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ]; then
@@ -165,8 +190,17 @@ case "$WORKDIR" in
         exit 2
         ;;
 esac
-rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
+# The compiler phase owns the workdir. The parity phase reads the compiler it
+# produced and the assembly it left there, so it never wipes them.
+if [ "$BOOTSTRAP_PHASE" = parity ]; then
+    if [ ! -d "$WORKDIR" ]; then
+        echo "bootstrap parity phase needs a finished compiler phase workdir: $WORKDIR" >&2
+        exit 1
+    fi
+else
+    rm -rf "$WORKDIR"
+    mkdir -p "$WORKDIR"
+fi
 configure_toolchain
 
 BOOTSTRAP_SOURCE_ROOT=$ROOT
@@ -205,13 +239,19 @@ BOOTSTRAP_EMBEDDED_IMAGE="$BOOTSTRAP_EMBEDDED_WORKDIR/stdlib.tlci"
 # Every converged compiler records its commit separately from the exact source
 # tree used for frontend/image admission. Keep these beside the selected src/
 # tree because compiler_build_identity includes it through src/../target.
-BUILD_IDENTITY=$(build_provenance_hash "$0")
-BUILD_PRODUCER_IDENTITY=$(build_provenance_hash "$0" 'HEAD^{tree}')
-mkdir -p "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0"
-printf '%s' "$BUILD_IDENTITY" \
-    > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/git-hash.txt"
-printf '%s' "$BUILD_PRODUCER_IDENTITY" \
-    > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/tree-hash.txt"
+# The parity phase stamps nothing: both stage3.s and the envelope were built
+# with the identity the compiler phase wrote.
+BUILD_IDENTITY=
+BUILD_PRODUCER_IDENTITY=
+if [ "$BOOTSTRAP_PHASE" != parity ]; then
+    BUILD_IDENTITY=$(build_provenance_hash "$0")
+    BUILD_PRODUCER_IDENTITY=$(build_provenance_hash "$0" 'HEAD^{tree}')
+    mkdir -p "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0"
+    printf '%s' "$BUILD_IDENTITY" \
+        > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/git-hash.txt"
+    printf '%s' "$BUILD_PRODUCER_IDENTITY" \
+        > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/tree-hash.txt"
+fi
 
 STAGE1_ASM="$WORKDIR/stage1.s"
 STAGE1_OBJ="$WORKDIR/stage1.$OBJ_EXT"
@@ -662,42 +702,6 @@ bootstrap_mutation_step() {
     bootstrap_step "$@"
 }
 
-echo "[bootstrap] stage0 -> stage1.s"
-bootstrap_step stage0 compile run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
-
-bootstrap_step stage1 link assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
-
-if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
-    bootstrap_step stage1 cli-smoke check_stage1_compile_cli
-fi
-
-bootstrap_step stage1 image build_bootstrap_embedded_stdlib "$STAGE1_BIN"
-bootstrap_mutation_step stage1 snapshot \
-    bootstrap_tlci_mutation_snapshot stage1 "$STAGE1_BIN"
-bootstrap_mutation_step stage1 witness bootstrap_tlci_mutation_source_route
-
-echo "[bootstrap] stage1 -> stage2.s"
-bootstrap_step stage1 compile run_bootstrap_compile "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
-
-bootstrap_step stage2 link assemble_and_link_stage2
-bootstrap_mutation_step stage2 witness bootstrap_tlci_mutation_native_route
-
-if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
-    bootstrap_step stage2 cli-smoke check_stage2_embedded_stdlib
-fi
-
-bootstrap_step stage2 image build_bootstrap_embedded_stdlib "$STAGE2_BIN"
-bootstrap_mutation_step stage2 snapshot \
-    bootstrap_tlci_mutation_snapshot stage2 "$STAGE2_BIN"
-
-echo "[bootstrap] stage2 -> stage3.s"
-# stage2+ compile with the embedded stdlib (no stdlib root): the byte-equal
-# fixpoint against stage2.s (built from the on-disk stdlib) is the parity
-# gate for the embedded source payload and the native macro route.
-bootstrap_step stage2 compile run_bootstrap_compile "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
-
-bootstrap_step stage3 link assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
-
 bootstrap_build_stage4() {
     bootstrap_step stage3 image build_bootstrap_embedded_stdlib "$STAGE3_BIN"
     bootstrap_mutation_step stage3 snapshot \
@@ -707,27 +711,85 @@ bootstrap_build_stage4() {
     bootstrap_step stage4 link assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 
-bootstrap_resolve_fixpoint
-bootstrap_mutation_step "$BOOTSTRAP_COMPILER_STAGE" image \
-    build_bootstrap_embedded_stdlib "$BOOTSTRAP_COMPILER_BIN"
-bootstrap_mutation_step "$BOOTSTRAP_COMPILER_STAGE" snapshot \
-    bootstrap_tlci_mutation_snapshot \
-    "$BOOTSTRAP_COMPILER_STAGE" "$BOOTSTRAP_COMPILER_BIN"
+# The converged compiler: the fixpoint compare decides the binary every
+# downstream gate runs, and the two path files hand it over. The embedded-stdlib
+# images stay here: each one is the include-bin input of the next self-host
+# compile (src/compiler_embedded_stdlib_tlci_payload.tl), so the payload a stage
+# embeds is the one its predecessor built.
+bootstrap_compiler_phase() {
+    echo "[bootstrap] stage0 -> stage1.s"
+    bootstrap_step stage0 compile run_bootstrap_compile "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
 
-# The stage2 -> stage3 compile runs from the repo root, where the loader's
-# cwd-relative fallback still reads ./stdlib from disk. Run one more stage2
-# self-compile from the workdir (which has no stdlib directory beneath it) so
-# every stdlib module genuinely loads from the embedded payload with the
-# native macro route active, and require byte parity with stage3.s.
-echo "[bootstrap] stage2 embedded-provenance parity"
-EMBEDDED_PARITY_ASM="$WORKDIR/stage3-embedded.s"
-bootstrap_step stage2 parity run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC_ABS" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
-if ! cmp -s "$STAGE3_ASM" "$EMBEDDED_PARITY_ASM"; then
-    echo "embedded-provenance stage2 output differs from stage3.s" >&2
-    exit 1
-fi
-echo "[bootstrap] embedded-provenance output matches stage3.s"
+    bootstrap_step stage1 link assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
-write_stage1_path
-write_bootstrap_compiler_path
+    if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
+        bootstrap_step stage1 cli-smoke check_stage1_compile_cli
+    fi
+
+    bootstrap_step stage1 image build_bootstrap_embedded_stdlib "$STAGE1_BIN"
+    bootstrap_mutation_step stage1 snapshot \
+        bootstrap_tlci_mutation_snapshot stage1 "$STAGE1_BIN"
+    bootstrap_mutation_step stage1 witness bootstrap_tlci_mutation_source_route
+
+    echo "[bootstrap] stage1 -> stage2.s"
+    bootstrap_step stage1 compile run_bootstrap_compile "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+
+    bootstrap_step stage2 link assemble_and_link_stage2
+    bootstrap_mutation_step stage2 witness bootstrap_tlci_mutation_native_route
+
+    if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
+        bootstrap_step stage2 cli-smoke check_stage2_embedded_stdlib
+    fi
+
+    bootstrap_step stage2 image build_bootstrap_embedded_stdlib "$STAGE2_BIN"
+    bootstrap_mutation_step stage2 snapshot \
+        bootstrap_tlci_mutation_snapshot stage2 "$STAGE2_BIN"
+
+    echo "[bootstrap] stage2 -> stage3.s"
+    # stage2+ compile with the embedded stdlib (no stdlib root): the byte-equal
+    # fixpoint against stage2.s (built from the on-disk stdlib) is the parity
+    # gate for the embedded source payload and the native macro route.
+    bootstrap_step stage2 compile run_bootstrap_compile "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+
+    bootstrap_step stage3 link assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
+
+    bootstrap_resolve_fixpoint
+    bootstrap_mutation_step "$BOOTSTRAP_COMPILER_STAGE" image \
+        build_bootstrap_embedded_stdlib "$BOOTSTRAP_COMPILER_BIN"
+    bootstrap_mutation_step "$BOOTSTRAP_COMPILER_STAGE" snapshot \
+        bootstrap_tlci_mutation_snapshot \
+        "$BOOTSTRAP_COMPILER_STAGE" "$BOOTSTRAP_COMPILER_BIN"
+
+    write_stage1_path
+    write_bootstrap_compiler_path
+}
+
+# What the compiler phase cannot give: the parity compile that proves stage2
+# loads every stdlib module from the embedded payload and emits stage3.s
+# byte-for-byte. It reads the compiler phase's workdir and writes only
+# stage3-embedded.s beside it.
+bootstrap_parity_phase() {
+    # The stage2 -> stage3 compile runs from the repo root, where the loader's
+    # cwd-relative fallback still reads ./stdlib from disk. Run one more stage2
+    # self-compile from the workdir (which has no stdlib directory beneath it) so
+    # every stdlib module genuinely loads from the embedded payload with the
+    # native macro route active, and require byte parity with stage3.s.
+    echo "[bootstrap] stage2 embedded-provenance parity"
+    EMBEDDED_PARITY_ASM="$WORKDIR/stage3-embedded.s"
+    bootstrap_step stage2 parity run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC_ABS" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+    if ! cmp -s "$STAGE3_ASM" "$EMBEDDED_PARITY_ASM"; then
+        echo "embedded-provenance stage2 output differs from stage3.s" >&2
+        exit 1
+    fi
+    echo "[bootstrap] embedded-provenance output matches stage3.s"
+}
+
+case "$BOOTSTRAP_PHASE" in
+    compiler) bootstrap_compiler_phase ;;
+    parity) bootstrap_parity_phase ;;
+    *)
+        bootstrap_compiler_phase
+        bootstrap_parity_phase
+        ;;
+esac
 echo "bootstrap fixpoint check passed"

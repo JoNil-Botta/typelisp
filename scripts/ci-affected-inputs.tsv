@@ -24,6 +24,7 @@ cli-tools-benchmark-repetition-self-test	-	Self-contained harness or publication
 stage0-release-publication-verifier-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
 stage0-latest-staged-publication-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
 bootstrap-adaptive-control-flow	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+bootstrap-compiler	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical image and the converged compiler.
 bootstrap-fixpoint	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage0-size-ratchet	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-opt1-opt2-build-invariance	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

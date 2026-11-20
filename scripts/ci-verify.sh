@@ -121,8 +121,8 @@ ci_gates_plan() {
                 }
             }
             # A gate receives a produced compiler only from a gate it needs.
-            if ($5 == "stage2" && !direct["bootstrap-fixpoint"])
-                fail("line " NR ": " $1 " runs the stage2 compiler without needing bootstrap-fixpoint")
+            if ($5 == "stage2" && !direct["bootstrap-compiler"])
+                fail("line " NR ": " $1 " runs the stage2 compiler without needing bootstrap-compiler")
             if ($5 == "profile" && !direct["stage2-compile-profile-verifier"])
                 fail("line " NR ": " $1 " runs the profile compiler without needing stage2-compile-profile-verifier")
             delete direct
@@ -330,7 +330,7 @@ ci_verify_load_handoffs() {
     COMPILE_PROFILE_BIN="$CI_VERIFY_UNPRODUCED/compile-profile-compiler"
     OPT2_REFERENCE_ASM="$CI_VERIFY_UNPRODUCED/build-invariance-opt1-reference.s"
     case ",$1," in
-        *,bootstrap-fixpoint,*)
+        *,bootstrap-compiler,*)
             read_handoff "bootstrap previous-stage compiler capture" "$CI_VERIFY_STAGE1_PATH_FILE" || return 1
             STAGE1_BIN=$CI_VERIFY_HANDOFF
             ensure_executable "previous-stage" "$STAGE1_BIN"
@@ -363,17 +363,22 @@ ci_verify_load_handoffs() {
 
 # The single compiler build of the flow: the seed bootstraps src/main.tl through
 # successive stages at opt2 until the compiler's own code converges (normally
-# stage2 == stage3, with a stage3 == stage4 fallback). Every later gate runs on
-# the resulting converged compiler - the branch-built full CLI, handed over via
-# the compatibility-named stage2 path file - so the artifact under test is the
-# one the bootstrap just produced. Do not add per-gate compiler rebuilds.
-gate_bootstrap_fixpoint() {
-    TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$CI_VERIFY_STAGE1_PATH_FILE \
+# stage2 == stage3, with a stage3 == stage4 fallback). Every later gate needs
+# this gate and runs on the resulting converged compiler - the branch-built full
+# CLI, handed over via the compatibility-named stage2 path file - so the artifact
+# under test is the one the bootstrap just produced. Do not add per-gate
+# compiler rebuilds. The fixpoint compare is the whole compiler handoff: nothing
+# this gate leaves behind changes those bytes, so bootstrap-fixpoint proves the
+# embedded-provenance parity beside the downstream gates instead of in front of
+# them.
+gate_bootstrap_compiler() {
+    TYPELISP_BOOTSTRAP_PHASE=compiler \
+        TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$CI_VERIFY_STAGE1_PATH_FILE \
         TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$CI_VERIFY_STAGE2_PATH_FILE \
         TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
         scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
     # The cross-mode differential also runs the previous-stage compiler.
-    ci_verify_load_handoffs bootstrap-fixpoint || return 1
+    ci_verify_load_handoffs bootstrap-compiler || return 1
     echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
     # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
@@ -392,6 +397,17 @@ gate_bootstrap_fixpoint() {
         fi
         echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
     fi
+}
+
+# The rest of the bootstrap fixpoint, and the only gate that publishes the
+# converged compiler role: it re-reads the compiler phase's workdir for the
+# embedded-provenance parity compile and hashes stage3.s, stage3-embedded.s and
+# the stage records into the lane envelope. A failure here fails the lane and
+# its receipt, exactly as if the parity had never left the bootstrap gate.
+gate_bootstrap_fixpoint() {
+    TYPELISP_BOOTSTRAP_PHASE=parity \
+        scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
+    ci_verify_load_handoffs bootstrap-compiler || return 1
     if [ -n "$CI_COMPILER_ENVELOPE_DIR" ]; then
         ci_timing_run bootstrap-converged artifact-snapshot \
             scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" \
@@ -764,7 +780,7 @@ fi
 # Only the two bootstraps consume the seed; a selection without them needs none.
 SEED_TYPELISP_BIN=
 case ",$CI_VERIFY_PLAN_IDS" in
-    *,bootstrap-fixpoint,* | *,tlci-mutation-bootstrap-fixpoint,*)
+    *,bootstrap-compiler,* | *,tlci-mutation-bootstrap-fixpoint,*)
         if [ -z "${TYPELISP_BIN:-}" ]; then
             scripts/fetch-stage0.sh
             SEED_TYPELISP_BIN="$ROOT/target/stage0/typelisp"

@@ -28,7 +28,7 @@ cd "$ROOT"
 
 # Every compiler-owned compressed stream in the binary must be accounted for
 # here or the stream counts below reject the report. Source fallback modules use
-# independent LZSS frames; the generated TLCI catalog uses one versioned TLCH envelope.
+# independent LZSS frames; the generated TLCI catalog is one stream envelope.
 EMBEDDED_STDLIB="src/compiler_embedded_stdlib_payload.tl src/compiler_embedded_stdlib_tlci_payload.tl"
 COMPILER_SOURCES="src/*.tl"
 BINARY=
@@ -360,9 +360,8 @@ set -- $lzss_counts
 payload_streams=$1
 compressed_payload_bytes=$2
 static_payload_bytes=$3
-lzss_v1_streams=$4
-lzss_v2_streams=$5
-lzss_raw_bytes=$6
+lzss_v3_streams=$4
+lzss_raw_bytes=$5
 encoded_payload_bytes=0
 [ "$payload_streams" -eq "$expected_lzss_streams" ] || {
     echo "expected $expected_lzss_streams compiler-owned LZSS payloads from source declarations ($manifest_lzss_streams embedded stdlib, $other_lzss_streams other), found $payload_streams" >&2
@@ -463,8 +462,7 @@ printf 'other_compiler_owned_lzss_declarations\t%s\n' "$other_lzss_streams"
 printf 'total_files\t%s\n' "$payload_files"
 printf 'expanded_source_bytes\t%s\n' "$payload_total"
 printf 'lzss_payload_streams\t%s\n' "$payload_streams"
-printf 'lzss_v1_streams\t%s\n' "$lzss_v1_streams"
-printf 'lzss_v2_streams\t%s\n' "$lzss_v2_streams"
+printf 'lzss_v3_streams\t%s\n' "$lzss_v3_streams"
 printf 'lzss_raw_bytes\t%s\n' "$lzss_raw_bytes"
 printf 'compressed_token_bytes\t%s\n' "$compressed_payload_bytes"
 printf 'tlci_envelope_raw_bytes\t%s\n' "$tlch_raw_bytes"

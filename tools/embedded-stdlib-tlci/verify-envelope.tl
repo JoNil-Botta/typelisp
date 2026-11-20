@@ -68,28 +68,16 @@
       [raw : (__tl_dyn-array u8) (byte_buf.to-array (io.read-file (io.arg 1)))]
       [envelope : (__tl_dyn-array u8)
         (byte_buf.to-array (io.read-file (io.arg 2)))]
-      (match (if (codec.compiler-embedded-stdlib-tlci-codec-prefix?
+      (match (frames.compiler-embedded-stdlib-tlci-frames-expand
         (& envelope)
-        (frames.compiler-embedded-stdlib-tlci-frames-prefix))
-        (frames.compiler-embedded-stdlib-tlci-frames-expand
-          (& envelope)
-          268435456)
-        (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-          (& envelope)
-          268435456)
-          [(Ok bytes) (tlci.ResultTlciBytes.Ok bytes)]
-          [(Err message) (tlci.ResultTlciBytes.Err message)]))
+        268435456)
         [(Err message)
           (io.print-error (str_cat.str-cat message "\n"))
           1]
         [(Ok expanded)
           (if (and
             (embedded-stdlib-tlci-envelope-eq? (& raw) (& expanded))
-            (if (codec.compiler-embedded-stdlib-tlci-codec-prefix?
-              (& envelope)
-              (frames.compiler-embedded-stdlib-tlci-frames-prefix))
-              (embedded-stdlib-tlci-indexed-integrity-ok? (& envelope))
-              true))
+            (embedded-stdlib-tlci-indexed-integrity-ok? (& envelope)))
             0
             (begin
               (io.print-error

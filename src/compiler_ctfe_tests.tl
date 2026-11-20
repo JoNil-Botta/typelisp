@@ -3962,20 +3962,19 @@
 ;; bytes are exactly `source`.
 (define (compiler-ctfe-lzss-roundtrip-length [source : String]) : i64
   (let
-    [envelope : String
-      (ctfe.ctfe-embedded-stdlib-binary-data-bytes (& (clone source)))]
-    [envelope-len : i64 (string.string-length envelope)]
+    [envelope : String (lzss.compiler-lzss-encode (& source))]
+    [envelope-len : i64 (string.string-length (& envelope))]
     [source-len : i64 (string.string-length source)]
     [header-len : i64
       (+
-        (string.string-length (ctfe.ctfe-embedded-stdlib-compressed-prefix))
+        (string.string-length (lzss.compiler-lzss-envelope-prefix))
         (string.string-length (string.int->string source-len))
         1)]
     [payload : (__tl_dyn-array u8) (__tl_make-array u8 envelope-len)]
     (for [index (iterator.range 0 envelope-len)]
       (set!
         (array-ref payload index)
-        (cast (string.string-ref envelope index) : u8)))
+        (cast (string.string-ref (& envelope) index) : u8)))
     (match (lzss.compiler-lzss-decode (& payload) source-len)
       [(Ok bytes)
         (let
@@ -4070,242 +4069,6 @@
       (compiler-ctfe-lzss-roundtrip-length
         (compiler-ctfe-lzss-noise-source 6000 3))
       0)))
-
-;; `source` as an `include-str-lzss` v2 payload, decoded by the runtime decoder:
-;; the coded stream's length, or -1 unless the decoded bytes are exactly
-;; `source`. `damage` rewrites the payload first: 0 none, 1 drop the last
-;; byte, 2 set the last byte's lowest bit (padding when the stream does not
-;; end on a byte boundary).
-(define (compiler-ctfe-lzss-v2-roundtrip-length
-  [source : String]
-  [damage : i64]) : i64
-  (let
-    [envelope : String
-      (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2 (& source))]
-    [source-len : i64 (string.string-length source)]
-    [header-len : i64
-      (+
-        (string.string-length (lzss.compiler-lzss-v2-prefix))
-        (string.string-length (string.int->string source-len))
-        1)]
-    [envelope-len : i64
-      (if (= damage 1)
-        (- (string.string-length envelope) 1)
-        (string.string-length envelope))]
-    [payload : (__tl_dyn-array u8) (__tl_make-array u8 envelope-len)]
-    [index : i64 0]
-    (while (< index envelope-len)
-      (set!
-        (array-ref payload index)
-        (cast (string.string-ref envelope index) : u8))
-      (set! index (+ index 1)))
-    (when
-      (and (= damage 2) (> envelope-len header-len))
-      (set!
-        (array-ref payload (- envelope-len 1))
-        (cast
-          (bit-or (cast (array-ref payload (- envelope-len 1)) : i64) 1)
-          : u8)))
-    (match (lzss.compiler-lzss-decode (& payload) source-len)
-      [(Ok bytes)
-        (let
-          [same : bool (= (array-length bytes) source-len)]
-          [cursor : i64 0]
-          (while (and same (< cursor source-len))
-            (unless
-              (=
-                (array-ref bytes cursor)
-                (cast (string.string-ref source cursor) : u8))
-              (set! same false))
-            (set! cursor (+ cursor 1)))
-          (if same
-            (- envelope-len header-len)
-            -1))]
-      [(Err _) -1])))
-
-;; Text with repeats, as the embedded stdlib sources are.
-(define (compiler-ctfe-lzss-text-source) : String
-  (let
-    [out : byte_buf_core.ByteBufBuilder
-      (byte_buf_core.byte-buf-builder-with-capacity 4096)]
-    [index : i64 0]
-    (while (< index 40)
-      (byte_buf_core.byte-buf-builder-append-string
-        (&mut out)
-        "(define (stdlib-entry [value : i64]) : i64\n  (let [next : i64 (+ value ")
-      (byte_buf_core.byte-buf-builder-append-string
-        (&mut out)
-        (string.int->string (* index 37)))
-      (byte_buf_core.byte-buf-builder-append-string (&mut out) ")] next))\n")
-      (set! index (+ index 1)))
-    (byte_buf_core.byte-buf-builder-to-string (& out))))
-
-;; Every v1 parse boundary decodes exactly through the v2 coding too; text
-;; codes smaller than under v1; a truncated stream and nonzero padding are
-;; rejected rather than decoded.
-(define (compiler-ctfe-lzss-v2-roundtrip-ok?) : bool
-  (let
-    [text : String (compiler-ctfe-lzss-text-source)]
-    (and
-      (= (compiler-ctfe-lzss-v2-roundtrip-length "" 0) 0)
-      (> (compiler-ctfe-lzss-v2-roundtrip-length "ab" 0) 0)
-      (>
-        (compiler-ctfe-lzss-v2-roundtrip-length "abcZbcdefghijk_abcdefghijk" 0)
-        0)
-      (>
-        (compiler-ctfe-lzss-v2-roundtrip-length
-          "abcQbcdeRcdefghijkl_abcdefghijkl"
-          0)
-        0)
-      (>
-        (compiler-ctfe-lzss-v2-roundtrip-length
-          "0123456789abcdefgh#0123456789abcdefgh"
-          0)
-        0)
-      (>
-        (compiler-ctfe-lzss-v2-roundtrip-length
-          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          0)
-        0)
-      (>
-        (compiler-ctfe-lzss-v2-roundtrip-length
-          (compiler-ctfe-lzss-window-source "<marker:0123456789>")
-          0)
-        0)
-      (>
-        (compiler-ctfe-lzss-v2-roundtrip-length
-          (compiler-ctfe-lzss-noise-source 6000 3)
-          0)
-        0)
-      (>
-        (compiler-ctfe-lzss-v2-roundtrip-length
-          (compiler-ctfe-lzss-noise-source 3000 256)
-          0)
-        0)
-      (let
-        [v2 : i64 (compiler-ctfe-lzss-v2-roundtrip-length (clone text) 0)]
-        [v1 : i64 (compiler-ctfe-lzss-roundtrip-length (clone text))]
-        (and (> v2 0) (> v1 0) (< v2 v1)))
-      (= (compiler-ctfe-lzss-v2-roundtrip-length (clone text) 1) -1)
-      (= (compiler-ctfe-lzss-v2-roundtrip-length "abcde" 2) -1))))
-
-;; One bit per iteration: the bit stream `ctfe-lzss-write-bits!` must produce.
-(define (compiler-ctfe-lzss-reference-write-bits!
-  [writer : (&mut writer ctfe.CtfeLzssBitWriter)]
-  [value : i64]
-  [count : i64]) : unit
-  (let
-    [left : i64 count]
-    (while (> left 0)
-      (set! left (- left 1))
-      (set!
-        writer.pending
-        (bit-or (shl writer.pending 1) (bit-and (shr value left) 1)))
-      (set! writer.used (+ writer.used 1))
-      (when
-        (= writer.used 8)
-        (byte_buf_core.byte-buf-builder-push
-          (&mut writer.out)
-          (cast writer.pending : u8))
-        (set! writer.pending 0)
-        (set! writer.used 0)))))
-
-(define (compiler-ctfe-lzss-new-bit-writer) : ctfe.CtfeLzssBitWriter
-  (ctfe.CtfeLzssBitWriter (byte_buf_core.byte-buf-builder-with-capacity 16) 0 0))
-
-(define (compiler-ctfe-lzss-writer-state-same?
-  [left : (& left ctfe.CtfeLzssBitWriter)]
-  [right : (& right ctfe.CtfeLzssBitWriter)]) : bool
-  (and
-    (= left.pending right.pending)
-    (= left.used right.used)
-    (= left.out.len right.out.len)))
-
-(define (compiler-ctfe-lzss-writer-bytes-same?
-  [left : (& left ctfe.CtfeLzssBitWriter)]
-  [right : (& right ctfe.CtfeLzssBitWriter)]) : bool
-  (let
-    [same : bool (= left.out.len right.out.len)]
-    [index : i64 0]
-    (while (and same (< index left.out.len))
-      (set!
-        same
-        (= (array-ref left.out.slots index) (array-ref right.out.slots index)))
-      (set! index (+ index 1)))
-    same))
-
-;; Apply one write to both writers and compare the state they are left in.
-(define (compiler-ctfe-lzss-write-both-same?
-  [batched : (&mut batched ctfe.CtfeLzssBitWriter)]
-  [reference : (&mut reference ctfe.CtfeLzssBitWriter)]
-  [value : i64]
-  [count : i64]) : bool
-  (ctfe.ctfe-lzss-write-bits! batched value count)
-  (compiler-ctfe-lzss-reference-write-bits! reference value count)
-  (compiler-ctfe-lzss-writer-state-same? batched reference))
-
-;; Every count the v2 coding can write, with bits set above `count`, then a
-;; pseudo-random stream at every alignment.
-(define (compiler-ctfe-lzss-bit-writer-matches-reference?) : bool
-  (let
-    [batched : ctfe.CtfeLzssBitWriter (compiler-ctfe-lzss-new-bit-writer)]
-    [reference : ctfe.CtfeLzssBitWriter (compiler-ctfe-lzss-new-bit-writer)]
-    [same : bool true]
-    [count : i64 0]
-    [step : i64 0]
-    [state : i64 12345]
-    (while (<= count 15)
-      (set!
-        same
-        (and
-          same
-          (compiler-ctfe-lzss-write-both-same?
-            (&mut batched)
-            (&mut reference)
-            -1
-            count)
-          (compiler-ctfe-lzss-write-both-same?
-            (&mut batched)
-            (&mut reference)
-            0
-            count)))
-      (set! count (+ count 1)))
-    (while (< step 5000)
-      (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-      (set!
-        same
-        (and
-          same
-          (compiler-ctfe-lzss-write-both-same?
-            (&mut batched)
-            (&mut reference)
-            (bit-or state (shl state 20))
-            (% (shr state 8) 16))))
-      (set! step (+ step 1)))
-    (and same (compiler-ctfe-lzss-writer-bytes-same? (& batched) (& reference)))))
-
-;; Bytes fill from the most significant bit and carry across byte boundaries;
-;; a zero count writes nothing; bits above `count` are ignored.
-(define (compiler-ctfe-lzss-bit-writer-golden-ok?) : bool
-  (let
-    [writer : ctfe.CtfeLzssBitWriter (compiler-ctfe-lzss-new-bit-writer)]
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 5 3)
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 1023 0)
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 31 5)
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 21845 15)
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 0 1)
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 268435200 8)
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 1 1)
-    (ctfe.ctfe-lzss-write-bits! (&mut writer) 0 7)
-    (and
-      (= writer.pending 0)
-      (= writer.used 0)
-      (= writer.out.len 5)
-      (= (array-ref writer.out.slots 0) (cast 191 : u8))
-      (= (array-ref writer.out.slots 1) (cast 170 : u8))
-      (= (array-ref writer.out.slots 2) (cast 170 : u8))
-      (= (array-ref writer.out.slots 3) (cast 0 : u8))
-      (= (array-ref writer.out.slots 4) (cast 128 : u8)))))
 
 (cfg
   test
@@ -4787,9 +4550,6 @@
     (unless (compiler-ctfe-env-arena-ok?) (return 1))
     (unless (compiler-ctfe-generated-dotted-suffix-id-ok?) (return 1))
     (unless (compiler-ctfe-lzss-roundtrip-ok?) (return 1))
-    (unless (compiler-ctfe-lzss-v2-roundtrip-ok?) (return 1))
-    (unless (compiler-ctfe-lzss-bit-writer-matches-reference?) (return 1))
-    (unless (compiler-ctfe-lzss-bit-writer-golden-ok?) (return 1))
     (cfg
       test
       (unless (compiler-ctfe-comptime-structural-fields-ok?) (return 1))

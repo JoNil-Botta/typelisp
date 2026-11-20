@@ -30,6 +30,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_embedded_stdlib as ces)
+(import compiler_lzss as lzss)
 (import compiler_ctfe as ctfe)
 (import stdlib.string)
 (import stdlib.string_utf8 as utf8)
@@ -4702,7 +4703,7 @@
   (compiler-load-include-bin-def-with-pools
     pools
     name
-    (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2 contents)))
+    (lzss.compiler-lzss-encode contents)))
 
 (define (compiler-load-include-def-with-pools
   [kind : CompilerLoadIncludeKind]

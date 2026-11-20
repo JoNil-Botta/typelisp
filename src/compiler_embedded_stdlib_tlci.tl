@@ -5,7 +5,13 @@
 (cfg test (import compiler_embedded_stdlib_tlci_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_tlci_payload as payload))
 (import compiler_embedded_stdlib_tlci_codec as codec)
+(import compiler_lzss as lzss)
 (import compiler_embedded_stdlib_tlci_frames as frames)
+;; Read-only support for a compiler built by the previous release, which embeds
+;; the earlier envelope. This compiler never writes it; delete with the next
+;; release.
+(import compiler_embedded_stdlib_tlci_frames_v2 as frames_v2)
+(import compiler_embedded_stdlib_tlci_codec_v2 as codec_v2)
 (import tlci_loader as loader)
 (cfg compile-profile (import compiler_allocation_profile as allocation_profile))
 
@@ -186,9 +192,28 @@
 (define compiler-embedded-stdlib-tlci-frames : (__tl_dyn-array
     frames.CompilerEmbeddedStdlibTlciFrames)
   (__tl_make-array frames.CompilerEmbeddedStdlibTlciFrames 1))
-(define compiler-embedded-stdlib-tlci-tables : (__tl_dyn-array
-    codec.CompilerEmbeddedStdlibTlciHuffmanTable)
-  (__tl_make-array codec.CompilerEmbeddedStdlibTlciHuffmanTable 3))
+(define compiler-embedded-stdlib-tlci-model : (__tl_dyn-array
+    lzss.CompilerLzssModel)
+  (__tl_make-array lzss.CompilerLzssModel 1))
+;; One-element owner slots: element 0 is the decoded image list itself.
+(define compiler-embedded-stdlib-tlci-images : (__tl_dyn-array
+    (__tl_dyn-array (__tl_dyn-array u8)))
+  (__tl_make-array (__tl_dyn-array (__tl_dyn-array u8)) 1))
+(define compiler-embedded-stdlib-tlci-images-ready : i64
+  0)
+(define compiler-embedded-stdlib-tlci-legacy : i64
+  0)
+(define compiler-embedded-stdlib-tlci-legacy-images : (__tl_dyn-array
+    (__tl_dyn-array u8))
+  (__tl_make-array (__tl_dyn-array u8) 1))
+(define compiler-embedded-stdlib-tlci-legacy-frames : (__tl_dyn-array
+    frames_v2.CompilerEmbeddedStdlibTlciV2Frames)
+  (__tl_make-array frames_v2.CompilerEmbeddedStdlibTlciV2Frames 1))
+(define compiler-embedded-stdlib-tlci-legacy-tables : (__tl_dyn-array
+    codec_v2.CompilerEmbeddedStdlibTlciHuffmanTable)
+  (__tl_make-array codec_v2.CompilerEmbeddedStdlibTlciHuffmanTable 3))
+(define compiler-embedded-stdlib-tlci-legacy-ready : i64
+  0)
 (define compiler-embedded-stdlib-tlci-active : (__tl_dyn-array i64)
   (__tl_make-array i64 0))
 (define compiler-embedded-stdlib-tlci-active-count : i64
@@ -205,7 +230,50 @@
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes
         compiler-embedded-stdlib-tlci-session-arena-handle))))
 
+(define (compiler-embedded-stdlib-tlci-legacy-envelope?) : bool
+  (codec_v2.compiler-embedded-stdlib-tlci-codec-prefix?
+    (& payload.embedded-stdlib-tlci-bytes)
+    (frames_v2.compiler-embedded-stdlib-tlci-frames-prefix)))
+
+;; Build the previous release's model and index when the payload is its envelope.
+(define (compiler-embedded-stdlib-tlci-legacy-ensure!) : bool
+  (when (= compiler-embedded-stdlib-tlci-legacy-ready 1)
+    (return true))
+  (let
+    [catalog : frames_v2.CompilerEmbeddedStdlibTlciV2Frames
+      (match (frames_v2.compiler-embedded-stdlib-tlci-frames-parse
+        (& payload.embedded-stdlib-tlci-bytes)
+        (compiler-embedded-stdlib-tlci-raw-limit))
+        [(Ok catalog) catalog]
+        [(Err _) (return false)])]
+    [index : i64 0]
+    (while (< index 3)
+      (match (codec_v2.compiler-embedded-stdlib-tlci-codec-build-table
+        (& payload.embedded-stdlib-tlci-bytes)
+        (+ 68 (cond [(= index 0) 0] [(= index 1) 257] [else 4353]))
+        (cond [(= index 0) 257] [(= index 1) 4096] [else 16]))
+        [(Ok table)
+          (set!
+            (array-ref compiler-embedded-stdlib-tlci-legacy-tables index)
+            table)]
+        [(Err _) (return false)])
+      (set! index (+ index 1)))
+    (set!
+      (array-ref compiler-embedded-stdlib-tlci-frames 0)
+      (frames.CompilerEmbeddedStdlibTlciFrames
+        catalog.raw-len
+        catalog.count
+        catalog.index-end))
+    (set!
+      (array-ref compiler-embedded-stdlib-tlci-legacy-frames 0)
+      catalog)
+    (set! compiler-embedded-stdlib-tlci-legacy 1)
+    (set! compiler-embedded-stdlib-tlci-legacy-ready 1)
+    true))
+
 (define (compiler-embedded-stdlib-tlci-frames-ensure!) : bool
+  (when (compiler-embedded-stdlib-tlci-legacy-envelope?)
+    (return (compiler-embedded-stdlib-tlci-legacy-ensure!)))
   (if (> compiler-embedded-stdlib-tlci-table-owner 0)
     true
     (if (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
@@ -224,18 +292,15 @@
         (in-arena
           (unsafe
             (arena.Arena owner))
-          (for [index (iterator.range 0 3)]
-            (match (codec.compiler-embedded-stdlib-tlci-codec-build-table
-              (& payload.embedded-stdlib-tlci-bytes)
-              (+ 68 (cond [(= index 0) 0] [(= index 1) 257] [else 4353]))
-              (cond [(= index 0) 257] [(= index 1) 4096] [else 16]))
-              [(Ok table)
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-tables index)
-                  table)]
-              [(Err _)
-                (abort.compiler-abort
-                  "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-frames-ensure!: invalid embedded TLCI model\n")]))
+          (match (codec.compiler-embedded-stdlib-tlci-codec-model
+            (& payload.embedded-stdlib-tlci-bytes))
+            [(Ok model)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-model 0)
+                model)]
+            [(Err _)
+              (abort.compiler-abort
+                "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-frames-ensure!: invalid embedded TLCI model\n")])
           (set!
             compiler-embedded-stdlib-tlci-session-state
             (__tl_make-array i64 catalog.count))
@@ -252,32 +317,73 @@
         (set! compiler-embedded-stdlib-tlci-table-owner owner)
         true))))
 
-(define (compiler-embedded-stdlib-tlci-decode-frame [index : i64]) : (__tl_dyn-array
-    u8)
+;; The envelope holds one stream, so the first frame request expands all of it
+;; once; later requests hand out their frame from the decoded images.
+(define (compiler-embedded-stdlib-tlci-images-ensure!) : bool
+  (when (= compiler-embedded-stdlib-tlci-images-ready 1)
+    (return true))
+  (when (compiler-embedded-stdlib-tlci-legacy-envelope?)
+    (return (compiler-embedded-stdlib-tlci-legacy-ensure!)))
   (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
-    (__tl_make-array u8 0)
-    (match (frames.compiler-embedded-stdlib-tlci-frames-decode
+    false
+    (match (frames.compiler-embedded-stdlib-tlci-frames-decode-images
       (& payload.embedded-stdlib-tlci-bytes)
       (array-ref compiler-embedded-stdlib-tlci-frames 0)
-      index
-      (& compiler-embedded-stdlib-tlci-tables))
-      [(Ok bytes) bytes]
-      [(Err _)
-        (abort.compiler-abort
-          "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-decode-frame: invalid embedded TLCI frame\n")
-        (__tl_make-array u8 0)])))
+      (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
+      [(Ok images)
+        (set! (array-ref compiler-embedded-stdlib-tlci-images 0) images)
+        (set! compiler-embedded-stdlib-tlci-images-ready 1)
+        true]
+      [(Err _) false])))
+
+(define (compiler-embedded-stdlib-tlci-decode-frame [index : i64]) : (__tl_dyn-array
+    u8)
+  (when (not (compiler-embedded-stdlib-tlci-images-ensure!))
+    (return (__tl_make-array u8 0)))
+  (when (= compiler-embedded-stdlib-tlci-legacy 1)
+    (return
+      (match (frames_v2.compiler-embedded-stdlib-tlci-frames-decode
+        (& payload.embedded-stdlib-tlci-bytes)
+        (array-ref compiler-embedded-stdlib-tlci-legacy-frames 0)
+        index
+        (& compiler-embedded-stdlib-tlci-legacy-tables))
+        [(Ok bytes) bytes]
+        [(Err _) (__tl_make-array u8 0)])))
+  (clone
+    (array-ref (array-ref compiler-embedded-stdlib-tlci-images 0) index)))
 
 (define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
-  (if (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
+  (if (or
+    (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
+    (not (compiler-embedded-stdlib-tlci-images-ensure!)))
     (__tl_make-array u8 0)
-    (match (frames.compiler-embedded-stdlib-tlci-frames-expand
-      (& payload.embedded-stdlib-tlci-bytes)
-      (compiler-embedded-stdlib-tlci-raw-limit))
-      [(Ok bytes) bytes]
-      [(Err _)
-        (abort.compiler-abort
-          "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy: invalid embedded TLCI catalog\n")
-        (__tl_make-array u8 0)])))
+    (if (= compiler-embedded-stdlib-tlci-legacy 1)
+      (match (frames_v2.compiler-embedded-stdlib-tlci-frames-expand
+        (& payload.embedded-stdlib-tlci-bytes)
+        (compiler-embedded-stdlib-tlci-raw-limit))
+        [(Ok bytes) bytes]
+        [(Err _) (__tl_make-array u8 0)])
+    (let
+      [catalog : frames.CompilerEmbeddedStdlibTlciFrames
+        (array-ref compiler-embedded-stdlib-tlci-frames 0)]
+      [names : (__tl_dyn-array String)
+        (__tl_make-array String (- catalog.count 1))]
+      [index : i64 0]
+      (while (< index (- catalog.count 1))
+        (set!
+          (array-ref names index)
+          (frames.compiler-embedded-stdlib-tlci-frames-name
+            (& payload.embedded-stdlib-tlci-bytes)
+            (+ index 1)))
+        (set! index (+ index 1)))
+      (match (frames.compiler-embedded-stdlib-tlci-frames-aggregate
+        (& (array-ref compiler-embedded-stdlib-tlci-images 0))
+        (& names))
+        [(Ok bytes) bytes]
+        [(Err _)
+          (abort.compiler-abort
+            "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy: invalid embedded TLCI catalog\n")
+          (__tl_make-array u8 0)])))))
 
 ;; Publish the owner only after its immutable bytes are complete. Nested users
 ;; borrow the enclosing owner's bytes and cannot release that owner.
@@ -383,10 +489,15 @@
     (Unavailable "embedded stdlib tlci is unavailable in the seed/test build")
     (let
       [index : i64
-        (frames.compiler-embedded-stdlib-tlci-frames-find
-          (& payload.embedded-stdlib-tlci-bytes)
-          (array-ref compiler-embedded-stdlib-tlci-frames 0)
-          (& name))]
+        (if (= compiler-embedded-stdlib-tlci-legacy 1)
+          (frames_v2.compiler-embedded-stdlib-tlci-frames-find
+            (& payload.embedded-stdlib-tlci-bytes)
+            (array-ref compiler-embedded-stdlib-tlci-legacy-frames 0)
+            (& name))
+          (frames.compiler-embedded-stdlib-tlci-frames-find
+            (& payload.embedded-stdlib-tlci-bytes)
+            (array-ref compiler-embedded-stdlib-tlci-frames 0)
+            (& name)))]
       (cond
         [(< index 0) Missing]
         [(not (compiler-embedded-stdlib-tlci-session-open! index))

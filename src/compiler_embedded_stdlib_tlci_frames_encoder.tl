@@ -2,8 +2,8 @@
 (import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.byte_buf_core as buf)
-(import compiler_ctfe as ctfe)
 (import compiler_embedded_stdlib_tlci_encoder as encoder)
+(import compiler_lzss as lzss)
 (import compiler_embedded_stdlib_tlci_frames as frames)
 (import compiler_tlci_native_producer as producer)
 (import tlci_core as tlci)
@@ -12,62 +12,104 @@
   (Err String)
   (Ok (__tl_dyn-array u8) (__tl_dyn-array u8)))
 
-(define (compiler-embedded-stdlib-tlci-frames-encode
-  [images : (& images (__tl_dyn-array (__tl_dyn-array u8)))]
-  [names : (& names (__tl_dyn-array String))]) : encoder.ResultCompilerEmbeddedStdlibTlciEncoderBytes
+(define (compiler-embedded-stdlib-tlci-frames-source
+  [image : (& image (__tl_dyn-array u8))]) : String
+  (tlci.tlci-bytes->string image 0 (array-length image)))
+
+;; One stream holds every frame, so the tokenizer sees the whole catalog: a
+;; match may reach back into the frames before it.
+(define (compiler-embedded-stdlib-tlci-frames-stream-source
+  [images : (& images (__tl_dyn-array (__tl_dyn-array u8)))]) : String
   (let
     [count : i64 (array-length images)]
-    [streams : (__tl_dyn-array String) (__tl_make-array String count)]
-    [counts : (__tl_dyn-array
-      encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies)
-      (__tl_make-array
-        encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies
-        count)]
-    [main : (__tl_dyn-array i64) (__tl_make-array i64 257)]
-    [distance : (__tl_dyn-array i64) (__tl_make-array i64 4096)]
-    [length : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+    [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
+    [index : i64 0]
+    (while (< index count)
+      (buf.byte-buf-builder-append-array-range
+        (&mut out)
+        (& (array-ref images index))
+        0
+        (array-length (array-ref images index)))
+      (set! index (+ index 1)))
+    (buf.byte-buf-builder-to-string (& out))))
+
+;; Re-price the whole stream with the model these code lengths describe, then
+;; return the lengths of the token stream that model produced.
+(define (compiler-embedded-stdlib-tlci-frames-refine
+  [images : (& images (__tl_dyn-array (__tl_dyn-array u8)))]
+  [lengths : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
+  (let
+    [source : String (compiler-embedded-stdlib-tlci-frames-stream-source images)]
+    [model : lzss.CompilerLzssModel
+      (lzss.compiler-lzss-model-from-lengths (clone lengths))]
+    [counts : encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies
+      (encoder.compiler-embedded-stdlib-tlci-encoder-frequencies)]
+    [tokens : (__tl_dyn-array lzss.CompilerLzssToken)
+      (lzss.compiler-lzss-tokenize (& source) (& model))]
+    (encoder.compiler-embedded-stdlib-tlci-encoder-count!
+      (&mut counts)
+      (& source)
+      (& tokens))
+    (encoder.compiler-embedded-stdlib-tlci-encoder-lengths (& counts))))
+
+(define (compiler-embedded-stdlib-tlci-frames-encode
+  [images : (& images (__tl_dyn-array (__tl_dyn-array u8)))]
+  [names : (& names (__tl_dyn-array String))]) : ResultCompilerEmbeddedStdlibTlciFramesBuild
+  (let
+    [count : i64 (array-length images)]
+    [main-symbols : i64 (lzss.compiler-lzss-main-symbols)]
+    [frequencies : encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies
+      (encoder.compiler-embedded-stdlib-tlci-encoder-frequencies)]
     [raw-total : i64 0]
     [name-bytes : i64 0]
+    [index : i64 0]
     (unless
       (= count (+ (array-length names) 1))
       (return (Err "embedded stdlib tlci frames: frame/name count mismatch")))
-    (for [index (iterator.range 0 count)]
+    ;; Pass one: tokenize the whole stream under the fixed model and count
+    ;; symbols; every frame's raw length still comes from its own image.
+    (while (< index count)
       (let
         [source : String
-          (tlci.tlci-bytes->string
-            (& (array-ref images index))
-            0
-            (array-length (array-ref images index)))]
-        [stream : String
-          (ctfe.ctfe-embedded-stdlib-binary-data-bytes (& source))]
-        [freq
-          (try (encoder.compiler-embedded-stdlib-tlci-encoder-count (& stream)))]
-        (for [i (iterator.range 0 257)]
-          (+= (array-ref main i) (array-ref freq.main i)))
-        (for [i (iterator.range 0 4096)]
-          (+= (array-ref distance i) (array-ref freq.distance i)))
-        (for [i (iterator.range 0 16)]
-          (+= (array-ref length i) (array-ref freq.length i)))
-        (+= raw-total freq.raw-len)
-        (set! (array-ref streams index) stream)
-        (set! (array-ref counts index) freq)))
-    (for [index (iterator.range 0 (array-length names))]
-      (+= name-bytes (string.string-length (array-ref names index))))
+          (compiler-embedded-stdlib-tlci-frames-source
+            (& (array-ref images index)))]
+        (+= raw-total (string.string-length (& source))))
+      (set! index (+ index 1)))
+    (set! index 0)
     (let
-      [main-codes
-        (try (encoder.compiler-embedded-stdlib-tlci-encoder-build-codes main))]
-      [distance-codes
-        (try
-          (encoder.compiler-embedded-stdlib-tlci-encoder-build-codes distance))]
-      [length-codes
-        (try (encoder.compiler-embedded-stdlib-tlci-encoder-build-codes length))]
-      [index-end : i64
-        (+
-          (frames.compiler-embedded-stdlib-tlci-frames-record count)
-          name-bytes)]
-      [name-cursor : i64
-        (frames.compiler-embedded-stdlib-tlci-frames-record count)]
-      [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
+      [source : String
+        (compiler-embedded-stdlib-tlci-frames-stream-source images)]
+      [tokens : (__tl_dyn-array lzss.CompilerLzssToken)
+        (lzss.compiler-lzss-tokenize (& source) (& lzss.compiler-lzss-fixed-model))]
+      (encoder.compiler-embedded-stdlib-tlci-encoder-count!
+        (&mut frequencies)
+        (& source)
+        (& tokens)))
+    (set! index 0)
+    (while (< index (array-length names))
+      (+= name-bytes (string.string-length (array-ref names index)))
+      (set! index (+ index 1)))
+    ;; Refine twice: each model re-prices the tokenizer that produced it.
+    (let
+      [first-lengths
+        (encoder.compiler-embedded-stdlib-tlci-encoder-lengths (& frequencies))]
+      [refined-once
+        (compiler-embedded-stdlib-tlci-frames-refine images first-lengths)]
+      [lengths
+        (compiler-embedded-stdlib-tlci-frames-refine images refined-once)]
+      [spec
+        (encoder.compiler-embedded-stdlib-tlci-encoder-spec (& lengths))]
+      [model : lzss.CompilerLzssModel
+        (lzss.compiler-lzss-model-from-lengths (clone lengths))]
+      [record-bytes : i64
+          (frames.compiler-embedded-stdlib-tlci-frames-record-bytes)]
+        [directory : i64
+          (frames.compiler-embedded-stdlib-tlci-frames-directory)]
+        [index-end : i64 (+ (+ directory (* count record-bytes)) name-bytes)]
+        [name-cursor : i64 (+ directory (* count record-bytes))]
+        [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
+        [writer : lzss.CompilerLzssWriter (lzss.compiler-lzss-writer)]
+        [raw-offset : i64 0]
       (buf.byte-buf-builder-append-string
         (&mut out)
         (frames.compiler-embedded-stdlib-tlci-frames-prefix))
@@ -75,54 +117,51 @@
       (tlci.tlci-push-u64! (&mut out) index-end)
       (tlci.tlci-push-u64! (&mut out) count)
       (tlci.tlci-push-u64! (&mut out) 0)
-      (encoder.compiler-embedded-stdlib-tlci-encoder-append-lengths!
-        (&mut out)
-        (& main-codes))
-      (encoder.compiler-embedded-stdlib-tlci-encoder-append-lengths!
-        (&mut out)
-        (& distance-codes))
-      (encoder.compiler-embedded-stdlib-tlci-encoder-append-lengths!
-        (&mut out)
-        (& length-codes))
-      (for [index (iterator.range 0 count)]
+      (tlci.tlci-push-u64! (&mut out) 0)
+      (buf.byte-buf-builder-append-string (&mut out) spec)
+      (set! index 0)
+      (while (< index count)
         (let
+          [record : i64
+            (frames.compiler-embedded-stdlib-tlci-frames-record index)]
           [name-len : i64
             (if (= index 0)
               0
               (string.string-length (array-ref names (- index 1))))]
+          [source : String
+            (compiler-embedded-stdlib-tlci-frames-source
+              (& (array-ref images index)))]
           (tlci.tlci-push-u64! (&mut out) name-cursor)
           (tlci.tlci-push-u64! (&mut out) name-len)
-          (tlci.tlci-push-u64! (&mut out) 0)
-          (tlci.tlci-push-u64!
-            (&mut out)
-            (__tl-project-field (array-ref counts index) raw-len))
+          (tlci.tlci-push-u64! (&mut out) raw-offset)
+          (tlci.tlci-push-u64! (&mut out) (string.string-length (& source)))
           (tlci.tlci-push-u64! (&mut out) 0)
           (tlci.tlci-push-u64!
             (&mut out)
             (tlci.tlci-read-u64 (& (array-ref images index)) 48))
-          (+= name-cursor name-len)))
-      (for [index (iterator.range 0 (array-length names))]
+          (+= name-cursor name-len)
+          (+= raw-offset (string.string-length (& source)))
+          (set! record record))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (array-length names))
         (buf.byte-buf-builder-append-string
           (&mut out)
-          (string.copy (& (array-ref names index)))))
-      (for [index (iterator.range 0 count)]
-        (let
-          [writer : encoder.CompilerEmbeddedStdlibTlciEncoderBitWriter
-            (encoder.compiler-embedded-stdlib-tlci-encoder-encode-tokens
-              (& (array-ref streams index))
-              (& (array-ref counts index))
-              (& main-codes)
-              (& distance-codes)
-              (& length-codes))]
-          [record : i64
-            (frames.compiler-embedded-stdlib-tlci-frames-record index)]
-          (tlci.tlci-set-u64! (&mut out.slots) (+ record 16) out.len)
-          (tlci.tlci-set-u64! (&mut out.slots) (+ record 32) writer.bits)
-          (buf.byte-buf-builder-append-array-range
-            (&mut out)
-            (& writer.out.slots)
-            0
-            writer.out.len)))
+          (string.copy (& (array-ref names index))))
+        (set! index (+ index 1)))
+      ;; Pass two: tokenize the whole stream under the stored model and write
+      ;; it; distances may reach into the frames before each position.
+      (let
+        [source : String
+          (compiler-embedded-stdlib-tlci-frames-stream-source images)]
+        [tokens : (__tl_dyn-array lzss.CompilerLzssToken)
+          (lzss.compiler-lzss-tokenize (& source) (& model))]
+        (lzss.compiler-lzss-emit (& source) (& tokens) (& model) (&mut writer)))
+      (let
+        [stream : String (lzss.compiler-lzss-finish-writer (&mut writer))]
+        ;; The header records the stream length before the stream is appended.
+        (tlci.tlci-set-u64! (&mut out.slots) 68 (string.string-length (& stream)))
+        (buf.byte-buf-builder-append-string (&mut out) stream))
       (let
         [bytes : (__tl_dyn-array u8) (buf.byte-buf-builder-to-array (& out))]
         (tlci.tlci-set-u64!
@@ -131,7 +170,7 @@
           (frames.compiler-embedded-stdlib-tlci-frames-index-hash
             (& bytes)
             index-end))
-        (Ok bytes)))))
+        (Ok (__tl_make-array u8 0) bytes)))))
 
 ;; Sort identities once; runtime lookup can binary-search the authenticated index.
 (define (compiler-embedded-stdlib-tlci-frames-build
@@ -211,7 +250,9 @@
           (frames.compiler-embedded-stdlib-tlci-frames-aggregate
             (& images)
             (& sorted)))]
-      [payload
-        (try
-          (compiler-embedded-stdlib-tlci-frames-encode (& images) (& sorted)))]
-      (Ok ordinary payload))))
+      [packed
+        (match
+          (compiler-embedded-stdlib-tlci-frames-encode (& images) (& sorted))
+          [(Ok empty packed) packed]
+          [(Err message) (return (Err message))])]
+      (Ok ordinary packed))))

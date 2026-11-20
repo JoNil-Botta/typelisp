@@ -1,388 +1,315 @@
-;; Malformed-frame coverage for the compiler-owned LZSS envelope. Keeping the
-;; fixtures outside `compiler_lzss` avoids shipping test constructors in the
-;; compiler that decodes the production payloads.
+;; Payload codec coverage: the fixed model, the coding ladders, byte-exact
+;; round trips and the rejection of malformed or truncated frames.
 (import stdlib.iterator)
-(import compiler_lzss as lzss)
-(import stdlib.str_cat)
 (import stdlib.string)
+(import stdlib.byte_buf_core)
+(import stdlib.str_cat_runtime as str_cat)
+(import compiler_lzss as lzss)
 
-(define (compiler-lzss-test-payload
-  [header : String]
-  [tokens : (__tl_dyn-array u8)]) : (__tl_dyn-array u8)
+;; Every table of the fixed model is a complete prefix code: each symbol has a
+;; code, no code is longer than the maximum, and the Kraft sum never exceeds
+;; one (so no two symbols can share a code).
+(define (compiler-lzss-test-kraft-ok?
+  [lengths : (& lengths (__tl_dyn-array i64))]
+  [start : i64]
+  [n : i64]) : bool
   (let
-    [prefix : String (lzss.compiler-lzss-envelope-prefix)]
-    [prefix-len : i64 (string.string-length prefix)]
-    [header-len : i64 (string.string-length header)]
-    [out : (__tl_dyn-array u8)
-      (__tl_make-array u8 (+ prefix-len header-len (array-length tokens)))]
-    (for [index (iterator.range 0 prefix-len)]
-      (set! (array-ref out index) (cast (string.string-ref prefix index) : u8)))
-    (for [header-index (iterator.range 0 header-len)]
-      (set!
-        (array-ref out (+ prefix-len header-index))
-        (cast (string.string-ref header header-index) : u8)))
-    (for [token-index (iterator.range 0 (array-length tokens))]
-      (set!
-        (array-ref out (+ prefix-len header-len token-index))
-        (array-ref tokens token-index)))
+    [limit : i64 (shl 1 (lzss.compiler-lzss-max-code-bits))]
+    [sum : i64 0]
+    [index : i64 0]
+    [ok : bool true]
+    (while (< index n)
+      (let
+        [length : i64 (array-ref lengths (+ start index))]
+        (cond
+          [(<= length 0) (set! ok false)]
+          [(> length (lzss.compiler-lzss-max-code-bits)) (set! ok false)]
+          [else
+            (+= sum
+              (shl 1 (- (lzss.compiler-lzss-max-code-bits) length)))]))
+      (set! index (+ index 1)))
+    (and ok (<= sum limit))))
+
+(define (compiler-lzss-test-model-ok?) : bool
+  (let
+    [lengths : (__tl_dyn-array i64)
+      (lzss.compiler-lzss-spec-lengths (& lzss.compiler-lzss-fixed-spec))]
+    [contexts : i64 (lzss.compiler-lzss-contexts)]
+    [main-symbols : i64 (lzss.compiler-lzss-main-symbols)]
+    [length-start : i64 (* contexts main-symbols)]
+    [distance-start : i64
+      (+ length-start (lzss.compiler-lzss-length-symbols))]
+    [context : i64 0]
+    [ok : bool
+      (= (array-length lengths) (lzss.compiler-lzss-model-spec-bytes))]
+    (while (and ok (< context contexts))
+      (unless
+        (compiler-lzss-test-kraft-ok?
+          (& lengths)
+          (* context main-symbols)
+          main-symbols)
+        (set! ok false))
+      (set! context (+ context 1)))
+    (when ok
+      (unless
+        (compiler-lzss-test-kraft-ok?
+          (& lengths)
+          length-start
+          (lzss.compiler-lzss-length-symbols))
+        (set! ok false)))
+    (set! context 0)
+    (while (and ok (< context (lzss.compiler-lzss-length-buckets)))
+      (unless
+        (compiler-lzss-test-kraft-ok?
+          (& lengths)
+          (+ distance-start
+            (* context (lzss.compiler-lzss-distance-symbols)))
+          (lzss.compiler-lzss-distance-symbols))
+        (set! ok false))
+      (set! context (+ context 1)))
+    ok))
+
+;; A length symbol covers exactly its own base range, and so does a distance.
+(define (compiler-lzss-test-ladders-ok?) : bool
+  (let
+    [length : i64 (lzss.compiler-lzss-min-match)]
+    [ok : bool true]
+    [distance : i64 1]
+    (while (and ok (<= length (lzss.compiler-lzss-max-match)))
+      (let
+        [slot : i64 (lzss.compiler-lzss-length-slot length)]
+        [base : i64 (lzss.compiler-lzss-length-base slot)]
+        [span : i64 (shl 1 (lzss.compiler-lzss-length-extra slot))]
+        (unless
+          (and (>= slot 0) (>= length base) (<= length (- (+ base span) 1)))
+          (set! ok false)))
+      (set! length (+ length 1)))
+    (while (and ok (<= distance (lzss.compiler-lzss-window)))
+      (let
+        [slot : i64 (lzss.compiler-lzss-distance-slot distance)]
+        [base : i64 (lzss.compiler-lzss-distance-base slot)]
+        [span : i64 (shl 1 (lzss.compiler-lzss-distance-extra slot))]
+        (unless
+          (and
+            (>= slot 0)
+            (< slot (lzss.compiler-lzss-distance-symbols))
+            (>= distance base)
+            (<= distance (- (+ base span) 1)))
+          (set! ok false)))
+      (set! distance (* distance 2)))
+    ;; Every small distance too, not only the powers of two.
+    (set! distance 1)
+    (while (and ok (<= distance 8192))
+      (let
+        [slot : i64 (lzss.compiler-lzss-distance-slot distance)]
+        [base : i64 (lzss.compiler-lzss-distance-base slot)]
+        [span : i64 (shl 1 (lzss.compiler-lzss-distance-extra slot))]
+        (unless
+          (and (>= distance base) (<= distance (- (+ base span) 1)))
+          (set! ok false)))
+      (set! distance (+ distance 1)))
+    ok))
+
+;; --- frame fixtures ---------------------------------------------------------
+(define (compiler-lzss-test-bytes-of [text : (& text str)]) : (__tl_dyn-array u8)
+  (let
+    [n : i64 (string.string-length text)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [index : i64 0]
+    (while (< index n)
+      (set! (array-ref out index) (cast (string.string-ref text index) : u8))
+      (set! index (+ index 1)))
     out))
+
+(define (compiler-lzss-test-same?
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [text : (& text str)]) : bool
+  (let
+    [n : i64 (string.string-length text)]
+    [same : bool (= (array-length bytes) n)]
+    [index : i64 0]
+    (while (and same (< index n))
+      (unless
+        (= (array-ref bytes index) (cast (string.string-ref text index) : u8))
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
+
+;; Pseudo-random bytes as a String, built through a byte buffer.
+(define (compiler-lzss-test-noise [seed : i64] [count : i64]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity count)]
+    [state : i64 seed]
+    [index : i64 0]
+    (while (< index count)
+      (set! state (% (+ (* state 1103515245) 12345) 2147483648))
+      (byte_buf_core.byte-buf-builder-push
+        (&mut out)
+        (cast (% (shr state 16) 37) : u8))
+      (set! index (+ index 1)))
+    (byte_buf_core.byte-buf-builder-to-string (& out))))
+
+(define (compiler-lzss-test-round-trip? [text : (& text str)]) : bool
+  (let
+    [payload : String (lzss.compiler-lzss-encode text)]
+    [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+    (match (lzss.compiler-lzss-decode (& packed) 268435456)
+      [(Err _) false]
+      [(Ok bytes) (compiler-lzss-test-same? (& bytes) text)])))
+
+;; Corrupting any single byte of a valid payload may decode to different bytes,
+;; but it must never abort: every code, length and distance is checked.
+(define (compiler-lzss-test-corrupt-safe? [text : (& text str)]) : bool
+  (let
+    [payload : String (lzss.compiler-lzss-encode text)]
+    [clean : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+    [len : i64 (array-length clean)]
+    [position : i64 0]
+    [safe : bool true]
+    (while (and safe (< position len))
+      (let
+        [broken : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+        (set!
+          (array-ref broken position)
+          (cast
+            (bit-and (+ (cast (array-ref broken position) : i64) 129) 255)
+            : u8))
+        (match (lzss.compiler-lzss-decode (& broken) 268435456)
+          [(Ok _) unit]
+          [(Err _) unit]))
+      (set! position (+ position 1)))
+    safe))
+
+;; Every proper truncation is rejected.
+(define (compiler-lzss-test-truncations-rejected? [text : (& text str)]) : bool
+  (let
+    [payload : String (lzss.compiler-lzss-encode text)]
+    [clean : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+    [len : i64 (array-length clean)]
+    [keep : i64 0]
+    [ok : bool true]
+    (while (and ok (< keep len))
+      (let
+        [cut : (__tl_dyn-array u8) (__tl_make-array u8 keep)]
+        [index : i64 0]
+        (while (< index keep)
+          (set! (array-ref cut index) (array-ref clean index))
+          (set! index (+ index 1)))
+        (match (lzss.compiler-lzss-decode (& cut) 268435456)
+          [(Ok _) (set! ok false)]
+          [(Err _) unit]))
+      (set! keep (+ keep 1)))
+    ok))
 
 (define (compiler-lzss-test-rejects?
   [payload : (__tl_dyn-array u8)]
-  [raw-limit : i64]
-  [expected : String]) : bool
+  [raw-limit : i64]) : bool
   (match (lzss.compiler-lzss-decode (& payload) raw-limit)
-    [(Err message) (string.eq message expected)]
-    [(Ok _) false]))
+    [(Ok _) false]
+    [(Err _) true]))
 
-(define (compiler-lzss-test-decode
-  [payload : (__tl_dyn-array u8)]
-  [raw-limit : i64]) : lzss.CompilerLzssBytes
-  (lzss.compiler-lzss-decode (& payload) raw-limit))
+(define (compiler-lzss-test-header-attack?
+  [text : (& text str)]
+  [raw-len-delta : i64]) : bool
+  (let
+    [payload : String (lzss.compiler-lzss-encode text)]
+    [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+    [prefix-len : i64
+      (string.string-length (lzss.compiler-lzss-envelope-prefix))]
+    [raw : i64 (+ (string.string-length text) raw-len-delta)]
+    [patched : (__tl_dyn-array u8)
+      (compiler-lzss-test-patch-header packed prefix-len raw)]
+    (compiler-lzss-test-rejects? patched 268435456)))
 
-(define (compiler-lzss-self-test-status) : i64
-  (cond
-    [(not
-        (match (compiler-lzss-test-decode
-          (compiler-lzss-test-payload "6\n" (__tl_make-array 7 65 66 67 0 32))
-          64)
-          [(Ok bytes)
-            (and
-              (= (array-length bytes) 6)
-              (= (array-ref bytes 0) (cast 65 : u8))
-              (= (array-ref bytes 3) (cast 65 : u8))
-              (= (array-ref bytes 5) (cast 67 : u8)))]
-          [(Err _) false]))
-      1]
-    [(not
-        (match (compiler-lzss-test-decode
-          (compiler-lzss-test-payload "0\n" (__tl_make-array))
-          0)
-          [(Ok bytes) (= (array-length bytes) 0)]
-          [(Err _) false]))
-      2]
-    [(not
-        (compiler-lzss-test-rejects?
-          (__tl_make-array 0)
-          64
-          "compiler lzss: bad envelope prefix"))
-      3]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "\n" (__tl_make-array))
-          64
-          "compiler lzss: missing raw length"))
-      4]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "1x" (__tl_make-array))
-          64
-          "compiler lzss: malformed raw length"))
-      5]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "9223372036854775808\n" (__tl_make-array))
-          9223372036854775807
-          "compiler lzss: raw length overflows i64"))
-      6]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload
-            "65\n"
-            (__tl_make-array 255 0 0 0 0 0 0 0 0))
-          64
-          "compiler lzss: raw length exceeds consumer limit"))
-      7]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "100\n" (__tl_make-array 1 65))
-          128
-          "compiler lzss: impossible raw length"))
-      8]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "1\n" (__tl_make-array 1))
-          64
-          "compiler lzss: truncated literal token"))
-      9]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "3\n" (__tl_make-array 0 0))
-          64
-          "compiler lzss: truncated backreference token"))
-      10]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "3\n" (__tl_make-array 0 0 32))
-          64
-          "compiler lzss: backreference before output"))
-      11]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "3\n" (__tl_make-array 1 65 0 0))
-          64
-          "compiler lzss: token exceeds raw length"))
-      12]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload
-            "9\n"
-            (__tl_make-array 255 65 65 65 65 65 65 65 65))
-          64
-          "compiler lzss: truncated token stream"))
-      13]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "1\n" (__tl_make-array 1 65 99))
-          64
-          "compiler lzss: trailing compressed bytes"))
-      14]
-    [(not
-        (compiler-lzss-test-rejects?
-          (compiler-lzss-test-payload "0\n" (__tl_make-array))
-          -1
-          "compiler lzss: invalid raw length limit"))
-      15]
-    [else 0]))
+;; Rebuild a payload with its decimal raw length replaced.
+(define (compiler-lzss-test-patch-header
+  [packed : (& packed (__tl_dyn-array u8))]
+  [prefix-len : i64]
+  [raw : i64]) : (__tl_dyn-array u8)
+  (let
+    [text : String (string.int->string raw)]
+    [digits : i64 (string.string-length (& text))]
+    [end : i64 prefix-len]
+    (while
+      (and
+        (< end (array-length packed))
+        (>= (cast (array-ref packed end) : i64) 48)
+        (<= (cast (array-ref packed end) : i64) 57))
+      (set! end (+ end 1)))
+    (let
+      [tail : i64 (- (array-length packed) end)]
+      [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ prefix-len digits tail))]
+      [index : i64 0]
+      (while (< index prefix-len)
+        (set! (array-ref out index) (array-ref packed index))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index digits)
+        (set!
+          (array-ref out (+ prefix-len index))
+          (cast (string.string-ref (& text) index) : u8))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index tail)
+        (set!
+          (array-ref out (+ prefix-len digits index))
+          (array-ref packed (+ end index)))
+        (set! index (+ index 1)))
+      out)))
+
+(define (compiler-lzss-test-trailing-byte-rejected? [text : (& text str)]) : bool
+  (let
+    [payload : String (lzss.compiler-lzss-encode text)]
+    [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+    [len : i64 (array-length packed)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ len 1))]
+    [index : i64 0]
+    (while (< index len)
+      (set! (array-ref out index) (array-ref packed index))
+      (set! index (+ index 1)))
+    (set! (array-ref out len) (cast 0 : u8))
+    (compiler-lzss-test-rejects? out 268435456)))
+
+(define (compiler-lzss-test-wrong-prefix-rejected? [text : (& text str)]) : bool
+  (let
+    [payload : String (lzss.compiler-lzss-encode text)]
+    [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+    (set! (array-ref packed 0) (cast 88 : u8))
+    (compiler-lzss-test-rejects? packed 268435456)))
+
+(define (compiler-lzss-codec-status) : i64
+  (let
+    [noise : String (compiler-lzss-test-noise 4242 6000)]
+    [repeat : String
+      (string.copy
+        "the quick brown fox jumps over the lazy dog; the quick brown fox\n")]
+    (cond
+      [(not (compiler-lzss-test-model-ok?)) 1]
+      [(not (compiler-lzss-test-ladders-ok?)) 2]
+      [(not (compiler-lzss-test-round-trip? "")) 3]
+      [(not (compiler-lzss-test-round-trip? "a")) 4]
+      [(not (compiler-lzss-test-round-trip? "abcabcabcabcabcabc")) 5]
+      [(not (compiler-lzss-test-round-trip? (& repeat))) 6]
+      [(not (compiler-lzss-test-round-trip? (& noise))) 7]
+      [(not (compiler-lzss-test-corrupt-safe? (& noise))) 8]
+      [(not (compiler-lzss-test-truncations-rejected? "abcdefghij")) 9]
+      [(not (compiler-lzss-test-truncations-rejected? (& noise))) 10]
+      [(not (compiler-lzss-test-header-attack? (& repeat) 1)) 11]
+      [(not (compiler-lzss-test-header-attack? (& repeat) -1)) 12]
+      [(not (compiler-lzss-test-trailing-byte-rejected? (& repeat))) 13]
+      [(not (compiler-lzss-test-wrong-prefix-rejected? (& repeat))) 14]
+      ;; A consumer limit below the raw length rejects before allocating.
+      [(not
+          (let
+            [payload : String (lzss.compiler-lzss-encode (& repeat))]
+            [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& payload))]
+            (compiler-lzss-test-rejects? packed 8)))
+        15]
+      [else 0])))
 
 (test
-  compiler-lzss-bounded-envelope
-  (if (= (compiler-lzss-self-test-status) 0)
-    unit
-    (string.tl_oob_abort)))
-
-;; The checked token loop alone, as `compiler-lzss-decode-tokens` ran before it
-;; gained a fast group path: the decoder must give the same bytes or the same
-;; error text for every stream.
-(define (compiler-lzss-test-reference-tokens
-  [payload : (& payload (__tl_dyn-array u8))]
-  [start : i64]
-  [raw-len : i64]) : lzss.CompilerLzssBytes
-  (let
-    [compressed-len : i64 (- (array-length payload) start)]
-    [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
-    [index : i64 0]
-    [out-index : i64 0]
-    [error : String ""]
-    (while (and (string.eq error "") (< out-index raw-len))
-      (if (>= index compressed-len)
-        (set! error "compiler lzss: truncated token stream")
-        (let
-          [flags : i64 (cast (array-ref payload (+ start index)) : i64)]
-          [bit : i64 0]
-          (+= index 1)
-          (while (and (string.eq error "") (< bit 8) (< out-index raw-len))
-            (cond
-              [(!= (bit-and flags (shl 1 bit)) 0)
-                (if (>= index compressed-len)
-                  (set! error "compiler lzss: truncated literal token")
-                  (begin
-                    (set!
-                      (array-ref out out-index)
-                      (array-ref payload (+ start index)))
-                    (+= index 1)
-                    (+= out-index 1)))]
-              [(< (- compressed-len index) 2)
-                (set! error "compiler lzss: truncated backreference token")]
-              [else
-                (let
-                  [packed : i64
-                    (bit-or
-                      (shl (cast (array-ref payload (+ start index)) : i64) 8)
-                      (cast (array-ref payload (+ start index 1)) : i64))]
-                  [offset : i64 (+ (shr packed 4) 1)]
-                  [length : i64 (+ (bit-and packed 15) 3)]
-                  (+= index 2)
-                  (cond
-                    [(> offset out-index)
-                      (set! error "compiler lzss: backreference before output")]
-                    [(> length (- raw-len out-index))
-                      (set! error "compiler lzss: token exceeds raw length")]
-                    [else
-                      (for [copied (iterator.range 0 length)]
-                        (set!
-                          (array-ref out (+ out-index copied))
-                          (array-ref out (- (+ out-index copied) offset))))
-                      (+= out-index length)]))])
-            (+= bit 1)))))
-    (cond
-      [(not (string.eq error "")) (Err error)]
-      [(!= out-index raw-len) (Err "compiler lzss: expanded length mismatch")]
-      [(!= index compressed-len)
-        (Err "compiler lzss: trailing compressed bytes")]
-      [else (Ok out)])))
-
-(define (compiler-lzss-test-reference
-  [payload : (& payload (__tl_dyn-array u8))]
-  [raw-limit : i64]) : lzss.CompilerLzssBytes
-  (match (lzss.compiler-lzss-frame payload raw-limit)
-    [(Err message) (Err message)]
-    [(Ok raw-len start)
-      (compiler-lzss-test-reference-tokens payload start raw-len)]))
-
-;; Whether the decoder and the reference agree on the stream TOKENS under the
-;; claimed raw length RAW-LEN.
-(define (compiler-lzss-test-agrees?
-  [tokens : (__tl_dyn-array u8)]
-  [raw-len : i64]) : bool
-  (let
-    [payload : (__tl_dyn-array u8)
-      (compiler-lzss-test-payload
-        (str_cat.str-cat (string.int->string raw-len) "\n")
-        tokens)]
-    (match (lzss.compiler-lzss-decode (& payload) 16777216)
-      [(Ok got)
-        (match (compiler-lzss-test-reference (& payload) 16777216)
-          [(Ok want)
-            (and
-              (= (array-length got) (array-length want))
-              (let
-                [index : i64 0]
-                [same : bool true]
-                (while (and same (< index (array-length got)))
-                  (set! same (= (array-ref got index) (array-ref want index)))
-                  (+= index 1))
-                same))]
-          [(Err _) false])]
-      [(Err got)
-        (match (compiler-lzss-test-reference (& payload) 16777216)
-          [(Ok _) false]
-          [(Err want) (string.eq got want)])])))
-
-(defstruct CompilerLzssTestStream
-  (tokens (__tl_dyn-array u8))
-  (raw-len i64))
-
-;; A valid token stream of COUNT tokens drawn from SEED: about a quarter
-;; literals, and matches of every length 3..18 whose distances are 1..8 a
-;; quarter of the time (overlapping copies) and up to 4096 otherwise. A LONG
-;; stream is one literal and then only 18-byte matches, so each later group
-;; writes the most output a group can.
-(define (compiler-lzss-test-stream [seed : i64] [count : i64] [long : bool]) : CompilerLzssTestStream
-  (let
-    [buf : (__tl_dyn-array u8)
-      (__tl_make-array u8 (+ (* count 2) (/ count 8) 1))]
-    [len : i64 0]
-    [state : i64 seed]
-    [out-len : i64 0]
-    [flag-at : i64 0]
-    [flags : i64 0]
-    (for [token (iterator.range 0 count)]
-      (when
-        (= (bit-and token 7) 0)
-        (set! flag-at len)
-        (+= len 1)
-        (set! flags 0))
-      (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-      (if (or (= out-len 0) (and (not long) (< (bit-and (shr state 16) 3) 1)))
-        (begin
-          (set! flags (bit-or flags (shl 1 (bit-and token 7))))
-          (set! (array-ref buf len) (cast (bit-and (shr state 8) 255) : u8))
-          (+= len 1)
-          (+= out-len 1))
-        (let
-          [length : i64
-            (if long
-              18
-              (+ 3 (bit-and (shr state 18) 15)))]
-          [wanted : i64
-            (if (= (bit-and (shr state 22) 3) 0)
-              (+ 1 (bit-and (shr state 24) 7))
-              (+ 1 (bit-and (shr state 4) 4095)))]
-          [offset : i64
-            (if (> wanted out-len)
-              (+ 1 (% wanted out-len))
-              wanted)]
-          [packed : i64 (bit-or (shl (- offset 1) 4) (- length 3))]
-          (set! (array-ref buf len) (cast (shr packed 8) : u8))
-          (set! (array-ref buf (+ len 1)) (cast (bit-and packed 255) : u8))
-          (+= len 2)
-          (+= out-len length)))
-      (set! (array-ref buf flag-at) (cast flags : u8)))
-    (let
-      [tokens : (__tl_dyn-array u8) (__tl_make-array u8 len)]
-      (for [index (iterator.range 0 len)]
-        (set! (array-ref tokens index) (array-ref buf index)))
-      (CompilerLzssTestStream tokens out-len))))
-
-(define (compiler-lzss-test-prefix
-  [tokens : (& tokens (__tl_dyn-array u8))]
-  [len : i64]) : (__tl_dyn-array u8)
-  (let
-    [out : (__tl_dyn-array u8) (__tl_make-array u8 len)]
-    (for [index (iterator.range 0 len)]
-      (set! (array-ref out index) (array-ref tokens index)))
-    out))
-
-;; 0 when the decoder agrees with the reference on the stream from SEED and
-;; COUNT and on every variant of it: the stream cut after each of its bytes,
-;; each byte flipped two ways (turning literals into matches, distances into
-;; ones before the output, and so on), and claimed raw lengths one short and
-;; one long. Otherwise the first variant that disagrees, as a code.
-(define (compiler-lzss-test-differential-status
-  [seed : i64]
-  [count : i64]
-  [long : bool]) : i64
-  (let
-    [stream : CompilerLzssTestStream
-      (compiler-lzss-test-stream seed count long)]
-    [tokens : (__tl_dyn-array u8) stream.tokens]
-    [raw-len : i64 stream.raw-len]
-    [len : i64 (array-length tokens)]
-    [status : i64 0]
-    [index : i64 0]
-    (cond
-      [(not (compiler-lzss-test-agrees? (clone tokens) raw-len))
-        (set! status 1)]
-      [(not (compiler-lzss-test-agrees? (clone tokens) (+ raw-len 1)))
-        (set! status 2)]
-      [(not (compiler-lzss-test-agrees? (clone tokens) (/ raw-len 2)))
-        (set! status 3)]
-      [else unit])
-    ;; Claimed lengths short of the stream put the end of the output where
-    ;; plenty of input remains, at every distance up to the fast path's
-    ;; output room.
-    (let
-      [short : i64 1]
-      (while (and (= status 0) (<= short 160) (< short raw-len))
-        (unless
-          (compiler-lzss-test-agrees? (clone tokens) (- raw-len short))
-          (set! status (+ 100 short)))
-        (+= short 1)))
-    (while (and (= status 0) (< index len))
-      (let
-        [flipped : (__tl_dyn-array u8) (clone tokens)]
-        [high : (__tl_dyn-array u8) (clone tokens)]
-        (set!
-          (array-ref flipped index)
-          (cast (bit-xor (cast (array-ref tokens index) : i64) 90) : u8))
-        (set!
-          (array-ref high index)
-          (cast (bit-xor (cast (array-ref tokens index) : i64) 240) : u8))
-        (cond
-          [(not
-              (compiler-lzss-test-agrees?
-                (compiler-lzss-test-prefix (& tokens) index)
-                raw-len))
-            (set! status (+ 1000 index))]
-          [(not (compiler-lzss-test-agrees? flipped raw-len))
-            (set! status (+ 100000 index))]
-          [(not (compiler-lzss-test-agrees? high raw-len))
-            (set! status (+ 10000000 index))]
-          [else unit]))
-      (+= index 1))
-    status))
-
-;; The fast group path must reproduce the checked loop: long streams that use
-;; it for most groups, a short one that never reaches it, one whose groups each
-;; write the most output a group can, and every truncation, corruption and
-;; wrong raw length of each.
-(test
-  compiler-lzss-fast-path-matches-checked-loop
-  (if (and
-    (= (compiler-lzss-test-differential-status 1 400 false) 0)
-    (= (compiler-lzss-test-differential-status 7 23 false) 0)
-    (= (compiler-lzss-test-differential-status 12345 900 false) 0)
-    (= (compiler-lzss-test-differential-status 99 200 true) 0))
+  compiler-lzss-payload-codec
+  (if (= (compiler-lzss-codec-status) 0)
     unit
     (string.tl_oob_abort)))

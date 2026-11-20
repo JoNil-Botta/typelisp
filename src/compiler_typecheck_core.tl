@@ -19274,13 +19274,13 @@
                                 ty
                                 TcSelectedOccurrence.Unrepresented
                                 (TcSelectedSink.Capture store lease bindings))])]
-                        ;; A closure local is read as its environment.
+                        ;; A closure local is read as its environment, also
+                        ;; when an arena tags its function type.
                         [(TcSelectedBinder.Found binder)
                           (match (tc-selected-publish
                             (ResultTcType.Ok
-                              (if (match (tc-resolve-type
-                                ctx
-                                (tc-global-shared-view ty))
+                              (if (match (tc-type-strip-region
+                                (tc-resolve-type ctx (tc-global-shared-view ty)))
                                 [(ast.AstType.Func _ _) true]
                                 [_ false])
                                 (let
@@ -67975,7 +67975,8 @@
                     ;; A closure local takes the closure value's own type
                     ;; (its environment, see `tc-selected-publish-closure`),
                     ;; whether bound from the lambda or moved from another
-                    ;; closure local.
+                    ;; closure local. A closure made in an arena is a
+                    ;; function under its region tag.
                     (let
                       [value-ty : ast.AstType
                         (tc-selected-occurrence-type! store lease (& child))]
@@ -67985,9 +67986,10 @@
                             (tc-selected-closure-capability
                               (tc-global-shared-view value-ty))
                             0)
-                          (match (tc-resolve-type
-                            ctx
-                            (tc-global-shared-view binding-ty))
+                          (match (tc-type-strip-region
+                            (tc-resolve-type
+                              ctx
+                              (tc-global-shared-view binding-ty)))
                             [(ast.AstType.Func _ _) true]
                             [_ false]))
                         (set! binding-ty value-ty)))

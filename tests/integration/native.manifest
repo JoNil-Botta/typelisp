@@ -936,6 +936,8 @@ with_arena_builtin_alloc|all|-|tests/integration/with_arena_builtin_alloc.tl|2|-
 with_arena_loop|all|-|tests/integration/with_arena_loop.tl|42|-|-|stdlib/string.tl|-
 with_arena_mark_stress|all|-|tests/integration/with_arena_mark_stress.tl|42|-|-|stdlib/string.tl|-
 with_escape_clone_out|all|-|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+arena_closure_reference_capture|all|-|tests/integration/arena_closure_reference_capture.tl|42|-|-|-|-
+arena_closure_reference_move|all|-|tests/integration/arena_closure_reference_move.tl|42|-|-|-|-
 compiler_abort_intern|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|intern|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: compiler_intern.intern-id-from-renderable: invalid renderable name ID\n
 compiler_abort_session|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|session|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: compiler_intern_state.intern-structural-session-key: invalid structural session handle or kind\n
 compiler_abort_optimizer|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|optimizer|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: compiler_optimize.opt-ssa-env-rollback: invalid SSA rename change checkpoint\n

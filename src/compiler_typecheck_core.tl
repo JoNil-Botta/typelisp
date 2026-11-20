@@ -37702,18 +37702,7 @@
       (match (cis.intern-structural-session-arena-phase-record-for-raw
         session
         region-id)
-        [(Some (Region record-owner-id nested))
-          (or
-            (= record-owner-id owner-id)
-            (match (cis.intern-structural-session-arena-phase-record-for-raw
-              session
-              nested)
-              [(Some (Nested parent _))
-                (tc-arena-region-owned-by-id-for-session?
-                  session
-                  owner-id
-                  parent)]
-              [_ false]))]
+        [(Some (Region record-owner-id _)) (= record-owner-id owner-id)]
         [_ false]))))
 
 (define (tc-arena-region-owned-by-id?
@@ -37732,16 +37721,7 @@
   [token-id : i64]
   [owner-id : i64]) : TcTypeEnv
   (let
-    [current : i64 (tc-current-arena-owner-region env owner-id)]
-    [region-id : i64
-      (tc-arena-phase-region-id
-        env
-        owner-id
-        (if (= current owner-id)
-          token-id
-          (tc-arena-phase-record-id
-            (tc-type-env-structural-session env)
-            (Nested current token-id))))]
+    [region-id : i64 (tc-arena-phase-region-id env owner-id token-id)]
     (tc-bind-id
       (tc-bind-id
         (tc-bind-id

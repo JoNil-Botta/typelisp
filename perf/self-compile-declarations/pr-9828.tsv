@@ -1,1 +1,1 @@
-self_compile/compile_cli_opt1	9233	payload: the compress-on-include encoder and the catalog group decodes cost about a percent of a self-compile, against a 395,336-byte smaller stage0 file and 408,247 fewer stored payload bytes
+self_compile/compile_cli_opt1	8972	payload: the compress-on-include encoder and the catalog group prefix decodes cost about 0.9% of a self-compile, against a 395,024-byte smaller stage0 file and 408,084 fewer stored payload bytes

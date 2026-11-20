@@ -64664,18 +64664,17 @@
                           (tc-global-shared-view args)
                           (tc-global-shared-view params)
                           (tc-global-shared-view ret)))]
-                    (let
-                      [arg-types : (__tl_dyn-array ast.AstType)
-                        (tc-call-argument-types ctx env (& args) (& params))]
-                      (tc-call-erased-owner-result
-                        ctx
-                        env
-                        (& args)
-                        (& params)
-                        (& arg-types)
-                        (tc-tag-regions
-                          spawn-owner-regions
-                          (tc-tag-active-region env ret))))))
+                    [arg-types : (__tl_dyn-array ast.AstType)
+                      (tc-call-argument-types ctx env (& args) (& params))]
+                    (tc-call-erased-owner-result
+                      ctx
+                      env
+                      (& args)
+                      (& params)
+                      (& arg-types)
+                      (tc-tag-regions
+                        spawn-owner-regions
+                        (tc-tag-active-region env ret)))))
                 (tc-call-lifetime-function-type
                   ctx
                   env

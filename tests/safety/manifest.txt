@@ -1620,7 +1620,7 @@ arena_invalidate_independent_ref_other_defined|run-exit|tests/safety/arena_inval
 # with the owner; a function or fixed-array result carries it too (#8173).
 arena_bare_handle_return_reject|check-fail|tests/safety/arena_bare_handle_return_reject.tl|-|use of moved value `t`
 arena_bare_handle_struct_reject|check-fail|tests/safety/arena_bare_handle_struct_reject.tl|-|use of moved value `h`
-arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|use of moved value `f`
+arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|lambda cannot capture immutable reference
 arena_bare_handle_array_reject|check-fail|tests/safety/arena_bare_handle_array_reject.tl|-|use of moved value `xs`
 arena_bare_handle_ref_reject|check-fail|tests/safety/arena_bare_handle_ref_reject.tl|-|use of moved value `t`
 arena_bare_handle_chain_reject|check-fail|tests/safety/arena_bare_handle_chain_reject.tl|-|use of moved value `u`

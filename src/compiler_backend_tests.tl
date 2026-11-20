@@ -9167,25 +9167,28 @@ high:
 
 (define (compiler-backend-slice-reference-abi-windows-body-ok? [body : String]) : bool
   (let
+    ;; The two home words sit at the bottom of the frame; the dense pair region
+    ;; moved them from 16/24 to 0/8 of the 24-byte frame. Word order in the
+    ;; source text, not the numeric offset, is what the checks below pin.
     [incoming0 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq %rcx, 24(%rsp)\n"
+        "    movq %rcx, 8(%rsp)\n"
         0)]
     [incoming1 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq %rdx, 16(%rsp)\n"
+        "    movq %rdx, 0(%rsp)\n"
         0)]
     [outgoing0 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq 24(%rsp), %rax\n"
+        "    movq 8(%rsp), %rax\n"
         0)]
     [outgoing1 : i64
       (backend.compiler-backend-string-find-from
         body
-        "    movq 16(%rsp), %rdx\n"
+        "    movq 0(%rsp), %rdx\n"
         0)]
     (and
       (> (string.string-length body) 0)

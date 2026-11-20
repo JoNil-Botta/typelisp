@@ -37322,15 +37322,26 @@
         (if (> set-bits slot-vars)
           set-bits
           slot-vars))]
-    [ranks : (__tl_dyn-array i64) (__tl_make-array i64 rank-slots)]
-    [group-count : i64 0]
+    [group-count : i64 (compiler_liveness.compiler-live-set-count vars)]
+    ;; Only a function that HAS a group var pays for the rank table; every other
+    ;; function keeps the state's empty array, so the table costs nothing in the
+    ;; common case.
+    [ranks : (__tl_dyn-array i64)
+      (if (> group-count 0)
+        (__tl_make-array i64 rank-slots)
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-group-ranks))]
+    [ranked : i64 0]
     [_ranks : unit
-      (for [var (iterator.range 0 rank-slots)]
-        (if (compiler_liveness.compiler-live-set-contains? vars var)
-          (begin
-            (set! (array-ref ranks var) group-count)
-            (set! group-count (+ group-count 1)))
-          (set! (array-ref ranks var) (- 0 1))))]
+      (if (> group-count 0)
+        (for [var (iterator.range 0 rank-slots)]
+          (if (compiler_liveness.compiler-live-set-contains? vars var)
+            (begin
+              (set! (array-ref ranks var) ranked)
+              (set! ranked (+ ranked 1)))
+            (set! (array-ref ranks var) (- 0 1))))
+        unit)]
     [_install : unit
       (begin
         (compiler-backend-function-state-set-i64-array!

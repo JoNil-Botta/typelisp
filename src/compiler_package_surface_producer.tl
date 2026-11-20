@@ -323,25 +323,35 @@
     package-surface-abort-survives-scratch-retirement
     (for [round (iterator.range 0 8)]
       (with-scratch
-        (package-surface-capture-start!
-          (surface_identity.SurfaceIdentityKey
-            "capture"
-            (__tl_make-array "capture")
-            "source"
-            "compiler"
-            "linux-x86_64")
-          (sym_i64_env.sym-i64-empty))
+        (unsafe
+          ;; unsafe: installs the global surface capture; released before this arena ends
+          (package-surface-capture-start!
+            (surface_identity.SurfaceIdentityKey
+              "capture"
+              (__tl_make-array "capture")
+              "source"
+              "compiler"
+              "linux-x86_64")
+            (sym_i64_env.sym-i64-empty)))
         (with-scratch
-          (package-surface-capture-abort! (string.copy "retained diagnostic")))
+          (unsafe
+            ;; unsafe: resets the global surface capture; released before this arena ends
+            (package-surface-capture-abort! (string.copy "retained diagnostic"))))
         (unless
-          (match (package-surface-capture-take)
+          (match (unsafe
+            ;; unsafe: the capture payload lives in the arena of the global package-surface-capture-state handle
+            (package-surface-capture-take))
             [(Err message) (string.eq message "retained diagnostic")]
             [_ false])
           (io.panic "package capture lost its retired error")))
       ;; The inactive carrier must also survive its former result arena.
-      (package-surface-capture-abort! "inactive abort")
+      (unsafe
+        ;; unsafe: resets the global surface capture; released before this arena ends
+        (package-surface-capture-abort! "inactive abort"))
       (unless
-        (match (package-surface-capture-take)
+        (match (unsafe
+          ;; unsafe: the capture payload lives in the arena of the global package-surface-capture-state handle
+          (package-surface-capture-take))
           [(Err message)
             (string.eq
               message

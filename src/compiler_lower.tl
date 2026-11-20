@@ -4783,7 +4783,7 @@
     [(Done) false]
     [(Cache rest-env) (lower-type-env-contains-reference? rest-env)]
     [(Bind _ ty rest-env)
-      (if (tc_core.tc-type-contains-reference? ty)
+      (if (tc_core.tc-type-contains-reference? (& ty))
         true
         (lower-type-env-contains-reference? rest-env))]))
 
@@ -19398,7 +19398,7 @@
     [(DynArray elem-ty)
       (not
         (tc_core.tc-type-contains-reference?
-          (tc_core.tc-context-type-get ctx elem-ty)))]
+          (& (tc_core.tc-context-type-get ctx elem-ty))))]
     [(Struct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
@@ -19697,9 +19697,7 @@
       ;; Slice arm below is reached only through Ref/MutRef's referent helper.
       [(Slice _) false]
       [_
-        (if (not
-          (tc_core.tc-type-contains-reference?
-            (lower-global-shared-view resolved)))
+        (if (not (tc_core.tc-type-contains-reference? (& resolved)))
           true
           (match resolved
             [(or (Ref _ inner) (MutRef _ inner))
@@ -19938,8 +19936,7 @@
           (lower-borrow-reference-var-address state env name result-ty)]
         [_
           (if (and
-            (tc_core.tc-type-contains-reference?
-              (lower-global-shared-view place-ty))
+            (tc_core.tc-type-contains-reference? (& place-ty))
             (not
               (lower-supported-reference-type?
                 ctx
@@ -28179,8 +28176,7 @@
             [(or (Ref _ _) (MutRef _ _)) true]
             [_ false])
           (and
-            (tc_core.tc-type-contains-reference?
-              (lower-global-shared-view place-ty))
+            (tc_core.tc-type-contains-reference? (& place-ty))
             (not (lower-supported-reference-type? ctx place-ty)))
           (lower-borrow-place-value-reference? ctx referent-ty))
           (lower-call-arg-normal-as
@@ -77809,7 +77805,7 @@
                   (if (and
                     c-abi?
                     (tc_core.tc-type-contains-reference?
-                      (lower-global-shared-view resolved-ty))
+                      (& (lower-global-shared-view resolved-ty)))
                     (not
                       (lower-supported-reference-extern?
                         decl-ctx

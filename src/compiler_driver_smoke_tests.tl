@@ -460,7 +460,9 @@
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (in-arena
     caller
-    (match (compiler-driver-load-runtime-prelude-cache-miss key roots cfgs)
+    (match (unsafe
+      ;; unsafe: interned names live in the persistent intern arena, not this one
+      (compiler-driver-load-runtime-prelude-cache-miss key roots cfgs))
       [(Ok _ paths _ _)
         (and
           (= (arena.tl_arena_current) caller-handle)

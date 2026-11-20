@@ -2249,8 +2249,9 @@
   (foreign-call 1))")
 
 (define (compiler-backend-pic-output-ok?) : bool
-  (match (backend.compiler-backend-emit-source-pic-linux
-    (compiler-backend-pic-source))
+  (match (backend.compiler-backend-emit-source-pic-for-target
+    (compiler-backend-pic-source)
+    (backend.CompilerBackendTarget.Linux))
     [(Ok output)
       (let
         [asm : String output.asm]
@@ -2284,8 +2285,9 @@
     [(Err _) false]))
 
 (define (compiler-backend-pic-extern-reject-ok?) : bool
-  (match (backend.compiler-backend-emit-source-pic-linux
-    (compiler-backend-pic-extern-source))
+  (match (backend.compiler-backend-emit-source-pic-for-target
+    (compiler-backend-pic-extern-source)
+    (backend.CompilerBackendTarget.Linux))
     [(Ok _) false]
     [(Err diag)
       (let
@@ -2864,11 +2866,13 @@
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
     [renders : bool
-      (match (backend.compiler-backend-emit-program-object-image-target
+      (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program
         target
+        (Scalar)
         (ir.compiler-source-spans-empty)
-        true)
+        true
+        false)
         [(Err _) false]
         [(Ok image)
           (match target
@@ -9630,11 +9634,13 @@ high:
 
 (define (compiler-backend-descriptor-pair-object-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-emit-program-object-image-target
+  (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
     (compiler-backend-descriptor-pair-object-program)
     target
+    (Scalar)
     (ir.compiler-source-spans-empty)
-    true)
+    true
+    false)
     [(Ok image)
       (let
         [sections : cobj.CompilerObjectSectionList
@@ -9711,11 +9717,13 @@ high:
           (owned_view.compiler-owned-shared-view program)
           target)
         (has "    call _tl_f1\n"))
-      (match (backend.compiler-backend-emit-program-object-image-target
+      (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program
         target
+        (Scalar)
         (ir.compiler-source-spans-empty)
-        true)
+        true
+        false)
         [(Ok _) true]
         [(Err _) false])
       (compiler-backend-descriptor-pair-object-target-ok? target))))
@@ -12028,13 +12036,17 @@ high:
                     [(Ok second-program second-spans lower-owner)
                       (let
                         [result : bool
-                          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+                          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+                            (backend.compiler-backend-state-new
+                              (ci.intern-compat-state-capture-active))
+                            (ast.ast-node-pool-reader-type-segment-bases)
                             second-program
                             (backend.CompilerBackendTarget.Linux)
                             (Scalar)
                             second-spans
                             true
-                            false)
+                            false
+                            (profile_state.compiler-profile-state-new))
                             [(Ok streamed)
                               (string.eq legacy (text_buf.render streamed))]
                             [(Err _) false])]
@@ -15852,28 +15864,34 @@ f:
     [(Ok program spans lower-owner)
       (let
         [ok : bool
-          (match (backend.compiler-backend-emit-program-target-with-mode-and-crt
+          (match (backend.compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+            (backend.compiler-backend-state-new
+              (ci.intern-compat-state-capture-active))
+            (ast.ast-node-pool-reader-type-segment-bases)
             program
             (backend.CompilerBackendTarget.Linux)
             (Scalar)
             spans
             true
-            true)
-            [(Ok asm)
-              (and
-                (let
-                  [text
-                    (backend.compiler-backend-target-entry-text-with-crt
-                      (backend.CompilerBackendTarget.Linux)
-                      true
-                      true)]
-                  (asm-has? text ".globl main"))
-                (asm-has?
-                  asm
-                  "main:\n"
-                  "    movq %rdi, .L_tl_argc(%rip)\n"
-                  "    call _tl___global_init_")
-                (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n"))]
+            true
+            (profile_state.compiler-profile-state-new))
+            [(Ok buf)
+              (let
+                [asm : String (text_buf.render buf)]
+                (and
+                  (let
+                    [text
+                      (backend.compiler-backend-target-entry-text-with-crt
+                        (backend.CompilerBackendTarget.Linux)
+                        true
+                        true)]
+                    (asm-has? text ".globl main"))
+                  (asm-has?
+                    asm
+                    "main:\n"
+                    "    movq %rdi, .L_tl_argc(%rip)\n"
+                    "    call _tl___global_init_")
+                  (asm-lacks? asm ".globl _tl_start\n" "_tl_start:\n")))]
             [(Err _) false])]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas lower-owner))
@@ -17392,9 +17410,12 @@ f:
           (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
-    (match (backend.compiler-backend-emit-program-linux-with-spans
+    (match (backend.compiler-backend-emit-program-target-with-mode
       program
-      spans)
+      (backend.CompilerBackendTarget.Linux)
+      (Scalar)
+      spans
+      true)
       [(Err diag)
         (and
           (string.eq
@@ -17647,10 +17668,18 @@ f:
       (let
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
-          (asm-has? body "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          ;; A non-PIC image reads the case address itself out of the table and
+          ;; transfers through the register it landed in.
+          (asm-has? body "    movl .Lf0_entry_switch_table(,%r" ",4), %r")
+          (asm-has? body "    jmp *%r")
           (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")
-          (= (backend.compiler-backend-string-count asm "    .quad .Lf0_") 6)
-          (asm-has? asm "    .quad .Lf0_zero\n" "    .quad .Lf0_five\n")))]
+          (asm-lacks? body "    movslq (")
+          (= (backend.compiler-backend-string-count asm "    .long .Lf0_") 6)
+          (asm-has?
+            asm
+            "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n"
+            "    .long .Lf0_zero\n"
+            "    .long .Lf0_five\n")))]
     [(Err _) false]))
 
 (define (compiler-backend-forwarded-total-switch-asm-ok?) : bool
@@ -17660,17 +17689,22 @@ f:
       (let
         [body : String (compiler-backend-asm-function-body asm "main")]
         (and
-          (asm-has? body "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (asm-has? body "    movl .Lf0_entry_switch_table(,%r" ",4), %r")
+          (asm-has? body "    jmp *%r")
           (asm-lacks? body "    cmpq $5" "    ja ")))]
     [(Err _) false]))
 
 (define (compiler-backend-total-switch-pic-asm-ok?) : bool
-  (match (backend.compiler-backend-emit-program-pic-target-with-mode
+  (match (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+    (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))
+    (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-total-switch-test-program)
     (backend.CompilerBackendTarget.Linux)
     (Scalar)
     (ir.compiler-source-spans-empty)
-    true)
+    true
+    false
+    (profile_state.compiler-profile-state-new))
     [(Ok output)
       (let
         [asm : String output.asm]
@@ -17679,8 +17713,13 @@ f:
           (asm-has?
             body
             "    leaq .Lf0_entry_switch_table(%rip), "
-            "    jmp *(")
-          (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")))]
+            "    movslq ("
+            "    addq ")
+          (asm-lacks? body "    cmpq $5" "    ja " "leaq .Lf0_match_total_trap")
+          (asm-has?
+            asm
+            "    .text\n"
+            "    .long .Lf0_zero - .Lf0_entry_switch_table\n")))]
     [(Err _) false]))
 
 (define (compiler-backend-total-switch-object-image-ok?) : bool
@@ -17736,15 +17775,21 @@ f:
         (asm-has? asm "    movq -8(%rsp), %r8\n")
         (asm-has? asm "    cmpq $2, %r8\n")
         (asm-has? asm "    ja .Lf0_other\n")
-        ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
-        (asm-has? asm "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
-        (asm-lacks? asm "    jmp *(%r11,%rax,8)\n")
-        (asm-has? asm "    .section .rodata\n    .balign 8\n")
-        (asm-has? asm ".Lf0_entry_switch_table:\n")
-        (asm-has? asm "    .quad .Lf0_zero\n")
-        (asm-has? asm "    .quad .Lf0_one\n")
-        (asm-has? asm "    .quad .Lf0_two\n")
-        (asm-has? asm ".text\n"))]
+        ;; Non-PIC Linux reads the case address itself out of a 4-byte-entry
+        ;; table and transfers through the register it landed in.
+        (asm-has? asm "    movl .Lf0_entry_switch_table(,%r" ",4), %r")
+        (asm-has? asm "    jmp *%r")
+        (asm-lacks? asm "    movslq (")
+        ;; The table is read-only, 4-byte aligned, and holds 32-bit absolute
+        ;; case addresses, not 64-bit pointers or differences.
+        (asm-has?
+          asm
+          "    .section .rodata\n    .balign 4\n.Lf0_entry_switch_table:\n")
+        (asm-has? asm "    .long .Lf0_zero\n")
+        (asm-has? asm "    .long .Lf0_one\n")
+        (asm-has? asm "    .long .Lf0_two\n")
+        (asm-lacks? asm "    .quad .Lf0_")
+        (asm-lacks? asm "    .long .Lf0_zero - .Lf0_entry_switch_table\n"))]
     [(Err _) false]))
 
 (define (compiler-backend-switch-base-test-program) : ir.CompilerIrProgram
@@ -17800,9 +17845,10 @@ f:
         (asm-has? asm "    subq $4, %r8\n")
         (asm-has? asm "    cmpq $1, %r8\n")
         (asm-has? asm "    ja .Lf0_other\n")
-        ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
-        (asm-has? asm "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
-        (asm-lacks? asm "    jmp *(%r11,%rax,8)\n"))]
+        ;; The base subtraction leaves the entry index, and the dispatch reads
+        ;; the 4-byte absolute case address out of the table.
+        (asm-has? asm "    movl .Lf0_entry_switch_table(,%r" ",4), %r")
+        (asm-has? asm "    jmp *%r"))]
     [(Err _) false]))
 
 (define (compiler-backend-switch-bad-shape-program) : ir.CompilerIrProgram
@@ -17887,9 +17933,9 @@ f:
       (compiler-backend-switch-phi-program))
     (has
       "    ja .Lf0_entry_switch_default\n"
-      ".Lf0_entry_switch_table:\n"
-      "    .quad .Lf0_entry_switch_case_0\n"
-      "    .quad .Lf0_entry_switch_case_1\n"
+      "    .balign 4\n.Lf0_entry_switch_table:\n"
+      "    .long .Lf0_entry_switch_case_0\n"
+      "    .long .Lf0_entry_switch_case_1\n"
       ".Lf0_entry_switch_case_0:\n"
       ".Lf0_entry_switch_case_1:\n"
       ".Lf0_entry_switch_default:\n"
@@ -17955,13 +18001,13 @@ f:
       (and
         (asm-has? asm ".Lf0_entry_switch_table:\n")
         ;; The negative key spells with `m`, in the table and at the block.
-        (asm-has? asm "    .quad .Lf0_entry_switch_case_m1\n")
+        (asm-has? asm "    .long .Lf0_entry_switch_case_m1\n")
         (asm-has? asm ".Lf0_entry_switch_case_m1:\n")
         ;; A non-negative key is spelled exactly as it always was.
-        (asm-has? asm "    .quad .Lf0_entry_switch_case_0\n")
+        (asm-has? asm "    .long .Lf0_entry_switch_case_0\n")
         (asm-has? asm ".Lf0_entry_switch_case_0:\n")
         ;; Equal-magnitude signed keys remain distinct.
-        (asm-has? asm "    .quad .Lf0_entry_switch_case_1\n")
+        (asm-has? asm "    .long .Lf0_entry_switch_case_1\n")
         (asm-has? asm ".Lf0_entry_switch_case_1:\n")
         ;; No `-` reaches a symbol name anywhere in the emission.
         (asm-lacks? asm "switch_case_-")
@@ -22501,7 +22547,10 @@ entry:
     [(Ok program spans lower-owner)
       (let
         [ok : bool
-          (match (opt.optimize-program-with-spans (& program) spans)
+          (match (opt.optimize-program-with-spans-and-level
+            (& program)
+            spans
+            (opt.compiler-optimize-default-level))
             [(Program optimized optimized-spans)
               (match (backend.compiler-backend-emit-program-target-with-mode
                 optimized
@@ -23012,11 +23061,17 @@ entry:
       (begin
         ;; Non-abort instruction spans are intentionally a debug-only cost.
         (ir.compiler-debug-info-set-enabled! true)
-        (match (opt.optimize-program-with-spans (& program) spans)
+        (match (opt.optimize-program-with-spans-and-level
+          (& program)
+          spans
+          (opt.compiler-optimize-default-level))
           [(Program optimized optimized-spans)
-            (match (backend.compiler-backend-emit-program-linux-with-spans
+            (match (backend.compiler-backend-emit-program-target-with-mode
               optimized
-              optimized-spans)
+              (backend.CompilerBackendTarget.Linux)
+              (Scalar)
+              optimized-spans
+              true)
               [(Err diag)
                 (and
                   (string.eq
@@ -38461,9 +38516,6 @@ entry:
   (backend.compiler-backend-state-set-scalar-registers-enabled!
     session.backend-state
     true)
-  (backend.compiler-backend-state-set-absolute-switch-ok!
-    session.backend-state
-    true)
   (backend.compiler-backend-peephole-carry-safe-insert!
     session.backend-state
     session.stream
@@ -38486,9 +38538,6 @@ entry:
   ;; Model a Windows vector job.  These job-local policy bits must survive
   ;; alternating calls through A's differently configured backend state.
   (backend.compiler-backend-state-set-scalar-registers-enabled!
-    session.backend-state
-    false)
-  (backend.compiler-backend-state-set-absolute-switch-ok!
     session.backend-state
     false))
 
@@ -38635,11 +38684,6 @@ b_keep:
               session-a.backend-state)
             (not
               (backend.compiler-backend-state-scalar-registers-enabled?
-                session-b.backend-state))
-            (backend.compiler-backend-state-absolute-switch-ok?
-              session-a.backend-state)
-            (not
-              (backend.compiler-backend-state-absolute-switch-ok?
                 session-b.backend-state)))]
         (compiler-backend-assembly-stream-test-session-destroy! session-a)
         (compiler-backend-assembly-stream-test-session-destroy! session-b)
@@ -40162,11 +40206,13 @@ b_keep:
                   spans
                   (% mode 3))
                   [(Program optimized optimized-spans)
-                    (backend.compiler-backend-emit-program-object-image-target
+                    (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
                       optimized
                       target
+                      (Scalar)
                       optimized-spans
-                      true)])]
+                      true
+                      false)])]
               (lower.compiler-lower-arena-state-release!
                 (lower.compiler-lower-state-arenas lower-owner))
               result)])]
@@ -41432,8 +41478,14 @@ b_keep:
                 stream
                 (backend.compiler-backend-global-shared-view state))
               (owned_view.compiler-owned-shared-view state))]
+          ;; unsafe: the group text lives in group-arena, which the caller keeps
+          ;; for the whole flush; a bare arena parameter's allocation cannot
+          ;; otherwise leave the call.
           [group : text_buf.TextBuf
-            (in-arena group-arena (text_buf.append at-boundary.group chunk))]
+            (unsafe
+              (in-arena
+                (arena.Arena (arena.raw-handle group-arena))
+                (text_buf.append at-boundary.group chunk)))]
           (set! state (CompilerBackendPeepholeChunkState at-boundary.out group))))
       (let
         [flushed : CompilerBackendPeepholeChunkState
@@ -41569,7 +41621,20 @@ b_keep:
     result))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
-  (text_buf.render (backend.compiler-backend-peephole-asm-buffer asm false)))
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream : backend.CompilerBackendStreamState
+      (backend.compiler-backend-state-stream-state state)]
+    (backend.compiler-backend-sweep-reset! state stream)
+    (text_buf.render
+      (backend.compiler-backend-peephole-asm-buffer-with-state
+        state
+        stream
+        asm
+        false
+        false))))
 
 ;; Inline-by-value aggregates are the always-on default lowering, so
 ;; emitting "in inline-aggregates mode" is just the ordinary target emit. The
@@ -45461,10 +45526,12 @@ user_fn:
               (& (ir.compiler-ir-function-seq-empty)))))
         (ir.compiler-ir-extern-seq1 provided)
         (ir.CompilerIrReturnStorageAuthority.None))]
-    (match (backend.compiler-backend-emit-program-object-image-target
+    (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
       (clone program)
       (backend.CompilerBackendTarget.Windows)
+      (Scalar)
       (ir.compiler-source-spans-empty)
+      false
       false)
       [(Err diag)
         (test.assert-true

@@ -2,13 +2,18 @@
 (import stdlib.string)
 (import stdlib.test)
 
+;; A value allocated through a bare arena parameter cannot leave the call
+;; (SPEC 5.16): read it after `in-arena` ends and return a copy.
 (define (build-kept [scratch : arena.Arena]) : String
-  (in-arena
-    scratch
-    (test.assert-true
-      (arena.eq? (arena.current) scratch)
-      "in-arena active target")
-    (string.append "arena:" (string.int->string 42))))
+  (let
+    [kept : String
+      (in-arena
+        scratch
+        (test.assert-true
+          (arena.eq? (arena.current) scratch)
+          "in-arena active target")
+        (string.append "arena:" (string.int->string 42)))]
+    (string.copy (& kept))))
 
 (define (main) : i64
   (let

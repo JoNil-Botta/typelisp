@@ -72,7 +72,6 @@ st_record() {
         sc_record_line compiler_sha256 7777777777777777777777777777777777777777777777777777777777777777
         sc_record_line compiler_commit "$ST_SHA_A"
         sc_record_line key.image_os ubuntu24
-        sc_record_line key.kernel 6.11.0-1018-azure
         sc_record_line key.valgrind valgrind-3.22.0
         sc_record_line key.as "GNU assembler (GNU Binutils for Ubuntu) 2.42"
         sc_record_line key.ld "GNU ld (GNU Binutils for Ubuntu) 2.42"
@@ -80,6 +79,7 @@ st_record() {
         sc_record_line key.arch X64
         sc_record_line info.image_version 20261012.334.1
         sc_record_line info.cpu "AMD EPYC 7763 64-Core Processor"
+        sc_record_line info.kernel 6.11.0-1018-azure
         sc_record_line authority hosted
         sc_record_line run.repository "$ST_REPO"
         sc_record_line run.id 100
@@ -156,8 +156,9 @@ st_records() {
     st_record "$_d/r.tsv"
     st_succeeds "valid record" sc_record_validate "$_d/r.tsv" gate
     st_fails "role mismatch" sc_record_validate "$_d/r.tsv" base-fallback
-    st_record "$_d/r-nokernel.tsv" key.kernel='<delete>'
-    st_fails "missing key" sc_record_validate "$_d/r-nokernel.tsv"
+    st_record "$_d/r-nokernel.tsv" info.kernel='<delete>' key.kernel=6.11.0-1018-azure
+    st_succeeds "a record published before info.kernel is valid" sc_record_validate "$_d/r-nokernel.tsv" gate
+    st_succeeds "a missing info.kernel is not bound" sc_records_comparable "$_d/r.tsv" "$_d/r-nokernel.tsv"
     st_record "$_d/r-schema.tsv" schema=typelisp-self-compile-record/0
     st_fails "old schema" sc_record_validate "$_d/r-schema.tsv"
     st_record "$_d/r-ir.tsv" ir_count=12x
@@ -173,6 +174,8 @@ st_records() {
         st_record "$_d/diff.tsv" "$_k=changed"
         st_fails "cross-environment $_k" sc_records_comparable "$_d/r.tsv" "$_d/diff.tsv"
     done
+    st_record "$_d/other-kernel.tsv" info.kernel=6.8.0-1036-azure
+    st_succeeds "a kernel difference is recorded, not bound" sc_records_comparable "$_d/r.tsv" "$_d/other-kernel.tsv"
     st_record "$_d/local.tsv" authority=local
     st_fails "local never compares with hosted" sc_records_comparable "$_d/r.tsv" "$_d/local.tsv"
     st_record "$_d/u1.tsv" key.image_os=unknown
@@ -216,8 +219,8 @@ st_records() {
     st_record "$_d/duplicate.tsv"
     printf 'schema\tbad\ncommit\tbad\n' >> "$_d/duplicate.tsv"
     st_succeeds "first duplicate row wins" sc_record_validate "$_d/duplicate.tsv"
-    st_record "$_d/numeric.tsv" key.kernel=01
-    st_record "$_d/numeric2.tsv" key.kernel=1
+    st_record "$_d/numeric.tsv" key.valgrind=01
+    st_record "$_d/numeric2.tsv" key.valgrind=1
     st_fails "identity comparison is textual" sc_records_comparable "$_d/numeric.tsv" "$_d/numeric2.tsv"
     for _k in $SC_COMPARABLE_KEYS authority; do
         st_record "$_d/missing.tsv" "$_k=<delete>"
@@ -384,8 +387,8 @@ EOF
     st_fails "record from a fork" _st_check x.tsv
     st_record "$_d/x.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 authority=local
     st_fails "local record" _st_check x.tsv
-    st_record "$_d/x.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 key.kernel=6.8.0-1036-azure
-    st_fails "reference from another kernel" _st_check x.tsv
+    st_record "$_d/x.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 key.valgrind=valgrind-old
+    st_fails "reference from another environment" _st_check x.tsv
     st_record "$_d/x.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 procedure=5555555555555555555555555555555555555555555555555555555555555555
     st_fails "reference measured by another procedure" _st_check x.tsv
     st_record "$_d/x.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 role=base-fallback
@@ -500,6 +503,8 @@ st_resolve() {
 # st_entry DIR PARENT_IR COMMIT_IR [OPTIONS]  ->  ledger entry inputs.
 # Options: tc= tp= tt= tb= mt= mb= own= declared= nopr pkey= ckey= tkey= tcode=
 #          rmt= rmb= (a reproduction of T and B in the landed identity)
+# pkey=, ckey= and tkey= set the parent, landed and PR records' key.valgrind:
+# another environment is one whose comparable identity differs.
 st_entry() {
     _ste=$1
     [ ! -e "$_ste" ] || sc_fail "self-test entry directory exists: $_ste"
@@ -516,9 +521,9 @@ st_entry() {
     _ste_own=
     _ste_declared=none
     _ste_pr=yes
-    _ste_pkey=6.11.0-1018-azure
-    _ste_ckey=6.11.0-1018-azure
-    _ste_tkey=6.11.0-1018-azure
+    _ste_pkey=valgrind-3.22.0
+    _ste_ckey=valgrind-3.22.0
+    _ste_tkey=valgrind-3.22.0
     _ste_tcode=8888888888888888888888888888888888888888888888888888888888888888
     _ste_mt_set=no
     _ste_rmt=
@@ -550,8 +555,8 @@ st_entry() {
     printf '%s\n' "$ST_SHA_B" > "$_ste/parent"
     printf '%s\n' "$_ste_tc" > "$_ste/tree.commit"
     printf '%s\n' "$_ste_tp" > "$_ste/tree.parent"
-    st_record "$_ste/parent.tsv" commit="$ST_SHA_B" tree="$_ste_tp" ir_count="$_ste_mp" key.kernel="$_ste_pkey"
-    st_record "$_ste/landed.tsv" commit="$ST_SHA_C" tree="$_ste_tc" ir_count="$_ste_mc" key.kernel="$_ste_ckey"
+    st_record "$_ste/parent.tsv" commit="$ST_SHA_B" tree="$_ste_tp" ir_count="$_ste_mp" key.valgrind="$_ste_pkey"
+    st_record "$_ste/landed.tsv" commit="$ST_SHA_C" tree="$_ste_tc" ir_count="$_ste_mc" key.valgrind="$_ste_ckey"
     if [ "$_ste_pr" = yes ]; then
         {
             sc_record_line schema "$SC_RESULT_SCHEMA"
@@ -562,16 +567,16 @@ st_entry() {
             sc_record_line own "$_ste_own"
             sc_record_line declared_ppm "$_ste_declared"
         } > "$_ste/pr.tsv"
-        st_record "$_ste/pr-head.tsv" commit="$ST_SHA_D" tree="$_ste_tt" ir_count="$_ste_mt" key.kernel="$_ste_tkey" \
+        st_record "$_ste/pr-head.tsv" commit="$ST_SHA_D" tree="$_ste_tt" ir_count="$_ste_mt" key.valgrind="$_ste_tkey" \
             compiler_sha256="$_ste_tcode" run.event=pull_request
-        st_record "$_ste/pr-base.tsv" commit="$ST_SHA_F" tree="$_ste_tb" ir_count="$_ste_mb" key.kernel="$_ste_tkey" \
+        st_record "$_ste/pr-base.tsv" commit="$ST_SHA_F" tree="$_ste_tb" ir_count="$_ste_mb" key.valgrind="$_ste_tkey" \
             role=base-fallback run.event=pull_request
         printf '%s\n%s\n' "$ST_SHA_A" "$ST_SHA_F" > "$_ste/merges-between"
         if [ -n "$_ste_rmt" ]; then
             st_record "$_ste/rep-head.tsv" commit="$ST_SHA_E" tree="$_ste_tt" ir_count="$_ste_rmt" \
-                key.kernel="$_ste_ckey" role=head-reproduction
+                key.valgrind="$_ste_ckey" role=head-reproduction
             st_record "$_ste/rep-base.tsv" commit="$ST_SHA_F" tree="$_ste_tb" ir_count="$_ste_rmb" \
-                key.kernel="$_ste_ckey" role=base-fallback
+                key.valgrind="$_ste_ckey" role=base-fallback
         fi
     fi
 }
@@ -590,15 +595,23 @@ st_ledger() {
     st_eq "class S within bounds" "$(st_entry_says "$_d/s-ok")" "S ok -"
     st_eq "class S residual" "$(sc_record_get "$_d/s-ok/entry.tsv" r)" 300
     st_eq "class S from the PR's own report" "$(sc_record_get "$_d/s-ok/entry.tsv" own_source)" "PR report"
+    # A landed record published before the kernel was recorded as info.kernel
+    # still classifies, and records an unknown kernel in the pair identity.
+    st_entry "$_d/s-old-record" "$_P" 100000050000 mt=100000049700
+    awk -F '\t' '$1 != "info.kernel"' "$_d/s-old-record/landed.tsv" > "$_d/s-old-record/landed-old.tsv" &&
+        mv "$_d/s-old-record/landed-old.tsv" "$_d/s-old-record/landed.tsv"
+    st_eq "a landed record without info.kernel still classifies" "$(st_entry_says "$_d/s-old-record")" "S ok -"
+    st_eq "an unknown kernel is recorded in the pair identity" \
+        "$(sc_record_get "$_d/s-old-record/entry.tsv" pair_identity | cut -d'|' -f1)" unknown
     st_entry "$_d/s-warn" "$_P" 100000050000 mt=100000048999
     st_eq "class S warning" "$(st_entry_says "$_d/s-warn")" "S warning -"
     st_entry "$_d/s-fail" "$_P" 100000050000 mt=100000039999
     st_eq "class S failure" "$(st_entry_says "$_d/s-fail")" "S numerical-failure class-s class-s-attribution"
     # A PR measured in another identity is never subtracted from the landed
     # pair: it is reproduced in the landed identity, or the entry fails closed.
-    st_entry "$_d/s-xenv" "$_P" 100000050000 mt=100100049800 mb=100100000000 tkey=6.8.0-1036-azure
+    st_entry "$_d/s-xenv" "$_P" 100000050000 mt=100100049800 mb=100100000000 tkey=valgrind-old
     st_eq "class S cross-environment, not reproduced" "$(st_entry_says "$_d/s-xenv")" "none comparability-failure comparability"
-    st_entry "$_d/s-xenv-rep" "$_P" 100000050000 mt=100100049800 mb=100100000000 tkey=6.8.0-1036-azure \
+    st_entry "$_d/s-xenv-rep" "$_P" 100000050000 mt=100100049800 mb=100100000000 tkey=valgrind-old \
         rmt=100000050200 rmb="$_P"
     st_eq "class S cross-environment, reproduced" "$(st_entry_says "$_d/s-xenv-rep")" "S ok -"
     st_eq "class S reproduction is marked" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own_source)" \
@@ -608,10 +621,10 @@ st_ledger() {
     st_eq "class S accounts the PR-reported own" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own)" 49800
     st_eq "class S records the reproduced own" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own_reproduced)" 50200
     # A PR report that its reproduction contradicts fails class S (probe P1).
-    st_entry "$_d/s-xenv-p1" "$_P" 100000050000 tkey=6.8.0-1036-azure own=250100 rmt=100000050000 rmb="$_P"
+    st_entry "$_d/s-xenv-p1" "$_P" 100000050000 tkey=valgrind-old own=250100 rmt=100000050000 rmb="$_P"
     st_eq "a contradicted reproduced report fails class S" "$(st_entry_says "$_d/s-xenv-p1")" "S numerical-failure class-s"
     st_eq "the contradiction is the residual" "$(sc_record_get "$_d/s-xenv-p1/entry.tsv" r)" -200100
-    st_entry "$_d/s-xenv-badrep" "$_P" 100000050000 tkey=6.8.0-1036-azure rmt=100000050000 rmb="$_P"
+    st_entry "$_d/s-xenv-badrep" "$_P" 100000050000 tkey=valgrind-old rmt=100000050000 rmb="$_P"
     st_record "$_d/s-xenv-badrep/rep-base.tsv" commit="$ST_SHA_F" tree="$ST_TREE_4" ir_count="$_P"
     st_eq "a reproduction of another tree is refused" "$(st_entry_says "$_d/s-xenv-badrep")" \
         "none comparability-failure comparability"
@@ -634,14 +647,14 @@ st_ledger() {
     st_eq "class M at 1000 ppm warns" "$(sc_record_get "$_d/m-edge/entry.tsv" warnings)" class-m
     st_entry "$_d/m-fail" "$_P" 100100050001 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000
     st_eq "class M failure" "$(st_entry_says "$_d/m-fail")" "M numerical-failure class-m"
-    st_entry "$_d/m-xenv" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=6.8.0-1036-azure
+    st_entry "$_d/m-xenv" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=valgrind-old
     st_eq "class M cross-environment, not reproduced" "$(st_entry_says "$_d/m-xenv")" "none comparability-failure comparability"
-    st_entry "$_d/m-xenv-rep" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=6.8.0-1036-azure \
+    st_entry "$_d/m-xenv-rep" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=valgrind-old \
         rmt=100000047000 rmb=99999999000
     st_eq "class M cross-environment, reproduced" "$(st_entry_says "$_d/m-xenv-rep")" "M ok -"
     st_eq "class M reproduced own cost" "$(sc_record_get "$_d/m-xenv-rep/entry.tsv" own_reproduced)" 48000
     st_eq "class M accounts the PR-reported own" "$(sc_record_get "$_d/m-xenv-rep/entry.tsv" own)" 50000
-    st_entry "$_d/pair-xenv" "$_P" 100000050000 pkey=6.8.0-1036-azure
+    st_entry "$_d/pair-xenv" "$_P" 100000050000 pkey=valgrind-old
     st_eq "incomparable pair" "$(st_entry_says "$_d/pair-xenv")" "none comparability-failure comparability"
     st_entry "$_d/window" "$_P" 100500000001 mt=100500000001 mb="$_P"
     st_eq "landed gate window breach" "$(st_entry_says "$_d/window")" "S numerical-failure landed-gate-window"
@@ -658,13 +671,13 @@ st_ledger() {
     st_eq "the landed window is checked without attribution" "$(st_entry_says "$_d/nopr-window")" \
         "none attribution-failure+numerical-failure landed-gate-window attribution"
     st_eq "an unattributed landed cost is routed" "$(sc_record_get "$_d/nopr-window/entry.tsv" routing)" non-routine
-    st_entry "$_d/xenv-window" "$_P" 101000000000 tkey=6.8.0-1036-azure
+    st_entry "$_d/xenv-window" "$_P" 101000000000 tkey=valgrind-old
     st_eq "the landed window is checked without a comparable PR report" "$(st_entry_says "$_d/xenv-window")" \
         "none comparability-failure+numerical-failure landed-gate-window comparability"
-    st_entry "$_d/m-diff" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=6.8.0-1036-azure \
+    st_entry "$_d/m-diff" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=valgrind-old \
         rmt=100000047000 rmb=99999999000
     st_eq "a reproduced PR report keeps its identity differences" \
-        "$(st_entry_says "$_d/m-diff" >/dev/null; sc_record_get "$_d/m-diff/entry.tsv" pr_identity_differences | cut -d: -f1)" key.kernel
+        "$(st_entry_says "$_d/m-diff" >/dev/null; sc_record_get "$_d/m-diff/entry.tsv" pr_identity_differences | cut -d: -f1)" key.valgrind
 }
 
 st_account() {
@@ -889,12 +902,69 @@ st_tree() {
 st_fallback() {
     case "$(uname -s)" in Linux*) ;; *) return 0 ;; esac
     _sfb_dir=$1
-    mkdir -p "$_sfb_dir/repo/scripts" "$_sfb_dir/bin" "$_sfb_dir/tmp"
+    mkdir -p "$_sfb_dir/repo/scripts" "$_sfb_dir/bin" "$_sfb_dir/tmp" "$_sfb_dir/seed"
     cp "$SC_TOOL_DIR/self-compile.sh" "$SC_TOOL_DIR/lib-self-compile.sh" \
         "$SC_TOOL_DIR/self-compile-self-test.sh" "$_sfb_dir/repo/scripts/"
+    # The seed is fetched from the newest permanent stage0 release at or before
+    # the base: a newer non-ancestor, then two ancestors. Only the ancestors
+    # are downloadable, so choosing the newest release over all fails.
+    printf 'permanent stage0 fixture\n' > "$_sfb_dir/seed/typelisp-stage0-linux"
+    sha256sum "$_sfb_dir/seed/typelisp-stage0-linux" | cut -d ' ' -f 1 |
+        awk '{ print $1 "  typelisp-stage0-linux" }' > "$_sfb_dir/seed/SHA256SUMS"
+    _sfb_assets='[{"name":"typelisp-stage0-linux","state":"uploaded","size":10},{"name":"typelisp-stage0-windows.exe","state":"uploaded","size":10},{"name":"SHA256SUMS","state":"uploaded","size":100}]'
+    jq -n --argjson assets "$_sfb_assets" '
+        [{tag_name:"stage0-20261019-120000-r101", target_commitish:"1111111111111111111111111111111111111111", published_at:"2026-10-19T12:00:00Z"},
+         {tag_name:"stage0-20261018-120000-r100", target_commitish:"2222222222222222222222222222222222222222", published_at:"2026-10-18T12:00:00Z"},
+         {tag_name:"stage0-20261017-120000-r99", target_commitish:"3333333333333333333333333333333333333333", published_at:"2026-10-17T12:00:00Z"}] |
+        map(. + {draft:false, prerelease:false, assets:$assets})' > "$_sfb_dir/seed/releases.json"
+    printf '{"base_commit":{"sha":"0000000000000000000000000000000000000000"},"status":"diverged"}\n' \
+        > "$_sfb_dir/seed/compare-stage0-20261019-120000-r101.json"
+    printf '{"base_commit":{"sha":"2222222222222222222222222222222222222222"},"status":"ahead"}\n' \
+        > "$_sfb_dir/seed/compare-stage0-20261018-120000-r100.json"
+    printf '{"base_commit":{"sha":"3333333333333333333333333333333333333333"},"status":"ahead"}\n' \
+        > "$_sfb_dir/seed/compare-stage0-20261017-120000-r99.json"
+    cat > "$_sfb_dir/bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+fmt=
+url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) output=$2; shift ;;
+        -w) fmt=$2; shift ;;
+        -*) ;;
+        https://*) url=$1 ;;
+    esac
+    shift
+done
+printf '%s\n' "$url" >> "$ST_SEED/calls"
+case "$url" in
+    */releases\?per_page=100\&page=1) file=$ST_SEED/releases.json ;;
+    */compare/*)
+        tag=${url##*/compare/}
+        tag=${tag%%...*}
+        file=$ST_SEED/compare-$tag.json
+        ;;
+    */releases/download/stage0-20261019-120000-r101/*) file= ;;
+    */releases/download/*/SHA256SUMS) file=$ST_SEED/SHA256SUMS ;;
+    */releases/download/*) file=$ST_SEED/typelisp-stage0-linux ;;
+    *) file= ;;
+esac
+status=200
+if [ -z "$file" ] || [ ! -f "$file" ]; then
+    status=404
+fi
+[ -z "$fmt" ] || printf '%s' "$status"
+[ "$status" = 200 ] || exit 22
+cp "$file" "$output"
+EOF
+    chmod +x "$_sfb_dir/bin/curl"
     cat > "$_sfb_dir/repo/scripts/ci-verify.sh" <<'EOF'
 #!/bin/sh
 set -eu
+[ -x "${TYPELISP_BIN:-}" ] || { echo "no executable seed: ${TYPELISP_BIN:-<unset>}" >&2; exit 19; }
+printf '%s\n' "$TYPELISP_BIN" > "$RUNNER_TEMP/seed.txt"
 [ "${ST_BOOTSTRAP_FAIL:-no}" != yes ] || exit 17
 mkdir -p target/mock
 printf '#!/bin/sh\necho typelisp %s built fixture\n' "$(git rev-parse HEAD)" > target/mock/compiler
@@ -927,10 +997,19 @@ EOF
         ROOT=$PWD
         RUNNER_TEMP=$_sfb_dir/tmp
         PATH=$_sfb_dir/bin:$PATH
-        export RUNNER_TEMP PATH
+        ST_SEED=$_sfb_dir/seed
+        TYPELISP_STAGE0_FETCH_ATTEMPTS=1
+        TYPELISP_STAGE0_FETCH_RETRY_DELAY=0
+        export RUNNER_TEMP PATH ST_SEED TYPELISP_STAGE0_FETCH_ATTEMPTS TYPELISP_STAGE0_FETCH_RETRY_DELAY
         mkdir target
         echo preserved > target/sentinel
         st_succeeds "copied fallback measures parent" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/parent.tsv parent-fallback
+        st_eq "the base bootstrap is seeded with the newest stage0 ancestor" \
+            "$(cat "$_sfb_dir/tmp/seed.txt")" "$PWD/target/stage0/typelisp"
+        st_eq "the seed downloads the newest ancestor, not the newer release" \
+            "$(grep -c 'download/stage0-20261018-120000-r100/typelisp-stage0-linux' "$_sfb_dir/seed/calls" | tr -d ' ')|$(grep -c 'download/stage0-20261019-120000-r101/' "$_sfb_dir/seed/calls" | tr -d ' ')" "1|0"
+        st_eq "the seed never downloads the older ancestor or stage0-latest" \
+            "$(grep -c 'download/stage0-20261017-120000-r99/' "$_sfb_dir/seed/calls" | tr -d ' ')|$(grep -c 'download/stage0-latest/' "$_sfb_dir/seed/calls" | tr -d ' ')" "0|0"
         st_eq "fallback parent provenance" "$(sc_record_get target/records/parent.tsv commit)" "$_sfb_base"
         st_succeeds "second copied fallback measures PR base" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/base.tsv base-fallback
         st_eq "fallback restores checkout" "$(git rev-parse HEAD)" "$_sfb_head"
@@ -1118,12 +1197,19 @@ st_e2e_ledger() {
         sleep() {
             echo "$1" >> "$_sel_dir/sleeps"
         }
-        # This runner's identity is the fixture identity, and the parent
-        # measured here is a fixture record.
+        # This runner's identity is the fixture identity plus these knobs, and
+        # the parent measured here is a fixture record.
+        st_runner_record() {
+            _strr_dest=$1
+            shift
+            st_record "$_strr_dest" "$@" \
+                "info.kernel=${ST_RUNNER_KERNEL:-6.11.0-1018-azure}" \
+                "key.valgrind=${ST_RUNNER_VALGRIND:-valgrind-3.22.0}"
+        }
         sc_this_runner_record() {
             [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 1
             echo identity >> "$_sel_dir/events"
-            st_record "$1" "key.kernel=${ST_RUNNER_KERNEL:-6.11.0-1018-azure}"
+            st_runner_record "$1"
         }
         sc_run_fallback() {
             [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 1
@@ -1132,9 +1218,8 @@ st_e2e_ledger() {
             if [ "$4" = base-fallback ] && [ -n "${ST_FALLBACK_BASE_SHA:-}" ]; then
                 _self_sha=$ST_FALLBACK_BASE_SHA
             fi
-            st_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role="$4" \
-                run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="$_self_sha" \
-                "key.kernel=${ST_RUNNER_KERNEL:-6.11.0-1018-azure}"
+            st_runner_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role="$4" \
+                run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="$_self_sha"
         }
         sc_ledger_measure_pair_here() {
             [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 3
@@ -1143,8 +1228,7 @@ st_e2e_ledger() {
             if [ -f "$3/parent.tsv" ]; then
                 cp "$3/parent.tsv" "$3/parent-reference.tsv"
             fi
-            st_record "$3/landed.tsv" commit="$1" tree="$(st_tree "$1")" ir_count=116000050000 \
-                "key.kernel=${ST_RUNNER_KERNEL:-6.11.0-1018-azure}"
+            st_runner_record "$3/landed.tsv" commit="$1" tree="$(st_tree "$1")" ir_count=116000050000
             sc_run_fallback "$2" "$1" "$3/parent.tsv" parent-fallback
         }
         _sel_rc=0
@@ -1282,7 +1366,7 @@ st_e2e_lost_association() {
 
     # A PR measured in another identity would need a reproduction: the repair
     # step never measures, so the entry stays unattributed.
-    st_e2e_ledger_set reattr-id - 116000050100 key.kernel=6.8.0-1036-azure
+    st_e2e_ledger_set reattr-id - 116000050100 key.valgrind=valgrind-old
     ST_API=$ST_E2E/reattr-id-api
     printf '[]\n' | st_api_put "repos/$ST_REPO/commits/$ST_SET_C0/pulls"
     st_closed_prs 1 100
@@ -1441,22 +1525,22 @@ st_e2e() {
     st_e2e_ledger_set e2 empty-resolutions 116000070000
     st_eq "e2e ledger failure at c0" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e2)" "1 numerical-failure yes unresolved 1"
     st_eq "e2e ledger with an empty resolutions file" "$(st_e2e_ledger c1 "$ST_SET_C1" 901 e2)" "1 ok yes unresolved 2"
-    # A PR measured on another kernel is reproduced; a reproduced base whose
-    # compiler bytes differ from the PR's base (same commit, as/ld and
+    # A PR measured in another environment is reproduced; a reproduced base
+    # whose compiler bytes differ from the PR's base (same commit, as/ld and
     # workspace) fails the entry.
-    st_e2e_ledger_set e3 - 116000050100 key.kernel=6.8.0-1036-azure
-    st_eq "e2e ledger reproduces a PR from another kernel" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e3)" "0 ok yes clean 1"
+    st_e2e_ledger_set e3 - 116000050100 key.valgrind=valgrind-old
+    st_eq "e2e ledger reproduces a PR from another environment" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e3)" "0 ok yes clean 1"
     st_eq "e2e ledger records the reproduction" \
         "$(sc_record_get "$ST_E2E/e3-c0/repo/target/self-compile/ledger/entry.tsv" own_source)" \
         "reproduced in the landed pair's identity"
-    st_e2e_ledger_set e4 - 116000050100 key.kernel=6.8.0-1036-azure
+    st_e2e_ledger_set e4 - 116000050100 key.valgrind=valgrind-old
     st_eq "e2e ledger fails a reproduced base with other compiler bytes" \
         "$(ST_FALLBACK_SHA=5555555555555555555555555555555555555555555555555555555555555555 st_e2e_ledger c0 "$ST_SET_C0" 900 e4)" \
         "1 comparability-failure yes unresolved 1"
     # The PR's B is the landed parent but was built with an older assembler:
     # neither PR comparison applies, so the ledger's own measurements of that
     # one commit (the parent and the reproduced B) must still agree.
-    st_e2e_ledger_set e5 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
+    st_e2e_ledger_set e5 - 116000050100 "key.valgrind=valgrind-old key.as=GNU-assembler-2.41"
     st_eq "e2e ledger compares the parent with the reproduced base" \
         "$(ST_FALLBACK_BASE_SHA=5555555555555555555555555555555555555555555555555555555555555555 st_e2e_ledger c0 "$ST_SET_C0" 900 e5)" \
         "1 comparability-failure yes unresolved 1"
@@ -1532,14 +1616,23 @@ st_e2e() {
         "$(st_e2e_ledger c0 "$ST_SET_C0" 900 legacy-job)" "0 ok yes clean 1"
     st_e2e_lost_association
     st_e2e_settle
-    st_e2e_ledger_set e6 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
+    st_e2e_ledger_set e6 - 116000050100 "key.valgrind=valgrind-old key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 
     st_e2e_ledger_set lazy-pair - 116000050100
     st_eq "different runner identity remeasures both operands after install" \
-        "$(ST_RUNNER_KERNEL=other-kernel st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-pair)" "0 ok yes clean 1"
+        "$(ST_RUNNER_VALGRIND=other-valgrind st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-pair)" "0 ok yes clean 1"
     st_eq "different runner pair ordering" \
         "$(tr '\n' ' ' < "$ST_E2E/lazy-pair-c0/events")" "install identity pair parent-fallback identity base-fallback "
+    # A runner whose kernel differs from the reference reuses it: the kernel is
+    # recorded, and Cachegrind does not measure it.
+    st_e2e_ledger_set lazy-kernel - 116000050100
+    st_eq "a kernel-only runner difference reuses the reference" \
+        "$(ST_RUNNER_KERNEL=other-kernel st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-kernel)" "0 ok yes clean 1"
+    st_eq "a kernel-only runner difference measures no pair" \
+        "$(tr '\n' ' ' < "$ST_E2E/lazy-kernel-c0/events")" "install identity parent-fallback "
+    st_eq "a kernel-only runner difference takes the PR report" \
+        "$(sc_record_get "$ST_E2E/lazy-kernel-c0/repo/target/self-compile/ledger/entry.tsv" own_source)" "PR report"
     st_e2e_ledger_set lazy-failure - 116000050100
     st_eq "failed package action cannot reach identity or measurement" \
         "$(ST_TOOLS_FAILURE=yes st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-failure)" "1 none none none none"
@@ -1550,7 +1643,7 @@ st_e2e() {
     st_e2e_ledger_set lazy-reproduce - 116000050100
     st_eq "prepare predecessor for reproduction" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-reproduce)" "0 ok yes clean 1"
     (cd "$ST_E2E/lazy-reproduce-repo" &&
-        st_e2e_pr_api "$ST_SET_C1" 51 "$ST_SHA_F" 7051 116000060300 116000050000 "$ST_SET_C0" key.kernel=other-kernel)
+        st_e2e_pr_api "$ST_SET_C1" 51 "$ST_SHA_F" 7051 116000060300 116000050000 "$ST_SET_C0" key.valgrind=other-valgrind)
     st_eq "PR-only identity mismatch requests installed tools" \
         "$(st_e2e_ledger c1 "$ST_SET_C1" 901 lazy-reproduce)" "1 numerical-failure yes unresolved 2"
     st_eq "PR reproduction installs before its identity probe" \

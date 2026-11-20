@@ -48837,9 +48837,12 @@
   [retarget-phi-edges : bool]
   [targets : BackendSymbolSeq]
   [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
+  [absolute : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
     [out : text_buf.TextBuf buf]
+    [table-label : String
+      (compiler-backend-switch-table-label function current-label)]
     (for [index (iterator.range 0 cases.len)]
       (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
         [(Case tag label)
@@ -48847,23 +48850,42 @@
             out
             (text_buf.append
               (text_buf.append
-                (text_buf.append out "    .quad ")
-                (compiler-backend-asm-label
-                  (compiler-backend-global-shared-view function)
-                  (if (and
-                    retarget-phi-edges
-                    (compiler-backend-symbol-list-contains-id? targets label))
-                    (compiler-backend-switch-case-edge-label current-label tag)
-                    label)))
+                (text_buf.append
+                  (text_buf.append
+                    (text_buf.append out "    .long ")
+                    (compiler-backend-asm-label
+                      (compiler-backend-global-shared-view function)
+                      (if (and
+                        retarget-phi-edges
+                        (compiler-backend-symbol-list-contains-id?
+                          targets
+                          label))
+                        (compiler-backend-switch-case-edge-label
+                          current-label
+                          tag)
+                        label)))
+                  (if absolute
+                    ""
+                    " - "))
+                (if absolute
+                  ""
+                  (string.copy (& table-label))))
               "\n"))]))
     out))
 
+;; One switch table: `cases.len` four-byte entries. A non-PIC ELF image takes
+;; the case address itself, which the linker fills through a 32-bit absolute
+;; relocation; every other code model takes the difference between the case
+;; label and the table label, which the assembler resolves to a constant, so
+;; those tables need no relocation at all. The caller emits the section
+;; directive for the whole run of tables.
 (define (compiler-backend-emit-switch-table
   [function : String]
   [current-label : i64]
   [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [retarget-phi-edges : bool]
-  [targets : BackendSymbolSeq]) : String
+  [targets : BackendSymbolSeq]
+  [absolute : bool]) : String
   (text_buf.render
     (compiler-backend-emit-switch-table-cases-into
       (compiler-backend-global-shared-view function)
@@ -48871,11 +48893,10 @@
       retarget-phi-edges
       targets
       cases
+      absolute
       (text_buf.append
         (text_buf.append
-          (text_buf.append
-            (text_buf.empty)
-            "    .section .rodata\n    .balign 8\n")
+          (text_buf.append (text_buf.empty) "    .balign 4\n")
           (compiler-backend-switch-table-label function current-label))
         ":\n"))))
 
@@ -48883,6 +48904,7 @@
   [function : String]
   [current-label : i64]
   [targets : BackendSymbolSeq]
+  [absolute : bool]
   [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -48892,6 +48914,7 @@
       (compiler-backend-global-shared-view function)
       current-label
       (compiler-backend-global-shared-view targets)
+      absolute
       instrs
       (+ index 1)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
@@ -48907,12 +48930,14 @@
                 (compiler-backend-global-shared-view targets)
                 cases
                 default-label)
-              targets))]
+              targets
+              absolute))]
         [_ buf]))))
 
 (define (compiler-backend-emit-switch-tables-seq-into
   [function : String]
   [targets : BackendSymbolSeq]
+  [absolute : bool]
   [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -48923,29 +48948,41 @@
         (compiler-backend-emit-switch-tables-seq-into
           (compiler-backend-global-shared-view function)
           (compiler-backend-global-shared-view targets)
+          absolute
           blocks
           (+ index 1)
           (compiler-backend-emit-switch-tables-instr-seq-into
             function
             label
             targets
+            absolute
             instrs
             0
             buf))])))
 
+;; Every switch table of the program, in one run: `.rodata` for the 32-bit
+;; absolute entries a non-PIC ELF image can relocate, `.text` for the relative
+;; entries every other model folds at assembly time.
 (define (compiler-backend-emit-switch-tables-functions-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
+  [absolute : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (compiler-backend-emit-switch-tables-function-seq-into
     functions
     program-index
+    absolute
     0
-    buf))
+    (text_buf.append
+      buf
+      (if absolute
+        "    .section .rodata\n"
+        "    .text\n"))))
 
 (define (compiler-backend-emit-switch-tables-function-seq-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
+  [absolute : bool]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
@@ -48962,6 +48999,7 @@
           (compiler-backend-emit-switch-tables-function-seq-into
             functions
             program-index
+            absolute
             (+ index 1)
             (match (compiler-backend-global-shared-view blocks)
               [(Array seq)
@@ -48970,9 +49008,46 @@
                   (compiler-backend-function-state-phi-targets
                     (compiler-backend-state-function-state
                       program-index.backend-state))
+                  absolute
                   seq
                   0
                   buf)])))])))
+
+;; The case address for INDEX-REG: TABLE-REG holds the rip-relative table base
+;; and TARGET-REG the sign-extended 4-byte difference, or, for a non-PIC ELF
+;; image, TARGET-REG alone receives the entry's 32-bit absolute address.
+(define (compiler-backend-emit-switch-table-lookup
+  [function : String]
+  [current-label : i64]
+  [index-reg : String]
+  [table-reg : String]
+  [target-reg : String]
+  [absolute : bool]) : String
+  (if absolute
+    (str_cat.str-cat
+      "    movl "
+      (compiler-backend-switch-table-label function current-label)
+      "(,"
+      index-reg
+      ",4), "
+      (compiler-backend-reg-part target-reg 4)
+      "\n")
+    (str_cat.str-cat
+      "    leaq "
+      (compiler-backend-switch-table-label function current-label)
+      "(%rip), "
+      table-reg
+      "\n    movslq ("
+      table-reg
+      ","
+      index-reg
+      ",4), "
+      target-reg
+      "\n    addq "
+      table-reg
+      ", "
+      target-reg
+      "\n")))
 
 ;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
 ;; saturated at a switch dispatch, one or both of the index / jump-table-base
@@ -49003,6 +49078,8 @@
   [base : i64]
   [index-reg : String]
   [table-reg : String]
+  [target-reg : String]
+  [absolute : bool]
   [load-index : String]
   [backend-state : CompilerBackendState]) : String
   (let
@@ -49035,156 +49112,6 @@
             compiler-backend-scratch-i64-emergency-used-count
             (+ target-idx 1))
           unit))]
-    [done-label : String
-      (compiler-backend-asm-label
-        (compiler-backend-global-shared-view function)
-        (compiler_ir_types.compiler-ir-label
-          (&
-            (str_cat.str-cat
-              (compiler_ir_types.compiler-ir-label-text current-label)
-              "_disp_j"
-              ""))))]
-    ;; Emits the borrowed-occupant restores here (before the transfer) and
-    ;; suppresses the wrap's trailing restore. Must be spliced AFTER the target
-    ;; stash and BEFORE the indirect jump.
-    [restore : String
-      (compiler-backend-emergency-restore-before-jumps backend-state)]
-    (if total-switch
-      (str_cat.str-cat
-        load-index
-        (if (= base 0)
-          ""
-          (str_cat.str-cat
-            "    subq $"
-            (string.int->string base)
-            ", "
-            index-reg
-            "\n"
-            ""))
-        "    leaq "
-        (compiler-backend-switch-table-label function current-label)
-        "(%rip), "
-        table-reg
-        "\n    movq ("
-        table-reg
-        ","
-        index-reg
-        ",8), "
-        table-reg
-        "\n    movq "
-        table-reg
-        ", "
-        target-slot
-        "\n"
-        restore
-        "    jmp *"
-        target-slot
-        "\n")
-      (str_cat.str-cat
-        load-index
-        (if (= base 0)
-          ""
-          (str_cat.str-cat
-            "    subq $"
-            (string.int->string base)
-            ", "
-            index-reg
-            "\n"
-            ""))
-        "    leaq "
-        (compiler-backend-asm-label
-          (compiler-backend-global-shared-view function)
-          default-label)
-        "(%rip), "
-        table-reg
-        "\n    cmpq $"
-        (string.int->string (- case-count 1))
-        ", "
-        index-reg
-        "\n    ja "
-        done-label
-        "\n    leaq "
-        (compiler-backend-switch-table-label function current-label)
-        "(%rip), "
-        table-reg
-        "\n    movq ("
-        table-reg
-        ","
-        index-reg
-        ",8), "
-        table-reg
-        "\n"
-        done-label
-        ":\n    movq "
-        table-reg
-        ", "
-        target-slot
-        "\n"
-        restore
-        "    jmp *"
-        target-slot
-        "\n"))))
-
-;; The same GAP2b hazard on the absolute (non-PIC) dispatch form, which has no
-;; table register to stash through and so was left splicing the inline restore
-;; straight into the sequence. That splice is correct for a conditional branch
-;; -- emergency-restore-before-jumps documents its precondition as "the
-;; scavenged scratch is dead after the compare, because the jumps read EFLAGS,
-;; not the register" -- and it is false here: `jmp *table(,index-reg,8)` reads
-;; the index register, and the `subq $base` that computed the index wrote it
-;; into the very register the restore overwrites. The emitted code then
-;; dispatches on the restored occupant.
-;;
-;; Same fix as the PIC path, one register short: the final target address is
-;; resolved into the index register itself -- the table entry when in range, a
-;; `leaq` of the default block when not -- stashed to the dedicated slot, and
-;; only then are the occupants restored and the slot-indirect jump taken. The
-;; index is dead from the stash onward, so every occupant is restored exactly
-;; once on the single path reaching the transfer.
-(define (compiler-backend-emit-switch-dispatch-absolute-emergency
-  [function : String]
-  [current-label : i64]
-  [default-label : i64]
-  [total-switch : bool]
-  [case-count : i64]
-  [base : i64]
-  [index-reg : String]
-  [load-index : String]
-  [backend-state : CompilerBackendState]) : String
-  (let
-    [function-state : CompilerBackendFunctionState
-      (compiler-backend-state-function-state backend-state)]
-    [target-idx : i64
-      (compiler-backend-function-scratch-i64
-        function-state
-        compiler-backend-scratch-i64-emergency-pending-count)]
-    [target-slot : String
-      (compiler-backend-frame-offset-with-backend-state
-        backend-state
-        (compiler-backend-emergency-reg-offset function-state target-idx))]
-    [_reserve-target-slot : unit
-      (begin
-        ;; T1-6 (b): this dedicated stash slot is a REAL frame slot even when
-        ;; every borrowed register is XMM-parked, so the emergency frame region
-        ;; must be reserved for it explicitly.
-        (compiler-backend-function-scratch-set-bool!
-          function-state
-          compiler-backend-scratch-bool-emergency-used
-          true)
-        (if (<
-          (compiler-backend-function-scratch-i64
-            function-state
-            compiler-backend-scratch-i64-emergency-used-count)
-          (+ target-idx 1))
-          (compiler-backend-function-scratch-set-i64!
-            function-state
-            compiler-backend-scratch-i64-emergency-used-count
-            (+ target-idx 1))
-          unit))]
-    [table-label : String
-      (compiler-backend-switch-table-label
-        (compiler-backend-global-shared-view function)
-        current-label)]
     [done-label : String
       (compiler-backend-asm-label
         (compiler-backend-global-shared-view function)
@@ -49203,7 +49130,17 @@
               (compiler_ir_types.compiler-ir-label-text current-label)
               "_disp_d"
               ""))))]
-    [rebase : String
+    ;; The target is computed in the index register itself whenever that copy is
+    ;; a dead scratch: only then can the range check not run first, because the
+    ;; index must survive the load.
+    [shares-index : bool (string.eq target-reg index-reg)]
+    ;; Emits the borrowed-occupant restores here (before the transfer) and
+    ;; suppresses the wrap's trailing restore. Must be spliced AFTER the target
+    ;; stash and BEFORE the indirect jump.
+    [restore : String
+      (compiler-backend-emergency-restore-before-jumps backend-state)]
+    (str_cat.str-cat
+      load-index
       (if (= base 0)
         ""
         (str_cat.str-cat
@@ -49212,63 +49149,62 @@
           ", "
           index-reg
           "\n"
-          ""))]
-    ;; Emitted after the last read of index-reg, before the transfer.
-    [restore : String
-      (compiler-backend-emergency-restore-before-jumps backend-state)]
-    (if total-switch
-      (str_cat.str-cat
-        load-index
-        rebase
-        "    movq "
-        table-label
-        "(,"
+          ""))
+      (if (or total-switch shares-index)
+        ""
+        (str_cat.str-cat
+          "    leaq "
+          (compiler-backend-asm-label
+            (compiler-backend-global-shared-view function)
+            default-label)
+          "(%rip), "
+          target-reg
+          "\n"))
+      (if total-switch
+        ""
+        (str_cat.str-cat
+          "    cmpq $"
+          (string.int->string (- case-count 1))
+          ", "
+          index-reg
+          "\n    ja "
+          (if shares-index
+            default-stub-label
+            done-label)
+          "\n"))
+      (compiler-backend-emit-switch-table-lookup
+        function
+        current-label
         index-reg
-        ",8), "
-        index-reg
-        "\n    movq "
-        index-reg
-        ", "
-        target-slot
-        "\n"
-        restore
-        "    jmp *"
-        target-slot
-        "\n")
-      (str_cat.str-cat
-        load-index
-        rebase
-        "    cmpq $"
-        (string.int->string (- case-count 1))
-        ", "
-        index-reg
-        "\n    ja "
-        default-stub-label
-        "\n    movq "
-        table-label
-        "(,"
-        index-reg
-        ",8), "
-        index-reg
-        "\n    jmp "
-        done-label
-        "\n"
-        default-stub-label
-        ":\n    leaq "
-        (compiler-backend-asm-label function default-label)
-        "(%rip), "
-        index-reg
-        "\n"
-        done-label
-        ":\n    movq "
-        index-reg
-        ", "
-        target-slot
-        "\n"
-        restore
-        "    jmp *"
-        target-slot
-        "\n"))))
+        table-reg
+        target-reg
+        absolute)
+      (if (or total-switch (not shares-index))
+        ""
+        (str_cat.str-cat
+          "    jmp "
+          done-label
+          "\n"
+          default-stub-label
+          ":\n    leaq "
+          (compiler-backend-asm-label
+            (compiler-backend-global-shared-view function)
+            default-label)
+          "(%rip), "
+          target-reg
+          "\n"))
+      (if total-switch
+        ""
+        (str_cat.str-cat done-label ":\n"))
+      "    movq "
+      target-reg
+      ", "
+      target-slot
+      "\n"
+      restore
+      "    jmp *"
+      target-slot
+      "\n")))
 
 (define (compiler-backend-emit-switch-dispatch
   [backend-state : CompilerBackendState]
@@ -49301,13 +49237,34 @@
           "%r8"
           backend-state)
         index-home)]
+    [absolute : bool (compiler-backend-state-absolute-switch-ok? backend-state)]
     [table-exclude : (__tl_dyn-array String)
       (compiler-backend-one-exclude
         (compiler-backend-global-shared-view index-reg))]
+    ;; A relative entry is an offset from the table base, so that code model
+    ;; always needs a base register. A 32-bit absolute entry is the address
+    ;; itself, so the non-PIC form addresses the table directly.
     [table-reg : String
-      (if (compiler-backend-state-absolute-switch-ok? backend-state)
+      (if absolute
         ""
         (compiler-backend-scavenge-reg-here table-exclude 1 "%r9" backend-state))]
+    ;; The target address is computed in a scratch that is dead at the transfer.
+    ;; The index copy is that scratch when the index had to be loaded into one;
+    ;; otherwise the index home is still live here (a successor block can read
+    ;; it), so the target takes a second scratch.
+    [target-exclude : (__tl_dyn-array String)
+      (compiler-backend-two-exclude
+        (compiler-backend-global-shared-view index-reg)
+        (compiler-backend-global-shared-view table-reg))]
+    [target-exclude-n : i64 2]
+    [target-reg : String
+      (if (and (not absolute) need-index-scratch)
+        (string.copy (& index-reg))
+        (compiler-backend-scavenge-reg-here
+          target-exclude
+          target-exclude-n
+          "%r10"
+          backend-state))]
     [index-load : ResultCompilerBackend
       (if need-index-scratch
         (compiler-backend-emit-load-value
@@ -49318,15 +49275,13 @@
         (Ok ""))]
     [load-index (try index-load)]
     (Ok
-      ;; lint-allow: nested-if-ladder
-      (if (and
-        (compiler-backend-state-absolute-switch-ok? backend-state)
-        (compiler-backend-function-scratch-bool?
-          (compiler-backend-state-function-state backend-state)
-          compiler-backend-scratch-bool-emergency-pending))
-        ;; GAP2b on the absolute form: the index register is live through
-        ;; the indirect jump, so the restore cannot precede it.
-        (compiler-backend-emit-switch-dispatch-absolute-emergency
+      (if (compiler-backend-function-scratch-bool?
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-scratch-bool-emergency-pending)
+        ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant, and
+        ;; a restore after the transfer would be unreachable, so the target goes
+        ;; through the dedicated slot and the restores run before the jump.
+        (compiler-backend-emit-switch-dispatch-emergency
           function
           current-label
           default-label
@@ -49334,120 +49289,72 @@
           case-count
           base
           index-reg
+          table-reg
+          target-reg
+          absolute
           load-index
           backend-state)
-        (if (compiler-backend-state-absolute-switch-ok? backend-state)
-          ;; Absolute indexed form (non-PIC Linux): no table register at
-          ;; all, so the dispatch never borrows one. Pending emergency
-          ;; occupants from earlier borrows take the slot-indirect form
-          ;; above; this arm has none to restore.
-          (if total-switch
-            (str_cat.str-cat
-              load-index
-              (if (= base 0)
-                ""
-                (str_cat.str-cat
-                  "    subq $"
-                  (string.int->string base)
-                  ", "
-                  index-reg
-                  "\n"
-                  ""))
-              "    jmp *"
-              (compiler-backend-switch-table-label function current-label)
-              "(,"
-              index-reg
-              ",8)\n")
-            (str_cat.str-cat
-              load-index
-              (if (= base 0)
-                ""
-                (str_cat.str-cat
-                  "    subq $"
-                  (string.int->string base)
-                  ", "
-                  index-reg
-                  "\n"
-                  ""))
-              "    cmpq $"
-              (string.int->string (- case-count 1))
-              ", "
-              index-reg
-              "\n    ja "
-              (compiler-backend-asm-label
-                (compiler-backend-global-shared-view function)
-                default-label)
-              "\n    jmp *"
-              (compiler-backend-switch-table-label function current-label)
-              "(,"
-              index-reg
-              ",8)\n"))
-          (if (compiler-backend-function-scratch-bool?
-            (compiler-backend-state-function-state backend-state)
-            compiler-backend-scratch-bool-emergency-pending)
-            ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
-            ;; a trailing restore after the indirect jmp is unreachable. Emit the
-            ;; slot-indirect form with the restore BEFORE the transfer.
-            (compiler-backend-emit-switch-dispatch-emergency
-              function
-              current-label
-              default-label
-              total-switch
-              case-count
-              base
-              index-reg
-              table-reg
-              load-index
-              backend-state)
-            (if total-switch
-              (str_cat.str-cat
-                load-index
-                (if (= base 0)
-                  ""
-                  (str_cat.str-cat
-                    "    subq $"
-                    (string.int->string base)
-                    ", "
-                    index-reg
-                    "\n"
-                    ""))
-                "    leaq "
-                (compiler-backend-switch-table-label function current-label)
-                "(%rip), "
-                table-reg
-                "\n    jmp *("
-                table-reg
-                ","
-                index-reg
-                ",8)\n")
-              (str_cat.str-cat
-                load-index
-                (if (= base 0)
-                  ""
-                  (str_cat.str-cat
-                    "    subq $"
-                    (string.int->string base)
-                    ", "
-                    index-reg
-                    "\n"
-                    ""))
-                "    cmpq $"
-                (string.int->string (- case-count 1))
-                ", "
-                index-reg
-                "\n    ja "
-                (compiler-backend-asm-label
-                  (compiler-backend-global-shared-view function)
-                  default-label)
-                "\n    leaq "
-                (compiler-backend-switch-table-label function current-label)
-                "(%rip), "
-                table-reg
-                "\n    jmp *("
-                table-reg
-                ","
-                index-reg
-                ",8)\n"))))))))
+        (compiler-backend-emit-switch-dispatch-direct
+          function
+          current-label
+          default-label
+          total-switch
+          case-count
+          base
+          index-reg
+          table-reg
+          target-reg
+          absolute
+          load-index)))))
+
+;; The plain dispatch: the final target block address is computed into a scratch
+;; that is dead at the transfer, so the jump stays register-indirect and no frame
+;; slot is needed. An out-of-range key branches straight to the default block.
+(define (compiler-backend-emit-switch-dispatch-direct
+  [function : String]
+  [current-label : i64]
+  [default-label : i64]
+  [total-switch : bool]
+  [case-count : i64]
+  [base : i64]
+  [index-reg : String]
+  [table-reg : String]
+  [target-reg : String]
+  [absolute : bool]
+  [load-index : String]) : String
+  (str_cat.str-cat
+    load-index
+    (if (= base 0)
+      ""
+      (str_cat.str-cat
+        "    subq $"
+        (string.int->string base)
+        ", "
+        index-reg
+        "\n"
+        ""))
+    (if total-switch
+      ""
+      (str_cat.str-cat
+        "    cmpq $"
+        (string.int->string (- case-count 1))
+        ", "
+        index-reg
+        "\n    ja "
+        (compiler-backend-asm-label
+          (compiler-backend-global-shared-view function)
+          default-label)
+        "\n"))
+    (compiler-backend-emit-switch-table-lookup
+      function
+      current-label
+      index-reg
+      table-reg
+      target-reg
+      absolute)
+    "    jmp *"
+    target-reg
+    "\n"))
 
 (define (compiler-backend-emit-switch
   [type-segment-bases : i64]
@@ -72140,12 +72047,14 @@
                     emit-vars
                     (compiler-backend-global-shared-view emit-blocks-list)
                     function-abi)]
-                (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                  (& scavenge-func)
-                  (&
-                    (compiler_liveness.compiler-live-analyze-function
-                      (& scavenge-func)))
-                  false))
+                (unsafe
+                  ;; unsafe: grows the global liveness id buffer here; reset before this arena ends
+                  (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
+                    (& scavenge-func)
+                    (&
+                      (compiler_liveness.compiler-live-analyze-function
+                        (& scavenge-func)))
+                    false)))
               (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
                 (compiler_regalloc.compiler-reg-interval-index-build
@@ -73560,25 +73469,27 @@
               backend-state
               function-state)]
           [emitted : ResultCompilerBackend
-            (compiler-backend-emit-function
-              type-segment-bases
-              target
-              mode
-              func
-              all-functions
-              globals
-              global-types
-              externs
-              plan
-              program-index
-              spans
-              span-index
-              emit-entry
-              crt-entry
-              true
-              true
-              (compiler_ir_types.compiler-ir-label-none)
-              (__tl_make-array i64 0))]
+            (unsafe
+              ;; unsafe: the early-exit label globals are reset for each function
+              (compiler-backend-emit-function
+                type-segment-bases
+                target
+                mode
+                func
+                all-functions
+                globals
+                global-types
+                externs
+                plan
+                program-index
+                spans
+                span-index
+                emit-entry
+                crt-entry
+                true
+                true
+                (compiler_ir_types.compiler-ir-label-none)
+                (__tl_make-array i64 0)))]
           [wrapped : ResultCompilerBackend
             (match emitted
               [(Ok head)
@@ -78302,27 +78213,6 @@ tl_shared_object_init:
     program
     (CompilerBackendTarget.Linux)))
 
-(define (compiler-backend-emit-program-linux-with-spans
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode
-    program
-    (CompilerBackendTarget.Linux)
-    (Scalar)
-    spans
-    true))
-
-(define (compiler-backend-emit-program-with-spans-for-target
-  [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode
-    program
-    target
-    (Scalar)
-    spans
-    true))
-
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -78416,6 +78306,8 @@ tl_shared_object_init:
                       (compiler-backend-emit-switch-tables-functions-into
                         functions
                         program-index
+                        (compiler-backend-state-absolute-switch-ok?
+                          program-index.backend-state)
                         descriptor-buf)]
                     [runtime-data-buf : text_buf.TextBuf
                       (text_buf.append
@@ -78875,8 +78767,9 @@ tl_shared_object_init:
       backend-state
       (compiler-backend-state-stream-state backend-state))
     (compiler-backend-state-set-abort-site-counter! backend-state 0)
-    ;; An absolute `jmp *table(,idx,8)` needs a text relocation in a shared
-    ;; object, so that code model takes the rip-relative table form.
+    ;; A 4-byte table entry holding an absolute case address needs a
+    ;; 32-bit-absolute relocation, which only a non-PIC, non-shared ELF image
+    ;; below 2 GiB can carry; every other model keeps the rip-relative table.
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
       (and
@@ -83617,9 +83510,6 @@ tl_shared_object_init:
   (let
     [backend-state : CompilerBackendState
       (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
-    (compiler-backend-state-set-absolute-switch-ok!
-      backend-state
-      (compiler-backend-target-elf? target))
     (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
       backend-state
       type-segment-bases
@@ -83668,42 +83558,27 @@ tl_shared_object_init:
     (if (> (string.string-length problem) 0)
       (ResultCompilerBackendObject.Err
         (compiler-backend-return-storage-authority-diagnostic problem))
-      (begin
-        (compiler-backend-state-set-absolute-switch-ok!
-          backend-state
-          (compiler-backend-target-elf? target))
-        (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
-          backend-state
-          (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-          program
-          target
-          mode
-          spans
-          emit-entry
-          crt-entry
-          profile-state)))))
-
-(define (compiler-backend-emit-program-object-image-target
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
-    program
-    target
-    (Scalar)
-    spans
-    emit-entry
-    false))
+      (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+        backend-state
+        (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
+        program
+        target
+        mode
+        spans
+        emit-entry
+        crt-entry
+        profile-state))))
 
 (define (compiler-backend-emit-program-object-image-linux
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerBackendObject
-  (compiler-backend-emit-program-object-image-target
+  (compiler-backend-emit-program-object-image-target-with-mode-and-crt
     program
     (CompilerBackendTarget.Linux)
+    (Scalar)
     spans
-    true))
+    true
+    false))
 
 (define (compiler-backend-peephole-byte-at [data : (Ptr u8)] [index : i64]) : i64
   (cast
@@ -90289,18 +90164,22 @@ tl_shared_object_init:
           stream
           (compiler-backend-global-shared-view records))]
       [finished : CompilerBackendPeepholeSweepChunkState
-        (in-arena
-          home-arena
-          (let
-            [_probes : unit
-              (compiler-backend-expand-stack-probes!
-                backend-state
-                (&mut records))]
-            [kept : String (compiler-backend-peephole-records-render records)]
-            (CompilerBackendPeepholeSweepChunkState
-              (text_buf.append state.out kept)
-              (text_buf.empty)
-              cursor)))]
+        (unsafe
+          ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
+          ;; result from naming a caller region; the state it returns lives in
+          ;; that arena, whose owner outlives every use of it
+          (in-arena
+            (arena.Arena (arena.raw-handle home-arena))
+            (let
+              [_probes : unit
+                (compiler-backend-expand-stack-probes!
+                  backend-state
+                  (&mut records))]
+              [kept : String (compiler-backend-peephole-records-render records)]
+              (CompilerBackendPeepholeSweepChunkState
+                (text_buf.append state.out kept)
+                (text_buf.empty)
+                cursor))))]
       [_carry-home : unit
         (compiler-backend-assembly-stream-carry-home-current! stream home-arena)]
       (compiler-backend-peephole-records-retire! stream)
@@ -90321,7 +90200,11 @@ tl_shared_object_init:
   [peephole-mark : arena.ArenaMark]
   [home-arena : arena.Arena]) : unit
   (let
-    [batch : text_buf.TextBuf (in-arena raw-arena (text_buf.empty))]
+    ;; unsafe: the stream state keeps these buffers while raw-arena and
+    ;; home-arena live; a bare arena parameter's allocation cannot leave the call.
+    [batch : text_buf.TextBuf
+      (unsafe
+        (in-arena (arena.Arena (arena.raw-handle raw-arena)) (text_buf.empty)))]
     [data : (MutPtr CompilerBackendStreamStateData)
       (compiler-backend-stream-state-ptr stream)]
     (unsafe
@@ -90329,7 +90212,9 @@ tl_shared_object_init:
       (set! (deref data).assembly-raw-mark raw-mark)
       (set! (deref data).assembly-peephole-arena peephole-arena)
       (set! (deref data).assembly-peephole-mark peephole-mark)
-      (set! (deref data).assembly-out (in-arena home-arena (text_buf.empty)))
+      (set!
+        (deref data).assembly-out
+        (in-arena (arena.Arena (arena.raw-handle home-arena)) (text_buf.empty)))
       (set! (deref data).assembly-home-arena home-arena)
       (set! (deref data).assembly-sweep-cursor 0)
       (set! (deref data).assembly-batch batch)
@@ -93571,26 +93456,22 @@ tl_shared_object_init:
     (compiler-backend-sweep-reset! backend-state stream)
     buf))
 
-(define (compiler-backend-peephole-asm-buffer
-  [asm : String]
-  [drop-fallthrough? : bool]) : text_buf.TextBuf
+;; Production entry: same whole-text pass with the fallthrough-`jmp` deletion
+;; folded in, matching what the streaming emission walk applies per group.
+(define (compiler-backend-peephole-asm-drop-fallthrough [asm : String]) : String
   (let
     [backend-state : CompilerBackendState
       (compiler-backend-state-new (ci.intern-compat-state-capture-active))]
     [stream : CompilerBackendStreamState
       (compiler-backend-state-stream-state backend-state)]
     (compiler-backend-sweep-reset! backend-state stream)
-    (compiler-backend-peephole-asm-buffer-with-state
-      backend-state
-      stream
-      asm
-      drop-fallthrough?
-      false)))
-
-;; Production entry: same whole-text pass with the fallthrough-`jmp` deletion
-;; folded in, matching what the streaming emission walk applies per group.
-(define (compiler-backend-peephole-asm-drop-fallthrough [asm : String]) : String
-  (text_buf.render (compiler-backend-peephole-asm-buffer asm true)))
+    (text_buf.render
+      (compiler-backend-peephole-asm-buffer-with-state
+        backend-state
+        stream
+        asm
+        true
+        false))))
 
 ;; PIC uses the whole-text finalizer rather than a streaming group flush.
 ;; Its production boundary must expand probes after the same analyses.
@@ -93724,24 +93605,6 @@ tl_shared_object_init:
                   backend-state)
                 (Err owned-message))]))))))
 
-(define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-with-pools-and-crt-and-profile-state-backend-state
   [backend-state : CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -93773,23 +93636,25 @@ tl_shared_object_init:
         crt-entry
         profile-state))))
 
-(define (compiler-backend-emit-program-target-with-mode-and-crt
+(define (compiler-backend-emit-program-target-with-mode
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
+  [emit-entry : bool]) : ResultCompilerBackend
   (let
     [buf
       (try
-        (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+        (compiler-backend-emit-program-target-with-mode-final-buffer-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          (compiler-backend-state-new (ci.intern-compat-state-capture-active))
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           program
           target
           mode
           spans
           emit-entry
-          crt-entry))]
+          false
+          (profile_state.compiler-profile-state-new)))]
     (Ok (text_buf.render buf))))
 
 (define (compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
@@ -93816,20 +93681,6 @@ tl_shared_object_init:
           crt-entry
           profile-state))]
     (Ok (text_buf.render buf))))
-
-(define (compiler-backend-emit-program-target-with-mode
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode-and-crt
-    program
-    target
-    mode
-    spans
-    emit-entry
-    false))
 
 (define (compiler-backend-lower-mode-for-target
   [target : CompilerBackendTarget]
@@ -93894,7 +93745,12 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackend
-          (compiler-backend-emit-program-linux-with-spans program spans)]
+          (compiler-backend-emit-program-target-with-mode
+            program
+            (CompilerBackendTarget.Linux)
+            (Scalar)
+            spans
+            true)]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
@@ -93907,10 +93763,12 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackend
-          (compiler-backend-emit-program-with-spans-for-target
+          (compiler-backend-emit-program-target-with-mode
             program
+            target
+            (Scalar)
             spans
-            target)]
+            true)]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
@@ -93923,11 +93781,13 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackendObject
-          (compiler-backend-emit-program-object-image-target
+          (compiler-backend-emit-program-object-image-target-with-mode-and-crt
             program
             target
+            (Scalar)
             spans
-            true)]
+            true
+            false)]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
@@ -94301,7 +94161,6 @@ tl_shared_object_init:
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendPic
-  (compiler-backend-state-set-absolute-switch-ok! backend-state false)
   (let
     [buf
       (try
@@ -94383,23 +94242,6 @@ tl_shared_object_init:
         crt-entry
         profile-state))))
 
-(define (compiler-backend-emit-program-pic-target-with-mode
-  [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : compiler_ir_types.CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackendPic
-  (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
-    (compiler-backend-state-new (ci.intern-compat-state-capture-active))
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    program
-    target
-    mode
-    spans
-    emit-entry
-    false
-    (profile_state.compiler-profile-state-new)))
-
 (define (compiler-backend-emit-source-pic-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackendPic
@@ -94407,21 +94249,20 @@ tl_shared_object_init:
     [(Ok program spans lower-state)
       (let
         [result : ResultCompilerBackendPic
-          (compiler-backend-emit-program-pic-target-with-mode
+          (compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+            (compiler-backend-state-new (ci.intern-compat-state-capture-active))
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
             program
             target
             (Scalar)
             spans
-            true)]
+            true
+            false
+            (profile_state.compiler-profile-state-new))]
         (compiler_lower.compiler-lower-arena-state-release!
           (compiler_lower.compiler-lower-state-arenas lower-state))
         result)]
     [(Err diag) (Err diag)]))
-
-(define (compiler-backend-emit-source-pic-linux [src : String]) : ResultCompilerBackendPic
-  (compiler-backend-emit-source-pic-for-target
-    src
-    (CompilerBackendTarget.Linux)))
 
 (define (compiler-backend-runtime-helper-externs) : compiler_ir_types.CompilerIrExternSeq
   (compiler_ir_types.compiler-ir-extern-seq4

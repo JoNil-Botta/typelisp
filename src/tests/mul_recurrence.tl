@@ -206,5 +206,9 @@
   (for [mode (iterator.range 0 6)]
     (let
       [scope (arena.make)]
-      (in-arena scope (check-rewrite mode))
+      (in-arena
+        scope
+        (unsafe
+          ;; unsafe: interned names live in the persistent intern arena, not this one
+          (check-rewrite mode)))
       (arena.destroy-safe! scope))))

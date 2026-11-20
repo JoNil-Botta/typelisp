@@ -475,13 +475,16 @@ count = 1 ^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$
 capture data_reg ^[[:space:]]*movq \(%rdi\), (%r[a-z0-9]*)$
 count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\({{data_reg}}\)$
 
-# Non-PIC Linux switch dispatch uses the absolute indexed form; no table
-# register is borrowed under pressure.
+# A non-PIC switch dispatch reads a 4-byte absolute case address out of the
+# table and jumps through the scratch it landed in; an 8-byte table or a
+# rip-relative base would be the other code models.
 case switch-dispatch-scavenge
 source tests/integration/switch_dispatch_scavenge.tl
 in fn _tl_switch_dispatch_scavenge_run_switch
-count = 1 ^[[:space:]]+jmp \*\.Lf.*_switch_table\(,%r[a-z0-9]+,8\)$
-not-match ^[[:space:]]+jmp \*%r
+count = 1 ^[[:space:]]+movl \.Lf.*_switch_table\(,%r[a-z0-9]+,4\), %[re][a-z0-9]+$
+count = 1 ^[[:space:]]+jmp \*%r[a-z0-9]+$
+not-match _switch_table\(,%r[a-z0-9]+,8\)
+not-match ^[[:space:]]+leaq \.Lf.*_switch_table\(%rip\)
 
 # The length compare reads memory directly and the check is eliminated.
 case cmp-fold-load

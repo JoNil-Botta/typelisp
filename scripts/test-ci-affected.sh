@@ -7,7 +7,7 @@ work=$(mktemp -d "$ROOT/target/exp/ci-affected-test/run.XXXXXX")
 selector="$ROOT/scripts/ci-affected.sh"
 TAB=$(printf '\t')
 fail() { echo "ci-affected self-test: $* (evidence: $work)" >&2; exit 1; }
-has_gate() { grep -Fx "$2" "$1" >/dev/null || fail "missing $2 in $1"; }
+has_gate() { grep -Fx "$2" "$1" >/dev/null || fail "missing $2 in $1${3:+ for $3}"; }
 case "$work" in
     "$ROOT/target/exp/ci-affected-test/run."??????) ;;
     *) fail "unexpected self-test scratch directory" ;;
@@ -323,6 +323,13 @@ awk -F '\t' '
 for host in linux windows; do
     "$ROOT/scripts/ci-verify.sh" --list-gates "$host" > "$work/$host.table"
     sed '1d' "$work/$host.table" | cut -f 1 > "$work/$host.full"
+    # The literal-input, literal-reader and constructed-input replays below
+    # batch their single-path queries per host, so the selector loads the
+    # inventory, the reviewed map and each distinct dependency closure once
+    # instead of once per query.
+    batched=0
+    : > "$work/$host-replay.batch"
+    : > "$work/$host-replay.rows"
     while IFS=$TAB read -r pr run base head gate; do
         case "$pr" in \#* | pr) continue ;; esac
         "$selector" --host "$host" --paths "$ROOT/tests/fixtures/ci-affected/$pr.paths" > "$work/$host-$pr.ids" 2> "$work/$host-$pr.log"
@@ -373,9 +380,9 @@ for host in linux windows; do
     awk -F '\t' '!/^#/ && $1 != "id" {n = split($8, words, " "); for (i = 1; i <= n; i++) if (words[i] ~ /^tests\/[A-Za-z0-9._\/-]+$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" > "$work/literal-inputs.tsv"
     while IFS=$TAB read -r path gate; do
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
-        printf '%s\n' "$path" > "$work/paths"
-        "$selector" --host "$host" --paths "$work/paths" > "$work/literal.ids"
-        has_gate "$work/literal.ids" "$gate"
+        batched=$((batched + 1))
+        printf '@@\t%s\trequired\t%s\n%s\n' "$host" "$work/$host-replay.$batched.ids" "$path" >> "$work/$host-replay.batch"
+        printf '%s\t%s\t%s\n' "$batched" "$path" "$gate" >> "$work/$host-replay.rows"
     done < "$work/literal-inputs.tsv"
     while IFS=$TAB read -r path gate; do
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
@@ -400,19 +407,33 @@ for host in linux windows; do
             esac
             path="$path/__ci_affected_directory_probe__.tl"
         fi
-        printf '%s\n' "$path" > "$work/paths"
-        "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
-        has_gate "$work/direct-reader.ids" "$gate"
+        batched=$((batched + 1))
+        printf '@@\t%s\trequired\t%s\n%s\n' "$host" "$work/$host-replay.$batched.ids" "$path" >> "$work/$host-replay.batch"
+        printf '%s\t%s\t%s\n' "$batched" "$path" "$gate" >> "$work/$host-replay.rows"
     done < "$work/script-inputs.tsv"
     # Constructed script inputs and the reported independent source guards.
     for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'tests/safety/global_mut_borrow_deref_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_field_overlap_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_initializer_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_noncall_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/global_mut_borrow_store_location_reject.tl stage2-public-tool-cli-transcripts-3' 'tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl stage2-public-tool-cli-transcripts-3' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-corpora' 'src/compiler_driver_core.tl stage2-public-tool-corpora' 'src/compiler_lower.tl stage2-public-tool-corpora' 'src/lsp_frame_core.tl stage2-public-tool-corpora' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
-        printf '%s\n' "$path" > "$work/paths"
-        "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
-        has_gate "$work/direct-reader.ids" "$gate"
+        batched=$((batched + 1))
+        printf '@@\t%s\trequired\t%s\n%s\n' "$host" "$work/$host-replay.$batched.ids" "$path" >> "$work/$host-replay.batch"
+        printf '%s\t%s\t%s\n' "$batched" "$path" "$gate" >> "$work/$host-replay.rows"
     done
+    "$selector" --batch "$work/$host-replay.batch"
+    while IFS=$TAB read -r batched path gate; do
+        has_gate "$work/$host-replay.$batched.ids" "$gate" "$path"
+    done < "$work/$host-replay.rows"
+    # A batched record must match its single-query replay, in both tiers.
+    IFS=$TAB read -r batched path gate < "$work/$host-replay.rows"
+    printf '%s\n' "$path" > "$work/paths"
+    "$selector" --host "$host" --paths "$work/paths" > "$work/single.ids"
+    cmp "$work/single.ids" "$work/$host-replay.$batched.ids" || fail "batched record differs from its replay: $path"
+    printf '@@\t%s\tadvisory\t%s\n%s\n' "$host" "$work/batch-advisory.ids" docs/testing-guide.md > "$work/batch-advisory.batch"
+    "$selector" --batch "$work/batch-advisory.batch"
+    printf '%s\n' docs/testing-guide.md > "$work/paths"
+    "$selector" --host "$host" --paths "$work/paths" --tier advisory > "$work/single-advisory.ids"
+    cmp "$work/batch-advisory.ids" "$work/single-advisory.ids" || fail 'batched advisory record differs from its replay'
     for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
         path=${row% *}
         gate=${row##* }
@@ -586,6 +607,8 @@ expect_rejected invalid-input-class "$fixture_selector" --base "$base"
 cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
 printf 'tests/unmapped.dat\t-,-\t@corpus\tinvalid empty minimum\n' >> "$repo/scripts/ci-affected-paths.tsv"
 expect_rejected invalid-empty-minimum "$fixture_selector" --base "$base"
+printf '@@\tlinux\trequired\n' > "$work/malformed.batch"
+expect_rejected malformed-batch "$fixture_selector" --batch "$work/malformed.batch"
 
 # The fixture repository's .git must not block clean --experiments after
 # success. Every failure exits above and retains its evidence.

@@ -4437,14 +4437,19 @@
     (in-arena
       scratch
       (let
-        [temporary : ir.CompilerIrFunction (opt-test-price-memo-function 41)]
-        (opt.opt-inline-price-memo-record!
-          pools
-          bases
-          (& temporary)
-          0
-          fingerprint
-          37)))
+        [temporary : ir.CompilerIrFunction
+          (unsafe
+            ;; unsafe: interned names live in the persistent intern arena, not this one
+            (opt-test-price-memo-function 41))]
+        (unsafe
+          ;; unsafe: the memo entry is cloned into the memo's own arena, not this one
+          (opt.opt-inline-price-memo-record!
+            pools
+            bases
+            (& temporary)
+            0
+            fingerprint
+            37))))
     (arena.destroy-safe! scratch)
     (test.assert-i64-eq
       (opt.opt-inline-price-memo-lookup bases (& probe) 0 fingerprint)
@@ -10606,9 +10611,14 @@
 (define (opt-successor-sink-run-function
   [name : String]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (opt.opt-successor-sink-function
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (& (opt-successor-sink-test-function name blocks))))
+  (let
+    [func : ir.CompilerIrFunction
+      (opt-successor-sink-test-function name blocks)]
+    (match (opt.opt-successor-sink-function-with-context-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+      func)
+      [(Result f _) f])))
 
 (define (opt-successor-sink-run
   [name : String]
@@ -13606,9 +13616,10 @@
         2)]
     [defaulted : ir.CompilerIrProgram
       (match (with-test-inline-mode
-        (opt.optimize-program-with-spans
+        (opt.optimize-program-with-spans-and-level
           (& program)
-          (ir.compiler-source-spans-empty)))
+          (ir.compiler-source-spans-empty)
+          (opt.compiler-optimize-default-level)))
         [(Program optimized _) optimized])]
     [fixed-program : ir.CompilerIrProgram
       (opt-test-program (opt-fixed-point-instrs))]
@@ -33372,10 +33383,18 @@
 (define (opt-licm-array-optimized-function-with-direct-call-clean
   [blocks : ir.CompilerIrBlockList]
   [direct-call-clean : opt_i64_i64_map.Map]) : ir.CompilerIrFunction
-  (opt.opt-licm-function-with-direct-call-clean
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (& (opt-licm-array-test-function blocks))
-    (& direct-call-clean)))
+  (let
+    [func : ir.CompilerIrFunction (opt-licm-array-test-function blocks)]
+    (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+      false
+      (& direct-call-clean)
+      (& (opt_i64_i64_map.with-capacity 1))
+      (& (opt.opt-global-cell-summary-empty))
+      false
+      (& func))
+      [(Result next _) next])))
 
 ;; The POST-BCE run, which is where the descriptor-header exception lives (see
 ;; opt-licm-apply-loop's `descriptor-header-hoist?`), with a caller-supplied
@@ -34665,15 +34684,22 @@
   [arg-var : i64]
   [mode : i64]
   [call-memory : opt_i64_i64_map.Map]) : ir.CompilerIrFunction
-  (opt.opt-licm-function-with-global-cells
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (&
-      (let
-        [cell : opt.OptGlobalCellSummary (opt.opt-global-cell-summary-empty)]
-        (set! cell.call-memory call-memory)
-        cell))
-    true
-    (& (opt-licm-array-test-function (opt-licm-frame-call-blocks arg-var mode)))))
+  (let
+    [cells : opt.OptGlobalCellSummary (opt.opt-global-cell-summary-empty)]
+    (set! cells.call-memory call-memory)
+    (let
+      [func : ir.CompilerIrFunction
+        (opt-licm-array-test-function (opt-licm-frame-call-blocks arg-var mode))]
+      (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+        false
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& (opt_i64_i64_map.with-capacity 1))
+        (& cells)
+        true
+        (& func))
+        [(Result next _) next]))))
 
 (define (opt-licm-frame-call-loop-loads
   [arg-var : i64]
@@ -34847,27 +34873,43 @@
             1)
           map)]
       [clean-call-func : ir.CompilerIrFunction
-        (opt.opt-licm-function-with-direct-call-clean
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (&
+        (let
+          [func : ir.CompilerIrFunction
             (opt-licm-checked-root-function
               (opt.compiler-opt-global-shared-view ref-ty)
               (opt.compiler-opt-global-shared-view mut-ref-ty)
               (opt.compiler-opt-global-shared-view ref-ty)
-              (opt-licm-checked-root-blocks 1 2 2)))
-          (& clean-touch-map))]
+              (opt-licm-checked-root-blocks 1 2 2))]
+          (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+            false
+            (& clean-touch-map)
+            (& (opt_i64_i64_map.with-capacity 1))
+            (& (opt.opt-global-cell-summary-empty))
+            false
+            (& func))
+            [(Result next _) next]))]
       [clean-call : ir.CompilerIrBlockList
         (opt.opt-function-blocks clean-call-func)]
       [clean-indirect-func : ir.CompilerIrFunction
-        (opt.opt-licm-function-with-direct-call-clean
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (&
+        (let
+          [func : ir.CompilerIrFunction
             (opt-licm-checked-root-function
               (opt.compiler-opt-global-shared-view ref-ty)
               (opt.compiler-opt-global-shared-view mut-ref-ty)
               (opt.compiler-opt-global-shared-view ref-ty)
-              (opt-licm-checked-root-blocks 1 2 3)))
-          (& clean-touch-map))]
+              (opt-licm-checked-root-blocks 1 2 3))]
+          (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+            false
+            (& clean-touch-map)
+            (& (opt_i64_i64_map.with-capacity 1))
+            (& (opt.opt-global-cell-summary-empty))
+            false
+            (& func))
+            [(Result next _) next]))]
       [clean-indirect : ir.CompilerIrBlockList
         (opt.opt-function-blocks clean-indirect-func)]
       [fresh-func : ir.CompilerIrFunction
@@ -37196,9 +37238,14 @@
     Ordinary))
 
 (define (opt-induction-optimized-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (opt.opt-induction-function
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (& (opt-induction-test-function blocks))))
+  (let
+    [func : ir.CompilerIrFunction (opt-induction-test-function blocks)]
+    (match (opt.opt-induction-function-with-context-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+      false
+      (& func))
+      [(Result next _) next])))
 
 (define (opt-induction-offset-blocks [step : i64] [scale : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
@@ -38003,9 +38050,14 @@
 ;; counter's only readers are its own increment and that compare, so the test
 ;; moves onto the pointer phi and the counter retires.
 (define (opt-lftr-optimized-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (opt.opt-lftr-function
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (& (opt-induction-test-function blocks))))
+  (let
+    [func : ir.CompilerIrFunction (opt-induction-test-function blocks)]
+    (match (opt.opt-lftr-function-with-context-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+      false
+      (& func))
+      [(Result next _) next])))
 
 (define (opt-lftr-entry-block) : ir.CompilerIrBlock
   (irt.block "entry:
@@ -51829,9 +51881,14 @@
     [preheadered-induction-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks preheadered-induction)]
     [induction-after-preheader : ir.CompilerIrFunction
-      (opt.opt-induction-function
+      (match (opt.opt-induction-function-with-context-result
         (ast.ast-node-pool-reader-type-segment-bases)
-        (& preheadered-induction))]
+        (&
+          (opt.opt-cfg-context-build
+            (opt.opt-function-blocks preheadered-induction)))
+        false
+        (& preheadered-induction))
+        [(Result next _) next])]
     [induction-after-preheader-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks induction-after-preheader)]
     (cond
@@ -64481,11 +64538,18 @@
 (define (opt-lp-promoted-blocks
   [symbols : OptLpTestSymbols]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
-  (opt.opt-licm-function-with-global-cells
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (& (opt-lp-test-cells symbols))
-    false
-    (& (opt-licm-test-function blocks))))
+  (let
+    [func : ir.CompilerIrFunction (opt-licm-test-function blocks)]
+    (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+      false
+      (& (opt_i64_i64_map.with-capacity 1))
+      (& (opt_i64_i64_map.with-capacity 1))
+      (& (opt-lp-test-cells symbols))
+      false
+      (& func))
+      [(Result next _) next])))
 
 (define (opt-lp-has-block? [blocks : ir.CompilerIrBlockList] [label : String]) : bool
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
@@ -69583,15 +69647,21 @@ return 0" true)
     [call-promoted : ir.CompilerIrBlockList
       (let
         [func
-          (opt.opt-licm-function-with-global-cells
+          (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
             type-segment-bases
+            (&
+              (opt.opt-cfg-context-build (opt.opt-function-blocks call-fixture)))
+            false
+            (& (opt_i64_i64_map.with-capacity 1))
+            (& (opt_i64_i64_map.with-capacity 1))
             (&
               (opt.opt-global-cell-summary-build
                 (ast.ast-node-pool-reader-type-segment-bases)
                 (& (opt-lp-test-globals symbols))
                 (& call-functions)))
             false
-            (& call-fixture))]
+            (& call-fixture))
+            [(Result next _) next])]
         (opt.opt-function-blocks func))]
     ;; (d) the versioning unlock: the promoted bound is an invariant Var, which
     ;; is what `opt-bce-version-invariant-operand` accepts
@@ -71378,11 +71448,15 @@ done:
         previous
         (let
           [blocks : ir.CompilerIrBlockList
-            (irt.blocks
-              "entry:
+            (unsafe
+              ;; unsafe: interned names live in the persistent intern arena, not this one
+              (irt.blocks
+                "entry:
                            %1 = addr_of %0
-                           return %0")]
-          (opt.opt-function-addr-taken-install! 2 (& blocks))))]
+                           return %0"))]
+          (unsafe
+            ;; unsafe: the next install replaces these tables before they are read
+            (opt.opt-function-addr-taken-install! 2 (& blocks)))))]
     [_retire-previous : unit (arena.destroy-safe! previous)]
     [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
     [no-exprs : ir.CompilerIrInstrSeq (irt.instrs "%1 = mov %0 : i64")]
@@ -72753,21 +72827,25 @@ done:
           (let
             [dump-owner : i64 (arena.tl_arena_current)]
             [_configure : unit
-              (opt.compiler-opt-debug-configure!
-                structural-session
-                false
-                "linear-dump"
-                false)]
+              (unsafe
+                ;; unsafe: installs the global debug dump state; reset before this arena ends
+                (opt.compiler-opt-debug-configure!
+                  structural-session
+                  false
+                  "linear-dump"
+                  false))]
             [start-bytes : i64
               (allocation_profile.compiler-allocation-profile-arena-bump-bytes
                 dump-owner)]
             [i : i64 0]
             (while (< i 16)
               (begin
-                (opt.compiler-opt-debug-observe-function
-                  0
-                  "linear-dump"
-                  (ir.compiler-ir-global-shared-view func))
+                (unsafe
+                  ;; unsafe: interned names live in the persistent intern arena, not this one
+                  (opt.compiler-opt-debug-observe-function
+                    0
+                    "linear-dump"
+                    (ir.compiler-ir-global-shared-view func)))
                 unit)
               (+= i 1))
             (let
@@ -72777,10 +72855,12 @@ done:
               [mid-length : i64 (opt.compiler-opt-debug-dump-length)]
               (while (< i 32)
                 (begin
-                  (opt.compiler-opt-debug-observe-function
-                    0
-                    "linear-dump"
-                    (ir.compiler-ir-global-shared-view func))
+                  (unsafe
+                    ;; unsafe: interned names live in the persistent intern arena, not this one
+                    (opt.compiler-opt-debug-observe-function
+                      0
+                      "linear-dump"
+                      (ir.compiler-ir-global-shared-view func)))
                   unit)
                 (+= i 1))
               (let
@@ -79391,10 +79471,13 @@ done:
   (let
     [cells : opt.OptGlobalCellSummary
       (owned_view.compiler-owned-reference-shared-view cells)]
+    [inner : ir.CompilerIrFunction (opt-guard-sink-test-function name blocks)]
     [func
-      (opt.opt-guard-sink-function
+      (match (opt.opt-guard-sink-function-with-context-result
         (& cells)
-        (& (opt-guard-sink-test-function name blocks)))]
+        (opt.opt-cfg-context-build (opt.opt-function-blocks inner))
+        inner)
+        [(Result f _) f])]
     (opt.opt-function-blocks func)))
 
 ;; A global-rooted `gep; load` chain derived in the entry block and read only
@@ -79648,12 +79731,16 @@ done:
           cells
           (opt-guard-sink-cell-blocks global callee false)))]
     [remat-function : ir.CompilerIrFunction
-      (opt.opt-guard-sink-function
-        (& clean)
-        (&
+      (let
+        [input : ir.CompilerIrFunction
           (opt-guard-sink-test-function
             "guard_sink_remat"
-            (opt-guard-sink-remat-blocks global callee true))))]
+            (opt-guard-sink-remat-blocks global callee true))]
+        (match (opt.opt-guard-sink-function-with-context-result
+          (& clean)
+          (opt.opt-cfg-context-build (opt.opt-function-blocks input))
+          input)
+          [(Result f _) f]))]
     [remat : ir.CompilerIrBlockList (opt.opt-function-blocks remat-function)]
     [no-frame : ir.CompilerIrBlockList
       (opt-guard-sink-run
@@ -83583,12 +83670,22 @@ done:
 (define (opt-fill-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (opt.opt-verify-at
     "fill_call"
-    (opt.opt-loop-call-function opt.opt-fill-call-try-rewrite (& func))))
+    (match (opt.opt-loop-call-function-with-context-result
+      opt.opt-fill-call-try-rewrite
+      (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+      false
+      (& func))
+      [(Result next _) next])))
 
 (define (opt-copy-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (opt.opt-verify-at
     "copy_call"
-    (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func))))
+    (match (opt.opt-loop-call-function-with-context-result
+      opt.opt-copy-call-try-rewrite
+      (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+      false
+      (& func))
+      [(Result next _) next])))
 
 ;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
 ;; keeps the defensive entry verify.
@@ -85603,7 +85700,12 @@ return
     [out
       (opt.opt-verify-at
         "loop_call"
-        (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func)))]
+        (match (opt.opt-loop-call-function-with-context-result
+          opt.opt-copy-call-try-rewrite
+          (& (opt.opt-cfg-context-build (opt.opt-function-blocks func)))
+          false
+          (& func))
+          [(Result next _) next]))]
     (test.assert-true
       (not
         (opt.opt-function-eq

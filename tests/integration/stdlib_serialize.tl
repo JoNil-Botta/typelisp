@@ -68,6 +68,26 @@
 (import (serialize.serialize toy Person) as person_ser)
 (import (serialize.serialize toy Person) as person_ser_again)
 
+(defenum Grade
+  (Fresh)
+  (Scored i64))
+
+(defstruct Tag
+  (label String)
+  (grade Grade))
+
+(defstruct Record
+  (name String)
+  (tag Tag)
+  (boxed (Box Tag))
+  (scores (Array i64 3))
+  (tags (Array Tag 2)))
+
+(import (serialize.serialize toy Record) as record_ser)
+(import (serialize.serialize toy Tag) as tag_ser)
+(import (serialize.serialize toy (Array Tag 2)) as tag_array_ser)
+(import (serialize.serialize toy enum_fixture.StatusPlace) as status_place_ser)
+
 (define (serialize-address-eq? [home : Address] [zip : i64] [city : String]) : bool
   (and (= home.zip zip) (string.eq home.city city)))
 
@@ -647,6 +667,160 @@
       [(Ok parsed) (result_i64_string.is-err? (& parsed))]
       [(Err _) false])))
 
+(define (serialize-tag-eq? [tag : Tag] [label : String] [score : i64]) : bool
+  (and
+    (string.eq tag.label label)
+    (match tag.grade
+      [(Fresh) false]
+      [(Scored actual) (= actual score)])))
+
+(define (serialize-record-roundtrip-ok?) : bool
+  (let
+    [record : Record
+      (Record
+        "record"
+        (Tag "tag" (Scored 7))
+        (box (Tag "boxed" (Scored 3)))
+        (array 4 5 6)
+        (array (Tag "first" (Scored 1)) (Tag "second" (Scored 2))))]
+    [encoded : toy.Value (record_ser.encode record)]
+    (match (record_ser.decode encoded)
+      [(Ok parsed)
+        (and
+          (string.eq parsed.name "record")
+          (serialize-tag-eq? parsed.tag "tag" 7)
+          (serialize-tag-eq? (deref parsed.boxed) "boxed" 3)
+          (= (array-ref parsed.scores 0) 4)
+          (= (array-ref parsed.scores 1) 5)
+          (= (array-ref parsed.scores 2) 6)
+          (serialize-tag-eq? (array-ref parsed.tags 0) "first" 1)
+          (serialize-tag-eq? (array-ref parsed.tags 1) "second" 2))]
+      [(Err _) false])))
+
+(define (serialize-status-place-root-roundtrip-ok?) : bool
+  (let
+    [place : enum_fixture.StatusPlace (enum_fixture.StatusPlace 42 "Oslo")]
+    [encoded : toy.Value (status_place_ser.encode place)]
+    (match (status_place_ser.decode encoded)
+      [(Ok parsed) (and (= parsed.zip 42) (string.eq parsed.city "Oslo"))]
+      [(Err _) false])))
+
+(define (serialize-record-object
+  [name : toy.Value]
+  [tag : toy.Value]
+  [boxed : toy.Value]
+  [scores : toy.Value]
+  [tags : toy.Value]) : toy.Value
+  (Object
+    (box
+      (toy.field-list-prepend
+        "name"
+        name
+        (toy.field-list-prepend
+          "tag"
+          tag
+          (toy.field-list-prepend
+            "boxed"
+            boxed
+            (toy.field-list-prepend
+              "scores"
+              scores
+              (toy.field-list-prepend "tags" tags (toy.field-list-empty)))))))))
+
+(define (serialize-record-valid-tag-value) : toy.Value
+  (tag_ser.encode (Tag "tag" (Scored 7))))
+
+(define (serialize-record-valid-scores-value) : toy.Value
+  (fixed_i64_ser.encode (array 4 5 6)))
+
+(define (serialize-record-valid-tags-value) : toy.Value
+  (tag_array_ser.encode
+    (array (Tag "first" (Scored 1)) (Tag "second" (Scored 2)))))
+
+(define (serialize-record-two-elements) : toy.Value
+  (Sequence
+    (box
+      (toy.value-list-prepend
+        (Int 4)
+        (toy.value-list-prepend (Int 5) (toy.value-list-empty))))))
+
+(define (serialize-record-tags-first-bad-value) : toy.Value
+  (Sequence
+    (box
+      (toy.value-list-prepend
+        (Int 3)
+        (toy.value-list-prepend
+          (serialize-record-valid-tag-value)
+          (toy.value-list-empty))))))
+
+(define (serialize-record-error-is? [value : toy.Value] [expected : String]) : bool
+  (match (record_ser.decode value)
+    [(Ok _) false]
+    [(Err message) (string.eq message expected)]))
+
+(define (serialize-record-invalid-input-ok?) : bool
+  (and
+    ;; Every field after `name` is invalid too; the first field's error wins.
+    (serialize-record-error-is?
+      (serialize-record-object
+        (Int 3)
+        (Sequence (box (toy.value-list-empty)))
+        (Int 4)
+        (serialize-record-two-elements)
+        (serialize-record-tags-first-bad-value))
+      "toy format: expected string")
+    ;; Enum field: the `tag` object has no `tag` member.
+    (serialize-record-error-is?
+      (serialize-record-object
+        (Text "record")
+        (Object
+          (box
+            (toy.field-list-prepend
+              "payload"
+              (Sequence (box (toy.value-list-empty)))
+              (toy.field-list-empty))))
+        (serialize-record-valid-tag-value)
+        (serialize-record-valid-scores-value)
+        (serialize-record-valid-tags-value))
+      "toy format: missing field")
+    ;; Nested-struct field: `label` is an Int.
+    (serialize-record-error-is?
+      (serialize-record-object
+        (Text "record")
+        (Object
+          (box (toy.field-list-prepend "label" (Int 9) (toy.field-list-empty))))
+        (serialize-record-valid-tag-value)
+        (serialize-record-valid-scores-value)
+        (serialize-record-valid-tags-value))
+      "toy format: expected string")
+    ;; Box field: its inner value is not an object.
+    (serialize-record-error-is?
+      (serialize-record-object
+        (Text "record")
+        (serialize-record-valid-tag-value)
+        (Int 3)
+        (serialize-record-valid-scores-value)
+        (serialize-record-valid-tags-value))
+      "toy format: expected object")
+    ;; Fixed array of scalars: two elements for a length-three array.
+    (serialize-record-error-is?
+      (serialize-record-object
+        (Text "record")
+        (serialize-record-valid-tag-value)
+        (serialize-record-valid-tag-value)
+        (serialize-record-two-elements)
+        (serialize-record-valid-tags-value))
+      "serialize: sequence length mismatch")
+    ;; Fixed array of structs: element zero is not an object.
+    (serialize-record-error-is?
+      (serialize-record-object
+        (Text "record")
+        (serialize-record-valid-tag-value)
+        (serialize-record-valid-tag-value)
+        (serialize-record-valid-scores-value)
+        (serialize-record-tags-first-bad-value))
+      "toy format: expected object")))
+
 (define (serialize-missing-field-value) : toy.Value
   (Object
     (box (toy.field-list-prepend "name" (Text "Ada") (toy.field-list-empty)))))
@@ -736,4 +910,7 @@
   (unless (serialize-tuple-single-and-mixed-roots-ok?) (return 24))
   (unless (serialize-tuple-aggregate-root-roundtrip-ok?) (return 25))
   (unless (serialize-tuple-length-mismatch-ok?) (return 26))
+  (unless (serialize-record-roundtrip-ok?) (return 27))
+  (unless (serialize-status-place-root-roundtrip-ok?) (return 28))
+  (unless (serialize-record-invalid-input-ok?) (return 29))
   42)

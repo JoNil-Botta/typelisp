@@ -136,8 +136,8 @@ stdlib.serialize/encode-value	4	fixed	expr	tests/integration/stdlib_serialize_js
 stdlib.serialize/decode-value	5	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/encode-field	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/encode-fields	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
-stdlib.serialize/decode-field	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
-stdlib.serialize/decode-fields	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-field	5	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-fields	6	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/enum-source-import	2	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/nested-import-for-type	3	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/nested-imports-for-tuple	4	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

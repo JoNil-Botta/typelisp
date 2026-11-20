@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+5073.148	Arena phase-rewind and end checks: a phase's parent is part of its identity so a rewind ends later phases and their tokens, call arguments are borrowed instead of re-typed, and the #8173 arena-tie check runs per call; CI own cost over base d7010966 110681645660 -> 111243150046 Ir

@@ -373,9 +373,11 @@
   ;; path to scalar loads. The arena retains all three allocations for the job.
   (keys-address i64)
   (handles-address i64)
-  ;; Top-level move kind of the slot's declaration: 0 unknown, 1 Copyable,
-  ;; 2 MoveOnly. Every store of a key into a slot resets its kind, so a kind is
-  ;; only ever read beside the key and stamp it was classified under.
+  ;; Facts about the slot's declaration. Bits 0-1, its top-level move kind:
+  ;; 0 unknown, 1 Copyable, 2 MoveOnly. Bits 2-3, whether a value of it can
+  ;; hold a bare arena handle (`tc-nominal-can-hold-arena-handle?`): 0 unknown,
+  ;; 4 yes, 8 no. Every store of a key into a slot resets its facts, so a fact
+  ;; is only ever read beside the key and stamp it was classified under.
   (move-kinds-address i64)
   (symbols-owner i64)
   (symbols-generation i64))
@@ -10802,7 +10804,7 @@
 
 ;; Whether a value of type `ty` holds a region that ends: any region of an
 ;; `owners` brand (`tc-type-contains-arena-owner-region?`) or the phase
-;; `region` (-1 for none).
+;; `region` (-1 for none), which ends with the phases nested in it.
 (define (tc-selected-type-ends-region?
   [env : TcTypeEnv]
   [ty : ast.AstType]
@@ -10810,15 +10812,16 @@
   [region : i64]) : bool
   (let
     [cursor : TcNameIdList owners]
+    [regions : TcNameIdList (tc-type-collect-regions (& ty))]
     [found : bool
       (and
         (>= region 0)
-        (tc-type-contains-region (tc-global-shared-view ty) region))]
+        (tc-region-list-contains-arena-owner? env regions region))]
     (while (and (not found) (not (tc-name-id-list-empty? cursor)))
       (when
-        (tc-type-contains-arena-owner-region?
+        (tc-region-list-contains-arena-owner?
           env
-          (tc-global-shared-view ty)
+          regions
           (tc-name-id-list-head cursor))
         (set! found true))
       (set! cursor (tc-name-id-list-rest cursor)))
@@ -10911,6 +10914,108 @@
         (& (array-ref carrier.sidecar.stack.slots index))]
       (tc-cleanup-owner-marker-for? marker.name-id marker.ty slot.name-id))))
 
+;; Phase region `phase` ends: it is a phase of one of `owners`, or the rewound
+;; `region` (-1 for none) or a phase taken after it
+;; (`tc-phase-taken-after-region?`).
+(define (tc-selected-phase-ends?
+  [env : TcTypeEnv]
+  [phase : i64]
+  [owners : TcNameIdList]
+  [region : i64]) : bool
+  (let
+    [cursor : TcNameIdList owners]
+    [found : bool
+      (and (>= region 0) (tc-arena-region-owned-by-id? env region phase))]
+    (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+      (when
+        (tc-arena-region-owned-by-id? env (tc-name-id-list-head cursor) phase)
+        (set! found true))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    (or found (tc-phase-taken-after-region? env phase region))))
+
+;; Scoped slot `index` is a phase token whose phase ends
+;; (`tc-selected-phase-ends?`). A token's type carries no region: its phase is
+;; the region marker in the slot below it (`tc-bind-arena-phase-token`).
+(define (tc-selected-token-ends?
+  [env : TcTypeEnv]
+  [carrier : (& carrier TcTypeEnvScopedCarrier)]
+  [index : i64]
+  [owners : TcNameIdList]
+  [region : i64]) : bool
+  (and
+    (> index 0)
+    (< index (array-length carrier.sidecar.stack.slots))
+    (let
+      [marker : (& carrier TcTypeEnvScopedSlot)
+        (& (array-ref carrier.sidecar.stack.slots (- index 1)))]
+      [slot : (& carrier TcTypeEnvScopedSlot)
+        (& (array-ref carrier.sidecar.stack.slots index))]
+      (and
+        (match (cis.intern-structural-session-arena-phase-record-for-raw
+          (tc-type-env-structural-session env)
+          marker.name-id)
+          [(Some (TokenRegionMarker token)) (= token slot.name-id)]
+          [_ false])
+        (match (& marker.ty)
+          [(ast.AstType.Var phase)
+            (tc-selected-phase-ends? env phase owners region)]
+          [_ false])))))
+
+;; E0212 when an end's argument (each of `origins`, -1 for none) is a place
+;; rooted at a binder the enclosing closure captures (`o`, `state.arena`, a
+;; deeper projection or a deref, `tc-selected-place-root-name`): the end
+;; would be invisible to the closure's callers, which still hold the arena's
+;; values. The closure takes the arena as an `(:invalidate r)` parameter
+;; instead.
+(define (tc-selected-end-captured
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [kind : i64]
+  [origins : TcNameIdList]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [bindings : (& bindings TcSelectedBindings)]) : ResultTcUnit
+  (let
+    [cursor : TcNameIdList origins]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [origin-id : i64 (tc-name-id-list-head cursor)]
+        [origin : ast.AstExpr
+          (if (< origin-id 0)
+            (ast.AstExpr.Var -1)
+            (tc-context-expr-get ctx origin-id))]
+        [name : i64
+          (if (< origin-id 0)
+            -1
+            (tc-selected-place-root-name ctx origin-id))]
+        (when
+          (and
+            (>= name 0)
+            (match (tc-selected-named-binder env bindings name)
+              [(TcSelectedBinder.Found binder)
+                (match (typed.typed-binder-get! store lease binder)
+                  [(typed.TypedBinderView.Ok row)
+                    (match (& row.kind)
+                      [(typed.TypedBinderKind.Capture) true]
+                      [_ false])]
+                  [(typed.TypedBinderView.Err _) false])]
+              [(TcSelectedBinder.Unrepresented) false]))
+          (return
+            (ResultTcUnit.Err
+              (tc-locate-error-at-expr
+                (tc-context-expr-bases ctx)
+                origin
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.ArenaOwnership)
+                  (str_cat.str-cat
+                    "typecheck: "
+                    (tc-end-kind-operation kind)
+                    " cannot end an arena reached through `"
+                    (tc-env-key-name-text name)
+                    "`, which the closure captures; its callers would still hold the arena's values. Take it as an (:invalidate r) parameter"))))))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    ResultTcUnit.Ok))
+
 ;; The source spelling of an end of `kind` (`tc-selected-end`).
 (define (tc-end-kind-operation [kind : i64]) : String
   (cond
@@ -10950,7 +11055,7 @@
       (set! index (+ index 1)))
     (if (and
       (>= region 0)
-      (tc-type-contains-region (tc-global-shared-view held) region))
+      (tc-type-contains-arena-owner-region? env held region))
       index
       -1)))
 
@@ -11055,8 +11160,8 @@
           -1
           (tc-move-live-cleanup-owner-in-region
             (tc-global-shared-view env)
-            -1
-            region))]
+            region
+            -1))]
       (if (< live 0)
         ResultTcUnit.Ok
         (ResultTcUnit.Err
@@ -11077,9 +11182,11 @@
 ;; Each end publishes its occurrences here, after `call` (its type
 ;; `result-ty`). No live `with` cleanup owner may hold an ended region: the
 ;; legacy pre-check, then a `RequireUnheld` of the arena for every `with` owner
-;; whose binder holds one. Then an Invalidate for every binder in scope whose
-;; type holds an ended region (`tc-selected-type-ends-region?`; every scoped
-;; slot, so a shadowed binder counts too), and an EndBrand for every enclosing
+;; whose binder holds one. No end may name an arena the enclosing closure
+;; captures (`tc-selected-end-captured`). Then an Invalidate for every binder
+;; in scope whose type holds an ended region (`tc-selected-type-ends-region?`;
+;; every scoped slot, so a shadowed binder counts too) or that is a phase token
+;; of an ended phase (`tc-selected-token-ends?`), and an EndBrand for every enclosing
 ;; `:invalidate` parameter whose brand is among `owners`. A unit call is
 ;; followed by them in one unit sequence; a call yielding a value is held in a
 ;; temporary read after them. Typing has already rejected an end inside its
@@ -11171,6 +11278,20 @@
               (tc-selected-unrepresented
                 (ResultTcType.Ok result-ty)
                 (TcSelectedSink.Capture store lease bindings))))
+          (match (tc-selected-end-captured
+            ctx
+            env
+            kind
+            origins
+            store
+            lease
+            (& bindings))
+            [(ResultTcUnit.Err message)
+              (return
+                (TcSelectedResult.Err
+                  message
+                  (TcSelectedSink.Capture store lease bindings)))]
+            [(ResultTcUnit.Ok) unit])
           ;; The call first: whole, or held in a temporary.
           (if unit?
             (tc-selected-occurrences-push! (&mut children) call)
@@ -11331,6 +11452,13 @@
                             lease
                             (& binder)
                             env
+                            owners
+                            region)
+                          ;; A phase token of an ended phase ends with it.
+                          (tc-selected-token-ends?
+                            env
+                            (& carrier)
+                            index
                             owners
                             region))
                         ;; A thread handle of an atomic owner is required
@@ -18340,6 +18468,12 @@
   ;; The call's result type; a constructor's joins each argument's regions
   ;; (`tc-type-join-regions`), as the constructed value holds them.
   [constructed : (&mut constructed ast.AstType)]
+  ;; Each argument's type, in argument order, for
+  ;; `tc-call-erased-owner-result`: its identity walk never re-types an
+  ;; argument. Filled only when the call's result can hold an arena handle, the
+  ;; one case an erased owner's region can be tagged on it.
+  [collect-arg-types? : bool]
+  [arg-types : (&mut arg-types (__tl_dyn-array ast.AstType))]
   [arity-msg : TcArityMessage]
   ;; `tc-call-arena-store-region`, once per call.
   [arena-region : i64]
@@ -18559,6 +18693,9 @@
             [(TcSelectedResult.Err message next)
               (TcSelectedArgsResult.Err message next)]
             [(TcSelectedResult.Ok got child next)
+              (when
+                collect-arg-types?
+                (tc-selected-types-push! (&mut arg-types) (clone got)))
               (match (tc-match-call-type-for-expected
                 ctx
                 env
@@ -18599,7 +18736,8 @@
                         (tc-global-shared-view got)))
                     (not
                       (tc-type-regions-all-scratch? (tc-global-shared-view got)))
-                    (not (tc-type-contains-reference? (& got))))
+                    (not (tc-type-contains-reference? (& got)))
+                    (not (tc-tagged-arena-handle-borrow? ctx (clone got) want)))
                     (TcSelectedArgsResult.Err
                       (tc-region-call-arg-error
                         (tc-context-expr-bases ctx)
@@ -18646,6 +18784,8 @@
                             allow-region-args
                             constructor
                             constructed
+                            collect-arg-types?
+                            arg-types
                             arity-msg
                             arena-region
                             (+ index 1)
@@ -19093,6 +19233,8 @@
                     (tc-lifetime-subst-type subst declared-ret))]
                 [children : (__tl_dyn-array typed.TypedOccurrenceId)
                   (__tl_make-array typed.TypedOccurrenceId args.len)]
+                [arg-types : (__tl_dyn-array ast.AstType)
+                  (tc-selected-no-types)]
                 ;; A call through a function value reads the callee first.
                 (match (if (= key -2)
                   (tc-infer-selected-callee
@@ -19111,6 +19253,11 @@
                     (let
                       [constructed : ast.AstType
                         (tc-tag-active-region env (clone ret))]
+                      [collect-arg-types? : bool
+                        (tc-type-can-hold-arena-handle?
+                          ctx
+                          (clone constructed)
+                          Nil)]
                       (match (tc-infer-selected-call-args
                         ctx
                         env
@@ -19127,6 +19274,8 @@
                               (tc-global-shared-view ret)))
                           ast.AstMaybeType.No)
                         (&mut constructed)
+                        collect-arg-types?
+                        (&mut arg-types)
                         (TcArityMessage.Detailed
                           (tc-global-shared-view func)
                           (tc-global-shared-view args)
@@ -19167,8 +19316,9 @@
                                 (tc-check-invalidate-call
                                   ctx
                                   env
-                                  (tc-global-shared-view args)
-                                  (tc-global-shared-view params)
+                                  (& args)
+                                  (& declared-view)
+                                  (& params)
                                   (tc-global-shared-view ret)))])
                             [(ResultTcUnit.Err message)
                               (TcSelectedResult.Err message next)]
@@ -19213,7 +19363,15 @@
                                         syntax
                                         (tc-global-shared-view source)
                                         (tc-selected-publish-call
-                                          (ResultTcType.Ok constructed)
+                                          (if (= key -1)
+                                            (ResultTcType.Ok constructed)
+                                            (tc-call-erased-owner-result
+                                              ctx
+                                              env
+                                              (& args)
+                                              (& params)
+                                              (& arg-types)
+                                              constructed))
                                           ;; Key -1 names a constructor (no declaration),
                                           ;; -2 a call through a function value.
                                           (cond
@@ -27777,6 +27935,24 @@
         [_ (No)])]
     [_ (No)]))
 
+;; A region-tagged bare `arena.Arena` handle (a copy a call tied to its owner,
+;; `tc-call-erased-owner-result`) passed to a bare `arena.Arena` formal: the
+;; same non-consuming borrow as passing the owner, whose call result is tied to
+;; the owner again.
+(define (tc-tagged-arena-handle-borrow?
+  [ctx : TcContext]
+  [got : ast.AstType]
+  [want : ast.AstType]) : bool
+  (and
+    (match (tc-arena-target ctx got)
+      [(TcArenaTarget.Target (TcArenaTargetAccess.Value) _ (TcMaybeNameId.No))
+        true]
+      [_ false])
+    (match (tc-arena-target ctx want)
+      [(TcArenaTarget.Target (TcArenaTargetAccess.Value) _ (TcMaybeNameId.No))
+        true]
+      [_ false])))
+
 ;; A direct array read through a reference rvalue can produce a region-tagged
 ;; move-only aggregate. Keep the sound confinement rejection, but make this
 ;; frequent vector-iteration shape actionable without changing diagnostics for
@@ -32980,8 +33156,6 @@
                             (ResultTcType.Ok exit-ty)
                             after)])])]))])])))
 
-;; Selected and Query loops share the same non-contextual child inference and
-;; checks. A loop target becomes visible only after its condition was checked.
 ;; The owning expression attempt retires both children if either is unsupported.
 (define (tc-infer-selected-while
   [ctx : TcContext]
@@ -37530,13 +37704,34 @@
   (cis.intern-arena-phase-identity-raw
     (cis.intern-structural-session-arena-phase-identity session record)))
 
+;; The region the phase `token-id` binds under `owner-id` while the phase region
+;; `parent-region-id` is the owner's current one: `(Region owner-id binder)`, the
+;; binder being `(PhaseBinder token-id parent-region-id)`. A phase taken after
+;; another phase of the same owner is another id, so one id never needs two
+;; parents, and the parent is part of the identity: a value's region tag can be
+;; read back after the binder's scope closed.
+(define (tc-arena-phase-region-id-under
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [token-id : i64]
+  [parent-region-id : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session env)]
+    [binder : i64
+      (tc-arena-phase-record-id session (PhaseBinder token-id parent-region-id))]
+    (tc-arena-phase-record-id session (Region owner-id binder))))
+
+;; The phase region `token-id` binds under `owner-id` now.
 (define (tc-arena-phase-region-id
   [env : TcTypeEnv]
   [owner-id : i64]
   [token-id : i64]) : i64
-  (tc-arena-phase-record-id
-    (tc-type-env-structural-session env)
-    (Region owner-id token-id)))
+  (tc-arena-phase-region-id-under
+    env
+    owner-id
+    token-id
+    (tc-current-arena-owner-region env owner-id)))
 
 (define (tc-arena-phase-current-region-marker-id
   [env : TcTypeEnv]
@@ -37568,6 +37763,8 @@
 (define (tc-generated-name-id [name : String]) : i64
   (tc-generated-module-name-id name))
 
+;; Region `region-id` is `owner-id`, a phase of the arena `owner-id`, or a
+;; phase nested in the phase region `owner-id` (taken while it was current).
 (define (tc-arena-region-owned-by-id-for-session?
   [session : cis.InternStructuralSessionHandle]
   [owner-id : i64]
@@ -37591,6 +37788,8 @@
     owner-id
     region-id))
 
+;; A phase taken while another phase of `owner-id` is current records it as its
+;; parent (`tc-selected-phase-ends?`): rewinding that phase ends this one too.
 (define (tc-bind-arena-phase-token
   [env : TcTypeEnv]
   [token-id : i64]
@@ -37607,6 +37806,46 @@
         (Var owner-id))
       (tc-arena-phase-token-region-marker-id env token-id)
       (Var region-id))))
+
+;; The phase region `phase` was taken under, or -1: the owner itself (a first
+;; phase) or not a phase binder's region at all. Read from the record, so it
+;; outlives the binder's scope.
+(define (tc-phase-parent-region-id [env : TcTypeEnv] [phase : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-type-env-structural-session env)]
+    (match (cis.intern-structural-session-arena-phase-record-for-raw
+      session
+      phase)
+      [(Some (Region _ binder))
+        (match (cis.intern-structural-session-arena-phase-record-for-raw
+          session
+          binder)
+          [(Some (PhaseBinder _ parent)) parent]
+          [_ -1])]
+      [_ -1])))
+
+;; Phase `phase` was taken after `region` was its owner's current phase, under
+;; a phase that was: a rewind of `region` ends it too (#9480).
+(define (tc-phase-taken-after-region?
+  [env : TcTypeEnv]
+  [phase : i64]
+  [region : i64]) : bool
+  (if (< region 0)
+    false
+    (let
+      [cursor : i64 (tc-phase-parent-region-id env phase)]
+      [seen : TcNameIdList Nil]
+      [ended? : bool false]
+      (while (and
+        (>= cursor 0)
+        (not ended?)
+        (not (tc-name-id-list-contains seen cursor)))
+        (set! seen (tc-name-id-list-add seen cursor))
+        (if (= cursor region)
+          (set! ended? true)
+          (set! cursor (tc-phase-parent-region-id env cursor))))
+      ended?)))
 
 ;; Threshold compaction (`tc-env-compact-local-if-threshold`) can put a
 ;; transparent cache layer between a token's own binding and its markers. Such
@@ -37739,10 +37978,67 @@
       [(Some (Var region)) region]
       [_ owner])))
 
+;; An end of `owner` runs while its arena is active: the innermost active
+;; region, or any enclosing one, is owned by it. A `with-arena` region inside
+;; `(in-arena owner ...)` is carved from the owner's arena (#9502).
 (define (tc-active-region-owned-by-arena-id? [env : TcTypeEnv] [owner : i64]) : bool
-  (match (tc-active-region env)
-    [(Some region) (tc-arena-region-owned-by-id? env owner region)]
-    [(No) false]))
+  (or
+    (match (tc-active-region env)
+      [(Some region) (tc-arena-region-owned-by-id? env owner region)]
+      [(No) false])
+    (if (tc-type-env-scoped-runtime-active? env)
+      (let
+        [carrier : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-runtime-current env)]
+        [index : i64
+          (-
+            (if (<
+              carrier.sidecar.stack.slot-count
+              (array-length carrier.sidecar.stack.slots))
+              carrier.sidecar.stack.slot-count
+              (array-length carrier.sidecar.stack.slots))
+            1)]
+        (while (>= index 0)
+          (let
+            [slot : (& carrier TcTypeEnvScopedSlot)
+              (& (array-ref carrier.sidecar.stack.slots index))]
+            (when
+              (and
+                (= slot.name-id (tc-region-marker-id))
+                (tc-region-marker-owned-by? env (& slot.ty) owner))
+              (return true))
+            (set! index (- index 1))))
+        (tc-region-markers-owned-by-scan?
+          env
+          (tc-type-env-scoped-sidecar-persistent carrier.sidecar)
+          owner))
+      (tc-region-markers-owned-by-scan? env env owner))))
+
+;; Active region marker type `ty` names a region of `owner`.
+(define (tc-region-marker-owned-by?
+  [env : TcTypeEnv]
+  [ty : (& ty ast.AstType)]
+  [owner : i64]) : bool
+  (match ty
+    [(or (Var region) (Region region _))
+      (tc-arena-region-owned-by-id? env owner region)]
+    [_ false]))
+
+;; Some region marker on the spine of `scan` names a region of `owner`.
+(define (tc-region-markers-owned-by-scan?
+  [env : TcTypeEnv]
+  [scan : TcTypeEnv]
+  [owner : i64]) : bool
+  (match (tc-type-env-view scan)
+    [(Nil) false]
+    [(Cache _ scan-through _ rest _)
+      (and scan-through (tc-region-markers-owned-by-scan? env rest owner))]
+    [(Bind key ty rest)
+      (or
+        (and
+          (= key (tc-region-marker-id))
+          (tc-region-marker-owned-by? env (& ty) owner))
+        (tc-region-markers-owned-by-scan? env rest owner))]))
 
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
@@ -40243,6 +40539,8 @@
 (define (tc-type-collect-regions [ty : (& ty ast.AstType)]) : TcNameIdList
   (tc-type-collect-regions-into ty Nil))
 
+;; A region of `regions` ends with `owner`: it is `owner`, a phase of it, or a
+;; phase taken after the phase `owner` (`tc-phase-taken-after-region?`).
 (define (tc-region-list-contains-arena-owner?
   [env : TcTypeEnv]
   [regions : TcNameIdList]
@@ -40251,9 +40549,13 @@
     [cursor : TcNameIdList regions]
     [found : bool false]
     (while (and (not found) (not (tc-name-id-list-empty? cursor)))
-      (if (tc-arena-region-owned-by-id? env owner (tc-name-id-list-head cursor))
-        (set! found true)
-        unit)
+      (let
+        [region : i64 (tc-name-id-list-head cursor)]
+        (if (or
+          (tc-arena-region-owned-by-id? env owner region)
+          (tc-phase-taken-after-region? env region owner))
+          (set! found true)
+          unit))
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
 
@@ -44874,8 +45176,10 @@
       (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
     (if (= address (cast 0 : u64))
       0
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr i64)))))))
+      (bit-and
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        3))))
 
 (define (tc-type-handle-cache-move-kind-set!
   [nominal-state : TcNominalCacheState]
@@ -44888,7 +45192,40 @@
     (if (= address (cast 0 : u64))
       unit
       (unsafe
-        (ptr-write! (int->ptr address : (MutPtr i64)) kind)))))
+        (ptr-write!
+          (int->ptr address : (MutPtr i64))
+          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 12) kind))))))
+
+;; The arena-handle fact of LOOKUP-ID's slot (4 yes, 8 no, 0 unknown), in the
+;; move-kind lane's bits 2-3.
+(define (tc-type-handle-cache-arena-handle
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : i64
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      0
+      (bit-and
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        12))))
+
+(define (tc-type-handle-cache-arena-handle-set!
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]
+  [fact : i64]) : unit
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      unit
+      (unsafe
+        (ptr-write!
+          (int->ptr address : (MutPtr i64))
+          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 3) fact))))))
 
 (define (tc-type-handle-cache-lookup-id
   [nominal-state : TcNominalCacheState]
@@ -51109,6 +51446,295 @@
   (let
     [completed : TcNameIdList (One -64)]
     (tc-type-move-kind-with-stack ctx ty Nil (&mut completed))))
+
+;; A value of type `ty` can hold a bare `arena.Arena` handle: the handle, a
+;; function (a closure can capture one), or an owned aggregate with such an
+;; element, field or payload. References and pointers do not own their
+;; referent. `stack` holds the nominals being walked.
+(define (tc-type-can-hold-arena-handle?
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [stack : TcNameIdList]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(Func _ _) true]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
+      (or
+        (tc-arena-nominal-name-id? name)
+        (tc-nominal-can-hold-arena-handle? ctx name stack))]
+    [(Tuple elems)
+      (tc-type-list-can-hold-arena-handle?
+        ctx
+        (ast.ast-type-list-box-shared-view elems)
+        stack)]
+    [(or (Array inner _) (DynArray inner) (Box inner) (Invalidate _ inner))
+      (tc-type-can-hold-arena-handle? ctx (tc-context-type-get ctx inner) stack)]
+    [_ false]))
+
+(define (tc-type-list-can-hold-arena-handle?
+  [ctx : TcContext]
+  [types : ast.AstTypeList]
+  [stack : TcNameIdList]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index (ast.ast-type-list-len (& types))))
+      (when
+        (tc-type-can-hold-arena-handle?
+          ctx
+          (tc-context-type-get
+            ctx
+            (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))
+          stack)
+        (set! found true))
+      (set! index (+ index 1)))
+    found))
+
+(define (tc-nominal-can-hold-arena-handle?
+  [ctx : TcContext]
+  [name-id : i64]
+  [stack : TcNameIdList]) : bool
+  (let
+    [nominal-state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
+    [cached : i64
+      (tc-type-handle-cache-arena-handle
+        nominal-state
+        (tc-context-symbols-ref (& ctx))
+        name-id)]
+    (cond
+      [(= cached 4) true]
+      [(= cached 8) false]
+      [else
+        (let
+          [answer : bool
+            (tc-nominal-can-hold-arena-handle-walk ctx name-id stack)]
+          ;; A yes holds on every path; a no is final only for a walk from no
+          ;; enclosing nominal, since one cut off by `stack` is partial.
+          (when
+            (or
+              answer
+              (match stack
+                [(Nil) true]
+                [_ false]))
+            (tc-type-handle-cache-arena-handle-set!
+              nominal-state
+              (tc-context-symbols-ref (& ctx))
+              name-id
+              (if answer
+                4
+                8)))
+          answer)])))
+
+(define (tc-nominal-can-hold-arena-handle-walk
+  [ctx : TcContext]
+  [name-id : i64]
+  [stack : TcNameIdList]) : bool
+  (let
+    [handle : i64
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache (tc-context-job-state ctx))
+        (tc-context-symbols-ref (& ctx))
+        name-id
+        tc-type-handle-lookup-caller-aggregate-layout)]
+    [nominal-id : i64
+      (if (csym.compiler-symbols-handle-found? handle)
+        (tc-nominal-owner-id-or ctx handle name-id)
+        -1)]
+    (if (or (< nominal-id 0) (tc-name-id-list-contains stack nominal-id))
+      false
+      (let
+        [owner-ctx : TcContext
+          (tc-context-with-nominal-owner-index-module
+            ctx
+            (csym.compiler-symbol-handle-index handle))]
+        [next : TcNameIdList (tc-name-id-list-add stack nominal-id)]
+        (match (csym.compiler-symbols-decl-at-index
+          (tc-context-symbols-ref (& owner-ctx))
+          (csym.compiler-symbol-handle-index handle))
+          [(Ok decl)
+            (match decl
+              [(or (DefStruct _ _ _ _ fields)
+                   (DefStructLifetimes _ _ _ _ _ fields))
+                (tc-type-list-can-hold-arena-handle?
+                  owner-ctx
+                  (tc-field-type-list owner-ctx fields)
+                  next)]
+              [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
+                (let
+                  [index : i64 0]
+                  [found : bool false]
+                  (while (and (not found) (< index variants.len))
+                    (match (ast.ast-variant-def-list-get
+                      (& variants)
+                      index
+                      (ast.ast-variant-def-fallback))
+                      [(Def _ payloads _)
+                        (when
+                          (tc-type-list-can-hold-arena-handle?
+                            owner-ctx
+                            (tc-resolve-type-list owner-ctx payloads)
+                            next)
+                          (set! found true))])
+                    (set! index (+ index 1)))
+                  found)]
+              [_ false])]
+          [(Err _) false])))))
+
+;; A formal of type `ty` reaches a bare `arena.Arena` handle: the handle, a
+;; reference to one, or a value that can hold one
+;; (`tc-type-can-hold-arena-handle?`). A branded or `:invalidate` formal ties
+;; the call through its lifetime instead, and a function formal is a callback.
+(define (tc-formal-reaches-bare-arena? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx (clone ty)))
+    [(or (Ref _ inner) (MutRef _ inner))
+      (tc-formal-reaches-bare-arena? ctx (tc-context-type-get ctx inner))]
+    [(or (Invalidate _ _) (Func _ _)) false]
+    [(or (Struct name) (StructArgs name _))
+      (if (tc-arena-nominal-name-id? name)
+        (match (tc-arena-branded-region ctx ty)
+          [(Some _) false]
+          [(No) true])
+        (tc-type-can-hold-arena-handle? ctx ty Nil))]
+    [_ (tc-type-can-hold-arena-handle? ctx ty Nil)]))
+
+;; The arena identities argument `arg` (of type `actual`) carries: the arena
+;; regions of its type (a branded owner's brand, a handle tagged by an earlier
+;; call), and the owner local its place is rooted at, through a borrow.
+(define (tc-call-arg-arena-identities
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [actual : (& actual ast.AstType)]) : TcNameIdList
+  (let
+    [cursor : TcNameIdList (tc-type-collect-regions actual)]
+    [out : TcNameIdList Nil]
+    [place-id : i64
+      (match (ast.ast-expr-unspan (& (tc-context-expr-get ctx arg-id)))
+        [(ast.AstExpr.Borrow _ _ place) place]
+        [_ arg-id])]
+    [root : i64 (tc-selected-place-root-name ctx place-id)]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [region : i64 (tc-name-id-list-head cursor)]
+        (when
+          (and
+            (tc-selected-arena-region? env region)
+            (not (tc-name-id-list-contains out region)))
+          (set! out (tc-name-id-list-add out region)))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    (if (and
+      (>= root 0)
+      (or
+        (tc-ordinary-arena-owner-active-id? env root)
+        (tc-atomic-arena-owner-active-id? env root)))
+      (let
+        [identity : i64 (tc-arena-owner-identity ctx env root)]
+        (if (tc-name-id-list-contains out identity)
+          out
+          (tc-name-id-list-add out identity)))
+      out)))
+
+;; A call passing an arena owner or a handle copied from one (a branded owner,
+;; a tracked bare owner local, a handle a call tagged, or a reference to any of
+;; them) to a formal that reaches a bare `arena.Arena` handle
+;; (`tc-formal-reaches-bare-arena?`) does not consume it. The callee may return
+;; a copy of the handle (#8173), so a result `ty` that can hold one
+;; (`tc-type-can-hold-arena-handle?`) carries the owner's region and ends with
+;; it. A result type that cannot carry a region tag (a function, a fixed array)
+;; is rejected instead.
+(define (tc-call-erased-owner-result
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]
+  ;; Each argument's type, as the call site typed it. Typing an argument again
+  ;; here is what made a nested `(pass (pass ...))` chain exponential.
+  [arg-types : (& arg-types (__tl_dyn-array ast.AstType))]
+  [ty : ast.AstType]) : ResultTcType
+  ;; Most results cannot hold a handle: one walk, before any formal's.
+  (unless (tc-type-can-hold-arena-handle? ctx (clone ty) Nil) (return (Ok ty)))
+  (let
+    [index : i64 0]
+    [reaches? : bool false]
+    [regions : TcNameIdList Nil]
+    [first-arg-id : i64 -1]
+    (while (and (< index (ast.ast-type-list-len params)) (< index args.len))
+      (let
+        [arg-id : i64 (ast.ast-expr-list-get (& args) index 0)]
+        (when
+          (tc-formal-reaches-bare-arena?
+            ctx
+            (tc-context-type-get
+              ctx
+              (ast.ast-type-list-get
+                (& params)
+                index
+                (ast.ast-type-id-fallback))))
+          (set! reaches? true)
+          (when
+            (< index (array-length arg-types))
+            (let
+              [found : TcNameIdList
+                (tc-call-arg-arena-identities
+                  ctx
+                  env
+                  arg-id
+                  (& (array-ref arg-types index)))]
+              (unless
+                (tc-name-id-list-empty? found)
+                (when (< first-arg-id 0) (set! first-arg-id arg-id))
+                (let
+                  [cursor : TcNameIdList found]
+                  (while (not (tc-name-id-list-empty? cursor))
+                    (set!
+                      regions
+                      (tc-name-id-list-add
+                        regions
+                        (tc-name-id-list-head cursor)))
+                    (set! cursor (tc-name-id-list-rest cursor)))))))))
+      (set! index (+ index 1)))
+    (unless reaches? (return (Ok ty)))
+    (if (tc-name-id-list-empty? regions)
+      (Ok ty)
+      (begin
+        (unless
+          (tc-region-taggable-type? (clone ty))
+          (return
+            (Err
+              (tc-locate-error-at-expr
+                (tc-context-expr-bases ctx)
+                (tc-context-expr-get ctx first-arg-id)
+                (tc-kind-message
+                  (ArenaOwnership)
+                  "typecheck: this call's result type cannot carry the region of the arena owner passed to it (a function or fixed-array result cannot), so a copy of the owner's handle could outlive the owner's end; take the parameter as `(arena.Arena r)`")))))
+        ;; A region the result already carries is not tagged twice.
+        (let
+          [held : TcNameIdList (tc-type-outer-regions (clone ty))]
+          (Ok (tc-tag-regions (tc-name-id-list-difference regions held) ty)))))))
+
+;; Each argument's type in argument order, typed only where the formal reaches
+;; a bare `arena.Arena` handle: the identity walk never looks at the others, and
+;; typing an argument is what a chain of nested calls must not pay twice.
+(define (tc-call-argument-types
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]) : (__tl_dyn-array ast.AstType)
+  (let
+    [index : i64 0]
+    [types : (__tl_dyn-array ast.AstType) (tc-selected-no-types)]
+    (while (and (< index args.len) (< index (ast.ast-type-list-len params)))
+      (if (tc-formal-reaches-bare-arena?
+        ctx
+        (tc-context-type-get
+          ctx
+          (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback))))
+        (match (tc-expr-id ctx env (ast.ast-expr-list-get (& args) index 0))
+          [(Ok actual) (tc-selected-types-push! (&mut types) actual)]
+          [(Err _) (tc-selected-types-push! (&mut types) ast.AstType.Unit)])
+        (tc-selected-types-push! (&mut types) ast.AstType.Unit))
+      (set! index (+ index 1)))
+    types))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
@@ -61327,10 +61953,25 @@
             (match (tc-check-invalidate-call
               ctx
               env
-              args
-              resolved-params
+              (& args)
+              (& params)
+              (& resolved-params)
               (tc-global-shared-view resolved-ret))
-              [(Ok) (Ok (tc-tag-active-region env resolved-ret))]
+              [(Ok)
+                (let
+                  [arg-types : (__tl_dyn-array ast.AstType)
+                    (tc-call-argument-types
+                      ctx
+                      env
+                      (& args)
+                      (& resolved-params))]
+                  (tc-call-erased-owner-result
+                    ctx
+                    env
+                    (& args)
+                    (& resolved-params)
+                    (& arg-types)
+                    (tc-tag-active-region env resolved-ret)))]
               [(Err message) (Err message)])]
           [(Err message) (Err message)])]
       [(Err message) (Err message)])))
@@ -61478,17 +62119,22 @@
 ;; substitution each invalidated brand must be one the caller may end (a local
 ;; arena's brand, or a lifetime the caller itself invalidates), no two
 ;; arguments may invalidate the same brand, the call cannot run inside that
-;; arena, and its result cannot carry the brand.
+;; arena, and its result cannot carry the brand. No other argument can carry
+;; it either unless its `declared` formal names the brand's lifetime (#9537):
+;; any other formal outlives the call, which ends the arena.
 (define (tc-check-invalidate-call
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
+  [args : (& args ast.AstExprList)]
+  [declared : (& declared ast.AstTypeList)]
+  [params : (& params ast.AstTypeList)]
   [ret : ast.AstType]) : ResultTcUnit
   (unless (tc-invalidate-types-present?) (return Ok))
   (let
     [index : i64 0]
     [seen : TcNameIdList Nil]
+    ;; The declared lifetime of each of `seen`, in the same order.
+    [lifetimes : TcNameIdList Nil]
     [failure : String ""]
     [failed? : bool false]
     (while (and
@@ -61515,7 +62161,20 @@
                   "typecheck: an :invalidate call cannot return a value tied to the arena it destroys"]
                 [else ""])]
             (if (= (string.string-length message) 0)
-              (set! seen (tc-name-id-list-add seen brand))
+              (begin
+                (set! seen (tc-name-id-list-add seen brand))
+                (set!
+                  lifetimes
+                  (tc-name-id-list-add
+                    lifetimes
+                    (match (tc-type-invalidate-lifetime
+                      (ast.ty-node-get
+                        (ast.ast-type-list-get
+                          (& declared)
+                          index
+                          (ast.ast-type-id-fallback))))
+                      [(Some lifetime) lifetime]
+                      [(No) -1]))))
               (begin
                 (set! failed? true)
                 (set!
@@ -61527,6 +62186,61 @@
                       (ast.ast-expr-list-get (& args) index 0))
                     (tc-kind-message (ArenaOwnership) message))))))]
         [(No) unit])
+      (+= index 1))
+    (set! index 0)
+    (while (and
+      (not failed?)
+      (not (tc-name-id-list-empty? seen))
+      (< index (ast.ast-type-list-len (& params)))
+      (< index args.len))
+      (match (tc-type-invalidate-lifetime
+        (ast.ty-node-get
+          (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback))))
+        [(Some _) unit]
+        [(No)
+          (let
+            [arg : ast.AstExpr
+              (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) index 0))]
+            [named : TcNameIdList
+              (tc-type-collect-regions
+                (&
+                  (ast.ty-node-get
+                    (ast.ast-type-list-get
+                      (& declared)
+                      index
+                      (ast.ast-type-id-fallback)))))]
+            (match (tc-expr ctx env arg)
+              [(Ok actual)
+                (let
+                  [brand-cursor : TcNameIdList seen]
+                  [lifetime-cursor : TcNameIdList lifetimes]
+                  (while (and
+                    (not failed?)
+                    (not (tc-name-id-list-empty? brand-cursor)))
+                    (when
+                      (and
+                        (tc-type-contains-arena-owner-region?
+                          env
+                          (clone actual)
+                          (tc-name-id-list-head brand-cursor))
+                        (not
+                          (tc-name-id-list-contains
+                            named
+                            (tc-name-id-list-head lifetime-cursor))))
+                      (set! failed? true)
+                      (set!
+                        failure
+                        (tc-locate-error-at-expr
+                          (tc-context-expr-bases ctx)
+                          (tc-global-shared-view arg)
+                          (tc-kind-message
+                            (ArenaOwnership)
+                            "typecheck: an :invalidate call cannot pass a value tied to the arena it destroys under a formal that does not name the arena's lifetime"))))
+                    (set! brand-cursor (tc-name-id-list-rest brand-cursor))
+                    (set!
+                      lifetime-cursor
+                      (tc-name-id-list-rest lifetime-cursor))))]
+              [(Err _) unit]))])
       (+= index 1))
     (if failed?
       (Err failure)
@@ -61720,9 +62434,6 @@
     [(= kind (tc-arena-safe-call-kind-destroy)) 12]
     [else 0]))
 
-;; The symbol handles and indices of `stdlib.arena`'s `phase`, `rewind-safe!`
-;; and `destroy-safe!` (missing and -1 when absent), read from the value map of
-;; the stamp below (`tc-arena-safe-declarations-refresh!`).
 (define tc-arena-safe-stamp-owner : i64
   0)
 (define tc-arena-safe-stamp-generation : i64
@@ -62018,12 +62729,31 @@
                 (if (or
                   (tc-ordinary-arena-owner-active-id? env oid)
                   (tc-atomic-arena-owner-active-id? env oid))
-                  (Some oid)
+                  (Some (tc-arena-owner-identity ctx env oid))
                   (No))
                 (No)))
             (No)))
         (No))]
     [_ (No)]))
+
+;; The identity a direct owner local `owner` allocates and ends under: its
+;; brand when its type is a branded owner (`tc-in-arena-region`,
+;; `tc-destroy-safe-owner-place-id`), else the local itself.
+(define (tc-arena-owner-identity
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner : i64]) : i64
+  (match (tc-lookup-id env owner)
+    [(Ok ty)
+      (match (tc-arena-branded-region ctx ty)
+        [(Some brand)
+          (if (or
+            (tc-ordinary-arena-owner-active-id? env brand)
+            (tc-atomic-arena-owner-active-id? env brand))
+            brand
+            owner)]
+        [(No) owner])]
+    [(Err _) owner]))
 
 (define (tc-bind-arena-owner-from-kind-id
   [ctx : TcContext]
@@ -63994,10 +64724,17 @@
                           ctx
                           env
                           func
-                          args
-                          params
+                          (tc-global-shared-view args)
+                          (tc-global-shared-view params)
                           (tc-global-shared-view ret)))]
-                    (Ok
+                    [arg-types : (__tl_dyn-array ast.AstType)
+                      (tc-call-argument-types ctx env (& args) (& params))]
+                    (tc-call-erased-owner-result
+                      ctx
+                      env
+                      (& args)
+                      (& params)
+                      (& arg-types)
                       (tc-tag-regions
                         spawn-owner-regions
                         (tc-tag-active-region env ret)))))
@@ -64219,7 +64956,9 @@
                       (not
                         (tc-type-regions-all-scratch?
                           (tc-global-shared-view got)))
-                      (not (tc-type-contains-reference? (& got))))
+                      (not (tc-type-contains-reference? (& got)))
+                      (not
+                        (tc-tagged-arena-handle-borrow? ctx (clone got) want)))
                       (Err
                         (tc-region-call-arg-error
                           (tc-context-expr-bases ctx)
@@ -89176,7 +89915,8 @@
   [arena : ast.AstExpr]
   [arena-ty : ast.AstType]) : TcMaybeNameId
   (match (tc-arena-branded-region ctx arena-ty)
-    [(Some region) (Some region)]
+    ;; A branded owner allocates in its current phase, as a bare one does.
+    [(Some region) (Some (tc-current-arena-owner-region env region))]
     [(No)
       (match (tc-in-arena-owner (tc-context-expr-segment-bases ctx) env arena)
         [(Some owner) (Some (tc-current-arena-owner-region env owner))]

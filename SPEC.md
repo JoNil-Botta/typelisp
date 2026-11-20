@@ -7124,10 +7124,15 @@ proof in section 6.5.
 non-lexical invalidation surface for first-class arena owners. `arena.phase`
 and `arena.rewind-safe!` remain limited to direct local owners initialized by
 `arena.make` or `arena.make-atomic`. `arena.phase` records the runtime mark and
-advances the checker's generation for later `(in-arena owner ...)` allocations.
+advances the checker's generation for later `(in-arena owner ...)` allocations,
+whether the owner is bare-annotated or branded. A phase taken while another
+phase of the same owner is current is nested in it, since its mark is at or
+after that phase's mark.
 `arena.rewind-safe!` consumes a direct local phase token and is accepted only
 when no live value, reference, borrow, closure capture, or container slot can
-reach an allocation from the token's generation. For atomic owners, the checker
+reach an allocation from the token's generation or a generation nested in it.
+The tokens of the nested phases end with it, and `arena.destroy-safe!` of an
+owner ends every phase token of the owner. For atomic owners, the checker
 also requires every checker-visible thread user of the owner to have been joined
 or otherwise moved through an accepted release point before the rewind.
 `arena.destroy-safe!` consumes either such a direct local owner or a branded
@@ -7137,9 +7142,13 @@ reference, borrow, closure, or aggregate/container value whose resolved type or
 capture provenance contains `r` becomes unusable. A parameter or
 parameter-rooted place of brand `r` is accepted only when a parameter of the
 enclosing function or lambda declares `(:invalidate r)`; a nested lambda never
-inherits its enclosing function's effect. Atomic brands require the same
-joined-user proof. Both calls are rejected while executing inside the same owner through
-`in-arena`, because the active allocation target would be invalidated by the
+inherits its enclosing function's effect. A closure cannot end an owner or
+phase token it captures: its callers would still hold the arena's values, so
+it takes the arena as an `(:invalidate r)` parameter instead. Atomic brands
+require the same joined-user proof. Both calls are rejected while the owner is
+active anywhere on the activation stack: inside `(in-arena owner ...)`,
+including through a nested `with-arena`, whose region is carved from the
+owner's arena. The active allocation target would be invalidated by the
 operation. They are also rejected while a live `with` cleanup owner (section
 5.19) carries the destroyed brand or the rewound phase generation: that owner
 is not merely made unusable, because its cleanup runs when its scope ends.
@@ -7173,8 +7182,18 @@ original reports "use of moved value".
 
 Two cases do not move the owner:
 
-- Passing it as a call argument to a bare `arena.Arena` parameter is a
-  non-consuming borrow.
+- Passing it as a call argument to a bare `arena.Arena` parameter, or to a
+  parameter that reaches one (a reference to it, or a value that can hold one),
+  is a non-consuming borrow. The callee may return a copy of the handle, so a
+  result whose type can hold an `arena.Arena` handle (the handle, a function,
+  a struct, enum, tuple or container holding one) carries the owner's brand, or
+  the bare-annotated owner itself, and ends with the owner. A handle so
+  tagged can be passed on to a bare `arena.Arena` parameter, the same borrow,
+  and that call's result is tagged again. Any other region-tagged argument,
+  such as a struct holding the tagged handle, stays rejected at a parameter
+  that does not carry a region (the general region-escape rule). A result type
+  that cannot carry the tag rejects the call: a function, and a fixed array
+  until arrays carry region tags.
 - A closure that captures an atomic owner becomes one of the owner's
   checker-visible users, which its destroy or rewind must see joined or
   released.
@@ -7221,7 +7240,9 @@ At a call, the checker substitutes `r` from the argument's type and applies the
 same checks as a direct `arena.destroy-safe!` of that brand: it must be a local
 arena's brand or a lifetime the caller itself invalidates, two arguments cannot
 invalidate the same brand, the call cannot run inside that arena through
-`in-arena`, and the call's result type cannot contain the brand. After the
+`in-arena`, and the call's result type cannot contain the brand. No other
+argument can carry the brand either, unless its declared formal type names
+`r`: any other formal lifetime outlives the call, which ends the arena. After the
 arguments move, every caller local, reference, borrow, closure capture, and
 aggregate or container value carrying the brand becomes unusable; atomic users
 must already be joined or released and no live `with` cleanup owner may carry

@@ -1440,11 +1440,9 @@ arena_closure_call_result_escape_reject|check-fail|tests/safety/arena_closure_ca
 # borrow of an arena value has the arena as its lifetime (a plain reference
 # lifetime, as in format_writer_capabilities, does not tag it).
 arena_closure_reference_field_store_reject|check-fail|tests/safety/arena_closure_reference_field_store_reject.tl|-|cannot store region-tagged value into assignment
-# KNOWN OPEN, pre-existing and unsafe (accepted, reads reclaimed storage):
-# tracked in #9479 / D-C47 S2. A branded `in-arena` allocates in the brand, not
-# the owner's live phase, so a rewind does not see the owner. This row must flip
-# to check-fail when S2 lands.
-with_owner_rewind_unannotated_known_open|check-ok|tests/safety/with_owner_rewind_unannotated_known_open.tl|-|-
+# A branded `in-arena` allocates in the owner's live phase (#9479), so a rewind
+# sees a `with` owner allocated in that phase.
+with_owner_rewind_unannotated_reject|check-fail|tests/safety/with_owner_rewind_unannotated_reject.tl|-|arena.rewind-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
 # Every end kind runs typing's in-arena self-check before the end operator: an
 # end inside its own arena is that error even while a `with` owner holds it.
 with_owner_end_inside_arena_destroy_reject|check-fail|tests/safety/with_owner_end_inside_arena_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot run inside the arena it destroys
@@ -1603,6 +1601,54 @@ arena_phase_token_after_25_locals_ok|run-exit|tests/safety/arena_phase_token_aft
 arena_phase_token_after_57_locals_ok|run-exit|tests/safety/arena_phase_token_after_57_locals_ok.tl|42|-
 arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
 arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`
+# A phase of a branded owner covers its allocations (#9479). Rewinding a
+# phase ends the phases taken after it and their tokens (#9480), and destroying
+# an owner ends its tokens (#9788). Values from before the phase stay usable.
+arena_phase_rewind_branded_reject|check-fail|tests/safety/arena_phase_rewind_branded_reject.tl|-|use of moved value `t`
+arena_phase_rewind_branded_string_reject|check-fail|tests/safety/arena_phase_rewind_branded_string_reject.tl|-|use of moved value `text`
+arena_phase_rewind_branded_pre_phase_defined|run-exit|tests/safety/arena_phase_rewind_branded_pre_phase_defined.tl|42|-
+arena_phase_rewind_outer_later_value_reject|check-fail|tests/safety/arena_phase_rewind_outer_later_value_reject.tl|-|use of moved value `v`
+arena_phase_rewind_outer_later_token_reject|check-fail|tests/safety/arena_phase_rewind_outer_later_token_reject.tl|-|use of moved value `ph2`
+arena_phase_rewind_outer_pre_phase_defined|run-exit|tests/safety/arena_phase_rewind_outer_pre_phase_defined.tl|42|-
+arena_phase_rewind_after_destroy_reject|check-fail|tests/safety/arena_phase_rewind_after_destroy_reject.tl|-|use of moved value `p`
+arena_phase_rewind_after_destroy_with_reject|check-fail|tests/safety/arena_phase_rewind_after_destroy_with_reject.tl|-|cleanup owner `p` moved before with scope exit
+# A branded owner's phase covers a constructor result, a `box`, a capturing
+# closure, a `with-scratch` clone, a match binder and a branded owner field
+# allocated through `in-arena` (#9479).
+arena_phase_rewind_constructor_reject|check-fail|tests/safety/arena_phase_rewind_constructor_reject.tl|-|use of moved value `h`
+arena_phase_rewind_box_reject|check-fail|tests/safety/arena_phase_rewind_box_reject.tl|-|use of moved value `b`
+arena_phase_rewind_closure_reject|check-fail|tests/safety/arena_phase_rewind_closure_reject.tl|-|use of moved value `f`
+arena_phase_rewind_with_scratch_reject|check-fail|tests/safety/arena_phase_rewind_with_scratch_reject.tl|-|use of moved value `text`
+arena_phase_rewind_match_binder_reject|check-fail|tests/safety/arena_phase_rewind_match_binder_reject.tl|-|use of moved value `text`
+arena_phase_rewind_branded_field_reject|check-fail|tests/safety/arena_phase_rewind_branded_field_reject.tl|-|use of moved value `text`
+# A phase taken after another ends with it wherever its binder sat: an inner
+# `let`, a shadowed token name, and a chain longer than any fixed depth (#9480).
+arena_phase_inner_scope_annotated_reject|check-fail|tests/safety/arena_phase_inner_scope_annotated_reject.tl|-|use of moved value `v`
+arena_phase_inner_scope_branded_reject|check-fail|tests/safety/arena_phase_inner_scope_branded_reject.tl|-|use of moved value `v`
+arena_phase_shadowed_token_reject|check-fail|tests/safety/arena_phase_shadowed_token_reject.tl|-|use of moved value `v`
+arena_phase_rewind_seventy_phases_reject|check-fail|tests/safety/arena_phase_rewind_seventy_phases_reject.tl|-|use of moved value `v`
+# An end cannot run while its arena is active anywhere on the stack, including
+# under a nested `with-arena` (#9502), nor end an arena a closure captures
+# (#9482).
+arena_end_nested_with_arena_reject|check-fail|tests/safety/arena_end_nested_with_arena_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
+arena_end_nested_with_arena_other_defined|run-exit|tests/safety/arena_end_nested_with_arena_other_defined.tl|42|-
+arena_end_lambda_captured_reject|check-fail|tests/safety/arena_end_lambda_captured_reject.tl|-|arena.destroy-safe! cannot end an arena reached through `o`, which the closure captures
+arena_end_lambda_captured_field_reject|check-fail|tests/safety/arena_end_lambda_captured_field_reject.tl|-|arena.destroy-safe! cannot end an arena reached through `state`, which the closure captures
+# An `:invalidate` call's other arguments cannot carry the ended brand under a
+# formal that does not name it (#9537).
+arena_invalidate_independent_ref_reject|check-fail|tests/safety/arena_invalidate_independent_ref_reject.tl|-|an :invalidate call cannot pass a value tied to the arena it destroys
+arena_invalidate_independent_ref_other_defined|run-exit|tests/safety/arena_invalidate_independent_ref_other_defined.tl|42|-
+# A call result that can hold a handle copied from an owner, or from a handle
+# or reference to one, passed to a parameter reaching a bare `arena.Arena` ends
+# with the owner; a function or fixed-array result carries it too (#8173).
+arena_bare_handle_return_reject|check-fail|tests/safety/arena_bare_handle_return_reject.tl|-|use of moved value `t`
+arena_bare_handle_struct_reject|check-fail|tests/safety/arena_bare_handle_struct_reject.tl|-|use of moved value `h`
+arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|lambda cannot capture immutable reference
+arena_bare_handle_array_reject|check-fail|tests/safety/arena_bare_handle_array_reject.tl|-|use of moved value `xs`
+arena_bare_handle_ref_reject|check-fail|tests/safety/arena_bare_handle_ref_reject.tl|-|use of moved value `t`
+arena_bare_handle_chain_reject|check-fail|tests/safety/arena_bare_handle_chain_reject.tl|-|use of moved value `u`
+arena_bare_handle_return_defined|run-exit|tests/safety/arena_bare_handle_return_defined.tl|42|-
+arena_bare_handle_chain_defined|run-exit|tests/safety/arena_bare_handle_chain_defined.tl|42|-
 function_lifetime_elision_ambiguous_return_reject|check-fail|tests/safety/function_lifetime_elision_ambiguous_return_reject.tl|-|typecheck: elided reference return is ambiguous; write an explicit lifetime
 function_lifetime_elision_field_reject|check-fail|tests/safety/function_lifetime_elision_field_reject.tl|-|typecheck: elided reference lifetime is only allowed in function signatures; write an explicit lifetime
 function_lifetime_elision_global_reject|check-fail|tests/safety/function_lifetime_elision_global_reject.tl|-|typecheck: elided reference lifetime is only allowed in function signatures; write an explicit lifetime

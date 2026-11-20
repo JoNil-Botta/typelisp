@@ -115,7 +115,11 @@
   (Region i64 i64)
   (CurrentRegionMarker i64)
   (TokenOwnerMarker i64)
-  (TokenRegionMarker i64))
+  (TokenRegionMarker i64)
+  ;; One phase binder: the token, and the phase region it was taken under.
+  ;; `Region owner-id binder-id` is that binder's region, so a binder's parent is
+  ;; read back from its own identity, in or out of scope.
+  (PhaseBinder i64 i64))
 
 (defstruct InternArenaPhaseIdentity
   (value i64))
@@ -1413,7 +1417,13 @@
         handle
         3
         token-id
-        0)]))
+        0)]
+    [(PhaseBinder token-id parent-region-id)
+      (intern-structural-session-arena-phase-identity-for-components
+        handle
+        5
+        token-id
+        parent-region-id)]))
 
 (define (intern-structural-session-arena-phase-record
   [handle : InternStructuralSessionHandle]
@@ -1442,6 +1452,7 @@
             [(= role 1) (Some (CurrentRegionMarker first-id))]
             [(= role 2) (Some (TokenOwnerMarker first-id))]
             [(= role 3) (Some (TokenRegionMarker first-id))]
+            [(= role 5) (Some (PhaseBinder first-id second-id))]
             [else No]))))))
 
 (define (intern-structural-session-arena-phase-record-for-raw

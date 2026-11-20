@@ -1440,6 +1440,32 @@
     [spec : String (compiler-lzss-spec-string payload start count)]
     (compiler-lzss-model-from-spec (& spec))))
 
+;; Decode a stream prefix without the tail checks: a caller that only needs the
+;; first frames must not pay for the rest of the stream.
+(define (compiler-lzss-decode-prefix
+  [payload : (& payload (__tl_dyn-array u8))]
+  [start : i64]
+  [raw-len : i64]
+  [model : (& model CompilerLzssModel)]) : CompilerLzssBytes
+  (let
+    [reader : CompilerLzssReader
+      (CompilerLzssReader start (- (array-length payload) start) 0 0 0 0)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
+    [error : String
+      (if (= raw-len 0)
+        ""
+        (compiler-lzss-decode-body
+          payload
+          (&mut reader)
+          (unsafe
+            (__tl_array-data out))
+          0
+          raw-len
+          model))]
+    (if (> (string.string-length (& error)) 0)
+      (Err error)
+      (Ok out))))
+
 ;; Decode one complete bitstream of `raw-len` bytes under `model`.
 (define (compiler-lzss-decode-stream
   [payload : (& payload (__tl_dyn-array u8))]

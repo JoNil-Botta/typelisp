@@ -203,6 +203,14 @@
   (__tl_make-array (__tl_dyn-array (__tl_dyn-array u8)) 1))
 (define compiler-embedded-stdlib-tlci-images-ready : i64
   0)
+
+;; Frame zero is the prelude surface, which every compile asks for; decoding
+;; only its prefix keeps a plain compile from expanding the whole catalog.
+(define compiler-embedded-stdlib-tlci-surface-frame : (__tl_dyn-array
+    (__tl_dyn-array u8))
+  (__tl_make-array (__tl_dyn-array u8) 1))
+(define compiler-embedded-stdlib-tlci-surface-frame-ready : i64
+  0)
 (define compiler-embedded-stdlib-tlci-legacy : i64
   0)
 (define compiler-embedded-stdlib-tlci-legacy-images : (__tl_dyn-array
@@ -339,8 +347,48 @@
           true]
         [(Err _) false]))))
 
+;; The prelude surface is frame zero at the head of the stream, so its bytes
+;; need only that frame's raw length, not the rest of the catalog.
+(define (compiler-embedded-stdlib-tlci-surface-frame-bytes) : (__tl_dyn-array
+    u8)
+  (when
+    (not (compiler-embedded-stdlib-tlci-frames-ensure!))
+    (return (__tl_make-array u8 0)))
+  (when
+    (= compiler-embedded-stdlib-tlci-legacy 1)
+    (return
+      (match (frames_v2.compiler-embedded-stdlib-tlci-frames-decode
+        (& payload.embedded-stdlib-tlci-bytes)
+        (array-ref compiler-embedded-stdlib-tlci-legacy-frames 0)
+        0
+        (& compiler-embedded-stdlib-tlci-legacy-tables))
+        [(Ok bytes) bytes]
+        [(Err _) (__tl_make-array u8 0)])))
+  (when
+    (= compiler-embedded-stdlib-tlci-surface-frame-ready 0)
+    (let
+      [catalog : frames.CompilerEmbeddedStdlibTlciFrames
+        (array-ref compiler-embedded-stdlib-tlci-frames 0)]
+      [raw : i64
+        (tlci.tlci-read-u64
+          (& payload.embedded-stdlib-tlci-bytes)
+          (+ (frames.compiler-embedded-stdlib-tlci-frames-record 0) 24))]
+      (match (lzss.compiler-lzss-decode-prefix
+        (& payload.embedded-stdlib-tlci-bytes)
+        catalog.index-end
+        raw
+        (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
+        [(Ok bytes)
+          (set! (array-ref compiler-embedded-stdlib-tlci-surface-frame 0) bytes)
+          (set! compiler-embedded-stdlib-tlci-surface-frame-ready 1)]
+        [(Err _) (return (__tl_make-array u8 0))])))
+  (clone (array-ref compiler-embedded-stdlib-tlci-surface-frame 0)))
+
 (define (compiler-embedded-stdlib-tlci-decode-frame [index : i64]) : (__tl_dyn-array
     u8)
+  (when
+    (= index 0)
+    (return (compiler-embedded-stdlib-tlci-surface-frame-bytes)))
   (when
     (not (compiler-embedded-stdlib-tlci-images-ensure!))
     (return (__tl_make-array u8 0)))

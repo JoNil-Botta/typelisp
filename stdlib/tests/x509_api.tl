@@ -933,7 +933,7 @@
       [(x509.CertificateOk certificate) certificate]
       [(x509.CertificateErr _)
         (test.assert-true false "valid identity certificate")
-        (init : x509.Certificate)])))
+        (x509.empty-certificate)])))
 
 (define (service-dns [text : String]) : byte_buf.ByteBuf
   (tlv 130 (byte_buf.from-string text)))
@@ -1265,7 +1265,7 @@
     [references : x509.ServiceReferences (x509.service-references-new)]
     [record : x509.ServiceReference
       (x509.Dns (x509.ServiceDnsName (clone input)))]
-    [certificate : x509.Certificate (init : x509.Certificate)]
+    [certificate : x509.Certificate (x509.empty-certificate)]
     (match (x509.service-reference-add!
       (&mut references)
       record

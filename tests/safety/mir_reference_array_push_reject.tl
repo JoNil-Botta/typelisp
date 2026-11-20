@@ -6,8 +6,7 @@
 (define (main) : i64
   (let
     [value : i64 41]
-    [refs : (__tl_dyn-array (& value i64))
-      (init : (__tl_dyn-array (& value i64)))]
+    [refs : (__tl_dyn-array (& value i64)) (__tl_make-array)]
     (begin
       (__tl_array-push! refs (& value))
       (bump (&mut value))

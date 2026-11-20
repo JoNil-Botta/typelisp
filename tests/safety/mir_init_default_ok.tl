@@ -5,6 +5,7 @@
 
 (define (main) : i64
   (let
+    ;; lint-allow: removed-init -- This test is about init's fresh default value.
     [pair : InitPair (init : InitPair)]
     (begin
       (set! pair.left 40)

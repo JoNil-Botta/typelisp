@@ -967,6 +967,9 @@
     (lower_tests.compiler-lower-make-array-register-resident-zero-fill-shape-ok?)
     (io.panic "lower: __tl_make-array fill8 smoke mismatch"))
   (unless
+    (lower_tests.compiler-lower-make-array-nullable-cfunc-zero-fill-shape-ok?)
+    (io.panic "lower: __tl_make-array nullable CFunc zero-fill smoke mismatch"))
+  (unless
     (lower_tests.compiler-lower-runtime-helper-tests-ok?)
     (io.panic "lower: runtime helper smoke mismatch"))
   (unless

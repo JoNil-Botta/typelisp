@@ -94,7 +94,7 @@
         (cast 0 : u8)
         (cast 0 : u8)
         (cast 0 : u8)
-        (init : (Array u8 8)))]
+        (make-array u8 8))]
     [shelf : Shelf
       (Shelf
         (array

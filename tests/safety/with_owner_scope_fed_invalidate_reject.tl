@@ -1,8 +1,6 @@
-;; KNOWN OPEN, pre-existing and unsafe: this program is accepted and crashes.
-;; Tracked in #9445 / D-C47 S4 (#9476 d6/d9/d11). The `with` owner lives in a
-;; younger `with-arena` scope but holds a value fed from `o`. Admission records
-;; no edge from that value to `o`, so neither this call nor a safe destroy of
-;; `o` sees the owner. Its row must flip to a rejection when S4 lands.
+;; #9445: the `with` owner lives in a younger `with-arena` scope but holds a
+;; value fed from `o`. A constructor result carries its fields' arena regions,
+;; so the owner's type names `o` and the :invalidate call sees it.
 (import stdlib.arena)
 (import stdlib.string)
 

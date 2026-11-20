@@ -1098,8 +1098,8 @@
   (BoxSet i64 i64)
   ;; Compile-time-only type value literal: `(type T)`.
   (TypeLiteral i64)
-  ;; Zero/identity initialization. `(init : T)` carries `AstMaybeType.Some T`;
-  ;; contextual `(init)` carries `AstMaybeType.No` until type checking/lowering sees
+  ;; Zero/identity initialization. Typed Init carries `AstMaybeType.Some T`;
+  ;; contextual Init carries `AstMaybeType.No` until type checking/lowering sees
   ;; an expected type.
   (Init i64)
   ;; Compile-time evaluation form `(comptime expr)`. Parsed and
@@ -2718,12 +2718,6 @@
 (define (ast-expr-node-pool-state-len [pool : (& pool AstExprNodePoolState)]) : i64
   (ast-expr-pool-cursor-count pool.segment-bases))
 
-(define (ast-expr-node-pool-state-capacity
-  [pool : (& pool AstExprNodePoolState)]) : i64
-  (*
-    (ast-expr-pool-cursor-segments pool.segment-bases)
-    ast-expr-node-pool-segment-size))
-
 (define (ast-expr-node-pool-state-with-canonical-spans
   [pool : AstExprNodePoolState]
   [records : i64]
@@ -3661,12 +3655,6 @@
 
 (define (ast-type-node-pool-state-len [pool : (& pool AstTypeNodePoolState)]) : i64
   (ast-type-pool-cursor-count pool.revision-cell))
-
-(define (ast-type-node-pool-state-capacity
-  [pool : (& pool AstTypeNodePoolState)]) : i64
-  (*
-    (ast-type-pool-cursor-segment-count pool.revision-cell)
-    ast-type-node-pool-segment-size))
 
 (define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
@@ -7317,9 +7305,6 @@
 (define (ast-expr-replace [place : i64] [replacement : i64]) : i64
   (ast-node-push (Replace place replacement)))
 
-(define (ast-expr-while [cond : i64] [body : i64]) : i64
-  (ast-node-push (While cond (ast-expr-cons body (& (ast-expr-list-new))))))
-
 (define (ast-for-owned-state-payload
   [source-name : i64]
   [index-name : i64]
@@ -9365,12 +9350,6 @@
 
 (define (ast-expr-cast-id [expr : i64] [ty-id : i64]) : i64
   (ast-node-push (Cast expr ty-id)))
-
-(define (ast-expr-borrow
-  [mutable : bool]
-  [lifetime : AstBorrowLifetime]
-  [expr : i64]) : i64
-  (ast-node-push (Borrow mutable (ast-borrow-lifetime-to-id lifetime) expr)))
 
 (define (ast-expr-borrow-id [mutable : bool] [lifetime-id : i64] [expr : i64]) : i64
   (ast-node-push (Borrow mutable lifetime-id expr)))

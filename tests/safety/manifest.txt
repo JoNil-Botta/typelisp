@@ -1358,11 +1358,71 @@ with_owner_invalidate_call_reject|check-fail|tests/safety/with_owner_invalidate_
 with_owner_invalidate_call_second_brand_reject|check-fail|tests/safety/with_owner_invalidate_call_second_brand_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `second` while `with` cleanup owner `w` holds values from it
 with_owner_invalidate_call_place_reject|check-fail|tests/safety/with_owner_invalidate_call_place_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
 with_owner_invalidate_call_alias_reject|check-fail|tests/safety/with_owner_invalidate_call_alias_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
-# KNOWN OPEN, pre-existing and unsafe (accepted, crashes at run time): tracked in
-# #9445 / D-C47 S4 (#9476 d6/d9/d11). An owner in a younger scope holding a value
-# fed from the ended arena is not seen by any end kind until admission records
-# that edge. This row must flip to check-fail when S4 lands.
-with_owner_scope_fed_invalidate_known_open|check-ok|tests/safety/with_owner_scope_fed_invalidate_known_open.tl|-|-
+# #9445: an owner in a younger scope holding a value fed from the ended arena.
+# A constructor result carries its fields' arena regions, so the end sees it.
+with_owner_scope_fed_invalidate_reject|check-fail|tests/safety/with_owner_scope_fed_invalidate_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+# Arena provenance joins and is never dropped (SPEC 3.9): if/match arms, array
+# elements, constructor fields and expected types carry the union of their
+# inputs' arena regions; clone and capturing closures allocate in the active
+# arena. #9061:
+arena_if_join_copy_out_reject|check-fail|tests/safety/arena_if_join_copy_out_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_if_join_scalar_tag_reject|check-fail|tests/safety/arena_if_join_scalar_tag_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_if_join_struct_tag_reject|check-fail|tests/safety/arena_if_join_struct_tag_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+# #9493: a `with` owner initialized by an if/match keeps its arms' region.
+with_owner_if_init_destroy_reject|check-fail|tests/safety/with_owner_if_init_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_if_init_rewind_reject|check-fail|tests/safety/with_owner_if_init_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `w` holds values from it
+with_owner_match_init_destroy_reject|check-fail|tests/safety/with_owner_match_init_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_if_init_invalidate_call_reject|check-fail|tests/safety/with_owner_if_init_invalidate_call_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+# #8985: fixed arrays carry their elements' arena regions.
+arena_fixed_array_tail_reject|check-fail|tests/safety/arena_fixed_array_tail_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_fixed_array_return_reject|check-fail|tests/safety/arena_fixed_array_return_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_fixed_array_box_deref_reject|check-fail|tests/safety/arena_fixed_array_box_deref_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_box_deref_string_reject|check-fail|tests/safety/arena_fixed_array_box_deref_string_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_locals_reject|check-fail|tests/safety/arena_fixed_array_locals_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_store_reject|check-fail|tests/safety/arena_fixed_array_store_reject.tl|-|cannot store region-tagged value into assignment
+arena_fixed_array_box_local_reject|check-fail|tests/safety/arena_fixed_array_box_local_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_boxes_reject|check-fail|tests/safety/arena_fixed_array_boxes_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_strings_reject|check-fail|tests/safety/arena_fixed_array_strings_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_annotated_reject|check-fail|tests/safety/arena_fixed_array_annotated_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_let_bound_reject|check-fail|tests/safety/arena_fixed_array_let_bound_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_call_result_reject|check-fail|tests/safety/arena_fixed_array_call_result_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_struct_elements_reject|check-fail|tests/safety/arena_fixed_array_struct_elements_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_outer_param_ok|run-exit|tests/safety/arena_fixed_array_outer_param_ok.tl|42|-
+arena_fixed_array_outer_box_ok|run-exit|tests/safety/arena_fixed_array_outer_box_ok.tl|42|-
+# #9052: a clone in an arena is allocated there.
+arena_clone_escape_reject|check-fail|tests/safety/arena_clone_escape_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_clone_deref_escape_reject|check-fail|tests/safety/arena_clone_deref_escape_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+# #9508 (q13): a `box` element keeps its own type.
+box_shortened_reference_element_reject|check-fail|tests/safety/box_shortened_reference_element_reject.tl|-|let binding `b` type mismatch: expected (Box (& k i64)), found (Box (& r i64))
+# #9445: a value from an arena an explicit end can reclaim (an owner's brand or
+# phase) flows only into storage whose type names it. The store is rejected,
+# so the never-destroying twin (slot_store) is too: a precision loss.
+arena_owner_value_scoped_slot_destroy_reject|check-fail|tests/safety/arena_owner_value_scoped_slot_destroy_reject.tl|-|its source arena can be destroyed before the target
+arena_owner_value_slot_while_cond_reject|check-fail|tests/safety/arena_owner_value_slot_while_cond_reject.tl|-|its source arena can be destroyed before the target
+arena_owner_value_scoped_slot_store_reject|check-fail|tests/safety/arena_owner_value_scoped_slot_store_reject.tl|-|its source arena can be destroyed before the target
+# #9770: a capturing closure's environment is allocated in the active arena.
+arena_closure_escape_reject|check-fail|tests/safety/arena_closure_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_escape_param_reject|check-fail|tests/safety/arena_closure_escape_param_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_local_capture_escape_reject|check-fail|tests/safety/arena_closure_local_capture_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_store_escape_reject|check-fail|tests/safety/arena_closure_store_escape_reject.tl|-|cannot store region-tagged value into assignment
+arena_closure_escape_poison_reject|check-fail|tests/safety/arena_closure_escape_poison_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+closure_no_arena_poison_ok|run-exit|tests/safety/closure_no_arena_poison_ok.tl|42|-
+arena_closure_called_inside_ok|run-exit|tests/safety/arena_closure_called_inside_ok.tl|42|-
+# Function types are region-taggable: a closure keeps its arena region through
+# fields, stores, match binders, `try` and call results.
+arena_closure_field_escape_reject|check-fail|tests/safety/arena_closure_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_constructor_field_escape_reject|check-fail|tests/safety/arena_closure_constructor_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_annotated_field_escape_reject|check-fail|tests/safety/arena_closure_annotated_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_box_field_escape_reject|check-fail|tests/safety/arena_closure_box_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_array_field_escape_reject|check-fail|tests/safety/arena_closure_array_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_field_store_escape_reject|check-fail|tests/safety/arena_closure_field_store_escape_reject.tl|-|cannot store region-tagged value into assignment
+arena_closure_match_binder_escape_reject|check-fail|tests/safety/arena_closure_match_binder_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_try_escape_reject|check-fail|tests/safety/arena_closure_try_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_call_result_escape_reject|check-fail|tests/safety/arena_closure_call_result_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+# A function value read through a reference takes arena provenance only: the
+# borrow of an arena value has the arena as its lifetime (a plain reference
+# lifetime, as in format_writer_capabilities, does not tag it).
+arena_closure_reference_field_store_reject|check-fail|tests/safety/arena_closure_reference_field_store_reject.tl|-|cannot store region-tagged value into assignment
 # KNOWN OPEN, pre-existing and unsafe (accepted, reads reclaimed storage):
 # tracked in #9479 / D-C47 S2. A branded `in-arena` allocates in the brand, not
 # the owner's live phase, so a rewind does not see the owner. This row must flip
@@ -2359,9 +2419,9 @@ mir_function_array_ok|run-exit|tests/safety/mir_function_array_ok.tl|42|-
 mir_box_pattern_move_reject|check-fail|tests/safety/mir_box_pattern_move_reject.tl|tests/safety/mir_box_pattern_move_reject.tl:11:32|use of moved value `cell`
 mir_box_pattern_copy_ok|run-exit|tests/safety/mir_box_pattern_copy_ok.tl|42|-
 mir_deref_reference_read_ok|run-exit|tests/safety/mir_deref_reference_read_ok.tl|42|-
-mir_reference_array_push_reject|check-fail|tests/safety/mir_reference_array_push_reject.tl|tests/safety/mir_reference_array_push_reject.tl:13:13|cannot mutably borrow borrowed place `value`
-mir_reference_array_store_reject|check-fail|tests/safety/mir_reference_array_store_reject.tl|tests/safety/mir_reference_array_store_reject.tl:18:13|cannot mutably borrow borrowed place `pair`
-mir_holding_array_push_reject|check-fail|tests/safety/mir_holding_array_push_reject.tl|tests/safety/mir_holding_array_push_reject.tl:16:13|cannot mutably borrow borrowed place `value`
+mir_reference_array_push_reject|check-fail|tests/safety/mir_reference_array_push_reject.tl|tests/safety/mir_reference_array_push_reject.tl:12:13|cannot mutably borrow borrowed place `value`
+mir_reference_array_store_reject|check-fail|tests/safety/mir_reference_array_store_reject.tl|tests/safety/mir_reference_array_store_reject.tl:17:13|cannot mutably borrow borrowed place `pair`
+mir_holding_array_push_reject|check-fail|tests/safety/mir_holding_array_push_reject.tl|tests/safety/mir_holding_array_push_reject.tl:15:13|cannot mutably borrow borrowed place `value`
 mir_reference_array_return_ok|check-ok|tests/safety/mir_reference_array_return_ok.tl|-|-
 mir_reference_slice_param_ok|check-ok|tests/safety/mir_reference_slice_param_ok.tl|-|-
 mir_box_reference_borrow_reject|check-fail|tests/safety/mir_box_reference_borrow_reject.tl|tests/safety/mir_box_reference_borrow_reject.tl:15:13|cannot mutably borrow borrowed place `pair`

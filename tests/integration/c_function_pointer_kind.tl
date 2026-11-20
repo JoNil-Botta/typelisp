@@ -5,6 +5,7 @@
     `1))
 
 (defmacro (c-empty [T : type (:kind c-function)]) : Expr
+  ;; lint-allow: removed-init -- Preserve Init syntax coverage until #7951.
   `(init : ,T))
 
 (defmacro (c-null [T : type (:kind c-function)]) : Expr

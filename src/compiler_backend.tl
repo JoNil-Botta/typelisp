@@ -33336,16 +33336,17 @@
 ;; over a program. A chunk run at or above
 ;; `compiler-backend-copy-thunk-min-bytes` therefore emits ONE 5-byte `call`
 ;; to a thunk emitted once per emission, and the thunk holds exactly the
-;; inline `movups` sequence it replaces. The thunk is a leaf: it reads only
-;; its base registers, writes only the scratch xmm the inline pair already
-;; wrote, touches no flags, no GPR and no stack, and ends in `ret`. A call
-;; site therefore has the inline sequence's exact clobber set.
+;; inline `movups` sequence it replaces, tail included. The thunk is a leaf:
+;; it reads only its base registers, writes only the scratch xmm and GPR the
+;; inline sequence already wrote, touches no flags and no stack, and ends in
+;; `ret`. A call site therefore has the inline sequence's exact clobber set.
 ;;
-;; A thunk is keyed by the chunk count, the src/dst base SPELLINGS, both
-;; displacements and the scratch xmm -- i.e. by the emitted text itself, so
-;; two sites share a thunk only where their inline bytes would be identical.
-;; The displacements ride the key instead of being adjusted at the call site:
-;; a site cannot adjust them without paying an instruction of its own.
+;; A thunk is keyed by the byte count, the src/dst/gp base SPELLINGS, both
+;; displacements, the type-segment basis and the scratch xmm -- i.e. by the
+;; emitted text itself, so two sites share a thunk only where their inline
+;; bytes would be identical. The displacements ride the key instead of being
+;; adjusted at the call site: a site cannot adjust them without paying an
+;; instruction of its own.
 ;;
 ;; Where the call may go is a property of the CALLER's frame, not of the
 ;; copy. `compiler-backend-copy-thunk-applies?` requires the function's IR to
@@ -33450,18 +33451,24 @@
       compiler-backend-copy-thunk-capacity)))
 
 (define (compiler-backend-copy-thunk-key
-  [chunked : i64]
+  [type-segment-bases : i64]
+  [bytes : i64]
   [src-reg : (& str)]
   [dst-reg : (& str)]
+  [gp-scratch : (& str)]
   [xmm-scratch : (& str)]
   [offset : i64]
   [dst-bias : i64]) : String
   (str_cat.str-cat
-    (string.int->string chunked)
+    (string.int->string type-segment-bases)
+    "|"
+    (string.int->string bytes)
     "|"
     src-reg
     "|"
     dst-reg
+    "|"
+    gp-scratch
     "|"
     (string.int->string offset)
     "|"
@@ -33490,10 +33497,7 @@
           (if (< index (array-length bodies))
             (set! (array-ref bodies index) body)
             (__tl_array-push! bodies body))
-          (backend_string_i64_map.insert-ref!
-            (&mut seen)
-            (compiler-backend-global-shared-view key)
-            index)
+          (backend_string_i64_map.insert-ref! (&mut seen) key index)
           (compiler-backend-state-set-copy-thunks! backend-state seen)
           (compiler-backend-state-set-copy-thunk-count!
             backend-state
@@ -33630,10 +33634,11 @@
             (- remaining chunk)
             dst-bias))))))
 
-;; The copy emitter proper: the 16-byte chunk run becomes one `call` to a
-;; shared thunk where `compiler-backend-copy-thunk-applies?` allows it, and
-;; the sub-16-byte tail (if any) stays inline either way. `chunked` is the
-;; length of the run a thunk would carry.
+;; The copy emitter proper: the whole chunk run -- the 16-byte chunks and the
+;; sub-16-byte tail -- becomes one `call` to a shared thunk where
+;; `compiler-backend-copy-thunk-applies?` allows it, and stays inline
+;; otherwise. `chunked` is the length of the run without its tail, so it is
+;; the run whose byte saving has to pay for the thunk's extra `call`.
 (define (compiler-backend-emit-copy-bytes-chunks
   [type-segment-bases : i64]
   [dst-reg : String]
@@ -33662,39 +33667,33 @@
           (in-arena
             (compiler-backend-state-lazy-table-arena-ensure! backend-state)
             (let
+              ;; The key is built first: the body call takes ownership of the
+              ;; register spellings, the key only reads them.
+              [key : String
+                (compiler-backend-copy-thunk-key
+                  type-segment-bases
+                  remaining
+                  (& src-reg)
+                  (& dst-reg)
+                  (& gp-scratch)
+                  (& xmm-scratch)
+                  offset
+                  dst-bias)]
               [body : String
                 (compiler-backend-emit-copy-bytes-chunks-inline
                   type-segment-bases
-                  (compiler-backend-global-shared-view dst-reg)
-                  (compiler-backend-global-shared-view src-reg)
-                  (compiler-backend-global-shared-view gp-scratch)
-                  (compiler-backend-global-shared-view xmm-scratch)
+                  dst-reg
+                  src-reg
+                  gp-scratch
+                  xmm-scratch
                   offset
-                  chunked
-                  dst-bias)]
-              [key : String
-                (compiler-backend-copy-thunk-key
-                  chunked
-                  (compiler-backend-global-shared-view src-reg)
-                  (compiler-backend-global-shared-view dst-reg)
-                  (compiler-backend-global-shared-view xmm-scratch)
-                  offset
+                  remaining
                   dst-bias)]
               (str_cat.str-cat
                 "    call "
                 (compiler-backend-copy-thunk-register key body backend-state)
                 "\n")))]
-        (str_cat.str-cat
-          chunk-call
-          (compiler-backend-emit-copy-bytes-chunks-inline
-            type-segment-bases
-            (compiler-backend-global-shared-view dst-reg)
-            (compiler-backend-global-shared-view src-reg)
-            (compiler-backend-global-shared-view gp-scratch)
-            (compiler-backend-global-shared-view xmm-scratch)
-            (+ offset chunked)
-            (- remaining chunked)
-            dst-bias)))
+        chunk-call)
       (compiler-backend-emit-copy-bytes-chunks-inline
         type-segment-bases
         dst-reg

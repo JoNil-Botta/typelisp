@@ -29,7 +29,7 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
-(import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_ast_types as ast)
 (import compiler_load as load)
 (import compiler_symbols as csym)
@@ -5131,7 +5131,7 @@
       (Err
         (str_cat.str-cat
           "build: direct object required: "
-          (backend.compiler-direct-object-fallback-transcript reason)))]
+          (be_object.compiler-direct-object-fallback-transcript reason)))]
     [(Err message) (Err message)]))
 
 (cfg

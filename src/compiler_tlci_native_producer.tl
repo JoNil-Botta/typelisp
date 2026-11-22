@@ -18,6 +18,7 @@
 (import compiler_diagnostic)
 (import compiler_object as cobj)
 (import compiler_backend)
+(import compiler_backend_object as be_object)
 (import compiler_lower)
 (import compiler_optimize)
 (import compiler_tlci_native_image)
@@ -9292,7 +9293,7 @@
             "generated source rejected: "
             (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
       [(ResultCompilerLower.Ok program spans _lower-state)
-        (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+        (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
           program
           target
           (Scalar)

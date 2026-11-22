@@ -18,6 +18,7 @@
 (import build_run_core)
 (import build_run_core_tests as build_run_tests)
 (cfg test (import compiler_backend as backend))
+(cfg test (import compiler_backend_object as be_object))
 (import compiler_ast_types as ast)
 (import compiler_load as load)
 (cfg test (import compiler_intern as ci))
@@ -300,7 +301,7 @@
       [(Eligible) (string.eq expected "")]
       [(Fallback reason)
         (string.eq
-          (backend.compiler-direct-object-fallback-category reason)
+          (be_object.compiler-direct-object-fallback-category reason)
           expected)])))
 
 (cfg
@@ -1391,7 +1392,7 @@
     (unless
       (and
         (string.eq
-          (backend.compiler-direct-object-fallback-transcript
+          (be_object.compiler-direct-object-fallback-transcript
             (ArtifactKindUnavailable (Windows) StaticLib))
           "artifact-kind-unavailable|target=windows-x86_64|kind=staticlib")
         (match (build.build-package-require-direct-object

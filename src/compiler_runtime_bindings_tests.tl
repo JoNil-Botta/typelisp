@@ -13,6 +13,7 @@
 (import compiler_backend_object_target as object_target)
 (import compiler_backend_object_target_windows as object_windows)
 (import compiler_backend as backend)
+(cfg test (import compiler_backend_object as be_object))
 (import compiler_object as cobj)
 (import compiler_windows_coff_core as coff)
 
@@ -576,7 +577,7 @@ windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
       (io.panic
         (str_cat.str-cat
           "GetStdHandle should link: "
-          (backend.compiler-direct-object-fallback-transcript reason)))]))
+          (be_object.compiler-direct-object-fallback-transcript reason)))]))
 
 (test
   runtime-bindings-object-route-rejects-undeclared-external
@@ -594,7 +595,7 @@ windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
         "the undeclared symbol")
       (test.assert-true
         (string.eq
-          (backend.compiler-direct-object-fallback-category
+          (be_object.compiler-direct-object-fallback-category
             (UndeclaredExternal section label offset symbol))
           "unsupported-external-relocation")
         "the batch plan keeps its reason")]
@@ -602,7 +603,7 @@ windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
       (io.panic
         (str_cat.str-cat
           "unexpected fallback: "
-          (backend.compiler-direct-object-fallback-transcript reason)))]
+          (be_object.compiler-direct-object-fallback-transcript reason)))]
     [(Linkable) (io.panic "an undeclared external must not link")]))
 
 (test
@@ -623,7 +624,7 @@ windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
   runtime-bindings-planned-runtime-definition-is-not-a-binding
   (let
     [planned : be_state.BackendStringSeq
-      (backend.compiler-backend-object-runtime-symbols-list)]
+      (be_object.compiler-backend-object-runtime-symbols-list)]
     (test.assert-true (> planned.len 0) "the object runtime plans definitions")
     (for [index (iterator.range 0 planned.len)]
       (let

@@ -37665,6 +37665,187 @@
         8]
       [else 42])))
 
+;; IND-BASE reverse index: `%4 = sub %2, <rhs>` read by a gep, with <rhs>
+;; the counter itself (shape 0), a masked counter no induction rule admits
+;; (shape 1), the counter in a loop that still carries a bounds check on the
+;; sum (shape 2), or the counter in a conditional arm that does not run on
+;; every trip (shape 3). Shapes 4 and 5 are shapes 3 and 2 with the counter's
+;; product `%7 = mul %3, 3` as <rhs>: the refused sub leaves that product to
+;; the plain Mul derived.
+(define (opt-induction-sub-inv-blocks [shape : i64]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (cond
+      [(= shape 4)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, latch] : i64
+           branch %0, body, exit
+         body:
+           branch %0, arm, latch
+         arm:
+           %7 = mul %3, 3 : i64
+           %4 = sub %2, %7 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           jump latch
+         latch:
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 5)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %7 = mul %3, 3 : i64
+           %4 = sub %2, %7 : i64
+           bounds_check %4, %2 message \"sub_ok\"
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 1)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %9 = and %3, 7 : i64
+           %4 = sub %2, %9 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 3)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, latch] : i64
+           branch %0, body, exit
+         body:
+           branch %0, arm, latch
+         arm:
+           %4 = sub %2, %3 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           jump latch
+         latch:
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 2)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %4 = sub %2, %3 : i64
+           bounds_check %4, %2 message \"sub_ok\"
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [else
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %4 = sub %2, %3 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"])))
+
+;; `c - i` has no three-operand form, so it derives a down-stepping sum phi
+;; (the difference becomes a `mov` of it). A sub whose var side is not the
+;; counter or an admitted product stays, and so does one in a loop that still
+;; carries a bounds check (bce_version reads that index off the counter) or
+;; one whose block does not dominate the latch (the phi's step would run on
+;; trips that never compute the difference). A product such a refused sub
+;; reads still derives as a plain Mul (`%7` becomes a `mov` of its phi).
+(define (compiler-optimize-induction-sub-inv-self-test) : i64
+  (let
+    [arm-mul-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 4))]
+    [arm-mul : ir.CompilerIrBlockList (opt.opt-function-blocks arm-mul-func)]
+    [checked-mul-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 5))]
+    [checked-mul : ir.CompilerIrBlockList
+      (opt.opt-function-blocks checked-mul-func)]
+    [counter-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 0))]
+    [counter : ir.CompilerIrBlockList (opt.opt-function-blocks counter-func)]
+    [masked-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 1))]
+    [masked : ir.CompilerIrBlockList (opt.opt-function-blocks masked-func)]
+    [checked-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 2))]
+    [checked : ir.CompilerIrBlockList (opt.opt-function-blocks checked-func)]
+    [arm-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 3))]
+    [arm : ir.CompilerIrBlockList (opt.opt-function-blocks arm-func)]
+    (cond
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& counter-func)))))
+        1]
+      [(not
+          (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view counter)) 2))
+        2]
+      [(=
+          (opt-blocks-mov-src-var
+            (ir.compiler-ir-block-list-view counter)
+            4
+            (- 0 1))
+          (- 0 1))
+        3]
+      [(not
+          (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view masked)) 1))
+        4]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (ir.compiler-ir-block-list-view masked)
+              4
+              (- 0 1))
+            (- 0 1)))
+        5]
+      [(not
+          (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view checked)) 1))
+        6]
+      [(not (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view arm)) 1))
+        7]
+      [(=
+          (opt-blocks-mov-src-var
+            (ir.compiler-ir-block-list-view arm-mul)
+            7
+            (- 0 1))
+          (- 0 1))
+        8]
+      [(=
+          (opt-blocks-mov-src-var
+            (ir.compiler-ir-block-list-view checked-mul)
+            7
+            (- 0 1))
+          (- 0 1))
+        9]
+      [else 42])))
+
 (define (compiler-optimize-induction-self-test) : i64
   (let
     [blocks : ir.CompilerIrBlockList (opt-induction-offset-blocks 1 4)]
@@ -85315,6 +85496,10 @@ done:
     (compiler-optimize-induction-add-inv-self-test)
     42
     "compiler-optimize-induction-add-inv-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-induction-sub-inv-self-test)
+    42
+    "compiler-optimize-induction-sub-inv-self-test")
   (test.assert-i64-eq
     (compiler-optimize-induction-self-test)
     42

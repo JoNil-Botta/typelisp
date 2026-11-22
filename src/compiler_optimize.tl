@@ -32115,15 +32115,18 @@
         [_ (None)])]
     [_ (None)]))
 
-;; IND-BASE. The (invariant, var) split of an i64 `add`: one operand a var
-;; defined outside the loop, the other a var; `None` otherwise. The var side
-;; is what may be the counter or one of its products.
+;; IND-BASE. The (invariant, var) split of an i64 `add` or `sub`: one operand
+;; a var defined outside the loop, the other a var; `None` otherwise. A `sub`
+;; splits only as `c - var` (the var side negated); `var - c` is the var plus
+;; a loop-invariant offset, not a sum this rule derives. The var side is what
+;; may be the counter or one of its products.
 (defenum OptInductionAddInvSplit
   (No)
   (Some ir.CompilerIrValue i64))
 
 (define (opt-induction-add-inv-split
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [op : (& ir.CompilerIrBinOp)]
   [lhs : (& ir.CompilerIrValue)]
   [rhs : (& ir.CompilerIrValue)]
   [ty : (& ty ast.AstType)]) : OptInductionAddInvSplit
@@ -32136,19 +32139,33 @@
             (let
               [l-in? : bool (opt-used-contains loop-defs l)]
               [r-in? : bool (opt-used-contains loop-defs r)]
-              (cond
-                [(and (not l-in?) r-in?) (Some (Var l) r)]
-                [(and (not r-in?) l-in?) (Some (Var r) l)]
-                [else (No)]))]
+              (match op
+                [(Add)
+                  (cond
+                    [(and (not l-in?) r-in?) (Some (Var l) r)]
+                    [(and (not r-in?) l-in?) (Some (Var r) l)]
+                    [else (No)])]
+                [(Sub)
+                  (if (and (not l-in?) r-in?)
+                    (Some (Var l) r)
+                    (No))]
+                [_ (No)]))]
           [_ (No)])]
       [_ (No)])))
 
+;; The sign a split's var side carries into the sum: `c - var` negates it.
+(define (opt-induction-add-inv-sign [op : (& ir.CompilerIrBinOp)]) : i64
+  (match op
+    [(Sub) (- 0 1)]
+    [_ 1]))
+
 (define (opt-induction-add-inv-var
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [op : (& ir.CompilerIrBinOp)]
   [lhs : (& ir.CompilerIrValue)]
   [rhs : (& ir.CompilerIrValue)]
   [ty : (& ast.AstType)]) : option_i64.Option
-  (match (opt-induction-add-inv-split loop-defs lhs rhs ty)
+  (match (opt-induction-add-inv-split loop-defs op lhs rhs ty)
     [(Some _ var) (Some var)]
     [(No) (None)]))
 
@@ -32169,20 +32186,26 @@
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [phi-var : i64]
   [step : i64]
+  [op : (& ir.CompilerIrBinOp)]
   [lhs : (& ir.CompilerIrValue)]
   [rhs : (& ir.CompilerIrValue)]
   [ty : ast.AstType]) : OptMaybeInductionDerived
-  (match (opt-induction-add-inv-split loop-defs lhs rhs ty)
+  (match (opt-induction-add-inv-split loop-defs op lhs rhs ty)
     [(Some c var)
       (match (opt-induction-add-inv-scale scaled phi-var var)
-        [(Some scale)
-          ;; Products only. The plain `c + i` sum would trade one add per
-          ;; trip for a loop-live phi, and admitting it costs more in spills
-          ;; than it saves; the product rule's own scale window is the right
-          ;; gate here too.
-          (if (opt-induction-scale-ok? step scale)
-            (Some (AddInv c scale ty))
-            (No))]
+        [(Some side-scale)
+          (let
+            [scale : i64 (* (opt-induction-add-inv-sign op) side-scale)]
+            ;; Products and reverse indices only. The plain `c + i` sum
+            ;; (scale 1) would trade one three-operand `leaq` per trip for a
+            ;; loop-live phi, and admitting it costs more in spills than it
+            ;; saves. `c - i` (scale -1) has no three-operand form: it is a
+            ;; copy of `c` and a `sub` per trip, which the derived phi's one
+            ;; latch step replaces. The product rule's own scale window is
+            ;; the right gate for both.
+            (if (opt-induction-scale-ok? step scale)
+              (Some (AddInv c scale ty))
+              (No)))]
         [(None) (No)])]
     [(No) (No)]))
 
@@ -32200,27 +32223,39 @@
         [(None) false])]
     [_ false]))
 
-;; Does this `add` compute the derived sum: the same invariant on one side
-;; and the counter, or a product of it with the same scale, on the other?
+;; Does this `add` or `sub` compute the derived sum: the same invariant on one
+;; side and the counter, or a product of it whose signed scale is the
+;; derived's, on the other (a `sub` only as `c - var`)?
 (define (opt-induction-add-inv-matches?
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [phi-var : i64]
   [c : (& ir.CompilerIrValue)]
   [scale : i64]
+  [op : (& ir.CompilerIrBinOp)]
   [lhs : (& ir.CompilerIrValue)]
   [rhs : (& ir.CompilerIrValue)]) : bool
-  (or
-    (and
-      (opt-value-eq lhs c)
-      (opt-induction-add-inv-side? scaled phi-var scale rhs))
-    (and
-      (opt-value-eq rhs c)
-      (opt-induction-add-inv-side? scaled phi-var scale lhs))))
+  (let
+    [side-scale : i64 (* (opt-induction-add-inv-sign op) scale)]
+    (match op
+      [(Add)
+        (or
+          (and
+            (opt-value-eq lhs c)
+            (opt-induction-add-inv-side? scaled phi-var side-scale rhs))
+          (and
+            (opt-value-eq rhs c)
+            (opt-induction-add-inv-side? scaled phi-var side-scale lhs)))]
+      [(Sub)
+        (and
+          (opt-value-eq lhs c)
+          (opt-induction-add-inv-side? scaled phi-var side-scale rhs))]
+      [_ false])))
 
 ;; Vars used as a gep's var offset (invariant base only, mirroring the
 ;; derived-collection rule).
 (define (opt-induction-gep-offset-vars-instr-seq-from
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
   [vars : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
@@ -32233,66 +32268,95 @@
             (if (opt-induction-value-base-invariant? loop-defs base)
               (opt-induction-gep-offset-vars-instr-seq-from
                 loop-defs
+                reverse-ok?
                 instrs
                 (+ index 1)
                 (opt-used-add vars offset-var))
               (opt-induction-gep-offset-vars-instr-seq-from
                 loop-defs
+                reverse-ok?
                 instrs
                 (+ index 1)
                 vars))]
           [_
             (opt-induction-gep-offset-vars-instr-seq-from
               loop-defs
+              reverse-ok?
               instrs
               (+ index 1)
               vars)])]
-      ;; IND-BASE: the var an invariant-plus-var add consumes feeds a sum
-      ;; derived value the same way a gep's offset feeds an address one.
-      [(BinOp _ (Add) lhs rhs ty)
-        (match (opt-induction-add-inv-var loop-defs (& lhs) (& rhs) (& ty))
+      ;; IND-BASE: the var an invariant-plus-var add (or invariant-minus-var
+      ;; sub) consumes feeds a sum derived value the same way a gep's offset
+      ;; feeds an address one. A sub feeds only where the derived collection
+      ;; admits it (`reverse-ok?`), or its product would lose the Mul derived
+      ;; to a sum that is never derived.
+      [(BinOp _ op lhs rhs ty)
+        (match (if (match op
+          [(Sub) reverse-ok?]
+          [_ true])
+          (opt-induction-add-inv-var loop-defs (& op) (& lhs) (& rhs) (& ty))
+          (option_i64.None))
           [(Some var)
             (opt-induction-gep-offset-vars-instr-seq-from
               loop-defs
+              reverse-ok?
               instrs
               (+ index 1)
               (opt-used-add vars var))]
           [(None)
             (opt-induction-gep-offset-vars-instr-seq-from
               loop-defs
+              reverse-ok?
               instrs
               (+ index 1)
               vars)])]
       [_
         (opt-induction-gep-offset-vars-instr-seq-from
           loop-defs
+          reverse-ok?
           instrs
           (+ index 1)
           vars)])))
 
 (define (opt-induction-gep-offset-vars-blocks-from
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
+  [context : (& context OptCfgContext)]
+  [latch-id : i64]
   [body-blocks : (& body-blocks (Slice ir.CompilerIrBlock))]
   [vars : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match body-blocks
     [(slice) vars]
     [(slice block & rest)
       (match block
-        [(Block _ instrs)
+        [(Block label instrs)
           (opt-induction-gep-offset-vars-blocks-from
             loop-defs
+            reverse-ok?
+            context
+            latch-id
             rest
             (opt-induction-gep-offset-vars-instr-seq-from
               loop-defs
+              ;; The derived collection's own `c - i` gate.
+              (and
+                reverse-ok?
+                (opt-licm-block-guaranteed? context latch-id label))
               (& instrs)
               0
               vars))])]))
 
 (define (opt-induction-gep-offset-vars-blocks
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
+  [context : (& context OptCfgContext)]
+  [latch-id : i64]
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]) : opt_i64_i64_map.Map
   (opt-induction-gep-offset-vars-blocks-from
     loop-defs
+    reverse-ok?
+    context
+    latch-id
     (ir.compiler-ir-block-list-view body-blocks)
     (opt_i64_i64_map.with-capacity 17)))
 
@@ -32394,12 +32458,20 @@
 (define (opt-induction-scaled-env-blocks
   [fact : (& fact OptInductionFact)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
+  [context : (& context OptCfgContext)]
+  [latch-id : i64]
   [body-blocks : (& ir.CompilerIrBlockList)]) : opt_i64_i64_map.Map
   (match fact
     [(Fact phi-var _ _ step _)
       (let
         [feeders : opt_i64_i64_map.Map
-          (opt-induction-gep-offset-vars-blocks loop-defs body-blocks)]
+          (opt-induction-gep-offset-vars-blocks
+            loop-defs
+            reverse-ok?
+            context
+            latch-id
+            body-blocks)]
         (opt-induction-scaled-env-list-from
           phi-var
           step
@@ -32425,6 +32497,7 @@
   [offsets : (& offsets opt_i64_i64_map.Map)]
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
   [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionDerived
   (match fact
     [(Fact phi-var _ _ step _)
@@ -32449,9 +32522,22 @@
                 scaled
                 phi-var
                 step
+                (& op)
                 (& lhs)
                 (& rhs)
                 (ast.ty-node-persist ty))]
+            [(Sub)
+              (if reverse-ok?
+                (opt-induction-add-inv-derived
+                  loop-defs
+                  scaled
+                  phi-var
+                  step
+                  (& op)
+                  (& lhs)
+                  (& rhs)
+                  (ast.ty-node-persist ty))
+                (No))]
             [_ (No)])]
         [(Gep _ base offset ty)
           (match (opt-induction-value-offset offsets offset phi-var)
@@ -32684,6 +32770,7 @@
   [offsets : (& offsets opt_i64_i64_map.Map)]
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
@@ -32695,6 +32782,7 @@
       offsets
       scaled
       loop-defs
+      reverse-ok?
       (ir.compiler-ir-instr-seq-borrow instrs index))
       [(Some derived)
         (opt-induction-collect-derived-instr-seq-from
@@ -32703,6 +32791,7 @@
           offsets
           scaled
           loop-defs
+          reverse-ok?
           instrs
           (+ index 1)
           (opt-induction-derived-list-append-unique
@@ -32716,6 +32805,7 @@
           offsets
           scaled
           loop-defs
+          reverse-ok?
           instrs
           (+ index 1)
           deriveds)])))
@@ -32726,6 +32816,7 @@
   [offsets : (& offsets opt_i64_i64_map.Map)]
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [deriveds : (& OptInductionDerivedList)]) : OptInductionDerivedList
   (opt-induction-collect-derived-instr-seq-from
@@ -32734,6 +32825,7 @@
     offsets
     scaled
     loop-defs
+    reverse-ok?
     instrs
     0
     (owned_view.compiler-owned-reference-shared-view deriveds)))
@@ -32815,6 +32907,9 @@
   [offsets : (& offsets opt_i64_i64_map.Map)]
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
+  [reverse-ok? : bool]
+  [context : (& context OptCfgContext)]
+  [latch-id : i64]
   [all-body-blocks : (& all-body-blocks ir.CompilerIrBlockList)]
   [body-blocks : (& body-blocks (Slice ir.CompilerIrBlock))]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
@@ -32830,6 +32925,9 @@
             offsets
             scaled
             loop-defs
+            reverse-ok?
+            context
+            latch-id
             all-body-blocks
             rest
             (if (opt-induction-switch-arm? index all-body-blocks label instrs)
@@ -32840,6 +32938,12 @@
                 offsets
                 scaled
                 loop-defs
+                ;; The derived phi's latch step runs on every trip, so the
+                ;; `c - i` it replaces must too: only a block that dominates
+                ;; the latch pays for it.
+                (and
+                  reverse-ok?
+                  (opt-licm-block-guaranteed? context latch-id label))
                 (& instrs)
                 (& deriveds))))])]))
 
@@ -32901,18 +33005,16 @@
         [(AddInv c scale ty)
           (match (owned_view.compiler-owned-reference-shared-view instr)
             [(BinOp _ op lhs rhs instr-ty)
-              (match op
-                [(Add)
-                  (and
-                    (opt-type-eq type-segment-bases instr-ty (& ty))
-                    (opt-induction-add-inv-matches?
-                      scaled
-                      phi-var
-                      (& c)
-                      scale
-                      (& lhs)
-                      (& rhs)))]
-                [_ false])]
+              (and
+                (opt-type-eq type-segment-bases instr-ty (& ty))
+                (opt-induction-add-inv-matches?
+                  scaled
+                  phi-var
+                  (& c)
+                  scale
+                  (& op)
+                  (& lhs)
+                  (& rhs)))]
             [_ false])])]))
 
 ;; The rewrite mov must carry the PHI's type: for address deriveds that is
@@ -33396,7 +33498,7 @@
 
 (define (opt-induction-apply-loop
   [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
+  [context : (& context OptCfgContext)]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [loop : (& OptNaturalLoop)]) : OptInductionApplyResult
@@ -33430,19 +33532,39 @@
                       (opt-licm-body-map-capacity (& body-blocks))))]
                 [offsets : opt_i64_i64_map.Map
                   (opt-induction-affine-offset-env body-blocks fact)]
+                ;; IND-BASE `c - i` waits until the loop carries no bounds
+                ;; check: bce_version proves a checked reverse index from the
+                ;; counter it reads, and a down-stepping derived phi would
+                ;; hide that counter from it. The fixpoint's next round
+                ;; derives it in the checked-free fast clone bce_version
+                ;; leaves behind.
+                [reverse-ok? : bool
+                  (not (opt-inline-blocks-have-bounds-check? (& body-blocks)))]
+                [latch-id : i64
+                  (match (opt-cfg-index-id
+                    (__tl-project-field (deref context) index)
+                    (opt-natural-loop-latch loop))
+                    [(Some id) id]
+                    [(None) (- 0 1)])]
                 [scaled : opt_i64_i64_map.Map
                   (opt-induction-scaled-env-blocks
                     fact
                     loop-defs
+                    reverse-ok?
+                    context
+                    latch-id
                     (& body-blocks))]
                 [deriveds : OptInductionDerivedList
                   (opt-induction-collect-derived-blocks
                     type-segment-bases
-                    index
+                    (__tl-project-field (deref context) index)
                     fact
                     offsets
                     scaled
                     loop-defs
+                    reverse-ok?
+                    context
+                    latch-id
                     blocks
                     (ir.compiler-ir-block-list-view body-blocks)
                     (Nil))]
@@ -33457,7 +33579,7 @@
                       (opt-induction-rewrite-derived-list-blocks
                         type-segment-bases
                         (& body)
-                        index
+                        (__tl-project-field (deref context) index)
                         fact
                         (& offsets)
                         (& scaled)
@@ -33490,7 +33612,7 @@
 
 (define (opt-induction-apply-loops
   [type-segment-bases : i64]
-  [index : (& index OptCfgIndex)]
+  [context : (& context OptCfgContext)]
   [loops : (& loops (Slice OptNaturalLoop))]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
@@ -33500,14 +33622,14 @@
     [(slice loop & rest)
       (match (opt-induction-apply-loop
         type-segment-bases
-        index
+        context
         blocks
         frame
         loop)
         [(Result next-blocks next-frame loop-changed)
           (opt-induction-apply-loops
             type-segment-bases
-            index
+            context
             rest
             next-blocks
             next-frame
@@ -33539,7 +33661,7 @@
             (opt_natural_loop_vec.view natural-loops))
           (opt-induction-apply-loops
             type-segment-bases
-            (__tl-project-field (deref context) index)
+            context
             (opt_natural_loop_vec.view natural-loops)
             blocks
             frame

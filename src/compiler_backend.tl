@@ -19598,43 +19598,44 @@
   [rhs : compiler_ir_types.CompilerIrValue]) : String
   (match rhs
     [(I64 n)
-      (cond
-        [(or (= n 2) (= n 4) (= n 8))
-          (str_cat.str-cat
-            "    leaq (,"
-            lhs-reg
-            ","
-            (string.int->string n)
-            "), "
-            dst-home
-            "\n")]
-        ;; A value in %rbp must never look like a frame address to the final
-        ;; rsp-rebase pass. It cannot occupy both SIB roles without doing so.
-        [(and (or (= n 3) (= n 5) (= n 9)) (not (string.eq lhs-reg "%rbp")))
-          (str_cat.str-cat
-            "    leaq ("
-            lhs-reg
-            ","
-            lhs-reg
-            ","
-            (string.int->string (- n 1))
-            "), "
-            dst-home
-            "\n")]
-        [(and (> n 8) (string.eq lhs-reg dst-home))
-          (match (compiler-backend-power-of-two-shift n)
-            [(Some count)
-              (str_cat.str-cat
-                "    shlq $"
-                (string.int->string count)
-                ", "
-                dst-home
-                "\n")]
-            [(None)
-              (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
-        [else
-          (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")])]
+      (let
+        [sib : String (compiler-backend-mul-sib-operand lhs-reg n)]
+        (cond
+          [(not (string.eq sib ""))
+            (str_cat.str-cat "    leaq " sib ", " dst-home "\n")]
+          [(and (> n 8) (string.eq lhs-reg dst-home))
+            (match (compiler-backend-power-of-two-shift n)
+              [(Some count)
+                (str_cat.str-cat
+                  "    shlq $"
+                  (string.int->string count)
+                  ", "
+                  dst-home
+                  "\n")]
+              [(None)
+                (str_cat.str-cat
+                  "    imulq "
+                  imm
+                  ", "
+                  lhs-reg
+                  ", "
+                  dst-home
+                  "\n")])]
+          [else
+            (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
+
+;; The SIB memory operand computing `reg * n`, or "" when no LEA does: SIB
+;; scales 2/4/8 take the no-base `(,reg,n)` spelling and factors 3/5/9 put
+;; `reg` in both roles, `(reg,reg,n-1)`. A value in %rbp must never look like
+;; a frame address to the final rsp-rebase pass, so it may not be a base.
+(define (compiler-backend-mul-sib-operand [reg : (& reg str)] [n : i64]) : String
+  (cond
+    [(or (= n 2) (= n 4) (= n 8))
+      (str_cat.str-cat "(," reg "," (string.int->string n) ")")]
+    [(and (or (= n 3) (= n 5) (= n 9)) (not (string.eq reg "%rbp")))
+      (str_cat.str-cat "(" reg "," reg "," (string.int->string (- n 1)) ")")]
+    [else ""]))
 
 ;; The three-operand form for `dst = lhs OP imm` when the destination is not the
 ;; source's home: `add` is `leaq K(src), dst` and `sub` is the same instruction
@@ -50348,6 +50349,179 @@
       (compiler-backend-emergency-wrap head ctx.backend-state))
     (compiler-backend-emit-instrs ctx fallthrough instrs index out)))
 
+;; LEA selection across a sole-use pair. `t = mul x, n` (a SIB factor) or
+;; `t = add x, k` whose only reader is the very next instruction
+;; `u = add t, k'` / `u = add t, y` is one `leaq disp(base,index,scale), u`:
+;;   mul x, 3 ; add t, 2   ->  leaq 2(x,x,2), u
+;;   mul x, 4 ; add t, y   ->  leaq (y,x,4), u
+;;   add x, -48 ; add t, y ->  leaq -48(y,x), u
+;; LEA computes the same wrapped 64-bit sum, so `t` is simply never written.
+;; It writes no EFLAGS where the consumer's `addq` would have, so a consumer
+;; whose result the next instruction compares is refused: that compare's
+;; `testq` is dropped after a flags-writing `addq` (the ZF/SF peephole), and
+;; fusing there would only trade the saved instruction for the kept `testq`.
+;; Every operand must sit in a register other than %rbp, which a base slot
+;; would make look like a frame address to the rsp rebase.
+(define (compiler-backend-lea-pair-asm
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : (& ty compiler_ast_types.AstType)]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : be_state.CompilerBackendMaybeAsm
+  (unless
+    (and
+      (< index instrs.len)
+      (compiler-backend-gep-fold-64bit-int? ty)
+      (compiler-backend-var-single-use? ctx.use-counts dst)
+      (match lhs
+        [(Var _) true]
+        [_ false]))
+    (return (No)))
+  (let
+    [source : String
+      (be_operand.compiler-backend-value-scalar-register
+        ctx.backend-state
+        ctx.assignments
+        lhs)]
+    ;; The first instruction as a LEA term: a product's factor, or an
+    ;; immediate add's displacement (its index is `source` at scale 1).
+    [scaled? : bool
+      (match (& op)
+        [(Mul) true]
+        [_ false])]
+    [factor : i64
+      (match (& rhs)
+        [(I64 n)
+          (if scaled?
+            n
+            0)]
+        [_ 0])]
+    [offset : CompilerBackendMaybeVarImm
+      (match (& op)
+        [(or (Add) (Sub))
+          (compiler-backend-gep-fold-offset-operands op lhs rhs)]
+        [_ (No)])]
+    [first-disp : i64
+      (match (& offset)
+        [(Some _ k) k]
+        [(No) 0])]
+    ;; A product's SIB text ("" for any other first instruction).
+    [first-sib : String
+      (if scaled?
+        (compiler-backend-mul-sib-operand source factor)
+        "")]
+    [term-ok? : bool
+      (if scaled?
+        (not (string.eq first-sib ""))
+        (match (& offset)
+          [(Some _ k) (be_operand.compiler-backend-imm32? k)]
+          [(No) false]))]
+    (when
+      (or (string.eq source "") (string.eq source "%rbp") (not term-ok?))
+      (return (No)))
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(BinOp u op2 a b ty2)
+        (let
+          [target : String
+            (compiler-backend-var-register-home
+              ctx.backend-state
+              ctx.assignments
+              u)]
+          ;; The addend of `t + y`, when that is the consumer's shape.
+          [addend : i64
+            (match (& op2)
+              [(Add)
+                (match (& a)
+                  [(Var av)
+                    (match (& b)
+                      [(Var bv)
+                        (cond
+                          [(and (= av dst) (not (= bv dst))) bv]
+                          [(and (= bv dst) (not (= av dst))) av]
+                          [else (- 0 1)])]
+                      [_ (- 0 1)])]
+                  [_ (- 0 1)])]
+              [_ (- 0 1)])]
+          (when
+            (or
+              (not (compiler-backend-gep-fold-64bit-int? (& ty2)))
+              (string.eq target "")
+              (compiler-backend-next-compare-reads-var? instrs (+ index 1) u))
+            (return (No)))
+          (if (>= addend 0)
+            ;; `u = t + y`: needs a free base slot -- a 2/4/8 product (no base
+            ;; register) or an add of an immediate (the sum's index alone).
+            ;; A forwarded addr-of addend has no register home ("" here), so
+            ;; it falls back to the plain pair.
+            (let
+              [base : String
+                (be_operand.compiler-backend-value-scalar-register
+                  ctx.backend-state
+                  ctx.assignments
+                  (& (compiler_ir_types.CompilerIrValue.Var addend)))]
+              [free-base? : bool
+                (or (not scaled?) (= factor 2) (= factor 4) (= factor 8))]
+              (if (or
+                (not free-base?)
+                (string.eq base "")
+                (string.eq base "%rbp"))
+                (No)
+                (Some
+                  (str_cat.str-cat
+                    "    leaq "
+                    (if (= first-disp 0)
+                      ""
+                      (string.int->string first-disp))
+                    "("
+                    base
+                    (if scaled?
+                      (string.substring
+                        first-sib
+                        1
+                        (- (string.string-length first-sib) 1))
+                      (str_cat.str-cat "," source ")"))
+                    ", "
+                    target
+                    "\n"))))
+            ;; `u = t + k'`: only after a product; two immediate adds are the
+            ;; folder's job.
+            (match (compiler-backend-gep-fold-offset-operands op2 a b)
+              [(Some v k)
+                (if (and
+                  scaled?
+                  (= v dst)
+                  (be_operand.compiler-backend-imm32? k))
+                  (Some
+                    (str_cat.str-cat
+                      "    leaq "
+                      (string.int->string k)
+                      first-sib
+                      ", "
+                      target
+                      "\n"))
+                  (No))]
+              [(No) (No)])))]
+      [_ (No)])))
+
+;; Does the instruction at `index` compare `var`?
+(define (compiler-backend-next-compare-reads-var?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : bool
+  (if (>= index instrs.len)
+    false
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
+      [(BinOp _ op a b _)
+        (and
+          (be_facts.compiler-backend-compare-op? (& op))
+          (or
+            (be_operand.compiler-backend-branch-uses-var? (& a) var)
+            (be_operand.compiler-backend-branch-uses-var? (& b) var)))]
+      [_ false])))
+
 ;; A sole-use byte offset such as i*24 followed by an address addition can
 ;; use two LEAs: i*3, then base + scaled-index*8. This removes multiply latency
 ;; without adding instructions. Keep the existing homes and refuse any shape
@@ -50474,6 +50648,25 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (match (compiler-backend-lea-pair-asm
+    (be_state.compiler-backend-global-shared-view ctx)
+    dst
+    (be_state.compiler-backend-global-shared-view op)
+    (be_state.compiler-backend-global-shared-view lhs)
+    (be_state.compiler-backend-global-shared-view rhs)
+    (& ty)
+    (be_state.compiler-backend-global-shared-view instrs)
+    index)
+    [(Some text)
+      (return
+        (compiler-backend-emit-fused-result-rest
+          ctx
+          fallthrough
+          (Ok text)
+          instrs
+          (+ index 1)
+          out))]
+    [(No) unit])
   (when
     (match (& op)
       [(Mul) true]

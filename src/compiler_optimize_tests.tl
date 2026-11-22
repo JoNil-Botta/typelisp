@@ -73964,6 +73964,277 @@ done:
   (when (opt-bit-test-changed? (opt-bit-test-unsigned-blocks)) (return 5))
   42)
 
+;; --- bit_test: a two-sided range pair -> one unsigned range compare ----------
+;;
+;; `(and (>= c 48) (<= c 57))` and its complement `(or (< c 48) (> c 57))` are
+;; two test blocks and fold to `(c - 48) <=u 9`, the guard a whole-window run
+;; already emits. Under `and` the head continues on its true edge and the pair
+;; shares the head's false exit; under `or` it continues on its false edge and
+;; shares its true one, so the folded branch is `hit`/`miss` for `and` and
+;; `miss`/`hit` for `or`.
+(define (opt-bit-test-range-pair-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block
+      "entry:
+         %2 = ge %0, 48 : i64
+         branch %2, inner, miss")
+    (irt.block
+      "inner:
+         %3 = le %0, 57 : i64
+         branch %3, hit, miss")))
+
+;; The strict bound forms move their bounds inward by one, so `> 47` and `< 58`
+;; are the same range as `>= 48` and `<= 57`.
+(define (opt-bit-test-range-pair-strict-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block
+      "entry:
+         %2 = gt %0, 47 : i64
+         branch %2, inner, miss")
+    (irt.block
+      "inner:
+         %3 = lt %0, 58 : i64
+         branch %3, hit, miss")))
+
+;; `(or (<= c 47) (>= c 58))` is the complement of the same range: the pair's
+;; in-range exit is `miss` and its shared exit is `hit`.
+(define (opt-bit-test-range-pair-or-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block
+      "entry:
+         %2 = le %0, 47 : i64
+         branch %2, hit, inner")
+    (irt.block
+      "inner:
+         %3 = ge %0, 58 : i64
+         branch %3, hit, miss")))
+
+(define (opt-bit-test-range-pair-or-strict-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block
+      "entry:
+         %2 = lt %0, 48 : i64
+         branch %2, hit, inner")
+    (irt.block
+      "inner:
+         %3 = gt %0, 57 : i64
+         branch %3, hit, miss")))
+
+;; A third link-shaped block, so the pre-scan admits a refusal fixture and the
+;; pair's own refusals are what decide. It is unreachable and plans nothing: an
+;; equality on its own is not a pair.
+(define (opt-bit-test-range-pair-filler) : ir.CompilerIrBlock
+  (irt.block
+    "filler:
+         %5 = eq %0, 7 : i64
+         branch %5, hit, miss"))
+
+;; `lo > hi`: the pair admits nothing.
+(define (opt-bit-test-range-pair-empty-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block
+      "entry:
+         %2 = ge %0, 80 : i64
+         branch %2, inner, miss")
+    (irt.block
+      "inner:
+         %3 = le %0, 70 : i64
+         branch %3, hit, miss")
+    (opt-bit-test-range-pair-filler)))
+
+;; A head with a store before its test: the rewrite keeps the head and replaces
+;; only its terminator, so an effect ahead of the test is legal and stays.
+(define (opt-bit-test-range-pair-head-effect-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block
+      "entry:
+         store_ptr %1, 7 : i64
+         %2 = ge %0, 48 : i64
+         branch %2, inner, miss")
+    (irt.block
+      "inner:
+         %3 = le %0, 57 : i64
+         branch %3, hit, miss")
+    (opt-bit-test-range-pair-filler)))
+
+;; A head whose compare value numbering reused from a dominating block: the pair
+;; is read from the fact table, and the tested value is untouched after it.
+(define (opt-bit-test-range-pair-reused-compare-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block "probe:
+         %2 = ge %0, 48 : i64
+         jump entry")
+    (irt.block "entry:
+         branch %2, inner, miss")
+    (irt.block
+      "inner:
+         %3 = le %0, 57 : i64
+         branch %3, hit, miss")
+    (opt-bit-test-range-pair-filler)))
+
+;; The two tests read different values: no one range bounds either.
+(define (opt-bit-test-range-pair-mixed-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (opt-bit-test-arms)
+    (irt.block
+      "entry:
+         %2 = ge %0, 48 : i64
+         branch %2, inner, miss")
+    (irt.block
+      "inner:
+         %3 = le %1, 57 : i64
+         branch %3, hit, miss")))
+
+;; The head keeps its own compare, then subtracts `base` as u64, compares the
+;; offset against `width` as u64 and branches to `in-range`/`out-range`; the
+;; second test block is gone.
+(define (opt-bit-test-range-shape-ok?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [base : i64]
+  [width : i64]
+  [in-range : i64]
+  [out-range : i64]) : bool
+  (let
+    [head : ir.CompilerIrBlock
+      (opt-bit-test-block-at blocks (ir.compiler-ir-label "entry"))]
+    [head-count : i64 (opt-block-instr-count head)]
+    (and
+      (>= head-count 3)
+      (not
+        (opt-block-list-has-label?
+          (ir.compiler-ir-block-list-view blocks)
+          (ir.compiler-ir-label "inner")))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 3))
+        16
+        Sub
+        (Var 0)
+        (I64 base))
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 2))
+        17
+        Le
+        (Var 16)
+        (I64 width))
+      (opt-bit-test-branch-matches?
+        (opt-block-instr-at head (- head-count 1))
+        17
+        in-range
+        out-range))))
+
+(define (opt-bit-test-range-rewrites?
+  [blocks : ir.CompilerIrBlockList]
+  [base : i64]
+  [width : i64]
+  [in-range : i64]
+  [out-range : i64]) : bool
+  (match (opt-bit-test-run blocks)
+    [(Result next changed)
+      (let
+        [verified : bool
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& next))))]
+        [out : ir.CompilerIrBlockList
+          (match next
+            [(Function _ _ _ _ out _) out])]
+        (and
+          changed
+          verified
+          (opt-bit-test-range-shape-ok? (& out) base width in-range out-range)))]))
+
+;; The same fold with the head's own work kept ahead of the guard: the store
+;; and the compare survive, so the head holds five instructions.
+(define (opt-bit-test-range-head-effect-ok? [blocks : ir.CompilerIrBlockList]) : bool
+  (match (opt-bit-test-run blocks)
+    [(Result next changed)
+      (let
+        [verified : bool
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& next))))]
+        [out : ir.CompilerIrBlockList
+          (match next
+            [(Function _ _ _ _ out _) out])]
+        [head : ir.CompilerIrBlock
+          (opt-bit-test-block-at (& out) (ir.compiler-ir-label "entry"))]
+        (and
+          changed
+          verified
+          (= (opt-block-instr-count head) 5)
+          (opt-bit-test-range-shape-ok?
+            (& out)
+            48
+            9
+            (ir.compiler-ir-label "hit")
+            (ir.compiler-ir-label "miss"))))]))
+
+;; Returns 42 only when a two-sided range pair folds to one unsigned range
+;; compare for the `and` and `or` forms and for both bound spellings.
+(define (compiler-optimize-bit-test-range-pair-self-test) : i64
+  (let
+    [hit : i64 (ir.compiler-ir-label "hit")]
+    [miss : i64 (ir.compiler-ir-label "miss")]
+    (unless
+      (opt-bit-test-range-rewrites?
+        (opt-bit-test-range-pair-blocks)
+        48
+        9
+        hit
+        miss)
+      (return 1))
+    (unless
+      (opt-bit-test-range-rewrites?
+        (opt-bit-test-range-pair-strict-blocks)
+        48
+        9
+        hit
+        miss)
+      (return 2))
+    (unless
+      (opt-bit-test-range-rewrites?
+        (opt-bit-test-range-pair-or-blocks)
+        48
+        9
+        miss
+        hit)
+      (return 3))
+    (unless
+      (opt-bit-test-range-rewrites?
+        (opt-bit-test-range-pair-or-strict-blocks)
+        48
+        9
+        miss
+        hit)
+      (return 4))
+    (unless
+      (opt-bit-test-range-head-effect-ok?
+        (opt-bit-test-range-pair-head-effect-blocks))
+      (return 5))
+    (unless
+      (opt-bit-test-range-rewrites?
+        (opt-bit-test-range-pair-reused-compare-blocks)
+        48
+        9
+        hit
+        miss)
+      (return 6))
+    42))
+
+;; Returns 42 only when the pair's refusals leave the blocks exactly as they
+;; were: an empty range and two tested values.
+(define (compiler-optimize-bit-test-range-pair-refusal-self-test) : i64
+  (when
+    (opt-bit-test-changed? (opt-bit-test-range-pair-empty-blocks))
+    (return 1))
+  (when
+    (opt-bit-test-changed? (opt-bit-test-range-pair-mixed-blocks))
+    (return 2))
+  42)
+
 ;; --- unsigned loop-bound narrowing -------------------------------------------
 ;;
 ;; The shape the pass exists for: a rotated loop whose index is REASSIGNED on
@@ -85982,6 +86253,14 @@ done:
     (compiler-optimize-bit-test-refusal-self-test)
     42
     "compiler-optimize-bit-test-refusal-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-test-range-pair-self-test)
+    42
+    "compiler-optimize-bit-test-range-pair-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-bit-test-range-pair-refusal-self-test)
+    42
+    "compiler-optimize-bit-test-range-pair-refusal-self-test")
   (test.assert-i64-eq
     (compiler-optimize-ubound-self-test)
     42

@@ -5348,10 +5348,25 @@
 ;; the batch live-memory baseline below its 4 MiB drift budget.
 (define intern-expansion-max-segments : i64
   40960)
-(define intern-expansion-segments : (__tl_dyn-array i64)
-  (__tl_make-array i64 intern-expansion-max-segments))
+
+;; The first segment is a process-lifetime global, so it is present in the
+;; batch memory baseline and costs no drift; later segments live in `arena`.
+(define intern-expansion-first : (__tl_dyn-array InternExpansionFrame)
+  (__tl_make-array InternExpansionFrame intern-expansion-segment-capacity))
 (define intern-expansion-current : (__tl_dyn-array InternExpansionFrame)
-  (__tl_make-array InternExpansionFrame 0))
+  (intern-global-shared-view intern-expansion-first))
+
+(define (intern-expansion-segments-new) : (__tl_dyn-array i64)
+  (let
+    [segments : (__tl_dyn-array i64)
+      (__tl_make-array i64 intern-expansion-max-segments)]
+    (set!
+      (array-ref segments 0)
+      (cast (intern-i64-array-address intern-expansion-current) : i64))
+    segments))
+
+(define intern-expansion-segments : (__tl_dyn-array i64)
+  (intern-expansion-segments-new))
 (define intern-expansion-arena : i64
   0)
 (define intern-expansion-used : i64
@@ -5564,9 +5579,12 @@
     (unsafe
       (tl_arena_destroy intern-expansion-arena)))
   (set! intern-expansion-arena 0)
+  (set!
+    intern-expansion-current
+    (intern-global-shared-view intern-expansion-first))
+  (set!
+    (array-ref intern-expansion-segments 0)
+    (cast (intern-i64-array-address intern-expansion-current) : i64))
   (set! intern-expansion-used 0)
   (set! intern-expansion-count 0)
-  (set! intern-expansion-generation (+ intern-expansion-generation 1))
-  ;; Allocate the first segment here, outside the measured macro-capture
-  ;; region, rather than on the first expansion push.
-  (intern-expansion-next-segment!))
+  (set! intern-expansion-generation (+ intern-expansion-generation 1)))

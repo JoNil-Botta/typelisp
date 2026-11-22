@@ -133465,8 +133465,11 @@
   [dead : (&mut dead (__tl_dyn-array i64))]
   [index : i64]
   [instr : (& instr ir.CompilerIrInstr)]) : OptDeadStoreSet
+  ;; With nothing pending, a marked def or read has no store to keep alive.
   (when
-    (or (opt-addr-taken-def? marks instr) (opt-addr-taken-read? marks instr))
+    (and
+      (> pending.len 0)
+      (or (opt-addr-taken-def? marks instr) (opt-addr-taken-read? marks instr)))
     (return (opt-dead-store-set-clear pending)))
   (let
     [after-memory : OptDeadStoreSet

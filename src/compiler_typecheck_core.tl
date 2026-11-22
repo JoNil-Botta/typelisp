@@ -102971,6 +102971,32 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-intern-storage-bytes) : i64
+    (let
+      [persistent : i64 (ci.intern-persistent-arena-handle)]
+      [records : i64 (ci.intern-structural-records-arena-handle)]
+      [map : i64 (ci.intern-structural-map-arena-handle)]
+      [expansion : i64 (ci.intern-expansion-arena-handle)]
+      (+
+        (compiler-tc-macro-lifetime-arena-bytes persistent)
+        (+
+          (if (and (!= records 0) (!= records persistent))
+            (compiler-tc-macro-lifetime-arena-bytes records)
+            0)
+          (+
+            (if (and (!= map 0) (!= map persistent) (!= map records))
+              (compiler-tc-macro-lifetime-arena-bytes map)
+              0)
+            (if (and
+              (!= expansion 0)
+              (!= expansion persistent)
+              (!= expansion records)
+              (!= expansion map))
+              (compiler-tc-macro-lifetime-arena-bytes expansion)
+              0)))))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-lifetime-row
     [boundary : String]
     [owner : String]
@@ -103080,8 +103106,7 @@
       (compiler-tc-profile-metric-set!
         metrics-address
         compiler-tc-macro-lifetime-start-intern-bytes-metric
-        (compiler-tc-macro-lifetime-arena-bytes
-          (ci.intern-persistent-arena-handle))))))
+        (compiler-tc-intern-storage-bytes)))))
 
 (cfg
   compile-profile
@@ -103174,15 +103199,19 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-scoped-env-bytes-metric))]
-      ;; Spellings interned during expansion (generated names, hygiene
-      ;; renames) persist in the intern arena for the whole session.
+      ;; Spellings, structural records, and expansion provenance frames created
+      ;; during expansion persist in intern-owned arenas for the whole session.
       [intern-handle : i64 (ci.intern-persistent-arena-handle)]
+      [intern-records-handle : i64 (ci.intern-structural-records-arena-handle)]
+      [intern-map-handle : i64 (ci.intern-structural-map-arena-handle)]
+      [intern-expansion-handle : i64 (ci.intern-expansion-arena-handle)]
       [interns : i64
-        (compiler-tc-macro-lifetime-owner-delta
-          intern-handle
-          (compiler-tc-profile-metric-value
-            metrics-address
-            compiler-tc-macro-lifetime-start-intern-bytes-metric))]
+        (compiler-tc-macro-lifetime-nonnegative
+          (-
+            (compiler-tc-intern-storage-bytes)
+            (compiler-tc-profile-metric-value
+              metrics-address
+              compiler-tc-macro-lifetime-start-intern-bytes-metric)))]
       [job-owner : i64
         (if (or
           (= job-owner-handle (ast.ast-node-pool-context-base-arena pools))
@@ -103214,7 +103243,10 @@
             job-owner-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
           (= job-owner-handle scoped-env-handle)
-          (= job-owner-handle intern-handle))
+          (= job-owner-handle intern-handle)
+          (= job-owner-handle intern-records-handle)
+          (= job-owner-handle intern-map-handle)
+          (= job-owner-handle intern-expansion-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             job-owner-handle
@@ -103257,7 +103289,10 @@
             enclosing-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
           (= enclosing-handle scoped-env-handle)
-          (= enclosing-handle intern-handle))
+          (= enclosing-handle intern-handle)
+          (= enclosing-handle intern-records-handle)
+          (= enclosing-handle intern-map-handle)
+          (= enclosing-handle intern-expansion-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             enclosing-handle

@@ -2882,9 +2882,8 @@
 ;; The scan visits loans in index order up to the answer. Only an active loan
 ;; this access can conflict with (any for a write, an exclusive one for a
 ;; read) is examined, taken from the state's planes a word at a time; every
-;; loan scanned counts one unit and each parent link visited one more. The
-;; units are charged once, at the answer: work only grows, so the budget
-;; runs out by then exactly when it would run out on some unit before it.
+;; loan scanned counts one unit. Parent links and terminal comparisons add
+;; to that prefix charge, which is applied once when the answer is known.
 (define (ownership-loan-conflict
   [body : (& body OwnershipBody)]
   [state : (& state (__tl_dyn-array i64))]
@@ -2896,8 +2895,7 @@
   (let
     [words : i64 (/ (array-length state) 4)]
     [w : i64 0]
-    [scanned : i64 0]
-    [units : i64 0]
+    [relation-work : i64 0]
     (while (< w words)
       (let
         [rest : i64 (array-ref state (+ words w))]
@@ -2913,46 +2911,62 @@
             (begin
               (when
                 (!= (bit-and rest 1) 0)
-                (set! units (+ units (- (+ i 1) scanned)))
-                (set! scanned (+ i 1))
-                (when
-                  (and
-                    (=
-                      (ownership-loan-ancestor-charged
-                        body
-                        i
-                        grant
-                        (&mut units)
-                        9223372036854775807)
-                      0)
-                    (or
+                (let
+                  [exempt? : bool
+                    (if (< grant i)
+                      ;; The granting loan is already below this candidate.
+                      (begin
+                        (set! relation-work (+ relation-work 1))
+                        false)
                       (=
-                        (ownership-descendant-charged
+                        1
+                        (ownership-loan-ancestor-charged
                           body
-                          place
-                          (array-ref body.loans i).place.index
-                          (&mut units)
-                          9223372036854775807)
-                        1)
-                      (=
-                        (ownership-descendant-charged
-                          body
-                          (array-ref body.loans i).place.index
-                          place
-                          (&mut units)
-                          9223372036854775807)
-                        1)))
-                  (return
-                    (if (ownership-charge! work limit units)
-                      i
-                      -2))))
+                          i
+                          grant
+                          (&mut relation-work)
+                          9223372036854775807)))]
+                  (unless
+                    exempt?
+                    (let
+                      [other : i64 (array-ref body.loans i).place.index]
+                      [target : i64 other]
+                      [probe : i64 place]
+                      ;; Validation orders parents before children. Only the
+                      ;; larger ID can reach the smaller. Always charge the
+                      ;; first comparison, which fails immediately if place
+                      ;; is smaller and forces the reverse comparison.
+                      (set! relation-work (+ relation-work 1))
+                      (when
+                        (< place other)
+                        (set! relation-work (+ relation-work 1))
+                        (set! target place)
+                        (set! probe other))
+                      (while (> probe target)
+                        (set! relation-work (+ relation-work 1))
+                        (set!
+                          probe
+                          (ownership-parent (& (array-ref body.places probe)))))
+                      (when
+                        (= probe target)
+                        (return
+                          (if (ownership-charge!
+                            work
+                            limit
+                            (+ relation-work i 1))
+                            i
+                            -2)))
+                      ;; A failed forward walk also reaches the reverse test.
+                      (when
+                        (> place other)
+                        (set! relation-work (+ relation-work 1)))))))
               (set! rest (bit-and (shr rest 1) 9223372036854775807))
               (set! i (+ i 1))))))
       (set! w (+ w 1)))
     (if (ownership-charge!
       work
       limit
-      (+ units (- (array-length body.loans) scanned)))
+      (+ relation-work (array-length body.loans)))
       -1
       -2)))
 

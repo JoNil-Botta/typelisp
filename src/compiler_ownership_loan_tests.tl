@@ -1129,3 +1129,190 @@
     (compiler-ownership-loan-reissue-self-test)
     42
     "a loan issued again in a loop stays live while a reference holds its earlier issue"))
+
+;; Preserve the two charged directional queries as the reference scan.
+(define (loan-test-reference-conflict
+  [body : (& body own.OwnershipBody)]
+  [state : (& state (__tl_dyn-array i64))]
+  [place : i64]
+  [grant : i64]
+  [write? : bool]
+  [work : (&mut work i64)]
+  [limit : i64]) : i64
+  (let
+    [words : i64 (/ (array-length state) 4)]
+    [w : i64 0]
+    [scanned : i64 0]
+    [units : i64 0]
+    (while (< w words)
+      (let
+        [rest : i64 (array-ref state (+ words w))]
+        [i : i64 (* w 64)]
+        (unless
+          write?
+          (set! rest (bit-and rest (array-ref state (+ (* 3 words) w)))))
+        (while (!= rest 0)
+          (if (= (bit-and rest 255) 0)
+            (begin
+              (set! rest (bit-and (shr rest 8) 72057594037927935))
+              (set! i (+ i 8)))
+            (begin
+              (when
+                (!= (bit-and rest 1) 0)
+                (set! units (+ units (- (+ i 1) scanned)))
+                (set! scanned (+ i 1))
+                (when
+                  (and
+                    (=
+                      (own.ownership-loan-ancestor-charged
+                        body
+                        i
+                        grant
+                        (&mut units)
+                        9223372036854775807)
+                      0)
+                    (or
+                      (=
+                        (own.ownership-descendant-charged
+                          body
+                          place
+                          (array-ref body.loans i).place.index
+                          (&mut units)
+                          9223372036854775807)
+                        1)
+                      (=
+                        (own.ownership-descendant-charged
+                          body
+                          (array-ref body.loans i).place.index
+                          place
+                          (&mut units)
+                          9223372036854775807)
+                        1)))
+                  (return
+                    (if (own.ownership-charge! work limit units)
+                      i
+                      -2))))
+              (set! rest (bit-and (shr rest 1) 9223372036854775807))
+              (set! i (+ i 1))))))
+      (set! w (+ w 1)))
+    (if (own.ownership-charge!
+      work
+      limit
+      (+ units (- (array-length body.loans) scanned)))
+      -1
+      -2)))
+
+(define (loan-test-conflict-charge-cases) : i64
+  (let
+    [body : own.OwnershipBody
+      (fixture.ownership-test-body (__tl_make-array own.OwnershipBlock 0))]
+    [state : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [i : i64 0]
+    [checked : i64 0]
+    (set! body.loans (__tl_make-array own.OwnershipLoan 128))
+    (while (< i 128)
+      (set!
+        (array-ref body.loans i)
+        (loan-test-loan
+          (% i 7)
+          true
+          (if (= (% i 3) 0)
+            -1
+            (- i 1))))
+      (set! i (+ i 1)))
+    (set! i 0)
+    ;; Walk every singleton mask, then the empty mask and four multi-bit
+    ;; patterns across the word boundary.
+    (while (< i 133)
+      (let
+        [bit : i64 (shl 1 (bit-and i 63))]
+        [place : i64 0]
+        (set!
+          (array-ref state 2)
+          (if (< i 64)
+            bit
+            0))
+        (set!
+          (array-ref state 3)
+          (if (and (>= i 64) (< i 128))
+            bit
+            0))
+        (when
+          (>= i 129)
+          (set!
+            (array-ref state 2)
+            (cond
+              [(= i 129) -1]
+              [(= i 130) -9223372036854775807]
+              [(= i 131) 6148914691236517205]
+              [else 257]))
+          (set!
+            (array-ref state 3)
+            (cond
+              [(= i 129) -1]
+              [(= i 130) 3]
+              [(= i 131) -6148914691236517206]
+              [else -9223372036854775807])))
+        (set! (array-ref state 6) -6148914691236517206)
+        (set! (array-ref state 7) 6148914691236517205)
+        (while (< place 7)
+          (let
+            [grant : i64 -1]
+            (while (< grant 128)
+              (let
+                [access : i64 0]
+                (while (< access 2)
+                  (let
+                    [peak : i64 3]
+                    [_conflict : i64
+                      (loan-test-reference-conflict
+                        (& body)
+                        (& state)
+                        place
+                        grant
+                        (= access 1)
+                        (&mut peak)
+                        1000000)]
+                    ;; Compare just below, at and above the required work.
+                    [limit : i64 (- peak 1)]
+                    (while (<= limit (+ peak 1))
+                      (let
+                        [reference-work : i64 3]
+                        [fused-work : i64 3]
+                        [reference : i64
+                          (loan-test-reference-conflict
+                            (& body)
+                            (& state)
+                            place
+                            grant
+                            (= access 1)
+                            (&mut reference-work)
+                            limit)]
+                        [fused : i64
+                          (own.ownership-loan-conflict
+                            (& body)
+                            (& state)
+                            place
+                            grant
+                            (= access 1)
+                            (&mut fused-work)
+                            limit)]
+                        (unless
+                          (and
+                            (= reference-work fused-work)
+                            (= fused reference))
+                          (return -1))
+                        (set! checked (+ checked 1))
+                        (set! limit (+ limit 1)))))
+                  (set! access (+ access 1))))
+              (set! grant (+ grant 1))))
+          (set! place (+ place 1))))
+      (set! i (+ i 1)))
+    checked))
+
+(test
+  ownership-loan-conflict-charge
+  (test.assert-i64-eq
+    (loan-test-conflict-charge-cases)
+    720594
+    "the fused conflict scan matches the reference result and work at budget boundaries"))

@@ -27458,8 +27458,7 @@
 (defenum LowerBodyWriteMode
   (ScanWrites)
   (ReadPointer)
-  (CountMentions)
-  (SkipWrites))
+  (CountMentions))
 
 (defstruct LowerBodyProofScan
   (raw-address bool)
@@ -27527,18 +27526,10 @@
            (ast.AstExpr.Xgetbv _) (ast.AstExpr.WithResource _))
         (set! child-writes (CountMentions))]
       [_ unit])
-    (unless
-      (or
-        root?
-        (match write-mode
-          [(SkipWrites) true]
-          [_ false]))
+    (unless root?
       (when (<= scan.write-budget 0) (return false))
       (set! scan.write-budget (- scan.write-budget 1)))
     (match write-mode
-      [(SkipWrites)
-        (set! child-writes (SkipWrites))
-        (set! read-first-child? false)]
       [(CountMentions)
         (set! child-writes (CountMentions))
         (set! read-first-child? false)
@@ -27573,21 +27564,17 @@
       (for [index (iterator.range 0 children.len)]
         (let
           [id : i64 (ast.ast-expr-list-get (& children) index -1)]
-          [mode : LowerBodyWriteMode
-            (cond
-              [(< id 0) (SkipWrites)]
-              [(and read-first-child? (= index 0)) (ReadPointer)]
-              [else child-writes])]
-          (unless
-            (lower-body-proof-node!
-              ctx
-              (lower-context-expr-get ctx id)
-              child-exposure
-              child-loop?
-              mode
-              false
-              scan)
-            (return false))
+          (when (>= id 0)
+            (unless
+              (lower-body-proof-node!
+                ctx
+                (lower-context-expr-get ctx id)
+                child-exposure
+                child-loop?
+                (if (and read-first-child? (= index 0)) (ReadPointer) child-writes)
+                false
+                scan)
+              (return false)))
           unit)))
     true))
 

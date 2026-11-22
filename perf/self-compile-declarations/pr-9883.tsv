@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-15158.608	Lowering collects written roots, loop-set values, and address proof facts in one function-body traversal, avoiding repeated AST walks.

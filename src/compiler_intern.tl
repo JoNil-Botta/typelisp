@@ -5527,7 +5527,7 @@
     new-id))
 
 (define (intern-expansion-at [id : i64]) : InternExpansionFrame
-  (if (not (intern-expansion-live? id))
+  (if (or (<= id 0) (!= (shr id 32) intern-expansion-generation))
     (InternExpansionFrame 0 0 0 0 0 0 0 0 0)
     (let
       [index : i64 (- (bit-and id 4294967295) 1)]
@@ -5547,7 +5547,7 @@
 (define (intern-expansion-bytes [id : i64]) : i64
   (if (= id intern-expansion-last-id)
     intern-expansion-last-bytes
-    (if (not (intern-expansion-live? id))
+    (if (or (<= id 0) (!= (shr id 32) intern-expansion-generation))
       0
       (intern-expansion-at id).bytes)))
 

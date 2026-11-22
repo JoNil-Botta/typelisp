@@ -14,6 +14,7 @@
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
+(import stdlib.clone as clone_gen)
 (import compiler_ast_types)
 (import compiler_diagnostic)
 (import compiler_object as cobj)
@@ -611,6 +612,8 @@
 (defenum ResultProducerBytes
   (Ok (__tl_dyn-array u8))
   (Err String))
+
+(clone_gen.gen-clone ResultProducerBytes)
 
 ;; Per-body op budget. A template node costs its construction op plus the
 ;; span op that rebuilds the parser's wrapper, so a body needs about two ops

@@ -214,3 +214,34 @@ line is a `movq`/`movl`/`movups`/`set*` store whose destination is a
 `N(%rsp)` slot, and no remaining line in that body reads that slot. Every
 branch, call, table reference, address form and wipe instruction is
 byte-identical.
+
+## Range-pair fold re-pin (PR #9864)
+
+The optimizer now folds a two-sided range test on one value with constant
+bounds into one unsigned compare. `validate-lengths` tested
+`(or (< payload-length 0) (> payload-length (p-max)))` with
+`p-max = 68719476704`, inside the window of literal bounds the fold reads, so
+its two compares became one. Re-derived pins:
+
+- linux opt2: 1 body (`shape-linux-x86_64-opt2.sha256`);
+- windows opt2: 1 body (`shape-windows-x86_64-opt2.sha256`);
+- linux opt1 and windows opt1: unchanged.
+
+Per changed body, checked before re-pinning: the only change is that the
+`testq %rsi, %rsi` / `jl` pair and the signed `jle` on `%rsi` became one
+unsigned `jbe` on the same `%rsi` (windows: `%rdx`). The predicate reads the
+public `payload-length` argument, a negative length still reads as at least
+2^63 unsigned and so still takes the error arm, and the branch decision is
+identical for every i64. No instruction is added, no new data-dependent
+instruction or memory access appears, and every other line, call, table
+reference and the GHASH multiply body is byte-identical.
+
+    .Lf53_if_else.7:
+   -    testq %rsi, %rsi
+   -    jl .Lf53_if_then.14
+   -.Lf53_if_else.9:
+        movq $68719476704, %r8
+        cmpq %r8, %rsi
+   -    jle .Lf53_if_else.15
+   +    jbe .Lf53_if_else.15
+    .Lf53_if_then.14:

@@ -624,13 +624,12 @@
     (let
       [grown : (__tl_dyn-array ,item-ty)
         (__tl_make-array ,item-ty (+ 8 (* 2 ,count)))]
-      [at : i64 0]
-      (while (< at ,count)
-        (set!
-          (array-ref grown at)
-          (unsafe
-            (ptr-read (ptr-offset (__tl_array-data ,cells) at))))
-        (set! at (+ at 1)))
+      (when
+        (> ,count 0)
+        (ci.intern-structural-copy-array!
+          ,cells
+          grown
+          (* ,count (comptime (size-of (type ,item-ty))))))
       (set! ,cells grown))))
 
 ;; `normalize-reserve!` of an i64 or bool backing: the room test stays at the
@@ -695,13 +694,12 @@
           (if (> ,room size)
             ,room
             size))]
-      [at : i64 0]
-      (while (< at ,count)
-        (set!
-          (array-ref grown at)
-          (unsafe
-            (ptr-read (ptr-offset (__tl_array-data ,cells) at))))
-        (set! at (+ at 1)))
+      (when
+        (> ,count 0)
+        (ci.intern-structural-copy-array!
+          ,cells
+          grown
+          (* ,count (comptime (size-of (type ,item-ty))))))
       (set! ,cells grown))))
 
 ;; `cells` and then `value`, in a fresh array of exactly that length (as
@@ -858,13 +856,12 @@
   [item-ty : Expr]) : Expr
   `(let
     [exact : (__tl_dyn-array ,item-ty) (__tl_make-array ,item-ty ,count)]
-    [at : i64 0]
-    (while (< at ,count)
-      (set!
-        (array-ref exact at)
-        (unsafe
-          (ptr-read (ptr-offset (__tl_array-data ,cells) at))))
-      (set! at (+ at 1)))
+    (when
+      (> ,count 0)
+      (ci.intern-structural-copy-array!
+        ,cells
+        exact
+        (* ,count (comptime (size-of (type ,item-ty))))))
     exact))
 
 ;; Room for a body's places or locals: a few more than its occurrences.
@@ -1018,7 +1015,7 @@
     (< ,count (array-length ,cells))
     (set! ,cells (normalize-trimmed ,cells ,count ,item-ty))))
 
-;; `normalize-trimmed` of an i64 or bool array, out of line: one copy loop for
+;; `normalize-trimmed` of an i64 or bool array, shared out of line across
 ;; the many columns `normalize-trim!` cuts (each is taken out with `replace!`
 ;; and its trimmed copy stored back).
 (define (normalize-trimmed-i64s [cells : (__tl_dyn-array i64)] [count : i64]) : (__tl_dyn-array
@@ -1979,29 +1976,28 @@
     (try (normalize-charge! state 1 bytes bytes))
     (normalize-source-clone source)))
 
-;; The charges of `copies` copies of `source` (`normalize-source-copy!` each)
-;; and then of `records` and `work`, with nothing that can fail between them,
-;; as one charge (work only grows, so the sum runs out exactly when one of its
-;; parts would), and the first copy; the others clone it without a failure. An
-;; invalid source fails after the first copy's own charge, as it would alone.
-(define (normalize-source-copies!
+;; Validate the source once before copying. For valid provenance, account for
+;; each copy and the following records in one charge. For invalid provenance,
+;; the first copy's charge can still report exhaustion before the error.
+(define (normalize-source-copies-charge!
   [state : (&mut state NormalizeState)]
   [source : (& source own.OwnershipSource)]
   [copies : i64]
   [records : i64]
-  [work : i64]) : NormalizeSource
+  [work : i64]) : NormalizeUnit
   (let
     [bytes : i64
       (+ source.path.bytes (own.ownership-expansion-bytes source.expansion))]
-    (if (and (> source.path.bytes 0) (> source.line 0) (> source.column 0))
-      (try
-        (normalize-charge!
-          state
-          (+ copies records)
-          (+ (* copies bytes) work)
-          (* copies bytes)))
-      (try (normalize-charge! state 1 bytes bytes)))
-    (normalize-source-clone source)))
+    (if (own.ownership-source-valid? source)
+      (normalize-charge!
+        state
+        (+ copies records)
+        (+ (* copies bytes) work)
+        (* copies bytes))
+      (begin
+        (try (normalize-charge! state 1 bytes bytes))
+        (normalize-unit-structural
+          "ownership normalization: invalid provenance")))))
 
 ;; One record and the path's and expansion's bytes, as one charge: work only
 ;; grows, so the sum runs out exactly when either part would.
@@ -2015,12 +2011,7 @@
 
 (define (normalize-source-clone [source : (& source own.OwnershipSource)]) : NormalizeSource
   (if (own.ownership-source-valid? source)
-    (NormalizeSource.Ok
-      (own.OwnershipSource
-        (own.ownership-path-copy (& source.path))
-        source.line
-        source.column
-        source.expansion))
+    (NormalizeSource.Ok (own.ownership-source-copy source))
     (NormalizeSource.Err
       (OwnershipNormalizeFailure.Structural
         "ownership normalization: invalid provenance"))))
@@ -2250,9 +2241,10 @@
     [index : i64 state.place-count]
     [local : i64 state.local-count]
     ;; Two copies of the source, then two records.
-    [local-source : own.OwnershipSource
-      (try (normalize-source-copies! state source 2 2 2))]
-    [place-source : own.OwnershipSource (try (normalize-source-clone source))]
+    [_source-charge : unit
+      (try (normalize-source-copies-charge! state source 2 2 2))]
+    [local-source : own.OwnershipSource (own.ownership-source-copy source)]
+    [place-source : own.OwnershipSource (own.ownership-source-copy source)]
     (unless
       (normalize-storage-type? (& state) type)
       (return
@@ -2286,8 +2278,9 @@
   (let
     [index : i64 state.block-count]
     ;; The copy, then two records.
-    [copy : own.OwnershipSource
-      (try (normalize-source-copies! state source 1 2 2))]
+    [_source-charge : unit
+      (try (normalize-source-copies-charge! state source 1 2 2))]
+    [copy : own.OwnershipSource (own.ownership-source-copy source)]
     ;; About one block per four occurrences.
     (normalize-reserve-room!
       state.body.blocks
@@ -2324,8 +2317,9 @@
                 [(own.OwnershipAccess.Read) false])))]
         [_ unit])]
     ;; The copy, then the instruction's record.
-    [copy : own.OwnershipSource
-      (try (normalize-source-copies! state source 1 1 1))]
+    [_source-charge : unit
+      (try (normalize-source-copies-charge! state source 1 1 1))]
+    [copy : own.OwnershipSource (own.ownership-source-copy source)]
     [index : i64 (array-ref state.instruction-counts block)]
     ;; A reference read here is a use of every loan its origin may hold; a
     ;; reference copied or moved also flows that origin into its destination.

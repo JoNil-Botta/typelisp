@@ -16,6 +16,7 @@
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.runtime)
+(import stdlib.string)
 
 ;; Pool storage revisions are independent of the installed compatibility pool.
 ;; Every value copy of one type pool's state, the global compatibility mirror,
@@ -7196,8 +7197,18 @@
 (define (ast-expr-cons [head : i64] [rest : (& AstExprList)]) : AstExprList
   (let
     [out : AstExprList (ast-expr-list-with-capacity (+ 1 rest.len))]
-    (ast-expr-list-push (&mut out) head)
-    (ast-expr-list-append-from (&mut out) rest 0)
+    (set! (array-ref out.slots 0) head)
+    ;; `out` owns fresh storage that covers the tail, so the tail's initialized
+    ;; slots move as bytes rather than through one checked push per element.
+    (when
+      (> rest.len 0)
+      (unsafe
+        (string.str-copy-bytes-into
+          (ptr-cast (__tl_array-data rest.slots) : (Ptr u8))
+          (ptr-cast (__tl_array-data out.slots) : (MutPtr u8))
+          8
+          (* rest.len 8))))
+    (set! out.len (+ 1 rest.len))
     out))
 
 (define (ast-expr-clause [first : i64] [second : i64]) : AstExprClause

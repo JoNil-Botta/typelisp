@@ -49735,14 +49735,25 @@
 ;; two branches instead of one per link, and no per-link compare. This is the
 ;; bit-test cluster a C compiler forms from the same source.
 ;;
-;; The rewrite only replaces the chain head's terminator: the remaining link
-;; blocks are no longer reachable through it and drop out with the reachability
-;; filter, so a link some other edge still enters keeps working unchanged and no
-;; phi predecessor moves. Link blocks must therefore be pure -- their own
-;; compare plus their branch, nothing else -- and every link must test the same
-;; var, which is what makes dropping the path they describe sound. Windows wider
-;; than 64, chains shorter than the profitability floor, mixed test values and
-;; side-effecting links are refused rather than split.
+;; The floor leaves one shape unclaimed, and it is the commonest one: a single
+;; two-sided range, `(and (>= v lo) (<= v hi))` or its complement
+;; `(or (< v lo) (> v hi))`. That is two test blocks and one guard, with no
+;; window left to mask -- clang emits `(v - lo) <u (hi - lo + 1)` -- so it is
+;; worth folding at two links, and the guard is the one the whole-window run
+;; below already emits: `d = v - lo` read unsigned against `hi - lo`. `or` is
+;; the same pair with both tests negated (`Lt` reads as `Ge`, `Le` as `Gt`) and
+;; both branch senses swapped, so one reader and one normalization cover both
+;; spellings: the fold is `d <=u hi - lo` to the inner block's remaining exit,
+;; and the emitted instruction is the same either way.
+;;
+;; The head is KEPT -- only its terminator changes -- so it may carry the bounds
+;; check, load or call that produced the tested value, and a compare value
+;; numbering reused from a dominator; what it may not do is redefine that value
+;; after the compare. The second block is dropped, so it must hold only its
+;; test. Both tests are signed compares on one i64 value and the range is
+;; `lo <= hi` in signed order; both bounds have passed `opt-bit-test-bound-ok?`,
+;; so `hi - lo` is exact and the unsigned compare is the same test as clang's.
+;;
 ;; Two branches plus a subtract, a range compare, a shift and a mask test cost
 ;; about as much as three tests taken in sequence, and a refused chain costs
 ;; nothing, so the floor sits where the average walk of the chain being replaced
@@ -49762,6 +49773,19 @@
 ;; masked offset.
 (define (opt-bit-test-plan-vars) : i64
   6)
+
+;; A two-sided range pair introduces only its offset and its guard.
+(define (opt-bit-test-range-plan-vars) : i64
+  2)
+
+;; What a plan's guard covers: a window mask run, or the two-sided range pair,
+;; which is the same `d = v - lo; d <=u hi - lo` guard with no window left to
+;; mask because the pair covers all of it.
+(define (opt-bit-test-plan-mask-kind) : i64
+  0)
+
+(define (opt-bit-test-plan-range-kind) : i64
+  1)
 
 (define (opt-bit-test-window-width) : i64
   64)
@@ -49799,6 +49823,36 @@
 
 (define (opt-bit-test-lower-kind? [kind : i64]) : bool
   (or (= kind 4) (= kind 5)))
+
+;; The inclusive bounds a lower-bound test and an upper-bound test spell, in
+;; either order: a test that excludes its own bound (`>` and `<`) moves it
+;; inward by one. Every bound has passed `opt-bit-test-bound-ok?` and `lo <= hi`
+;; is checked by each caller, so neither difference can leave i64.
+(define (opt-bit-test-range-lo
+  [kind : i64]
+  [bound : i64]
+  [other-kind : i64]
+  [other-bound : i64]) : i64
+  (if (opt-bit-test-lower-kind? kind)
+    (if (= kind 4)
+      (+ bound 1)
+      bound)
+    (if (= other-kind 4)
+      (+ other-bound 1)
+      other-bound)))
+
+(define (opt-bit-test-range-hi
+  [kind : i64]
+  [bound : i64]
+  [other-kind : i64]
+  [other-bound : i64]) : i64
+  (if (opt-bit-test-upper-kind? kind)
+    (if (= kind 2)
+      (- bound 1)
+      bound)
+    (if (= other-kind 2)
+      (- other-bound 1)
+      other-bound)))
 
 (define (opt-bit-test-upper-kind? [kind : i64]) : bool
   (or (= kind 2) (= kind 3)))
@@ -50004,13 +50058,72 @@
               [(Phi _ _ _) false]
               [_ true]))])]))
 
+;; A compare's result has to be read by its own branch alone: a var read
+;; anywhere else would keep a dropped block's value live.
+(define (opt-bit-test-single-use?
+  [uses : (& uses (__tl_dyn-array i64))]
+  [var : i64]) : bool
+  (and (>= var 0) (< var (array-length uses)) (= (array-ref uses var) 1)))
+
+;; Whether some instruction ahead of the terminator defines `var`. Callers use
+;; it to find a block's own test; `-1` asks for nothing, since no instruction
+;; defines it.
+(define (opt-bit-test-defines?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [var : i64]) : bool
+  (if (>= index stop)
+    false
+    (if (=
+      (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-borrow instrs index))
+      var)
+      true
+      (opt-bit-test-defines? instrs (+ index 1) stop var))))
+
+;; Every instruction ahead of a block's terminator is effect-free and, unless it
+;; is the one test the block is kept for, defines nothing anyone reads. A phi is
+;; never droppable: it reads its inputs by predecessor label, so it belongs to
+;; the block it opens. Lowering leaves the literal `mov`s its compare already
+;; reads by value behind, and DCE has not run yet here, so they are still in the
+;; block.
+(define (opt-bit-test-droppable?
+  [uses : (& uses (__tl_dyn-array i64))]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [cond-var : i64]) : bool
+  (if (>= index stop)
+    true
+    (let
+      [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+      [dst : i64 (ir.compiler-ir-instr-dst instr)]
+      (if (and
+        (opt-flag-exit-pure-instr? instr)
+        (match instr
+          [(Phi _ _ _) false]
+          [_ true])
+        (or
+          (and (>= cond-var 0) (= dst cond-var))
+          (and
+            (>= dst 0)
+            (< dst (array-length uses))
+            (= (array-ref uses dst) 0))))
+        (opt-bit-test-droppable? uses instrs (+ index 1) stop cond-var)
+        false))))
+
 ;; Forwarding is followed only while the block behind it does not open with a
 ;; phi: a phi reads its input by predecessor label, so the last forwarding block
-;; ahead of a merge is where an edge has to keep landing.
+;; ahead of a merge is where an edge has to keep landing. `loose?` also follows
+;; a block that computes dead values and jumps -- the `mov false; jump join` arm
+;; lowering gives each side of an `and`/`or` -- where a chain link only follows
+;; a block that holds nothing but its jump.
 (define (opt-bit-test-resolve-label
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [label : i64]
-  [hops : i64]) : i64
+  [hops : i64]
+  [loose? : bool]) : i64
   (if (<= hops 0)
     label
     (match (opt-cfg-index-find-block index label)
@@ -50018,14 +50131,33 @@
       [(Some block)
         (match block
           [(Block _ instrs)
-            (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-              (match (ir.compiler-ir-instr-seq-borrow instrs 0)
-                [(Jump next)
-                  (if (opt-bit-test-block-phi-free? index next)
-                    (opt-bit-test-resolve-label index next (- hops 1))
-                    label)]
-                [_ label])
-              label)])])))
+            (let
+              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              (if (= count 0)
+                label
+                (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
+                  [(Jump next)
+                    (let
+                      [forward? : bool
+                        (if loose?
+                          (opt-bit-test-droppable?
+                            uses
+                            (& instrs)
+                            0
+                            (- count 1)
+                            (- 0 1))
+                          (= count 1))]
+                      (if (and
+                        forward?
+                        (opt-bit-test-block-phi-free? index next))
+                        (opt-bit-test-resolve-label
+                          uses
+                          index
+                          next
+                          (- hops 1)
+                          loose?)
+                        label))]
+                  [_ label])))])])))
 
 (define (opt-bit-test-ones [width : i64]) : i64
   (if (>= width 64)
@@ -50041,6 +50173,7 @@
 ;; the upper-bound block and whose false edge is the chain's continuation; the
 ;; upper-bound block shares that continuation. Either bound may come first.
 (define (opt-bit-test-parse-range-link
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [value-var : i64]
@@ -50060,9 +50193,11 @@
             [inner-bound : i64 (opt-bit-test-fact-bound facts inner-cond)]
             [inner-next : i64
               (opt-bit-test-resolve-label
+                uses
                 index
                 inner-no
-                (opt-bit-test-max-hops))]
+                (opt-bit-test-max-hops)
+                false)]
             [paired? : bool
               (and
                 inner-pure?
@@ -50076,22 +50211,8 @@
                   (and
                     (opt-bit-test-upper-kind? kind)
                     (opt-bit-test-lower-kind? inner-kind))))]
-            [lo : i64
-              (if (opt-bit-test-lower-kind? kind)
-                (if (= kind 4)
-                  (+ bound 1)
-                  bound)
-                (if (= inner-kind 4)
-                  (+ inner-bound 1)
-                  inner-bound))]
-            [hi : i64
-              (if (opt-bit-test-upper-kind? kind)
-                (if (= kind 2)
-                  (- bound 1)
-                  bound)
-                (if (= inner-kind 2)
-                  (- inner-bound 1)
-                  inner-bound))]
+            [lo : i64 (opt-bit-test-range-lo kind bound inner-kind inner-bound)]
+            [hi : i64 (opt-bit-test-range-hi kind bound inner-kind inner-bound)]
             (if (and
               paired?
               (<= lo hi)
@@ -50101,13 +50222,16 @@
                 hi
                 (opt-bit-test-ones (+ (- hi lo) 1))
                 (opt-bit-test-resolve-label
+                  uses
                   index
                   inner-yes
-                  (opt-bit-test-max-hops))
+                  (opt-bit-test-max-hops)
+                  false)
                 next)
               (No)))])]))
 
 (define (opt-bit-test-parse-link
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [value-var : i64]
@@ -50125,9 +50249,19 @@
             [fact-var : i64 (opt-bit-test-fact-value facts cond-var)]
             [bound : i64 (opt-bit-test-fact-bound facts cond-var)]
             [true-label : i64
-              (opt-bit-test-resolve-label index yes (opt-bit-test-max-hops))]
+              (opt-bit-test-resolve-label
+                uses
+                index
+                yes
+                (opt-bit-test-max-hops)
+                false)]
             [next : i64
-              (opt-bit-test-resolve-label index no (opt-bit-test-max-hops))]
+              (opt-bit-test-resolve-label
+                uses
+                index
+                no
+                (opt-bit-test-max-hops)
+                false)]
             (if (or
               (and (not head?) (not pure?))
               (= kind 0)
@@ -50136,6 +50270,7 @@
               (if (= kind 1)
                 (Some bound bound 1 true-label next)
                 (opt-bit-test-parse-range-link
+                  uses
                   index
                   facts
                   value-var
@@ -50185,6 +50320,7 @@
   (Some i64 i64))
 
 (define (opt-bit-test-collect-chain
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
@@ -50206,6 +50342,7 @@
     [walking? : bool true]
     (while (and walking? (< count limit))
       (match (opt-bit-test-parse-link
+        uses
         index
         facts
         value-var
@@ -50330,12 +50467,14 @@
   (masks (__tl_dyn-array i64))
   (trues (__tl_dyn-array i64))
   (falses (__tl_dyn-array i64))
+  (kinds (__tl_dyn-array i64))
   (used (__tl_dyn-array i64)))
 
 (define (opt-bit-test-plans-new) : OptBitTestPlans
   (let
     [size : i64 (opt-bit-test-max-plans)]
     (OptBitTestPlans
+      (__tl_make-array i64 size)
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
@@ -50350,6 +50489,7 @@
 
 (define (opt-bit-test-plans-add!
   [plans : OptBitTestPlans]
+  [kind : i64]
   [head : i64]
   [value-var : i64]
   [base : i64]
@@ -50368,7 +50508,38 @@
       (set! (array-ref plans.masks slot) mask)
       (set! (array-ref plans.trues slot) true-label)
       (set! (array-ref plans.falses slot) false-label)
+      (set! (array-ref plans.kinds slot) kind)
       (set! (array-ref plans.used 0) (+ slot 1)))))
+
+(define (opt-bit-test-plan-vars-of
+  [plans : (& plans OptBitTestPlans)]
+  [slot : i64]) : i64
+  (if (= (array-ref plans.kinds slot) (opt-bit-test-plan-range-kind))
+    (opt-bit-test-range-plan-vars)
+    (opt-bit-test-plan-vars)))
+
+;; Plans reserve their own vars in slot order, so a range pair's two do not
+;; leave a mask run's four unused ids behind. `stop` plans are counted.
+(define (opt-bit-test-plans-frame-upto
+  [plans : (& plans OptBitTestPlans)]
+  [frame : i64]
+  [stop : i64]) : i64
+  (let
+    [next : i64 frame]
+    (for [slot (iterator.range 0 stop)]
+      (+= next (opt-bit-test-plan-vars-of plans slot)))
+    next))
+
+(define (opt-bit-test-plan-base
+  [plans : (& plans OptBitTestPlans)]
+  [slot : i64]
+  [frame : i64]) : i64
+  (opt-bit-test-plans-frame-upto plans frame slot))
+
+(define (opt-bit-test-plans-frame
+  [plans : (& plans OptBitTestPlans)]
+  [frame : i64]) : i64
+  (opt-bit-test-plans-frame-upto plans frame (opt-bit-test-plans-count plans)))
 
 (define (opt-bit-test-plans-slot
   [plans : (& plans OptBitTestPlans)]
@@ -50418,6 +50589,7 @@
 ;; beside it, a run of range links, and a chain too sparse for a table keep
 ;; the bit test.
 (define (opt-bit-test-run-inside-table-chain?
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
@@ -50448,6 +50620,7 @@
         ;; Forward: equality links after the run's false edge.
         (while (and walking? (< steps (opt-bit-test-max-links)))
           (match (opt-bit-test-parse-link
+            uses
             index
             facts
             value-var
@@ -50477,6 +50650,7 @@
                 [pred : i64 (opt-label-ref preds 0)]
                 [pure : OptBitTestMaybeLink
                   (opt-bit-test-parse-link
+                    uses
                     index
                     facts
                     value-var
@@ -50487,6 +50661,7 @@
                   (match (& pure)
                     [(No)
                       (opt-bit-test-parse-link
+                        uses
                         index
                         facts
                         value-var
@@ -50515,11 +50690,305 @@
           (> outside 0)
           (opt-switch-span-admissible? (+ length outside) (+ (- high low) 1)))))))
 
+(defenum OptBitTestRangePair
+  (No)
+  ;; lo, hi, in-range target, out-of-range target
+  (Some i64 i64 i64 i64))
+
+;; `or` over two bounds of one value is `and` over their negations: `Lt` reads as
+;; `Ge` and `Le` as `Gt`, which is `7 - kind` for the four ordered kinds, and both
+;; branch senses swap with it. Reading the `or` form that way lets one reader and
+;; one bound normalization serve both spellings.
+(define (opt-bit-test-flip-kind [kind : i64]) : i64
+  (- 7 kind))
+
+;; One past the instruction defining `var`, or -1 when this block is not where
+;; the head's compare lives -- value numbering reuses a compare from a dominating
+;; block, and the block's own instructions are then all after it.
+(define (opt-bit-test-compare-end
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [var : i64]) : i64
+  (if (>= index stop)
+    (- 0 1)
+    (if (=
+      (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-borrow instrs index))
+      var)
+      (+ index 1)
+      (opt-bit-test-compare-end instrs (+ index 1) stop var))))
+
+(define (opt-bit-test-no-def-range?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [var : i64]) : bool
+  (if (>= index stop)
+    true
+    (if (=
+      (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-borrow instrs index))
+      var)
+      false
+      (opt-bit-test-no-def-range? instrs (+ index 1) stop var))))
+
+;; The rewrite keeps the whole head and replaces only its terminator, so the
+;; value the pair tests must still be the one the head's compare read: nothing
+;; after that compare may redefine it. An effect ahead of the test is fine --
+;; bounds checks, loads and calls stay where they are.
+(define (opt-bit-test-head-keeps-value?
+  [block : (& ir.CompilerIrBlock)]
+  [cond-var : i64]
+  [value-var : i64]) : bool
+  (match block
+    [(Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [end : i64 (opt-bit-test-compare-end (& instrs) 0 (- count 1) cond-var)]
+        (opt-bit-test-no-def-range?
+          (& instrs)
+          (if (< end 0)
+            0
+            end)
+          (- count 1)
+          value-var))]))
+
+;; One test bounds below, the other above; two bounds on the same side are not a
+;; range and are left to whatever folds them.
+(define (opt-bit-test-paired-bound? [kind : i64] [other : i64]) : bool
+  (if (opt-bit-test-lower-kind? kind)
+    (opt-bit-test-upper-kind? other)
+    (opt-bit-test-lower-kind? other)))
+
+;; A block the pair drops may hold only the test it is dropped for: it must
+;; define that compare here, read it nowhere else, and define nothing else
+;; anyone reads.
+(define (opt-bit-test-block-dropped-only?
+  [uses : (& uses (__tl_dyn-array i64))]
+  [block : (& ir.CompilerIrBlock)]
+  [cond-var : i64]) : bool
+  (and
+    (opt-bit-test-single-use? uses cond-var)
+    (match block
+      [(Block _ instrs)
+        (let
+          [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+          (and
+            (opt-bit-test-defines? (& instrs) 0 (- count 1) cond-var)
+            (opt-bit-test-droppable? uses (& instrs) 0 (- count 1) cond-var)))])))
+
+;; The pair's inclusive bounds, `No` when they disagree: a pair whose bounds are
+;; ordered the other way admits nothing and would fold to one edge. Every bound
+;; has passed `opt-bit-test-bound-ok?`, so neither difference can leave i64.
+(define (opt-bit-test-range-bounds
+  [kind : i64]
+  [bound : i64]
+  [inner-kind : i64]
+  [inner-bound : i64]
+  [in-range : i64]
+  [out-range : i64]) : OptBitTestRangePair
+  (let
+    [lo : i64 (opt-bit-test-range-lo kind bound inner-kind inner-bound)]
+    [hi : i64 (opt-bit-test-range-hi kind bound inner-kind inner-bound)]
+    (if (> lo hi)
+      (No)
+      (Some lo hi in-range out-range))))
+
+;; The `or` reading of the same two blocks, once an `and` reading has failed.
+(define (opt-bit-test-range-retry
+  [uses : (& uses (__tl_dyn-array i64))]
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptBitTestCompareFacts)]
+  [value-var : i64]
+  [kind : i64]
+  [bound : i64]
+  [yes : i64]
+  [no : i64]
+  [flip? : bool]) : OptBitTestRangePair
+  (if flip?
+    (No)
+    (opt-bit-test-range-try uses index facts value-var kind bound yes no true)))
+
+;; The pair as two tests of one value. `inner-label` is the block the head
+;; continues to and `shared` the exit both blocks leave on: the `and` form
+;; continues on the head's true edge and shares the inner block's false one, the
+;; `or` form on the other side of both, which is the same pair with its kinds
+;; negated.
+(define (opt-bit-test-range-try
+  [uses : (& uses (__tl_dyn-array i64))]
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptBitTestCompareFacts)]
+  [value-var : i64]
+  [kind : i64]
+  [bound : i64]
+  [yes : i64]
+  [no : i64]
+  [flip? : bool]) : OptBitTestRangePair
+  (let
+    [inner-label : i64
+      (opt-bit-test-resolve-label
+        uses
+        index
+        (if flip?
+          no
+          yes)
+        (opt-bit-test-max-hops)
+        true)]
+    [shared : i64
+      (opt-bit-test-resolve-label
+        uses
+        index
+        (if flip?
+          yes
+          no)
+        (opt-bit-test-max-hops)
+        true)]
+    [test-kind : i64
+      (if flip?
+        (opt-bit-test-flip-kind kind)
+        kind)]
+    (match (opt-cfg-index-find-block index inner-label)
+      [(No)
+        (opt-bit-test-range-retry
+          uses
+          index
+          facts
+          value-var
+          kind
+          bound
+          yes
+          no
+          flip?)]
+      [(Some block)
+        (match (opt-bit-test-block-branch (& block) false)
+          [(No)
+            (opt-bit-test-range-retry
+              uses
+              index
+              facts
+              value-var
+              kind
+              bound
+              yes
+              no
+              flip?)]
+          [(Some inner-cond inner-yes inner-no _)
+            (let
+              [inner-kind : i64
+                (if flip?
+                  (opt-bit-test-flip-kind
+                    (opt-bit-test-fact-kind facts inner-cond))
+                  (opt-bit-test-fact-kind facts inner-cond))]
+              [inner-var : i64 (opt-bit-test-fact-value facts inner-cond)]
+              [inner-bound : i64 (opt-bit-test-fact-bound facts inner-cond)]
+              [inner-shared : i64
+                (opt-bit-test-resolve-label
+                  uses
+                  index
+                  (if flip?
+                    inner-yes
+                    inner-no)
+                  (opt-bit-test-max-hops)
+                  true)]
+              [in-range : i64
+                (opt-bit-test-resolve-label
+                  uses
+                  index
+                  (if flip?
+                    inner-no
+                    inner-yes)
+                  (opt-bit-test-max-hops)
+                  true)]
+              (if (or
+                (< inner-kind 2)
+                (!= inner-var value-var)
+                (not (opt-bit-test-paired-bound? test-kind inner-kind))
+                (not
+                  (opt-bit-test-block-dropped-only? uses (& block) inner-cond))
+                (!= inner-shared shared)
+                (= in-range shared)
+                (= in-range inner-label))
+                (opt-bit-test-range-retry
+                  uses
+                  index
+                  facts
+                  value-var
+                  kind
+                  bound
+                  yes
+                  no
+                  flip?)
+                (opt-bit-test-range-bounds
+                  test-kind
+                  bound
+                  inner-kind
+                  inner-bound
+                  in-range
+                  shared)))])])))
+
+;; A two-sided range test on one value with literal bounds is two test blocks
+;; and folds to one unsigned range compare. The pair's guard is the one a
+;; whole-window run emits, so this is a plan (of the range kind) rather than a
+;; rewrite of its own.
+(define (opt-bit-test-plan-range!
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptBitTestCompareFacts)]
+  [uses : (& uses (__tl_dyn-array i64))]
+  [plans : OptBitTestPlans]
+  [skip : OptLabelSet]
+  [block : (& ir.CompilerIrBlock)]) : OptLabelSet
+  (match block
+    [(Block head-label _)
+      (match (opt-bit-test-block-branch block false)
+        [(No) skip]
+        [(Some head-cond yes no _)
+          (let
+            [kind : i64 (opt-bit-test-fact-kind facts head-cond)]
+            [value-var : i64 (opt-bit-test-fact-value facts head-cond)]
+            [bound : i64 (opt-bit-test-fact-bound facts head-cond)]
+            (if (or
+              (< kind 2)
+              (< value-var 0)
+              (not (opt-bit-test-head-keeps-value? block head-cond value-var)))
+              skip
+              (match (opt-bit-test-range-try
+                uses
+                index
+                facts
+                value-var
+                kind
+                bound
+                yes
+                no
+                false)
+                [(No) skip]
+                [(Some lo hi in-range out-range)
+                  (if (or
+                    (= in-range head-label)
+                    (= out-range head-label)
+                    (not (opt-bit-test-block-phi-free? index in-range))
+                    (not (opt-bit-test-block-phi-free? index out-range)))
+                    skip
+                    (begin
+                      (opt-bit-test-plans-add!
+                        plans
+                        (opt-bit-test-plan-range-kind)
+                        head-label
+                        value-var
+                        lo
+                        (- hi lo)
+                        0
+                        in-range
+                        out-range)
+                      (opt-label-add skip head-label)))])))])]))
+
+;; A classifier chain over one value, when its leading run is long enough to pay
+;; for a mask. Returns `skip` with the chain's labels added when it plans.
 (define (opt-bit-test-plan-head!
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
   [plans : OptBitTestPlans]
+  [uses : (& uses (__tl_dyn-array i64))]
   [skip : OptLabelSet]
   [block : (& ir.CompilerIrBlock)]) : OptLabelSet
   (match block
@@ -50531,12 +51000,14 @@
           (if (< value-var 0)
             skip
             (match (opt-bit-test-collect-chain
+              uses
               index
               facts
               chain
               value-var
               head-label)
-              [(No) skip]
+              [(No)
+                (opt-bit-test-plan-range! index facts uses plans skip block)]
               [(Some count true-label)
                 (let
                   [length : i64 (opt-bit-test-run-length chain count 0)]
@@ -50550,6 +51021,7 @@
                     (opt-bit-test-block-phi-free? index false-label)
                     (not
                       (opt-bit-test-run-inside-table-chain?
+                        uses
                         index
                         facts
                         chain
@@ -50562,6 +51034,7 @@
                       [top : i64 (opt-bit-test-run-top chain length)]
                       (opt-bit-test-plans-add!
                         plans
+                        (opt-bit-test-plan-mask-kind)
                         head-label
                         value-var
                         base
@@ -50570,13 +51043,14 @@
                         true-label
                         false-label)
                       (opt-bit-test-skip-links chain length skip))
-                    skip))]))))]))
+                    (opt-bit-test-plan-range! index facts uses plans skip block)))]))))]))
 
 (define (opt-bit-test-plan-blocks!
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
   [plans : OptBitTestPlans]
+  [uses : (& uses (__tl_dyn-array i64))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [skip : OptLabelSet]) : unit
   (match blocks
@@ -50587,8 +51061,9 @@
         facts
         chain
         (compiler-opt-global-shared-view plans)
+        uses
         rest
-        (opt-bit-test-plan-head! index facts chain plans skip block))]))
+        (opt-bit-test-plan-head! index facts chain plans uses skip block))]))
 
 (define (opt-bit-test-candidate-label [head : i64] [suffix : i64]) : i64
   (ir.compiler-ir-label
@@ -50635,6 +51110,10 @@
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [prefix-end : i64 (- count 1)]
+        ;; A base of zero subtracts nothing: the guard reads the value itself,
+        ;; which the backend would otherwise emit as a register move per test.
+        ;; A mask block still needs the offset, so a masked run keeps the Sub.
+        [offset? : bool (or mask? (!= base 0))]
         [builder : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity (+ count 3))]
         (ir.compiler-ir-instr-builder-append-seq-range!
@@ -50647,20 +51126,24 @@
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Mov mask-var (I64 mask) (U64))))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (ir.CompilerIrInstr.BinOp
-            offset-var
-            (Sub)
-            (Var value-var)
-            (I64 base)
-            (U64)))
+        (when
+          offset?
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.BinOp
+              offset-var
+              (Sub)
+              (Var value-var)
+              (I64 base)
+              (U64))))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.BinOp
             guard-var
             (Le)
-            (Var offset-var)
+            (if offset?
+              (Var offset-var)
+              (Var value-var))
             (I64 width)
             (U64)))
         (ir.compiler-ir-instr-builder-push!
@@ -50729,13 +51212,28 @@
                   (owned_view.compiler-owned-reference-shared-view block))
                 (opt-bit-test-rewrite-blocks! out rest all-blocks plans frame))
               (let
-                [mask-label : i64 (opt-bit-test-fresh-label all-blocks label 0)]
-                [first-var : i64 (+ frame (* slot (opt-bit-test-plan-vars)))]
+                [mask-run? : bool
+                  (= (array-ref plans.kinds slot) (opt-bit-test-plan-mask-kind))]
                 [mask? : bool
-                  (not
-                    (opt-bit-test-mask-full?
-                      (array-ref plans.masks slot)
-                      (array-ref plans.widths slot)))]
+                  (and
+                    mask-run?
+                    (not
+                      (opt-bit-test-mask-full?
+                        (array-ref plans.masks slot)
+                        (array-ref plans.widths slot))))]
+                [first-var : i64 (opt-bit-test-plan-base plans slot frame)]
+                ;; A mask run reserves the mask, offset and guard in that order;
+                ;; a range pair has no mask, so its guard is its whole test and
+                ;; branches straight to its in-range target.
+                [offset-var : i64
+                  (if mask-run?
+                    (+ first-var 1)
+                    first-var)]
+                [guard-var : i64 (+ offset-var 1)]
+                [guard-target : i64
+                  (if mask?
+                    (opt-bit-test-fresh-label all-blocks label 0)
+                    (array-ref plans.trues slot))]
                 (ir.compiler-ir-block-builder-push!
                   out
                   (opt-bit-test-rewrite-head
@@ -50745,19 +51243,17 @@
                     (array-ref plans.widths slot)
                     (array-ref plans.masks slot)
                     (array-ref plans.falses slot)
-                    (if mask?
-                      mask-label
-                      (array-ref plans.trues slot))
+                    guard-target
                     mask?
                     first-var
-                    (+ first-var 1)
-                    (+ first-var 2)))
+                    offset-var
+                    guard-var))
                 (when
                   mask?
                   (ir.compiler-ir-block-builder-push!
                     out
                     (opt-bit-test-mask-block
-                      mask-label
+                      guard-target
                       (array-ref plans.trues slot)
                       (array-ref plans.falses slot)
                       first-var
@@ -50781,10 +51277,14 @@
         [_ false])]
     [_ false]))
 
-;; Cheap pre-scan: a chain link is a two-instruction block whose compare tests a
-;; var against an i64 literal and whose branch reads that compare. A function
-;; without at least the profitability floor's worth of them cannot hold a
-;; convertible chain.
+;; Cheap pre-scan, without an index: collect the labels of the function's
+;; link-shaped blocks -- a two-instruction block whose compare tests a var
+;; against an i64 literal and whose branch reads that compare -- and ask whether
+;; any terminator enters one. One entry per block, never the module's label
+;; count: this runs on every function. A pair needs exactly that, its head branching to
+;; its second test, and a chain has it by construction: a range link's true edge
+;; enters its second test, and an equality link's false edge enters a forwarding
+;; block that jumps to the next link.
 (define (opt-bit-test-block-is-link-shaped? [block : (& ir.CompilerIrBlock)]) : bool
   (match block
     [(Block _ instrs)
@@ -50804,22 +51304,73 @@
           [_ false])
         false)]))
 
-(define (opt-bit-test-count-link [seen : i64] [block : ir.CompilerIrBlock]) : i64
-  (if (opt-bit-test-block-is-link-shaped? (& block))
-    (+ seen 1)
-    seen))
+(define (opt-bit-test-mark-link-labels
+  [labels : (&mut labels (__tl_dyn-array i64))]
+  [count : i64]
+  [block : ir.CompilerIrBlock]) : i64
+  (match block
+    [(Block label _)
+      (if (opt-bit-test-block-is-link-shaped? (& block))
+        (begin
+          (set! (array-ref labels count) label)
+          (+ count 1))
+        count)]))
+
+(define (opt-bit-test-link-marked?
+  [labels : (& labels (__tl_dyn-array i64))]
+  [count : i64]
+  [label : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index count))
+      (if (= (array-ref labels index) label)
+        (set! found true)
+        unit)
+      (+= index 1))
+    found))
+
+(define (opt-bit-test-enters-link?
+  [labels : (& labels (__tl_dyn-array i64))]
+  [count : i64]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(Block label instrs)
+      (let
+        [instr-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (< instr-count 1)
+          false
+          (match (ir.compiler-ir-instr-seq-borrow instrs (- instr-count 1))
+            [(Branch _ yes no)
+              (or
+                (and
+                  (!= yes label)
+                  (opt-bit-test-link-marked? labels count yes))
+                (and (!= no label) (opt-bit-test-link-marked? labels count no)))]
+            [(Jump next)
+              (and
+                (!= next label)
+                (opt-bit-test-link-marked? labels count next))]
+            [_ false])))]))
 
 (define (opt-bit-test-blocks-have-candidate?
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [seen : i64]) : bool
-  (>=
-    (opt-blocks-fold-block blocks seen opt-bit-test-count-link)
-    (opt-bit-test-min-links)))
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
+  (let
+    [labels : (__tl_dyn-array i64)
+      (__tl_make-array i64 (ir.compiler-ir-block-list-count blocks))]
+    [start-count : i64 0]
+    [count : i64
+      (opt-blocks-fold-block
+        blocks
+        start-count
+        opt-bit-test-mark-link-labels
+        (&mut labels))]
+    (opt-blocks-any-block? blocks opt-bit-test-enters-link? (& labels) count)))
 
 (define (opt-bit-test-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ frame blocks _)
-      (if (not (opt-bit-test-blocks-have-candidate? blocks 0))
+      (if (not (opt-bit-test-blocks-have-candidate? blocks))
         (Result func false)
         (let
           [facts : OptBitTestCompareFacts
@@ -50827,12 +51378,15 @@
           [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
           [chain : OptBitTestChain (opt-bit-test-chain-new)]
           [plans : OptBitTestPlans (opt-bit-test-plans-new)]
+          [uses : (__tl_dyn-array i64)
+            (opt-collect-blocks-uses-array frame blocks)]
           [_planned : unit
             (opt-bit-test-plan-blocks!
               index
               facts
               chain
               (compiler-opt-global-shared-view plans)
+              uses
               (ir.compiler-ir-block-list-view blocks)
               (Nil))]
           [planned : i64 (opt-bit-test-plans-count plans)]
@@ -50852,7 +51406,7 @@
                           blocks
                           plans
                           frame)))
-                    (+ frame (* planned (opt-bit-test-plan-vars)))
+                    (opt-bit-test-plans-frame plans frame)
                     true)))))))]))
 
 (define (optimize-function-max-iterations) : i64
@@ -102619,6 +103173,88 @@
       (opt-pass-with-ctx-result (& simd) (& state))
       (opt-pass-with-block-ctx (& rotation) state))))
 
+;; --- dead_global_store --------------------------------------------------------
+;;
+;; opt-store-only-globals states the proof; this is the rewrite it feeds, and
+;; the prune that runs on the FINISHED bodies calls it (its `strip-store-only?`
+;; argument). That placement is the point: the rule needs "no read anywhere in
+;; the module", and the last reads of benchmarks/callgraph_scc's
+;; `cg-site-weight` survive almost the whole pipeline -- each store is followed
+;; by a `mov` reading the cell back, and only the last round's `dce_late`
+;; forwards that read to the stored value. The prune's walk is the one that
+;; sees the final use set, and the inliner (the pipeline's only instruction
+;; producer) ran long before it, so nothing can add a `Global g` operand after
+;; the answer is taken.
+;;
+;; The drop leaves the stored value dead in a function the pipeline has already
+;; finished, so each changed function runs the pipeline's own DCE fixpoint and
+;; is observed under this slot name, which is what `--trace-passes` and
+;; scripts/measure-pass-firing.sh report.
+(define (opt-store-only-global-target?
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(Store name _ _)
+      (opt_i64_i64_map.contains? (& store-only) (ir.compiler-ir-symbol-id name))]
+    [_ false]))
+
+(define (opt-store-only-global-instr-seq
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count (& instrs))]
+    [kept : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [instr : ir.CompilerIrInstr
+          (ir.compiler-ir-instr-seq-ref (& instrs) index)]
+        (unless
+          (opt-store-only-global-target? store-only (& instr))
+          (ir.compiler-ir-instr-builder-push! (&mut kept) instr))))
+    (ir.compiler-ir-instr-builder-to-seq kept)))
+
+(define (opt-store-only-global-function
+  [type-segment-bases : i64]
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-function-blocks (& func))]
+    (if (not (opt-blocks-any? blocks opt-store-only-global-target? store-only))
+      func
+      (let
+        [stripped : ir.CompilerIrBlockList
+          (opt-blocks-map-seq blocks opt-store-only-global-instr-seq store-only)]
+        (compiler-opt-debug-observe-function
+          type-segment-bases
+          "dead_global_store"
+          (opt-function-with-frame-blocks
+            (& func)
+            (opt-function-frame (& func))
+            (opt-dce-block-list-array-fixpoint
+              (opt-function-frame (& func))
+              (& stripped)
+              8)))))))
+
+;; The store-only strip over a kept function list. A function the set does not
+;; name is shared, not copied, so the prune pays this walk only for the bodies
+;; that actually lose an instruction.
+(define (opt-store-only-global-function-seq
+  [type-segment-bases : i64]
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    (for [index (iterator.range 0 functions.len)]
+      (let
+        [func : ir.CompilerIrFunction
+          (ir.compiler-ir-function-seq-ref (& functions) index)]
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (opt-store-only-global-function type-segment-bases store-only func))))
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
 (define (optimize-function-once-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -105817,8 +106453,18 @@
             (owned_view.compiler-owned-reference-shared-view (& worklist.items))
             next-len))))))
 
+;; `globals` is every global a body's `Store` target names plus every global a
+;; `Global`/`GlobalAddr` operand (or a global's initializer) names; `reads` is
+;; the second of those alone, so `globals` minus `reads` is exactly the set of
+;; globals whose only use is a direct store -- the answer the store-only rule
+;; needs, collected by the walk the prune already runs.
 (defenum OptReachState
-  (State opt_i64_i64_map.Map OptReachWorklist opt_i64_i64_map.Map i64))
+  (State
+    opt_i64_i64_map.Map
+    OptReachWorklist
+    opt_i64_i64_map.Map
+    i64
+    opt_i64_i64_map.Map))
 
 (defenum OptRuntimeStringHelper
   (No)
@@ -118366,7 +119012,7 @@
 
 (define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
   (match (compiler-opt-global-shared-view state)
-    [(State reachable worklist globals runtime-helper-mask)
+    [(State reachable worklist globals runtime-helper-mask reads)
       (if (opt_i64_i64_map.contains? (& reachable) slot)
         state
         (let
@@ -118376,18 +119022,34 @@
             next-reachable
             (opt-reach-worklist-push worklist slot)
             globals
-            runtime-helper-mask)))]))
+            runtime-helper-mask
+            reads)))]))
 
 (define (opt-reach-add-global [state : OptReachState] [name : i64]) : OptReachState
   (match (compiler-opt-global-shared-view state)
-    [(State reachable worklist globals runtime-helper-mask)
+    [(State reachable worklist globals runtime-helper-mask reads)
       (let
         [name-id : i64 (ir.compiler-ir-symbol-id name)]
         (if (or (< name-id 0) (opt_i64_i64_map.contains? (& globals) name-id))
           state
           (begin
             (opt_i64_i64_map.insert-ref! (&mut globals) name-id 1)
-            (State reachable worklist globals runtime-helper-mask))))]))
+            (State reachable worklist globals runtime-helper-mask reads))))]))
+
+;; A `Global`/`GlobalAddr` operand names a cell something can observe: a read of
+;; it, an escape of its address, or (from a global's initializer) an address it
+;; stores for later. Those globals are recorded in `reads`, which the store-only
+;; rule subtracts from `globals`.
+(define (opt-reach-add-read-global [state : OptReachState] [name : i64]) : OptReachState
+  (match (opt-reach-add-global state name)
+    [(State reachable worklist globals runtime-helper-mask reads)
+      (let
+        [name-id : i64 (ir.compiler-ir-symbol-id name)]
+        (if (or (< name-id 0) (opt_i64_i64_map.contains? (& reads) name-id))
+          (State reachable worklist globals runtime-helper-mask reads)
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut reads) name-id 1)
+            (State reachable worklist globals runtime-helper-mask reads))))]))
 
 (define (opt-reach-add-function-leaf-from
   [index : (& index OptFunctionIndex)]
@@ -118460,15 +119122,20 @@
     [(No) state]
     [(Some helper helper-bit)
       (match (& state)
-        [(State _ _ _ runtime-helper-mask)
+        [(State _ _ _ runtime-helper-mask _)
           (if (not (= (bit-and runtime-helper-mask helper-bit) 0))
             state
             ;; A self-compile contains hundreds of calls to these helpers. The
             ;; leaf scan retains every source-path spelling, but only needs to run
             ;; once per fixed runtime helper.
             (match (opt-reach-add-function-leaf index (& state) (& helper))
-              [(State reachable worklist globals mask)
-                (State reachable worklist globals (bit-or mask helper-bit))]))])]))
+              [(State reachable worklist globals mask reads)
+                (State
+                  reachable
+                  worklist
+                  globals
+                  (bit-or mask helper-bit)
+                  reads)]))])]))
 
 (define (opt-reach-add-call-target
   [index : (& index OptFunctionIndex)]
@@ -118488,7 +119155,7 @@
   [value : (& ir.CompilerIrValue)]) : OptReachState
   (match value
     [(or (Global name) (GlobalAddr name))
-      (opt-reach-add-function index (opt-reach-add-global state name) name)]
+      (opt-reach-add-function index (opt-reach-add-read-global state name) name)]
     [(or (Function name) (RuntimeGlobal name))
       (opt-reach-add-function index state name)]
     [_ state]))
@@ -118546,13 +119213,13 @@
   [index : (& OptFunctionIndex)]
   [state : OptReachState]) : OptReachState
   (match (compiler-opt-global-shared-view state)
-    [(State reachable worklist globals runtime-helper-mask)
+    [(State reachable worklist globals runtime-helper-mask reads)
       (match (opt-reach-worklist-pop (& worklist))
         [(Empty) state]
         [(Item slot rest)
           (let
             [popped : OptReachState
-              (State reachable rest globals runtime-helper-mask)]
+              (State reachable rest globals runtime-helper-mask reads)]
             (opt-reach-process
               index
               (opt-reach-function
@@ -118646,6 +119313,7 @@
 (define (opt-filter-reachable-globals
   [globals : (& ir.CompilerIrGlobalSeq)]
   [reachable : (& opt_i64_i64_map.Map)]
+  [store-only : (& store-only opt_i64_i64_map.Map)]
   [static-arrays-only? : bool]) : ir.CompilerIrGlobalSeq
   (let
     [builder : ir.CompilerIrGlobalBuilder
@@ -118662,9 +119330,14 @@
                     [(StaticArray _) false]
                     [_ true])
                   (opt-runtime-global? (& ty) (& value)))
-                (opt_i64_i64_map.contains?
-                  reachable
-                  (ir.compiler-ir-symbol-id name)))
+                (and
+                  (opt_i64_i64_map.contains?
+                    reachable
+                    (ir.compiler-ir-symbol-id name))
+                  (not
+                    (opt_i64_i64_map.contains?
+                      (& store-only)
+                      (ir.compiler-ir-symbol-id name)))))
               (ir.compiler-ir-global-builder-push! (&mut builder) global))])))
     (ir.compiler-ir-global-builder-snapshot-seq (& builder))))
 
@@ -118776,11 +119449,19 @@
           [_ unit])]))
   false)
 
+;; `strip-store-only?` asks the same walk for the globals whose only use is a
+;; direct `Store` (see OptReachState) and, when it finds any, drops those globals
+;; and their stores from the kept program. Only the prune that runs on the
+;; finished bodies asks for it: before the pipeline a cell that nothing names yet
+;; is not yet dead, and the DCE that retires the stored values is only worth its
+;; walk once the pipeline has finished rewriting.
 (define (opt-prune-unreachable-program
+  [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]
   [externs : (& ir.CompilerIrExternSeq)]
-  [static-arrays-only? : bool]) : OptPrunedProgram
+  [static-arrays-only? : bool]
+  [strip-store-only? : bool]) : OptPrunedProgram
   (when
     (and static-arrays-only? (not (opt-static-array-globals? (& globals))))
     (return (Program globals functions)))
@@ -118795,7 +119476,14 @@
           (opt-function-index-capacity
             (ir.compiler-ir-global-seq-count globals)))]
       [initial : OptReachState
-        (State reachable (opt-reach-worklist-new) reachable-globals 0)]
+        (State
+          reachable
+          (opt-reach-worklist-new)
+          reachable-globals
+          0
+          (opt_i64_i64_map.with-capacity
+            (opt-function-index-capacity
+              (ir.compiler-ir-global-seq-count globals))))]
       [roots : OptReachState
         (if static-arrays-only?
           initial
@@ -118812,15 +119500,39 @@
           index
           (& (opt-reach-add-provided-externs index externs (& roots)))
           (& globals)))
-        [(State reachable-out _ reachable-globals-out _)
-          (Program
-            (opt-filter-reachable-globals
-              (& globals)
-              (& reachable-globals-out)
-              static-arrays-only?)
-            (if static-arrays-only?
-              functions
-              (opt-filter-reachable-functions index (& functions) reachable-out)))]))
+        [(State reachable-out _ reachable-globals-out _ reachable-reads-out)
+          (let
+            [capacity : i64
+              (opt-function-index-capacity
+                (ir.compiler-ir-global-seq-count globals))]
+            [store-only : opt_i64_i64_map.Map
+              (if strip-store-only?
+                (opt-store-only-globals
+                  (& globals)
+                  externs
+                  (& reachable-globals-out)
+                  (& reachable-reads-out)
+                  capacity)
+                (opt_i64_i64_map.with-capacity 1))]
+            [kept-functions : ir.CompilerIrFunctionSeq
+              (if static-arrays-only?
+                functions
+                (opt-filter-reachable-functions
+                  index
+                  (& functions)
+                  reachable-out))]
+            (Program
+              (opt-filter-reachable-globals
+                (& globals)
+                (& reachable-globals-out)
+                (& store-only)
+                static-arrays-only?)
+              (if (= (opt_i64_i64_map.len (& store-only)) 0)
+                kept-functions
+                (opt-store-only-global-function-seq
+                  type-segment-bases
+                  (& store-only)
+                  kept-functions))))]))
     (Program globals functions)))
 
 (define (opt-direct-call-self-recursive-instr?
@@ -121355,6 +122067,58 @@
     [out : OptConstLengths (clone built)]
     (unsafe
       (arena.tl_arena_destroy scratch))
+    out))
+
+;; --- dead stores to a store-only global ---------------------------------------
+;;
+;; WHY IT IS SOUND. A direct `Store @g` is the only instruction that writes g's
+;; cell, and a `Global g` operand is every read of that cell -- plus every
+;; escape of its address, since a `(& g)` is `GlobalAddr g` and handing the cell
+;; to a callee needs a `Global g` operand. OptReachState's walk already tells
+;; those apart for the prune: `globals` gains a name from a `Store` target or a
+;; `Global`/`GlobalAddr` operand, `reads` gains it from the operand alone, and a
+;; global's INITIALIZER is walked too (so `global @alias = &@g`, which no body
+;; mentions, counts as a read of g). A global in `globals` but not in `reads`
+;; is therefore stored somewhere and named nowhere else.
+;;
+;; Such a cell still has no observer only when two shell facts hold, and both
+;; need the extern list: no `Extern` entry names its symbol (an `extern`
+;; declaration or a provided export promises the definition to other objects),
+;; and this module defines its storage -- a `.comm` runtime global
+;; (opt-runtime-global?: non-unit cell, no IR initializer) is kept for the same
+;; reason opt-filter-reachable-globals retains it unconditionally.
+(define (opt-extern-name-set
+  [externs : (& ir.CompilerIrExternSeq)]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    (for [index (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
+      (match (ir.compiler-ir-extern-seq-borrow externs index)
+        [(Extern name-id _ _ _ _ _ _ _ _)
+          (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)]))
+    out))
+
+(define (opt-store-only-globals
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]
+  [stored : (& stored opt_i64_i64_map.Map)]
+  [reads : (& reads opt_i64_i64_map.Map)]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [declared : opt_i64_i64_map.Map (opt-extern-name-set externs capacity)]
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    (for [index (iterator.range 0 (ir.compiler-ir-global-seq-count globals))]
+      (match (ir.compiler-ir-global-seq-borrow globals index)
+        [(Global name ty value)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            (when
+              (and
+                (opt_i64_i64_map.contains? (& stored) id)
+                (not (opt_i64_i64_map.contains? (& reads) id))
+                (not (opt_i64_i64_map.contains? (& declared) id))
+                (not (opt-runtime-global? (& ty) (& value))))
+              (opt_i64_i64_map.insert-ref! (&mut out) id 1)))]))
     out))
 
 ;; Build the per-program summaries: the function-count-gated call maps
@@ -128734,7 +129498,13 @@
       (if (= level 0)
         (let
           [pruned : OptPrunedProgram
-            (opt-prune-unreachable-program globals functions (& externs) true)]
+            (opt-prune-unreachable-program
+              type-segment-bases
+              globals
+              functions
+              (& externs)
+              true
+              false)]
           ;; Pruning keeps the program's return-storage authority.
           [retained : ir.CompilerIrProgram
             (Program
@@ -128846,9 +129616,11 @@
                       (ir.compiler-source-spans-escape (& inline-arena-spans))]
                     [pruned : OptPrunedProgram
                       (opt-prune-unreachable-program
+                        type-segment-bases
                         (compiler-opt-global-shared-view globals)
                         reachable-functions
                         (& externs)
+                        false
                         false)]
                     [pruned-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals pruned)]
@@ -128947,11 +129719,16 @@
                           ;; function referenced only from one still follows the
                           ;; existing reachability rule even if that global is
                           ;; later filtered from the emitted program.
+                          ;; Level 2 only: opt0/opt1 are the cheap modes by
+                          ;; contract, and the prune there reports the store as
+                          ;; a live use exactly as it always has.
                           (opt-prune-unreachable-program
+                            type-segment-bases
                             globals
                             optimized-functions
                             (& externs)
-                            false)]
+                            false
+                            (>= level 2))]
                         [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionSeq

@@ -91,4 +91,9 @@
 (define (main) : i64
   (blocks)
   (records)
-  42)
+  ;; The assembly harness reads this cell (and nothing in the program does), so
+  ;; the program has to name it too: a global no instruction reads is provably
+  ;; unobservable inside the module and the optimizer drops its stores.
+  (if (= probe-phase 0)
+    1
+    42))

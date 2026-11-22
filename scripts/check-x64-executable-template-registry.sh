@@ -24,7 +24,7 @@ count_matches 1 'compiler-x64-template-render-assembly' src/compiler_backend_run
 count_matches 1 'compiler-x64-template-render-assembly' src/compiler_backend_runtime_windows.tl
 count_matches 17 'compiler-backend-runtime-linux-render' src/compiler_backend_runtime_linux.tl
 count_matches 17 'compiler-backend-runtime-windows-render' src/compiler_backend_runtime_windows.tl
-count_matches 3 'compiler-x64-template-render-assembly' src/compiler_backend.tl
+count_matches 3 'compiler-x64-template-render-assembly' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
 
 # Pin the full-file lexical census as a construction-site tripwire. The typed
 # catalog remains authoritative; these counts make newly concatenated assembly
@@ -74,9 +74,9 @@ grep -Eq 'CompilerObjectX64Instr\.Bytes bytes' src/compiler_backend_object_targe
 # stack probe's `movl $frame, %eax` (a frame operation) and the full-width
 # `movq $imm64` (#7022). A new spelling of either family member must be a record
 # instead, and a count change here must say why.
-count_matches 1 '"    movl \$"' src/compiler_backend.tl
-count_matches 1 '"    movq \$"' src/compiler_backend.tl
-count_matches 0 'mov-(reg-reg|imm32-reg)-bytes' src/compiler_backend.tl
+count_matches 1 '"    movl \$"' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
+count_matches 1 '"    movq \$"' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
+count_matches 0 'mov-(reg-reg|imm32-reg)-bytes' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
 
 # Contribution boundaries are registered separately from reusable byte pieces.
 count_matches 1 'LinuxObjectStartContribution' src/compiler_backend_object_target_linux.tl

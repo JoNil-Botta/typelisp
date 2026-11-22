@@ -11,12 +11,14 @@
 ;; and resolves the compiled entries by the compact function-symbol contract.
 ;; Bodies outside the supported subset compile to ok-with-no-result shells so
 ;; the dispatch route keeps its counted interpreted fallback.
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_ast_types)
 (import compiler_diagnostic)
 (import compiler_object as cobj)
 (import compiler_backend)
+(import compiler_backend_object as be_object)
 (import compiler_lower)
 (import compiler_optimize)
 (import compiler_tlci_native_image)
@@ -9253,7 +9255,7 @@
 
 (define (embedded-native-lower-source
   [source : String]
-  [target : compiler_backend.CompilerBackendTarget]) : compiler_lower.ResultCompilerLower
+  [target : be_state.CompilerBackendTarget]) : compiler_lower.ResultCompilerLower
   (match (compiler_backend.compiler-backend-lower-source-for-target-in-session
     source
     target)
@@ -9280,7 +9282,7 @@
   [names : (__tl_dyn-array String)]
   [source : String]) : ResultProducerBytes
   (let
-    [target : compiler_backend.CompilerBackendTarget
+    [target : be_state.CompilerBackendTarget
       (if windows-target
         (Windows)
         (Linux))]
@@ -9291,7 +9293,7 @@
             "generated source rejected: "
             (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
       [(ResultCompilerLower.Ok program spans _lower-state)
-        (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+        (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
           program
           target
           (Scalar)

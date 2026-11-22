@@ -260,6 +260,23 @@
       (array-ref session.reset-generation-cell 0))
     -1))
 
+;; Match a durable stamp against the live generation without copying the
+;; source-name session's array descriptors.
+(define (intern-structural-session-stamp-current?
+  [handle : InternStructuralSessionHandle]
+  [owner : i64]
+  [generation : i64]) : bool
+  (and
+    (> handle.address 0)
+    (unsafe
+      (let
+        [session : (Ptr ci.InternSourceNameSession)
+          (int->ptr handle.address : (Ptr ci.InternSourceNameSession))]
+        (and
+          (= (deref session).structural-owner owner)
+          (= (deref session).reset-generation generation)
+          (= (array-ref (deref session).reset-generation-cell 0) generation))))))
+
 (define (intern-structural-session-key
   [handle : InternStructuralSessionHandle]
   [kind : i64]

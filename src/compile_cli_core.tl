@@ -21,6 +21,9 @@
 ;; `compile-cli-run [count]` dispatches and executes a command, reading `(io.arg 1)`
 ;; as the command name. The unified `main.tl` dispatcher calls it, so the single
 ;; binary drives the compiler.
+(import compiler_backend_operands as be_operand)
+(import compiler_backend_program_facts as be_facts)
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
@@ -35,6 +38,7 @@
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_diagnostic as cdiag)
 (import compiler_load as load)
 (import compiler_intern as ci)
@@ -96,20 +100,20 @@
     bool
     bool
     bool
-    backend.CompilerBackendTarget
+    be_state.CompilerBackendTarget
     cli_svec.Vec
     cli_svec.Vec
-    backend.CompilerBackendMode
+    be_state.CompilerBackendMode
     i64))
 
 (defenum CompileCliBatchConfig
   (Config
     String
     bool
-    backend.CompilerBackendTarget
+    be_state.CompilerBackendTarget
     cli_svec.Vec
     cli_svec.Vec
-    backend.CompilerBackendMode
+    be_state.CompilerBackendMode
     i64
     bool
     bool
@@ -368,7 +372,7 @@
             (or
               (not options.has-target)
               (not
-                (backend.compiler-backend-target-windows?
+                (be_facts.compiler-backend-target-windows?
                   (build_run_core.source-tool-backend-target options.target)))))
           (Err "compile: --windows-coff-plan requires --target windows-x86_64")]
         [(and
@@ -498,10 +502,10 @@
   [pic : bool]
   ;; lint-allow: unused-variable
   [has-target : bool]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
   (begin
@@ -559,7 +563,7 @@
                 compile-cli-trace-passes-requested
                 (string.copy (& compile-cli-dump-ir-pass))
                 compile-cli-verify-ir-requested)
-              (backend.compiler-backend-state-set-shared-object-code-model!
+              (be_state.compiler-backend-state-set-shared-object-code-model!
                 (compiler_driver_core.compiler-driver-state-backend (& state))
                 (compile-cli-shared-object-requested?))
               (let
@@ -747,7 +751,7 @@
                 (Ok
                   "assembly"
                   assembly-path
-                  (backend.compiler-direct-object-fallback-category category)))
+                  (be_object.compiler-direct-object-fallback-category category)))
               (Err write-status))))]
       [(Err diag advisories)
         (begin
@@ -774,7 +778,7 @@
   [force-assembly : bool]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]) : ResultCompileCliWindowsBatchEntry
   (begin
     ;; Match the legacy batch entry lifecycle exactly through the one-lowering
@@ -860,7 +864,7 @@
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [stride : i64]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]
   [ran-preflight : bool]) : i64
@@ -932,7 +936,7 @@
 
 (define (compile-cli-run-batch-inline-tests
   [entries : (& entries cli_svec.Vec)]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]) : i64
   (compile-cli-run-batch-inline-tests-from
@@ -946,7 +950,7 @@
 
 (define (compile-cli-run-windows-batch-inline-tests
   [entries : (& entries cli_svec.Vec)]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]) : i64
   (compile-cli-run-batch-inline-tests-from
@@ -1168,10 +1172,10 @@
   [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [has-target : bool]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]) : i64
   (if (>= index (cli_svec.len entries))
@@ -1316,21 +1320,21 @@
   [state : compiler_driver_core.CompilerDriverState]
   [entry-count : i64]) : unit
   (let
-    [backend-state : backend.CompilerBackendState
+    [backend-state : be_state.CompilerBackendState
       (compiler_driver_core.compiler-driver-state-backend state)]
     [typecheck-state : tc_core.TcJobState
       (compiler_driver_core.compiler-driver-state-typecheck state)]
-    (backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
+    (be_state.compiler-backend-peephole-carry-safe-reset-with-backend-state!
       backend-state
-      (backend.compiler-backend-state-stream-state backend-state))
+      (be_state.compiler-backend-state-stream-state backend-state))
     (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
       backend-state
-      (backend.compiler-backend-state-stream-state backend-state))
-    (backend.compiler-backend-state-slot-frame-cache-storage-ensure!
+      (be_state.compiler-backend-state-stream-state backend-state))
+    (be_operand.compiler-backend-state-slot-frame-cache-storage-ensure!
       backend-state)
-    (backend.compiler-backend-state-immediate-cache-storage-ensure!
+    (be_operand.compiler-backend-state-immediate-cache-storage-ensure!
       backend-state)
-    (backend.compiler-backend-state-slot-cache-reset! backend-state)
+    (be_facts.compiler-backend-state-slot-cache-reset! backend-state)
     (tc_core.tc-type-needs-resolution-storage-ensure-for-job! typecheck-state)
     (tc_core.tc-agg-size-cache-storage-ensure-for-job! typecheck-state)
     (tc_core.tc-agg-align-cache-storage-ensure-for-job! typecheck-state)
@@ -1357,10 +1361,10 @@
   [state : compiler_driver_core.CompilerDriverState]
   [entries : cli_svec.Vec]
   [has-target : bool]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]) : i64
   (compile-cli-batch-persistent-table-storage-ensure!
     (owned_view.compiler-owned-shared-view state)
@@ -1392,7 +1396,7 @@
   [index : i64]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : (& cfgs cli_svec.Vec)]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [previous-compat-arena : i64]
   [results : (&mut results cli_svec.Vec)]) : i64
@@ -1572,7 +1576,7 @@
   [result-plan-path : String]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]) : i64
   (let
     [results : cli_svec.Vec (cli_svec.new)]
@@ -1607,10 +1611,10 @@
   [start : i64]
   [line : i64]
   [has-target : bool]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-batch-parse-entries-from
     (owned_view.compiler-owned-shared-view text)
@@ -1654,10 +1658,10 @@
   [start : i64]
   [line : i64]
   [result-plan-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
-  [backend-mode : backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [opt-level : i64]) : i64
   (match (compile-cli-windows-batch-parse-entries-from
     text
@@ -1727,7 +1731,7 @@
                 state)
               (compiler_driver_core.compiler-driver-state-retain-stdlib-proofs!
                 state)
-              (backend.compiler-backend-state-set-shared-object-code-model!
+              (be_state.compiler-backend-state-set-shared-object-code-model!
                 (compiler_driver_core.compiler-driver-state-backend (& state))
                 (compile-cli-shared-object-requested?))
               (if has-windows-coff-plan

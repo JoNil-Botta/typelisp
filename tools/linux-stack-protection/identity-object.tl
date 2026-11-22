@@ -1,7 +1,7 @@
 ;; Build this unchanged tool against each compiler source tree for object
 ;; identity. Source roots under test are supplied separately from its backend.
+(import compiler_backend_state as be_state)
 (import build_run_core as build)
-(import compiler_backend as backend)
 (import stdlib.vector)
 (import (vector.vector String) as roots)
 (import sym_i64_env as cfg)
@@ -15,10 +15,10 @@
     [search : roots.Vec (roots.new)]
     [link-inputs : build.SourceToolLinkInputs
       (build.source-tool-link-inputs-empty)]
-    [target : backend.CompilerBackendTarget
+    [target : be_state.CompilerBackendTarget
       (if (string.eq (io.arg 1) "windows")
-        (backend.CompilerBackendTarget.Windows)
-        (backend.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Windows)
+        (be_state.CompilerBackendTarget.Linux))]
     (roots.push-ref! (&mut search) (io.arg 5))
     (roots.push-ref! (&mut search) (io.arg 6))
     (match (build.source-tool-emit-object
@@ -26,7 +26,7 @@
       (build.SourceToolProgram.Source search (cfg.sym-i64-empty))
       target
       (string.>int (io.arg 3))
-      (backend.CompilerBackendMode.Scalar)
+      (be_state.CompilerBackendMode.Scalar)
       (& link-inputs))
       [(Ok bytes)
         (io.write-file (io.arg 4) (byte_buf.str-as-bytes (& bytes)))

@@ -1,6 +1,7 @@
 ;; build_cli_core_tests.tl - White-box tests for package builds: paths and
 ;; artifact status, direct objects, preflight routes, the package graph and
 ;; scheduler, TLCI callables, rollback and commit, and worker arguments.
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (cfg test (import stdlib.fs))
@@ -16,7 +17,8 @@
 (import (vector.vector String) as cli_svec)
 (import build_run_core)
 (import build_run_core_tests as build_run_tests)
-(import compiler_backend as backend)
+(cfg test (import compiler_backend as backend))
+(cfg test (import compiler_backend_object as be_object))
 (import compiler_ast_types as ast)
 (import compiler_load as load)
 (cfg test (import compiler_intern as ci))
@@ -299,7 +301,7 @@
       [(Eligible) (string.eq expected "")]
       [(Fallback reason)
         (string.eq
-          (backend.compiler-direct-object-fallback-category reason)
+          (be_object.compiler-direct-object-fallback-category reason)
           expected)])))
 
 (cfg
@@ -408,7 +410,7 @@
         [spmd-index : i64 (% (/ index 24) 2)]
         [size-index : i64 (% (/ index 48) 2)]
         [override-index : i64 (% (/ index 96) 2)]
-        [target : backend.CompilerBackendTarget
+        [target : be_state.CompilerBackendTarget
           (if (= target-index 0)
             (Linux)
             (Windows))]
@@ -416,7 +418,7 @@
           (if (= kind-index 0)
             (CompilerPkgKindBin)
             (CompilerPkgKindLib))]
-        [mode : backend.CompilerBackendMode
+        [mode : be_state.CompilerBackendMode
           (cond
             [(= mode-index 0) (Scalar)]
             [(= mode-index 1) (Avx2)]
@@ -529,7 +531,7 @@
 
 (define (build-package-graph-test-link-arg-target
   [node : build.BuildPackageGraphNode]
-  [target : backend.CompilerBackendTarget]) : process.ProcessStringList
+  [target : be_state.CompilerBackendTarget]) : process.ProcessStringList
   (process.args-single
     (build.build-package-graph-node-artifact-path node (Release) target)))
 
@@ -543,7 +545,7 @@
 ;; The dependency archives of `nodes`' link inputs for `target`.
 (define (build-package-graph-test-archives
   [nodes : build.BuildPackageGraphNodeVec]
-  [target : backend.CompilerBackendTarget]) : process.ProcessStringList
+  [target : be_state.CompilerBackendTarget]) : process.ProcessStringList
   (match (build.build-package-graph-link-inputs nodes (Release) target)
     [(Ok inputs) (build_run_core.source-tool-link-inputs-archives inputs)]
     [(Err _) (process.args-single "error")]))
@@ -831,7 +833,7 @@
               (= item.index-param 1)
               (string.eq
                 item.symbol
-                (backend.compiler-backend-user-symbol-uncached
+                (be_state.compiler-backend-user-symbol-uncached
                   (ci.intern-str
                     (ci.intern-generated-canonical-name
                       (lower.lower-spmd-package-symbol
@@ -1390,7 +1392,7 @@
     (unless
       (and
         (string.eq
-          (backend.compiler-direct-object-fallback-transcript
+          (be_object.compiler-direct-object-fallback-transcript
             (ArtifactKindUnavailable (Windows) StaticLib))
           "artifact-kind-unavailable|target=windows-x86_64|kind=staticlib")
         (match (build.build-package-require-direct-object
@@ -1512,7 +1514,7 @@
   test
   (define (build-package-graph-test-link-inputs
     [nodes : build.BuildPackageGraphNodeVec]
-    [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
+    [target : be_state.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
     (match (build.build-package-graph-link-inputs nodes (Release) target)
       [(Ok inputs) inputs]
       [(Err _)

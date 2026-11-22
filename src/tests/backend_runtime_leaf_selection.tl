@@ -1,5 +1,6 @@
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
-(import compiler_backend as backend)
+(import compiler_backend_program_data as be_data)
 (import compiler_builtin_ids as cbi)
 (import compiler_backend_runtime_common as common)
 (import compiler_backend_runtime_linux as linux)
@@ -27,7 +28,7 @@
     [alias : i64 (ci.intern "runtime-leaf-alias")]
     [source : i64 (ci.intern "runtime-leaf-source")]
     [state
-      (backend.compiler-backend-state-new
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [externs
       (ir.compiler-ir-extern-seq1
@@ -41,15 +42,15 @@
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)))]
-    [index (backend.compiler-backend-runtime-index-empty)]
-    [refs (backend.BackendSymbolSeq (__tl_make-array i64 1) 0)]
+    [index (be_data.compiler-backend-runtime-index-empty)]
+    [refs (be_state.BackendSymbolSeq (__tl_make-array i64 1) 0)]
     ;; An unused extern declaration is deliberately insufficient. Keep the
     ;; linked helper for either call identity or an address-taking reference.
     (when
       (and (> mode 0) (< mode 4))
       (set!
         index
-        (backend.compiler-backend-runtime-index-instr
+        (be_data.compiler-backend-runtime-index-instr
           index
           (Call
             0
@@ -74,11 +75,11 @@
       (= mode 7)
       (set!
         index
-        (backend.compiler-backend-runtime-index-instr
+        (be_data.compiler-backend-runtime-index-instr
           index
           (TailCall alias (Nil) (Unit)))))
     (test.assert-i64-eq
-      (backend.compiler-backend-runtime-used-leaf-mask state index refs externs)
+      (be_data.compiler-backend-runtime-used-leaf-mask state index refs externs)
       (if (= mode 0)
         0
         (shl 1 which))
@@ -129,21 +130,21 @@
   runtime-leaf-selection-keeps-library-and-windows-recipes
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
-    [index (backend.compiler-backend-runtime-index-empty)]
-    [refs (backend.BackendSymbolSeq (__tl_make-array i64 0) 0)]
+    [index (be_data.compiler-backend-runtime-index-empty)]
+    [refs (be_state.BackendSymbolSeq (__tl_make-array i64 0) 0)]
     [externs (ir.compiler-ir-extern-seq-empty)]
     [state
-      (backend.compiler-backend-state-new
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (match (backend.compiler-backend-runtime-plan-for-with-backend-state
-      (backend.compiler-backend-state-new
+    (match (be_data.compiler-backend-runtime-plan-for-with-backend-state
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))
       (ir.compiler-ir-function-seq-empty)
       (owned.compiler-owned-shared-view externs))
       [(Ok plan)
         (let
           [executable
-            (backend.compiler-backend-runtime-features-for-emission
+            (be_data.compiler-backend-runtime-features-for-emission
               (Linux)
               plan
               state
@@ -152,7 +153,7 @@
               (owned.compiler-owned-shared-view externs)
               true)]
           [library
-            (backend.compiler-backend-runtime-features-for-emission
+            (be_data.compiler-backend-runtime-features-for-emission
               (Linux)
               plan
               state
@@ -161,7 +162,7 @@
               (owned.compiler-owned-shared-view externs)
               false)]
           [win
-            (backend.compiler-backend-runtime-features-for-emission
+            (be_data.compiler-backend-runtime-features-for-emission
               (Windows)
               plan
               state

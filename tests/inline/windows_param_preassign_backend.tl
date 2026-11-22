@@ -1,5 +1,7 @@
 ;; windows_param_preassign_backend.tl - backend smoke for #3493's Win64
 ;; incoming scalar parameter homes.
+(import compiler_backend_operands as be_operand)
+(import compiler_backend_state as be_state)
 (import stdlib.io)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -142,14 +144,14 @@
 (define (win-param-preassign-backend-ok?) : bool
   (let
     [program : ir.CompilerIrProgram (win-param-preassign-program)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     [_scalar : unit
-      (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+      (be_state.compiler-backend-state-set-scalar-registers-enabled!
         backend-state
         true)]
     (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
@@ -164,23 +166,23 @@
       profile-state)
       [(Ok asm)
         (and
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+          (be_operand.compiler-backend-string-contains?
+            (be_state.compiler-backend-global-shared-view asm)
             "#t _tl_f0 _tl_win_param_preassign\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+          (be_operand.compiler-backend-string-contains?
+            (be_state.compiler-backend-global-shared-view asm)
             "_tl_f0:\n")
           ;; Params a/b/d keep their incoming Win64 arg-register homes
           ;; (%rcx/%rdx/%r9) and are stored to their globals directly --
           ;; no stack spill.
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+          (be_operand.compiler-backend-string-contains?
+            (be_state.compiler-backend-global-shared-view asm)
             "    movq %rcx, _tl_win_pa(%rip)\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+          (be_operand.compiler-backend-string-contains?
+            (be_state.compiler-backend-global-shared-view asm)
             "    movq %rdx, _tl_win_pb(%rip)\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+          (be_operand.compiler-backend-string-contains?
+            (be_state.compiler-backend-global-shared-view asm)
             "    movq %r9, _tl_win_pd(%rip)\n")
           ;; Param c arrives in %r8, which doubles as the backend's fixed
           ;; emit scratch register, so it cannot stay there: it is
@@ -189,22 +191,22 @@
           ;; WIN1: on Windows the home is a callee-saved register (%r12) --
           ;; R3S-1's caller-saved widening is Linux-only, so this is the
           ;; pre-constraint expectation.
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+          (be_operand.compiler-backend-string-contains?
+            (be_state.compiler-backend-global-shared-view asm)
             "    movq %r8, %r12\n")
-          (compiler_backend.compiler-backend-string-contains?
-            (compiler_backend.compiler-backend-global-shared-view asm)
+          (be_operand.compiler-backend-string-contains?
+            (be_state.compiler-backend-global-shared-view asm)
             "    movq %r12, _tl_win_pc(%rip)\n")
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (compiler_backend.compiler-backend-global-shared-view asm)
+            (be_operand.compiler-backend-string-contains?
+              (be_state.compiler-backend-global-shared-view asm)
               "    movq %r8, _tl_win_pc(%rip)\n"))
           ;; The entry-copy schedule constraint, directly: c's home may never
           ;; be the incoming argument register of a LATER parameter, because
           ;; d's entry copy has not run yet when c's is emitted.
           (not
-            (compiler_backend.compiler-backend-string-contains?
-              (compiler_backend.compiler-backend-global-shared-view asm)
+            (be_operand.compiler-backend-string-contains?
+              (be_state.compiler-backend-global-shared-view asm)
               "    movq %r8, %r9\n")))]
       [(Err _) false])))
 

@@ -4,6 +4,8 @@
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
+(import compiler_backend_program_facts as be_facts)
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.fs)
@@ -27,7 +29,7 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
-(import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_ast_types as ast)
 (import compiler_load as load)
 (import compiler_symbols as csym)
@@ -82,8 +84,8 @@
     bool
     String
     bool
-    backend.CompilerBackendTarget
-    backend.CompilerBackendMode
+    be_state.CompilerBackendTarget
+    be_state.CompilerBackendMode
     cli_svec.Vec
     cli_svec.Vec
     i64
@@ -97,15 +99,15 @@
 ;; AST inputs and cannot regenerate assembly or invoke the compiler again.
 (defenum ResultBuildPackagePreparedRuntime
   (DirectObject String String)
-  (Assembly String backend.CompilerDirectObjectFallbackReason)
+  (Assembly String be_state.CompilerDirectObjectFallbackReason)
   (Err String))
 
 (defstruct BuildPackageDirectObjectRequest
   (name String)
   (kind load.CompilerPkgKind)
-  (target backend.CompilerBackendTarget)
+  (target be_state.CompilerBackendTarget)
   (opt-level i64)
-  (mode backend.CompilerBackendMode)
+  (mode be_state.CompilerBackendMode)
   (debug-info bool)
   (path-budget i64)
   (linux-budget-override bool)
@@ -124,9 +126,9 @@
 (define (build-package-direct-object-default-request
   [name : String]
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
@@ -297,8 +299,8 @@
 (defstruct BuildPackageWorkerConfig
   (manifest-path String)
   (has-manifest bool)
-  (target backend.CompilerBackendTarget)
-  (mode backend.CompilerBackendMode)
+  (target be_state.CompilerBackendTarget)
+  (mode be_state.CompilerBackendMode)
   (profile BuildProfile)
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
@@ -410,7 +412,7 @@
     [(Dev) "dev"]
     [(Release) "release"]))
 
-(define (build-backend-mode-name [mode : backend.CompilerBackendMode]) : String
+(define (build-backend-mode-name [mode : be_state.CompilerBackendMode]) : String
   (match mode
     [(Scalar) "scalar"]
     [(Avx2) "avx2"]
@@ -697,7 +699,7 @@
 (define (build-package-obj-path
   [manifest-dir : String]
   [name : String]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (build-package-obj-path-profile
     manifest-dir
     name
@@ -708,7 +710,7 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat
@@ -719,7 +721,7 @@
 (define (build-package-bin-path
   [manifest-dir : String]
   [name : String]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (build-package-bin-path-profile
     manifest-dir
     name
@@ -730,7 +732,7 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (str_cat.str-cat
@@ -740,7 +742,7 @@
 (define (build-package-lib-path
   [manifest-dir : String]
   [name : String]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (build-package-lib-path-profile
     manifest-dir
     name
@@ -751,7 +753,7 @@
   [manifest-dir : String]
   [name : String]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (load.compiler-load-join-root-path
     (build-package-output-dir-profile manifest-dir "" profile)
     (build_run_core.source-tool-static-library-filename name target)))
@@ -772,7 +774,7 @@
   [name : String]
   [kind : load.CompilerPkgKind]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (match kind
     [(CompilerPkgKindBin)
       (build-package-bin-path-profile manifest-dir name profile target)]
@@ -788,7 +790,7 @@
   [name : String]
   [kind : load.CompilerPkgKind]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : BuildPackageArtifactPaths
+  [target : be_state.CompilerBackendTarget]) : BuildPackageArtifactPaths
   (BuildPackageArtifactPaths
     (build-package-artifact-path-profile
       (owned_view.compiler-owned-shared-view manifest-dir)
@@ -2229,7 +2231,7 @@
     (BuildPackageCompileContext false "")))
 
 (define (build-package-compile-cfgs
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [root-compiler : bool]
   [cfg-names : (& cfg-names cli_svec.Vec)]) : sym_i64_env.SymI64Env
   (let
@@ -2404,7 +2406,7 @@
   [link : load.CompilerPkgLink]
   [manifest-dir : String]
   [owner : String]
-  [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
+  [target : be_state.CompilerBackendTarget]) : build_run_core.SourceToolLinkInputs
   (let
     [selected : load.CompilerPkgLinkSet
       (match target
@@ -2434,7 +2436,7 @@
 
 (define (build-package-artifact-status
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [artifact-path : String]
@@ -2470,7 +2472,7 @@
 
 (define (build-package-write-direct-object-artifact
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]
@@ -2492,7 +2494,8 @@
         obj
         "build: failed to write package direct object artifact")]))
 
-(define (build-package-direct-object-mode? [mode : backend.CompilerBackendMode]) : bool
+(define (build-package-direct-object-mode?
+  [mode : be_state.CompilerBackendMode]) : bool
   (match mode
     [(Scalar) true]
     [_ false]))
@@ -2539,7 +2542,7 @@
   (build-package-direct-object-owned-path-count-from paths 0))
 
 (define (build-package-direct-object-size-ok?
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [path-budget : i64]
   [linux-budget-override : bool]
   [paths : (& paths ast.AstDeclPathList)]) : bool
@@ -2553,12 +2556,12 @@
 
 (defenum BuildPackageDirectObjectPreflight
   (Eligible)
-  (Fallback backend.CompilerDirectObjectFallbackReason))
+  (Fallback be_state.CompilerDirectObjectFallbackReason))
 
 (define (build-package-direct-object-preflight
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [mode : backend.CompilerBackendMode]
+  [target : be_state.CompilerBackendTarget]
+  [mode : be_state.CompilerBackendMode]
   [debug-info : bool]
   [path-budget : i64]
   [linux-budget-override : bool]
@@ -2595,13 +2598,13 @@
 
 (define (build-package-emit-assembly-fallback
   [entry-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
   [lowered : compiler_driver_core.ResultCompilerDriverLowered]
-  [reason : backend.CompilerDirectObjectFallbackReason]) : ResultBuildPackagePreparedRuntime
+  [reason : be_state.CompilerDirectObjectFallbackReason]) : ResultBuildPackagePreparedRuntime
   (match (compiler_driver_core.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
     entry-path
     lowered
@@ -2625,9 +2628,9 @@
 (define (build-package-emit-preflighted-runtime
   [entry-path : String]
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
   [preflight : BuildPackageDirectObjectPreflight]
@@ -2704,7 +2707,7 @@
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : BuildPackageArtifactPaths
+  [target : be_state.CompilerBackendTarget]) : BuildPackageArtifactPaths
   (let
     [manifest-path : String node.manifest-path]
     [manifest : load.CompilerPkgManifest node.manifest]
@@ -2719,7 +2722,7 @@
 (define (build-package-graph-node-artifact-path
   [node : BuildPackageGraphNode]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (build-package-runtime-artifact-path
     (build-package-graph-node-artifact-paths node profile target)))
 
@@ -2776,7 +2779,7 @@
 (define (build-package-graph-link-inputs
   [nodes : BuildPackageGraphNodeVec]
   [profile : BuildProfile]
-  [target : backend.CompilerBackendTarget]) : build_run_core.ResultSourceToolLinkInputs
+  [target : be_state.CompilerBackendTarget]) : build_run_core.ResultSourceToolLinkInputs
   (let
     [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
     [out : build_run_core.SourceToolLinkInputs
@@ -3005,7 +3008,7 @@
       (+= cursor 1))
     dst))
 
-(define (build-package-tlci-backend [mode : backend.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
+(define (build-package-tlci-backend [mode : be_state.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
   (match mode
     [(Scalar) Scalar]
     [(Avx2) Avx2]
@@ -3065,7 +3068,7 @@
           args
           result
           index-param
-          (backend.compiler-backend-user-symbol-id logical-symbol-id))]
+          (be_state.compiler-backend-user-symbol-id logical-symbol-id))]
       (build-package-tlci-specializations-at
         package-name
         canonical-name
@@ -3084,7 +3087,7 @@
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [specializations : ast.AstSpmdSpecializationList]
-  [mode : backend.CompilerBackendMode]) : tlci.TlciSpmdCallable
+  [mode : be_state.CompilerBackendMode]) : tlci.TlciSpmdCallable
   (let
     [canonical-name : String
       (csym.compiler-symbol-module-key
@@ -3114,7 +3117,7 @@
   [owned-path : String]
   [module : String]
   [package-name : String]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
   (match decl
     [(DefFn decl-meta name params ret _ metadata)
@@ -3362,7 +3365,7 @@
   [fallback-path : String]
   [initial-module : String]
   [package-name : String]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [owned-sources : (& owned-sources build_string_i64_map.Map)]
   [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
   (let
@@ -3417,7 +3420,7 @@
 (define (build-package-tlci-callable-collector
   [source-set : (& source-set package_source_core.PackageSourceSet)]
   [manifest : load.CompilerPkgManifest]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciCallableCollector
   (let
@@ -3497,7 +3500,7 @@
 (define (build-package-tlci-capture-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [manifest : load.CompilerPkgManifest]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
@@ -3529,7 +3532,7 @@
 (define (build-package-tlci-collect-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [manifest : load.CompilerPkgManifest]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
@@ -3888,7 +3891,7 @@
     (load.compiler-load-join-root-path dir name)))
 
 (define (build-package-link-library-file-transcript
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [dir : String]
   [library : String]) : ResultBuildString
   (let
@@ -3924,7 +3927,7 @@
         (Ok (str_cat.str-cat direct-text first-text second-text))))))
 
 (define (build-package-link-library-files-transcript
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
   (let
     [libraries : process.ProcessStringList
@@ -3963,7 +3966,7 @@
       (Err error))))
 
 (define (build-package-link-file-transcript
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
   (let
     [raw-text
@@ -4006,7 +4009,7 @@
     out))
 
 (define (build-package-assembler-command-for
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]) : build_run_core.ResultSourceToolCommand
   (match target
@@ -4018,7 +4021,7 @@
 
 (define (build-package-artifact-command-for
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : build_run_core.ResultSourceToolCommand
@@ -4049,7 +4052,7 @@
 (define (build-package-runtime-input-transcript-after-assembler
   [base : String]
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
@@ -4084,9 +4087,9 @@
 
 (define (build-package-runtime-input-transcript
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [producer-identity : String]
   [asm-path : String]
@@ -4680,7 +4683,7 @@
 (define (build-package-write-assembly
   [path : (& path str)]
   [asm : String]
-  [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolCommandStatus
+  [target : be_state.CompilerBackendTarget]) : build_run_core.SourceToolCommandStatus
   (let
     [_
       (try
@@ -4692,7 +4695,7 @@
     [needle : String ".note.GNU-stack"]
     [note : String (build_run_core.source-tool-noexecstack-note)]
     (if (and
-      (backend.compiler-backend-target-linux? target)
+      (be_facts.compiler-backend-target-linux? target)
       (not (string.contains (& haystack) (& needle))))
       (match (io.try-append-file path (byte_buf.str-as-bytes (& note)))
         [(OkIoUnit) Ok]
@@ -4827,10 +4830,10 @@
 (define (build-package-finish-direct-fresh-artifacts
   [name : String]
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [producer-identity : String]
   [output-dir : String]
   [asm-path : String]
@@ -4950,10 +4953,10 @@
 (define (build-package-finish-assembly-fresh-artifacts
   [name : String]
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [producer-identity : String]
   [output-dir : String]
   [asm-path : String]
@@ -5065,10 +5068,10 @@
   [prepared : ResultBuildPackagePreparedRuntime]
   [name : String]
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [producer-identity : String]
   [output-dir : String]
   [asm-path : String]
@@ -5128,7 +5131,7 @@
       (Err
         (str_cat.str-cat
           "build: direct object required: "
-          (backend.compiler-direct-object-fallback-transcript reason)))]
+          (be_object.compiler-direct-object-fallback-transcript reason)))]
     [(Err message) (Err message)]))
 
 (cfg
@@ -5197,10 +5200,10 @@
     [seen : sym_i64_env.SymI64Env]
     [name : String]
     [kind : load.CompilerPkgKind]
-    [target : backend.CompilerBackendTarget]
+    [target : be_state.CompilerBackendTarget]
     [opt-level : i64]
     [profile : BuildProfile]
-    [mode : backend.CompilerBackendMode]
+    [mode : be_state.CompilerBackendMode]
     [producer-identity : String]
     [entry-path : String]
     [emit-entry : bool]
@@ -5335,7 +5338,7 @@
 (define (build-package-closure-doctest-status
   [owner : String]
   [entry-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [manifest-dir : String]
@@ -5394,10 +5397,10 @@
   (define (build-package-emit-one-with-surface
     [manifest-path : String]
     [manifest : load.CompilerPkgManifest]
-    [target : backend.CompilerBackendTarget]
+    [target : be_state.CompilerBackendTarget]
     [opt-level : i64]
     [profile : BuildProfile]
-    [mode : backend.CompilerBackendMode]
+    [mode : be_state.CompilerBackendMode]
     [stdlib-roots : cli_svec.Vec]
     [producer-identity : String]
     [entry-path : String]
@@ -5462,10 +5465,10 @@
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
     [manifest-path : String]
     [manifest : load.CompilerPkgManifest]
-    [target : backend.CompilerBackendTarget]
+    [target : be_state.CompilerBackendTarget]
     [opt-level : i64]
     [profile : BuildProfile]
-    [mode : backend.CompilerBackendMode]
+    [mode : be_state.CompilerBackendMode]
     [stdlib-roots : cli_svec.Vec]
     [producer-identity : String]
     [entry-path : String]
@@ -5562,10 +5565,10 @@
   (define (build-package-emit-one
     [manifest-path : String]
     [manifest : load.CompilerPkgManifest]
-    [target : backend.CompilerBackendTarget]
+    [target : be_state.CompilerBackendTarget]
     [opt-level : i64]
     [profile : BuildProfile]
-    [mode : backend.CompilerBackendMode]
+    [mode : be_state.CompilerBackendMode]
     [lock-policy : BuildPackageLockPolicy]
     [stdlib-roots : cli_svec.Vec]
     [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -5725,10 +5728,10 @@
   (define (build-package-emit-one
     [_manifest-path : String]
     [_manifest : load.CompilerPkgManifest]
-    [_target : backend.CompilerBackendTarget]
+    [_target : be_state.CompilerBackendTarget]
     [_opt-level : i64]
     [_profile : BuildProfile]
-    [_mode : backend.CompilerBackendMode]
+    [_mode : be_state.CompilerBackendMode]
     [_lock-policy : BuildPackageLockPolicy]
     [_stdlib-roots : cli_svec.Vec]
     [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -5811,10 +5814,10 @@
 (define (build-package-worker-args-with-flag
   [worker-flag : String]
   [manifest-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
@@ -5861,10 +5864,10 @@
 
 (define (build-package-worker-args
   [manifest-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
   [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessStringList
@@ -5882,10 +5885,10 @@
 
 (define (build-package-worker-command
   [manifest-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
   [cfg-names : (& cfg-names cli_svec.Vec)]) : process.ProcessCommand
@@ -5903,10 +5906,10 @@
 
 (define (build-package-doctest-worker-command
   [manifest-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : load.CompilerPkgDepList]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
@@ -5937,10 +5940,10 @@
   [owner : String]
   [entry-path : String]
   [manifest-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [deps : load.CompilerPkgDeps]
   [resolved-deps : load.CompilerPkgDepList]
@@ -6162,10 +6165,10 @@
 
 (define (build-package-start-worker
   [node : BuildPackageGraphNode]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : (& stdlib-roots cli_svec.Vec)]
   [cfg-names : (& cfg-names cli_svec.Vec)]) : ResultBuildPackageGraphWorker
@@ -6209,10 +6212,10 @@
   [nodes : BuildPackageGraphNodeVec]
   [scheduled : build_string_i64_map.Map]
   [built : (& built build_string_i64_map.Map)]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -6283,10 +6286,10 @@
   [nodes : BuildPackageGraphNodeVec]
   [scheduled : build_string_i64_map.Map]
   [built : build_string_i64_map.Map]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]) : ResultBuildPackageSchedulePass
@@ -6435,10 +6438,10 @@
 
 (define (build-package-emit-graph-nodes-parallel-loop
   [nodes : BuildPackageGraphNodeVec]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -6487,10 +6490,10 @@
 
 (define (build-package-emit-graph-nodes-parallel
   [nodes : BuildPackageGraphNodeVec]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [announce : bool]
   [stdlib-roots : cli_svec.Vec]
@@ -6510,10 +6513,10 @@
 
 (define (build-package-emit-graph-nodes-serial
   [nodes : BuildPackageGraphNodeVec]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -6566,10 +6569,10 @@
 
 (define (build-package-emit-graph-nodes
   [nodes : BuildPackageGraphNodeVec]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -6604,11 +6607,11 @@
   [source : String]
   [output : String]
   [has-output : bool]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : cli_svec.Vec]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [doctest-status : i64
@@ -6652,7 +6655,7 @@
   [_has-target : bool]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
@@ -6740,7 +6743,7 @@
   [has-target : bool]
   [opt-level : i64]
   [profile : BuildProfile]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]

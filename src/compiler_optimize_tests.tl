@@ -37665,6 +37665,187 @@
         8]
       [else 42])))
 
+;; IND-BASE reverse index: `%4 = sub %2, <rhs>` read by a gep, with <rhs>
+;; the counter itself (shape 0), a masked counter no induction rule admits
+;; (shape 1), the counter in a loop that still carries a bounds check on the
+;; sum (shape 2), or the counter in a conditional arm that does not run on
+;; every trip (shape 3). Shapes 4 and 5 are shapes 3 and 2 with the counter's
+;; product `%7 = mul %3, 3` as <rhs>: the refused sub leaves that product to
+;; the plain Mul derived.
+(define (opt-induction-sub-inv-blocks [shape : i64]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (cond
+      [(= shape 4)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, latch] : i64
+           branch %0, body, exit
+         body:
+           branch %0, arm, latch
+         arm:
+           %7 = mul %3, 3 : i64
+           %4 = sub %2, %7 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           jump latch
+         latch:
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 5)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %7 = mul %3, 3 : i64
+           %4 = sub %2, %7 : i64
+           bounds_check %4, %2 message \"sub_ok\"
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 1)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %9 = and %3, 7 : i64
+           %4 = sub %2, %9 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 3)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, latch] : i64
+           branch %0, body, exit
+         body:
+           branch %0, arm, latch
+         arm:
+           %4 = sub %2, %3 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           jump latch
+         latch:
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [(= shape 2)
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %4 = sub %2, %3 : i64
+           bounds_check %4, %2 message \"sub_ok\"
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"]
+      [else
+        "entry:
+           jump loop
+         loop:
+           %3 = phi [%1, entry], [%5, body] : i64
+           branch %0, body, exit
+         body:
+           %4 = sub %2, %3 : i64
+           %8 = gep %2, %4 : i64
+           %6 = load %8 : i64
+           %5 = add %3, 1 : i64
+           jump loop
+         exit:
+           return %3"])))
+
+;; `c - i` has no three-operand form, so it derives a down-stepping sum phi
+;; (the difference becomes a `mov` of it). A sub whose var side is not the
+;; counter or an admitted product stays, and so does one in a loop that still
+;; carries a bounds check (bce_version reads that index off the counter) or
+;; one whose block does not dominate the latch (the phi's step would run on
+;; trips that never compute the difference). A product such a refused sub
+;; reads still derives as a plain Mul (`%7` becomes a `mov` of its phi).
+(define (compiler-optimize-induction-sub-inv-self-test) : i64
+  (let
+    [arm-mul-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 4))]
+    [arm-mul : ir.CompilerIrBlockList (opt.opt-function-blocks arm-mul-func)]
+    [checked-mul-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 5))]
+    [checked-mul : ir.CompilerIrBlockList
+      (opt.opt-function-blocks checked-mul-func)]
+    [counter-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 0))]
+    [counter : ir.CompilerIrBlockList (opt.opt-function-blocks counter-func)]
+    [masked-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 1))]
+    [masked : ir.CompilerIrBlockList (opt.opt-function-blocks masked-func)]
+    [checked-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 2))]
+    [checked : ir.CompilerIrBlockList (opt.opt-function-blocks checked-func)]
+    [arm-func : ir.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-sub-inv-blocks 3))]
+    [arm : ir.CompilerIrBlockList (opt.opt-function-blocks arm-func)]
+    (cond
+      [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& counter-func)))))
+        1]
+      [(not
+          (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view counter)) 2))
+        2]
+      [(=
+          (opt-blocks-mov-src-var
+            (ir.compiler-ir-block-list-view counter)
+            4
+            (- 0 1))
+          (- 0 1))
+        3]
+      [(not
+          (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view masked)) 1))
+        4]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (ir.compiler-ir-block-list-view masked)
+              4
+              (- 0 1))
+            (- 0 1)))
+        5]
+      [(not
+          (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view checked)) 1))
+        6]
+      [(not (= (opt-count-phi-blocks (ir.compiler-ir-block-list-view arm)) 1))
+        7]
+      [(=
+          (opt-blocks-mov-src-var
+            (ir.compiler-ir-block-list-view arm-mul)
+            7
+            (- 0 1))
+          (- 0 1))
+        8]
+      [(=
+          (opt-blocks-mov-src-var
+            (ir.compiler-ir-block-list-view checked-mul)
+            7
+            (- 0 1))
+          (- 0 1))
+        9]
+      [else 42])))
+
 (define (compiler-optimize-induction-self-test) : i64
   (let
     [blocks : ir.CompilerIrBlockList (opt-induction-offset-blocks 1 4)]
@@ -65909,7 +66090,7 @@
 (define (opt-le-family
   [cells : (& cells opt.OptGlobalCellSummary)]
   [name : i64]) : i64
-  (opt.opt-len-eq-encoded-family (opt.opt-len-eq-lookup cells.len-eq name)))
+  (opt.opt-len-eq-family-of cells.len-eq name))
 
 (define (opt-le-fits? [cells : (& cells opt.OptGlobalCellSummary)] [name : i64]) : bool
   (opt.opt-len-eq-len-fits? cells.len-eq name))
@@ -66008,6 +66189,238 @@
 
 (define (opt-le-check-count [blocks : ir.CompilerIrBlockList]) : i64
   (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view blocks)))
+
+;; IR text gives ordinary call symbols their own identities. Bind only the
+;; fixture's runtime calls to the compiler builtin ids used by lowering.
+(define (opt-le-raw-test-runtime
+  [allocator : i64]
+  [abort : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [builder (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
+    (for [i (iterator.range 0 instrs.len)]
+      (let
+        [instr (ir.compiler-ir-instr-seq-ref (& instrs) i)]
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (match instr
+            [(Call dst name args ty)
+              (Call
+                dst
+                (cond
+                  [(= name allocator) cbi.compiler-builtin-id-tl-alloc]
+                  [(= name abort) cbi.compiler-builtin-id-tl-oob-abort]
+                  [else name])
+                args
+                ty)]
+            [_ instr]))))
+    (ir.compiler-ir-instr-builder-to-seq builder)))
+
+(define (opt-le-raw-test-functions [functions : (& ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    [allocator : i64 (opt-test-symbol "tl_alloc")]
+    [abort : i64 (opt-test-symbol "tl_oob_abort")]
+    (for [i (iterator.range 0 functions.len)]
+      (let
+        [func (ir.compiler-ir-function-seq-ref functions i)]
+        [blocks (opt.opt-function-blocks (& func))]
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (opt.opt-function-with-frame-blocks
+            (& func)
+            (opt.opt-function-frame (& func))
+            (opt.opt-blocks-map-seq
+              blocks
+              opt-le-raw-test-runtime
+              allocator
+              abort)))))
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
+(define (opt-le-raw-test-cells [writer : String]) : opt.OptGlobalCellSummary
+  (match (irt.program
+    (str_cat.str-cat
+      "global @raw-a : (__tl_dyn-array i64) = runtime-init@init-a
+       global @raw-b : (__tl_dyn-array i64) = runtime-init@init-b
+       function @init-a() -> (__tl_dyn-array i64) vars 4 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         return %1
+       }
+       function @init-b() -> (__tl_dyn-array i64) vars 4 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         return %1
+       }
+       function @read-raw(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       "
+      writer))
+    [(Program globals functions _ _)
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [functions (opt-le-raw-test-functions (& functions))]
+        [facts (opt.opt-program-facts-build functions)]
+        [call-memory
+          (opt.opt-call-memory-build type-segment-bases (& functions) 8)]
+        (opt.opt-global-cell-summary-build-with-call-memory
+          type-segment-bases
+          (& globals)
+          functions
+          facts
+          call-memory))]))
+
+(define (opt-le-raw-test-checks [writer : String] [checks : String]) : i64
+  (let
+    [cells (opt-le-raw-test-cells writer)]
+    (opt-le-check-count
+      (opt-le-bounds-dom
+        (& cells)
+        (opt-test-symbol "read-raw")
+        (irt.blocks checks)))))
+
+(test
+  len-eq-raw-reset-families
+  (test.assert-i64-eq
+    (opt-le-raw-test-checks
+      "function @reset(n=%0:i64) -> unit vars 10 {
+       entry:
+         %1 = call tl_alloc(64) : u64
+         %2 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %3 = gep %2, 0 : u8
+         store_ptr %3, %1 : u64
+         %4 = gep %2, 8 : u8
+         store_ptr %4, %0 : i64
+         store @raw-a, %2 : (__tl_dyn-array i64)
+         %5 = le %0, 8 : i64
+         branch %5, ready, trap
+       trap:
+         %6 = call tl_oob_abort() : unit
+         jump ready
+       ready:
+         %7 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %8 = gep %7, 0 : u8
+         store_ptr %8, %1 : u64
+         %9 = gep %7, 8 : u8
+         store_ptr %9, %0 : i64
+         store @raw-b, %7 : (__tl_dyn-array i64)
+         return
+       }"
+      "entry:
+         %1 = gep @raw-a, 1 : i64
+         %2 = load %1 : i64
+         bounds_check %0, %2 message \"first\"
+         %3 = mov @raw-b : (__tl_dyn-array i64)
+         %4 = gep %3, 1 : i64
+         %5 = load %4 : i64
+         bounds_check %0, %5 message \"second\"
+         return %0")
+    1
+    "raw resets separated by an abort guard update together on returning paths"))
+
+(test
+  len-eq-raw-mutable-descriptor
+  (let
+    [writers : (Array String 4)
+      (array
+        "function @push() -> unit vars 2 {
+         entry:
+           %0 = gep @raw-b, 0 : u8
+           store_ptr %0, 0 : u64
+           %1 = gep @raw-b, 8 : u8
+           store_ptr %1, 1 : i64
+           return
+         }"
+        "function @change-header(cell=%0:u64) -> unit vars 2 {
+         entry:
+           %1 = gep %0, 8 : u8
+           store_ptr %1, 1 : i64
+           return
+         }
+         function @push() -> unit vars 1 {
+         entry:
+           %0 = call change-header(@raw-b) : unit
+           return
+         }"
+        "function @copy-header() -> unit vars 2 {
+         entry:
+           %0 = gep @raw-b, 8 : u8
+           %1 = call tl_alloc(8) : u64
+           store_ptr %1, 1 : i64
+           copy_bytes %0, %1, 8
+           return
+         }"
+        "function @opaque() -> unit vars 1 {
+         entry:
+           %0 = call unknown(@raw-b) : unit
+           return
+         }")]
+    (for [i (iterator.range 0 (array-length writers))]
+      (test.assert-i64-eq
+        (opt-le-raw-test-checks
+          (string.copy (& (array-ref writers i)))
+          "entry:
+             %1 = gep @raw-a, 1 : i64
+             %2 = load %1 : i64
+             bounds_check %0, %2 message \"first\"
+             %3 = gep @raw-b, 1 : i64
+             %4 = load %3 : i64
+             bounds_check %0, %4 message \"second\"
+             return %0")
+        2
+        "a descriptor write or an opaque call preserves both bounds checks"))))
+
+(test
+  len-eq-constant-cell-length
+  (let
+    [in-range : String
+      "entry:
+         %1 = gep @raw-a, 1 : i64
+         %2 = load %1 : i64
+         bounds_check 7, %2 message \"in-range\"
+         return %0"]
+    (test.assert-i64-eq
+      (opt-le-raw-test-checks "" (string.copy (& in-range)))
+      0
+      "the initializer is the only writer and index 7 fits length 8")
+    (test.assert-i64-eq
+      (opt-le-raw-test-checks
+        "function @reset() -> unit vars 4 {
+         entry:
+           %0 = call tl_alloc(16) : u64
+           %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+           %2 = gep %1, 0 : u8
+           store_ptr %2, %0 : u64
+           %3 = gep %1, 8 : u8
+           store_ptr %3, 2 : i64
+           store @raw-a, %1 : (__tl_dyn-array i64)
+           return
+         }"
+        in-range)
+      1
+      "reallocating the cell at a different length preserves the check")
+    (test.assert-i64-eq
+      (opt-le-raw-test-checks
+        ""
+        "entry:
+           %1 = gep @raw-a, 1 : i64
+           %2 = load %1 : i64
+           bounds_check 8, %2 message \"at-end\"
+           return %0")
+      1
+      "index 8 is out of bounds at length 8")))
 
 ;; `v.len` read out of one cell, the array length of another: the shape
 ;; `(when (< var (i64vec.len (& v))) (gvn-ref w var))` leaves.
@@ -85083,6 +85496,10 @@ done:
     (compiler-optimize-induction-add-inv-self-test)
     42
     "compiler-optimize-induction-add-inv-self-test")
+  (test.assert-i64-eq
+    (compiler-optimize-induction-sub-inv-self-test)
+    42
+    "compiler-optimize-induction-sub-inv-self-test")
   (test.assert-i64-eq
     (compiler-optimize-induction-self-test)
     42

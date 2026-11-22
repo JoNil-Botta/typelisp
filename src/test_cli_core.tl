@@ -6,6 +6,8 @@
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDecl.Test`.
+(import compiler_backend_program_facts as be_facts)
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
@@ -23,7 +25,6 @@
 (import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
 (import compiler_ast_types as ast)
-(import compiler_backend)
 (import compiler_builtin_ids as cbi)
 (import compiler_check_core)
 (import compiler_diagnostic as cdiag)
@@ -48,17 +49,11 @@
   (Check))
 
 (defenum TestConfig
-  (File
-    String
-    String
-    compiler_backend.CompilerBackendMode
-    cli_svec.Vec
-    i64
-    TestMode)
+  (File String String be_state.CompilerBackendMode cli_svec.Vec i64 TestMode)
   (Batch
     cli_svec.Vec
     String
-    compiler_backend.CompilerBackendMode
+    be_state.CompilerBackendMode
     cli_svec.Vec
     i64
     TestMode)
@@ -66,7 +61,7 @@
     String
     bool
     String
-    compiler_backend.CompilerBackendMode
+    be_state.CompilerBackendMode
     cli_svec.Vec
     i64
     TestMode))
@@ -369,7 +364,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
@@ -1038,7 +1033,7 @@
     (tltest-windows-write-body)))
 
 (define (tltest-print-runtime-write-decl
-  [target : compiler_backend.CompilerBackendTarget]) : ast.AstDecl
+  [target : be_state.CompilerBackendTarget]) : ast.AstDecl
   (match target
     [(Linux) (tltest-linux-print-runtime-write-decl)]
     [(Windows) (tltest-windows-print-runtime-write-decl)]))
@@ -1087,7 +1082,7 @@
 
 (define (tltest-program-with-print-runtime
   [program : ast.AstProgram]
-  [target : compiler_backend.CompilerBackendTarget]) : ast.AstProgram
+  [target : be_state.CompilerBackendTarget]) : ast.AstProgram
   (match program
     [(Program decls-box)
       (let
@@ -1127,7 +1122,7 @@
       (tltest-paths-with-print-runtime-count (- count 1) runtime-path-id paths))))
 
 (define (tltest-paths-with-print-runtime
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
     [runtime-path-id : i64
@@ -2323,7 +2318,7 @@
     cfgs
     cache-scope-prefix))
 
-(define (tltest-cfgs [backend-target : compiler_backend.CompilerBackendTarget]) : sym_i64_env.SymI64Env
+(define (tltest-cfgs [backend-target : be_state.CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable
     (driver.compiler-driver-target-cfgs
       backend-target
@@ -2336,7 +2331,7 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [count : i64]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [roots : cli_svec.Vec]) : i64
   (let
     [legacy-roots : cli_svec.Vec (clone roots)]
@@ -2486,13 +2481,13 @@
       (string.eq normalized "stdlib/tests/env_api.tl"))))
 
 (define (tltest-stdlib-env-fixture-path
-  [target : compiler_backend.CompilerBackendTarget]) : String
-  (if (compiler_backend.compiler-backend-target-windows? target)
+  [target : be_state.CompilerBackendTarget]) : String
+  (if (be_facts.compiler-backend-target-windows? target)
     "one;two;three"
     "one:two:three"))
 
 (define (tltest-stdlib-env-fixture-env
-  [target : compiler_backend.CompilerBackendTarget]) : process.ProcessEnvList
+  [target : be_state.CompilerBackendTarget]) : process.ProcessEnvList
   (process.env-cons
     "TYPELISP_STDLIB_TEST_EMPTY"
     ""
@@ -2508,8 +2503,8 @@
 ;; compile/build/run. A target-neutral Scalar lower mode misses target ABI
 ;; rules, including Win64's caller copy for by-value aggregates (#8009).
 (define (tltest-harness-lower-mode
-  [target : compiler_backend.CompilerBackendTarget]
-  [backend-mode : compiler_backend.CompilerBackendMode]) : lower.CompilerLowerMode
+  [target : be_state.CompilerBackendTarget]
+  [backend-mode : be_state.CompilerBackendMode]) : lower.CompilerLowerMode
   (driver.compiler-driver-lower-mode-for-target target backend-mode))
 
 (define (tltest-run-harness-in-temp-with-lower-state
@@ -2520,9 +2515,9 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [inline-harness : bool]
   [temp-dir : String]) : i64
   (let
@@ -2606,9 +2601,9 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [inline-harness : bool]
   [temp-dir : String]) : i64
   (let
@@ -2641,7 +2636,7 @@
   [roots : cli_svec.Vec]
   [target : String]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [inline-harness : bool]) : i64
   (match (build_run_core.source-tool-parse-target
     (owned_view.compiler-owned-shared-view target))
@@ -2675,7 +2670,7 @@
   [roots : cli_svec.Vec]
   [target : String]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
+  [backend-mode : be_state.CompilerBackendMode]) : i64
   (tltest-run-direct-with-entry
     (owned_view.compiler-owned-shared-view source)
     (string.copy (& source))
@@ -2693,7 +2688,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]) : i64
+  [target : be_state.CompilerBackendTarget]) : i64
   (let
     [legacy-roots : cli_svec.Vec (clone roots)]
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
@@ -2723,7 +2718,7 @@
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
+  [backend-mode : be_state.CompilerBackendMode]) : i64
   ;; `test --check` owns source typechecking. Run the zero-test harness built
   ;; from the pruned runtime declarations so backend-emitted allocator calls
   ;; still have their exported abort handlers; the harness replaces the source
@@ -2944,9 +2939,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestPackageTotals
   (match (tltest-build-harness
@@ -3046,7 +3041,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : compiler_backend.CompilerBackendTarget]) : ResultTestPackageTotals
+  [target : be_state.CompilerBackendTarget]) : ResultTestPackageTotals
   (io.print-format
     "{}"
     (tltest-package-integration-line
@@ -3080,7 +3075,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestPackageTotals
   (io.print-format
@@ -3113,9 +3108,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : ResultTestPackageTotals
@@ -3226,9 +3221,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
@@ -3259,9 +3254,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : ResultTestPackageTotals
@@ -3310,9 +3305,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
@@ -3344,9 +3339,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -3397,9 +3392,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -3427,9 +3422,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -3482,9 +3477,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -3550,9 +3545,9 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -3593,7 +3588,7 @@
 (define (tltest-package-check-entry
   [source-set : (& source-set package_source_core.PackageSourceSet)]
   [roots : (& roots cli_svec.Vec)]
-  [backend-target : compiler_backend.CompilerBackendTarget]) : i64
+  [backend-target : be_state.CompilerBackendTarget]) : i64
   (let
     [entry : TlTestEntry (tltest-entry-new)]
     [status : i64
@@ -3644,7 +3639,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]) : i64
   (match (build_run_core.source-tool-parse-target
     (owned_view.compiler-owned-shared-view target))
@@ -3740,7 +3735,7 @@
   [source : String]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [roots : cli_svec.Vec]) : ResultTestFileCheck
   (match (tltest-build-harness
     (owned_view.compiler-owned-shared-view source)
@@ -3773,7 +3768,7 @@
 (define (tltest-check-file-source
   [source : String]
   [roots : cli_svec.Vec]
-  [backend-target : compiler_backend.CompilerBackendTarget]) : ResultTestFileCheck
+  [backend-target : be_state.CompilerBackendTarget]) : ResultTestFileCheck
   (let
     [source-roots : cli_svec.Vec (tltest-source-roots (& source) roots)]
     (match (driver.compiler-driver-load-file-with-runtime
@@ -3797,7 +3792,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestFileCheck
   (match (tltest-build-harness
@@ -3840,8 +3835,8 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]) : ResultTestFileCheck
+  [backend-mode : be_state.CompilerBackendMode]
+  [backend-target : be_state.CompilerBackendTarget]) : ResultTestFileCheck
   (let
     [source-roots : cli_svec.Vec (tltest-source-roots (& source) roots)]
     (match (driver.compiler-driver-load-file-with-runtime
@@ -3900,7 +3895,7 @@
 (define (tltest-run-batch-check-path
   [source : String]
   [roots : cli_svec.Vec]
-  [backend-target : compiler_backend.CompilerBackendTarget]) : i64
+  [backend-target : be_state.CompilerBackendTarget]) : i64
   (let
     [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
@@ -3916,7 +3911,7 @@
   [paths : cli_svec.Vec]
   [index : i64]
   [roots : cli_svec.Vec]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
   (let
@@ -3956,7 +3951,7 @@
 (define (tltest-run-batch-check-paths
   [paths : cli_svec.Vec]
   [roots : cli_svec.Vec]
-  [backend-target : compiler_backend.CompilerBackendTarget]
+  [backend-target : be_state.CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
   (tltest-run-batch-check-paths-from
@@ -3997,8 +3992,8 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]) : i64
+  [backend-mode : be_state.CompilerBackendMode]
+  [backend-target : be_state.CompilerBackendTarget]) : i64
   ;; Keep every entry's loader pools, harness AST, lowered IR, backend scratch,
   ;; and captured child output inside one destroyable arena. Only the scalar
   ;; test count crosses the boundary.
@@ -4024,8 +4019,8 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]
-  [backend-target : compiler_backend.CompilerBackendTarget]) : i64
+  [backend-mode : be_state.CompilerBackendMode]
+  [backend-target : be_state.CompilerBackendTarget]) : i64
   (let
     [count : i64 (cli_svec.len (& paths))]
     [cursor : i64 0]
@@ -4075,7 +4070,7 @@
   [target : String]
   [roots : cli_svec.Vec]
   [opt-level : i64]
-  [backend-mode : compiler_backend.CompilerBackendMode]) : i64
+  [backend-mode : be_state.CompilerBackendMode]) : i64
   (compiler_load.compiler-load-session-cache-enable!)
   (compiler_load.compiler-load-session-program-cache-disable!)
   (driver.compiler-driver-reset-file-state!)
@@ -4223,7 +4218,7 @@
 ;; contract the SPMD gates use (`stdlib.cpu`; AVX-512 means F+BW+DQ). The
 ;; capabilities are parameters so the refusal is testable on every host.
 (define (tltest-host-isa-refusal
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [runs-avx2 : bool]
   [runs-avx512 : bool]) : TestMaybeString
   (match backend-mode
@@ -4242,18 +4237,18 @@
 ;; `--check` and `--list` never execute a harness, so they accept every mode
 ;; on every host and never probe the CPU.
 (define (tltest-backend-mode-executes?
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]
   [list-only : bool]) : bool
   (and
-    (not (compiler_backend.compiler-backend-mode-scalar? backend-mode))
+    (not (be_state.compiler-backend-mode-scalar? backend-mode))
     (not list-only)
     (not (tltest-check-mode? test-mode))))
 
 ;; A run is refused once per process, before any compilation, instead of
 ;; trapping on the first vector instruction of some harness.
 (define (tltest-host-isa-permits?
-  [backend-mode : compiler_backend.CompilerBackendMode]
+  [backend-mode : be_state.CompilerBackendMode]
   [test-mode : TestMode]) : bool
   (if (tltest-backend-mode-executes? backend-mode test-mode tltest-list-only)
     (match (tltest-host-isa-refusal

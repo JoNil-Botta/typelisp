@@ -23,6 +23,14 @@ when the three exit codes disagree or differ from the program's declared exit
 CLI, package,
 batch and LSP services orchestrate these stages.
 
+`compiler_backend` uses `compiler_backend_div_magic` for constant division
+planning. Its shared backend layers start with `compiler_backend_state`.
+`compiler_backend_operands` builds on state, and
+`compiler_backend_program_facts` uses operands and state.
+`compiler_backend_program_data` uses operands, program facts and state, and
+`compiler_backend_object` adds program data to those three. The imports form
+an acyclic graph rooted at the backend entry module.
+
 The embedded TLCI catalog decodes only the prelude surface or requested
 native macro images, sharing one immutable Huffman model. Multi-entry batches
 retain the surface in the driver arena under the

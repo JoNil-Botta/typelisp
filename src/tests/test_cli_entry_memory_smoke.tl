@@ -1,9 +1,9 @@
 ;; Refs #7817. Exercise the normal inline compilation/run path repeatedly in
 ;; one process. Warming first excludes fixed intern/reader/IR-name tables; the
 ;; eight measured entries must not retain per-entry compiler owners.
+(import compiler_backend_state as be_state)
 (import test_cli_core as tltest)
 (import test_cli_core_tests as tltest_tests)
-(import compiler_backend)
 (import compiler_driver_core as driver)
 (import compiler_load)
 (import stdlib.io)
@@ -14,11 +14,11 @@
     [index : i64 0]
     [warm-live : i64 0]
     [target : String (cfg windows "windows-x86_64" "linux-x86_64")]
-    [backend-target : compiler_backend.CompilerBackendTarget
+    [backend-target : be_state.CompilerBackendTarget
       (cfg
         windows
-        compiler_backend.CompilerBackendTarget.Windows
-        compiler_backend.CompilerBackendTarget.Linux)]
+        be_state.CompilerBackendTarget.Windows
+        be_state.CompilerBackendTarget.Linux)]
     (compiler_load.compiler-load-session-cache-enable!)
     (compiler_load.compiler-load-session-program-cache-disable!)
     (driver.compiler-driver-reset-file-state!)

@@ -1,5 +1,6 @@
 ;; compiler_windows_coff_core.tl - Shared Windows COFF linkability and
 ;; one-optimization object-or-assembly emission.
+(import compiler_backend_state as be_state)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg test (import stdlib.io))
@@ -24,7 +25,7 @@
 
 (defenum CompilerWindowsCoffLinkability
   (Linkable)
-  (Unavailable compiler_backend.CompilerDirectObjectFallbackReason))
+  (Unavailable be_state.CompilerDirectObjectFallbackReason))
 
 (defenum CompilerWindowsBatchSideAssembly
   (None)
@@ -37,7 +38,7 @@
     compiler_diagnostic.CompilerAdvisoryList)
   (Assembly
     text_buf.TextBuf
-    compiler_backend.CompilerDirectObjectFallbackReason
+    be_state.CompilerDirectObjectFallbackReason
     compiler_diagnostic.CompilerAdvisoryList)
   (Err
     (Box compiler_diagnostic.CompilerDiagnostic)
@@ -110,7 +111,7 @@
 ;; that label's offset, and the undeclared symbol.
 (define (compiler-windows-coff-undeclared-external
   [image : cobj.CompilerObjectImage]
-  [index : i64]) : compiler_backend.CompilerDirectObjectFallbackReason
+  [index : i64]) : be_state.CompilerDirectObjectFallbackReason
   (match (cobj.compiler-object-relocation-list-ref image.relocations index)
     [(Relocation section label _ target)
       (UndeclaredExternal
@@ -183,14 +184,14 @@
       input-path)))
 
 (define (compiler-windows-batch-emit-assembly
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [emit-entry : bool]
-  [category : compiler_backend.CompilerDirectObjectFallbackReason]
+  [category : be_state.CompilerDirectObjectFallbackReason]
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerWindowsBatchArtifact
@@ -241,10 +242,10 @@
               typecheck-state)))])))
 
 (define (compiler-windows-coff-object-program-eligibility
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [program : compiler_ir_types.CompilerIrProgram]
-  [profile-state : profile_state.CompilerProfileState]) : compiler_backend.CompilerBackendObjectEligibility
+  [profile-state : profile_state.CompilerProfileState]) : be_state.CompilerBackendObjectEligibility
   (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
     backend-state
     pools
@@ -253,12 +254,12 @@
     profile-state))
 
 (define (compiler-windows-batch-emit-optimized
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [emit-entry : bool]
   [force-assembly : bool]
   [emit-side-assembly : bool]
@@ -416,12 +417,12 @@
                     typecheck-state)))]))])))
 
 (define (compiler-windows-batch-emit-lowered
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [pools : compiler_ast_types.AstNodePoolContext]
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [force-assembly : bool]
@@ -466,7 +467,7 @@
 (define (compiler-windows-batch-emit-lowered-result
   [input-path : String]
   [lowered : compiler_driver_core.ResultCompilerDriverLowered]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [force-assembly : bool]
@@ -530,7 +531,7 @@
   [input-path : String]
   [stdlib-roots : windows_coff_svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [emit-entry : bool]
   [force-assembly : bool]) : ResultCompilerWindowsBatchArtifact
@@ -540,7 +541,7 @@
       (compiler_driver_core.compiler-driver-profile-start-total
         (compiler_driver_core.compiler-driver-state-profile state)))
     (let
-      [target : compiler_backend.CompilerBackendTarget (Windows)]
+      [target : be_state.CompilerBackendTarget (Windows)]
       [lowered : compiler_driver_core.ResultCompilerDriverLowered
         (compiler_driver_core.compiler-driver-load-and-lower-escaping-with-state-and-retirement
           (owned_view.compiler-owned-shared-view state)

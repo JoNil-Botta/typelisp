@@ -255,6 +255,25 @@
   (Missing)
   (Inconsistent))
 
+;; A conflicting observation poisons its lane for the rest of recording.
+;; Plain and contextual observations use independent lanes.
+(defstruct TcCheckedBinaryFact
+  (declaration-and-op i64)
+  (left-id i64)
+  (right-id i64)
+  (plain i32)
+  (contextual i32))
+
+(defstruct TcCheckedNominalFact
+  (name-id i64)
+  (module-id i64)
+  (type-module-id i64)
+  ;; Zero is empty, -1 is inconsistent, 1 is Struct, and 2 is Enum.
+  (tag i64)
+  (resolved-id i64)
+  (symbol-revision csym.CompilerSymbolMapRevision)
+  (field-revision csym.CompilerSymbolMapRevision))
+
 (defstruct TcCheckedLetBindingFactStateData
   (enabled bool)
   (complete-required bool)
@@ -265,6 +284,18 @@
   (len i64)
   (by-hash tc_i64_i64_map.Map)
   (declaration-ordinals tc_i64_i64_map.Map)
+  ;; These tables own their storage so growth can release superseded buckets
+  ;; and freezing can retain them while compacting the binding facts.
+  (binary-facts (__tl_dyn-array TcCheckedBinaryFact))
+  (binary-fact-count i64)
+  (binary-fact-arena i64)
+  (binary-pool-cell i64)
+  (binary-expr-limit i64)
+  (nominal-facts (__tl_dyn-array TcCheckedNominalFact))
+  (nominal-fact-count i64)
+  (nominal-fact-arena i64)
+  (nominal-session-owner i64)
+  (nominal-generation i64)
   ;; Facts can contain aggregate AstType payloads. Keep the whole generation in
   ;; a separately resettable arena rather than leaking boxes into the job arena.
   (payload-arena i64)
@@ -328,6 +359,20 @@
   (job-epoch i64)
   (result bool))
 
+;; A splice re-resolution asks the same unresolved signature leaves again at
+;; every cache layer. A `Var` leaf that resolves to itself is unchanged, and
+;; that answer holds while the resolution inputs, the name ID's structural
+;; session and the job stay put. Only `true` answers are kept: the first leaf
+;; that resolves to something else is rebuilt instead of probed again.
+(defstruct TcTypeResolutionLeafMemoEntry
+  (type-name-generation i64)
+  (session-owner i64)
+  (session-generation i64)
+  (intern-owner i64)
+  (intern-generation i64)
+  (module-id i64)
+  (name i64))
+
 (defstruct TcTypeResolutionCacheStateData
   (owner-arena i64)
   (slots (__tl_dyn-array i64))
@@ -335,6 +380,10 @@
   (type-pool-owner-id i64)
   (type-segment-bases i64)
   (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry))
+  ;; `tc-type-rebuild-var-resolves-to-itself?` lanes, allocated in
+  ;; `owner-arena` on first use. A changed stamp or a job reset matches no
+  ;; entry.
+  (leaf-slots (__tl_dyn-array TcTypeResolutionLeafMemoEntry))
   ;; The lanes of `tc-selected-holds-memo-bind!`, allocated on first use in
   ;; `holds-memo-arena` (0 until then). Their entries hold for one resolution
   ;; stamp, which every file moves, so the file boundary frees them
@@ -814,6 +863,16 @@
         0
         (tc_i64_i64_map.with-capacity 1)
         (tc_i64_i64_map.with-capacity 1)
+        (__tl_make-array TcCheckedBinaryFact 0)
+        0
+        0
+        0
+        0
+        (__tl_make-array TcCheckedNominalFact 0)
+        0
+        0
+        0
+        -1
         0
         0
         (arena.tl_arena_current)))
@@ -888,6 +947,7 @@
         0
         0
         (__tl_make-array TcLifetimeOutlivesMemoEntry 0)
+        (__tl_make-array TcTypeResolutionLeafMemoEntry 0)
         0
         0))
     (TcTypeResolutionCacheState
@@ -2255,7 +2315,7 @@
           (if (= (arena.tl_arena_current) payload)
             (arena.tl_arena_set (deref data).return-arena)
             unit)
-          ;; Detach every payload-owned carrier before destroying the generation.
+          ;; Detach every carrier before destroying its backing arena.
           (in-arena
             (arena.Arena (deref data).owner-arena)
             (set!
@@ -2264,7 +2324,27 @@
             (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 1))
             (set!
               (deref data).declaration-ordinals
-              (tc_i64_i64_map.with-capacity 1)))
+              (tc_i64_i64_map.with-capacity 1))
+            (set!
+              (deref data).binary-facts
+              (__tl_make-array TcCheckedBinaryFact 0))
+            (set!
+              (deref data).nominal-facts
+              (__tl_make-array TcCheckedNominalFact 0)))
+          (set! (deref data).binary-pool-cell 0)
+          (set! (deref data).binary-fact-count 0)
+          (when
+            (!= (deref data).binary-fact-arena 0)
+            (arena.tl_arena_destroy (deref data).binary-fact-arena)
+            (set! (deref data).binary-fact-arena 0))
+          (set! (deref data).binary-expr-limit 0)
+          (set! (deref data).nominal-session-owner 0)
+          (set! (deref data).nominal-fact-count 0)
+          (when
+            (!= (deref data).nominal-fact-arena 0)
+            (arena.tl_arena_destroy (deref data).nominal-fact-arena)
+            (set! (deref data).nominal-fact-arena 0))
+          (set! (deref data).nominal-generation -1)
           (set! (deref data).enabled false)
           (set! (deref data).complete-required false)
           (set! (deref data).recording false)
@@ -2376,6 +2456,16 @@
                 count
                 (clone data.by-hash)
                 (clone data.declaration-ordinals)
+                data.binary-facts
+                data.binary-fact-count
+                data.binary-fact-arena
+                data.binary-pool-cell
+                data.binary-expr-limit
+                data.nominal-facts
+                data.nominal-fact-count
+                data.nominal-fact-arena
+                data.nominal-session-owner
+                data.nominal-generation
                 fresh
                 data.return-arena
                 data.owner-arena)))]
@@ -2462,9 +2552,9 @@
     [data : (MutPtr TcCheckedLetBindingFactStateData)
       (tc-checked-let-binding-fact-state-ptr state)]
     (unsafe
-      (if (deref data).enabled
-        (set! (deref data).current-declaration-ordinal ordinal)
-        unit))))
+      (when
+        (deref data).enabled
+        (set! (deref data).current-declaration-ordinal ordinal)))))
 
 (define (tc-checked-let-binding-fact-grow!
   [state : TcCheckedLetBindingFactState]) : unit
@@ -41928,6 +42018,7 @@
   [state : TcMacroState]
   [expr-id : i64]
   [expr : ast.AstExpr]) : unit
+  (tc-global-effect-note-expr-edit! state expr-id)
   (unless
     (< (tc-macro-walk-field state dotted-macro-journal-depth) 1)
     (if (>=
@@ -41970,9 +42061,12 @@
   (while (> (tc-macro-walk-field state dotted-macro-journal-len) mark)
     (let
       [index : i64 (- (tc-macro-walk-field state dotted-macro-journal-len) 1)]
+      [expr-id : i64
+        (array-ref (tc-macro-walk-field state dotted-macro-journal-ids) index)]
+      (tc-global-effect-note-expr-edit! state expr-id)
       (ast.ast-node-pool-context-expr-set!
         (tc-dotted-macro-journal-pool-at state index)
-        (array-ref (tc-macro-walk-field state dotted-macro-journal-ids) index)
+        expr-id
         (& (tc-dotted-macro-journal-expr-at state index)))
       (tc-macro-walk-set! state dotted-macro-journal-len index)))
   (tc-macro-walk-set!
@@ -45874,14 +45968,210 @@
           name-text
           name
           (ast.ast-lifetime-list-box-shared-view lifetimes)))]
-    [(Var name)
-      (let
-        [name-text : String
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)]
-        (tc-resolve-type-name ctx name-text name))]
+    [(Var name) (tc-resolve-checked-nominal ctx name)]
     [_ ty]))
+
+;; The tables contain no deletions and grow past half load, so a probe
+;; always reaches the matching key or an empty bucket.
+(define (tc-checked-nominal-fact-slot
+  [slots : (Ptr TcCheckedNominalFact)]
+  [mask : i64]
+  [module-id : i64]
+  [type-module-id : i64]
+  [name : i64]) : (Ptr TcCheckedNominalFact)
+  (unsafe
+    (let
+      [key (+ (* 4099 module-id) (* 2029 type-module-id) name (shr name 22))]
+      [hash (shr (* key -7046029254386353131) 32)]
+      [index (bit-and hash mask)]
+      [fact (ptr-offset slots index)]
+      (while (and
+        (!= (deref fact).tag 0)
+        (or
+          (!= (deref fact).name-id name)
+          (!= (deref fact).module-id module-id)
+          (!= (deref fact).type-module-id type-module-id)))
+        (set! index (bit-and (+ index 1) mask))
+        (set! fact (ptr-offset slots index)))
+      fact)))
+
+(define (tc-checked-nominal-facts-rehash
+  [capacity : i64]
+  [old : (__tl_dyn-array TcCheckedNominalFact)]) : (__tl_dyn-array
+    TcCheckedNominalFact)
+  (let
+    [next (__tl_make-array TcCheckedNominalFact capacity)]
+    [old-capacity (array-length old)]
+    (unsafe
+      (let
+        [slots (ptr-cast (__tl_array-data next) : (Ptr TcCheckedNominalFact))]
+        (for [index (iterator.range 0 old-capacity)]
+          (let
+            [fact (tc-global-array-element-shared-view old index)]
+            (when
+              (!= fact.tag 0)
+              (let
+                [destination
+                  (tc-checked-nominal-fact-slot
+                    slots
+                    (- capacity 1)
+                    fact.module-id
+                    fact.type-module-id
+                    fact.name-id)]
+                (ptr-write!
+                  (ptr-cast destination : (MutPtr TcCheckedNominalFact))
+                  fact)))))))
+    next))
+
+(define (tc-checked-nominal-facts-grow!
+  [data : (MutPtr TcCheckedLetBindingFactStateData)]) : unit
+  (unsafe
+    (let
+      [old-arena (deref data).nominal-fact-arena]
+      [fresh (arena.tl_arena_make)]
+      [old (deref data).nominal-facts]
+      [capacity (* 2 (array-length old))]
+      (in-arena
+        (arena.Arena fresh)
+        (set!
+          (deref data).nominal-facts
+          (tc-checked-nominal-facts-rehash capacity old)))
+      (set! (deref data).nominal-fact-arena fresh)
+      (arena.tl_arena_destroy old-arena))))
+
+;; The table only records pointer-free results with their resolution revisions.
+(define (tc-resolve-checked-nominal [ctx : TcContext] [name : i64]) : ast.AstType
+  (let
+    [session (tc-context-structural-session ctx)]
+    [state (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
+    [data (tc-checked-let-binding-fact-state-ptr state)]
+    (unsafe
+      (when
+        (and (deref data).enabled (not (deref data).complete-required))
+        (when
+          (and
+            (deref data).recording
+            (= (deref data).nominal-session-owner 0)
+            (> session.address 0))
+          (set! (deref data).nominal-fact-arena (arena.tl_arena_make))
+          (in-arena
+            (arena.Arena (deref data).nominal-fact-arena)
+            (set!
+              (deref data).nominal-facts
+              (__tl_make-array TcCheckedNominalFact 256)))
+          (set!
+            (deref data).nominal-session-owner
+            (cis.intern-structural-session-owner session))
+          (set!
+            (deref data).nominal-generation
+            (cis.intern-structural-session-current-reset-generation session)))
+        (when
+          (and
+            (> (deref data).nominal-session-owner 0)
+            (cis.intern-structural-session-stamp-current?
+              session
+              (deref data).nominal-session-owner
+              (deref data).nominal-generation))
+          (if (deref data).recording
+            (return (tc-checked-nominal-fact-record! ctx name session data))
+            (let
+              [fact
+                (tc-checked-nominal-fact-slot
+                  (ptr-cast
+                    (__tl_array-data (deref data).nominal-facts)
+                    : (Ptr TcCheckedNominalFact))
+                  (- (array-length (deref data).nominal-facts) 1)
+                  ctx.module-id
+                  ctx.type-module-id
+                  name)]
+              (when
+                (and
+                  (> (deref fact).tag 0)
+                  (match (tc-context-symbols ctx)
+                    [(CompilerSymbols _ types _ _ _ _)
+                      (let
+                        [revision (deref fact).symbol-revision]
+                        (csym.compiler-symbol-map-revision-current?
+                          types
+                          (& revision)))])
+                  (match (tc-context-registries ctx)
+                    [(CompilerRegistries _ fields _)
+                      (let
+                        [revision (deref fact).field-revision]
+                        (csym.compiler-symbol-map-revision-current?
+                          fields
+                          (& revision)))]))
+                (return
+                  (if (= (deref fact).tag 2)
+                    (Enum (deref fact).resolved-id)
+                    (Struct (deref fact).resolved-id)))))))))
+    (tc-resolve-type-name
+      ctx
+      (tc-hygiene-name-text-id-for-session session name)
+      name)))
+
+(define (tc-checked-nominal-fact-record!
+  [ctx : TcContext]
+  [name : i64]
+  [session : cis.InternStructuralSessionHandle]
+  [data : (MutPtr TcCheckedLetBindingFactStateData)]) : ast.AstType
+  (let
+    [lease
+      (csym.compiler-resolution-lease-capture
+        (tc-context-symbols ctx)
+        (tc-context-registries ctx))]
+    [ty
+      (tc-resolve-type-name
+        ctx
+        (tc-hygiene-name-text-id-for-session session name)
+        name)]
+    (match (& ty)
+      [(or (Struct resolved) (Enum resolved))
+        (when
+          (>= resolved 0)
+          (unsafe
+            (let
+              [capacity (array-length (deref data).nominal-facts)]
+              [fact
+                (ptr-cast
+                  (tc-checked-nominal-fact-slot
+                    (ptr-cast
+                      (__tl_array-data (deref data).nominal-facts)
+                      : (Ptr TcCheckedNominalFact))
+                    (- capacity 1)
+                    ctx.module-id
+                    ctx.type-module-id
+                    name)
+                  : (MutPtr TcCheckedNominalFact))]
+              [prior (deref fact).tag]
+              [tag : i64
+                (match (& ty)
+                  [(Enum _) 2]
+                  [_ 1])]
+              (if (or
+                (= prior 0)
+                (and (= prior tag) (= (deref fact).resolved-id resolved)))
+                (ptr-write!
+                  fact
+                  (TcCheckedNominalFact
+                    name
+                    ctx.module-id
+                    ctx.type-module-id
+                    tag
+                    resolved
+                    lease.symbol-revision
+                    lease.field-revision))
+                (set! (deref fact).tag -1))
+              (when
+                (= prior 0)
+                (let
+                  [count (+ (deref data).nominal-fact-count 1)]
+                  (set! (deref data).nominal-fact-count count)
+                  (when
+                    (> count (shr capacity 1))
+                    (tc-checked-nominal-facts-grow! data)))))))]
+      [_ unit])
+    ty))
 
 ;; True when `tc-resolve-type` would give back a type equal to `ty` in the
 ;; current state. The walk follows tc-resolve-type-rebuild exactly -- the same
@@ -45925,6 +46215,94 @@
         same)
       true)))
 
+;; One direct-mapped table in the job's resolution cache remembers the `Var`
+;; leaves `tc-type-rebuild-resolves-to-itself?` proved unchanged. A slot holds
+;; one entry: equal means the leaf resolves to itself under the same type-name
+;; resolution generation, structural session and intern table. Every expansion
+;; walk advances the generation, so no entry crosses a program boundary.
+(define tc-type-resolution-leaf-memo-capacity : i64
+  1024)
+
+(define (tc-type-resolution-leaf-memo-storage-ensure!
+  [state : TcTypeResolutionCacheState]) : unit
+  (let
+    [data : (MutPtr TcTypeResolutionCacheStateData)
+      (tc-type-resolution-cache-state-ptr state)]
+    (unsafe
+      (when
+        (= (array-length (deref data).leaf-slots) 0)
+        (in-arena
+          (arena.Arena (deref data).owner-arena)
+          (set!
+            (deref data).leaf-slots
+            (__tl_make-array
+              TcTypeResolutionLeafMemoEntry
+              tc-type-resolution-leaf-memo-capacity)))))))
+
+(define (tc-type-resolution-leaf-memo-slot [module-id : i64] [name : i64]) : i64
+  (bit-and
+    (bit-xor
+      (* module-id 2654435761)
+      (shr module-id 17)
+      (* name 40503)
+      (shr name 13))
+    (- tc-type-resolution-leaf-memo-capacity 1)))
+
+(define (tc-type-rebuild-var-resolves-to-itself?
+  [ctx : TcContext]
+  [name : i64]
+  [ty : ast.AstType]) : bool
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-context-job-state ctx))]
+    [_storage : unit (tc-type-resolution-leaf-memo-storage-ensure! state)]
+    [data : TcTypeResolutionCacheStateData
+      (tc-type-resolution-cache-state-data state)]
+    [resolution-ctx : TcContext (tc-context-for-type-resolution ctx)]
+    [module-id : i64 (tc-context-module-id resolution-ctx)]
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [generation : i64 tc-top-env-resolution-generation]
+    [session-owner : i64 (cis.intern-structural-session-owner session)]
+    [session-generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
+    [intern-owner : i64 (ci.intern-active-table-id)]
+    [intern-generation : i64 (ci.intern-generation)]
+    [slot : i64 (tc-type-resolution-leaf-memo-slot module-id name)]
+    [entry : (& data TcTypeResolutionLeafMemoEntry)
+      (& (array-ref data.leaf-slots slot))]
+    (if (and
+      (> generation 0)
+      (= entry.type-name-generation generation)
+      (= entry.session-owner session-owner)
+      (= entry.session-generation session-generation)
+      (= entry.intern-owner intern-owner)
+      (= entry.intern-generation intern-generation)
+      (= entry.module-id module-id)
+      (= entry.name name))
+      true
+      (let
+        [same : bool
+          (ast.ast-type-eq?
+            (tc-resolve-type-name
+              resolution-ctx
+              (tc-hygiene-name-text-id-for-session session name)
+              name)
+            ty)]
+        (when
+          (and same (> generation 0))
+          (set!
+            (array-ref data.leaf-slots slot)
+            (TcTypeResolutionLeafMemoEntry
+              generation
+              session-owner
+              session-generation
+              intern-owner
+              intern-generation
+              module-id
+              name)))
+        same))))
+
 (define (tc-type-rebuild-resolves-to-itself?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
@@ -45951,15 +46329,7 @@
           name
           (deref lifetimes))
         (tc-global-shared-view ty))]
-    [(Var name)
-      (ast.ast-type-eq?
-        (tc-resolve-type-name
-          ctx
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)
-          name)
-        ty)]
+    [(Var name) (tc-type-rebuild-var-resolves-to-itself? ctx name ty)]
     [_ true]))
 
 (define (tc-canonicalize-resolved-nominal-type-list-at
@@ -56142,6 +56512,290 @@
         (tc-global-shared-view source)
         sink))))
 
+;; Scalar tags occupy a nibble each. Zero marks an empty lane and -1
+;; permanently disables a lane whose observations disagreed.
+(define (tc-checked-binary-scalar-tag [ty : (& ast.AstType)]) : i64
+  (let
+    [tag (ast.ast-type-tag ty)]
+    (if (<= tag 12)
+      tag
+      0)))
+
+(define (tc-checked-binary-scalar-type [tag : i64]) : ast.AstType
+  (cond
+    [(= tag 1) (I64)]
+    [(= tag 2) (I32)]
+    [(= tag 3) (I16)]
+    [(= tag 4) (I8)]
+    [(= tag 5) (U64)]
+    [(= tag 6) (U32)]
+    [(= tag 7) (U16)]
+    [(= tag 8) (U8)]
+    [(= tag 9) (F64)]
+    [(= tag 10) (F32)]
+    [(= tag 11) (Bool)]
+    [(= tag 12) (Char)]
+    [else (Never)]))
+
+(define (tc-checked-binary-op-tag [op : (& ast.AstBinOp)]) : i64
+  (match op
+    [(Add) 1]
+    [(Sub) 2]
+    [(Mul) 3]
+    [(Div) 4]
+    [(Mod) 5]
+    [(Eq) 6]
+    [(Ne) 7]
+    [(Lt) 8]
+    [(Le) 9]
+    [(Gt) 10]
+    [(Ge) 11]
+    [(And) 12]
+    [(Or) 13]
+    [(BitAnd) 14]
+    [(BitOr) 15]
+    [(BitXor) 16]
+    [(Shl) 17]
+    [(Shr) 18]))
+
+(define (tc-checked-binary-fact-slot
+  [slots : (Ptr TcCheckedBinaryFact)]
+  [mask : i64]
+  [key : i64]
+  [left : i64]
+  [right : i64]) : (Ptr TcCheckedBinaryFact)
+  (unsafe
+    (let
+      [index (bit-and (bit-xor left (shr left 18)) mask)]
+      [fact (ptr-offset slots index)]
+      (while (and
+        (!= (deref fact).declaration-and-op 0)
+        (or
+          (!= (deref fact).declaration-and-op key)
+          (!= (deref fact).left-id left)
+          (!= (deref fact).right-id right)))
+        (set! index (bit-and (+ index 1) mask))
+        (set! fact (ptr-offset slots index)))
+      fact)))
+
+(define (tc-checked-binary-facts-rehash
+  [capacity : i64]
+  [old : (__tl_dyn-array TcCheckedBinaryFact)]) : (__tl_dyn-array
+    TcCheckedBinaryFact)
+  (let
+    [next (__tl_make-array TcCheckedBinaryFact capacity)]
+    [old-capacity (array-length old)]
+    ;; Copy all occupied buckets, including permanently conflicted lanes.
+    (unsafe
+      (let
+        [slots (ptr-cast (__tl_array-data next) : (Ptr TcCheckedBinaryFact))]
+        (for [index (iterator.range 0 old-capacity)]
+          (let
+            [fact (tc-global-array-element-shared-view old index)]
+            (when
+              (!= fact.declaration-and-op 0)
+              (let
+                [destination
+                  (tc-checked-binary-fact-slot
+                    slots
+                    (- capacity 1)
+                    fact.declaration-and-op
+                    fact.left-id
+                    fact.right-id)]
+                (ptr-write!
+                  (ptr-cast destination : (MutPtr TcCheckedBinaryFact))
+                  fact)))))))
+    next))
+
+(define (tc-checked-binary-facts-grow!
+  [data : (MutPtr TcCheckedLetBindingFactStateData)]) : unit
+  (unsafe
+    (let
+      [old-arena (deref data).binary-fact-arena]
+      [fresh (arena.tl_arena_make)]
+      [old (deref data).binary-facts]
+      [capacity (* 2 (array-length old))]
+      (in-arena
+        (arena.Arena fresh)
+        (set!
+          (deref data).binary-facts
+          (tc-checked-binary-facts-rehash capacity old)))
+      (set! (deref data).binary-fact-arena fresh)
+      (arena.tl_arena_destroy old-arena))))
+
+(define (tc-checked-binary-fact-syntax-key
+  [ordinal : i64]
+  [op : (& ast.AstBinOp)]) : i64
+  (+ (* ordinal 32) (tc-checked-binary-op-tag op)))
+
+(define (tc-checked-binary-fact-pack
+  [expected : i64]
+  [left : (& ast.AstType)]
+  [right : (& ast.AstType)]
+  [result : (& ast.AstType)]) : i32
+  (let
+    [l (tc-checked-binary-scalar-tag left)]
+    [r (tc-checked-binary-scalar-tag right)]
+    [t (tc-checked-binary-scalar-tag result)]
+    (if (and (> l 0) (> r 0) (> t 0))
+      (cast (+ l (shl r 4) (shl t 8) (shl expected 12)) : i32)
+      -1)))
+
+(define (tc-checked-binary-fact-merge [prior : i32] [value : i32]) : i32
+  (if (or (= prior 0) (= prior value))
+    value
+    -1))
+
+(define (tc-checked-binary-fact-record!
+  [ctx : TcContext]
+  [expr : (& ast.AstExpr)]
+  [op : (& ast.AstBinOp)]
+  [expected-tag : i64]
+  [left : (& ast.AstType)]
+  [right : (& ast.AstType)]
+  [result : (& ast.AstType)]) : unit
+  (let
+    [state (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
+    [data (tc-checked-let-binding-fact-state-ptr state)]
+    (unsafe
+      (let
+        [ordinal (deref data).current-declaration-ordinal]
+        (when
+          (and
+            (deref data).recording
+            (not (deref data).complete-required)
+            (>= ordinal 0))
+          (match expr
+            [(Binary _ l r)
+              (let
+                [pools (tc-context-pools ctx)]
+                [pool-cell (ast.ast-node-pool-context-expr-cell-address pools)]
+                (when
+                  (= (deref data).binary-pool-cell 0)
+                  (set! (deref data).binary-fact-arena (arena.tl_arena_make))
+                  (in-arena
+                    (arena.Arena (deref data).binary-fact-arena)
+                    (set!
+                      (deref data).binary-facts
+                      (__tl_make-array TcCheckedBinaryFact 1024)))
+                  (set! (deref data).binary-pool-cell pool-cell)
+                  (set!
+                    (deref data).binary-expr-limit
+                    (ast.ast-node-pool-context-expr-len pools)))
+                (when
+                  (and
+                    (= pool-cell (deref data).binary-pool-cell)
+                    (>= l 0)
+                    (< l (deref data).binary-expr-limit)
+                    (>= r 0)
+                    (< r (deref data).binary-expr-limit))
+                  (let
+                    [key (tc-checked-binary-fact-syntax-key ordinal op)]
+                    [capacity (array-length (deref data).binary-facts)]
+                    [fact
+                      (ptr-cast
+                        (tc-checked-binary-fact-slot
+                          (ptr-cast
+                            (__tl_array-data (deref data).binary-facts)
+                            : (Ptr TcCheckedBinaryFact))
+                          (- capacity 1)
+                          key
+                          l
+                          r)
+                        : (MutPtr TcCheckedBinaryFact))]
+                    [empty? (= (deref fact).declaration-and-op 0)]
+                    [value
+                      (tc-checked-binary-fact-pack
+                        expected-tag
+                        left
+                        right
+                        result)]
+                    (when
+                      empty?
+                      (set! (deref fact).declaration-and-op key)
+                      (set! (deref fact).left-id l)
+                      (set! (deref fact).right-id r))
+                    (if (= expected-tag 0)
+                      (set!
+                        (deref fact).plain
+                        (tc-checked-binary-fact-merge (deref fact).plain value))
+                      (set!
+                        (deref fact).contextual
+                        (tc-checked-binary-fact-merge
+                          (deref fact).contextual
+                          value)))
+                    (when
+                      empty?
+                      (let
+                        [count (+ (deref data).binary-fact-count 1)]
+                        (set! (deref data).binary-fact-count count)
+                        (when
+                          (> count (shr capacity 1))
+                          (tc-checked-binary-facts-grow! data)))))))]
+            [_ unit]))))))
+
+(define (tc-checked-binary-fact-lookup
+  [ctx : TcContext]
+  [l : i64]
+  [r : i64]
+  [op : (& ast.AstBinOp)]
+  [expected-tag : i64]) : i64
+  (let
+    [state (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
+    [data (tc-checked-let-binding-fact-state-view state)]
+    (unsafe
+      (let
+        [ordinal (deref data).current-declaration-ordinal]
+        (if (and
+          (>= ordinal 0)
+          (not (deref data).recording)
+          (> (deref data).binary-expr-limit 0)
+          (=
+            (deref data).binary-pool-cell
+            (ast.ast-node-pool-context-expr-cell-address (tc-context-pools ctx))))
+          (let
+            [fact
+              (tc-checked-binary-fact-slot
+                (ptr-cast
+                  (__tl_array-data (deref data).binary-facts)
+                  : (Ptr TcCheckedBinaryFact))
+                (- (array-length (deref data).binary-facts) 1)
+                (tc-checked-binary-fact-syntax-key ordinal op)
+                l
+                r)]
+            (if (!= (deref fact).declaration-and-op 0)
+              (if (= expected-tag 0)
+                (cast (deref fact).plain : i64)
+                (let
+                  [contextual (cast (deref fact).contextual : i64)]
+                  [plain (cast (deref fact).plain : i64)]
+                  (cond
+                    [(and
+                        (> contextual 0)
+                        (= (shr contextual 12) expected-tag)
+                        (= (bit-and (shr contextual 8) 15) expected-tag))
+                      contextual]
+                    ;; An intrinsic scalar result of the requested type uses
+                    ;; that type for its operands whenever the operator admits
+                    ;; contextual typing. Comparisons remain intrinsic.
+                    [(and
+                        (= contextual 0)
+                        (> plain 0)
+                        (= (shr plain 8) expected-tag))
+                      plain]
+                    [else 0])))
+              0))
+          0)))))
+
+(define (tc-checked-binary-fact-result [fact : i64]) : ast.AstType
+  (tc-checked-binary-scalar-type (bit-and (shr fact 8) 15)))
+
+(define (tc-checked-binary-fact-types [fact : i64]) : TcBinOpTypes
+  (TcBinOpTypes
+    (tc-checked-binary-scalar-type (bit-and fact 15))
+    (tc-checked-binary-scalar-type (bit-and (shr fact 4) 15))
+    (tc-checked-binary-fact-result fact)))
+
 (define (tc-infer-selected-binary-plain
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -56162,7 +56816,7 @@
         [(ast.AstExpr.Binary _ id _) (typed.TypedSyntax.Source id)]
         [_ typed.TypedSyntax.Generated])]
     [right-syntax : typed.TypedSyntax
-      (match expr
+      (match (tc-global-shared-view expr)
         [(ast.AstExpr.Binary _ _ id) (typed.TypedSyntax.Source id)]
         [_ typed.TypedSyntax.Generated])]
     (match (tc-infer-selected-binop-types
@@ -56179,7 +56833,15 @@
         (TcSelectedResult.Err message next)]
       [(TcSelectedBinOpResult.Ok types left-child right-child next)
         (match types
-          [(TcBinOpTypes _ _ result-ty)
+          [(TcBinOpTypes left-ty right-ty result-ty)
+            (tc-checked-binary-fact-record!
+              ctx
+              (& expr)
+              (& op)
+              0
+              (& left-ty)
+              (& right-ty)
+              (& result-ty))
             (tc-selected-publish-binary
               (ResultTcType.Ok result-ty)
               syntax
@@ -56377,8 +57039,23 @@
               (tc-global-shared-view source)
               next)
               [(TcSelectedResult.Ok right-ty right-occurrence ready)
-                (match (tc-binop-type op left-ty right-ty)
+                (match (tc-binop-type
+                  op
+                  (tc-global-shared-view left-ty)
+                  (tc-global-shared-view right-ty))
                   [(ResultTcType.Ok result-ty)
+                    (let
+                      [expected-tag (tc-checked-binary-scalar-tag (& expected))]
+                      (when
+                        (> expected-tag 0)
+                        (tc-checked-binary-fact-record!
+                          ctx
+                          (& expr)
+                          (& op)
+                          expected-tag
+                          (& left-ty)
+                          (& right-ty)
+                          (& result-ty))))
                     (tc-selected-publish-binary
                       (if (tc-type-compatible?
                         (tc-global-shared-view expected)
@@ -96674,6 +97351,16 @@
         unit]))
   true)
 
+;; The events needed to replay a declaration in the other collection mode.
+;; Revision zero marks an unread declaration.
+(defstruct TcGlobalEffectScan
+  (revision i64)
+  (start i64)
+  (events-end i64)
+  (inputs-end i64)
+  (contributes bool)
+  (complete bool))
+
 (defstruct TcGlobalEffectCollector
   (graph global_effects.Graph)
   (temporary-callers tc_i64_i64_map.Map)
@@ -96701,7 +97388,13 @@
   (exempt-borrow bool)
   ;; The declaration scanned holds a function value, a lambda or a call
   ;; inside an arena scope: what the indirect union's scan can find.
-  (contributes bool))
+  (contributes bool)
+  ;; Regular write collection and indirect discovery read the same syntax.
+  ;; Record the events the other mode needs in their original visit order.
+  (capture-scan bool)
+  (scan-for-discovery bool)
+  (scan-words effect_words.Vec)
+  (scan-inputs effect_words.Vec))
 
 (defstruct TcGlobalBorrowQuery
   (global i64)
@@ -96747,7 +97440,11 @@
   ;; The declarations the indirect union's first scan found contributing, so
   ;; the other graph's union scans only those; -1 before that scan.
   (union-count i64)
-  (union-declarations effect_words.Vec))
+  (union-declarations effect_words.Vec)
+  (scan-revision i64)
+  (edited-exprs tc_i64_i64_map.Map)
+  (scans (__tl_dyn-array TcGlobalEffectScan))
+  (scan-words effect_words.Vec))
 
 ;; A call the arena-store summary answers once every body is checked: kind 0
 ;; asks whether the callee may store an allocation into a global, kind 1
@@ -96844,20 +97541,56 @@
     (set! (array-ref collector.collected node) 1)
     (effect_words.push-ref! (&mut collector.pending) node)))
 
+;; The typechecker can retarget Var and Set nodes, and can restore the
+;; StructGet and StructSet produced by dotted-place normalization.
+(define (tc-global-effect-note-scan-input!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [id : i64]) : unit
+  (when
+    collector.capture-scan
+    (effect_words.push-ref! (&mut collector.scan-inputs) id)))
+
+(define (tc-global-effect-record!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [kind : i64]
+  [target : i64]) : unit
+  (when
+    (and
+      collector.capture-scan
+      (or (not collector.scan-for-discovery) (= node collector.graph.indirect)))
+    ;; The target is a declaration index or expression ID. Use the low
+    ;; three bits for the indirect caller and the kind (call, write, borrow).
+    (effect_words.push-ref!
+      (&mut collector.scan-words)
+      (+
+        (shl target 3)
+        (* kind 2)
+        (if (= node collector.graph.indirect)
+          1
+          0)))))
+
+(define (tc-global-effect-insert-call!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [caller : i64]
+  [callee : i64]) : unit
+  (global_effects.add-call! (&mut collector.graph) caller callee)
+  ;; Merely defining a lambda or taking a function value does not execute
+  ;; the indirect union. Its outgoing edges become relevant when queried.
+  (when
+    (or
+      (!= caller collector.graph.indirect)
+      (!= (array-ref collector.collected collector.graph.indirect) 0))
+    (tc-global-effect-enqueue! collector callee)))
+
 (define (tc-global-effect-add-call!
   [collector : (&mut collector TcGlobalEffectCollector)]
   [caller : i64]
   [callee : i64]) : unit
+  (tc-global-effect-record! collector caller 0 callee)
   (unless
     (or collector.prefix-only collector.address-only)
-    (global_effects.add-call! (&mut collector.graph) caller callee)
-    ;; Merely defining a lambda or taking a function value does not execute
-    ;; the indirect union. Its outgoing edges become relevant when queried.
-    (when
-      (or
-        (!= caller collector.graph.indirect)
-        (!= (array-ref collector.collected collector.graph.indirect) 0))
-      (tc-global-effect-enqueue! collector callee))))
+    (tc-global-effect-insert-call! collector caller callee)))
 
 (define (tc-global-effect-write-name!
   [ctx : TcContext]
@@ -96865,7 +97598,11 @@
   [node : i64]
   [bound : TcNameIdList]
   [name : i64]) : unit
-  (when (or collector.prefix-only collector.address-only) (return unit))
+  (when
+    (or
+      collector.prefix-only
+      (and collector.address-only (not collector.capture-scan)))
+    (return unit))
   (let
     [handle : i64 (tc-global-effect-handle ctx bound name)]
     (when
@@ -96874,10 +97611,29 @@
         (=
           (csym.compiler-symbol-handle-kind handle)
           (csym.compiler-symbol-kind-value-define)))
-      (global_effects.add-write!
-        (&mut collector.graph)
-        node
-        (csym.compiler-symbol-handle-index handle)))))
+      (let
+        [global : i64 (csym.compiler-symbol-handle-index handle)]
+        (tc-global-effect-record! collector node 1 global)
+        (unless
+          collector.address-only
+          (global_effects.add-write! (&mut collector.graph) node global))))))
+
+(define (tc-global-effect-temporary!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [place : i64]) : unit
+  (let
+    [head : i64
+      (tc_i64_i64_map.get-value-or (& collector.temporary-callers) place 0)]
+    [next : i64 (global_effects.link! (&mut collector.graph) node head)]
+    [cleanup : i64
+      (tc_i64_i64_map.get-value-or (& collector.typed-temporaries) place 0)]
+    (tc_i64_i64_map.insert-ref! (&mut collector.temporary-callers) place next)
+    (when
+      (>= cleanup 1)
+      ;; The inferred cleanup may arrive after the syntax is scanned. Look
+      ;; it up on replay, alongside the temporary operand itself.
+      (tc-global-effect-insert-call! collector node (- cleanup 1)))))
 
 (define (tc-global-effect-write-place!
   [ctx : TcContext]
@@ -97360,18 +98116,20 @@
   [value : i64]
   [field : i64]
   [kind : i64]) : unit
-  (tc-arena-store-effect!
-    ctx
-    collector
-    node
-    bound
-    (match (tc-move-root-projection-var-id
-      (tc-context-expr-bases ctx)
-      (tc-context-expr-get ctx place))
-      [(Some name) name]
-      [(No) -1])
-    value
-    (tc-arena-store-slot-type ctx collector place field kind)))
+  (when
+    (and collector.arena (not collector.address-only))
+    (tc-arena-store-effect!
+      ctx
+      collector
+      node
+      bound
+      (match (tc-move-root-projection-var-id
+        (tc-context-expr-bases ctx)
+        (tc-context-expr-get ctx place))
+        [(Some name) name]
+        [(No) -1])
+      value
+      (tc-arena-store-slot-type ctx collector place field kind))))
 
 ;; The arena-store key recording that a declaration calls its function
 ;; parameter `index` inside an arena-scoping form: each caller checks the
@@ -97426,6 +98184,38 @@
         collector.declaration
         (tc-arena-store-parameter-call-key head)))))
 
+(define (tc-global-effect-resolved-callee
+  [ctx : TcContext]
+  [handle : i64]
+  [indirect : i64]) : i64
+  (let
+    [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+    (cond
+      [(or
+          (= kind (csym.compiler-symbol-kind-function-define))
+          (= kind (csym.compiler-symbol-kind-defdispatch))
+          (= kind (csym.compiler-symbol-kind-struct-cleanup))
+          (= kind (csym.compiler-symbol-kind-enum-cleanup)))
+        (csym.compiler-symbol-handle-index handle)]
+      [(or
+          (= kind (csym.compiler-symbol-kind-defstruct))
+          (= kind (csym.compiler-symbol-kind-enum-variant)))
+        -1]
+      [(= kind (csym.compiler-symbol-kind-extern))
+        (match (csym.compiler-symbols-decl-at-index
+          (tc-context-symbols ctx)
+          (csym.compiler-symbol-handle-index handle))
+          [(Ok decl)
+            (match (ast.ast-decl-unwrapped (& decl))
+              [(Extern _ _ _ metadata _)
+                (match (& (deref metadata))
+                  [(ast.AstExternMetadata.Metadata (TypeLisp) _ _ _ _)
+                    (csym.compiler-symbol-handle-index handle)]
+                  [_ -1])]
+              [_ -1])]
+          [_ -1])]
+      [else indirect])))
+
 (define (tc-global-effect-callee
   [ctx : TcContext]
   [bound : TcNameIdList]
@@ -97439,33 +98229,7 @@
     [handle : i64 (tc-global-effect-handle ctx bound name)]
     (cond
       [(csym.compiler-symbols-handle-found? handle)
-        (let
-          [kind : i64 (csym.compiler-symbol-handle-kind handle)]
-          (cond
-            [(or
-                (= kind (csym.compiler-symbol-kind-function-define))
-                (= kind (csym.compiler-symbol-kind-defdispatch))
-                (= kind (csym.compiler-symbol-kind-struct-cleanup))
-                (= kind (csym.compiler-symbol-kind-enum-cleanup)))
-              (csym.compiler-symbol-handle-index handle)]
-            [(or
-                (= kind (csym.compiler-symbol-kind-defstruct))
-                (= kind (csym.compiler-symbol-kind-enum-variant)))
-              -1]
-            [(= kind (csym.compiler-symbol-kind-extern))
-              (match (csym.compiler-symbols-decl-at-index
-                (tc-context-symbols ctx)
-                (csym.compiler-symbol-handle-index handle))
-                [(Ok decl)
-                  (match (ast.ast-decl-unwrapped (& decl))
-                    [(Extern _ _ _ metadata _)
-                      (match (ast.ast-extern-metadata-abi
-                        (ast.ast-extern-metadata-box-shared-view metadata))
-                        [(TypeLisp) (csym.compiler-symbol-handle-index handle)]
-                        [_ -1])]
-                    [_ -1])]
-                [_ -1])]
-            [else indirect]))]
+        (tc-global-effect-resolved-callee ctx handle indirect)]
       [(or
           (tc-name-id-list-contains bound name)
           (tc-name-id-list-contains
@@ -97811,7 +98575,11 @@
           (tc_i64_i64_map.with-capacity 0)
           -1
           false
-          false)]
+          false
+          false
+          false
+          (effect_words.new)
+          (effect_words.new))]
       (for [index (iterator.range 0 indexed)]
         (tc-global-effect-scan-declaration! ctx (&mut collector) index)
         (when (< collector.first-contextual-declaration indexed) (break)))
@@ -97837,33 +98605,76 @@
     (return unit))
   (let
     [entry : i64 collector.bindings.len]
-    [expr : ast.AstExpr (tc-context-expr-get ctx id)]
+    [source-id : i64 id]
+    [expr : ast.AstExpr (tc-context-expr-get ctx source-id)]
+    ;; Keep the leaf ID for invalidation while passing transparently through
+    ;; span and macro-provenance wrappers.
+    (while true
+      (match (& expr)
+        [(or (Spanned inner _) (MacroExpansion inner _ _))
+          (set! source-id inner)
+          (set! expr (tc-context-expr-get ctx source-id))]
+        [_ (break)]))
     (match (tc-global-shared-view expr)
       [(or (Quote _) (Quasiquote _) (Comptime _) (TypeLiteral _)) unit]
-      [(or (Spanned inner _) (MacroExpansion inner _ _))
-        (tc-global-effect-scan! ctx collector node bound inner call-head)]
-      [(Var _)
+      [(Var name)
+        ;; The rewrite sites only retarget declared enum variants and dotted
+        ;; places. A qualified variant can also be restored via the journal.
+        (when
+          (and
+            collector.capture-scan
+            (or
+              (tc-bare-variant-declared-name? ctx name)
+              (>=
+                (tc-dotted-name-first-dot-id
+                  (tc-context-structural-session ctx)
+                  name)
+                0)))
+          (effect_words.push-ref! (&mut collector.scan-inputs) source-id))
         (unless
           (or call-head collector.prefix-only)
           (let
+            [handle : i64 (tc-global-effect-handle ctx bound name)]
             [target : i64
-              (tc-global-effect-callee ctx bound expr collector.graph.indirect)]
+              (if (csym.compiler-symbols-handle-found? handle)
+                (tc-global-effect-resolved-callee
+                  ctx
+                  handle
+                  collector.graph.indirect)
+                -1)]
             (when
               (and (>= target 0) (!= target collector.graph.indirect))
               (set! collector.contributes true)
-              (global_effects.add-call!
-                (&mut collector.graph)
-                (if collector.arena
-                  (tc-arena-store-decl-node ctx target collector.graph.indirect)
-                  collector.graph.indirect)
-                target)
-              (when
-                (!= (array-ref collector.collected collector.graph.indirect) 0)
-                (tc-global-effect-enqueue! collector target)))))]
+              (if collector.arena
+                (begin
+                  (global_effects.add-call!
+                    (&mut collector.graph)
+                    (tc-arena-store-decl-node
+                      ctx
+                      target
+                      collector.graph.indirect)
+                    target)
+                  (when
+                    (!=
+                      (array-ref collector.collected collector.graph.indirect)
+                      0)
+                    (tc-global-effect-enqueue! collector target)))
+                (begin
+                  (tc-global-effect-record!
+                    collector
+                    collector.graph.indirect
+                    0
+                    target)
+                  (tc-global-effect-insert-call!
+                    collector
+                    collector.graph.indirect
+                    target))))))]
       [(Call func args)
         (let
           [callee : i64
-            (if (or collector.prefix-only collector.address-only)
+            (if (or
+              collector.prefix-only
+              (and collector.address-only (not collector.capture-scan)))
               -1
               (tc-global-effect-callee
                 ctx
@@ -98251,10 +99062,22 @@
       [_
         (match (tc-global-shared-view expr)
           [(Set name value)
+            (when
+              (and
+                collector.capture-scan
+                (>=
+                  (tc-dotted-name-first-dot-id
+                    (tc-context-structural-session ctx)
+                    name)
+                  0))
+              (effect_words.push-ref! (&mut collector.scan-inputs) source-id))
             (tc-global-effect-write-name! ctx collector node bound name)
             ;; Assigning a body binder stores nothing outside the body.
-            (unless
-              (tc-name-id-list-contains bound name)
+            (when
+              (and
+                collector.arena
+                (not collector.address-only)
+                (not (tc-name-id-list-contains bound name)))
               (tc-arena-store-effect!
                 ctx
                 collector
@@ -98274,7 +99097,10 @@
               value
               -1
               0)]
+          [(StructGet _ _)
+            (tc-global-effect-note-scan-input! collector source-id)]
           [(StructSet place field value)
+            (tc-global-effect-note-scan-input! collector source-id)
             (tc-global-effect-write-place! ctx collector node bound place)
             (tc-arena-store-place-effect!
               ctx
@@ -98332,6 +99158,7 @@
             ;; unless the call's effects land in an explicit arena.
             (when
               (and
+                collector.arena
                 mutable
                 (not
                   (let
@@ -98363,31 +99190,14 @@
             (when
               (and
                 (not collector.prefix-only)
-                (not collector.address-only)
+                (or (not collector.address-only) collector.capture-scan)
                 (tc-borrow-operand-id-temporary?
                   (tc-context-expr-bases ctx)
                   place))
-              (let
-                [head : i64
-                  (tc_i64_i64_map.get-value-or
-                    (& collector.temporary-callers)
-                    place
-                    0)]
-                [next : i64
-                  (global_effects.link! (&mut collector.graph) node head)]
-                (tc_i64_i64_map.insert-ref!
-                  (&mut collector.temporary-callers)
-                  place
-                  next)
-                (let
-                  [cleanup : i64
-                    (tc_i64_i64_map.get-value-or
-                      (& collector.typed-temporaries)
-                      place
-                      0)]
-                  (when
-                    (> cleanup 0)
-                    (tc-global-effect-add-call! collector node (- cleanup 1))))))]
+              (tc-global-effect-record! collector node 2 place)
+              (unless
+                collector.address-only
+                (tc-global-effect-temporary! collector node place)))]
           [(ArrayTake place live _)
             (tc-global-effect-write-place! ctx collector node bound place)
             (tc-global-effect-write-place! ctx collector node bound live)]
@@ -98685,6 +99495,10 @@
               (tc_i64_i64_map.with-capacity 0)
               false
               -1
+              (effect_words.new)
+              1
+              (tc_i64_i64_map.with-capacity 0)
+              (__tl_make-array TcGlobalEffectScan count)
               (effect_words.new)))
           (set!
             address
@@ -98698,6 +99512,145 @@
           address)))
     (unsafe
       (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))))
+
+;; Edits can change a later walk without changing the declaration table.
+;; Edges that were already published keep the original collection semantics.
+(define (tc-global-effect-note-expr-edit! [owner : TcMacroState] [id : i64]) : unit
+  (let
+    [address : i64
+      (tc-macro-state-slot-address
+        owner
+        tc-macro-state-slot-global-call-effects)]
+    (when
+      (!= address 0)
+      (let
+        [state : (MutPtr TcGlobalCallEffects)
+          (unsafe
+            (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))]
+        [revision : i64
+          (unsafe
+            (+ (deref state).scan-revision 1))]
+        [edits : tc_i64_i64_map.Map
+          (unsafe
+            (deref state).edited-exprs)]
+        [enclosing : i64 (arena.tl_arena_current)]
+        (unsafe
+          (arena.tl_arena_set (deref state).arena))
+        (tc_i64_i64_map.insert-ref! (&mut edits) id revision)
+        (unsafe
+          (set! (deref state).edited-exprs edits)
+          (set! (deref state).scan-revision revision)
+          (arena.tl_arena_set enclosing))))))
+
+(define (tc-global-effect-scan-current?
+  [state : (Ptr TcGlobalCallEffects)]
+  [scan : TcGlobalEffectScan]
+  [words : (& words effect_words.Vec)]
+  [revision : i64]) : bool
+  (when (= scan.revision 0) (return false))
+  (when (= scan.revision revision) (return true))
+  (let
+    [edits : tc_i64_i64_map.Map
+      (unsafe
+        (deref state).edited-exprs)]
+    [input : i64 scan.events-end]
+    (while (< input scan.inputs-end)
+      (when
+        (>
+          (tc_i64_i64_map.get-value-or
+            (& edits)
+            (array-ref words.slots input)
+            0)
+          scan.revision)
+        (return false))
+      (+= input 1)))
+  true)
+
+(define (tc-global-effect-summarize-declaration!
+  [ctx : TcContext]
+  [state : (MutPtr TcGlobalCallEffects)]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [index : i64]) : unit
+  (when
+    collector.arena
+    (tc-global-effect-scan-declaration! ctx collector index)
+    (return unit))
+  (let
+    [revision : i64
+      (unsafe
+        (deref state).scan-revision)]
+    [scan : TcGlobalEffectScan
+      (unsafe
+        (array-ref (deref state).scans index))]
+    [words : effect_words.Vec
+      (unsafe
+        (deref state).scan-words)]
+    ;; A normal scan may have saved only the indirect events for discovery.
+    ;; A normal replay needs every event, including the declaration's writes.
+    (if (and
+      (or collector.address-only scan.complete)
+      (tc-global-effect-scan-current?
+        (unsafe
+          (ptr-cast state : (Ptr TcGlobalCallEffects)))
+        scan
+        (& words)
+        revision))
+      (let
+        [cursor : i64 scan.start]
+        (set! collector.contributes scan.contributes)
+        (while (< cursor scan.events-end)
+          (let
+            [code : i64 (array-ref words.slots cursor)]
+            [target : i64 (shr code 3)]
+            [shared : bool (= (bit-and code 1) 1)]
+            [node : i64
+              (if shared
+                collector.graph.indirect
+                index)]
+            (when
+              (or shared (not collector.address-only))
+              (match (bit-and (shr code 1) 3)
+                [0 (tc-global-effect-insert-call! collector node target)]
+                [1
+                  (global_effects.add-write! (&mut collector.graph) node target)]
+                [_ (tc-global-effect-temporary! collector node target)]))
+            (+= cursor 1))))
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [start : i64 (effect_words.len (& words))]
+        (set! collector.capture-scan true)
+        (set! collector.scan-for-discovery (not collector.address-only))
+        (set! collector.scan-words.len 0)
+        (set! collector.scan-inputs.len 0)
+        (set! collector.contributes false)
+        (tc-global-effect-scan-declaration! ctx collector index)
+        (set! collector.capture-scan false)
+        (unsafe
+          (arena.tl_arena_set (deref state).arena))
+        (for [cursor
+          (iterator.range 0 (effect_words.len (& collector.scan-words)))]
+          (effect_words.push-ref!
+            (&mut words)
+            (array-ref collector.scan-words.slots cursor)))
+        (let
+          [events-end : i64 (effect_words.len (& words))]
+          (for [cursor
+            (iterator.range 0 (effect_words.len (& collector.scan-inputs)))]
+            (effect_words.push-ref!
+              (&mut words)
+              (array-ref collector.scan-inputs.slots cursor)))
+          (unsafe
+            (set!
+              (array-ref (deref state).scans index)
+              (TcGlobalEffectScan
+                revision
+                start
+                events-end
+                (effect_words.len (& words))
+                collector.contributes
+                (not collector.scan-for-discovery)))
+            (set! (deref state).scan-words words)
+            (arena.tl_arena_set enclosing)))))))
 
 (define (tc-global-call-effects-collect!
   [ctx : TcContext]
@@ -98744,7 +99697,11 @@
               (deref state).tagged)
             -1
             false
-            false)]
+            false
+            false
+            false
+            (effect_words.new)
+            (effect_words.new))]
         [cursor : i64 0]
         [union : effect_words.Vec
           (unsafe
@@ -98771,14 +99728,16 @@
                 (set! collector.address-only true)
                 (if (>= union-count 0)
                   (for [index (iterator.range 0 union-count)]
-                    (tc-global-effect-scan-declaration!
+                    (tc-global-effect-summarize-declaration!
                       ctx
+                      state
                       (&mut collector)
                       (effect_words.get (& union) index 0)))
                   (for [index (iterator.range 0 collector.graph.indirect)]
                     (set! collector.contributes false)
-                    (tc-global-effect-scan-declaration!
+                    (tc-global-effect-summarize-declaration!
                       ctx
+                      state
                       (&mut collector)
                       index)
                     (when
@@ -98789,7 +99748,11 @@
                   (< union-count 0)
                   (set! union-count (effect_words.len (& found))))]
               [else
-                (tc-global-effect-scan-declaration! ctx (&mut collector) node)]))
+                (tc-global-effect-summarize-declaration!
+                  ctx
+                  state
+                  (&mut collector)
+                  node)]))
           (+= cursor 1))
         (unsafe
           (arena.tl_arena_set (deref state).arena))
@@ -99781,7 +100744,11 @@
             (deref state).tagged)
           -1
           false
-          false)]
+          false
+          false
+          false
+          (effect_words.new)
+          (effect_words.new))]
       [mask : i64 0]
       (tc-global-effect-scan-declaration! ctx (&mut collector) node)
       (for [index (iterator.range 0 63)]
@@ -106576,6 +107543,40 @@
     (if found
       (Some (macro-decl-list-reverse out-rev))
       (No))))
+
+(define (macro-segmented-module-exists?
+  [state : TcJobState]
+  [target-module : (& str)]) : bool
+  (let
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    (while iter.has-current
+      (let
+        [decls : ast.AstDeclList (tc-global-shared-view iter.decls)]
+        [index : i64 iter.index]
+        (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+          [(Module _)
+            (when
+              (string.eq
+                (tc-env-key-name-text
+                  (ast.ast-decl-list-module-id-at
+                    (& decls)
+                    index
+                    cbi.compiler-builtin-id-fix-empty))
+                target-module)
+              (return true))]
+          [_ unit])
+        (macro-segmented-program-iter-advance! (&mut iter))))
+    false))
+
+;; A memo hit needs only the presence of the target's marker, not the body it
+;; would collect and discard.
+(define (macro-module-present-in-context?
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [target-module : (& str)]) : bool
+  (if (macro-segmented-program-active? (tc-context-job-state ctx))
+    (macro-segmented-module-exists? (tc-context-job-state ctx) target-module)
+    (macro-module-exists? decls target-module)))
 
 (define (macro-find-module-body-decls-in-context
   [ctx : TcContext]
@@ -123728,22 +124729,21 @@
                                             alias
                                             span)]
                                         [expanded : ast.AstDeclList
-                                          (match (macro-find-module-body-decls-in-context
+                                          (if (macro-module-present-in-context?
                                             ctx
                                             orig-decls
-                                            target-module)
-                                            [(Some _) marker]
-                                            [(No)
-                                              (macro-decl-list-append
-                                                (&
-                                                  (ast.ast-decl-list-prepend-builder
-                                                    (ast.ast-decl-module-id
-                                                      target-id)
-                                                    catalog))
+                                            (& target-module))
+                                            marker
+                                            (macro-decl-list-append
+                                              (&
                                                 (ast.ast-decl-list-prepend-builder
                                                   (ast.ast-decl-module-id
-                                                    module-id)
-                                                  marker))])]
+                                                    target-id)
+                                                  catalog))
+                                              (ast.ast-decl-list-prepend-builder
+                                                (ast.ast-decl-module-id
+                                                  module-id)
+                                                marker)))]
                                         (Ok
                                           (tc-global-shared-view expanded)
                                           (macro-paths-for-decls
@@ -130108,13 +131108,12 @@
   (representative-count i64)
   (products (__tl_dyn-array ownership_normalize.OwnershipNormalizeProduct))
   (variances ownership_normalize.OwnershipNormalizeVariances)
-  ;; Where the representative scan may start for a type already looked up
-  ;; (`tc-selected-representative-noting!`): the first `memo-count` entries of
-  ;; `memo-types`/`memo-starts`, indexed by `memo-slots` (entry + 1, 0 empty).
-  (memo-types (__tl_dyn-array ast.AstType))
-  (memo-starts (__tl_dyn-array i64))
-  (memo-slots (__tl_dyn-array i64))
-  (memo-count i64)
+  ;; Where the representative scan may start for a type already looked up, or
+  ;; -1 - its match once it has one (`tc-selected-representative-noting!`).
+  (memo TcSelectedShallowIndex)
+  ;; The representative of each record type already classified
+  ;; (`tc-selected-classify!`).
+  (raw TcSelectedShallowIndex)
   ;; The representatives of each bucket (`tc-selected-representative-bucket`)
   ;; in order: its first and last (index + 1, 0 none) and, per
   ;; representative, the next one in its bucket (index + 1, 0 none).
@@ -130126,13 +131125,32 @@
   ;; representative.
   (poisoned? bool))
 
+;; Types by shallow value (variant, payloads and child node ids; nodes never
+;; change), each with a value: the first `count` entries of `types`/`values`,
+;; indexed by `slots` (entry + 1, 0 empty), which is at most half full.
+(defstruct TcSelectedShallowIndex
+  (types (__tl_dyn-array ast.AstType))
+  (values (__tl_dyn-array i64))
+  (slots (__tl_dyn-array i64))
+  (count i64))
+
+;; An empty index over a shared view of an empty `types` lane. Its lanes are
+;; replaced before their first write (`tc-selected-shallow-grow!`), so they
+;; share empty arrays.
+(define (tc-selected-shallow-index-new [types : (__tl_dyn-array ast.AstType)]) : TcSelectedShallowIndex
+  (TcSelectedShallowIndex
+    types
+    (tc-global-shared-view tc-chain-empty-i64-array)
+    (tc-global-shared-view tc-chain-empty-i64-array)
+    0))
+
 (define (tc-selected-type-table-new [regions : (__tl_dyn-array i64)]) : TcSelectedTypeTable
   (let
     [representatives : (__tl_dyn-array ast.AstType) (tc-selected-no-types)]
-    ;; The note lanes start empty and are replaced before their first write
-    ;; (`tc-selected-representative-memo-grow!`), so they share empty arrays.
-    [memo-types : (__tl_dyn-array ast.AstType)
-      (tc-global-shared-view representatives)]
+    [memo : TcSelectedShallowIndex
+      (tc-selected-shallow-index-new (tc-global-shared-view representatives))]
+    [raw : TcSelectedShallowIndex
+      (tc-selected-shallow-index-new (tc-global-shared-view representatives))]
     (TcSelectedTypeTable
       regions
       (tc-selected-no-type-classes)
@@ -130142,10 +131160,8 @@
       0
       (__tl_make-array ownership_normalize.OwnershipNormalizeProduct 0)
       (ownership_normalize.ownership-normalize-variances-empty)
-      memo-types
-      (tc-global-shared-view tc-chain-empty-i64-array)
-      (tc-global-shared-view tc-chain-empty-i64-array)
-      0
+      memo
+      raw
       (__tl_make-array i64 tc-selected-bucket-count)
       (__tl_make-array i64 tc-selected-bucket-count)
       (tc-selected-no-i64s)
@@ -130864,43 +131880,48 @@
 ;; function of the type's shallow value (its variant, payloads and child node
 ;; ids; nodes never change), so a scan for a shallow-equal type may start where
 ;; an earlier one ended (`tc-selected-representative-noting!`): every
-;; representative before that start failed to match it.
+;; representative before that start failed to match it. A scan that matched
+;; is noted as its match (a start of -1 - match): no later representative
+;; precedes it, so it stays the first match.
 (define (tc-selected-representative
   [table : (& table TcSelectedTypeTable)]
   [resolved : ast.AstType]) : i64
   (let
-    [capacity : i64 (array-length table.memo-slots)]
+    [capacity : i64 (array-length table.memo.slots)]
     [entry : i64
       (if (= capacity 0)
         0
         (array-ref
-          table.memo-slots
-          (tc-selected-representative-slot
-            table
+          table.memo.slots
+          (tc-selected-shallow-slot
+            (& table.memo)
             (tc-global-shared-view resolved))))]
-    (tc-selected-representative-scan
-      table
-      (tc-global-shared-view resolved)
+    [start : i64
       (if (= entry 0)
         0
-        (array-ref table.memo-starts (- entry 1))))))
+        (array-ref table.memo.values (- entry 1)))]
+    (if (< start 0)
+      (- -1 start)
+      (tc-selected-representative-scan
+        table
+        (tc-global-shared-view resolved)
+        start))))
 
 ;; `tc-selected-representative`, noting where its scan ended for `resolved`:
 ;; at the match, or where `resolved` becomes the next representative.
 (define (tc-selected-representative-noting!
   [table : (&mut table TcSelectedTypeTable)]
   [resolved : ast.AstType]) : i64
-  (when
-    (>= (* (+ table.memo-count 1) 2) (array-length table.memo-slots))
-    (tc-selected-representative-memo-grow! table))
+  (tc-selected-shallow-reserve! (&mut table.memo))
   (let
     [slot : i64
-      (tc-selected-representative-slot table (tc-global-shared-view resolved))]
-    [entry : i64 (array-ref table.memo-slots slot)]
+      (tc-selected-shallow-slot (& table.memo) (tc-global-shared-view resolved))]
+    [entry : i64 (array-ref table.memo.slots slot)]
     [start : i64
       (if (= entry 0)
         0
-        (array-ref table.memo-starts (- entry 1)))]
+        (array-ref table.memo.values (- entry 1)))]
+    [_matched : unit (when (< start 0) (return (- -1 start)))]
     [found : i64
       (tc-selected-representative-scan
         table
@@ -130908,20 +131929,15 @@
         start)]
     [end : i64
       (if (>= found 0)
-        found
+        (- -1 found)
         table.representative-count)]
-    (if (= entry 0)
-      (let
-        [index : i64 table.memo-count]
-        (set!
-          (array-ref table.memo-types index)
-          (tc-global-shared-view resolved))
-        (set! (array-ref table.memo-starts index) end)
-        (set! (array-ref table.memo-slots slot) (+ index 1))
-        (set! table.memo-count (+ index 1)))
-      (unless
-        (= end start)
-        (set! (array-ref table.memo-starts (- entry 1)) end)))
+    (unless
+      (and (> entry 0) (= end start))
+      (tc-selected-shallow-put!
+        (&mut table.memo)
+        slot
+        (tc-global-shared-view resolved)
+        end))
     found))
 
 (define (tc-selected-representative-scan
@@ -131029,59 +132045,84 @@
   [mask : i64]) : i64
   (bit-and (* (ast.ty-node-hash-value ty) 2654435761) mask))
 
-;; The index slot holding the entry of a type shallow-equal to `resolved`, or
+;; The slot of `index` holding the entry of a type shallow-equal to `ty`, or
 ;; the empty slot where one goes (the index is never full).
-(define (tc-selected-representative-slot
-  [table : (& table TcSelectedTypeTable)]
-  [resolved : ast.AstType]) : i64
+(define (tc-selected-shallow-slot
+  [index : (& index TcSelectedShallowIndex)]
+  [ty : ast.AstType]) : i64
   (let
-    [mask : i64 (- (array-length table.memo-slots) 1)]
-    [slot : i64 (tc-selected-representative-hash-slot (& resolved) mask)]
+    [mask : i64 (- (array-length index.slots) 1)]
+    [slot : i64 (tc-selected-representative-hash-slot (& ty) mask)]
     [done : bool false]
     (while (not done)
       (let
-        [entry : i64 (array-ref table.memo-slots slot)]
+        [entry : i64 (array-ref index.slots slot)]
         (if (or
           (= entry 0)
           (ast.ty-node-shallow-value-eq?
-            (tc-global-array-element-shared-view table.memo-types (- entry 1))
-            (tc-global-shared-view resolved)))
+            (tc-global-array-element-shared-view index.types (- entry 1))
+            (tc-global-shared-view ty)))
           (set! done true)
           (set! slot (bit-and (+ slot 1) mask)))))
     slot))
 
-;; Doubles the note index (at most half full) and its entry lanes.
-(define (tc-selected-representative-memo-grow!
-  [table : (&mut table TcSelectedTypeTable)]) : unit
+;; Sets the value of the entry at `slot` (`tc-selected-shallow-slot` of
+;; `ty`), adding the entry when the slot is empty.
+(define (tc-selected-shallow-put!
+  [index : (&mut index TcSelectedShallowIndex)]
+  [slot : i64]
+  [ty : ast.AstType]
+  [value : i64]) : unit
   (let
-    [count : i64 table.memo-count]
+    [entry : i64 (array-ref index.slots slot)]
+    (if (= entry 0)
+      (let
+        [at : i64 index.count]
+        (set! (array-ref index.types at) ty)
+        (set! (array-ref index.values at) value)
+        (set! (array-ref index.slots slot) (+ at 1))
+        (set! index.count (+ at 1)))
+      (set! (array-ref index.values (- entry 1)) value))))
+
+;; Room for one more entry: the index doubles when half full.
+(define (tc-selected-shallow-reserve!
+  [index : (&mut index TcSelectedShallowIndex)]) : unit
+  (when
+    (>= (* (+ index.count 1) 2) (array-length index.slots))
+    (tc-selected-shallow-grow! index)))
+
+;; Doubles the index and its entry lanes.
+(define (tc-selected-shallow-grow!
+  [index : (&mut index TcSelectedShallowIndex)]) : unit
+  (let
+    [count : i64 index.count]
     [capacity : i64
-      (if (= (array-length table.memo-slots) 0)
+      (if (= (array-length index.slots) 0)
         64
-        (* (array-length table.memo-slots) 2))]
+        (* (array-length index.slots) 2))]
     [mask : i64 (- capacity 1)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     [types : (__tl_dyn-array ast.AstType)
       (__tl_make-array ast.AstType capacity)]
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-    [index : i64 0]
-    (while (< index count)
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [at : i64 0]
+    (while (< at count)
       (let
         [slot : i64
           (tc-selected-representative-hash-slot
-            (& (array-ref table.memo-types index))
+            (& (array-ref index.types at))
             mask)]
         (set!
-          (array-ref types index)
-          (tc-global-array-element-shared-view table.memo-types index))
-        (set! (array-ref starts index) (array-ref table.memo-starts index))
+          (array-ref types at)
+          (tc-global-array-element-shared-view index.types at))
+        (set! (array-ref values at) (array-ref index.values at))
         (while (not (= (array-ref slots slot) 0))
           (set! slot (bit-and (+ slot 1) mask)))
-        (set! (array-ref slots slot) (+ index 1)))
-      (set! index (+ index 1)))
-    (set! table.memo-slots slots)
-    (set! table.memo-types types)
-    (set! table.memo-starts starts)))
+        (set! (array-ref slots slot) (+ at 1)))
+      (set! at (+ at 1)))
+    (set! index.slots slots)
+    (set! index.types types)
+    (set! index.values values)))
 
 ;; Room for one more representative: the four lanes double when full (a
 ;; private dynamic array copies its whole backing on every push).
@@ -131161,7 +132202,9 @@
 ;; for referents while classifying. A body has a type record per occurrence, so
 ;; the classes are gathered in a buffer that doubles when full (a private
 ;; dynamic array copies its backing on every push, which would make this
-;; quadratic in the body's size) and stored once at their exact length.
+;; quadratic in the body's size) and stored once at their exact length. The
+;; buffer starts at the store's record count, so unless indexing referents
+;; added records it already has that length.
 ;;
 ;; With `variances?`, it also records in `table.variances` the declared
 ;; variance of each lifetime parameter of every struct and enum the records'
@@ -131182,9 +132225,7 @@
     ;; stand as they are.
     [_unchanged : unit (when (>= count total) (return unit))]
     [cells : (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass)
-      (__tl_make-array
-        ownership_normalize.OwnershipNormalizeTypeClass
-        (+ total 1))]
+      (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass total)]
     [copied : i64 0]
     (while (< copied count)
       (set!
@@ -131199,32 +132240,70 @@
     (while (< count total)
       (let
         [index : i64 count]
-        [ty : ast.AstType
-          (match (typed.typed-type-value-at! store lease index)
-            [(typed.TypedTypeValueResult.Ok value) value]
-            [(typed.TypedTypeValueResult.Err _) ast.AstType.Never])]
-        [_variances : unit
-          (when
-            variances?
-            (tc-selected-nominal-variances-in!
-              ctx
-              (tc-global-shared-view ty)
-              (&mut table.variances)
-              0))]
-        [resolved : ast.AstType
-          (tc-selected-canonical-type-in
-            ctx
-            (& table.arena-regions)
-            (tc-resolve-type ctx (tc-global-shared-view ty)))]
+        [_room : unit (tc-selected-shallow-reserve! (&mut table.raw))]
+        ;; Set for a record type not seen before.
+        [resolved : ast.AstType ast.AstType.Never]
+        [primitive? : bool false]
+        ;; The record's type is read in place through a view of the store,
+        ;; which ends here, before a referent is indexed (that can add
+        ;; records). A record type seen before has that record's
+        ;; representative: it resolves and canonicalizes to an equal type,
+        ;; whose first match among the representatives is the same (or, had
+        ;; it none, is the representative it became: `tc-selected-same-type?`
+        ;; matches equal types). Its variances are recorded already: the
+        ;; first call on a table is the one with `variances?`, and an equal
+        ;; type names the same declarations, which
+        ;; `tc-selected-nominal-variance-add!` keeps once. A new one is noted
+        ;; under the representative it matches, or the one it becomes (-1
+        ;; then).
         [found : i64
-          (tc-selected-representative-noting!
-            table
-            (tc-global-shared-view resolved))]
+          (let
+            [ty : ast.AstType
+              (match (typed.typed-type-view-at! store lease index)
+                [(typed.TypedTypeResult.Ok view)
+                  (owned_view.compiler-owned-reference-shared-view view)]
+                [(typed.TypedTypeResult.Err _) ast.AstType.Never])]
+            [raw-slot : i64
+              (tc-selected-shallow-slot
+                (& table.raw)
+                (tc-global-shared-view ty))]
+            [raw-entry : i64 (array-ref table.raw.slots raw-slot)]
+            (if (> raw-entry 0)
+              (array-ref table.raw.values (- raw-entry 1))
+              (let
+                [_variances : unit
+                  (when
+                    variances?
+                    (tc-selected-nominal-variances-in!
+                      ctx
+                      (tc-global-shared-view ty)
+                      (&mut table.variances)
+                      0))]
+                [_resolved : unit
+                  (set!
+                    resolved
+                    (tc-selected-canonical-type-in
+                      ctx
+                      (& table.arena-regions)
+                      (tc-resolve-type ctx (tc-global-shared-view ty))))]
+                [rep : i64
+                  (tc-selected-representative-noting!
+                    table
+                    (tc-global-shared-view resolved))]
+                (set! primitive? (tc-selected-primitive-type? (& ty)))
+                (tc-selected-shallow-put!
+                  (&mut table.raw)
+                  raw-slot
+                  (tc-global-shared-view ty)
+                  (if (>= rep 0)
+                    rep
+                    table.representative-count))
+                rep)))]
         (when
           (< found 0)
           (let
             [fresh : ownership_normalize.OwnershipNormalizeTypeClass
-              (if (tc-selected-primitive-type? (& ty))
+              (if primitive?
                 (ownership_normalize.OwnershipNormalizeTypeClass
                   -1
                   true
@@ -131306,6 +132385,10 @@
             (array-ref table.representative-classes found).referent
             (array-ref table.representative-classes found).cleanup?))
         (set! count (+ count 1))))
+    (when
+      (= count (array-length cells))
+      (set! table.classes cells)
+      (return unit))
     (let
       [exact : (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass)
         (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass count)]

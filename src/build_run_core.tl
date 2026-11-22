@@ -1,4 +1,6 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers.
+(import compiler_backend_program_facts as be_facts)
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import cli_option_core as cli_option)
@@ -8,6 +10,7 @@
 (import compiler_driver_core)
 (import compiler_lower)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_ast_types as ast)
 (import compiler_ir_types as ir)
 (import compiler_load as load)
@@ -44,11 +47,11 @@
   (Err String))
 
 (defenum ResultSourceToolTarget
-  (Ok backend.CompilerBackendTarget)
+  (Ok be_state.CompilerBackendTarget)
   (Err String))
 
 (defenum ResultSourceToolBackendMode
-  (Ok backend.CompilerBackendMode)
+  (Ok be_state.CompilerBackendMode)
   (Err String))
 
 ;; Who declared each link input, in declaration order: its kind ("library",
@@ -75,20 +78,20 @@
   (Ok SourceToolLinkInputs)
   (Err String))
 
-(define (source-tool-target-name [target : backend.CompilerBackendTarget]) : String
-  (backend.compiler-backend-target-triple target))
+(define (source-tool-target-name [target : be_state.CompilerBackendTarget]) : String
+  (be_state.compiler-backend-target-triple target))
 
-(define (source-tool-default-target) : backend.CompilerBackendTarget
+(define (source-tool-default-target) : be_state.CompilerBackendTarget
   (if (string.eq (env.path-separator) ";")
     (Windows)
     (Linux)))
 
-(define (source-tool-backend-target [target : target_cfg.CompilerTargetCfg]) : backend.CompilerBackendTarget
+(define (source-tool-backend-target [target : target_cfg.CompilerTargetCfg]) : be_state.CompilerBackendTarget
   (match target
     [(Linux) (Linux)]
     [(Windows) (Windows)]))
 
-(define (source-tool-backend-mode [mode : cli_option.CliBackendMode]) : backend.CompilerBackendMode
+(define (source-tool-backend-mode [mode : cli_option.CliBackendMode]) : be_state.CompilerBackendMode
   (match mode
     [(Scalar) (Scalar)]
     [(Avx2) (Avx2)]
@@ -330,7 +333,7 @@
     (= (process.args-count inputs.archives) 0)))
 
 (define (source-tool-linux-crt-entry?
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : bool
   (match target
     [(Linux) (not (source-tool-link-inputs-empty? link-inputs))]
@@ -667,31 +670,31 @@
 
 (define (source-tool-default-output
   [source : String]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (match target
     [(Linux) (source-tool-replace-extension source "")]
     [(Windows) (source-tool-replace-extension source ".exe")]))
 
-(define (source-tool-object-extension [target : backend.CompilerBackendTarget]) : String
+(define (source-tool-object-extension [target : be_state.CompilerBackendTarget]) : String
   (match target
     [(Linux) "o"]
     [(Windows) "obj"]))
 
 (define (source-tool-executable-extension
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (match target
     [(Linux) ""]
     [(Windows) ".exe"]))
 
 (define (source-tool-static-library-extension
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (match target
     [(Linux) ".a"]
     [(Windows) ".lib"]))
 
 (define (source-tool-static-library-filename
   [name : String]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (match target
     [(Linux)
       (str_cat.str-cat "lib" name (source-tool-static-library-extension target))]
@@ -711,7 +714,7 @@
 (define (source-tool-obj-path
   [temp-dir : (& temp-dir str)]
   [source : (& source str)]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
     (str_cat.str-cat
@@ -722,7 +725,7 @@
 (define (source-tool-temp-bin-path
   [temp-dir : (& temp-dir str)]
   [source : (& source str)]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (source-tool-fs-path-join
     temp-dir
     (str_cat.str-cat
@@ -745,10 +748,10 @@
 
 (define (source-tool-emit-assembly
   [source : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
   (match (source-tool-try-read-file source)
@@ -781,16 +784,16 @@
 
 (defenum SourceToolLinuxDirectObjectEligibility
   (Eligible)
-  (Fallback backend.CompilerDirectObjectFallbackReason))
+  (Fallback be_state.CompilerDirectObjectFallbackReason))
 
 (defenum ResultSourceToolLinuxDirectObject
   (Ok String)
-  (Fallback backend.CompilerDirectObjectFallbackReason))
+  (Fallback be_state.CompilerDirectObjectFallbackReason))
 
 ;; One ELF capability boundary for source and package artifacts. The package
 ;; policy preflight must not duplicate these serializer/linkability checks.
 (define (source-tool-linux-direct-object-eligibility
-  [kind : backend.CompilerDirectObjectArtifactKind]
+  [kind : be_state.CompilerDirectObjectArtifactKind]
   [image : cobj.CompilerObjectImage]) : SourceToolLinuxDirectObjectEligibility
   (cond
     [(not
@@ -840,7 +843,7 @@
     [else Eligible]))
 
 (define (source-tool-render-linux-direct-object
-  [kind : backend.CompilerDirectObjectArtifactKind]
+  [kind : be_state.CompilerDirectObjectArtifactKind]
   [image : cobj.CompilerObjectImage]) : ResultSourceToolLinuxDirectObject
   (match (source-tool-linux-direct-object-eligibility
     kind
@@ -859,7 +862,7 @@
       (Err
         (str_cat.str-cat
           "linux direct object unavailable: "
-          (backend.compiler-direct-object-fallback-transcript reason)))]))
+          (be_object.compiler-direct-object-fallback-transcript reason)))]))
 
 (define (source-tool-windows-direct-object-env-name) : String
   "TYPELISP_WINDOWS_DIRECT_OBJECT")
@@ -888,11 +891,11 @@
 
 (define (source-tool-augment-assembly-for-target
   [asm : String]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (let
     [haystack : String asm]
     [needle : String ".note.GNU-stack"]
-    (if (backend.compiler-backend-target-linux? target)
+    (if (be_facts.compiler-backend-target-linux? target)
       (if (string.contains (& haystack) (& needle))
         haystack
         (str_cat.str-cat haystack (source-tool-noexecstack-note)))
@@ -1044,7 +1047,7 @@
 
 (define (source-tool-run-command
   [role : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [command : process.ProcessCommand]) : SourceToolCommandStatus
   (source-tool-run-command-for
     role
@@ -1056,7 +1059,7 @@
 ;; it could not find (source-tool-link-failure-notes).
 (define (source-tool-run-command-for
   [role : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [command : process.ProcessCommand]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (let
@@ -1094,7 +1097,7 @@
             (process.error-message error)))])))
 
 (define (source-tool-command-for-target
-  [_target : backend.CompilerBackendTarget]
+  [_target : be_state.CompilerBackendTarget]
   [command : process.ProcessCommand]) : process.ProcessCommand
   command)
 
@@ -1457,7 +1460,7 @@
   unit)
 
 (define (source-tool-assemble
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]) : SourceToolCommandStatus
   (match target
@@ -1473,7 +1476,7 @@
         (source-tool-windows-assembler-command asm-path obj-path))]))
 
 (define (source-tool-link
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
@@ -1498,7 +1501,7 @@
         (source-tool-run-command-for "linker" target command link-inputs))]))
 
 (define (source-tool-archive
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [obj-path : String]
   [archive-path : String]) : SourceToolCommandStatus
   (match target
@@ -1514,7 +1517,7 @@
         (source-tool-run-command "archiver" target command))]))
 
 (define (source-tool-assemble-and-link
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]
@@ -1529,7 +1532,7 @@
     (source-tool-link target obj-path bin-path link-inputs)))
 
 (define (source-tool-assemble-and-archive
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [archive-path : String]) : SourceToolCommandStatus
@@ -1545,7 +1548,7 @@
 (define (source-tool-write-direct-object-and-link
   [obj-path : String]
   [bin-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [link-inputs : SourceToolLinkInputs]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
@@ -1559,7 +1562,7 @@
 (define (source-tool-write-direct-object-and-archive
   [obj-path : String]
   [archive-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
   (match (source-tool-write-file obj-path obj context)
@@ -1595,9 +1598,9 @@
 (defstruct SourceToolLinkRequest
   (source String)
   (program SourceToolProgram)
-  (target backend.CompilerBackendTarget)
+  (target be_state.CompilerBackendTarget)
   (opt-level i64)
-  (mode backend.CompilerBackendMode)
+  (mode be_state.CompilerBackendMode)
   (link-inputs SourceToolLinkInputs)
   (files SourceToolTempFiles)
   (write-context String))
@@ -1611,7 +1614,7 @@
 (define (source-tool-temp-files
   [dir : String]
   [source : (& source str)]
-  [target : backend.CompilerBackendTarget]) : SourceToolTempFiles
+  [target : be_state.CompilerBackendTarget]) : SourceToolTempFiles
   (let
     [asm : String (source-tool-asm-path dir source)]
     [obj : String (source-tool-obj-path dir source target)]
@@ -1637,7 +1640,7 @@
 ;; Serialize an emitted object image for the target's linker, or say why the
 ;; program has to take the assembly route instead.
 (define (source-tool-render-object-result
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [result : compiler_driver_core.ResultCompilerDriverObject]) : ResultSourceToolString
   (match result
     [(Ok image advisories)
@@ -1646,7 +1649,7 @@
         [(Linux) (source-tool-render-linkable-linux-elf-object image)]
         [(Windows) (source-tool-render-linkable-windows-coff-object image)])]
     [(Unavailable category _)
-      (Err (backend.compiler-direct-object-fallback-category category))]
+      (Err (be_object.compiler-direct-object-fallback-category category))]
     [(Err diag advisories)
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))
       (Err
@@ -1658,9 +1661,9 @@
 (define (source-tool-emit-object
   [source : String]
   [program : SourceToolProgram]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
   (let
     [crt-entry : bool (source-tool-linux-crt-entry? target link-inputs)]
@@ -1713,7 +1716,7 @@
         [(Linux) (source-tool-linux-direct-object-enabled?)]
         [(Windows) (source-tool-windows-direct-object-enabled?)])
       (not (source-tool-program-assembly? (& request.program)))
-      (or (not lowered) (backend.compiler-backend-mode-scalar? request.mode)))
+      (or (not lowered) (be_state.compiler-backend-mode-scalar? request.mode)))
       (match (source-tool-emit-object
         request.source
         request.program
@@ -1738,9 +1741,9 @@
 (define (source-tool-emit-program-assembly
   [source : String]
   [program : SourceToolProgram]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : ResultSourceToolString
   (match program
     [(Source stdlib-roots cfgs)
@@ -1826,7 +1829,7 @@
   [env : process.ProcessEnvList]
   [inherit : bool]) : SourceToolRunOutcome
   (let
-    [target : backend.CompilerBackendTarget request.target]
+    [target : be_state.CompilerBackendTarget request.target]
     [bin-path : String
       (owned_view.compiler-owned-shared-view request.files.bin)]
     (match (source-tool-link-program request)
@@ -1890,7 +1893,7 @@
 ;; A Windows `/DEBUG` link names its PDB after `/OUT`. Name it after the
 ;; destination instead, so the PDB keeps its place and embedded path.
 (define (source-tool-link-inputs-for-destination
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [link-dir : (& link-dir SourceToolLinkDestination)]
   [destination : (& destination str)]
   [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
@@ -1930,11 +1933,11 @@
   [source : String]
   [output : String]
   [has-output : bool]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : cli_svec.Vec]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
@@ -2015,11 +2018,11 @@
   [source : String]
   [output : String]
   [has-output : bool]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : cli_svec.Vec]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-build")
     [(Ok temp-dir)
@@ -2043,7 +2046,7 @@
 ;: the caller for live progress output.
 (define (source-tool-run-executable-inherit
   [bin-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [runtime-args : process.ProcessStringList]) : process.ResultProcessOutput
   (process.inherit
     (source-tool-command-for-target
@@ -2052,12 +2055,12 @@
 
 (define (source-tool-run-source-in-temp
   [source : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [stream-output : bool]
   [temp-dir : String]) : i64
@@ -2115,12 +2118,12 @@
 
 (define (source-tool-run-source
   [source : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [stream-output : bool]) : i64
   (match (source-tool-create-temp-dir "typelisp-run")

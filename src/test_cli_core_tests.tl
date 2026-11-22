@@ -1,5 +1,6 @@
 ;; test_cli_core_tests.tl - White-box tests for the test CLI: batch paths, seeded
 ;; shuffle and selection, harness reachability and imported-test pruning.
+(import compiler_backend_state as be_state)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -10,7 +11,6 @@
 (import build_run_core)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
-(import compiler_backend as backend)
 (import compiler_builtin_ids as cbi)
 (import compiler_cfg_core as cfg_core)
 (import compiler_diagnostic as cdiag)
@@ -1132,7 +1132,7 @@
   [program : ast.AstProgram]
   [harness-paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : backend.CompilerBackendTarget]) : bool
+  [target : be_state.CompilerBackendTarget]) : bool
   (let
     [legacy-roots : cli_svec.Vec (clone roots)]
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
@@ -1173,7 +1173,7 @@
   [program : ast.AstProgram]
   [harness-paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : backend.CompilerBackendTarget]) : bool
+  [target : be_state.CompilerBackendTarget]) : bool
   (let
     [legacy-roots : cli_svec.Vec (clone roots)]
     (match (lower.lower-compiler-program-with-decl-paths-mode-cache
@@ -1198,7 +1198,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : backend.CompilerBackendTarget]) : bool
+  [target : be_state.CompilerBackendTarget]) : bool
   (match (tltest.tltest-build-harness
     (owned_view.compiler-owned-shared-view source)
     decls
@@ -1236,7 +1236,7 @@
         [source : String
           (build_run_core.source-tool-fs-path-join dir "nested_vector.tl")]
         [roots : cli_svec.Vec (tltest-roots-for-self-test)]
-        [target : backend.CompilerBackendTarget (Linux)]
+        [target : be_state.CompilerBackendTarget (Linux)]
         (tltest-write-text
           source
           "(import stdlib.vector)
@@ -1311,7 +1311,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
-  [target : backend.CompilerBackendTarget]) : bool
+  [target : be_state.CompilerBackendTarget]) : bool
   (match (tltest.tltest-build-harness source decls paths)
     [(Harness program harness-paths count)
       (unless (= count 1) (return false))
@@ -1330,7 +1330,7 @@
         [source : String
           (build_run_core.source-tool-fs-path-join dir "nested_result.tl")]
         [roots : cli_svec.Vec (tltest-roots-for-self-test)]
-        [target : backend.CompilerBackendTarget (Linux)]
+        [target : be_state.CompilerBackendTarget (Linux)]
         (tltest-write-text
           source
           "(module test.nested_result_user)
@@ -1439,7 +1439,7 @@
           [source : String
             (build_run_core.source-tool-fs-path-join dir "io_run.tl")]
           [roots : cli_svec.Vec (tltest-roots-for-self-test)]
-          [target : backend.CompilerBackendTarget (Linux)]
+          [target : be_state.CompilerBackendTarget (Linux)]
           (tltest.tltest-inline-reset-load-state!)
           (tltest-write-text
             source
@@ -1486,7 +1486,7 @@
 
 (define (tltest-typecheck-cache-scope
   [roots : cli_svec.Vec]
-  [backend-target : backend.CompilerBackendTarget]) : String
+  [backend-target : be_state.CompilerBackendTarget]) : String
   (let
     [legacy-roots : cli_svec.Vec (clone roots)]
     (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope

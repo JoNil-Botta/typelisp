@@ -1,7 +1,10 @@
 ;; Hosted Linux stack oracle. Object emission goes through the production
 ;; admission/serialization boundary and has no assembly fallback.
+(import compiler_backend_operands as be_operand)
+(import compiler_backend_state as be_state)
 (import build_run_core as build)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_intern as ci)
 (import stdlib.vector)
 (import (vector.vector String) as roots)
@@ -56,20 +59,20 @@
           (str_cat.str-cat
             ".text\n.globl combo\n.type combo,@function\ncombo:\n"
             (backend.compiler-backend-emit-stack-sub
-              (backend.compiler-backend-target-policy-new
-                (backend.CompilerBackendTarget.Linux))
+              (be_state.compiler-backend-target-policy-new
+                (be_state.CompilerBackendTarget.Linux))
               entry)
-            (backend.compiler-backend-emit-call-space-sub staging)
+            (be_operand.compiler-backend-emit-call-space-sub staging)
             "    movb $0, (%rsp)\n    incq body_count(%rip)\n"
-            (backend.compiler-backend-emit-call-space-add staging)
-            (backend.compiler-backend-emit-call-space-add entry)
+            (be_operand.compiler-backend-emit-call-space-add staging)
+            (be_operand.compiler-backend-emit-call-space-add entry)
             "    ret\n.size combo, .-combo\n")]
         [assembly : String
           (if (string.eq (io.arg 1) "combo-plain")
             raw
             (backend.compiler-backend-peephole-asm-drop-fallthrough-target
               raw
-              (backend.CompilerBackendTarget.Linux)))]
+              (be_state.CompilerBackendTarget.Linux)))]
         (io.write-file (io.arg 4) (byte_buf.str-as-bytes (& assembly)))
         0)]
     [(and
@@ -79,7 +82,7 @@
         [size : i64 (string.>int (io.arg 2))]
         [entry? : bool (string.eq (io.arg 1) "plan")]
         [state
-          (backend.compiler-backend-state-new
+          (be_state.compiler-backend-state-new
             (ci.intern-compat-state-capture-active))]
         [assembly : String
           (str_cat.str-cat
@@ -89,21 +92,21 @@
               (if entry?
                 32768
                 4096))
-              (backend.compiler-backend-emit-stack-probe size)
+              (be_operand.compiler-backend-emit-stack-probe size)
               (backend.compiler-backend-emit-stack-sub
-                (backend.compiler-backend-target-policy-new
-                  (backend.CompilerBackendTarget.Linux))
+                (be_state.compiler-backend-target-policy-new
+                  (be_state.CompilerBackendTarget.Linux))
                 size)))]
         [bytes : String
           (if entry?
-            (backend.compiler-backend-object-prologue-bytes
-              (backend.CompilerBackendTarget.Linux)
+            (be_object.compiler-backend-object-prologue-bytes
+              (be_state.CompilerBackendTarget.Linux)
               size)
             (str_cat.str-cat
-              (backend.compiler-backend-object-prologue-bytes
-                (backend.CompilerBackendTarget.Linux)
+              (be_object.compiler-backend-object-prologue-bytes
+                (be_state.CompilerBackendTarget.Linux)
                 0)
-              (backend.compiler-backend-object-sub-rsp-bytes size state)))]
+              (be_object.compiler-backend-object-sub-rsp-bytes size state)))]
         (io.write-file (io.arg 3) (byte_buf.str-as-bytes (& assembly)))
         (io.write-file (io.arg 4) (byte_buf.str-as-bytes (& bytes)))
         (backend.compiler-backend-state-release-final-arenas! state)
@@ -121,9 +124,9 @@
         (match (build.source-tool-emit-object
           (io.arg 2)
           (build.SourceToolProgram.Source search (cfg.sym-i64-empty))
-          (backend.CompilerBackendTarget.Linux)
+          (be_state.CompilerBackendTarget.Linux)
           (string.>int (io.arg 3))
-          (backend.CompilerBackendMode.Scalar)
+          (be_state.CompilerBackendMode.Scalar)
           (& link-inputs))
           [(Ok bytes)
             (io.write-file (io.arg 4) (byte_buf.str-as-bytes (& bytes)))

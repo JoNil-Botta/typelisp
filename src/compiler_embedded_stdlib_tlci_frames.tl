@@ -246,6 +246,31 @@
       (tlci.tlci-read-u64 payload record)
       (tlci.tlci-read-u64 payload (+ record 8)))))
 
+;; Compare frame `index`'s stored name with `name`: negative, zero or positive,
+;; as the catalog's sorted order defines it.
+(define (compiler-embedded-stdlib-tlci-frames-name-order
+  [payload : (& payload (__tl_dyn-array u8))]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
+  [index : i64]
+  [name : (& name str)]) : i64
+  (let
+    [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog index)]
+    [offset : i64 (tlci.tlci-read-u64 payload record)]
+    [name-len : i64 (tlci.tlci-read-u64 payload (+ record 8))]
+    [len : i64 (string.string-length name)]
+    [i : i64 0]
+    [order : i64 0]
+    (while (and (= order 0) (< i name-len) (< i len))
+      (set!
+        order
+        (-
+          (cast (array-ref payload (+ offset i)) : i64)
+          (cast (string.string-ref name i) : i64)))
+      (+= i 1))
+    (if (= order 0)
+      (- name-len len)
+      order)))
+
 (define (compiler-embedded-stdlib-tlci-frames-find
   [payload : (& payload (__tl_dyn-array u8))]
   [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
@@ -253,23 +278,15 @@
   (let
     [lo : i64 1]
     [hi : i64 catalog.count]
-    [len : i64 (string.string-length name)]
     (while (< lo hi)
       (let
         [mid : i64 (+ lo (/ (- hi lo) 2))]
-        [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog mid)]
-        [offset : i64 (tlci.tlci-read-u64 payload record)]
-        [name-len : i64 (tlci.tlci-read-u64 payload (+ record 8))]
-        [index : i64 0]
-        [order : i64 0]
-        (while (and (= order 0) (< index name-len) (< index len))
-          (set!
-            order
-            (-
-              (cast (array-ref payload (+ offset index)) : i64)
-              (cast (string.string-ref name index) : i64)))
-          (+= index 1))
-        (when (= order 0) (set! order (- name-len len)))
+        [order : i64
+          (compiler-embedded-stdlib-tlci-frames-name-order
+            payload
+            catalog
+            mid
+            name)]
         (cond
           [(= order 0) (return mid)]
           [(< order 0) (set! lo (+ mid 1))]

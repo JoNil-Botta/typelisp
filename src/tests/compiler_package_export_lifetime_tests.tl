@@ -1,4 +1,5 @@
 ;; Source-owned package export lifetime checks on both CI hosts.
+(import compiler_backend_state as be_state)
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.string)
@@ -6,7 +7,6 @@
 (import (vector.vector String) as strings)
 (import build_cli_core as build)
 (import compiler_ast_types as ast)
-(import compiler_backend as backend)
 (import compiler_builtin_ids as cbi)
 (import compiler_driver_core as driver)
 (import compiler_intern as ci)
@@ -55,7 +55,7 @@
 
 (define (export-test-capture-with-mode
   [source : String]
-  [mode : backend.CompilerBackendMode]) : build.ResultBuildPackageTlciExports
+  [mode : be_state.CompilerBackendMode]) : build.ResultBuildPackageTlciExports
   (let
     [home : arena.Arena (arena.current)]
     [home-pools : ast.AstNodePoolContext

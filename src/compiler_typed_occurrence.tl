@@ -2014,6 +2014,18 @@
     (TypedTypeValueResult.Ok (clone (array-ref store.types index).value))
     (TypedTypeValueResult.Err (typed-index-error (& store)))))
 
+;; A borrowed view of one type record's canonical value, read in place. Like
+;; every view, it ends before the next call that can add a record.
+(define (typed-type-view-at!
+  [store : (&mut store TypedStore)]
+  [_lease : (& lease (TypedBodyLease intern))]
+  [index : i64]) : (TypedTypeResult store)
+  ;; `typed-index-ok?`, spelled out: a classifier reads every record through
+  ;; this, and the check stays inline with it.
+  (if (and store.live? (>= index 0) (< index store.type-count))
+    (TypedTypeResult.Ok (& (array-ref store.types index).value))
+    (TypedTypeResult.Err (typed-index-error (& store)))))
+
 (define (typed-place-count!
   [store : (&mut store TypedStore)]
   [_lease : (& lease (TypedBodyLease intern))]) : TypedCountResult

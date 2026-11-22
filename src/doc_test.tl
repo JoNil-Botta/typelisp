@@ -12,6 +12,7 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
@@ -21,7 +22,6 @@
 (import stdlib.vector)
 (import (vector.vector String) as doc_svec)
 (import compiler_check_core)
-(import compiler_backend as backend)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_driver_core as driver)
@@ -1019,13 +1019,13 @@
 ;; binary. This is a required gate on both Linux and Windows because skipped
 ;; runnable doctests can hide target-specific compiler/runtime bugs.
 (define (doc-test-runnable-target-supported?
-  [target : backend.CompilerBackendTarget]) : bool
+  [target : be_state.CompilerBackendTarget]) : bool
   (match target
     [(or (Linux) (Windows)) true]))
 
 (define (doc-test-runnable-unsupported-message
   [index : i64]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (str_cat.str-cat
     "doctest example "
     (string.int->string index)
@@ -1086,7 +1086,7 @@
     out))
 
 (define (doc-test-normalize-output-for-target
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [text : String]) : String
   (match target
     [(Linux) text]
@@ -1095,7 +1095,7 @@
 (define (doc-test-runnable-mismatch-message
   [index : i64]
   [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [output : process.ProcessOutput]) : String
   (let
     [expected-exit : i64
@@ -1134,7 +1134,7 @@
 
 (define (doc-test-runnable-output-matches?
   [expectation : DocTestExpectation]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [output : (& output process.ProcessOutput)]) : bool
   (if (=
     (doc-test-expectation-run-exit
@@ -1158,7 +1158,7 @@
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
-  [target : backend.CompilerBackendTarget]) : build_run_core.ResultSourceToolString
+  [target : be_state.CompilerBackendTarget]) : build_run_core.ResultSourceToolString
   (driver.compiler-driver-reset-file-state!)
   (driver.compiler-driver-state-clear-pool-backed-caches!)
   (let
@@ -1186,7 +1186,7 @@
             paths
             (driver.compiler-driver-lower-mode-for-target
               target
-              (backend.CompilerBackendMode.Scalar))
+              (be_state.CompilerBackendMode.Scalar))
             stdlib-roots
             cfgs
             (tc.tc-prefix-default-cache-scope)
@@ -1231,7 +1231,7 @@
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [temp-dir : String]) : DocTestMaybeFailure
   (let
     [index : i64
@@ -1303,7 +1303,7 @@
     [source-line : i64
       (doc-test-example-source-line
         (owned_view.compiler-owned-shared-view example))]
-    [target : backend.CompilerBackendTarget
+    [target : be_state.CompilerBackendTarget
       (build_run_core.source-tool-default-target)]
     (if (doc-test-runnable-target-supported? target)
       (match (build_run_core.source-tool-create-temp-dir "typelisp-doctest")

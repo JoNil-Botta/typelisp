@@ -1,14 +1,14 @@
 ;; compiler_backend_raw_pointer_fixture.tl - emit the raw-pointer backend
 ;; witness program's assembly for a target so the integration suite can
 ;; assemble, link, and run it.
+(import compiler_backend_state as be_state)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import compiler_backend_tests)
-(import compiler_backend as backend)
 (import compiler_diagnostic as diagnostic)
 
-(define (compiler-backend-raw-pointer-fixture-for-name [target-name : String]) : backend.ResultCompilerBackend
+(define (compiler-backend-raw-pointer-fixture-for-name [target-name : String]) : be_state.ResultCompilerBackend
   (if (string.eq target-name "linux-x86_64")
     (compiler_backend_tests.compiler-backend-raw-pointer-fixture-emit (Linux))
     (if (string.eq target-name "windows-x86_64")

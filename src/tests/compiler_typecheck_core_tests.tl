@@ -1149,7 +1149,33 @@
       (& (I32))
       (& (I32))
       (& (I32)))
-    (for [index (iterator.range 2 514)]
+    ;; These two left IDs start in the same bucket before growth. Record
+    ;; both, and poison one lane before enough new keys arrive to rehash.
+    (tc_core.tc-checked-binary-fact-record!
+      ctx
+      (& (Binary op (+ left 1024) right))
+      (& op)
+      0
+      (& (I64))
+      (& (I64))
+      (& (I64)))
+    (tc_core.tc-checked-binary-fact-record!
+      ctx
+      (& (Binary op (+ left 2) right))
+      (& op)
+      0
+      (& (I64))
+      (& (I64))
+      (& (I64)))
+    (tc_core.tc-checked-binary-fact-record!
+      ctx
+      (& (Binary op (+ left 2) right))
+      (& op)
+      0
+      (& (I32))
+      (& (I32))
+      (& (I32)))
+    (for [index (iterator.range 3 513)]
       (tc_core.tc-checked-binary-fact-record!
         ctx
         (& (Binary op (+ left index) right))
@@ -1163,18 +1189,9 @@
       (& (Binary op (+ left 2) right))
       (& op)
       0
-      (& (I32))
-      (& (I32))
-      (& (I32)))
-    (tc_core.tc-checked-binary-fact-record!
-      ctx
-      (& (Binary op (+ left 1024) right))
-      (& op)
-      0
       (& (I64))
       (& (I64))
       (& (I64)))
-    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 8)
     (unless
       (unsafe
         (=
@@ -1216,7 +1233,7 @@
             right
             (& op)
             0)
-          0))
+          (tc_core.tc-checked-binary-fact-lookup ctx left right (& op) 0)))
       (io.panic
         "checked binary fact confused a role, expected type, operator or child"))
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 8)
@@ -1279,6 +1296,32 @@
     (match (tc_core.tc-resolve-type-rebuild enum-ctx (Var name))
       [(Enum _) unit]
       [_ (io.panic "checked nominal fact crossed symbol map owners")])
+    (tc_core.tc-checked-let-binding-facts-begin! facts false)
+    (tc_core.tc-resolve-type-name-cache-reset-for-state!
+      (tc_core.tc-job-state-nominal-cache job))
+    (tc_core.tc-resolve-type-rebuild struct-ctx (Var name))
+    (tc_core.tc-resolve-type-name-cache-reset-for-state!
+      (tc_core.tc-job-state-nominal-cache job))
+    (tc_core.tc-resolve-type-rebuild enum-ctx (Var name))
+    (tc_core.tc-resolve-type-name-cache-reset-for-state!
+      (tc_core.tc-job-state-nominal-cache job))
+    (tc_core.tc-resolve-type-rebuild struct-ctx (Var name))
+    (tc_core.tc-checked-let-binding-facts-freeze! facts)
+    (unsafe
+      (let
+        [data (tc_core.tc-checked-let-binding-fact-state-view facts)]
+        [fact
+          (tc_core.tc-checked-nominal-fact-slot
+            (ptr-cast
+              (__tl_array-data (deref data).nominal-facts)
+              : (Ptr tc_core.TcCheckedNominalFact))
+            (- (array-length (deref data).nominal-facts) 1)
+            struct-ctx.module-id
+            struct-ctx.type-module-id
+            name)]
+        (unless
+          (= (deref fact).tag -1)
+          (io.panic "checked nominal disagreement became usable again"))))
     (tc_core.tc-checked-let-binding-facts-finish! facts)))
 
 (test

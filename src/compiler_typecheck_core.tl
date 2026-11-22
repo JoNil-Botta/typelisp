@@ -255,8 +255,8 @@
   (Missing)
   (Inconsistent))
 
-;; A bucket keeps its first binary key so a conflicting observation can never
-;; become usable again after a collision. The two roles use independent slots.
+;; A conflicting observation poisons its lane for the rest of recording.
+;; Plain and contextual observations use independent lanes.
 (defstruct TcCheckedBinaryFact
   (declaration-and-op i64)
   (left-id i64)
@@ -268,7 +268,7 @@
   (name-id i64)
   (module-id i64)
   (type-module-id i64)
-  ;; Zero is an empty bucket. Otherwise tag 1 is Struct and tag 2 is Enum.
+  ;; Zero is empty, -1 is inconsistent, 1 is Struct, and 2 is Enum.
   (tag i64)
   (resolved-id i64)
   (symbol-revision csym.CompilerSymbolMapRevision)
@@ -284,12 +284,16 @@
   (len i64)
   (by-hash tc_i64_i64_map.Map)
   (declaration-ordinals tc_i64_i64_map.Map)
+  ;; These tables own their storage so growth can release superseded buckets
+  ;; and freezing can retain them while compacting the binding facts.
   (binary-facts (__tl_dyn-array TcCheckedBinaryFact))
   (binary-fact-count i64)
+  (binary-fact-arena i64)
   (binary-pool-cell i64)
   (binary-expr-limit i64)
   (nominal-facts (__tl_dyn-array TcCheckedNominalFact))
   (nominal-fact-count i64)
+  (nominal-fact-arena i64)
   (nominal-session-owner i64)
   (nominal-generation i64)
   ;; Facts can contain aggregate AstType payloads. Keep the whole generation in
@@ -845,7 +849,9 @@
         0
         0
         0
+        0
         (__tl_make-array TcCheckedNominalFact 0)
+        0
         0
         0
         -1
@@ -2290,7 +2296,7 @@
           (if (= (arena.tl_arena_current) payload)
             (arena.tl_arena_set (deref data).return-arena)
             unit)
-          ;; Detach every payload-owned carrier before destroying the generation.
+          ;; Detach every carrier before destroying its backing arena.
           (in-arena
             (arena.Arena (deref data).owner-arena)
             (set!
@@ -2308,9 +2314,17 @@
               (__tl_make-array TcCheckedNominalFact 0)))
           (set! (deref data).binary-pool-cell 0)
           (set! (deref data).binary-fact-count 0)
+          (when
+            (!= (deref data).binary-fact-arena 0)
+            (arena.tl_arena_destroy (deref data).binary-fact-arena)
+            (set! (deref data).binary-fact-arena 0))
           (set! (deref data).binary-expr-limit 0)
           (set! (deref data).nominal-session-owner 0)
           (set! (deref data).nominal-fact-count 0)
+          (when
+            (!= (deref data).nominal-fact-arena 0)
+            (arena.tl_arena_destroy (deref data).nominal-fact-arena)
+            (set! (deref data).nominal-fact-arena 0))
           (set! (deref data).nominal-generation -1)
           (set! (deref data).enabled false)
           (set! (deref data).complete-required false)
@@ -2423,16 +2437,14 @@
                 count
                 (clone data.by-hash)
                 (clone data.declaration-ordinals)
-                (tc-checked-binary-facts-copy
-                  (array-length data.binary-facts)
-                  data.binary-facts)
+                data.binary-facts
                 data.binary-fact-count
+                data.binary-fact-arena
                 data.binary-pool-cell
                 data.binary-expr-limit
-                (tc-checked-nominal-facts-copy
-                  (array-length data.nominal-facts)
-                  data.nominal-facts)
+                data.nominal-facts
                 data.nominal-fact-count
+                data.nominal-fact-arena
                 data.nominal-session-owner
                 data.nominal-generation
                 fresh
@@ -2523,17 +2535,6 @@
     (unsafe
       (when
         (deref data).enabled
-        ;; The checker visits each declaration once. Keep its buckets stable
-        ;; until it finishes so a rejected binary cannot reenter with only
-        ;; some of its observations after a split.
-        (when
-          (and
-            (deref data).recording
-            (!= ordinal (deref data).current-declaration-ordinal)
-            (>
-              (deref data).binary-fact-count
-              (shr (array-length (deref data).binary-facts) 1)))
-          (tc-checked-binary-facts-grow! data))
         (set! (deref data).current-declaration-ordinal ordinal)))))
 
 (define (tc-checked-let-binding-fact-grow!
@@ -45953,50 +45954,75 @@
     [(Var name) (tc-resolve-checked-nominal ctx name)]
     [_ ty]))
 
-(define (tc-checked-nominal-fact-index
+;; The tables contain no deletions and grow past half load, so a probe
+;; always reaches the matching key or an empty bucket.
+(define (tc-checked-nominal-fact-slot
+  [slots : (Ptr TcCheckedNominalFact)]
+  [mask : i64]
   [module-id : i64]
   [type-module-id : i64]
-  [name : i64]
-  [capacity : i64]) : i64
-  (bit-and
-    (+ (* 4099 module-id) (* 2029 type-module-id) name (shr name 22))
-    (- capacity 1)))
+  [name : i64]) : (Ptr TcCheckedNominalFact)
+  (unsafe
+    (let
+      [key (+ (* 4099 module-id) (* 2029 type-module-id) name (shr name 22))]
+      [hash (shr (* key -7046029254386353131) 32)]
+      [index (bit-and hash mask)]
+      [fact (ptr-offset slots index)]
+      (while (and
+        (!= (deref fact).tag 0)
+        (or
+          (!= (deref fact).name-id name)
+          (!= (deref fact).module-id module-id)
+          (!= (deref fact).type-module-id type-module-id)))
+        (set! index (bit-and (+ index 1) mask))
+        (set! fact (ptr-offset slots index)))
+      fact)))
 
-(define (tc-checked-nominal-facts-copy
+(define (tc-checked-nominal-facts-rehash
   [capacity : i64]
   [old : (__tl_dyn-array TcCheckedNominalFact)]) : (__tl_dyn-array
     TcCheckedNominalFact)
   (let
     [next (__tl_make-array TcCheckedNominalFact capacity)]
-    (for [index (iterator.range 0 (array-length old))]
+    [old-capacity (array-length old)]
+    (unsafe
       (let
-        [fact (tc-global-array-element-shared-view old index)]
-        (when
-          (> fact.tag 0)
-          (set!
-            (array-ref
-              next
-              (tc-checked-nominal-fact-index
-                fact.module-id
-                fact.type-module-id
-                fact.name-id
-                capacity))
-            fact))))
+        [slots (ptr-cast (__tl_array-data next) : (Ptr TcCheckedNominalFact))]
+        (for [index (iterator.range 0 old-capacity)]
+          (let
+            [fact (tc-global-array-element-shared-view old index)]
+            (when
+              (!= fact.tag 0)
+              (let
+                [destination
+                  (tc-checked-nominal-fact-slot
+                    slots
+                    (- capacity 1)
+                    fact.module-id
+                    fact.type-module-id
+                    fact.name-id)]
+                (ptr-write!
+                  (ptr-cast destination : (MutPtr TcCheckedNominalFact))
+                  fact)))))))
     next))
 
 (define (tc-checked-nominal-facts-grow!
   [data : (MutPtr TcCheckedLetBindingFactStateData)]) : unit
   (unsafe
     (let
+      [old-arena (deref data).nominal-fact-arena]
+      [fresh (arena.tl_arena_make)]
       [old (deref data).nominal-facts]
       [capacity (* 2 (array-length old))]
       (in-arena
-        (arena.Arena (deref data).payload-arena)
+        (arena.Arena fresh)
         (set!
           (deref data).nominal-facts
-          (tc-checked-nominal-facts-copy capacity old))))))
+          (tc-checked-nominal-facts-rehash capacity old)))
+      (set! (deref data).nominal-fact-arena fresh)
+      (arena.tl_arena_destroy old-arena))))
 
-;; The table only records pointer-free results. Collisions discard reuse.
+;; The table only records pointer-free results with their resolution revisions.
 (define (tc-resolve-checked-nominal [ctx : TcContext] [name : i64]) : ast.AstType
   (let
     [session (tc-context-structural-session ctx)]
@@ -46010,8 +46036,9 @@
             (deref data).recording
             (= (deref data).nominal-session-owner 0)
             (> session.address 0))
+          (set! (deref data).nominal-fact-arena (arena.tl_arena_make))
           (in-arena
-            (arena.Arena (deref data).payload-arena)
+            (arena.Arena (deref data).nominal-fact-arena)
             (set!
               (deref data).nominal-facts
               (__tl_make-array TcCheckedNominalFact 256)))
@@ -46028,46 +46055,39 @@
               session
               (deref data).nominal-session-owner
               (deref data).nominal-generation))
-          (let
-            [index
-              (tc-checked-nominal-fact-index
-                ctx.module-id
-                ctx.type-module-id
-                name
-                (array-length (deref data).nominal-facts))]
-            (if (deref data).recording
-              (return
-                (tc-checked-nominal-fact-record! ctx name session data index))
-              (let
-                ;; The masked index is within the table allocated above.
-                [fact
-                  (ptr-offset
+          (if (deref data).recording
+            (return (tc-checked-nominal-fact-record! ctx name session data))
+            (let
+              [fact
+                (tc-checked-nominal-fact-slot
+                  (ptr-cast
                     (__tl_array-data (deref data).nominal-facts)
-                    index)]
-                (when
-                  (and
-                    (> (deref fact).tag 0)
-                    (= (deref fact).name-id name)
-                    (= (deref fact).module-id ctx.module-id)
-                    (= (deref fact).type-module-id ctx.type-module-id)
-                    (match (tc-context-symbols ctx)
-                      [(CompilerSymbols _ types _ _ _ _)
-                        (let
-                          [revision (deref fact).symbol-revision]
-                          (csym.compiler-symbol-map-revision-current?
-                            types
-                            (& revision)))])
-                    (match (tc-context-registries ctx)
-                      [(CompilerRegistries _ fields _)
-                        (let
-                          [revision (deref fact).field-revision]
-                          (csym.compiler-symbol-map-revision-current?
-                            fields
-                            (& revision)))]))
-                  (return
-                    (if (= (deref fact).tag 2)
-                      (Enum (deref fact).resolved-id)
-                      (Struct (deref fact).resolved-id))))))))))
+                    : (Ptr TcCheckedNominalFact))
+                  (- (array-length (deref data).nominal-facts) 1)
+                  ctx.module-id
+                  ctx.type-module-id
+                  name)]
+              (when
+                (and
+                  (> (deref fact).tag 0)
+                  (match (tc-context-symbols ctx)
+                    [(CompilerSymbols _ types _ _ _ _)
+                      (let
+                        [revision (deref fact).symbol-revision]
+                        (csym.compiler-symbol-map-revision-current?
+                          types
+                          (& revision)))])
+                  (match (tc-context-registries ctx)
+                    [(CompilerRegistries _ fields _)
+                      (let
+                        [revision (deref fact).field-revision]
+                        (csym.compiler-symbol-map-revision-current?
+                          fields
+                          (& revision)))]))
+                (return
+                  (if (= (deref fact).tag 2)
+                    (Enum (deref fact).resolved-id)
+                    (Struct (deref fact).resolved-id)))))))))
     (tc-resolve-type-name
       ctx
       (tc-hygiene-name-text-id-for-session session name)
@@ -46077,8 +46097,7 @@
   [ctx : TcContext]
   [name : i64]
   [session : cis.InternStructuralSessionHandle]
-  [data : (MutPtr TcCheckedLetBindingFactStateData)]
-  [index : i64]) : ast.AstType
+  [data : (MutPtr TcCheckedLetBindingFactStateData)]) : ast.AstType
   (let
     [lease
       (csym.compiler-resolution-lease-capture
@@ -46095,30 +46114,45 @@
           (>= resolved 0)
           (unsafe
             (let
-              [prior
-                (ptr-offset (__tl_array-data (deref data).nominal-facts) index)]
-              (when
-                (= (deref prior).tag 0)
-                (set!
-                  (deref data).nominal-fact-count
-                  (+ (deref data).nominal-fact-count 1))))
-            (set!
-              (array-ref (deref data).nominal-facts index)
-              (TcCheckedNominalFact
-                name
-                ctx.module-id
-                ctx.type-module-id
+              [capacity (array-length (deref data).nominal-facts)]
+              [fact
+                (ptr-cast
+                  (tc-checked-nominal-fact-slot
+                    (ptr-cast
+                      (__tl_array-data (deref data).nominal-facts)
+                      : (Ptr TcCheckedNominalFact))
+                    (- capacity 1)
+                    ctx.module-id
+                    ctx.type-module-id
+                    name)
+                  : (MutPtr TcCheckedNominalFact))]
+              [prior (deref fact).tag]
+              [tag : i64
                 (match (& ty)
                   [(Enum _) 2]
-                  [_ 1])
-                resolved
-                lease.symbol-revision
-                lease.field-revision))
-            (when
-              (>
-                (deref data).nominal-fact-count
-                (shr (array-length (deref data).nominal-facts) 1))
-              (tc-checked-nominal-facts-grow! data))))]
+                  [_ 1])]
+              (if (or
+                (= prior 0)
+                (and (= prior tag) (= (deref fact).resolved-id resolved)))
+                (ptr-write!
+                  fact
+                  (TcCheckedNominalFact
+                    name
+                    ctx.module-id
+                    ctx.type-module-id
+                    tag
+                    resolved
+                    lease.symbol-revision
+                    lease.field-revision))
+                (set! (deref fact).tag -1))
+              (when
+                (= prior 0)
+                (let
+                  [count (+ (deref data).nominal-fact-count 1)]
+                  (set! (deref data).nominal-fact-count count)
+                  (when
+                    (> count (shr capacity 1))
+                    (tc-checked-nominal-facts-grow! data)))))))]
       [_ unit])
     ty))
 
@@ -56449,40 +56483,70 @@
     [(Shl) 17]
     [(Shr) 18]))
 
-(define (tc-checked-binary-fact-index [left : i64] [capacity : i64]) : i64
-  (bit-and (bit-xor left (shr left 18)) (- capacity 1)))
+(define (tc-checked-binary-fact-slot
+  [slots : (Ptr TcCheckedBinaryFact)]
+  [mask : i64]
+  [key : i64]
+  [left : i64]
+  [right : i64]) : (Ptr TcCheckedBinaryFact)
+  (unsafe
+    (let
+      [index (bit-and (bit-xor left (shr left 18)) mask)]
+      [fact (ptr-offset slots index)]
+      (while (and
+        (!= (deref fact).declaration-and-op 0)
+        (or
+          (!= (deref fact).declaration-and-op key)
+          (!= (deref fact).left-id left)
+          (!= (deref fact).right-id right)))
+        (set! index (bit-and (+ index 1) mask))
+        (set! fact (ptr-offset slots index)))
+      fact)))
 
-(define (tc-checked-binary-facts-copy
+(define (tc-checked-binary-facts-rehash
   [capacity : i64]
   [old : (__tl_dyn-array TcCheckedBinaryFact)]) : (__tl_dyn-array
     TcCheckedBinaryFact)
   (let
     [next (__tl_make-array TcCheckedBinaryFact capacity)]
-    ;; Doubling splits each old bucket into two. Copy each resident,
-    ;; including any conflicted lanes, to its new bucket.
-    (for [index (iterator.range 0 (array-length old))]
+    [old-capacity (array-length old)]
+    ;; Copy all occupied buckets, including permanently conflicted lanes.
+    (unsafe
       (let
-        [fact (tc-global-array-element-shared-view old index)]
-        (when
-          (!= fact.declaration-and-op 0)
-          (set!
-            (array-ref
-              next
-              (tc-checked-binary-fact-index fact.left-id capacity))
-            fact))))
+        [slots (ptr-cast (__tl_array-data next) : (Ptr TcCheckedBinaryFact))]
+        (for [index (iterator.range 0 old-capacity)]
+          (let
+            [fact (tc-global-array-element-shared-view old index)]
+            (when
+              (!= fact.declaration-and-op 0)
+              (let
+                [destination
+                  (tc-checked-binary-fact-slot
+                    slots
+                    (- capacity 1)
+                    fact.declaration-and-op
+                    fact.left-id
+                    fact.right-id)]
+                (ptr-write!
+                  (ptr-cast destination : (MutPtr TcCheckedBinaryFact))
+                  fact)))))))
     next))
 
 (define (tc-checked-binary-facts-grow!
   [data : (MutPtr TcCheckedLetBindingFactStateData)]) : unit
   (unsafe
     (let
+      [old-arena (deref data).binary-fact-arena]
+      [fresh (arena.tl_arena_make)]
       [old (deref data).binary-facts]
       [capacity (* 2 (array-length old))]
       (in-arena
-        (arena.Arena (deref data).payload-arena)
+        (arena.Arena fresh)
         (set!
           (deref data).binary-facts
-          (tc-checked-binary-facts-copy capacity old))))))
+          (tc-checked-binary-facts-rehash capacity old)))
+      (set! (deref data).binary-fact-arena fresh)
+      (arena.tl_arena_destroy old-arena))))
 
 (define (tc-checked-binary-fact-syntax-key
   [ordinal : i64]
@@ -56533,8 +56597,9 @@
                 [pool-cell (ast.ast-node-pool-context-expr-cell-address pools)]
                 (when
                   (= (deref data).binary-pool-cell 0)
+                  (set! (deref data).binary-fact-arena (arena.tl_arena_make))
                   (in-arena
-                    (arena.Arena (deref data).payload-arena)
+                    (arena.Arena (deref data).binary-fact-arena)
                     (set!
                       (deref data).binary-facts
                       (__tl_make-array TcCheckedBinaryFact 1024)))
@@ -56551,50 +56616,47 @@
                     (< r (deref data).binary-expr-limit))
                   (let
                     [key (tc-checked-binary-fact-syntax-key ordinal op)]
-                    [index
-                      (tc-checked-binary-fact-index
-                        l
-                        (array-length (deref data).binary-facts))]
+                    [capacity (array-length (deref data).binary-facts)]
                     [fact
-                      (tc-global-array-element-shared-view
-                        (deref data).binary-facts
-                        index)]
+                      (ptr-cast
+                        (tc-checked-binary-fact-slot
+                          (ptr-cast
+                            (__tl_array-data (deref data).binary-facts)
+                            : (Ptr TcCheckedBinaryFact))
+                          (- capacity 1)
+                          key
+                          l
+                          r)
+                        : (MutPtr TcCheckedBinaryFact))]
+                    [empty? (= (deref fact).declaration-and-op 0)]
+                    [value
+                      (tc-checked-binary-fact-pack
+                        expected-tag
+                        left
+                        right
+                        result)]
                     (when
-                      (or
-                        (= fact.declaration-and-op 0)
-                        (and
-                          (= fact.declaration-and-op key)
-                          (= fact.left-id l)
-                          (= fact.right-id r)))
+                      empty?
+                      (set! (deref fact).declaration-and-op key)
+                      (set! (deref fact).left-id l)
+                      (set! (deref fact).right-id r))
+                    (if (= expected-tag 0)
+                      (set!
+                        (deref fact).plain
+                        (tc-checked-binary-fact-merge (deref fact).plain value))
+                      (set!
+                        (deref fact).contextual
+                        (tc-checked-binary-fact-merge
+                          (deref fact).contextual
+                          value)))
+                    (when
+                      empty?
                       (let
-                        [value
-                          (tc-checked-binary-fact-pack
-                            expected-tag
-                            left
-                            right
-                            result)]
+                        [count (+ (deref data).binary-fact-count 1)]
+                        (set! (deref data).binary-fact-count count)
                         (when
-                          (= fact.declaration-and-op 0)
-                          (set!
-                            (deref data).binary-fact-count
-                            (+ (deref data).binary-fact-count 1)))
-                        (set!
-                          (array-ref (deref data).binary-facts index)
-                          (if (= expected-tag 0)
-                            (TcCheckedBinaryFact
-                              key
-                              l
-                              r
-                              (tc-checked-binary-fact-merge fact.plain value)
-                              fact.contextual)
-                            (TcCheckedBinaryFact
-                              key
-                              l
-                              r
-                              fact.plain
-                              (tc-checked-binary-fact-merge
-                                fact.contextual
-                                value)))))))))]
+                          (> count (shr capacity 1))
+                          (tc-checked-binary-facts-grow! data)))))))]
             [_ unit]))))))
 
 (define (tc-checked-binary-fact-lookup
@@ -56618,22 +56680,20 @@
             (ast.ast-node-pool-context-expr-cell-address (tc-context-pools ctx))))
           (let
             [fact
-              (tc-global-array-element-shared-view
-                (deref data).binary-facts
-                (tc-checked-binary-fact-index
-                  l
-                  (array-length (deref data).binary-facts)))]
-            (if (and
-              (= fact.left-id l)
-              (= fact.right-id r)
-              (=
-                fact.declaration-and-op
-                (tc-checked-binary-fact-syntax-key ordinal op)))
+              (tc-checked-binary-fact-slot
+                (ptr-cast
+                  (__tl_array-data (deref data).binary-facts)
+                  : (Ptr TcCheckedBinaryFact))
+                (- (array-length (deref data).binary-facts) 1)
+                (tc-checked-binary-fact-syntax-key ordinal op)
+                l
+                r)]
+            (if (!= (deref fact).declaration-and-op 0)
               (if (= expected-tag 0)
-                (cast fact.plain : i64)
+                (cast (deref fact).plain : i64)
                 (let
-                  [contextual (cast fact.contextual : i64)]
-                  [plain (cast fact.plain : i64)]
+                  [contextual (cast (deref fact).contextual : i64)]
+                  [plain (cast (deref fact).plain : i64)]
                   (cond
                     [(and
                         (> contextual 0)

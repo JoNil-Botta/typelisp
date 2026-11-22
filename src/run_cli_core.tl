@@ -3,6 +3,7 @@
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. Package runs reuse the package build path, then execute the emitted
 ;; binary artifact. `--direct` remains accepted as a compatibility no-op.
+(import compiler_backend_state as be_state)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.vector)
@@ -10,7 +11,6 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
-(import compiler_backend as backend)
 (import compiler_driver_core as driver)
 (import compiler_ir_types as ir)
 (import compiler_load as load)
@@ -25,8 +25,8 @@
 (defenum RunCliConfig
   (Config
     String
-    backend.CompilerBackendTarget
-    backend.CompilerBackendMode
+    be_state.CompilerBackendTarget
+    be_state.CompilerBackendMode
     cli_svec.Vec
     cli_svec.Vec
     process.ProcessStringList
@@ -172,12 +172,12 @@
 
 (define (run-cli-run-source-with-doctests
   [source : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : cli_svec.Vec]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
     [doctest-status : i64
@@ -212,7 +212,7 @@
 
 (define (run-cli-run-package-artifact
   [bin-path : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [runtime-args : process.ProcessStringList]) : i64
   (match (build_run_core.source-tool-run-executable-inherit
     (string.copy (& bin-path))
@@ -237,7 +237,7 @@
   [manifest-path : String]
   [manifest : load.CompilerPkgManifest]
   [profile : build_cli_core.BuildProfile]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (let
     [normalized-path : String
       (build_cli_core.build-package-normalize-manifest-path manifest-path)]

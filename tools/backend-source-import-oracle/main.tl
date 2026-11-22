@@ -1,4 +1,5 @@
 ;; Test-only driver for the public standalone backend source helpers.
+(import compiler_backend_state as be_state)
 (import compiler_backend as backend)
 (import compiler_diagnostic as diagnostic)
 (import compiler_object_elf as elf)
@@ -14,11 +15,11 @@
     (io.panic
       "usage: backend-source-import-oracle linux|windows asm|object SOURCE OUTPUT"))
   (let
-    [target : backend.CompilerBackendTarget
+    [target : be_state.CompilerBackendTarget
       (if (string.eq (io.arg 1) "linux")
-        (backend.CompilerBackendTarget.Linux)
+        (be_state.CompilerBackendTarget.Linux)
         (if (string.eq (io.arg 1) "windows")
-          (backend.CompilerBackendTarget.Windows)
+          (be_state.CompilerBackendTarget.Windows)
           (io.panic "expected linux or windows")))]
     [source : String (byte_buf.to-string (io.read-file (io.arg 3)))]
     (when
@@ -31,23 +32,23 @@
             0
             2))))
     (let
-      [result : backend.ResultCompilerBackend
+      [result : be_state.ResultCompilerBackend
         (if (string.eq (io.arg 2) "asm")
           (backend.compiler-backend-emit-source-for-target source target)
           (if (string.eq (io.arg 2) "object")
             (match (backend.compiler-backend-emit-source-object-image-for-target
               source
               target)
-              [(Err error) (backend.ResultCompilerBackend.Err error)]
+              [(Err error) (be_state.ResultCompilerBackend.Err error)]
               [(Ok image)
                 (match target
                   [(Linux)
                     (match (elf.compiler-object-elf-render (& image))
-                      [(Ok bytes) (backend.ResultCompilerBackend.Ok bytes)]
+                      [(Ok bytes) (be_state.ResultCompilerBackend.Ok bytes)]
                       [(Err error) (io.panic error)])]
                   [(Windows)
                     (match (coff.compiler-object-coff-render (& image))
-                      [(Ok bytes) (backend.ResultCompilerBackend.Ok bytes)]
+                      [(Ok bytes) (be_state.ResultCompilerBackend.Ok bytes)]
                       [(Err error) (io.panic error)])])])
             (io.panic "expected asm or object")))]
       (match result

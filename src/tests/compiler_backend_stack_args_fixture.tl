@@ -1,14 +1,14 @@
 ;; compiler_backend_stack_args_fixture.tl - emit the stack-passed call
 ;; argument witness program's assembly for a target so the integration suite can
 ;; assemble, link, and RUN it, proving each spilled argument arrives correctly.
+(import compiler_backend_state as be_state)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
 (import compiler_backend_tests)
-(import compiler_backend as backend)
 (import compiler_diagnostic as diagnostic)
 
-(define (compiler-backend-stack-args-fixture-for-name [target-name : String]) : backend.ResultCompilerBackend
+(define (compiler-backend-stack-args-fixture-for-name [target-name : String]) : be_state.ResultCompilerBackend
   (if (string.eq target-name "linux-x86_64")
     (compiler_backend_tests.compiler-backend-stack-args-fixture-emit (Linux))
     (if (string.eq target-name "windows-x86_64")

@@ -1,5 +1,6 @@
 ;; Source-owned inline lifetime regressions, auto-discovered by
 ;; scripts/verify-inline-tests.sh on Linux and Windows.
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.arena)
@@ -9,7 +10,6 @@
 (import stdlib.vector)
 (import (vector.vector String) as roots_vec)
 (import compiler_ast_types as ast)
-(import compiler_backend as backend)
 (import compiler_builtin_ids as cbi)
 (import compiler_check_core as check)
 (import compiler_cfg_core as cfg_core)
@@ -36,7 +36,7 @@
 
 (define (discovery-test-load
   [path : String]
-  [target : backend.CompilerBackendTarget]) : driver.ResultCompilerDriverPackagePaths
+  [target : be_state.CompilerBackendTarget]) : driver.ResultCompilerDriverPackagePaths
   (driver.compiler-driver-load-package-paths-with-runtime
     path
     target

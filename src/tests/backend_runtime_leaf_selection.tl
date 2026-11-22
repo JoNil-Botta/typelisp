@@ -1,3 +1,4 @@
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_backend as backend)
 (import compiler_builtin_ids as cbi)
@@ -27,7 +28,7 @@
     [alias : i64 (ci.intern "runtime-leaf-alias")]
     [source : i64 (ci.intern "runtime-leaf-source")]
     [state
-      (backend.compiler-backend-state-new
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [externs
       (ir.compiler-ir-extern-seq1
@@ -42,7 +43,7 @@
           false
           (ir.CompilerIrReturnStorage.None)))]
     [index (backend.compiler-backend-runtime-index-empty)]
-    [refs (backend.BackendSymbolSeq (__tl_make-array i64 1) 0)]
+    [refs (be_state.BackendSymbolSeq (__tl_make-array i64 1) 0)]
     ;; An unused extern declaration is deliberately insufficient. Keep the
     ;; linked helper for either call identity or an address-taking reference.
     (when
@@ -130,13 +131,13 @@
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [index (backend.compiler-backend-runtime-index-empty)]
-    [refs (backend.BackendSymbolSeq (__tl_make-array i64 0) 0)]
+    [refs (be_state.BackendSymbolSeq (__tl_make-array i64 0) 0)]
     [externs (ir.compiler-ir-extern-seq-empty)]
     [state
-      (backend.compiler-backend-state-new
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     (match (backend.compiler-backend-runtime-plan-for-with-backend-state
-      (backend.compiler-backend-state-new
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))
       (ir.compiler-ir-function-seq-empty)
       (owned.compiler-owned-shared-view externs))

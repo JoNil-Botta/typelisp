@@ -5,6 +5,9 @@
 ;; Internal GP save set, a probed frame with XMM saves, and a frame whose save
 ;; offsets need the far encoding. Platform RSI/RDI saves are checked separately
 ;; on the C entries that the virtual-unwind driver calls.
+(import compiler_backend_operands as be_operand)
+(import compiler_backend_program_facts as be_facts)
+(import compiler_backend_state as be_state)
 (import compiler_abi as cabi)
 (import compiler_backend as backend)
 (import compiler_diagnostic as cdiag)
@@ -27,7 +30,7 @@
     table))
 
 (define (seh-oracle-function
-  [state : backend.CompilerBackendState]
+  [state : be_state.CompilerBackendState]
   [symbol : String]
   [assignments : regalloc.CompilerRegAssignmentTable]
   [vars : i64]
@@ -35,7 +38,7 @@
   (let
     [entry : String
       (backend.compiler-backend-emit-function-entry
-        (backend.compiler-backend-target-policy-new Windows)
+        (be_state.compiler-backend-target-policy-new Windows)
         (string.copy symbol)
         frame
         assignments
@@ -66,7 +69,7 @@
           "    .seh_endproc\n")]
       [(Err _) ""])))
 
-(define (seh-oracle-asm [state : backend.CompilerBackendState]) : String
+(define (seh-oracle-asm [state : be_state.CompilerBackendState]) : String
   (let
     [full : regalloc.CompilerRegAssignmentTable
       (seh-oracle-home
@@ -110,16 +113,16 @@
         "seh_oracle_full"
         full
         3
-        (backend.compiler-backend-frame-size
-          (backend.compiler-backend-frame-slots 3 full state)))]
+        (be_facts.compiler-backend-frame-size
+          (be_operand.compiler-backend-frame-slots 3 full state)))]
     [mixed-text : String
       (seh-oracle-function
         state
         "seh_oracle_probed"
         mixed
         600
-        (backend.compiler-backend-frame-size
-          (backend.compiler-backend-frame-slots 600 mixed state)))]
+        (be_facts.compiler-backend-frame-size
+          (be_operand.compiler-backend-frame-slots 600 mixed state)))]
     [far-text : String
       (seh-oracle-function state "seh_oracle_far" far 3 600000)]
     (if (or
@@ -136,13 +139,13 @@
         "compiler-backend-seh-savereg-fixture: expected output path")
       2)
     (let
-      [state : backend.CompilerBackendState
-        (backend.compiler-backend-state-new
+      [state : be_state.CompilerBackendState
+        (be_state.compiler-backend-state-new
           (ci.intern-compat-state-capture-active))]
       [_win : unit
-        (backend.compiler-backend-function-state-set-bool!
-          (backend.compiler-backend-state-function-state state)
-          backend.compiler-backend-function-bool-current-fn-win64
+        (be_state.compiler-backend-function-state-set-bool!
+          (be_state.compiler-backend-state-function-state state)
+          be_state.compiler-backend-function-bool-current-fn-win64
           true)]
       [text : String (seh-oracle-asm state)]
       (if (string.eq text "")

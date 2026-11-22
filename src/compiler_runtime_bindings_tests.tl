@@ -1,5 +1,6 @@
 ;; compiler_runtime_bindings_tests.tl - The runtime binding table against its
 ;; producers and the Windows object route (#8318).
+(cfg test (import compiler_backend_state as be_state))
 (import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.string)
@@ -621,7 +622,7 @@ windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
 (test
   runtime-bindings-planned-runtime-definition-is-not-a-binding
   (let
-    [planned : backend.BackendStringSeq
+    [planned : be_state.BackendStringSeq
       (backend.compiler-backend-object-runtime-symbols-list)]
     (test.assert-true (> planned.len 0) "the object runtime plans definitions")
     (for [index (iterator.range 0 planned.len)]

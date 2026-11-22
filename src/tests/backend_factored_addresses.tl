@@ -1,5 +1,7 @@
 ;; Exercise address factoring with real whole-function use counts and explicit
 ;; register homes. A second block keeps an otherwise adjacent offset live.
+(import compiler_backend_operands as be_operand)
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_backend as backend)
 (import compiler_backend_tests as fixtures)
@@ -17,7 +19,7 @@
 (define (check-case [factor : i64] [mode : i64] [windows : bool]) : unit
   (let
     [b
-      (backend.compiler-backend-state-new
+      (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [p
       (fixtures.compiler-backend-program-index-build
@@ -152,9 +154,9 @@
           6
           (view.compiler-owned-shared-view blocks))]
       [ctx
-        (backend.CompilerBackendEmissionContext
+        (be_state.CompilerBackendEmissionContext
           (ast.ast-node-pool-reader-type-segment-bases)
-          (backend.compiler-backend-target-policy-new
+          (be_state.compiler-backend-target-policy-new
             (if windows
               (Windows)
               (Linux)))
@@ -177,7 +179,7 @@
           (diagnostic.compiler-diagnostic-at-start "" "")
           uses
           b
-          (backend.compiler-backend-state-function-state b))]
+          (be_state.compiler-backend-state-function-state b))]
       [accepted : bool
         (and
           (or
@@ -214,8 +216,8 @@
         (match result
           [(Some text)
             (and
-              (backend.compiler-backend-string-contains? text "    leaq (")
-              (not (backend.compiler-backend-string-contains? text "imul")))]
+              (be_operand.compiler-backend-string-contains? text "    leaq (")
+              (not (be_operand.compiler-backend-string-contains? text "imul")))]
           [(No) false])
         "factoring admission")
       (test.assert-i64-eq
@@ -234,7 +236,8 @@
           (test.assert-i64-eq
             32
             (let
-              [function-state (backend.compiler-backend-state-function-state b)]
+              [function-state
+                (be_state.compiler-backend-state-function-state b)]
               [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
               [offset (ir.CompilerIrValue.Var 0)]
               [elem-ty (ast.AstType.U8)]

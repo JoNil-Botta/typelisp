@@ -1,4 +1,5 @@
 ;; compiler_backend_runtime_fixture.tl - emit runtime-helper backend fixture assembly.
+(import compiler_backend_state as be_state)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -6,7 +7,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as diagnostic)
 
-(define (compiler-backend-runtime-fixture-emit [target-name : String]) : compiler_backend.ResultCompilerBackend
+(define (compiler-backend-runtime-fixture-emit [target-name : String]) : be_state.ResultCompilerBackend
   (cond
     [(string.eq target-name "linux-x86_64")
       (compiler_backend.compiler-backend-emit-program-linux

@@ -1,3 +1,4 @@
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.vector)
@@ -13,14 +14,13 @@
 (import compiler_driver_core as driver)
 (import compiler_ast_types as ast)
 (import compiler_parse_core as parser)
-(import compiler_backend as backend)
 (import compiler_owned_view as owned_view)
 (import compiler_windows_coff_core as coff)
 (import stdlib.text_buf)
 
 (define (runtime-owner-smoke-for-route-and-entry
   [source : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [level : i64]
   [direct-object : bool]
   [emit-entry : bool]) : String
@@ -145,7 +145,7 @@
 
 (define (runtime-owner-smoke-for-route
   [source : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [level : i64]
   [direct-object : bool]) : String
   (runtime-owner-smoke-for-route-and-entry
@@ -157,7 +157,7 @@
 
 (define (runtime-owner-smoke-for
   [source : String]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [level : i64]) : String
   (runtime-owner-smoke-for-route source target level false))
 

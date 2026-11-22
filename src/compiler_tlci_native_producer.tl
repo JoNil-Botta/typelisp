@@ -11,6 +11,7 @@
 ;; and resolves the compiled entries by the compact function-symbol contract.
 ;; Bodies outside the supported subset compile to ok-with-no-result shells so
 ;; the dispatch route keeps its counted interpreted fallback.
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_ast_types)
@@ -9253,7 +9254,7 @@
 
 (define (embedded-native-lower-source
   [source : String]
-  [target : compiler_backend.CompilerBackendTarget]) : compiler_lower.ResultCompilerLower
+  [target : be_state.CompilerBackendTarget]) : compiler_lower.ResultCompilerLower
   (match (compiler_backend.compiler-backend-lower-source-for-target-in-session
     source
     target)
@@ -9280,7 +9281,7 @@
   [names : (__tl_dyn-array String)]
   [source : String]) : ResultProducerBytes
   (let
-    [target : compiler_backend.CompilerBackendTarget
+    [target : be_state.CompilerBackendTarget
       (if windows-target
         (Windows)
         (Linux))]

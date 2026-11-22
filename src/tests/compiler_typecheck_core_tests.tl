@@ -13250,7 +13250,11 @@
               (tc_i64_i64_map.with-capacity 0)
               -1
               false
-              false)]
+              false
+              false
+              false
+              (effect_words.new)
+              (effect_words.new))]
           [outer : tc_core.TcNameIdList
             (tc_core.tc-global-effect-bind!
               (&mut collector)

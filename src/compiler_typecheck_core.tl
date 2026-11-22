@@ -359,6 +359,20 @@
   (job-epoch i64)
   (result bool))
 
+;; A splice re-resolution asks the same unresolved signature leaves again at
+;; every cache layer. A `Var` leaf that resolves to itself is unchanged, and
+;; that answer holds while the resolution inputs, the name ID's structural
+;; session and the job stay put. Only `true` answers are kept: the first leaf
+;; that resolves to something else is rebuilt instead of probed again.
+(defstruct TcTypeResolutionLeafMemoEntry
+  (type-name-generation i64)
+  (session-owner i64)
+  (session-generation i64)
+  (intern-owner i64)
+  (intern-generation i64)
+  (module-id i64)
+  (name i64))
+
 (defstruct TcTypeResolutionCacheStateData
   (owner-arena i64)
   (slots (__tl_dyn-array i64))
@@ -366,6 +380,10 @@
   (type-pool-owner-id i64)
   (type-segment-bases i64)
   (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry))
+  ;; `tc-type-rebuild-var-resolves-to-itself?` lanes, allocated in
+  ;; `owner-arena` on first use. A changed stamp or a job reset matches no
+  ;; entry.
+  (leaf-slots (__tl_dyn-array TcTypeResolutionLeafMemoEntry))
   ;; The lanes of `tc-selected-holds-memo-bind!`, allocated on first use in
   ;; `holds-memo-arena` (0 until then). Their entries hold for one resolution
   ;; stamp, which every file moves, so the file boundary frees them
@@ -929,6 +947,7 @@
         0
         0
         (__tl_make-array TcLifetimeOutlivesMemoEntry 0)
+        (__tl_make-array TcTypeResolutionLeafMemoEntry 0)
         0
         0))
     (TcTypeResolutionCacheState
@@ -46198,6 +46217,94 @@
         same)
       true)))
 
+;; One direct-mapped table in the job's resolution cache remembers the `Var`
+;; leaves `tc-type-rebuild-resolves-to-itself?` proved unchanged. A slot holds
+;; one entry: equal means the leaf resolves to itself under the same type-name
+;; resolution generation, structural session and intern table. Every expansion
+;; walk advances the generation, so no entry crosses a program boundary.
+(define tc-type-resolution-leaf-memo-capacity : i64
+  1024)
+
+(define (tc-type-resolution-leaf-memo-storage-ensure!
+  [state : TcTypeResolutionCacheState]) : unit
+  (let
+    [data : (MutPtr TcTypeResolutionCacheStateData)
+      (tc-type-resolution-cache-state-ptr state)]
+    (unsafe
+      (when
+        (= (array-length (deref data).leaf-slots) 0)
+        (in-arena
+          (arena.Arena (deref data).owner-arena)
+          (set!
+            (deref data).leaf-slots
+            (__tl_make-array
+              TcTypeResolutionLeafMemoEntry
+              tc-type-resolution-leaf-memo-capacity)))))))
+
+(define (tc-type-resolution-leaf-memo-slot [module-id : i64] [name : i64]) : i64
+  (bit-and
+    (bit-xor
+      (* module-id 2654435761)
+      (shr module-id 17)
+      (* name 40503)
+      (shr name 13))
+    (- tc-type-resolution-leaf-memo-capacity 1)))
+
+(define (tc-type-rebuild-var-resolves-to-itself?
+  [ctx : TcContext]
+  [name : i64]
+  [ty : ast.AstType]) : bool
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-context-job-state ctx))]
+    [_storage : unit (tc-type-resolution-leaf-memo-storage-ensure! state)]
+    [data : TcTypeResolutionCacheStateData
+      (tc-type-resolution-cache-state-data state)]
+    [resolution-ctx : TcContext (tc-context-for-type-resolution ctx)]
+    [module-id : i64 (tc-context-module-id resolution-ctx)]
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [generation : i64 tc-top-env-resolution-generation]
+    [session-owner : i64 (cis.intern-structural-session-owner session)]
+    [session-generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
+    [intern-owner : i64 (ci.intern-active-table-id)]
+    [intern-generation : i64 (ci.intern-generation)]
+    [slot : i64 (tc-type-resolution-leaf-memo-slot module-id name)]
+    [entry : (& data TcTypeResolutionLeafMemoEntry)
+      (& (array-ref data.leaf-slots slot))]
+    (if (and
+      (> generation 0)
+      (= entry.type-name-generation generation)
+      (= entry.session-owner session-owner)
+      (= entry.session-generation session-generation)
+      (= entry.intern-owner intern-owner)
+      (= entry.intern-generation intern-generation)
+      (= entry.module-id module-id)
+      (= entry.name name))
+      true
+      (let
+        [same : bool
+          (ast.ast-type-eq?
+            (tc-resolve-type-name
+              resolution-ctx
+              (tc-hygiene-name-text-id-for-session session name)
+              name)
+            ty)]
+        (when
+          (and same (> generation 0))
+          (set!
+            (array-ref data.leaf-slots slot)
+            (TcTypeResolutionLeafMemoEntry
+              generation
+              session-owner
+              session-generation
+              intern-owner
+              intern-generation
+              module-id
+              name)))
+        same))))
+
 (define (tc-type-rebuild-resolves-to-itself?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
@@ -46224,15 +46331,7 @@
           name
           (deref lifetimes))
         (tc-global-shared-view ty))]
-    [(Var name)
-      (ast.ast-type-eq?
-        (tc-resolve-type-name
-          ctx
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)
-          name)
-        ty)]
+    [(Var name) (tc-type-rebuild-var-resolves-to-itself? ctx name ty)]
     [_ true]))
 
 (define (tc-canonicalize-resolved-nominal-type-list-at
@@ -107079,6 +107178,40 @@
       (Some (macro-decl-list-reverse out-rev))
       (No))))
 
+(define (macro-segmented-module-exists?
+  [state : TcJobState]
+  [target-module : (& str)]) : bool
+  (let
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    (while iter.has-current
+      (let
+        [decls : ast.AstDeclList (tc-global-shared-view iter.decls)]
+        [index : i64 iter.index]
+        (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+          [(Module _)
+            (when
+              (string.eq
+                (tc-env-key-name-text
+                  (ast.ast-decl-list-module-id-at
+                    (& decls)
+                    index
+                    cbi.compiler-builtin-id-fix-empty))
+                target-module)
+              (return true))]
+          [_ unit])
+        (macro-segmented-program-iter-advance! (&mut iter))))
+    false))
+
+;; A memo hit needs only the presence of the target's marker, not the body it
+;; would collect and discard.
+(define (macro-module-present-in-context?
+  [ctx : TcContext]
+  [decls : ast.AstDeclList]
+  [target-module : (& str)]) : bool
+  (if (macro-segmented-program-active? (tc-context-job-state ctx))
+    (macro-segmented-module-exists? (tc-context-job-state ctx) target-module)
+    (macro-module-exists? decls target-module)))
+
 (define (macro-find-module-body-decls-in-context
   [ctx : TcContext]
   [decls : ast.AstDeclList]
@@ -124230,22 +124363,21 @@
                                             alias
                                             span)]
                                         [expanded : ast.AstDeclList
-                                          (match (macro-find-module-body-decls-in-context
+                                          (if (macro-module-present-in-context?
                                             ctx
                                             orig-decls
-                                            target-module)
-                                            [(Some _) marker]
-                                            [(No)
-                                              (macro-decl-list-append
-                                                (&
-                                                  (ast.ast-decl-list-prepend-builder
-                                                    (ast.ast-decl-module-id
-                                                      target-id)
-                                                    catalog))
+                                            (& target-module))
+                                            marker
+                                            (macro-decl-list-append
+                                              (&
                                                 (ast.ast-decl-list-prepend-builder
                                                   (ast.ast-decl-module-id
-                                                    module-id)
-                                                  marker))])]
+                                                    target-id)
+                                                  catalog))
+                                              (ast.ast-decl-list-prepend-builder
+                                                (ast.ast-decl-module-id
+                                                  module-id)
+                                                marker)))]
                                         (Ok
                                           (tc-global-shared-view expanded)
                                           (macro-paths-for-decls

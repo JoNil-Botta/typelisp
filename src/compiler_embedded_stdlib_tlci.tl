@@ -25,6 +25,7 @@
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
+(import stdlib.hash)
 (import stdlib.string)
 
 ;; Native-comptime session cells are process-global owner slots. Read-only
@@ -532,14 +533,47 @@
                 (+= compiler-embedded-stdlib-tlci-stress-image-generations 1))
               true]))])))
 
+;; The embedded catalog is immutable for the process, so a frame's ordinal by
+;; name survives every macro pass and job. One slot per name hash; a stored
+;; ordinal is revalidated against its own name before it is reused, and only
+;; found ordinals are kept (index 0 is the surface, missing is -1).
+(define compiler-embedded-stdlib-tlci-frame-memo : (Array i64 256)
+  (make-array i64 256))
+
+(define (compiler-embedded-stdlib-tlci-frame-find
+  [catalog : (& catalog frames.CompilerEmbeddedStdlibTlciFrames)]
+  [name : (& name str)]) : i64
+  (let
+    [slot : i64 (bit-and (hash.string-key name) 255)]
+    [index : i64 (array-ref compiler-embedded-stdlib-tlci-frame-memo slot)]
+    (if (and
+      (> index 0)
+      (=
+        0
+        (frames.compiler-embedded-stdlib-tlci-frames-name-order
+          (& payload.embedded-stdlib-tlci-bytes)
+          catalog
+          index
+          name)))
+      index
+      (let
+        [found : i64
+          (frames.compiler-embedded-stdlib-tlci-frames-find
+            (& payload.embedded-stdlib-tlci-bytes)
+            catalog
+            name)]
+        (when
+          (> found 0)
+          (set! (array-ref compiler-embedded-stdlib-tlci-frame-memo slot) found))
+        found))))
+
 (define (compiler-embedded-stdlib-tlci-catalog-lookup [name : String]) : CompilerEmbeddedStdlibTlciLookup
   (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
     (Unavailable "embedded stdlib tlci is unavailable in the seed/test build")
     (let
       [index : i64
-        (frames.compiler-embedded-stdlib-tlci-frames-find
-          (& payload.embedded-stdlib-tlci-bytes)
-          (array-ref compiler-embedded-stdlib-tlci-frames 0)
+        (compiler-embedded-stdlib-tlci-frame-find
+          (& (array-ref compiler-embedded-stdlib-tlci-frames 0))
           (& name))]
       (cond
         [(< index 0) Missing]

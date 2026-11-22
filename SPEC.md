@@ -9879,6 +9879,11 @@ and not a general manual memory management feature.
   lowering bypass. Missing or ambiguous dependencies, cleanup-owning types,
   cycles, raw pointers, references, and unsupported shapes are rejected with an
   expansion diagnostic.
+- After `(import stdlib.clone)`, `(clone.deep value)` uses the operand's
+  produced type to deep-copy it in the current arena, evaluating the operand
+  once and calling the owner's generated clone function for each nominal type.
+  Pass a place or an rvalue such as a call result; for a conditional or block
+  (`if`, `let`, or `match`), call `clone.deep` in each result position.
 - During the #7073 repository migration, `(clone value)` and `with-escape`
   still use the compiler-checked clone surface described below. New owner code
   should use `gen-clone`; the compiler-special spelling, reachable-root

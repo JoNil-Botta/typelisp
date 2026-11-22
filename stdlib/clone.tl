@@ -1,7 +1,8 @@
 ;# Explicit deep-clone declaration generation and the transitional compiler
 ;# handoff for compiler-checked `(clone value)` roots.
 ;#
-;# `(gen-clone T)` is the public direction: an owning module requests one
+;# With `(clone.deep value)`, callers deep-copy structural or nominal values.
+;# With `(gen-clone T)`, an owning module requests one
 ;# ordinary `clone-<kebab-name>` function with signature `(& T) -> T`. The
 ;# generated body reconstructs the aggregate and uses only ordinary language
 ;# and stdlib operations. Nominal dependencies must have their own generated
@@ -344,11 +345,27 @@
             ,source
             ,root-key-expr
             ,path-expr))
-        `(stdlib.clone.clone-borrowed-value
-          ,T
-          ,source
-          ,root-key-expr
-          ,path-expr))
+        (let
+          ;; A shared borrow exposes the underlying shape of a region-tagged
+          ;; value and strips any nested allocation region tags. An owned
+          ;; String exposes its unsized str view.
+          [value-type : comptime.Expr
+            (match kind
+              ["region"
+                (let
+                  [referent : comptime.Expr
+                    (comptime.reference-element-type source-type)]
+                  (if (string-eq (type-kind referent) "str")
+                    (type String)
+                    referent))]
+              [(or "tuple" "array" "dyn-array" "box")
+                (comptime.reference-element-type source-type)]
+              [_ T])]
+          `(stdlib.clone.clone-borrowed-value
+            ,value-type
+            ,source
+            ,root-key-expr
+            ,path-expr)))
       ;; Only a Copy payload binds by value; its copy is the clone.
       source)))
 
@@ -408,7 +425,7 @@
           `(let
             [__clone_source ,source]
             [__clone_len : i64 (array-length __clone_source)]
-            [__clone_out : ,T (__tl_make-array ,element-type __clone_len)]
+            [__clone_out (__tl_make-array ,element-type __clone_len)]
             [__clone_index : i64 0]
             (while (< __clone_index __clone_len)
               (set!
@@ -444,6 +461,34 @@
             (comptime.string-append
               (type-key T)
               (comptime.string-append " at " path))))])))
+
+;: Deep-copy a value, evaluating the operand once and preserving borrowed places.
+;:
+;: Pass a place or an rvalue such as a call result; for a conditional or block
+;: (`if`, `let`, or `match`), call `clone.deep` in each result position.
+;: A nominal type must expose its generated clone function from its owner.
+(defmacro (deep [value : comptime.Expr]) : comptime.Expr
+  (match value
+    [(or (comptime.Expr.If _ _ _) (comptime.Expr.Begin _))
+      (comptime.comptime-error
+        "clone.deep: clone each branch or block result separately")]
+    [_
+      (let
+        [T : comptime.Expr (comptime.expr-type value)]
+        [kind : String (type-kind T)]
+        (match kind
+          [(or "unit" "never" "bool" "char" "i64" "i32" "i16" "i8" "u64" "u32"
+               "u16" "u8" "f64" "f32")
+            value]
+          [(or "tuple" "array" "dyn-array" "box" "region")
+            (let
+              [name : String (comptime.syntax-name-fresh "__clone_deep_source")]
+              [source : comptime.Expr (comptime.expr-var name)]
+              (comptime.expr-shared-let-scope
+                name
+                value
+                `(stdlib.clone.clone-value ,T ,source "" "clone.deep")))]
+          [_ `(stdlib.clone.clone-borrowed-value ,T (& ,value) "" "clone.deep")]))]))
 
 ;: Generate the body of an ordinary clone function for a struct root.
 (defmacro (clone-struct-root [T : type] [root-key-expr : comptime.Expr]) : comptime.Expr

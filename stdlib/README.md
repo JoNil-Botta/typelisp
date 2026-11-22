@@ -92,6 +92,10 @@ so this section only maps the modules by area. Import a module with
 
 - Language support: `runtime`, `core_macros`, `comptime`, `clone`, `eq`,
   `hash`, `option`, `result`, `iterator`, `test`, `profile`, `ffi`, `cpu`.
+  After `(import stdlib.clone)`, `(clone.deep value)` deep-copies a value of a
+  supported type, using the owner's `(gen-clone T)` hook for nominal types.
+  Pass a place or an rvalue such as a call result; for a conditional or block
+  (`if`, `let`, or `match`), call `clone.deep` in each result position.
 - Text and formatting: `string`, `string_utf8`, `str_cat`, `str_cat_runtime`,
   `string_caller_result`, `text_buf`, `text_buf_borrowed`, `text_buf_family`,
   `format`, `format_writer_core`, `json`, `serialize`.

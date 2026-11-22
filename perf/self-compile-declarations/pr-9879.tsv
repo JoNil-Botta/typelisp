@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+5102.543	+0.51% hosted self-compile cost for pricing high-fanout inline copies and filtering cold checked-inline copies. The release-configured Linux stage0 rebuild saves 64,636 bytes of .text against the same-commit control. CI own cost +548,872,664 Ir (M(T) 108,117,330,716 vs M(B) 107,568,458,052 from reference run 45050337093 attempt 1).

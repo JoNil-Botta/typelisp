@@ -85,6 +85,7 @@
   (end-col i64))
 
 (defstruct ParseSemanticOriginVec
+  (arena-handle i64)
   (items (__tl_dyn-array ParseSemanticOriginRecord))
   (len i64))
 
@@ -104,15 +105,6 @@
   (occurrences i64)
   (runs i64)
   (wide-spans i64))
-
-(defstruct CompilerParseOriginCopyRange
-  (reader-start i64)
-  (reader-end i64)
-  (origin-start i64)
-  (origin-end i64)
-  ;; Detached parses have not published handles or scratch declaration keys.
-  ;; Transfer their directory entries in place; ordinary copies append refs.
-  (retire-source bool))
 
 (define (compiler-parse-origin-word [storage : i64] [slot : i64]) : i64
   (compiler-parse-raw-i64-ref storage slot))
@@ -443,7 +435,10 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ParseSemanticOriginVec (__tl_make-array ParseSemanticOriginRecord cap) 0)))
+    (ParseSemanticOriginVec
+      (arena.tl_arena_current)
+      (__tl_make-array ParseSemanticOriginRecord cap)
+      0)))
 
 (define (parse-semantic-origin-vec-grow!
   [items : (&mut items ParseSemanticOriginVec)]) : unit
@@ -451,11 +446,14 @@
     [old : (__tl_dyn-array ParseSemanticOriginRecord) items.items]
     [old-cap : i64 (array-length old)]
     [next : (__tl_dyn-array ParseSemanticOriginRecord)
-      (__tl_make-array
-        ParseSemanticOriginRecord
-        (if (< old-cap 1)
-          1
-          (* old-cap 2)))]
+      (in-arena
+        (unsafe
+          (arena.Arena items.arena-handle))
+        (__tl_make-array
+          ParseSemanticOriginRecord
+          (if (< old-cap 1)
+            1
+            (* old-cap 2))))]
     (if (> items.len 0)
       (unsafe
         (compiler-parse-runtime-copy-bytes!
@@ -1630,92 +1628,6 @@
             source-slot)))
       unit)))
 
-(define (compiler-parse-decl-origin-copy-direct-records!
-  [storage : i64]
-  [source : (& source ast.AstDeclList)]
-  [dest : (& dest ast.AstDeclList)]
-  [dest-slot : i64]
-  [range : CompilerParseOriginCopyRange]) : unit
-  (let
-    [source-key : i64 (compiler-parse-decl-list-storage-key source)]
-    [source-start : i64 source.offset]
-    [source-end : i64 (+ source-start (ast.ast-decl-list-len source))]
-    [dest-key : i64 (compiler-parse-decl-list-storage-key dest)]
-    [dest-start : i64 (+ dest.offset dest-slot)]
-    [cursor : i64 range.reader-start]
-    [limit : i64 range.reader-end]
-    (let
-      [runs : i64 range.origin-end]
-      (for [record (iterator.range range.origin-start runs)]
-        (let
-          [slot : i64 (compiler-parse-origin-run-word storage record 1)]
-          [boundary : i64 (compiler-parse-origin-run-word storage record 4)]
-          (when
-            (and
-              (= source-key (compiler-parse-origin-run-word storage record 0))
-              (>= slot source-start)
-              (< slot source-end)
-              (>= boundary range.reader-start)
-              (<= boundary range.reader-end))
-            (if range.retire-source
-              (let
-                [serial : i64 (+ (compiler-parse-origin-word storage 5) 1)]
-                (compiler-parse-origin-run-word-set! storage record 0 dest-key)
-                (compiler-parse-origin-run-word-set!
-                  storage
-                  record
-                  1
-                  (+ dest-start (- slot source-start)))
-                (compiler-parse-origin-run-word-set!
-                  storage
-                  record
-                  4
-                  (reader.sp-node-pool-len))
-                (compiler-parse-origin-run-word-set! storage record 5 serial)
-                (compiler-parse-origin-word-set! storage 5 serial))
-              (compiler-parse-origin-append-reference!
-                storage
-                dest-key
-                (+ dest-start (- slot source-start))
-                (compiler-parse-origin-run-word storage record 2)
-                (compiler-parse-origin-run-word storage record 3)))))))
-    (while (< cursor limit)
-      (match (reader.sp-node-get cursor)
-        [(Int record-key marker _)
-          (if (= record-key source-key)
-            (cond
-              [(and
-                  (compiler-parse-marker? marker "__tl_decl_origin")
-                  (< (+ cursor 2) limit))
-                (match (reader.sp-node-get (+ cursor 1))
-                  [(Int record-slot run-marker marker-span)
-                    (if (and
-                      (compiler-parse-marker?
-                        run-marker
-                        "__tl_decl_origin_start")
-                      (>= record-slot source-start)
-                      (< record-slot source-end))
-                      (begin
-                        (reader.sp-node-push
-                          (Int
-                            dest-key
-                            (compiler-parse-marker "__tl_decl_origin")
-                            marker-span))
-                        (reader.sp-node-push
-                          (Int
-                            (+ dest-start (- record-slot source-start))
-                            (compiler-parse-marker "__tl_decl_origin_start")
-                            marker-span))
-                        (reader.sp-node-push (reader.sp-node-get (+ cursor 2)))
-                        unit)
-                      unit)]
-                  [_ unit])]
-              [else unit])
-            unit)]
-        [_ unit])
-      (set! cursor (+ cursor 1)))
-    (compiler-parse-semantic-origin-lookup-cache-reset!)))
-
 (define (compiler-parse-decl-origin-register-list-aliases!
   [decls : (& decls ast.AstDeclList)]
   [decl-slot : i64]
@@ -2692,13 +2604,13 @@
       (compiler-parse-dispatch-intern-state dispatch)]
     (ci.intern-compat-state-syntax-id-text intern-state id)))
 
-(define (compiler-parse-dispatch-id-str
+(define (compiler-parse-dispatch-copy-id-str
   [dispatch : sym_i64_env.SymI64Env]
   [id : ci.InternId]) : String
   (let
     [intern-state : ci.InternCompatState
       (compiler-parse-dispatch-intern-state dispatch)]
-    (ci.intern-compat-state-id-str intern-state id)))
+    (string.copy (& (ci.intern-compat-state-id-str intern-state id)))))
 
 (define (compiler-parse-cfg-intern-owner-control [cfgs : sym_i64_env.SymI64Env]) : i64
   (let
@@ -4896,7 +4808,7 @@
       (Ok
         (ast.ast-node-pool-context-expr-push
           pools
-          (BinaryData (compiler-parse-dispatch-id-str dispatch bytes))))]
+          (BinaryData (compiler-parse-dispatch-copy-id-str dispatch bytes))))]
     [_ (Err "parse: malformed internal binary data")]))
 
 (define (parse-ast-resolved-nominal-type
@@ -10331,7 +10243,9 @@
     [(slice (Str value-id _))
       (if (>
         (string.string-length
-          (compiler-parse-dispatch-id-str dispatch value-id))
+          (ci.intern-compat-state-id-str
+            (& (compiler-parse-dispatch-intern-state dispatch))
+            value-id))
         0)
         (Ok (ast.ast-fn-export-id value-id))
         (Err "parse: define :export-symbol must not be empty"))]
@@ -10865,7 +10779,7 @@
   (match tail
     [(slice (Str value-id _))
       (let
-        [value : String (compiler-parse-dispatch-id-str dispatch value-id)]
+        [value : String (compiler-parse-dispatch-copy-id-str dispatch value-id)]
         (if (> (string.string-length value) 0)
           (Ok value value-id)
           (Err (str_cat.str-cat "parse: extern " key " must not be empty"))))]
@@ -11646,7 +11560,23 @@
   (let
     [previous-capture : CompilerParseSemanticOriginCaptureState
       (compiler-parse-semantic-origin-capture-current)]
-    [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
+    ;; Nested collectors share the enclosing collector's scratch owner.
+    [scratch : i64
+      (if (= previous-capture.vec-addr 0)
+        (arena.tl_arena_current)
+        (let
+          [parent : ParseSemanticOriginVec
+            (unsafe
+              (ptr-read
+                (int->ptr
+                  previous-capture.vec-addr
+                  : (Ptr ParseSemanticOriginVec))))]
+          parent.arena-handle))]
+    [out : ParseAstDeclVec
+      (in-arena
+        (unsafe
+          (arena.Arena scratch))
+        (parse-ast-decl-vec-new dispatch))]
     [result : ResultAstDecl
       (match (parse-ast-module-body-forms-into-vec
         dispatch
@@ -11694,7 +11624,7 @@
   (Ok
     (Import
       (ast.ast-decl-meta-runtime-shared-view)
-      (Spec kind path module-name alias (box span)))))
+      (Spec kind (string.copy (& path)) module-name alias (box span)))))
 
 (define (parse-ast-import-alias
   [kind : ast.AstImportKind]
@@ -11964,7 +11894,7 @@
       (Ok
         (IncludeStr
           (ci.intern-syntax-id-value name)
-          (compiler-parse-dispatch-id-str dispatch path-id)))]
+          (compiler-parse-dispatch-copy-id-str dispatch path-id)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
       (Err
         (parse-kind-message
@@ -12006,7 +11936,7 @@
       (Ok
         (IncludeStrComptime
           (ci.intern-syntax-id-value name)
-          (compiler-parse-dispatch-id-str dispatch path-id)))]
+          (compiler-parse-dispatch-copy-id-str dispatch path-id)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
       (Err
         (parse-kind-message
@@ -12051,7 +11981,7 @@
       (Ok
         (IncludeStrLzss
           (ci.intern-syntax-id-value name)
-          (compiler-parse-dispatch-id-str dispatch path)))]
+          (compiler-parse-dispatch-copy-id-str dispatch path)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
       (Err
         (parse-kind-message
@@ -12094,7 +12024,7 @@
       (Ok
         (IncludeBin
           (ci.intern-syntax-id-value name)
-          (compiler-parse-dispatch-id-str dispatch path-id)))]
+          (compiler-parse-dispatch-copy-id-str dispatch path-id)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
       (Err
         (parse-kind-message
@@ -12177,7 +12107,9 @@
                       [(slice (Str reason-id _))
                         (let
                           [reason : String
-                            (compiler-parse-dispatch-id-str dispatch reason-id)]
+                            (compiler-parse-dispatch-copy-id-str
+                              dispatch
+                              reason-id)]
                           (if (= (string.string-length reason) 0)
                             (Err "parse: test :ignore reason must not be empty")
                             (parse-ast-test-metadata-forms
@@ -12555,7 +12487,10 @@
   [span : ast.AstSourceSpan]) : unit
   (if (< v.len (array-length v.slots))
     unit
-    (parse-ast-decl-vec-grow v))
+    (in-arena
+      (unsafe
+        (arena.Arena v.semantic-origins.arena-handle))
+      (parse-ast-decl-vec-grow v)))
   (let
     [index : i64 v.len]
     (set! (array-ref v.slots index) value)
@@ -13293,7 +13228,10 @@
               semantic-origins
               out.len
               (compiler-parse-binding-origins-enabled dispatch))
-            (match (parse-ast-decl-maybe-with-pools dispatch pools spanned-form)
+            (match (in-arena
+              (unsafe
+                (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+              (parse-ast-decl-maybe-with-pools dispatch pools spanned-form))
               [(SomeDecl decl)
                 (parse-ast-decl-vec-push-with-span
                   out
@@ -13388,7 +13326,12 @@
           (ptr-addr-of out.semantic-origins))
         (&mut out))]
     (match result
-      [(Ok) (Ok (parse-ast-decl-vec-to-list (& out)))]
+      [(Ok)
+        (Ok
+          (in-arena
+            (unsafe
+              (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+            (parse-ast-decl-vec-to-list (& out))))]
       [(Err error)
         (compiler-parse-origin-rollback! out.origin-storage origin-mark)
         (Err error)])))
@@ -13432,7 +13375,11 @@
       [decls
         (try
           (parse-ast-program-forms-diagnostic path dispatch pools toks (& cur)))]
-      (Ok (ast.ast-program decls)))))
+      (Ok
+        (in-arena
+          (unsafe
+            (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+          (ast.ast-program decls))))))
 
 (define (parse-ast-source-diagnostic [path : String] [src : (& str)]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))

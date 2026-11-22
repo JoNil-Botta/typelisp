@@ -1,8 +1,8 @@
 ;; Synthetic verifier failures exercise the CLI handoff without relying on an
 ;; optimizer bug to produce invalid IR. The companion shell check asserts the
 ;; exact stderr order, single emission, and absence of published artifacts.
+(import compiler_backend_state as be_state)
 (import compile_cli_core as cli)
-(import compiler_backend as backend)
 (import compiler_diagnostic as diag)
 (import compiler_diagnostic_tests as diag_tests)
 (import stdlib.io)
@@ -56,7 +56,7 @@
     [pic-ok : i64
       (cli.compile-cli-reject-pic-result-on-ir-verification
         (Ok
-          (backend.CompilerBackendPicOutput "unused" "unused")
+          (be_state.CompilerBackendPicOutput "unused" "unused")
           (advisories "pic-ok" ""))
         "verify-pic-ok")]
     [pic-err : i64

@@ -5,6 +5,7 @@
 ;; backend no longer owns the `tl_oob_abort` body; executable driver paths link
 ;; it from the runtime prelude. The function is not an entry point (it takes
 ;; parameters), so the program emits as library code with no entry (#7071).
+(import compiler_backend_operands as be_operand)
 (import compiler_backend)
 (import compiler_optimize)
 (import compiler_ir_types as ir)
@@ -77,9 +78,7 @@
         [symbol-count : i64
           (compiler_backend.compiler-backend-string-count asm "tl_oob_abort")]
         [defines-abort : bool
-          (compiler_backend.compiler-backend-string-contains?
-            asm
-            "tl_oob_abort:\n")]
+          (be_operand.compiler-backend-string-contains? asm "tl_oob_abort:\n")]
         (if (not (= symbol-count 1))
           1
           (if defines-abort

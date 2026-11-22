@@ -1,4 +1,5 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_surface_facts as surface_facts)
@@ -59,7 +60,7 @@
 
 (defenum ResultCompilerDriverPic
   (Ok
-    compiler_backend.CompilerBackendPicOutput
+    be_state.CompilerBackendPicOutput
     compiler_diagnostic.CompilerAdvisoryList)
   (Err
     (Box compiler_diagnostic.CompilerDiagnostic)
@@ -68,7 +69,7 @@
 (defenum ResultCompilerDriverObject
   (Ok cobj.CompilerObjectImage compiler_diagnostic.CompilerAdvisoryList)
   (Unavailable
-    compiler_backend.CompilerDirectObjectFallbackReason
+    be_state.CompilerDirectObjectFallbackReason
     compiler_diagnostic.CompilerAdvisoryList)
   (Err
     (Box compiler_diagnostic.CompilerDiagnostic)
@@ -81,7 +82,7 @@
     compiler_diagnostic.CompilerAdvisoryList)
   (Assembly
     String
-    compiler_backend.CompilerDirectObjectFallbackReason
+    be_state.CompilerDirectObjectFallbackReason
     compiler_diagnostic.CompilerAdvisoryList)
   (Err
     (Box compiler_diagnostic.CompilerDiagnostic)
@@ -93,7 +94,7 @@
     compiler_ir_types.CompilerSourceSpans
     compiler_ast_types.AstNodePoolContext
     profile_state.CompilerProfileState
-    compiler_backend.CompilerBackendState
+    be_state.CompilerBackendState
     compiler_typecheck_core.TcJobState
     compiler_lower.CompilerLowerState)
   (Err
@@ -124,7 +125,7 @@
   (lower-state-address (__tl_dyn-array i64))
   (load-session compiler_load.CompilerLoadSessionState)
   (typecheck-state compiler_typecheck_core.TcJobState)
-  (backend-state compiler_backend.CompilerBackendState)
+  (backend-state be_state.CompilerBackendState)
   (typecheck-prefix-cache compiler_typecheck_core.TcPrefixSnapshotCacheState)
   (pool-arena (__tl_dyn-array i64))
   (surface-arena i64)
@@ -135,10 +136,7 @@
 ;; extent preserve their allocation order while restoring the caller before
 ;; the outer state installs any of them.
 (defenum CompilerDriverSurfaceState
-  (State
-    compiler_typecheck_core.TcJobState
-    i64
-    compiler_backend.CompilerBackendState))
+  (State compiler_typecheck_core.TcJobState i64 be_state.CompilerBackendState))
 
 (define (compiler-driver-state-new-from-pools-arena-and-load-session
   [expr-pool : compiler_ast_types.AstExprNodePoolState]
@@ -187,7 +185,7 @@
               (owned_view.compiler-owned-shared-view intern-state)
               profile-state)
             address)
-          (compiler_backend.compiler-backend-state-new-with-metrics
+          (be_state.compiler-backend-state-new-with-metrics
             (owned_view.compiler-owned-shared-view intern-state)
             (profile_state.compiler-profile-state-metrics profile-state))))]
     (match surface-state
@@ -205,7 +203,7 @@
             (compiler_lower.compiler-lower-state-from-address
               lower-state-address)
             advisory-sink)
-          (compiler_backend.compiler-backend-state-set-advisory-sink!
+          (be_state.compiler-backend-state-set-advisory-sink!
             backend-state
             advisory-sink))
         (let
@@ -302,7 +300,7 @@
       (owned_view.compiler-owned-reference-shared-view state)]
     state.profile-state))
 
-(define (compiler-driver-state-backend [state : (& state CompilerDriverState)]) : compiler_backend.CompilerBackendState
+(define (compiler-driver-state-backend [state : (& state CompilerDriverState)]) : be_state.CompilerBackendState
   (let
     [state : CompilerDriverState
       (owned_view.compiler-owned-reference-shared-view state)]
@@ -624,7 +622,7 @@
       unit)))
 
 (define (compiler-driver-allocation-profile-backend-output-snapshot!
-  [backend-state : compiler_backend.CompilerBackendState]) : unit
+  [backend-state : be_state.CompilerBackendState]) : unit
   (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
     unit
     (begin
@@ -632,8 +630,8 @@
         2
         "backend"
         "backend-output-home"
-        (compiler_backend.compiler-backend-assembly-stream-home-arena-handle-value
-          (compiler_backend.compiler-backend-state-stream-state backend-state)))
+        (be_state.compiler-backend-assembly-stream-home-arena-handle-value
+          (be_state.compiler-backend-state-stream-state backend-state)))
       unit)))
 
 (define (compiler-driver-state-pool-context
@@ -1023,7 +1021,7 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriverLowered
   (let
     [pools : compiler_ast_types.AstNodePoolContext
@@ -1045,8 +1043,8 @@
   [profile-state : profile_state.CompilerProfileState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriverLowered
   (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new-with-metrics
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
         (profile_state.compiler-profile-state-metrics profile-state))]
     (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
@@ -1061,7 +1059,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [pools : compiler_ast_types.AstNodePoolContext]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriverLowered
   (let
@@ -2017,7 +2015,7 @@
         compile-profile-summary
         (begin
           (compiler_optimize.compiler-opt-profile-summary-reset! state)
-          (compiler_backend.compiler-backend-profile-summary-reset! state))
+          (be_state.compiler-backend-profile-summary-reset! state))
         unit)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
@@ -2086,8 +2084,8 @@
       (ci.intern-profile-storage-emit! intern-metrics-address))))
 
 (define (compiler-driver-lower-mode-for-target
-  [target : compiler_backend.CompilerBackendTarget]
-  [mode : compiler_backend.CompilerBackendMode]) : compiler_lower.CompilerLowerMode
+  [target : be_state.CompilerBackendTarget]
+  [mode : be_state.CompilerBackendMode]) : compiler_lower.CompilerLowerMode
   (match mode
     [(Avx2)
       (match target
@@ -2123,7 +2121,7 @@
     intern-state))
 
 (define (compiler-driver-target-cfgs
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
@@ -2140,7 +2138,7 @@
 
 (define (compiler-driver-state-target-cfgs
   [state : CompilerDriverState]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
     [target-cfgs : sym_i64_env.SymI64Env
@@ -2172,16 +2170,16 @@
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriver
   (let
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new-with-metrics
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
         (profile_state.compiler-profile-state-metrics profile-state))]
     [result : ResultCompilerDriver
@@ -2220,7 +2218,7 @@
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
   [opt-level : i64]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriver
@@ -2341,11 +2339,11 @@
 (define (compiler-driver-representation-index-for-backend
   [pools : compiler_ast_types.AstNodePoolContext]
   [program : (& compiler_ir_types.CompilerIrProgram)]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
     [interns : ci.InternCompatState
-      (compiler_backend.compiler-backend-state-intern backend-state)]
+      (be_state.compiler-backend-state-intern backend-state)]
     [owner : arena.Arena
       (compiler_backend.compiler-backend-state-prepare-representation-arena!
         backend-state)]
@@ -2361,7 +2359,7 @@
             (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
             typecheck-state
             (compiler_ir_types.compiler-ir-representation-index-empty))))]
-    (compiler_backend.compiler-backend-state-set-representations-for-pools!
+    (be_state.compiler-backend-state-set-representations-for-pools!
       backend-state
       (& pools)
       (owned_view.compiler-owned-shared-view representations))
@@ -2380,13 +2378,13 @@
 (defenum ResultCompilerDriverEmit
   (Assembly String)
   (Buffer text_buf.TextBuf)
-  (Pic compiler_backend.CompilerBackendPicOutput)
+  (Pic be_state.CompilerBackendPicOutput)
   (ObjectImage cobj.CompilerObjectImage)
   (PackageRuntime cobj.CompilerObjectImage String)
   ;; PackageRuntime's assembly fallback for an ineligible program.
-  (Fallback String compiler_backend.CompilerDirectObjectFallbackReason)
+  (Fallback String be_state.CompilerDirectObjectFallbackReason)
   ;; ObjectImage leaves an ineligible program to the caller's fallback.
-  (Unavailable compiler_backend.CompilerDirectObjectFallbackReason)
+  (Unavailable be_state.CompilerDirectObjectFallbackReason)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
 (defenum CompilerDriverBackendProgram
@@ -2397,7 +2395,7 @@
 
 (define (compiler-driver-optimize-lowered
   [pools : compiler_ast_types.AstNodePoolContext]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
@@ -2426,7 +2424,7 @@
         spans
         (compiler_optimize.OptimizeRequest
           pools
-          (compiler_backend.compiler-backend-state-intern backend-state)
+          (be_state.compiler-backend-state-intern backend-state)
           opt-level
           profile-state
           backend?
@@ -2462,7 +2460,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]
   [lower-state : compiler_lower.CompilerLowerState]) : CompilerDriverBackendProgram
   (when
@@ -2491,7 +2489,7 @@
           (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (return (Exhausted)))
-        (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+        (be_state.compiler-backend-state-set-scalar-registers-enabled!
           backend-state
           (>= opt-level 2))
         (Program optimized optimized-spans)])))
@@ -2506,13 +2504,13 @@
   [pools : compiler_ast_types.AstNodePoolContext]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
-  [mode : compiler_backend.CompilerBackendMode]
+  [target : be_state.CompilerBackendTarget]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriverEmit
   (match (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
@@ -2574,22 +2572,22 @@
                   profile-state
                   "backend.object-image"))
               (let
-                [side-backend-state : compiler_backend.CompilerBackendState
-                  (compiler_backend.compiler-backend-state-new-with-metrics
+                [side-backend-state : be_state.CompilerBackendState
+                  (be_state.compiler-backend-state-new-with-metrics
                     (ci.intern-compat-state-capture-active)
                     (profile_state.compiler-profile-state-metrics profile-state))]
-                (compiler_backend.compiler-backend-state-set-advisory-sink!
+                (be_state.compiler-backend-state-set-advisory-sink!
                   side-backend-state
                   (compiler_typecheck_core.tc-job-state-advisory-sink
                     typecheck-state))
-                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                (be_state.compiler-backend-state-set-scalar-registers-enabled!
                   side-backend-state
                   (>= opt-level 2))
                 (cfg
                   compile-profile
                   (compiler-driver-profile-start-phase profile-state))
                 (let
-                  [side-result : compiler_backend.ResultCompilerBackend
+                  [side-result : be_state.ResultCompilerBackend
                     (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
                       side-backend-state
                       pools
@@ -2622,14 +2620,14 @@
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [typecheck-state : compiler_typecheck_core.TcJobState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriverEmit
   (match (compiler-driver-optimize-for-backend
@@ -2646,7 +2644,7 @@
       (Err (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))]
     [(Program optimized optimized-spans)
       (let
-        [emit-target : compiler_backend.CompilerBackendTarget
+        [emit-target : be_state.CompilerBackendTarget
           (if has-target
             target
             (Linux))]
@@ -2766,17 +2764,17 @@
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerDriverObject
   (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new-with-metrics
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
         (profile_state.compiler-profile-state-metrics profile-state))]
     [emitted : ResultCompilerDriverEmit
@@ -2812,9 +2810,9 @@
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]
@@ -2921,9 +2919,9 @@
   [route : CompilerDriverOutputRoute]
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : CompilerDriverEmitted
@@ -3037,9 +3035,9 @@
 (define (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
@@ -3060,9 +3058,9 @@
 (define (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (match (compiler-driver-emit-lowered-result
@@ -3082,9 +3080,9 @@
 (define (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
@@ -3104,8 +3102,8 @@
 (define (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
-  [target : compiler_backend.CompilerBackendTarget]
-  [mode : compiler_backend.CompilerBackendMode]
+  [target : be_state.CompilerBackendTarget]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPackageRuntime
@@ -3129,9 +3127,9 @@
 (define (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
@@ -3195,7 +3193,7 @@
   embedded-stdlib-tlci
   (define (compiler-driver-cfgs-match-default?
     [actual : sym_i64_env.SymI64Env]
-    [target : compiler_backend.CompilerBackendTarget]) : bool
+    [target : be_state.CompilerBackendTarget]) : bool
     (let
       [expected : sym_i64_env.SymI64Env
         (compiler-driver-target-cfgs
@@ -3767,9 +3765,9 @@
 
 (define (compiler-driver-load-and-lower-escaping-and-profile-state
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime
@@ -3828,9 +3826,9 @@
 
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (compiler-driver-load-and-lower-escaping-and-profile-state
     input-path
@@ -3842,9 +3840,9 @@
 
 (define (compiler-driver-load-and-lower-pic-image-and-profile-state
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-for-pic-image
@@ -3903,9 +3901,9 @@
 
 (define (compiler-driver-load-and-lower-pic-image
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (compiler-driver-load-and-lower-pic-image-and-profile-state
     input-path
@@ -4070,9 +4068,9 @@
 (define (compiler-driver-load-and-lower-escaping-with-state-and-retirement
   [state : CompilerDriverState]
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [retire-after-lower? : bool]
   [opt-level : i64]) : ResultCompilerDriverLowered
@@ -4338,9 +4336,9 @@
 (define (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
   [state : CompilerDriverState]
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [retire-after-lower? : bool]
   [opt-level : i64]) : ResultCompilerDriverLowered
@@ -4538,9 +4536,9 @@
 (define (compiler-driver-load-and-lower-pic-image-with-state
   [state : CompilerDriverState]
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [opt-level : i64]) : ResultCompilerDriverLowered
   (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
@@ -4555,11 +4553,11 @@
 
 (define (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [crt-entry : bool]) : ResultCompilerDriver
   (let
@@ -4588,11 +4586,11 @@
 
 (define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (let
@@ -4619,11 +4617,11 @@
 (define (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (begin
@@ -4658,11 +4656,11 @@
 (define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg
@@ -4871,8 +4869,8 @@
 (define (compiler-driver-package-runtime-lower
   [scope : CompilerDriverPackageRuntimeScope]
   [package-name : String]
-  [target : compiler_backend.CompilerBackendTarget]
-  [mode : compiler_backend.CompilerBackendMode]
+  [target : be_state.CompilerBackendTarget]
+  [mode : be_state.CompilerBackendMode]
   [decls : compiler_ast_types.AstDeclList]
   [paths : compiler_ast_types.AstDeclPathList]
   [cfgs : sym_i64_env.SymI64Env]
@@ -4979,7 +4977,7 @@
 
 (define (compiler-driver-load-package-file-with-runtime
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -5017,7 +5015,7 @@
 ;; following doctest (including inline worker fallback) starts with live state.
 (define (compiler-driver-load-package-paths-with-runtime
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [cfg-names : (& cfg-names svec.Vec)]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
@@ -5251,7 +5249,7 @@
 
 (define (compiler-driver-emit-ir-summary-lowered-with-level
   [pools : compiler_ast_types.AstNodePoolContext]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
@@ -5334,10 +5332,10 @@
 
 (define (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   ;; Emit-IR needs the macro prelude but must remain runtime-free so
   ;; target parity checks compare user IR rather than OS-specific runtime IR.
@@ -5353,10 +5351,10 @@
 (define (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-lowered-result-with-level
     (compiler-driver-load-and-lower-pic-image-with-state
@@ -5406,7 +5404,7 @@
 
 (define (compiler-driver-emit-ir-text-lowered-with-level
   [pools : compiler_ast_types.AstNodePoolContext]
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [opt-level : i64]
@@ -5498,10 +5496,10 @@
 (define (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
   [dump-pass : String]) : ResultCompilerDriver
   (compiler-driver-emit-ir-text-lowered-result-with-level

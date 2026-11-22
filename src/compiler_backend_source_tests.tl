@@ -1,3 +1,5 @@
+(import compiler_backend_operands as be_operand)
+(import compiler_backend_state as be_state)
 (import compiler_backend as backend)
 (import compiler_lower as lower)
 (import compiler_ast_types as ast)
@@ -38,7 +40,7 @@
     (string.eq (diagnostic.compiler-diagnostic-path error) path)
     (= (diagnostic.compiler-diagnostic-line error) line)
     (= (diagnostic.compiler-diagnostic-col error) column)
-    (backend.compiler-backend-string-contains?
+    (be_operand.compiler-backend-string-contains?
       (diagnostic.compiler-diagnostic-message error)
       needle)))
 
@@ -46,16 +48,16 @@
 ;; the existing semantic exclusion until runtime bodies are materialized.
 (define (source-object-status
   [source : String]
-  [target : backend.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]) : String
   (match (backend.compiler-backend-lower-source-for-target source target)
     [(Err error)
       (diagnostic.compiler-diagnostic-render (& (__tl-box-place error)))]
     [(Ok program _ owner)
       (let
-        [state : backend.CompilerBackendState
-          (backend.compiler-backend-state-new
+        [state : be_state.CompilerBackendState
+          (be_state.compiler-backend-state-new
             (intern.intern-compat-state-capture-active))]
-        [eligibility : backend.CompilerBackendObjectEligibility
+        [eligibility : be_state.CompilerBackendObjectEligibility
           (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
             state
             (ast.ast-node-pool-context-capture-active)
@@ -82,7 +84,7 @@
     [ok : bool true]
     (for [target-index (iterator.range 0 2)]
       (let
-        [target : backend.CompilerBackendTarget
+        [target : be_state.CompilerBackendTarget
           (if (= target-index 0)
             (Linux)
             (Windows))]
@@ -292,7 +294,7 @@
         "(import stdlib.backend_missing_for_test)"
         false))))
 
-(define (in-session-library-entry-ok? [target : backend.CompilerBackendTarget]) : bool
+(define (in-session-library-entry-ok? [target : be_state.CompilerBackendTarget]) : bool
   (match (backend.compiler-backend-lower-source-for-target-in-session
     "(module library-entries)
 (define (entry [value : i64]) : i64 value)"
@@ -308,7 +310,7 @@
             spans
             false)
             [(Ok text)
-              (backend.compiler-backend-string-contains? text "_tl_f0:\n")]
+              (be_operand.compiler-backend-string-contains? text "_tl_f0:\n")]
             [(Err _) false])]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas owner))

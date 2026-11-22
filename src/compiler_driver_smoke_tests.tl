@@ -1,4 +1,5 @@
 ;; compiler_driver_smoke_tests.tl - Shared driver/lowering integration smokes.
+(import compiler_backend_state as be_state)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.string)
@@ -496,7 +497,7 @@
       [(CompilerLoadPreludeCacheMiss) false])))
 
 (define (compiler-driver-pic-smoke-output-ok?
-  [output : compiler_backend.CompilerBackendPicOutput]) : bool
+  [output : be_state.CompilerBackendPicOutput]) : bool
   (let
     [asm : String output.asm]
     [fixups : String output.fixups]
@@ -512,7 +513,7 @@
         "typelisp-pic-fixups v1\n"))))
 
 (define (compiler-driver-pic-smoke-core-macros-path-ok?
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [input-path : String]) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
     input-path
@@ -526,7 +527,7 @@
     [(Err _ _) false]))
 
 (define (compiler-driver-pic-smoke-core-macros-ok?
-  [target : compiler_backend.CompilerBackendTarget]) : bool
+  [target : be_state.CompilerBackendTarget]) : bool
   (or
     (compiler-driver-pic-smoke-core-macros-path-ok?
       target
@@ -688,10 +689,10 @@
           (ci.intern-compat-state-table-id intern-b))))))
 
 (define (compiler-driver-reader-context-smoke-emit
-  [backend-state : compiler_backend.CompilerBackendState]
+  [backend-state : be_state.CompilerBackendState]
   [pools : ast.AstNodePoolContext]
   [program : compiler_ir_types.CompilerIrProgram]
-  [spans : compiler_ir_types.CompilerSourceSpans]) : compiler_backend.ResultCompilerBackend
+  [spans : compiler_ir_types.CompilerSourceSpans]) : be_state.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
     backend-state
     pools
@@ -710,8 +711,8 @@
   [pools-b : ast.AstNodePoolContext]
   [program-b : compiler_ir_types.CompilerIrProgram]
   [spans-b : compiler_ir_types.CompilerSourceSpans]
-  [backend-state-a : compiler_backend.CompilerBackendState]
-  [backend-state-b : compiler_backend.CompilerBackendState]
+  [backend-state-a : be_state.CompilerBackendState]
+  [backend-state-b : be_state.CompilerBackendState]
   [expr-segment-bases : i64]
   [type-segment-bases : i64]
   [base-arena : i64]) : bool
@@ -749,9 +750,9 @@
                   "state assemblies differ")]
               [(not
                   (and
-                    (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+                    (be_state.compiler-backend-state-scalar-registers-enabled?
                       backend-state-a)
-                    (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+                    (be_state.compiler-backend-state-scalar-registers-enabled?
                       backend-state-b)))
                 (compiler-driver-reader-context-smoke-fail
                   "backend scalar options changed")]
@@ -774,8 +775,8 @@
   [pools-b : ast.AstNodePoolContext]
   [program-b : compiler_ir_types.CompilerIrProgram]
   [spans-b : compiler_ir_types.CompilerSourceSpans]
-  [backend-state-a : compiler_backend.CompilerBackendState]
-  [backend-state-b : compiler_backend.CompilerBackendState]
+  [backend-state-a : be_state.CompilerBackendState]
+  [backend-state-b : be_state.CompilerBackendState]
   [expr-segment-bases : i64]
   [type-segment-bases : i64]
   [base-arena : i64]
@@ -882,11 +883,9 @@
             lower-b)
           (let
             [intern-a : ci.InternCompatState
-              (compiler_backend.compiler-backend-state-exact-intern
-                backend-state-a)]
+              (be_state.compiler-backend-state-exact-intern backend-state-a)]
             [intern-b : ci.InternCompatState
-              (compiler_backend.compiler-backend-state-exact-intern
-                backend-state-b)]
+              (be_state.compiler-backend-state-exact-intern backend-state-b)]
             [interns-ok? : bool
               (compiler-driver-reader-context-smoke-mirror-intern-state-ok?
                 (owned_view.compiler-owned-shared-view intern-a)
@@ -906,10 +905,10 @@
                 (compiler-driver-reader-context-smoke-fail
                   "intern capabilities could not be mirrored")
                 (begin
-                  (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  (be_state.compiler-backend-state-set-scalar-registers-enabled!
                     backend-state-a
                     true)
-                  (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                  (be_state.compiler-backend-state-set-scalar-registers-enabled!
                     backend-state-b
                     true)
                   (compiler-driver-reader-context-smoke-optimized-ok?
@@ -950,56 +949,48 @@
 (define (compiler-driver-reader-context-smoke-backend-state-idle?
   [state : driver.CompilerDriverState]) : bool
   (let
-    [backend-state : compiler_backend.CompilerBackendState
+    [backend-state : be_state.CompilerBackendState
       (driver.compiler-driver-state-backend state)]
     [intern-state : ci.InternCompatState
       (driver.compiler-driver-state-owned-interns state)]
     (and
-      (= (compiler_backend.compiler-backend-state-size) 8)
-      (> (compiler_backend.compiler-backend-state-owner-arena backend-state) 0)
+      (= (be_state.compiler-backend-state-size) 8)
+      (> (be_state.compiler-backend-state-owner-arena backend-state) 0)
       (=
-        (compiler_backend.compiler-backend-state-owner-arena backend-state)
+        (be_state.compiler-backend-state-owner-arena backend-state)
         (driver.compiler-driver-state-surface-arena state))
       (=
-        (compiler_backend.compiler-backend-state-intern-table-id backend-state)
+        (be_state.compiler-backend-state-intern-table-id backend-state)
         (ci.intern-compat-state-table-id intern-state))
       (=
-        (compiler_backend.compiler-backend-state-intern-generation
-          backend-state)
+        (be_state.compiler-backend-state-intern-generation backend-state)
         (ci.intern-compat-state-generation intern-state))
+      (= (be_state.compiler-backend-state-lazy-table-arena backend-state) 0)
+      (= (be_state.compiler-backend-state-slot-cache-capacity backend-state) 0)
       (=
-        (compiler_backend.compiler-backend-state-lazy-table-arena backend-state)
-        0)
-      (=
-        (compiler_backend.compiler-backend-state-slot-cache-capacity
+        (be_state.compiler-backend-state-frame-offset-cache-capacity
           backend-state)
         0)
       (=
-        (compiler_backend.compiler-backend-state-frame-offset-cache-capacity
+        (be_state.compiler-backend-state-immediate-cache-capacity backend-state)
+        0)
+      (=
+        (be_state.compiler-backend-state-operand-cache-retained-bytes
           backend-state)
         0)
       (=
-        (compiler_backend.compiler-backend-state-immediate-cache-capacity
+        (be_state.compiler-backend-state-user-symbol-cache-count backend-state)
+        0)
+      (=
+        (be_state.compiler-backend-state-user-symbol-cache-capacity
           backend-state)
         0)
       (=
-        (compiler_backend.compiler-backend-state-operand-cache-retained-bytes
-          backend-state)
-        0)
-      (=
-        (compiler_backend.compiler-backend-state-user-symbol-cache-count
-          backend-state)
-        0)
-      (=
-        (compiler_backend.compiler-backend-state-user-symbol-cache-capacity
-          backend-state)
-        0)
-      (=
-        (compiler_backend.compiler-backend-state-user-symbol-cache-retained-bytes
+        (be_state.compiler-backend-state-user-symbol-cache-retained-bytes
           backend-state)
         0)
       (not
-        (compiler_backend.compiler-backend-state-scalar-registers-enabled?
+        (be_state.compiler-backend-state-scalar-registers-enabled?
           backend-state)))))
 
 (define (compiler-driver-reader-context-smoke-backend-states-idle?
@@ -1043,7 +1034,7 @@
               (> surface-arena 0)
               (not (= surface-arena caller-handle))
               (=
-                (compiler_backend.compiler-backend-state-owner-arena
+                (be_state.compiler-backend-state-owner-arena
                   (driver.compiler-driver-state-backend state))
                 surface-arena))]
           [pools : ast.AstNodePoolContext
@@ -1085,8 +1076,8 @@
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [source : String (compiler-driver-reader-context-smoke-write-fixture)]
-    [target : compiler_backend.CompilerBackendTarget (Linux)]
-    [mode : compiler_backend.CompilerBackendMode (Scalar)]
+    [target : be_state.CompilerBackendTarget (Linux)]
+    [mode : be_state.CompilerBackendMode (Scalar)]
     [roots-a : svec.Vec (compiler-driver-pic-smoke-roots)]
     [idle-backend-state-ok? : bool
       (compiler-driver-reader-context-smoke-backend-states-idle?
@@ -1178,7 +1169,7 @@
 ;; so successful compilation proves selection rather than just parsing syntax.
 (define (compiler-driver-generated-cfg-job-ok?
   [state : (& state driver.CompilerDriverState)]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [enabled : bool]) : bool
   (let
     [state : driver.CompilerDriverState
@@ -2038,7 +2029,7 @@
           RegisterAllocation
           (& regalloc))
         (cdiag_tests.compiler-advisory-sink-push!
-          (compiler_backend.compiler-backend-state-advisory-sink
+          (be_state.compiler-backend-state-advisory-sink
             (driver.compiler-driver-state-backend state-a))
           Backend
           (& backend))
@@ -2383,11 +2374,11 @@
 
 (define (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
   [input-path : String]
-  [target : compiler_backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [has-target : bool]
   [stdlib-roots : svec.Vec]
   [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
+  [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : driver.ResultCompilerDriverPic
   (let
     [profile-state : profile_state.CompilerProfileState

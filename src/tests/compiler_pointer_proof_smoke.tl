@@ -1,3 +1,4 @@
+(import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_lower as lower)
 (import compiler_pointer_proof_input as proof)
@@ -8,7 +9,6 @@
 (import compiler_owned_view as owned_view)
 (import compiler_diagnostic as diagnostic)
 (import compiler_driver_core as driver)
-(import compiler_backend as backend)
 (import stdlib.string)
 (import stdlib.io)
 (import stdlib.fs)
@@ -171,7 +171,7 @@
   [input : proof.PointerProofInput]
   [source : String]
   [mode : lower.CompilerLowerMode]
-  [target : backend.CompilerBackendTarget]
+  [target : be_state.CompilerBackendTarget]
   [level : i64]
   [requested? : bool]) : String
   (let
@@ -219,7 +219,7 @@
 (define (proof-smoke-parity
   [source : String]
   [mode : lower.CompilerLowerMode]
-  [target : backend.CompilerBackendTarget]) : unit
+  [target : be_state.CompilerBackendTarget]) : unit
   (for [level (iterator.range 0 3)]
     (let
       [plain-input : proof.PointerProofInput (proof.pointer-proof-input-new)]
@@ -251,7 +251,7 @@
 
 (define (proof-smoke-interactions
   [mode : lower.CompilerLowerMode]
-  [target : backend.CompilerBackendTarget]) : unit
+  [target : be_state.CompilerBackendTarget]) : unit
   (let
     [sources : (Array String 6)
       (array
@@ -567,7 +567,7 @@
 
 (define (proof-smoke-driver-handoff
   [mode : lower.CompilerLowerMode]
-  [target : backend.CompilerBackendTarget]) : unit
+  [target : be_state.CompilerBackendTarget]) : unit
   (let
     [input : proof.PointerProofInput (proof.pointer-proof-input-new)]
     [request : lower.CompilerLowerRequest (proof-smoke-request input mode)]

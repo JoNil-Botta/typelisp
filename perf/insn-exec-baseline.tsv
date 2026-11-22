@@ -31,7 +31,7 @@ benchmark/typelisp/lex_source	465262898
 benchmark/c-scalar/lex_source	549230984
 benchmark/typelisp/liveness_scan	392939649
 benchmark/c-scalar/liveness_scan	433426168
-benchmark/typelisp/peephole_lines	420847647
+benchmark/typelisp/peephole_lines	420847646
 benchmark/c-scalar/peephole_lines	442194743
 benchmark/typelisp/read_sexpr	732900147
 benchmark/c-scalar/read_sexpr	598159390

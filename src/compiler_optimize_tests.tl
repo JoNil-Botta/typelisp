@@ -1301,14 +1301,32 @@
     (opt.opt-global-cell-summary-empty)
     blocks))
 
+(define (opt-test-block-marks [blocks : (& blocks ir.CompilerIrBlockList)]) : (__tl_dyn-array
+    bool)
+  (opt.opt-addr-taken-marks-blocks
+    (opt-test-addr-of-bound (ir.compiler-ir-block-list-view blocks))
+    blocks))
+
+(define (opt-test-instr-marks [instrs : (& instrs ir.CompilerIrInstrSeq)]) : (__tl_dyn-array
+    bool)
+  (opt-test-block-marks
+    (&
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          0
+          (owned_view.compiler-owned-reference-shared-view instrs))))))
+
 (define (opt-alias-run-from
+  [marks : (& marks (__tl_dyn-array bool))]
   [facts : opt.OptAliasFacts]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : opt.OptAliasFacts
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     facts
     (opt-alias-run-from
+      marks
       (opt.opt-alias-update-facts
+        marks
         (& facts)
         (ir.compiler-ir-instr-seq-borrow instrs index))
       instrs
@@ -1317,7 +1335,7 @@
 (define (opt-alias-run
   [facts : opt.OptAliasFacts]
   [instrs : ir.CompilerIrInstrSeq]) : opt.OptAliasFacts
-  (opt-alias-run-from facts instrs 0))
+  (opt-alias-run-from (& (opt-test-instr-marks (& instrs))) facts instrs 0))
 
 (define (opt-scratch-scope-scan-instrs
   [type-segment-bases : i64]
@@ -56547,6 +56565,13 @@
 
 (define (compiler-optimize-alias-self-test) : i64
   (let
+    [marks
+      (opt-test-instr-marks
+        (&
+          (opt-test-instrs
+            (opt-alias-sample-store)
+            (opt-alias-sample-tail-call)
+            (opt-alias-sample-binop))))]
     [unique : opt.OptAliasFacts
       (opt-alias-run (opt.opt-alias-empty) (opt-alias-test-unique-instrs))]
     [transitive : opt.OptAliasFacts
@@ -56582,13 +56607,13 @@
       [(not (= (opt-alias-facts-len stored) 0)) 8]
       [(not
           (opt.opt-alias-instr-clears-all?
-            (& opt.opt-addr-taken-none)
+            (& marks)
             (& (opt-alias-sample-store))))
         9]
       [(not (= (opt-alias-facts-len called) 0)) 10]
       [(not
           (opt.opt-alias-instr-clears-all?
-            (& opt.opt-addr-taken-none)
+            (& marks)
             (& (opt-alias-sample-tail-call))))
         11]
       [(not (opt-alias-contains? copied 1 (Derived 0))) 12]
@@ -56596,9 +56621,7 @@
       [(not (= (opt-alias-facts-len joined) 1)) 14]
       [(not (opt-alias-contains? joined 0 (Unique 0))) 15]
       [(opt-alias-contains? joined 1 (Derived 0)) 16]
-      [(opt.opt-alias-instr-clears-all?
-          (& opt.opt-addr-taken-none)
-          (& (opt-alias-sample-binop)))
+      [(opt.opt-alias-instr-clears-all? (& marks) (& (opt-alias-sample-binop)))
         17]
       [(not (opt-alias-contains? invalidated 0 (Invalidated))) 18]
       [(not (opt-alias-contains? seeded 0 (SharedRef))) 19]
@@ -83957,6 +83980,7 @@ done:
   [store-capacity : i64]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt.opt-dead-store-instr-seq-known-with-kinds
+    (& (opt-test-instr-marks (& instrs)))
     (profile_state.compiler-profile-state-metrics
       (profile_state.compiler-profile-state-new))
     type-segment-bases
@@ -86108,10 +86132,13 @@ return
     (test.assert-true
       (ir.compiler-ir-effect-eq?
         (opt.opt-instr-effect
-          (& opt.opt-addr-taken-none)
+          (&
+            (opt.opt-addr-taken-marks-blocks
+              4
+              (& (irt.blocks "entry:\n return 0"))))
           (& (irt.instr "%0 = mov 5 : i64")))
         (ir.CompilerIrEffect.Pure))
-      "a stage with no set installed keeps the form-only class")))
+      "a function without an address-taken local keeps the form-only class")))
 
 ;; `opt-instr-effect` is the optimizer's one effect classifier: a direct call of
 ;; the IR's form-only `compiler-ir-instr-effect` would call a def of an

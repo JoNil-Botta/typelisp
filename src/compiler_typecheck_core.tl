@@ -130610,13 +130610,12 @@
   (representative-count i64)
   (products (__tl_dyn-array ownership_normalize.OwnershipNormalizeProduct))
   (variances ownership_normalize.OwnershipNormalizeVariances)
-  ;; Where the representative scan may start for a type already looked up
-  ;; (`tc-selected-representative-noting!`): the first `memo-count` entries of
-  ;; `memo-types`/`memo-starts`, indexed by `memo-slots` (entry + 1, 0 empty).
-  (memo-types (__tl_dyn-array ast.AstType))
-  (memo-starts (__tl_dyn-array i64))
-  (memo-slots (__tl_dyn-array i64))
-  (memo-count i64)
+  ;; Where the representative scan may start for a type already looked up, or
+  ;; -1 - its match once it has one (`tc-selected-representative-noting!`).
+  (memo TcSelectedShallowIndex)
+  ;; The representative of each record type already classified
+  ;; (`tc-selected-classify!`).
+  (raw TcSelectedShallowIndex)
   ;; The representatives of each bucket (`tc-selected-representative-bucket`)
   ;; in order: its first and last (index + 1, 0 none) and, per
   ;; representative, the next one in its bucket (index + 1, 0 none).
@@ -130628,13 +130627,32 @@
   ;; representative.
   (poisoned? bool))
 
+;; Types by shallow value (variant, payloads and child node ids; nodes never
+;; change), each with a value: the first `count` entries of `types`/`values`,
+;; indexed by `slots` (entry + 1, 0 empty), which is at most half full.
+(defstruct TcSelectedShallowIndex
+  (types (__tl_dyn-array ast.AstType))
+  (values (__tl_dyn-array i64))
+  (slots (__tl_dyn-array i64))
+  (count i64))
+
+;; An empty index over a shared view of an empty `types` lane. Its lanes are
+;; replaced before their first write (`tc-selected-shallow-grow!`), so they
+;; share empty arrays.
+(define (tc-selected-shallow-index-new [types : (__tl_dyn-array ast.AstType)]) : TcSelectedShallowIndex
+  (TcSelectedShallowIndex
+    types
+    (tc-global-shared-view tc-chain-empty-i64-array)
+    (tc-global-shared-view tc-chain-empty-i64-array)
+    0))
+
 (define (tc-selected-type-table-new [regions : (__tl_dyn-array i64)]) : TcSelectedTypeTable
   (let
     [representatives : (__tl_dyn-array ast.AstType) (tc-selected-no-types)]
-    ;; The note lanes start empty and are replaced before their first write
-    ;; (`tc-selected-representative-memo-grow!`), so they share empty arrays.
-    [memo-types : (__tl_dyn-array ast.AstType)
-      (tc-global-shared-view representatives)]
+    [memo : TcSelectedShallowIndex
+      (tc-selected-shallow-index-new (tc-global-shared-view representatives))]
+    [raw : TcSelectedShallowIndex
+      (tc-selected-shallow-index-new (tc-global-shared-view representatives))]
     (TcSelectedTypeTable
       regions
       (tc-selected-no-type-classes)
@@ -130644,10 +130662,8 @@
       0
       (__tl_make-array ownership_normalize.OwnershipNormalizeProduct 0)
       (ownership_normalize.ownership-normalize-variances-empty)
-      memo-types
-      (tc-global-shared-view tc-chain-empty-i64-array)
-      (tc-global-shared-view tc-chain-empty-i64-array)
-      0
+      memo
+      raw
       (__tl_make-array i64 tc-selected-bucket-count)
       (__tl_make-array i64 tc-selected-bucket-count)
       (tc-selected-no-i64s)
@@ -131366,43 +131382,48 @@
 ;; function of the type's shallow value (its variant, payloads and child node
 ;; ids; nodes never change), so a scan for a shallow-equal type may start where
 ;; an earlier one ended (`tc-selected-representative-noting!`): every
-;; representative before that start failed to match it.
+;; representative before that start failed to match it. A scan that matched
+;; is noted as its match (a start of -1 - match): no later representative
+;; precedes it, so it stays the first match.
 (define (tc-selected-representative
   [table : (& table TcSelectedTypeTable)]
   [resolved : ast.AstType]) : i64
   (let
-    [capacity : i64 (array-length table.memo-slots)]
+    [capacity : i64 (array-length table.memo.slots)]
     [entry : i64
       (if (= capacity 0)
         0
         (array-ref
-          table.memo-slots
-          (tc-selected-representative-slot
-            table
+          table.memo.slots
+          (tc-selected-shallow-slot
+            (& table.memo)
             (tc-global-shared-view resolved))))]
-    (tc-selected-representative-scan
-      table
-      (tc-global-shared-view resolved)
+    [start : i64
       (if (= entry 0)
         0
-        (array-ref table.memo-starts (- entry 1))))))
+        (array-ref table.memo.values (- entry 1)))]
+    (if (< start 0)
+      (- -1 start)
+      (tc-selected-representative-scan
+        table
+        (tc-global-shared-view resolved)
+        start))))
 
 ;; `tc-selected-representative`, noting where its scan ended for `resolved`:
 ;; at the match, or where `resolved` becomes the next representative.
 (define (tc-selected-representative-noting!
   [table : (&mut table TcSelectedTypeTable)]
   [resolved : ast.AstType]) : i64
-  (when
-    (>= (* (+ table.memo-count 1) 2) (array-length table.memo-slots))
-    (tc-selected-representative-memo-grow! table))
+  (tc-selected-shallow-reserve! (&mut table.memo))
   (let
     [slot : i64
-      (tc-selected-representative-slot table (tc-global-shared-view resolved))]
-    [entry : i64 (array-ref table.memo-slots slot)]
+      (tc-selected-shallow-slot (& table.memo) (tc-global-shared-view resolved))]
+    [entry : i64 (array-ref table.memo.slots slot)]
     [start : i64
       (if (= entry 0)
         0
-        (array-ref table.memo-starts (- entry 1)))]
+        (array-ref table.memo.values (- entry 1)))]
+    [_matched : unit (when (< start 0) (return (- -1 start)))]
     [found : i64
       (tc-selected-representative-scan
         table
@@ -131410,20 +131431,15 @@
         start)]
     [end : i64
       (if (>= found 0)
-        found
+        (- -1 found)
         table.representative-count)]
-    (if (= entry 0)
-      (let
-        [index : i64 table.memo-count]
-        (set!
-          (array-ref table.memo-types index)
-          (tc-global-shared-view resolved))
-        (set! (array-ref table.memo-starts index) end)
-        (set! (array-ref table.memo-slots slot) (+ index 1))
-        (set! table.memo-count (+ index 1)))
-      (unless
-        (= end start)
-        (set! (array-ref table.memo-starts (- entry 1)) end)))
+    (unless
+      (and (> entry 0) (= end start))
+      (tc-selected-shallow-put!
+        (&mut table.memo)
+        slot
+        (tc-global-shared-view resolved)
+        end))
     found))
 
 (define (tc-selected-representative-scan
@@ -131531,59 +131547,84 @@
   [mask : i64]) : i64
   (bit-and (* (ast.ty-node-hash-value ty) 2654435761) mask))
 
-;; The index slot holding the entry of a type shallow-equal to `resolved`, or
+;; The slot of `index` holding the entry of a type shallow-equal to `ty`, or
 ;; the empty slot where one goes (the index is never full).
-(define (tc-selected-representative-slot
-  [table : (& table TcSelectedTypeTable)]
-  [resolved : ast.AstType]) : i64
+(define (tc-selected-shallow-slot
+  [index : (& index TcSelectedShallowIndex)]
+  [ty : ast.AstType]) : i64
   (let
-    [mask : i64 (- (array-length table.memo-slots) 1)]
-    [slot : i64 (tc-selected-representative-hash-slot (& resolved) mask)]
+    [mask : i64 (- (array-length index.slots) 1)]
+    [slot : i64 (tc-selected-representative-hash-slot (& ty) mask)]
     [done : bool false]
     (while (not done)
       (let
-        [entry : i64 (array-ref table.memo-slots slot)]
+        [entry : i64 (array-ref index.slots slot)]
         (if (or
           (= entry 0)
           (ast.ty-node-shallow-value-eq?
-            (tc-global-array-element-shared-view table.memo-types (- entry 1))
-            (tc-global-shared-view resolved)))
+            (tc-global-array-element-shared-view index.types (- entry 1))
+            (tc-global-shared-view ty)))
           (set! done true)
           (set! slot (bit-and (+ slot 1) mask)))))
     slot))
 
-;; Doubles the note index (at most half full) and its entry lanes.
-(define (tc-selected-representative-memo-grow!
-  [table : (&mut table TcSelectedTypeTable)]) : unit
+;; Sets the value of the entry at `slot` (`tc-selected-shallow-slot` of
+;; `ty`), adding the entry when the slot is empty.
+(define (tc-selected-shallow-put!
+  [index : (&mut index TcSelectedShallowIndex)]
+  [slot : i64]
+  [ty : ast.AstType]
+  [value : i64]) : unit
   (let
-    [count : i64 table.memo-count]
+    [entry : i64 (array-ref index.slots slot)]
+    (if (= entry 0)
+      (let
+        [at : i64 index.count]
+        (set! (array-ref index.types at) ty)
+        (set! (array-ref index.values at) value)
+        (set! (array-ref index.slots slot) (+ at 1))
+        (set! index.count (+ at 1)))
+      (set! (array-ref index.values (- entry 1)) value))))
+
+;; Room for one more entry: the index doubles when half full.
+(define (tc-selected-shallow-reserve!
+  [index : (&mut index TcSelectedShallowIndex)]) : unit
+  (when
+    (>= (* (+ index.count 1) 2) (array-length index.slots))
+    (tc-selected-shallow-grow! index)))
+
+;; Doubles the index and its entry lanes.
+(define (tc-selected-shallow-grow!
+  [index : (&mut index TcSelectedShallowIndex)]) : unit
+  (let
+    [count : i64 index.count]
     [capacity : i64
-      (if (= (array-length table.memo-slots) 0)
+      (if (= (array-length index.slots) 0)
         64
-        (* (array-length table.memo-slots) 2))]
+        (* (array-length index.slots) 2))]
     [mask : i64 (- capacity 1)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     [types : (__tl_dyn-array ast.AstType)
       (__tl_make-array ast.AstType capacity)]
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-    [index : i64 0]
-    (while (< index count)
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [at : i64 0]
+    (while (< at count)
       (let
         [slot : i64
           (tc-selected-representative-hash-slot
-            (& (array-ref table.memo-types index))
+            (& (array-ref index.types at))
             mask)]
         (set!
-          (array-ref types index)
-          (tc-global-array-element-shared-view table.memo-types index))
-        (set! (array-ref starts index) (array-ref table.memo-starts index))
+          (array-ref types at)
+          (tc-global-array-element-shared-view index.types at))
+        (set! (array-ref values at) (array-ref index.values at))
         (while (not (= (array-ref slots slot) 0))
           (set! slot (bit-and (+ slot 1) mask)))
-        (set! (array-ref slots slot) (+ index 1)))
-      (set! index (+ index 1)))
-    (set! table.memo-slots slots)
-    (set! table.memo-types types)
-    (set! table.memo-starts starts)))
+        (set! (array-ref slots slot) (+ at 1)))
+      (set! at (+ at 1)))
+    (set! index.slots slots)
+    (set! index.types types)
+    (set! index.values values)))
 
 ;; Room for one more representative: the four lanes double when full (a
 ;; private dynamic array copies its whole backing on every push).
@@ -131663,7 +131704,9 @@
 ;; for referents while classifying. A body has a type record per occurrence, so
 ;; the classes are gathered in a buffer that doubles when full (a private
 ;; dynamic array copies its backing on every push, which would make this
-;; quadratic in the body's size) and stored once at their exact length.
+;; quadratic in the body's size) and stored once at their exact length. The
+;; buffer starts at the store's record count, so unless indexing referents
+;; added records it already has that length.
 ;;
 ;; With `variances?`, it also records in `table.variances` the declared
 ;; variance of each lifetime parameter of every struct and enum the records'
@@ -131684,9 +131727,7 @@
     ;; stand as they are.
     [_unchanged : unit (when (>= count total) (return unit))]
     [cells : (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass)
-      (__tl_make-array
-        ownership_normalize.OwnershipNormalizeTypeClass
-        (+ total 1))]
+      (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass total)]
     [copied : i64 0]
     (while (< copied count)
       (set!
@@ -131701,32 +131742,70 @@
     (while (< count total)
       (let
         [index : i64 count]
-        [ty : ast.AstType
-          (match (typed.typed-type-value-at! store lease index)
-            [(typed.TypedTypeValueResult.Ok value) value]
-            [(typed.TypedTypeValueResult.Err _) ast.AstType.Never])]
-        [_variances : unit
-          (when
-            variances?
-            (tc-selected-nominal-variances-in!
-              ctx
-              (tc-global-shared-view ty)
-              (&mut table.variances)
-              0))]
-        [resolved : ast.AstType
-          (tc-selected-canonical-type-in
-            ctx
-            (& table.arena-regions)
-            (tc-resolve-type ctx (tc-global-shared-view ty)))]
+        [_room : unit (tc-selected-shallow-reserve! (&mut table.raw))]
+        ;; Set for a record type not seen before.
+        [resolved : ast.AstType ast.AstType.Never]
+        [primitive? : bool false]
+        ;; The record's type is read in place through a view of the store,
+        ;; which ends here, before a referent is indexed (that can add
+        ;; records). A record type seen before has that record's
+        ;; representative: it resolves and canonicalizes to an equal type,
+        ;; whose first match among the representatives is the same (or, had
+        ;; it none, is the representative it became: `tc-selected-same-type?`
+        ;; matches equal types). Its variances are recorded already: the
+        ;; first call on a table is the one with `variances?`, and an equal
+        ;; type names the same declarations, which
+        ;; `tc-selected-nominal-variance-add!` keeps once. A new one is noted
+        ;; under the representative it matches, or the one it becomes (-1
+        ;; then).
         [found : i64
-          (tc-selected-representative-noting!
-            table
-            (tc-global-shared-view resolved))]
+          (let
+            [ty : ast.AstType
+              (match (typed.typed-type-view-at! store lease index)
+                [(typed.TypedTypeResult.Ok view)
+                  (owned_view.compiler-owned-reference-shared-view view)]
+                [(typed.TypedTypeResult.Err _) ast.AstType.Never])]
+            [raw-slot : i64
+              (tc-selected-shallow-slot
+                (& table.raw)
+                (tc-global-shared-view ty))]
+            [raw-entry : i64 (array-ref table.raw.slots raw-slot)]
+            (if (> raw-entry 0)
+              (array-ref table.raw.values (- raw-entry 1))
+              (let
+                [_variances : unit
+                  (when
+                    variances?
+                    (tc-selected-nominal-variances-in!
+                      ctx
+                      (tc-global-shared-view ty)
+                      (&mut table.variances)
+                      0))]
+                [_resolved : unit
+                  (set!
+                    resolved
+                    (tc-selected-canonical-type-in
+                      ctx
+                      (& table.arena-regions)
+                      (tc-resolve-type ctx (tc-global-shared-view ty))))]
+                [rep : i64
+                  (tc-selected-representative-noting!
+                    table
+                    (tc-global-shared-view resolved))]
+                (set! primitive? (tc-selected-primitive-type? (& ty)))
+                (tc-selected-shallow-put!
+                  (&mut table.raw)
+                  raw-slot
+                  (tc-global-shared-view ty)
+                  (if (>= rep 0)
+                    rep
+                    table.representative-count))
+                rep)))]
         (when
           (< found 0)
           (let
             [fresh : ownership_normalize.OwnershipNormalizeTypeClass
-              (if (tc-selected-primitive-type? (& ty))
+              (if primitive?
                 (ownership_normalize.OwnershipNormalizeTypeClass
                   -1
                   true
@@ -131808,6 +131887,10 @@
             (array-ref table.representative-classes found).referent
             (array-ref table.representative-classes found).cleanup?))
         (set! count (+ count 1))))
+    (when
+      (= count (array-length cells))
+      (set! table.classes cells)
+      (return unit))
     (let
       [exact : (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass)
         (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass count)]

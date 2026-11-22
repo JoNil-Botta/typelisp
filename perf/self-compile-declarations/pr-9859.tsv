@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-5286.632	Ownership type classification reuses the representative of a record type it has already classified (an equal type resolves to the same first match) and reads record types in place through a store view instead of cloning them; same classes, same output, no work is skipped; CI own cost -586,751,249 Ir

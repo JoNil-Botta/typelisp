@@ -30561,9 +30561,7 @@
   [type-env : tc_core.TcTypeEnv]
   [left-id : i64]
   [right-id : i64]
-  [op : ast.AstBinOp]
-  [left : ast.AstExpr]
-  [right : ast.AstExpr]) : tc_core.ResultTcType
+  [op : ast.AstBinOp]) : tc_core.ResultTcType
   (let
     [fact (tc_core.tc-checked-binary-fact-lookup ctx left-id right-id (& op) 0)]
     (when (> fact 0) (return (Ok (tc_core.tc-checked-binary-fact-result fact)))))
@@ -30576,8 +30574,8 @@
             ctx
             type-env
             op
-            (lower-global-shared-view left)
-            (lower-global-shared-view right))))]
+            (lower-context-expr-get ctx left-id)
+            (lower-context-expr-get ctx right-id))))]
     (match binop-types
       [(TcBinOpTypes _ _ result-ty)
         (Ok
@@ -31402,17 +31400,7 @@
           func
           args))]
     [(Binary op left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (lower-binary-result-type-fast
-          ctx
-          type-env
-          left-box
-          right-box
-          op
-          left
-          right))]
+      (lower-binary-result-type-fast ctx type-env left-box right-box op)]
     [(If _ then-branch-box else-branch-box)
       (let
         [then-branch : ast.AstExpr (lower-context-expr-get ctx then-branch-box)]
@@ -31965,20 +31953,10 @@
         (tc_core.tc-type-without-regions
           (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
     [(Binary op left-box right-box)
-      (let
-        [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-        [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (match (lower-binary-result-type-fast
-          ctx
-          type-env
-          left-box
-          right-box
-          op
-          left
-          right)
-          [(Ok expr-ty)
-            (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
-          [(Err _) (lower-expr-typechecked ctx state env type-env expr origin)]))]
+      (match (lower-binary-result-type-fast ctx type-env left-box right-box op)
+        [(Ok expr-ty)
+          (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
+        [(Err _) (lower-expr-typechecked ctx state env type-env expr origin)])]
     [(Call func-box args)
       (let
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]

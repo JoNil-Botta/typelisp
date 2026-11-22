@@ -288,7 +288,7 @@
   (binary-pool-cell i64)
   (binary-expr-limit i64)
   (nominal-facts (__tl_dyn-array TcCheckedNominalFact))
-  (nominal-session i64)
+  (nominal-session-owner i64)
   (nominal-generation i64)
   ;; Facts can contain aggregate AstType payloads. Keep the whole generation in
   ;; a separately resettable arena rather than leaking boxes into the job arena.
@@ -2304,7 +2304,7 @@
               (__tl_make-array TcCheckedNominalFact 0)))
           (set! (deref data).binary-pool-cell 0)
           (set! (deref data).binary-expr-limit 0)
-          (set! (deref data).nominal-session 0)
+          (set! (deref data).nominal-session-owner 0)
           (set! (deref data).nominal-generation -1)
           (set! (deref data).enabled false)
           (set! (deref data).complete-required false)
@@ -2421,7 +2421,7 @@
                 data.binary-pool-cell
                 data.binary-expr-limit
                 (clone data.nominal-facts)
-                data.nominal-session
+                data.nominal-session-owner
                 data.nominal-generation
                 fresh
                 data.return-arena
@@ -45930,116 +45930,120 @@
     [(Var name) (tc-resolve-checked-nominal ctx name)]
     [_ ty]))
 
-;; A bounded direct-mapped table keeps just the last resolved nominal in each
-;; bucket. Name ids are meaningful only in the same structural name session.
+;; The table only records pointer-free results. Collisions discard reuse.
 (define (tc-resolve-checked-nominal [ctx : TcContext] [name : i64]) : ast.AstType
   (let
-    [session : cis.InternStructuralSessionHandle
-      (tc-context-structural-session ctx)]
-    [state : TcCheckedLetBindingFactState
-      (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
-    [data : (MutPtr TcCheckedLetBindingFactStateData)
-      (tc-checked-let-binding-fact-state-ptr state)]
+    [session (tc-context-structural-session ctx)]
+    [state (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
+    [data (tc-checked-let-binding-fact-state-ptr state)]
     (unsafe
       (when
-        (and
-          (deref data).enabled
-          (not (deref data).complete-required)
-          (> session.address 0))
-        (return (tc-resolve-checked-nominal-with-facts ctx name session data))))
+        (and (deref data).enabled (not (deref data).complete-required))
+        (when
+          (and
+            (deref data).recording
+            (= (deref data).nominal-session-owner 0)
+            (> session.address 0))
+          (in-arena
+            (arena.Arena (deref data).payload-arena)
+            (set!
+              (deref data).nominal-facts
+              (__tl_make-array TcCheckedNominalFact 32768)))
+          (set!
+            (deref data).nominal-session-owner
+            (cis.intern-structural-session-owner session))
+          (set!
+            (deref data).nominal-generation
+            (cis.intern-structural-session-current-reset-generation session)))
+        (when
+          (and
+            (> (deref data).nominal-session-owner 0)
+            (cis.intern-structural-session-stamp-current?
+              session
+              (deref data).nominal-session-owner
+              (deref data).nominal-generation))
+          (let
+            [index
+              (bit-and
+                (+
+                  (* 4099 ctx.module-id)
+                  (* 2029 ctx.type-module-id)
+                  name
+                  (shr name 22))
+                32767)]
+            (if (deref data).recording
+              (return
+                (tc-checked-nominal-fact-record! ctx name session data index))
+              (let
+                ;; The masked index is within the table allocated above.
+                [fact
+                  (ptr-offset
+                    (__tl_array-data (deref data).nominal-facts)
+                    index)]
+                (when
+                  (and
+                    (> (deref fact).tag 0)
+                    (= (deref fact).name-id name)
+                    (= (deref fact).module-id ctx.module-id)
+                    (= (deref fact).type-module-id ctx.type-module-id)
+                    (match (tc-context-symbols ctx)
+                      [(CompilerSymbols _ types _ _ _ _)
+                        (let
+                          [revision (deref fact).symbol-revision]
+                          (csym.compiler-symbol-map-revision-current?
+                            types
+                            (& revision)))])
+                    (match (tc-context-registries ctx)
+                      [(CompilerRegistries _ fields _)
+                        (let
+                          [revision (deref fact).field-revision]
+                          (csym.compiler-symbol-map-revision-current?
+                            fields
+                            (& revision)))]))
+                  (return
+                    (if (= (deref fact).tag 2)
+                      (Enum (deref fact).resolved-id)
+                      (Struct (deref fact).resolved-id))))))))))
     (tc-resolve-type-name
       ctx
       (tc-hygiene-name-text-id-for-session session name)
       name)))
 
-(define (tc-resolve-checked-nominal-with-facts
+(define (tc-checked-nominal-fact-record!
   [ctx : TcContext]
   [name : i64]
   [session : cis.InternStructuralSessionHandle]
-  [data : (MutPtr TcCheckedLetBindingFactStateData)]) : ast.AstType
+  [data : (MutPtr TcCheckedLetBindingFactStateData)]
+  [index : i64]) : ast.AstType
   (let
-    [capacity : i64 16384]
-    [index : i64
-      (bit-and
-        (+
-          (* 4099 ctx.module-id)
-          (* 2029 ctx.type-module-id)
-          name
-          (shr name 22))
-        (- capacity 1))]
-    [generation : i64
-      (cis.intern-structural-session-current-reset-generation session)]
-    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
-    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
-    (unsafe
-      (when
-        (and (deref data).recording (= (deref data).nominal-session 0))
-        (in-arena
-          (arena.Arena (deref data).payload-arena)
-          (set!
-            (deref data).nominal-facts
-            (__tl_make-array TcCheckedNominalFact capacity)))
-        (set! (deref data).nominal-session session.address)
-        (set! (deref data).nominal-generation generation))
-      (let
-        [same-session? : bool
-          (and
-            (= session.address (deref data).nominal-session)
-            (= generation (deref data).nominal-generation))]
+    [lease
+      (csym.compiler-resolution-lease-capture
+        (tc-context-symbols ctx)
+        (tc-context-registries ctx))]
+    [ty
+      (tc-resolve-type-name
+        ctx
+        (tc-hygiene-name-text-id-for-session session name)
+        name)]
+    (match (& ty)
+      [(or (Struct resolved) (Enum resolved))
         (when
-          (and same-session? (not (deref data).recording))
-          (let
-            [fact
-              (tc-global-array-element-shared-view
-                (deref data).nominal-facts
-                index)]
-            (when
-              (and
-                (> fact.tag 0)
-                (= fact.name-id name)
-                (= fact.module-id ctx.module-id)
-                (= fact.type-module-id ctx.type-module-id)
-                (match symbols
-                  [(CompilerSymbols _ types _ _ _ _)
-                    (csym.compiler-symbol-map-revision-current?
-                      types
-                      (& fact.symbol-revision))])
-                (match registries
-                  [(CompilerRegistries _ fields _)
-                    (csym.compiler-symbol-map-revision-current?
-                      fields
-                      (& fact.field-revision))]))
-              (return
-                (if (= fact.tag 2)
-                  (Enum fact.resolved-id)
-                  (Struct fact.resolved-id))))))
-        (let
-          [ty : ast.AstType
-            (tc-resolve-type-name
-              ctx
-              (tc-hygiene-name-text-id-for-session session name)
-              name)]
-          (when
-            (and same-session? (deref data).recording)
-            (match (& ty)
-              [(or (Struct resolved) (Enum resolved))
-                (let
-                  [lease
-                    (csym.compiler-resolution-lease-capture symbols registries)]
-                  (set!
-                    (array-ref (deref data).nominal-facts index)
-                    (TcCheckedNominalFact
-                      name
-                      ctx.module-id
-                      ctx.type-module-id
-                      (match (& ty)
-                        [(Enum _) 2]
-                        [_ 1])
-                      resolved
-                      lease.symbol-revision
-                      lease.field-revision)))]
-              [_ unit]))
-          ty)))))
+          (>= resolved 0)
+          (unsafe
+            (set!
+              (array-ref (deref data).nominal-facts index)
+              (TcCheckedNominalFact
+                name
+                ctx.module-id
+                ctx.type-module-id
+                (match (& ty)
+                  [(Enum _) 2]
+                  [_ 1])
+                resolved
+                lease.symbol-revision
+                lease.field-revision))))]
+      [_ unit])
+    ty))
 
 ;; True when `tc-resolve-type` would give back a type equal to `ty` in the
 ;; current state. The walk follows tc-resolve-type-rebuild exactly -- the same

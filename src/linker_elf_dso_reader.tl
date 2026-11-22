@@ -3,6 +3,7 @@
 (import linker_elf_object_reader as elf)
 (import linker_elf_dynamic as dynamic)
 (import linker_elf_version_codec as versions)
+(import stdlib.clone)
 (import stdlib.byte_le as le)
 (import stdlib.byte_reader as bytes)
 (import stdlib.string)
@@ -41,12 +42,16 @@
   (UnsupportedMetadata)
   (ResourceLimit))
 
+(clone.gen-clone DsoErrorKind)
+
 ;; Field names are fixed literals; hostile input cannot allocate diagnostics.
 (defstruct DsoError
   (kind DsoErrorKind)
   (identity elf.ElfIdentity)
   (field String)
   (offset i64))
+
+(clone.gen-clone DsoError)
 
 (defstruct DsoSegment
   (index i64)
@@ -128,7 +133,11 @@
     (set! check.ok false)
     (set!
       check.error
-      (DsoError (InvalidInput) (clone check.identity) (string.copy field) at)))
+      (DsoError
+        (InvalidInput)
+        (elf.clone-elf-identity (& check.identity))
+        (string.copy field)
+        at)))
   unit)
 
 (define (check-dynamic-pointers!
@@ -190,11 +199,11 @@
         [width : i64 0]
         (match section.section-type
           [6
-            (set! expected (clone (deref dynamic-span)))
+            (set! expected (deref dynamic-span))
             (set! dynamics (+ dynamics 1))
             (set! width 16)]
           [11
-            (set! expected (clone (deref symbols)))
+            (set! expected (deref symbols))
             (set! tag dynamic.dt-symtab)
             (set! dynsyms (+ dynsyms 1))
             (set! width 24)
@@ -215,19 +224,19 @@
                 "dynsym-sh_link"
                 (+ section.id.offset 40)))]
           [5
-            (set! expected (clone sysv.span))
+            (set! expected (elf.ElfSpan sysv.span.offset sysv.span.size))
             (set! tag dynamic.dt-hash)]
           [1879048182
-            (set! expected (clone gnu.span))
+            (set! expected (elf.ElfSpan gnu.span.offset gnu.span.size))
             (set! tag dynamic.dt-gnu-hash)]
           [1879048189
-            (set! expected (clone (array-ref spans 1)))
+            (set! expected (array-ref spans 1))
             (set! tag dynamic.dt-verdef)]
           [1879048190
-            (set! expected (clone (array-ref spans 2)))
+            (set! expected (array-ref spans 2))
             (set! tag dynamic.dt-verneed)]
           [1879048191
-            (set! expected (clone (array-ref spans 0)))
+            (set! expected (array-ref spans 0))
             (set! tag dynamic.dt-versym)
             (set! width 2)]
           [3
@@ -237,7 +246,7 @@
                 (and
                   (elf.flag? section.flags 2)
                   (= section.address string-address)))
-              (set! expected (clone (deref strings)))
+              (set! expected (deref strings))
               (set! tag dynamic.dt-strtab))]
           [_ unit])
         (when
@@ -272,18 +281,18 @@
   (let
     [check : DsoCheck (new-check request)]
     [header : elf.ElfHeader (read-header! data (&mut check))]
-    (unless check.ok (return (ReadFailed (clone check.error))))
+    (unless check.ok (return (ReadFailed (clone-dso-error (& check.error)))))
     ;; Result owners and the version codec's empty vectors have fixed storage
     ;; even when their variable record counts are zero.
     (reserve! (&mut check) 4096 1)
-    (unless check.ok (return (ReadFailed (clone check.error))))
+    (unless check.ok (return (ReadFailed (clone-dso-error (& check.error)))))
     (let
       [segments : (__tl_dyn-array DsoSegment)
         (read-segments! data (& header) (&mut check))]
       [sections : (__tl_dyn-array elf.ElfSection)
         (read-sections! data (& header) (&mut check))]
       [dynamic-span : elf.ElfSpan (dynamic-span! (& segments) (&mut check))]
-      (unless check.ok (return (ReadFailed (clone check.error))))
+      (unless check.ok (return (ReadFailed (clone-dso-error (& check.error)))))
       (let
         [entries : (__tl_dyn-array DsoDynamic)
           (read-dynamic! data (& dynamic-span) (&mut check))]
@@ -306,7 +315,9 @@
             (<= string-size (cast check.limits.max-string-bytes : u64))
             "string-limit"
             (tag-offset (& entries) dynamic.dt-strsz))
-          (unless check.ok (return (ReadFailed (clone check.error))))
+          (unless
+            check.ok
+            (return (ReadFailed (clone-dso-error (& check.error)))))
           (let
             [strings : elf.ElfSpan
               (map-range!
@@ -332,7 +343,9 @@
               (> strings.size 0)
               "DT_STRSZ-empty"
               (tag-offset (& entries) dynamic.dt-strsz))
-            (unless check.ok (return (ReadFailed (clone check.error))))
+            (unless
+              check.ok
+              (return (ReadFailed (clone-dso-error (& check.error)))))
             (require!
               (&mut check)
               (and
@@ -355,7 +368,9 @@
               (<= count check.limits.max-symbols)
               "symbol-limit"
               0)
-            (unless check.ok (return (ReadFailed (clone check.error))))
+            (unless
+              check.ok
+              (return (ReadFailed (clone-dso-error (& check.error)))))
             (let
               [symbol-span : elf.ElfSpan
                 (map-range!
@@ -365,7 +380,9 @@
                   (&mut check)
                   "DT_SYMTAB"
                   (tag-offset (& entries) dynamic.dt-symtab))]
-              (unless check.ok (return (ReadFailed (clone check.error))))
+              (unless
+                check.ok
+                (return (ReadFailed (clone-dso-error (& check.error)))))
               (let
                 [symbols : (__tl_dyn-array elf.ElfSymbol)
                   (read-symbols!
@@ -390,17 +407,21 @@
                           (+ (array-ref entries i).offset 8))]
                       (when
                         (= (array-ref entries i).tag dynamic.dt-soname)
-                        (set! soname (clone span)))
+                        (set! soname span))
                       (set! (array-ref entries i).name span)))
                   (set! i (+ i 1)))
                 (validate-hash! data (& sysv) (& symbols) false (&mut check))
                 (validate-hash! data (& gnu) (& symbols) true (&mut check))
-                (unless check.ok (return (ReadFailed (clone check.error))))
+                (unless
+                  check.ok
+                  (return (ReadFailed (clone-dso-error (& check.error)))))
                 (reserve!
                   (&mut check)
                   3
                   (comptime (size-of (type elf.ElfSpan))))
-                (unless check.ok (return (ReadFailed (clone check.error))))
+                (unless
+                  check.ok
+                  (return (ReadFailed (clone-dso-error (& check.error)))))
                 (let
                   [spans : (__tl_dyn-array elf.ElfSpan)
                     (__tl_make-array elf.ElfSpan 3)]
@@ -415,7 +436,9 @@
                       (/ check.left (+ 2 (array-length entries))))
                     "work-limit"
                     header.section-offset)
-                  (unless check.ok (return (ReadFailed (clone check.error))))
+                  (unless
+                    check.ok
+                    (return (ReadFailed (clone-dso-error (& check.error)))))
                   (charge!
                     (&mut check)
                     (* (array-length sections) (+ 2 (array-length entries)))
@@ -444,7 +467,7 @@
                       (ReadDso
                         (DsoObject
                           data
-                          (clone request.identity)
+                          (elf.clone-elf-identity (& request.identity))
                           header
                           segments
                           dynamic-span
@@ -459,7 +482,7 @@
                           soname
                           flags
                           flags-1))
-                      (ReadFailed (clone check.error)))))))))))))
+                      (ReadFailed (clone-dso-error (& check.error))))))))))))))
 
 (define (limit!
   [check : (&mut c DsoCheck)]
@@ -494,10 +517,15 @@
   (let
     [out : DsoCheck
       (DsoCheck
-        (clone request.identity)
-        (clone request.limits)
+        (elf.clone-elf-identity (& request.identity))
+        (match request.limits
+          [value value])
         true
-        (DsoError (InvalidInput) (clone request.identity) "ELF.header" 0)
+        (DsoError
+          (InvalidInput)
+          (elf.clone-elf-identity (& request.identity))
+          "ELF.header"
+          0)
         request.limits.max-work
         0
         0)]
@@ -610,7 +638,9 @@
       (set! limits.max-work 64)
       (let
         [request : elf.ElfReadRequest
-          (elf.ElfReadRequest (clone check.identity) limits)]
+          (elf.ElfReadRequest
+            (elf.clone-elf-identity (& check.identity))
+            limits)]
         [common : elf.ElfCheck (elf.new-check (& request))]
         (elf.check-ident! data (&mut common) 3)
         (let
@@ -1538,7 +1568,10 @@
   (let
     [out : (__tl_dyn-array elf.ElfSymbol) (__tl_make-array elf.ElfSymbol count)]
     [table-id : elf.ElfSectionId
-      (elf.ElfSectionId (clone check.identity) -1 span.offset)]
+      (elf.ElfSectionId
+        (elf.clone-elf-identity (& check.identity))
+        -1
+        span.offset)]
     [local-count : i64 -1]
     [global-seen : bool false]
     [i : i64 0]
@@ -1546,7 +1579,7 @@
     (while (< j (array-length sections))
       (when
         (= (array-ref sections j).section-type 11)
-        (set! table-id (clone (array-ref sections j).id))
+        (set! table-id (array-ref sections j).id)
         (set! local-count (array-ref sections j).info))
       (set! j (+ j 1)))
     (while (and check.ok (< i count))
@@ -1583,7 +1616,7 @@
             section
             (elf.DefinedSection
               (elf.ElfSectionId
-                (clone check.identity)
+                (elf.clone-elf-identity (& check.identity))
                 raw
                 (if (< raw (array-length sections))
                   (array-ref sections raw).id.offset
@@ -1612,7 +1645,7 @@
         (set!
           (array-ref out i)
           (elf.ElfSymbol
-            (elf.ElfEntryId (clone table-id) i at)
+            (elf.ElfEntryId table-id i at)
             name
             (name-span! data strings (cast name : u64) check at)
             (elf.symbol-binding (shr info 4))
@@ -1877,7 +1910,7 @@
     (set! limits.max-work request.max-work)
     (let
       [read-request : DsoReadRequest
-        (DsoReadRequest (clone object.identity) limits)]
+        (DsoReadRequest (elf.clone-elf-identity (& object.identity)) limits)]
       [check : DsoCheck (new-check (& read-request))]
       [gnu : bool
         (match request.hash
@@ -1893,7 +1926,9 @@
         (&mut check)
         (+ (array-length request.name) (array-length request.version))
         0)
-      (unless check.ok (return (LookupFailed (clone check.error))))
+      (unless
+        check.ok
+        (return (LookupFailed (clone-dso-error (& check.error)))))
       (let
         [name-hash : i64
           (if gnu
@@ -1930,10 +1965,15 @@
               (< index (array-length object.symbols)))
             "lookup-hash-index"
             hash.bucket-offset)
-          (unless check.ok (return (LookupFailed (clone check.error))))
+          (unless
+            check.ok
+            (return (LookupFailed (clone-dso-error (& check.error)))))
           (when
             (lookup-match? object index request (&mut check))
-            (return (Found (clone (array-ref object.symbols index)))))
+            (return
+              (Found
+                (match (array-ref object.symbols index)
+                  [symbol symbol]))))
           (let
             [next : i64
               (le.read-u32
@@ -1949,4 +1989,4 @@
           (set! steps (+ steps 1)))
         (if check.ok
           (Absent)
-          (LookupFailed (clone check.error)))))))
+          (LookupFailed (clone-dso-error (& check.error))))))))

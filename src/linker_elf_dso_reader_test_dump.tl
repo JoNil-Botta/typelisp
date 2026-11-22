@@ -20,7 +20,9 @@
 (define (indexed-name [object : (& o (dso.DsoObject input))] [index : i64]) : String
   (let
     [request : dso.DsoReadRequest
-      (dso.DsoReadRequest (clone object.identity) (dso.default-limits))]
+      (dso.DsoReadRequest
+        (elf.clone-elf-identity (& object.identity))
+        (dso.default-limits))]
     [check : dso.DsoCheck (dso.new-check (& request))]
     [span : elf.ElfSpan
       (dso.name-span!
@@ -36,7 +38,9 @@
     [symbol : (& o elf.ElfSymbol) (& (array-ref object.symbols index))]
     [plain : String (name object.bytes (& symbol.name))]
     [request : dso.DsoReadRequest
-      (dso.DsoReadRequest (clone object.identity) (dso.default-limits))]
+      (dso.DsoReadRequest
+        (elf.clone-elf-identity (& object.identity))
+        (dso.default-limits))]
     [check : dso.DsoCheck (dso.new-check (& request))]
     [span : elf.ElfSpan (dso.version-name! object index (&mut check))]
     (when (= span.size 0) (return plain))

@@ -565,7 +565,7 @@
     [check : ArCheck
       (ArCheck
         true
-        (ArError (BadName) (clone directory.identity) -1 -1 0 (cast 0 : u64))
+        (ArError (BadName) directory.identity -1 -1 0 (cast 0 : u64))
         directory.work-left
         (-
           directory.limits.max-retained-bytes

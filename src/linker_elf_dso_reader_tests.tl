@@ -77,6 +77,9 @@
       (set! i (+ i 1)))
     out))
 
+(define (copy-fixture [data : (& (__tl_dyn-array u8))]) : (__tl_dyn-array u8)
+  (copy-span data 0 (array-length data)))
+
 (define (assert-fixture
   [data : (& b (__tl_dyn-array u8))]
   [expected : (& e (__tl_dyn-array u8))]
@@ -93,9 +96,7 @@
         (test.assert-owned-string-eq
           (dump.dump (& object) complete)
           (byte_buf.to-string
-            (byte_buf.ByteBuf
-              (copy-span expected 0 (array-length expected))
-              (array-length expected)))
+            (byte_buf.ByteBuf (copy-fixture expected) (array-length expected)))
           "every independent readelf record")
         (test.assert-i64-eq
           (array-length object.bytes)
@@ -126,7 +127,7 @@
           (dump.dump (& object) true)
           (byte_buf.to-string
             (byte_buf.ByteBuf
-              (clone gcc-both-oracle)
+              (copy-fixture (& gcc-both-oracle))
               (array-length gcc-both-oracle)))
           "complete version model matches sectionful oracle")]))
   (test.assert-i64-eq
@@ -192,7 +193,14 @@
   [kind : (& k dso.DsoHashKind)]) : unit
   (let
     [query : (dso.DsoLookupRequest n v)
-      (dso.DsoLookupRequest name version (clone (deref kind)) 1048576)]
+      (dso.DsoLookupRequest
+        name
+        version
+        (match kind
+          [(PreferGnu) (dso.PreferGnu)]
+          [(GnuHash) (dso.GnuHash)]
+          [(SysvHash) (dso.SysvHash)])
+        1048576)]
     (match (dso.lookup object (& query))
       [(LookupFailed _) (test.assert-true false "bounded hash lookup")]
       [(Absent)
@@ -653,7 +661,7 @@
                 scratch
                 (let
                   [mutation : (& cases Mutation) (& (array-ref cases i))]
-                  [data : (__tl_dyn-array u8) (clone gcc-both)]
+                  [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
                   (mutate!
                     (&mut data)
                     mutation.at
@@ -662,7 +670,7 @@
                   (assert-error (& data) mutation.field mutation.offset)))
               (set! i (+ i 1)))
             (let
-              [data : (__tl_dyn-array u8) (clone gcc-both)]
+              [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
               [at : i64 (- (dso.tag-offset (& object.entries) 20) 8)]
               (le.set-u64! (&mut data) at dynamic.dt-syment)
               (assert-error (& data) "duplicate-DT-tag" at))))]))
@@ -742,13 +750,13 @@
                 (with-arena
                   scratch
                   (let
-                    [data : (__tl_dyn-array u8) (clone gcc-both)]
+                    [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
                     [field : String (dynamic.pointer-field entry.tag)]
                     (le.set-u64! (&mut data) (+ entry.offset 8) -1)
                     (assert-error (& data) field (+ entry.offset 8))))))
             (set! i (+ i 1))))
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           [check : dso.DsoCheck (dso.new-check (& req))]
           [tail : elf.ElfSpan
             (dso.mapped-tail!
@@ -764,11 +772,11 @@
             (set! at (+ at 4)))
           (assert-error (& data) "GNU-hash-chain" at))
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           (le.set-u32! (&mut data) object.gnu.bucket-offset -1)
           (assert-error (& data) "symbol-limit" object.gnu.bucket-offset))
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           (le.set-u32!
             (&mut data)
             (+ object.sysv.chain-offset 4)
@@ -778,7 +786,7 @@
             "SysV-hash-chain"
             (+ object.sysv.chain-offset 4)))
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           (le.set-u32!
             (&mut data)
             (+ (array-ref object.version-spans 1).offset 12)
@@ -863,7 +871,7 @@
       [(ReadFailed _) (test.assert-true false "numbering control")]
       [(ReadDso object)
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           (le.set-u16! (&mut data) 56 65535)
           (le.set-u16! (&mut data) 60 0)
           (le.set-u16! (&mut data) 62 65535)
@@ -881,7 +889,7 @@
             (array-length object.segments))
           (assert-fixture (& data) (& gcc-both-oracle) true))
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           [i : i64 0]
           [found : bool false]
           (while (< i (array-length object.segments))
@@ -899,7 +907,7 @@
           (test.assert-true found "empty GNU_STACK producer control")
           (assert-fixture (& data) (& gcc-both-oracle) true))
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           (le.set-u64! (&mut data) (+ object.header.section-offset 32) 1)
           (assert-error
             (& data)
@@ -929,7 +937,7 @@
           (array-length object.symbols)
           "complete symbol count")
         (let
-          [data : (__tl_dyn-array u8) (clone empty-gnu)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& empty-gnu))]
           (le.set-u64! (&mut data) 40 0)
           (le.set-u16! (&mut data) 58 0)
           (le.set-u16! (&mut data) 60 0)
@@ -947,7 +955,7 @@
               [_ false])
             "ambiguous total count is explicit unsupported metadata"))])
     (let
-      [data : (__tl_dyn-array u8) (clone empty-both)]
+      [data : (__tl_dyn-array u8) (copy-fixture (& empty-both))]
       (le.set-u64! (&mut data) 40 0)
       (le.set-u16! (&mut data) 58 0)
       (le.set-u16! (&mut data) 60 0)
@@ -981,7 +989,7 @@
           [i : i64 0]
           (while (< i 6)
             (let
-              [data : (__tl_dyn-array u8) (clone gcc-both)]
+              [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
               [mutation : (& cases Mutation) (& (array-ref cases i))]
               (mutate! (&mut data) mutation.at mutation.width mutation.value)
               (assert-error (& data) mutation.field mutation.offset))
@@ -994,7 +1002,7 @@
       [(ReadFailed _) (test.assert-true false "unrelated string table control")]
       [(ReadDso object)
         (let
-          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [data : (__tl_dyn-array u8) (copy-fixture (& gcc-both))]
           [i : i64 0]
           [found : bool false]
           (while (< i object.header.section-count)
@@ -1057,7 +1065,7 @@
                   (= section.section-type 3)
                   (not (elf.flag? section.flags 2)))
                 (let
-                  [data : (__tl_dyn-array u8) (clone zero-dynstr)]
+                  [data : (__tl_dyn-array u8) (copy-fixture (& zero-dynstr))]
                   (set! controls (+ controls 1))
                   ;; An allocated table at this address must corroborate the
                   ;; mapped dynstr; ordinary unallocated tables need not.

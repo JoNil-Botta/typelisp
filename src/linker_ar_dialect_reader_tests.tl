@@ -417,7 +417,7 @@
       [prefix : String
         (cat.str-cat "__.SYMDEF SORTED" (word (cast 0 : u64) 4 false))]
       [target : String (word (cast 116 : u64) 4 true)]
-      (set! body (patch (& body) 8 (clone target)))
+      (set! body (patch (& body) 8 (string.copy (& target))))
       (set! body (patch (& body) 16 target))
       (let
         [extended : String
@@ -531,10 +531,16 @@
     [obj : String (member "x/" "x")]
     [cases : (Array String 5)
       (array
-        (cat.str-cat "!<arch>\n" (clone index) (clone index))
-        (cat.str-cat "!<arch>\n" (clone table) (clone index))
-        (cat.str-cat "!<arch>\n" (clone obj) index)
-        (cat.str-cat "!<arch>\n" (clone table) table)
+        (cat.str-cat
+          "!<arch>\n"
+          (string.copy (& index))
+          (string.copy (& index)))
+        (cat.str-cat
+          "!<arch>\n"
+          (string.copy (& table))
+          (string.copy (& index)))
+        (cat.str-cat "!<arch>\n" (string.copy (& obj)) index)
+        (cat.str-cat "!<arch>\n" (string.copy (& table)) table)
         (cat.str-cat "!<arch>\n" obj (member "//" "name/\n")))]
     [i : i64 0]
     (while (< i 5)
@@ -689,11 +695,11 @@
           (set! exact.max-special-members 2)
           (set! exact.max-index-entries 5)
           (set! exact.max-work (- exact.max-work parsed.session.work-left))
-          (accept (& data) (GnuSystemV) (clone exact))
+          (accept (& data) (GnuSystemV) exact)
           (set! which 0)
           (while (< which 6)
             (let
-              [caps : archive.ArchiveLimits (clone exact)]
+              [caps : archive.ArchiveLimits exact]
               (cond
                 [(= which 0)
                   (set! caps.max-input-bytes (- caps.max-input-bytes 1))]
@@ -715,7 +721,7 @@
   ar-dialects-stable-input-identity
   (let
     [a : String (fixture (& gnu))]
-    [b : String (clone a)]
+    [b : String (string.copy (& a))]
     (match (ar.read (& a) (identity) (GnuSystemV) (limits))
       [(ReadArchive first)
         (match (ar.read (& b) (identity) (GnuSystemV) (limits))

@@ -1264,7 +1264,7 @@
 ;;
 ;; #rbp-base invariant: in fpo mode every "(%rbp" occurrence is a frame
 ;; reference. Emitters structurally distinguish %rbp pool VALUES with a
-;; no-base SIB spelling `(,%rbp,1)` where possible and otherwise stage through
+;; spaced spelling `( %rbp)` where possible and otherwise stage through
 ;; a scratch (see address-base-filter); bare `%rbp` register operands also
 ;; contain no "(%rbp".
 ;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites (no
@@ -3450,56 +3450,104 @@
       slot
       owners.r15)))
 
-;; Owner map with every register that mirrored `slot` reset to unknown. Used
-;; when `slot` is written (its memory value changed) so stale mirrors are dropped.
-(define (compiler-backend-peephole-owners-clear-slot
+;; A complete movq mirror covers eight bytes. A narrow or unaligned write
+;; can overlap it at a different offset. Keys have four values per byte,
+;; so clear on the intersecting range and drop any mirror using another
+;; stack base, whose relationship to this one is unknown here.
+(define (compiler-backend-peephole-clear-overlapping-owner
+  [owner : i64]
+  [base : i64]
+  [first : i64]
+  [last : i64]) : i64
+  (if (<= owner 0)
+    owner
+    (let
+      [key : i64 (- (compiler-backend-peephole-owner-key-base owner) 1)]
+      (if (or (!= (bit-and key 2) base) (and (>= key first) (< key last)))
+        (compiler-backend-peephole-owner-key-unknown)
+        owner))))
+
+(define (compiler-backend-peephole-owners-clear-extent
   [owners : be_state.CompilerBackendPeepholeOwners]
-  [slot : i64]) : be_state.CompilerBackendPeepholeOwners
+  [slot : i64]
+  [bytes : i64]) : be_state.CompilerBackendPeepholeOwners
   (let
-    [base : i64 (compiler-backend-peephole-owner-key-base slot)]
+    [key : i64 (- slot 1)]
+    [base : i64 (bit-and key 2)]
+    [aligned : i64 (bit-and key (- 0 4))]
+    [first : i64 (- aligned 28)]
+    [last : i64 (+ aligned (* bytes 4))]
     (be_state.CompilerBackendPeepholeOwners
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rax base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rax)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rcx base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rcx)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rdx base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rdx)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rbx base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rbx)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rsi base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rsi)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rdi base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rdi)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r8 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r8)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r9 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r9)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r10 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r10)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r11 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r11)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r12 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r12)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r13 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r13)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r14 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r14)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r15 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r15))))
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rax
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rcx
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rdx
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rbx
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rsi
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rdi
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r8
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r9
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r10
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r11
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r12
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r13
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r14
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r15
+        base
+        first
+        last))))
 
 ;; Owner key that can survive a normal call. Calls may mutate globals, so a
 ;; callee-saved register keeps only stack-slot ownership across the boundary --
@@ -3551,7 +3599,7 @@
 ;; Owner-map transfer for a recognized `movq SRC, DST` line.
 ;;  * DST is a clean stack slot (a store): SRC's value is written to
 ;;    the slot. Every OTHER register that mirrored the slot becomes stale and is
-;;    dropped (`owners-clear-slot`, which also drops SRC's entry when it happened
+;;    dropped (`owners-clear-extent`, which also drops SRC's entry when it happened
 ;;    to mirror this slot). SRC's value itself is unchanged, so any slot SRC
 ;;    already mirrors is preserved; only when SRC is a tracked register with no
 ;;    known location do we record that it now mirrors DST (a sound store-to-reload
@@ -3573,7 +3621,7 @@
     [(compiler-backend-peephole-owner-key-stack? dst-key)
       (let
         [cleared : be_state.CompilerBackendPeepholeOwners
-          (compiler-backend-peephole-owners-clear-slot owners dst-key)]
+          (compiler-backend-peephole-owners-clear-extent owners dst-key 8)]
         (if (and
           (>= src-reg 0)
           (not
@@ -3585,12 +3633,9 @@
             (compiler-backend-peephole-owner-key-mark-store dst-key))
           cleared))]
     [(>= dst-reg 0)
-      ;; DST is a load/reg-reg dest: it mirrors a clean stack slot OR a SYM(%rip)
-      ;; global load (SCAV2); otherwise its contents become unknown.
       (compiler-backend-peephole-owners-set-reg-index owners dst-reg src-key)]
     [else (compiler-backend-peephole-owners-empty)]))
 
-;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
 (define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool
   (or (= b 113) (= b 108) (= b 119) (= b 98)))
 
@@ -6138,6 +6183,68 @@
 ;;    clear only that register's owner (everything else's reg<->slot mirror
 ;;    survives).
 ;;  * Otherwise fall back to the conservative whole-map clear.
+;; A spelled stack operand starts with a signed decimal or a bare base.
+;; Reject symbol addends, indexed forms, and segment overrides.
+(define (compiler-backend-peephole-stack-destination-key
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [base : i64 (compiler-backend-peephole-memory-base-range data start end)]
+    (if (or (= base 1) (= base 2))
+      (let
+        [paren : i64 (- end 6)]
+        [first : i64 (compiler-backend-rsp-rebase-int-start data start paren)]
+        [operand : i64
+          (if (>= first 0)
+            first
+            paren)]
+        (if (and
+          (> operand start)
+          (= (be_state.compiler-backend-peephole-byte-at data (- operand 1)) 32)
+          (<= (- paren operand) 10))
+          (compiler-backend-peephole-stack-owner-key-from-parts
+            (- base 1)
+            (if (>= first 0)
+              (compiler-backend-rsp-rebase-parse-int data first paren)
+              0)
+            (>= first 0))
+          0))
+      0)))
+
+(define (compiler-backend-peephole-single-memory-write-owners
+  [owners : be_state.CompilerBackendPeepholeOwners]
+  [line : (& line be_state.CompilerBackendPeepholeLine)]) : be_state.CompilerBackendPeepholeOwners
+  (let
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    [ml : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
+    [suffix : i64
+      (be_state.compiler-backend-peephole-byte-at line.data (- (+ ms ml) 1))]
+    [width : i64
+      (cond
+        [(= (be_state.compiler-backend-peephole-byte-at line.data ms) 115)
+          (if (=
+            (be_state.compiler-backend-peephole-byte-at line.data (+ ms 1))
+            101)
+            1
+            (cond
+              [(= suffix 98) 1]
+              [(= suffix 119) 2]
+              [(= suffix 108) 4]
+              [else 8]))]
+        [(= suffix 98) 1]
+        [(= suffix 119) 2]
+        [(= suffix 108) 4]
+        [else 8])]
+    [slot : i64
+      (compiler-backend-peephole-stack-destination-key
+        line.data
+        (+ ms ml)
+        (compiler-backend-peephole-desc-end line))]
+    (if (> slot 0)
+      (compiler-backend-peephole-owners-clear-extent owners slot width)
+      (compiler-backend-peephole-owners-empty))))
+
 (define (compiler-backend-peephole-line-clobber-owners-desc
   [carry-safe : (& carry-safe be_state.CompilerBackendPeepholeCarrySafeView)]
   [owners : be_state.CompilerBackendPeepholeOwners]
@@ -6165,9 +6272,11 @@
       (compiler-backend-peephole-owners-clear-call-clobbers owners)]
     [(compiler-backend-peephole-desc-single-dest? line)
       (let
-        [dreg : i64 (compiler-backend-peephole-desc-last-reg line)]
+        [dreg : i64
+          (compiler-backend-peephole-desc-last-reg
+            (be_state.compiler-backend-global-shared-view line))]
         (if (< dreg 0)
-          (compiler-backend-peephole-owners-empty)
+          (compiler-backend-peephole-single-memory-write-owners owners (& line))
           (compiler-backend-peephole-owners-set-reg-index
             owners
             dreg
@@ -6683,7 +6792,7 @@
     ;; so the store is a no-op. The invariant is exactly the one the reload
     ;; elision above relies on: an owner entry survives only while neither the
     ;; register nor the location has been written since the mirror was
-    ;; established (a location write runs `owners-clear-slot`, a register write
+    ;; established (a location write runs `owners-clear-extent`, a register write
     ;; clears that register, a call keeps only stack owners in callee-saved
     ;; registers), so `owners[%rX] == SLOT` means memory at SLOT equals %rX.
     ;; Restricted to packed stack keys, matching the store arm of the owner
@@ -6961,6 +7070,227 @@
 ;; The single render of the group: one allocation in the active arena, then the
 ;; surviving records' bytes blitted straight in. Records carry their own source
 ;; string, so the group never has to be flattened first.
+;; These edits run after the last alias analysis. A stack pointer already
+;; materialized by LEA can encode a later reference more cheaply. Keep it
+;; only inside a straight-line run and stop at unknown instructions or any
+;; mention of its register, including subregister writes.
+(define (compiler-backend-peephole-stack-address-cost
+  [offset : i64]
+  [sib? : bool]
+  [zero-disp? : bool]) : i64
+  (+
+    (if sib?
+      1
+      0)
+    (cond
+      [(and (= offset 0) (not zero-disp?)) 0]
+      [(and (>= offset -128) (<= offset 127)) 1]
+      [else 4])))
+
+(define (compiler-backend-peephole-compact-stack-addresses!
+  [records : (&mut records be_state.CompilerBackendPeepholeLineVec)]) : unit
+  (let
+    [base : i64 -1]
+    [bias : i64 0]
+    [base-line : i64 0]
+    [base-start : i64 0]
+    (for [i (iterator.range 0 records.len)]
+      (when
+        (= (array-ref records.live i) 1)
+        (let
+          [rec : (& records be_state.CompilerBackendPeepholeLineRecord)
+            (& (array-ref records.lines i))]
+          [flags : i64 (compiler-backend-peephole-record-flags rec)]
+          [simple-lea? : bool
+            (and
+              (!= (bit-and flags compiler-backend-sweep-line-flag-leaq) 0)
+              (= (compiler-backend-peephole-record-mem-count rec) 1)
+              (= (bit-and flags compiler-backend-sweep-line-flag-fatal-mem) 0))]
+          (when
+            (or (>= base 0) simple-lea?)
+            (let
+              [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+              [start : i64 (compiler-backend-peephole-record-start rec)]
+              [end : i64 (compiler-backend-peephole-record-end rec)]
+              [ms : i64 (compiler-backend-peephole-record-mnemonic-start rec)]
+              [instruction? : bool
+                (=
+                  (compiler-backend-peephole-record-kind rec)
+                  compiler-backend-sweep-line-kind-instruction)]
+              [mov? : bool
+                (and
+                  (<= (+ ms 5) end)
+                  (be_operand.compiler-backend-peephole-range-eq?
+                    data
+                    ms
+                    (+ ms 5)
+                    "movq "))]
+              [mention? : bool
+                (and
+                  (>= base 0)
+                  (compiler-backend-peephole-range-mentions-reg-index?
+                    data
+                    ms
+                    end
+                    base))]
+              (cond
+                [(or
+                    (not instruction?)
+                    (!=
+                      (bit-and
+                        flags
+                        (bit-or
+                          compiler-backend-sweep-line-flag-bare-rsp
+                          compiler-backend-sweep-line-flag-bare-rsp-tail))
+                      0))
+                  (set! base -1)]
+                [simple-lea?
+                  (let
+                    [comma : i64
+                      (compiler-backend-peephole-find-comma-space-range
+                        data
+                        ms
+                        end)]
+                    [reg-start : i64 (+ comma 2)]
+                    [reg : i64
+                      (if (or
+                        (< comma 0)
+                        (<=
+                          (compiler-backend-peephole-stack-destination-key
+                            data
+                            (+ ms 4)
+                            comma)
+                          0))
+                        -1
+                        (compiler-backend-peephole-token-reg-index-range
+                          data
+                          reg-start
+                          end))]
+                    (set! base reg)
+                    (when
+                      (>= reg 0)
+                      (set! bias rec.value)
+                      (set! base-line i)
+                      (set! base-start reg-start)))]
+                [mov?
+                  (when
+                    (and
+                      (>= base 0)
+                      (= (compiler-backend-peephole-record-mem-count rec) 1)
+                      (=
+                        (bit-and
+                          flags
+                          compiler-backend-sweep-line-flag-fatal-mem)
+                        0))
+                    (let
+                      [disp : i64 (- rec.value bias)]
+                      (when
+                        (and
+                          (be_operand.compiler-backend-imm32? disp)
+                          (<
+                            (compiler-backend-peephole-stack-address-cost
+                              disp
+                              (= base 10)
+                              (= base 11))
+                            (compiler-backend-peephole-stack-address-cost
+                              rec.value
+                              true
+                              false)))
+                        (let
+                          [anchor : (&
+                            records
+                            be_state.CompilerBackendPeepholeLineRecord)
+                            (& (array-ref records.lines base-line))]
+                          [base-text : String
+                            (string.substring
+                              anchor.src
+                              base-start
+                              (-
+                                (compiler-backend-peephole-record-end anchor)
+                                base-start))]
+                          [text : String
+                            (compiler-backend-peephole-rewrite-stack-address
+                              rec
+                              start
+                              end
+                              ms
+                              disp
+                              base-text)]
+                          (unless
+                            (string.eq text "")
+                            (let
+                              [span : i64 (shl (string.string-length text) 32)]
+                              (set!
+                                (array-ref records.lines i)
+                                (be_state.CompilerBackendPeepholeLineRecord
+                                  text
+                                  span
+                                  (bit-or
+                                    rec.meta
+                                    compiler-backend-peephole-record-owned-bit)
+                                  rec.cand
+                                  rec.epilogue
+                                  rec.value))))))))
+                  (when mention? (set! base -1))]
+                [else
+                  (let
+                    [space : i64
+                      (be_operand.compiler-backend-peephole-scan-byte-range
+                        data
+                        ms
+                        end
+                        32)]
+                    [last-reg : i64
+                      (compiler-backend-peephole-last-operand-reg-index
+                        data
+                        space
+                        end)]
+                    (unless
+                      (and
+                        (not mention?)
+                        (>= last-reg 0)
+                        (compiler-backend-peephole-mnemonic-single-dest?
+                          data
+                          ms
+                          (- space ms)))
+                      (set! base -1)))]))))))))
+
+(define (compiler-backend-peephole-rewrite-stack-address
+  [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]
+  [start : i64]
+  [end : i64]
+  [ms : i64]
+  [disp : i64]
+  [base : String]) : String
+  (let
+    [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+    [paren : i64
+      (be_operand.compiler-backend-peephole-scan-byte-range data ms end 40)]
+    (when
+      (and
+        (<= (+ paren 6) end)
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          paren
+          (+ paren 6)
+          "(%rsp)"))
+      (let
+        [first : i64 (compiler-backend-rsp-rebase-int-start data ms paren)]
+        [from : i64
+          (if (>= first 0)
+            first
+            paren)]
+        (when
+          (and
+            (> from ms)
+            (= (be_state.compiler-backend-peephole-byte-at data (- from 1)) 32))
+          (return
+            (str_cat.str-cat
+              (string.substring rec.src start (- from start))
+              (be_operand.compiler-backend-mem-base-address disp base)
+              (string.substring rec.src (+ paren 6) (- end (+ paren 6))))))))
+    ""))
+
 (define (compiler-backend-peephole-records-render-plain
   [v : be_state.CompilerBackendPeepholeLineVec]) : String
   (let

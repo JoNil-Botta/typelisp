@@ -851,7 +851,7 @@ source tests/integration/rbp_sixth_csr.tl
 in fn _tl_rbp_sixth_csr_churn6
 contains pushq %rbp
 contains popq %rbp
-match ^[[:space:]]+leaq 31\(,%rbp,1\), %r[a-z0-9]+$
+match ^[[:space:]]+leaq 31\( %rbp\), %r[a-z0-9]+$
 not-contains leaq 31(%rsp)
 not-match \(%rbp\)
 

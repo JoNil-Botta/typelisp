@@ -31,7 +31,10 @@
 ;; Sort keys borrow stable input slots through the compiler's scalar arena
 ;; handle ABI. They never escape the planner or outlive its input collection.
 (defstruct CompilerBackendLiteralKey
-  (slot-address u64))
+  (slot-address u64)
+  (owner i64)
+  (offset i64)
+  (owner-address u64))
 
 (import (stdlib.vector.vector CompilerBackendLiteralKey) as literal_vec)
 (import (stdlib.sort.vec CompilerBackendLiteralKey) as literal_sort)
@@ -176,95 +179,245 @@
         (unless (= a b) (return (> a b)))))
     (> i j)))
 
-;; This shared plan owns every fragment and label in the destination arena.
-;; Only immutable String payloads share bytes; mutable binary constants keep
-;; their separate storage. Headers stay eight-byte aligned and every owner
-;; retains its final zero byte, including interior-NUL and empty suffixes.
+;; Both consumers of literal byte labels carry explicit lengths: String
+;; descriptors and located diagnostic paths. The C marshalling helpers create
+;; their own terminated buffers. Raw binary data and runtime C strings are
+;; emitted separately. Put a real label at each interior offset so text, ELF,
+;; and COFF all relocate to it using their normal symbol-address records.
+(define (compiler-backend-literal-text [address : u64]) : String
+  (unsafe
+    (ptr-read (int->ptr address : (Ptr String)))))
+
+(define (compiler-backend-literal-position-before?
+  [left : CompilerBackendLiteralKey]
+  [right : CompilerBackendLiteralKey]) : bool
+  (if (= left.owner right.owner)
+    (< left.offset right.offset)
+    (< left.owner right.owner)))
+
+(define compiler-backend-literal-prefix-length : i64
+  6)
+
+(define (compiler-backend-literal-prefix-key [text : (& text str)]) : i64
+  (let
+    [key : i64 0]
+    (for [i (iterator.range 0 compiler-backend-literal-prefix-length)]
+      (set! key (bit-or (shl key 8) (cast (string.string-ref text i) : i64))))
+    key))
+
+;; Index only prefixes that can remove an entire payload. A match must still
+;; prove equality across the full byte range. Only a strictly longer owner
+;; can take over a payload, so the placement graph is acyclic. Six bytes
+;; separate common assembly and diagnostic prefixes. The prefilter costs
+;; one byte lookup at each position and avoids most hash-table probes.
+(define (compiler-backend-literal-place-interiors!
+  [ordered : (&mut ordered literal_vec.Vec)]) : unit
+  (let
+    [links : (__tl_dyn-array i64) (__tl_make-array i64 ordered.len)]
+    [filter : (__tl_dyn-array bool) (__tl_make-array bool 4096)]
+    [prefixes : backend_i64_i64_map.Map
+      (backend_i64_i64_map.with-capacity ordered.len)]
+    (for [i (iterator.range 0 ordered.len)]
+      (let
+        [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+        [text : String (compiler-backend-literal-text entry.slot-address)]
+        (when
+          (and
+            (= entry.owner i)
+            (>=
+              (string.string-length text)
+              compiler-backend-literal-prefix-length))
+          (let
+            [key : i64 (compiler-backend-literal-prefix-key (& text))]
+            (set!
+              (array-ref links i)
+              (backend_i64_i64_map.get-value-or (& prefixes) key 0))
+            (set! (array-ref filter (bit-and key 4095)) true)
+            (backend_i64_i64_map.insert-ref! (&mut prefixes) key (+ i 1))))))
+    (for [i (iterator.range 0 ordered.len)]
+      (let
+        [host : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+        [text : String (compiler-backend-literal-text host.slot-address)]
+        [length : i64 (string.string-length text)]
+        (when
+          (and
+            (= host.owner i)
+            (> length compiler-backend-literal-prefix-length))
+          (let
+            [key : i64 (compiler-backend-literal-prefix-key (& text))]
+            (for [offset
+              (iterator.range
+                0
+                (+ 1 (- length compiler-backend-literal-prefix-length)))]
+              (let
+                [link : i64
+                  (if (array-ref filter (bit-and key 4095))
+                    (backend_i64_i64_map.get-value-or (& prefixes) key 0)
+                    0)]
+                (while (> link 0)
+                  (let
+                    [index : i64 (- link 1)]
+                    [entry : CompilerBackendLiteralKey
+                      (array-ref ordered.slots index)]
+                    (when
+                      (= entry.owner index)
+                      (let
+                        [candidate : String
+                          (compiler-backend-literal-text entry.slot-address)]
+                        [need : i64 (string.string-length candidate)]
+                        (when
+                          (and
+                            (< need length)
+                            (<= need (- length offset))
+                            (string.is-string-prefix-at text candidate offset))
+                          (set!
+                            (array-ref ordered.slots index)
+                            (CompilerBackendLiteralKey
+                              entry.slot-address
+                              i
+                              offset
+                              0)))))
+                    (set! link (array-ref links index))))
+                (when
+                  (< (+ offset compiler-backend-literal-prefix-length) length)
+                  (set!
+                    key
+                    (bit-or
+                      (bit-and (shl key 8) 281474976710655)
+                      (cast
+                        (string.string-ref
+                          text
+                          (+ offset compiler-backend-literal-prefix-length))
+                        : i64))))))))))
+    (for [i (iterator.range 0 ordered.len)]
+      (let
+        [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+        [owner : i64 entry.owner]
+        [offset : i64 entry.offset]
+        [parent : CompilerBackendLiteralKey (array-ref ordered.slots owner)]
+        (while (!= owner parent.owner)
+          (+= offset parent.offset)
+          (set! owner parent.owner)
+          (set! parent (array-ref ordered.slots owner)))
+        (set!
+          (array-ref ordered.slots i)
+          (CompilerBackendLiteralKey
+            entry.slot-address
+            owner
+            offset
+            parent.slot-address))))))
+
 (define (compiler-backend-literal-records
   [strings : be_state.BackendStringSeq]
   [start : i64]) : cobj.CompilerObjectDataRecordList
   (let
     [ordered : literal_vec.Vec
       (literal_vec.with-capacity (- strings.len start))]
-    [i : i64 start]
-    [records : cobj.CompilerObjectDataRecordBuilder
-      (cobj.compiler-object-data-record-builder-with-capacity
-        (+ 1 (* 6 (- strings.len start))))]
-    [owner : String ""]
-    [cursor : i64 0]
-    [active : bool false]
-    (while (< i strings.len)
+    (for [i (iterator.range start strings.len)]
       (literal_vec.push-ref!
         (&mut ordered)
         (CompilerBackendLiteralKey
           (unsafe
-            (ptr->int (ptr-offset (__tl_array-data strings.slots) i)))))
-      (+= i 1))
+            (ptr->int (ptr-offset (__tl_array-data strings.slots) i)))
+          0
+          0
+          0)))
     (literal_sort.sort! (&mut ordered) compiler-backend-literal-suffix-before?)
-    (set! i 0)
-    (while (< i ordered.len)
+    (let
+      [owner : i64 0]
+      [owner-address : u64 0]
+      (for [i (iterator.range 0 ordered.len)]
+        (let
+          [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+          [candidate : String
+            (compiler-backend-literal-text entry.slot-address)]
+          [text : String
+            (if (> i 0)
+              (compiler-backend-literal-text owner-address)
+              "")]
+          [offset : i64
+            (- (string.string-length text) (string.string-length candidate))]
+          (if (and
+            (> i 0)
+            (>= offset 0)
+            (string.is-string-prefix-at text candidate offset))
+            (set!
+              (array-ref ordered.slots i)
+              (CompilerBackendLiteralKey entry.slot-address owner offset 0))
+            (begin
+              (set! owner i)
+              (set! owner-address entry.slot-address)
+              (set!
+                (array-ref ordered.slots i)
+                (CompilerBackendLiteralKey entry.slot-address i 0 0)))))))
+    (compiler-backend-literal-place-interiors! (&mut ordered))
+    (literal_sort.sort!
+      (&mut ordered)
+      compiler-backend-literal-position-before?)
+    (compiler-backend-literal-build-records (& ordered))))
+
+(define (compiler-backend-literal-build-records
+  [ordered : (& ordered literal_vec.Vec)]) : cobj.CompilerObjectDataRecordList
+  (let
+    [records : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-with-capacity
+        (+ 1 (* 6 ordered.len)))]
+    [owner : i64 -1]
+    [cursor : i64 0]
+    [text : String ""]
+    (for [i (iterator.range 0 ordered.len)]
       (let
-        [text : String
-          (unsafe
-            (ptr-read
-              (int->ptr (array-ref ordered.slots i).slot-address : (Ptr String))))]
-        [offset : i64
-          (- (string.string-length owner) (string.string-length text))]
-        (if (and
-          active
-          (>= offset 0)
-          (string.is-string-prefix-at owner text offset))
-          (begin
-            (when
-              (> offset cursor)
-              (set!
+        [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+        (when
+          (!= owner entry.owner)
+          (when
+            (>= owner 0)
+            (set!
+              records
+              (cobj.compiler-object-data-record-builder-push
                 records
-                (cobj.compiler-object-data-record-builder-push
-                  records
-                  (Bytes (string.substring owner cursor (- offset cursor))))))
-            (set! cursor offset))
-          (begin
-            (when
-              active
-              (set!
-                records
-                (cobj.compiler-object-data-record-builder-push
-                  records
-                  (String
-                    (string.substring
-                      owner
-                      cursor
-                      (- (string.string-length owner) cursor))))))
-            (set! owner (be_state.compiler-backend-global-shared-view text))
-            (set! cursor 0)
-            (set! active true)))
+                (String
+                  (string.substring
+                    text
+                    cursor
+                    (- (string.string-length text) cursor))))))
+          (set! owner entry.owner)
+          (set! text (compiler-backend-literal-text entry.owner-address))
+          (set! cursor 0))
+        (when
+          (> entry.offset cursor)
+          (set!
+            records
+            (cobj.compiler-object-data-record-builder-push
+              records
+              (Bytes (string.substring text cursor (- entry.offset cursor)))))
+          (set! cursor entry.offset))
         (set!
           records
           (cobj.compiler-object-data-record-builder-push
             records
-            (Label (be_facts.compiler-backend-string-data-label text)))))
-      (+= i 1))
+            (Label
+              (be_facts.compiler-backend-string-data-label
+                (compiler-backend-literal-text entry.slot-address)))))))
     (when
-      active
+      (>= owner 0)
       (set!
         records
         (cobj.compiler-object-data-record-builder-push
           records
           (String
             (string.substring
-              owner
+              text
               cursor
-              (- (string.string-length owner) cursor))))))
+              (- (string.string-length text) cursor))))))
     (set!
       records
       (cobj.compiler-object-data-record-builder-push records (Align 8)))
-    (set! i 0)
-    (while (< i ordered.len)
+    (for [i (iterator.range 0 ordered.len)]
       (let
         [text : String
-          (unsafe
-            (ptr-read
-              (int->ptr (array-ref ordered.slots i).slot-address : (Ptr String))))]
+          (compiler-backend-literal-text
+            (array-ref ordered.slots i).slot-address)]
         (set!
           records
           (cobj.compiler-object-data-record-builder-push
@@ -273,8 +426,7 @@
                 records
                 (Label (be_operand.compiler-backend-string-fat-label text)))
               (SymbolAddress (be_facts.compiler-backend-string-data-label text)))
-            (I64 (string.string-length text)))))
-      (+= i 1))
+            (I64 (string.string-length text))))))
     (cobj.compiler-object-data-record-builder-finish records)))
 
 (define (compiler-backend-emit-quoted-literal!

@@ -30749,8 +30749,8 @@ entry:
     (and
       direct-result.ok
       spilled-result.ok
-      (asm-has? direct "    leaq 31(,%rbp,1), %r12\n")
-      (asm-has? spilled "    leaq 31(,%rbp,1), %r8\n")
+      (asm-has? direct "    leaq 31( %rbp), %r12\n")
+      (asm-has? spilled "    leaq 31( %rbp), %r8\n")
       (asm-lacks? direct "31(%rsp)")
       (asm-lacks? spilled "31(%rsp)")
       (asm-lacks? direct "    addq $31")
@@ -30876,7 +30876,7 @@ entry:
       "    movq $-1, %rax\n")
     (string.eq
       (be_scalar.compiler-backend-emit-load-i64-immediate 2147483648 "%rax")
-      "    movq $2147483648, %rax\n")
+      "    movl $2147483648, %eax\n")
     true
     true
     true))
@@ -31150,7 +31150,7 @@ entry:
       (match (compiler-backend-divmod-polish-asm false false true false)
         [(Ok r12-asm)
           (and
-            (asm-has? rbp-asm "    leaq 62(,%rbp,1), %r9\n")
+            (asm-has? rbp-asm "    leaq 62( %rbp), %r9\n")
             (asm-lacks? rbp-asm "(%rbp)")
             (asm-has? r12-asm "    leaq 62(%r12), %r9\n"))]
         [(Err _) false])]
@@ -45603,7 +45603,8 @@ user_fn:
 
 (define (compiler-backend-literal-pool-case
   [values : (__tl_dyn-array String)]
-  [maximum-bytes : i64]) : bool
+  [maximum-bytes : i64]
+  [terminated? : bool]) : bool
   (let
     [owner : arena.Arena
       (unsafe
@@ -45677,7 +45678,9 @@ user_fn:
               (array-ref out.slots (+ offset j))
               (cast (string.string-ref value j) : u8))
             (return false)))
-        (unless (= (array-ref out.slots (+ offset length)) 0) (return false))
+        (when
+          (and terminated? (!= (array-ref out.slots (+ offset length)) 0))
+          (return false))
         (for [j (iterator.range 0 8)]
           (unless
             (=
@@ -45733,23 +45736,39 @@ user_fn:
         (set! (array-ref many i) value)))
     (set! (array-ref many 64) "end")
     (and
-      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0)
-      (compiler-backend-literal-pool-case (__tl_make-array "only") 24)
-      (compiler-backend-literal-pool-case (__tl_make-array "ab" "cd" "ef") 64)
+      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0 true)
+      (compiler-backend-literal-pool-case (__tl_make-array "only") 24 true)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "ab" "cd" "ef")
+        64
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefix/abc" "abc" "bc" "c" "")
-        96)
+        96
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "" "c" "abc" "prefix/abc" "bc")
-        96)
+        96
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "cab" "dab" "ab" "b" "")
-        88)
-      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56)
+        88
+        true)
+      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56 true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefixλ" "λ" "")
-        64)
-      (compiler-backend-literal-pool-case many budget))))
+        64
+        true)
+      (compiler-backend-literal-pool-case many budget true))))
+
+(test
+  backend-interior-literal-records
+  (test.assert-true
+    (compiler-backend-literal-pool-case
+      (__tl_make-array "prefix-middle-suffix" "middle")
+      56
+      false)
+    "interior literal relocation and byte length agree with its descriptor"))
 
 (test
   backend-packed-literal-records

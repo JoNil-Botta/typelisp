@@ -6980,23 +6980,31 @@ typecheck as bare `arena.Arena` or branded `(arena.Arena r)` from
 with `with-arena`. A raw `i64` does not satisfy this requirement.
 
 The body is a non-empty expression sequence evaluated with that arena as the
-active allocation target. On exit, the result is cloned into the enclosing
-active arena when needed, the scratch arena is rewound to its entry mark, and
-the active arena is restored. The result surface follows `clone` lowering:
-copyable values are returned as-is, `String` values are copied, and cloneable
-tuples, fixed arrays, private dynamic buffers, boxes, and named aggregates
-are cloned recursively when their elements or fields are clone-supported.
-Unsupported result shapes such as function values are rejected. Typechecking
-returns the body result type with source-region tags stripped, matching the
-clone semantics of moving the result back to the enclosing arena.
+active allocation target. On exit the active arena is switched back, the
+result is copied out, the scratch arena is rewound to its entry mark, and the
+active arena is restored.
+
+**Clone-out:** the result of `with-escape` and `with-scratch` is copied out by
+ordinary code. When the body's type is Copy and not a function type, the
+body's value is the result. Otherwise the result is `(stdlib.clone.deep r)`
+over the body's value `r`, the public type-directed clone: scalars are copied,
+`String` uses `string.copy`, tuples, fixed arrays, dynamic arrays and boxes
+are cloned element by element, and a named struct or enum calls its owner's
+`clone-<kebab-name>`, which `(gen-clone T)` generates or the owner writes. The
+clone runs after the switch back to the enclosing arena, so it allocates there,
+and before the scratch arena is rewound or destroyed, so it may read the body's
+value. The form's type is the type of that result. It must not carry the
+form's scratch body region (see below); a result that does is rejected
+(E0205). A type the clone does not support, such as a function value, or a
+nominal type whose owner has no `clone-<kebab-name>`, is rejected with the
+clone's diagnostic, prefixed by the form and the result type.
 
 **One-shot scratch escape:** `(with-scratch body ...)` is the explicit one-shot
 variant of `with-escape`. It creates a fresh first-class scratch arena,
 evaluates the non-empty body sequence with that arena active, switches back to
-the enclosing active arena, clones the body result when the type requires it,
-destroys the scratch arena root, restores the enclosing active arena, and
-returns the cloned result. The result surface and source-region stripping match
-`with-escape`. `with-arena` continues to reject region-tagged escapes;
+the enclosing active arena, copies the result out, destroys the scratch arena
+root, restores the enclosing active arena, and returns the copied result. Its
+clone-out is `with-escape`'s. `with-arena` continues to reject region-tagged escapes;
 clone-out is explicit through `with-escape` for reusable first-class scratch
 arenas and `with-scratch` for one-shot scratch work.
 
@@ -7013,8 +7021,9 @@ an owner region, as inside `with-arena`. The region is never a branded or
 owned scratch arena's own region, which outlives the rewind. Unlike a
 `with-arena` body, a body allocation may be passed by value to an ordinary
 function; the callee-store rule below covers what that callee does with it.
-The form's result still leaves cloned into the arena active around the form, so
-it names that region, and no region when no scoped arena is active.
+The form's result is its clone-out, which allocates in the arena active around
+the form, so it names that region, and no region when no scoped arena is
+active.
 
 **Callee stores under a scoped arena (#8681, #8692, #8805, #8815):** a function
 allocates in whatever arena is active at its call. Inside `with-arena`,
@@ -9491,9 +9500,9 @@ uses conservative loop-body summaries.
 
 `with-escape` is not a lexical lifetime binder and does not introduce a
 written lifetime name. Its scratch arena is a first-class arena handle, and
-the only supported escape from it is the form's clone step: the result leaves
-the form cloned into the saved enclosing arena, without the scratch region
-tag. Its body, like a `with-scratch` body, is checked under an anonymous region
+the only supported escape from it is the form's clone-out: the result leaves
+the form copied into the saved enclosing arena, and it must not carry the
+scratch region. Its body, like a `with-scratch` body, is checked under an anonymous region
 scoped to the form, so the other exits of a body allocation are rejected.
 
 Atomic arenas are shareable allocation owners, not synchronization primitives
@@ -9554,9 +9563,9 @@ result. The safe source form for this pattern is:
 
 `with-escape` evaluates the arena expression in the current arena, records
 the enclosing active arena, switches to the scratch arena, marks it,
-evaluates the body, switches back to the enclosing arena, clones the body
-result when the type requires it, rewinds the scratch arena to the entry
-mark, and restores the enclosing active arena. The form is intended for
+evaluates the body, switches back to the enclosing arena, copies the result
+out (clone-out, section 5.16), rewinds the scratch arena to the entry mark, and
+restores the enclosing active arena. The form is intended for
 first-class scratch arenas; it is not a lexical lifetime binder, and lexical
 region cleanup remains the job of `with-arena`.
 
@@ -9574,12 +9583,10 @@ transient build:
 ```
 
 `with-scratch` creates a fresh first-class scratch arena, evaluates the
-non-empty body sequence with that arena active, clones the body result into
-the enclosing arena when the type requires it, destroys the scratch arena
-root, restores the enclosing active arena, and returns the cloned result. It
-uses the same clone-supported result rules and source-region stripping as
-`with-escape`, and rejects unsupported result shapes with a `with-scratch`
-diagnostic.
+non-empty body sequence with that arena active, copies the result out into the
+enclosing arena, destroys the scratch arena root, restores the enclosing
+active arena, and returns the copied result. Its clone-out rule is
+`with-escape`'s, and its diagnostics name `with-scratch`.
 
 #### First-class arena allocation target — `in-arena`
 
@@ -9895,8 +9902,8 @@ and not a general manual memory management feature.
   read.
   Pass a place or an rvalue such as a call result; for a conditional or block
   (`if`, `let`, or `match`), call `clone.deep` in each result position.
-- During the #7073 repository migration, `(clone value)` and `with-escape`
-  still use the compiler-checked clone surface described below. New owner code
+- During the #7073 repository migration, `(clone value)` still uses the
+  compiler-checked clone surface described below. New owner code
   should use `gen-clone`; the compiler-special spelling, reachable-root
   discovery, `clone$Type` identities, and the transitional handoff are removed
   only after existing callers have moved to explicit functions.

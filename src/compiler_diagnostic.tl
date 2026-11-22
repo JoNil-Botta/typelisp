@@ -7,6 +7,7 @@
 (import stdlib.string)
 (import stdlib.text_buf)
 (import compiler_owned_view as owned_view)
+(import stdlib.clone as clone_gen)
 
 (defmacro (compiler-diagnostic-place-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -75,6 +76,30 @@
   (secondary CompilerDiagnosticLabelList)
   (notes CompilerDiagnosticNoteList)
   (fixes CompilerDiagnosticFixSeq))
+
+(clone_gen.gen-clone CompilerDiagnosticLevel)
+
+(clone_gen.gen-clone CompilerDiagnosticMaybeString)
+
+(clone_gen.gen-clone CompilerDiagnosticSpan)
+
+(clone_gen.gen-clone CompilerDiagnosticLabel)
+
+(clone_gen.gen-clone CompilerDiagnosticLabelList)
+
+(clone_gen.gen-clone CompilerDiagnosticNoteList)
+
+(clone_gen.gen-clone CompilerDiagnosticApplicability)
+
+(clone_gen.gen-clone CompilerDiagnosticTextEdit)
+
+(clone_gen.gen-clone CompilerDiagnosticTextEditSeq)
+
+(clone_gen.gen-clone CompilerDiagnosticFix)
+
+(clone_gen.gen-clone CompilerDiagnosticFixSeq)
+
+(clone_gen.gen-clone CompilerDiagnostic)
 
 (define (compiler-diagnostic-box-shared-view [value : (Box CompilerDiagnostic)]) : CompilerDiagnostic
   (let

@@ -8,6 +8,7 @@
 ;; deprecated string.concat rule and staged migration rules are opt-in.
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
+(import stdlib.clone as clone_gen)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -1554,6 +1555,10 @@
   (slots (__tl_dyn-array SelfhostLintDeadDecl))
   (len i64))
 
+(clone_gen.gen-clone SelfhostLintDeadDecl)
+
+(clone_gen.gen-clone SelfhostLintDeadDecls)
+
 (defstruct SelfhostLintDeadSourceSet
   (sources lint_svec.Vec)
   (root-sources lint_svec.Vec)
@@ -1568,6 +1573,8 @@
   (Ok lint_svec.Vec)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+(clone_gen.gen-clone ResultSelfhostLintDeadImportList)
+
 (defenum ResultSelfhostLintDeadSources
   (Ok SelfhostLintDeadSourceSet)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -1575,6 +1582,8 @@
 (defstruct SelfhostLintDeadScan
   (decls SelfhostLintDeadDecls)
   (roots lint_svec.Vec))
+
+(clone_gen.gen-clone SelfhostLintDeadScan)
 
 (define selfhost-lint-dead-import-aliases : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))

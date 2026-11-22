@@ -526,6 +526,7 @@
     [(SpmdCompact _) "spmd-compact"]
     [(ForeachActive _ _) "foreach-active"]
     [(LaneValue _) "lane-value"]
+    [(CloneOut _ _) "clone-out"]
     [(Unsafe _) "unsafe"]
     [(Literal (Float _)) "float-literal"]
     [(Literal _) "literal"]

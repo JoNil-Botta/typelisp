@@ -1,5 +1,6 @@
 (import stdlib.arena)
 (import stdlib.string)
+(import stdlib.clone as clone_gen)
 
 ;; Compatibility dynamic-array clone-out coverage kept until public unsized
 ;; public `(Array T)` removal. The fixed array and box cases below cover the
@@ -13,6 +14,10 @@
 (defenum EscapeOutcome
   (Escaped EscapeBundle)
   (NoEscape))
+
+(clone_gen.gen-clone EscapeBundle)
+
+(clone_gen.gen-clone EscapeOutcome)
 
 (define (piece [seed : i64] [slot : i64]) : String
   (string.append

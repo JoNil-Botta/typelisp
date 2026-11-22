@@ -3042,6 +3042,7 @@
     [(SpmdProgramCount) "program-count"]
     [(ForeachActive _ _) "foreach-active"]
     [(LaneValue _) "lane-value"]
+    [(CloneOut _ _) "clone-out"]
     [(StructGet _ _) "struct-get"]
     [(WithRegion _ _) "with-arena"]
     [(WithEscape _ _) "with-escape"]
@@ -13633,9 +13634,13 @@
             (Expr)
             next-fuel)]
         [(Err diag) (Err diag)])]
+    ;; A produced scratch form is expanded again for its clone-out step.
     [(WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr (ctfe-ast-get env scratch-box)]
+        [_step : unit
+          (ctfe-result-may-contain-macro-note-for-state!
+            (ctfe-env-macro-state env))]
         (match (ctfe-quote-expr scratch env fuel quasiquote)
           [(Ok quoted-scratch _ scratch-fuel)
             (match (ctfe-quote-expr-list body env scratch-fuel quasiquote)
@@ -13650,6 +13655,7 @@
               [(Err diag) (Err diag)])]
           [(Err diag) (Err diag)]))]
     [(WithScratch body)
+      (ctfe-result-may-contain-macro-note-for-state! (ctfe-env-macro-state env))
       (ctfe-quote-items
         env
         fuel
@@ -13931,6 +13937,14 @@
         quasiquote
         ast.ast-expr-lane-value-with-pools
         value-box)]
+    [(CloneOut form-box step-box)
+      (ctfe-quote-children-2
+        env
+        fuel
+        quasiquote
+        ast.ast-expr-clone-out-with-pools
+        form-box
+        step-box)]
     [(Unquote inner-box)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]

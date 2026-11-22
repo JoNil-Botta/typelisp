@@ -26,6 +26,7 @@
 (import compiler_cfg_core as cfg_core)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_diagnostic)
+(import stdlib.clone as clone_gen)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_load)
@@ -5036,6 +5037,8 @@
 (defenum ResultCompilerDriverPackagePaths
   (Ok compiler_ast_types.AstDeclPathList)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+
+(clone_gen.gen-clone ResultCompilerDriverPackagePaths)
 
 ;; Only copied strings cross the discovery boundary. Interned ownership and
 ;; provenance ids belong to the retiring session, and are deliberately absent.

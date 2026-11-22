@@ -65,15 +65,16 @@
 (defenum DocTestExtraction
   (Extraction doc_example_vec.Vec doc_error_vec.Vec))
 
-;; Extraction contains only scalar locations, expectations and owned strings.
-;; Copy live rows explicitly; vector capacity can include uninitialized slots.
-(define (doc-test-extraction-copy [extraction : DocTestExtraction]) : DocTestExtraction
+;; The owner clone hook clone-out uses (`stdlib.clone`). Extraction contains
+;; only scalar locations, expectations and owned strings. Copy live rows
+;; explicitly; vector capacity can include uninitialized slots.
+(define (clone-doc-test-extraction [extraction : (& DocTestExtraction)]) : DocTestExtraction
   (match extraction
     [(Extraction examples errors)
       (let
         [out-examples : doc_example_vec.Vec (doc_example_vec.new)]
         [out-errors : doc_error_vec.Vec (doc_error_vec.new)]
-        (for [index (iterator.range 0 (doc_example_vec.len (& examples)))]
+        (for [index (iterator.range 0 (doc_example_vec.len examples))]
           (match (doc-test-example-list-ref examples index)
             [(Example ordinal line expectation code)
               (doc_example_vec.push-ref!
@@ -87,7 +88,7 @@
                     [(Run status stdout stderr)
                       (Run status (string.copy stdout) (string.copy stderr))])
                   (string.copy code)))]))
-        (for [index (iterator.range 0 (doc_error_vec.len (& errors)))]
+        (for [index (iterator.range 0 (doc_error_vec.len errors))]
           (match (doc-test-error-list-ref errors index)
             [(Error line message)
               (doc_error_vec.push-ref!
@@ -99,17 +100,11 @@
 ;; The source bytes and line/fence scanner are disposable; only extracted code,
 ;; runnable output expectations and errors survive into compiler typechecking.
 (define (doc-test-extract-package-file-text [path : String]) : DocTestExtraction
-  (let
-    [home : arena.Arena (arena.current)]
-    (with-scratch
-      (match (io.try-read-file (& path))
-        [(ErrIoBytes _)
-          (in-arena home (Extraction (doc_example_vec.new) (doc_error_vec.new)))]
-        [(OkIoBytes contents)
-          (let
-            [extraction : DocTestExtraction
-              (doc-test-extract-source (byte_buf.to-string contents))]
-            (in-arena home (doc-test-extraction-copy extraction)))]))))
+  (with-scratch
+    (match (io.try-read-file (& path))
+      [(ErrIoBytes _) (Extraction (doc_example_vec.new) (doc_error_vec.new))]
+      [(OkIoBytes contents)
+        (doc-test-extract-source (byte_buf.to-string contents))])))
 
 (defenum DocTestMaybeString
   (No)

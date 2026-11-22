@@ -12,6 +12,7 @@
 (import stdlib.vector)
 (import (vector.vector i64 core) as live_ids)
 (import compiler_owned_view as owned_view)
+(import stdlib.clone as clone_gen)
 
 ;; Ownership-aware read view for compiler pass state. The pass treats these
 ;; aggregate values as persistent snapshots while mutating their backing dense
@@ -27,6 +28,8 @@
 
 (defstruct CompilerLiveI64Set
   (words (__tl_dyn-array i64)))
+
+(clone_gen.gen-clone CompilerLiveI64Set)
 
 (defenum CompilerLiveLabelSet
   (Nil)

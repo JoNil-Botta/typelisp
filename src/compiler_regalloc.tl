@@ -26,6 +26,7 @@
 (import compiler_ir_types as ir)
 (import compiler_ir_return_storage as return_storage)
 (import compiler_owned_view as owned_view)
+(import stdlib.clone as clone_gen)
 (import compiler_profile_state as profile_state)
 (import compiler_diagnostic as cdiag)
 (cfg test (import stdlib.test))
@@ -275,6 +276,14 @@
 
 (defenum CompilerRegIntervalSelection
   (Selection CompilerRegIntervalSeq CompilerRegIntervalIndex))
+
+(clone_gen.gen-clone CompilerRegInterval)
+
+(clone_gen.gen-clone CompilerRegIntervalSeq)
+
+(clone_gen.gen-clone CompilerRegIntervalIndex)
+
+(clone_gen.gen-clone CompilerRegIntervalSelection)
 
 ;; Scalar literal SafeDiv/SafeMod scratch participates in the ordinary greedy
 ;; allocation before the final homes are published.  The model is empty for
@@ -27174,6 +27183,8 @@
 (defenum CompilerRegColoring
   (None)
   (Remap (__tl_dyn-array i64) i64))
+
+(clone_gen.gen-clone CompilerRegColoring)
 
 ;; Per-var slot-colorability flags: only values the register allocator could
 ;; legally home in one 64-bit register (scalars and 8-byte handles) are known

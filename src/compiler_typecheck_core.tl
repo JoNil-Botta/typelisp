@@ -6060,6 +6060,36 @@
         expected
         source
         sink)]
+    ;; The clone-out step reads only the body result: the form's ownership
+    ;; flow is its scratch form's, and its type the step's.
+    [(ast.AstExpr.CloneOut form-box _)
+      (match (tc-clone-out-form ctx form-box)
+        [(ast.AstExpr.WithEscape scratch-id body)
+          (tc-infer-selected-scratch
+            ctx
+            env
+            expr
+            scratch-id
+            (& body)
+            syntax
+            expected
+            source
+            sink)]
+        [(ast.AstExpr.WithScratch body)
+          (tc-infer-selected-scratch
+            ctx
+            env
+            expr
+            -1
+            (& body)
+            syntax
+            expected
+            source
+            sink)]
+        [_
+          (TcSelectedResult.Err
+            "typecheck: clone-out step without a scratch form"
+            sink)])]
     ;; A compile-time value is computed before the program runs: at run time
     ;; it is a fresh value with no operands.
     [(ast.AstExpr.Comptime _)
@@ -48801,6 +48831,11 @@
         [index : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         (tc-source-expr-spmd-broadcast-scope-ok expr-bases index allow))]
+    [(CloneOut form-box _)
+      (tc-source-expr-spmd-broadcast-scope-ok
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases form-box)
+        allow)]
     [_ Ok]))
 
 (define (tc-source-lambda-signature-policy-ok
@@ -49149,6 +49184,11 @@
           (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
         [_ (try (tc-source-expr-policy-ok ctx expr-bases scratch))]
         (tc-source-expr-list-policy-ok ctx expr-bases body))]
+    [(CloneOut form-box _)
+      (tc-source-expr-policy-ok
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases form-box))]
     [(InArena arena-box body)
       (let
         [arena : ast.AstExpr
@@ -58848,8 +58888,10 @@
     [(WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
-        (tc-with-escape-expr ctx env scratch body (Some expected)))]
-    [(WithScratch body) (tc-with-scratch-expr ctx env body (Some expected))]
+        (tc-with-escape-expr ctx env scratch body -1 (Some expected)))]
+    [(WithScratch body) (tc-with-scratch-expr ctx env body -1 (Some expected))]
+    [(CloneOut form-box step-box)
+      (tc-clone-out-expr ctx env form-box step-box (Some expected))]
     [(InArena arena-box body)
       (let
         [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
@@ -74540,7 +74582,8 @@
       (tc-spmd-masked-if-unsupported
         "side effects other than contiguous array writes inside masked branches")]
     [(or (FixedMakeArray _ _) (MakeArray _ _) (Array _) (DynArray _) (Box _)
-         (WithRegion _ _) (WithEscape _ _) (WithScratch _) (InArena _ _))
+         (WithRegion _ _) (WithEscape _ _) (WithScratch _) (CloneOut _ _)
+         (InArena _ _))
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
     [(BoxTake _)
@@ -76813,6 +76856,8 @@
       (Err "typecheck: with-escape inside spmd is not supported")]
     [(WithScratch _)
       (Err "typecheck: with-scratch inside spmd is not supported")]
+    [(CloneOut _ _)
+      (Err "typecheck: with-scratch inside spmd is not supported")]
     [(InArena _ _) (Err "typecheck: in-arena inside spmd is not supported")]
     [(WithResource _) (Err "typecheck: resource with is not implemented yet")]
     [(or (Quote _) (Quasiquote _)) (tc-spmd-finish expr-ty Uniform spmd-env)]
@@ -78622,7 +78667,8 @@
   (match expr
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _) (Ann inner-box _)
          (Cast inner-box _) (Comptime inner-box) (Try inner-box)
-         (Return inner-box) (BoxGet inner-box) (BoxTake inner-box))
+         (Return inner-box) (BoxGet inner-box) (BoxTake inner-box)
+         (CloneOut inner-box _))
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
@@ -90727,25 +90773,17 @@
     [(Quote _) Ok]
     [_ Ok]))
 
-(define (tc-clone-out-unsupported-message
+(define (tc-clone-out-escape-message
   [ctx : TcContext]
   [form : String]
   [ty : ast.AstType]) : String
-  (str_cat.str-cat
-    (tc-kind-message (TypeMismatch) "typecheck: ")
-    form
-    " result type is not clone-supported: "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
-
-(define (tc-with-escape-unsupported-message
-  [ctx : TcContext]
-  [ty : ast.AstType]) : String
-  (tc-clone-out-unsupported-message ctx "with-escape" ty))
-
-(define (tc-with-scratch-unsupported-message
-  [ctx : TcContext]
-  [ty : ast.AstType]) : String
-  (tc-clone-out-unsupported-message ctx "with-scratch" ty))
+  (tc-kind-message
+    (RegionEscape)
+    (str_cat.str-cat
+      "typecheck: "
+      form
+      " result still refers to the scratch arena after clone-out: "
+      (tc-type-render (tc-resolve-type ctx ty)))))
 
 (define (tc-with-region-expr
   [ctx : TcContext]
@@ -90796,18 +90834,24 @@
     (tc-lifetime-name-render region)
     "' reuses the name of a visible lifetime or owner; rename the arena"))
 
-;; with-escape is a first-class scratch-arena clone path, not a lexical
-;; lifetime binder. The scratch expression is just an arena handle, and
-;; supported results leave the form with scratch-region tags erased.
+;; with-escape and with-scratch are scratch-arena forms, not lexical lifetime
+;; binders. The scratch expression is just an arena handle.
 ;;
 ;; The scratch arena is rewound (with-escape) or destroyed (with-scratch) when
 ;; the form exits, so both check their body under an anonymous region scoped
 ;; to the form, as with-arena does (#8776): a body allocation is tagged with it,
 ;; and the ordinary escape checks reject storing one into a place that outlives
 ;; the form, a global or a lambda capture. `return` and a `try` error exit are
-;; rejected below. Only the cloned result leaves. The region is never a branded
-;; scratch's own `r`, which outlives the rewind. Each form names its region by
-;; its first body expression, so nested forms get distinct regions.
+;; rejected below. The region is never a branded scratch's own `r`, which
+;; outlives the rewind. Each form names its region by its first body
+;; expression, so nested forms get distinct regions.
+;;
+;; Only the clone-out step's value leaves (SPEC 5.16, #8223). Expansion wraps
+;; the form in `CloneOut` with that step: the result binding itself for a Copy
+;; body type, otherwise the prelude `__tl-clone-out` (`stdlib.clone.deep`)
+;; over it. The step is ordinary code checked in the enclosing environment,
+;; after the switch back to the enclosing arena and before the rewind or
+;; destroy; its type is the form's type and must not carry the body region.
 ;;
 ;; A by-value call argument does not take with-arena's blanket rule (see
 ;; tc-type-regions-all-scratch?): that rule would reject handing any body
@@ -90824,6 +90868,12 @@
         (if (> body.len 0)
           (array-ref body.slots 0)
           -1)))))
+
+;; The hidden binding of a scratch form's body result, which its clone-out
+;; step reads. A step holds only generated clone code, never another form's
+;; step, so one portable name serves every form.
+(define (tc-clone-out-result-name) : i64
+  (ci.intern "__tl-scratch-result"))
 
 (define (tc-scratch-region-id? [region : i64]) : bool
   (and
@@ -90863,24 +90913,17 @@
   [env : TcTypeEnv]
   [scratch : ast.AstExpr]
   [body : ast.AstExprList]
+  [step : i64]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
     [scratch-ty : ast.AstType (try (tc-expr ctx env scratch))]
     (if (tc-arena-type? ctx scratch-ty)
       (let
+        [region : i64 (tc-scratch-body-region (& body))]
+        [name : i64 (tc-clone-out-result-name)]
         [body-ty : ast.AstType
           (try (tc-scratch-body-type ctx env body expected))]
-        (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-          (let
-            [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-            (tc-clone-root-collection-note!
-              ctx
-              (tc-global-shared-view clone-ty))
-            ;; The clone lands in the arena active outside the form, so it
-            ;; carries that region: a clone out of a scratch region into an
-            ;; enclosing `with-arena` must not read as untagged.
-            (Ok (tc-tag-active-region env clone-ty)))
-          (Err (tc-with-escape-unsupported-message ctx body-ty))))
+        (tc-clone-out-type ctx env "with-escape" region name body-ty step))
       (Err
         (tc-kind-message
           (ArenaOwnership)
@@ -90890,17 +90933,65 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [body : ast.AstExprList]
+  [step : i64]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
+    [region : i64 (tc-scratch-body-region (& body))]
+    [name : i64 (tc-clone-out-result-name)]
     [body-ty : ast.AstType (try (tc-scratch-body-type ctx env body expected))]
-    (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-      (let
-        [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-        (tc-clone-root-collection-note! ctx (tc-global-shared-view clone-ty))
-        ;; Same as `tc-clone-call`: the clone-out allocates in the arena
-        ;; active outside the form (SPEC 3.4.1) and carries its region.
-        (Ok (tc-tag-active-region env clone-ty)))
-      (Err (tc-with-scratch-unsupported-message ctx body-ty)))))
+    (tc-clone-out-type ctx env "with-scratch" region name body-ty step)))
+
+;; The form's type: its clone-out step's type, which must not carry the body
+;; REGION. The step reads the body result through the hidden binding NAME. A
+;; form without a step (-1) yields the body result itself.
+(define (tc-clone-out-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [form : String]
+  [region : i64]
+  [name : i64]
+  [body-ty : ast.AstType]
+  [step : i64]) : ResultTcType
+  (let
+    ;; The scratch arena is still live while the step runs: its region stays
+    ;; visible, so the step may borrow the result, without being the active
+    ;; allocation region. A binding named by the region makes it visible.
+    [out-ty : ast.AstType
+      (if (< step 0)
+        body-ty
+        (try
+          (tc-expr-id
+            ctx
+            (tc-bind-id (tc-bind-id env region ast.AstType.Unit) name body-ty)
+            step)))]
+    (if (tc-type-contains-region (tc-global-shared-view out-ty) region)
+      (Err (tc-clone-out-escape-message ctx form out-ty))
+      (Ok out-ty))))
+
+;; `(CloneOut form step)`: the scratch form `form` with its clone-out step.
+(define (tc-clone-out-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [form-box : i64]
+  [step : i64]
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (match (tc-clone-out-form ctx form-box)
+    [(WithEscape scratch-box body)
+      (tc-with-escape-expr
+        ctx
+        env
+        (tc-context-expr-get ctx scratch-box)
+        body
+        step
+        expected)]
+    [(WithScratch body) (tc-with-scratch-expr ctx env body step expected)]
+    [_ (Err "typecheck: clone-out step without a scratch form")]))
+
+;; The scratch form a `CloneOut` wraps, through any span.
+(define (tc-clone-out-form [ctx : TcContext] [form-box : i64]) : ast.AstExpr
+  (match (tc-context-expr-get ctx form-box)
+    [(Spanned inner-box _) (tc-clone-out-form ctx inner-box)]
+    [_ (tc-context-expr-get ctx form-box)]))
 
 (define (tc-in-arena-owner
   [expr-bases : i64]
@@ -93100,8 +93191,10 @@
     [(WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
-        (tc-with-escape-expr ctx env scratch body No))]
-    [(WithScratch body) (tc-with-scratch-expr ctx env body No)]
+        (tc-with-escape-expr ctx env scratch body -1 No))]
+    [(WithScratch body) (tc-with-scratch-expr ctx env body -1 No)]
+    [(CloneOut form-box step-box)
+      (tc-clone-out-expr ctx env form-box step-box No)]
     [(InArena arena-box body)
       (let
         [arena : ast.AstExpr (tc-context-expr-get ctx arena-box)]
@@ -108813,7 +108906,8 @@
         (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
         (macro-source-span-from-ast ast-span)
         origin)]
-    [(MacroExpansion inner-box _ _)
+    ;; A clone-out step is regenerated when its form is expanded again.
+    [(or (MacroExpansion inner-box _ _) (CloneOut inner-box _))
       (macro-expr-to-spanned-sexpr-with-span
         owner
         (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
@@ -115116,6 +115210,9 @@
       (ast.ast-expr-lane-value-with-pools
         env.pools
         (macro-hygiene-expr expr-bases value-box env macro-name depth))]
+    ;; Expansion regenerates a clone-out step for the renamed form.
+    [(CloneOut form-box _)
+      (macro-hygiene-expr expr-bases form-box env macro-name depth)]
     [(ast.AstExpr.Literal _) (macro-hygiene-expr-push env expr)]
     [(ast.AstExpr.Break) (macro-hygiene-expr-push env expr)]
     [(ast.AstExpr.Continue) (macro-hygiene-expr-push env expr)]
@@ -118199,25 +118296,37 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcType
+  (let
+    [observer : TcSemanticObserver (tc-discarding-errors-enter! ctx env)]
+    [result : ResultTcType (tc-expr ctx env expr)]
+    (tc-discarding-errors-exit! ctx env observer)
+    result))
+
+;; Open a check whose errors are dropped unseen: unbound-name suggestions are
+;; suppressed and the semantic observer, returned for the exit, is suspended.
+(define (tc-discarding-errors-enter! [ctx : TcContext] [env : TcTypeEnv]) : TcSemanticObserver
   (tc-unbound-suggestions-suppress-push! env)
   (let
     [observer : TcSemanticObserver (tc-context-semantic-observer ctx)]
-    [_suspend : unit
-      (when
-        (!= observer.address 0)
-        (tc-context-set-semantic-observer! ctx (TcSemanticObserver 0))
-        (tc-scoped-state-set-semantic-observer!
-          (tc-type-env-scoped-state env)
-          (TcSemanticObserver 0)))]
-    [result : ResultTcType (tc-expr ctx env expr)]
     (when
       (!= observer.address 0)
-      (tc-context-set-semantic-observer! ctx observer)
+      (tc-context-set-semantic-observer! ctx (TcSemanticObserver 0))
       (tc-scoped-state-set-semantic-observer!
         (tc-type-env-scoped-state env)
-        observer))
-    (tc-unbound-suggestions-suppress-pop! env)
-    result))
+        (TcSemanticObserver 0)))
+    observer))
+
+(define (tc-discarding-errors-exit!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [observer : TcSemanticObserver]) : unit
+  (when
+    (!= observer.address 0)
+    (tc-context-set-semantic-observer! ctx observer)
+    (tc-scoped-state-set-semantic-observer!
+      (tc-type-env-scoped-state env)
+      observer))
+  (tc-unbound-suggestions-suppress-pop! env))
 
 (define (macro-captured-expr-produced-type
   [ctx : TcContext]
@@ -122339,6 +122448,112 @@
                     (box
                       (tc-expr-diag (tc-context-expr-bases ctx) body message)))]))))])))
 
+;; The scratch BODY's type for choosing its clone-out step, errors dropped.
+;; Expansion does not track the form's expected type; a body that only checks
+;; against one, such as a bare variant constructor, is retried against the
+;; enclosing function's result type, which a form in tail position has.
+(define (tc-clone-out-body-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [body : ast.AstExprList]) : ResultTcType
+  (let
+    [region-env : TcTypeEnv
+      (tc-push-region env (tc-scratch-body-region (& body)))]
+    [observer : TcSemanticObserver (tc-discarding-errors-enter! ctx env)]
+    [result : ResultTcType
+      (match (tc-begin-list-maybe-expected ctx region-env (& body) No)
+        [(Ok ty) (Ok ty)]
+        [(Err message)
+          (match (tc-current-return-type env)
+            [(Ok ret)
+              (tc-begin-list-maybe-expected ctx region-env (& body) (Some ret))]
+            [(Err _) (Err message)])])]
+    (tc-discarding-errors-exit! ctx env observer)
+    result))
+
+;; Wrap the expanded scratch FORM in its clone-out step (SPEC 5.16, #8223).
+;; The body's type decides the step: a Copy result other than a function is
+;; read back as is, and any other result goes through the prelude
+;; `__tl-clone-out`, the public `stdlib.clone.deep`, over the hidden result
+;; binding. The binding is region-free here so the clone's own annotations
+;; carry no body region; the checker binds the body's real type. A body that
+;; does not check yet keeps the identity step, and the checker reports the
+;; body, or the body region if the result still carries it.
+(define (macro-expand-clone-out
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [form : i64]) : ResultMacroExpr
+  (let
+    [form-name : String
+      (match (tc-context-expr-get ctx form)
+        [(WithEscape _ _) "with-escape"]
+        [_ "with-scratch"])]
+    [body : ast.AstExprList
+      (match (tc-context-expr-get ctx form)
+        [(or (WithEscape _ body) (WithScratch body)) body]
+        [_ (ast.ast-expr-list-new)])]
+    ;; The step reports at the form's first body expression.
+    [first-span : TcMaybeAstSourceSpan
+      (if (> body.len 0)
+        (tc-expr-maybe-span
+          (tc-context-expr-bases ctx)
+          (tc-context-expr-get ctx (ast.ast-expr-list-get (& body) 0 0)))
+        (TcMaybeAstSourceSpan.No))]
+    [name : i64 (tc-clone-out-result-name)]
+    [result : i64 (ast.ast-node-push (Var name))]
+    [body-ty : ResultTcType (tc-clone-out-body-type ctx env body)]
+    [_publish : unit (tc-context-publish-newer-pools! ctx)]
+    [step : i64
+      (match body-ty
+        [(Ok ty)
+          ;; A function value is not cloned out; the clone step reports it.
+          (if (and
+            (tc-type-copyable? ctx (clone ty))
+            (match (tc-type-without-regions (tc-resolve-type ctx (clone ty)))
+              [(or (Func _ _) (CFunc _ _)) false]
+              [_ true]))
+            result
+            (let
+              [args : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
+              [call : i64
+                (begin
+                  (ast.ast-expr-list-push (&mut args) result)
+                  (ast.ast-expr-call
+                    (ast.ast-node-push (Var (ci.intern "__tl-clone-out")))
+                    args))]
+              [spanned : i64
+                (match first-span
+                  [(Some span) (ast.ast-expr-spanned call span)]
+                  [(No) call])]
+              (match (macro-expand-node
+                ctx
+                (tc-bind-id env name (tc-type-without-regions (clone ty)))
+                decls
+                depth
+                spanned)
+                [(Ok step) step]
+                [(Err diag)
+                  (let
+                    [diagnostic : cdiag.CompilerDiagnostic
+                      (cdiag.compiler-diagnostic-box-shared-view diag)]
+                    (return
+                      (Err
+                        (box
+                          (cdiag.compiler-diagnostic-with-message
+                            (& diagnostic)
+                            (str_cat.str-cat
+                              form-name
+                              " clone-out of "
+                              (tc-type-render
+                                (tc-type-without-regions
+                                  (tc-resolve-type ctx ty)))
+                              ": "
+                              (cdiag.compiler-diagnostic-message (& diagnostic))))))))])))]
+        [(Err _) result])]
+    (Ok (ast.ast-expr-clone-out form step))))
+
 (define (macro-expand-bindings
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -123084,11 +123299,22 @@
       (let
         [nscratch (try (macro-expand-node ctx env decls depth scratch-box))]
         [nbody (try (macro-expand-exprs ctx env decls depth body))]
-        (Ok (ast.ast-expr-with-escape nscratch nbody)))]
+        (macro-expand-clone-out
+          ctx
+          env
+          decls
+          depth
+          (ast.ast-expr-with-escape nscratch nbody)))]
     [(WithScratch body)
       (let
         [nbody (try (macro-expand-exprs ctx env decls depth body))]
-        (Ok (ast.ast-expr-with-scratch nbody)))]
+        (macro-expand-clone-out
+          ctx
+          env
+          decls
+          depth
+          (ast.ast-expr-with-scratch nbody)))]
+    [(CloneOut form-box _) (macro-expand-node ctx env decls depth form-box)]
     [(InArena arena-box body)
       (let
         [narena (try (macro-expand-node ctx env decls depth arena-box))]
@@ -125841,11 +126067,12 @@
           (macro-exprs-use-macro? ctx expr-bases decls args)))]
     ;; The index is a literal integer, not an expression.
     [(TupleRef a _) (macro-node-uses-macro? ctx expr-bases decls a)]
-    ;; These forms are conservatively assumed to use a macro.
+    ;; These forms are conservatively assumed to use a macro. A scratch form
+    ;; takes its clone-out step from expansion.
     [(or (Break) (Continue) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
          (SpmdBroadcast _ _) (SpmdShuffle _ _) (WithRegion _ _) (WithResource _)
          (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _)
-         (ForOwnedState _) (ForOwnedStep _))
+         (ForOwnedState _) (ForOwnedStep _) (WithEscape _ _) (WithScratch _))
       true]
     [_
       (macro-exprs-use-macro?
@@ -126075,9 +126302,11 @@
           (macro-expr-might-fire? state expr-bases func)
           (macro-expr-list-might-fire? state expr-bases args)))]
     [(or (BracketClause items) (Tuple items) (Array items) (DynArray items)
-         (Begin items) (Unsafe items) (WithRegion _ items) (WithScratch items)
-         (Syscall items))
+         (Begin items) (Unsafe items) (WithRegion _ items) (Syscall items))
       (macro-expr-list-might-fire? state expr-bases items)]
+    ;; Expansion gives every scratch form its clone-out step, once.
+    [(or (WithScratch _) (WithEscape _ _)) true]
+    [(CloneOut _ _) false]
     [(Binary _ left-box right-box)
       (let
         [left : ast.AstExpr
@@ -126355,13 +126584,6 @@
         (or
           (macro-expr-might-fire? state expr-bases receiver)
           (macro-expr-might-fire? state expr-bases value)))]
-    [(WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
-        (or
-          (macro-expr-might-fire? state expr-bases scratch)
-          (macro-expr-list-might-fire? state expr-bases body)))]
     [(InArena arena-box body)
       (let
         [arena : ast.AstExpr

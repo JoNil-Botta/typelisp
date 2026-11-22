@@ -6,6 +6,7 @@
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_diagnostic)
+(import stdlib.clone as clone_gen)
 (import compiler_abi)
 (import compiler_regalloc)
 (import compiler_liveness)
@@ -595,6 +596,8 @@
 (defenum ResultCompilerBackend
   (Ok String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+
+(clone_gen.gen-clone ResultCompilerBackend)
 
 ;; Append-only function-body assembly text buffer.
 ;;

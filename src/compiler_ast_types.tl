@@ -8,6 +8,7 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.dense_list)
 (import compiler_owned_view as owned_view)
+(import stdlib.clone as clone_gen)
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
@@ -286,6 +287,8 @@
   (start-col i32)
   (end-line i32)
   (end-col i32))
+
+(clone_gen.gen-clone AstSourceSpan)
 
 (define (ast-source-span-box-shared-view [value : (Box AstSourceSpan)]) : AstSourceSpan
   (let
@@ -1200,7 +1203,14 @@
   (ForeachActive i64 i64)
   ;; `(lane-value expr)`: inside a foreach-active body, the current lane's
   ;; value of the varying EXPR, as a uniform value.
-  (LaneValue i64))
+  (LaneValue i64)
+  ;; `(CloneOut form step)`: a `with-scratch` or `with-escape` FORM with its
+  ;; clone-out STEP, which expansion produces: the prelude `__tl-clone-out`
+  ;; expansion over the hidden result binding (`tc-clone-out-result-name`),
+  ;; or that binding alone for a Copy result. The step runs in the enclosing
+  ;; arena after the body and before the rewind or destroy. Appended so every
+  ;; established AstExpr tag ordinal stays stable.
+  (CloneOut i64 i64))
 
 ;; Tuple-place writes reuse `StructSet` internally so the public place syntax
 ;; can land without changing the serialized AstExpr ABI. Interned struct field
@@ -5976,6 +5986,8 @@
   (len i64)
   (prependable bool))
 
+(clone_gen.gen-clone AstDeclPathList)
+
 (defenum AstDeclPathListStep
   (Nil)
   (Cons String AstDeclPathList))
@@ -7823,7 +7835,8 @@
         (ast-for-owned-slots-fold items ,c ,s ,e ,@x)]
       [(AstExpr.MacroExpansion a _ _) (ast-fold-1 ,c ,s ,e a ,@x)]
       [(AstExpr.ForeachActive _ a) (ast-fold-1 ,c ,s ,e a ,@x)]
-      [(AstExpr.LaneValue a) (ast-fold-1 ,c ,s ,e a ,@x)])))
+      [(AstExpr.LaneValue a) (ast-fold-1 ,c ,s ,e a ,@x)]
+      [(AstExpr.CloneOut a b) (ast-fold-2 ,c ,s ,e a b ,@x)])))
 
 (defmacro (ast-expr-for-each-child
   [expr : Expr]
@@ -8189,7 +8202,8 @@
       [(AstExpr.MacroExpansion a provenance name)
         (AstExpr.MacroExpansion (,e ,@x a) provenance name)]
       [(AstExpr.ForeachActive lane a) (AstExpr.ForeachActive lane (,e ,@x a))]
-      [(AstExpr.LaneValue a) (AstExpr.LaneValue (,e ,@x a))])))
+      [(AstExpr.LaneValue a) (AstExpr.LaneValue (,e ,@x a))]
+      [(AstExpr.CloneOut a b) (AstExpr.CloneOut (,e ,@x a) (,e ,@x b))])))
 
 ;; The expression-child schema as two functions, for walkers that treat a
 ;; node's expression children uniformly: `ast-expr-child-ids` lists them in
@@ -8946,6 +8960,10 @@
       [(AstExpr.LaneValue a0)
         (match ,r
           [(AstExpr.LaneValue b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.CloneOut a0 a1)
+        (match ,r
+          [(AstExpr.CloneOut b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
           [_ false])])))
 
 (define (ast-expr-for-owned? [expr : (& expr AstExpr)]) : bool
@@ -9908,6 +9926,15 @@
   [pools : AstNodePoolContext]
   [value : i64]) : i64
   (ast-node-pool-context-expr-push pools (LaneValue value)))
+
+(define (ast-expr-clone-out [form : i64] [step : i64]) : i64
+  (ast-node-push (CloneOut form step)))
+
+(define (ast-expr-clone-out-with-pools
+  [pools : AstNodePoolContext]
+  [form : i64]
+  [step : i64]) : i64
+  (ast-node-pool-context-expr-push pools (CloneOut form step)))
 
 (define (ast-expr-struct-get-id-with-pools
   [pools : AstNodePoolContext]

@@ -131168,117 +131168,122 @@
     (while (< count total)
       (let
         [index : i64 count]
-        ;; The record's type, read in place (`index` is below the store's
-        ;; record count, which only grows).
-        [record : typed.TypedType
-          (tc-global-array-element-shared-view store.types index)]
-        [ty : ast.AstType (tc-global-shared-view record.value)]
-        ;; A record type seen before has that record's representative: it
-        ;; resolves and canonicalizes to an equal type, whose first match
-        ;; among the representatives is the same (or, had it none, is the
-        ;; representative it became: `tc-selected-same-type?` matches equal
-        ;; types). Its variances are recorded already: the first call on a
-        ;; table is the one with `variances?`, and an equal type names the
-        ;; same declarations, which `tc-selected-nominal-variance-add!` keeps
-        ;; once.
         [_room : unit (tc-selected-shallow-reserve! (&mut table.raw))]
-        [raw-slot : i64
-          (tc-selected-shallow-slot (& table.raw) (tc-global-shared-view ty))]
-        [raw-entry : i64 (array-ref table.raw.slots raw-slot)]
+        ;; Set for a record type not seen before.
+        [resolved : ast.AstType ast.AstType.Never]
+        [primitive? : bool false]
+        ;; The record's type is read in place through a view of the store,
+        ;; which ends here, before a referent is indexed (that can add
+        ;; records). A record type seen before has that record's
+        ;; representative: it resolves and canonicalizes to an equal type,
+        ;; whose first match among the representatives is the same (or, had
+        ;; it none, is the representative it became: `tc-selected-same-type?`
+        ;; matches equal types). Its variances are recorded already: the
+        ;; first call on a table is the one with `variances?`, and an equal
+        ;; type names the same declarations, which
+        ;; `tc-selected-nominal-variance-add!` keeps once. A new one is noted
+        ;; under the representative it matches, or the one it becomes (-1
+        ;; then).
         [found : i64
-          (if (> raw-entry 0)
-            (array-ref table.raw.values (- raw-entry 1))
-            -1)]
-        (when
-          (= raw-entry 0)
           (let
-            [_variances : unit
-              (when
-                variances?
-                (tc-selected-nominal-variances-in!
-                  ctx
-                  (tc-global-shared-view ty)
-                  (&mut table.variances)
-                  0))]
-            [resolved : ast.AstType
-              (tc-selected-canonical-type-in
-                ctx
-                (& table.arena-regions)
-                (tc-resolve-type ctx (tc-global-shared-view ty)))]
-            (set!
-              found
-              (tc-selected-representative-noting!
-                table
-                (tc-global-shared-view resolved)))
-            (when
-              (< found 0)
+            [ty : ast.AstType
+              (match (typed.typed-type-view-at! store lease index)
+                [(typed.TypedTypeResult.Ok view)
+                  (owned_view.compiler-owned-reference-shared-view view)]
+                [(typed.TypedTypeResult.Err _) ast.AstType.Never])]
+            [raw-slot : i64
+              (tc-selected-shallow-slot
+                (& table.raw)
+                (tc-global-shared-view ty))]
+            [raw-entry : i64 (array-ref table.raw.slots raw-slot)]
+            (if (> raw-entry 0)
+              (array-ref table.raw.values (- raw-entry 1))
               (let
-                [fresh : ownership_normalize.OwnershipNormalizeTypeClass
-                  (if (tc-selected-primitive-type? (& ty))
-                    (ownership_normalize.OwnershipNormalizeTypeClass
-                      -1
-                      true
-                      0
-                      -1
-                      false)
-                    (tc-selected-type-class
+                [_variances : unit
+                  (when
+                    variances?
+                    (tc-selected-nominal-variances-in!
                       ctx
-                      (tc-global-shared-view resolved)
-                      table.representative-count))]
-                ;; A reference's or view's referent; an owned box's contents.
-                [referent : i64
-                  (cond
-                    [(> fresh.reference 0)
-                      (tc-selected-type-index!
-                        ctx
-                        store
-                        lease
-                        table
-                        (tc-selected-referent
-                          ctx
-                          (tc-global-shared-view resolved)))]
-                    [(and
-                        (>= fresh.key 0)
-                        (match (tc-type-strip-region
-                          (tc-global-shared-view resolved))
-                          [(ast.AstType.Box _) true]
-                          [_ false]))
-                      (match (tc-deref-result-type
-                        ctx
-                        TcMaybeTypeEnv.No
-                        (tc-global-shared-view resolved))
-                        [(ResultTcType.Ok contents)
-                          (tc-selected-type-index!
-                            ctx
-                            store
-                            lease
-                            table
-                            contents)]
-                        [(ResultTcType.Err _) -1])]
-                    [else -1])]
-                ;; Only an indexed referent can have added a record.
-                (when
-                  (>= referent 0)
-                  (set! total (tc-selected-type-record-count store lease)))
-                (set! found table.representative-count)
-                (tc-selected-representatives-reserve! table)
-                (set!
-                  (array-ref table.representative-classes found)
-                  (ownership_normalize.OwnershipNormalizeTypeClass
-                    fresh.key
-                    fresh.copy?
-                    fresh.reference
-                    referent
-                    fresh.cleanup?))
-                (set! (array-ref table.representative-indices found) index)
-                (set! (array-ref table.representatives found) resolved)
-                (tc-selected-representative-file! table found)
-                (set! table.representative-count (+ found 1))))
-            (tc-selected-shallow-put!
-              (&mut table.raw)
-              raw-slot
-              (tc-global-shared-view ty)
-              found)))
+                      (tc-global-shared-view ty)
+                      (&mut table.variances)
+                      0))]
+                [_resolved : unit
+                  (set!
+                    resolved
+                    (tc-selected-canonical-type-in
+                      ctx
+                      (& table.arena-regions)
+                      (tc-resolve-type ctx (tc-global-shared-view ty))))]
+                [rep : i64
+                  (tc-selected-representative-noting!
+                    table
+                    (tc-global-shared-view resolved))]
+                (set! primitive? (tc-selected-primitive-type? (& ty)))
+                (tc-selected-shallow-put!
+                  (&mut table.raw)
+                  raw-slot
+                  (tc-global-shared-view ty)
+                  (if (>= rep 0)
+                    rep
+                    table.representative-count))
+                rep)))]
+        (when
+          (< found 0)
+          (let
+            [fresh : ownership_normalize.OwnershipNormalizeTypeClass
+              (if primitive?
+                (ownership_normalize.OwnershipNormalizeTypeClass
+                  -1
+                  true
+                  0
+                  -1
+                  false)
+                (tc-selected-type-class
+                  ctx
+                  (tc-global-shared-view resolved)
+                  table.representative-count))]
+            ;; A reference's or view's referent; an owned box's contents.
+            [referent : i64
+              (cond
+                [(> fresh.reference 0)
+                  (tc-selected-type-index!
+                    ctx
+                    store
+                    lease
+                    table
+                    (tc-selected-referent ctx (tc-global-shared-view resolved)))]
+                [(and
+                    (>= fresh.key 0)
+                    (match (tc-type-strip-region
+                      (tc-global-shared-view resolved))
+                      [(ast.AstType.Box _) true]
+                      [_ false]))
+                  (match (tc-deref-result-type
+                    ctx
+                    TcMaybeTypeEnv.No
+                    (tc-global-shared-view resolved))
+                    [(ResultTcType.Ok contents)
+                      (tc-selected-type-index! ctx store lease table contents)]
+                    [(ResultTcType.Err _) -1])]
+                [else -1])]
+            ;; Only an indexed referent can have added a record.
+            (when
+              (>= referent 0)
+              (set! total (tc-selected-type-record-count store lease)))
+            (set! found table.representative-count)
+            (tc-selected-representatives-reserve! table)
+            (set!
+              (array-ref table.representative-classes found)
+              (ownership_normalize.OwnershipNormalizeTypeClass
+                fresh.key
+                fresh.copy?
+                fresh.reference
+                referent
+                fresh.cleanup?))
+            (set! (array-ref table.representative-indices found) index)
+            (set! (array-ref table.representatives found) resolved)
+            (tc-selected-representative-file! table found)
+            (set! table.representative-count (+ found 1))))
         (when
           (>= count (array-length cells))
           (let

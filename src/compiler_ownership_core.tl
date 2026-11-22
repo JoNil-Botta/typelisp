@@ -1,8 +1,11 @@
 ;; Typed, storage-independent ownership graph (#8449).
 ;; This is the initialization/move/loan/cleanup core, not a replacement for source checking
 ;; yet. The caller owns every array/string for the duration of validation and
-;; solving. Nothing is retained in a global, intern table, or AST node pool.
+;; solving. Provenance expansion frames are the one shared table: a source
+;; carries their id and renders text only for diagnostics.
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
+(import compiler_intern as ci)
 
 ;; Numeric indices have meaning only within one immutable body revision. No
 ;; arithmetic packs a source name, field ordinal, or pool id into an identity.
@@ -90,8 +93,68 @@
   (path OwnershipPath)
   (line i64)
   (column i64)
-  ;; An owned expansion trace; no source-pool handles survive the handoff.
-  (expansion String))
+  ;; The innermost frame of the expansion trace, or 0; the frame table owns
+  ;; the frames, so copying a source copies one integer.
+  (expansion i64))
+
+(define (ownership-expansion-none) : i64
+  (ci.intern-expansion-none))
+
+(define (ownership-expansion-frame
+  [previous : i64]
+  [invocation-path-id : i64]
+  [start-line : i64]
+  [start-column : i64]
+  [end-line : i64]
+  [end-column : i64]
+  [origin-path-id : i64]
+  [macro-name-id : i64]) : i64
+  (ci.intern-expansion-push
+    previous
+    invocation-path-id
+    start-line
+    start-column
+    end-line
+    end-column
+    origin-path-id
+    macro-name-id))
+
+(define (ownership-expansion-text [expansion : i64]) : String
+  (let
+    [out : String ""]
+    [cursor : i64 expansion]
+    (while (ci.intern-expansion-live? cursor)
+      (let
+        [frame : ci.InternExpansionFrame (ci.intern-expansion-at cursor)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            (string.int->string frame.invocation-path-id)
+            "|"
+            (string.int->string frame.start-line)
+            "|"
+            (string.int->string frame.start-column)
+            "|"
+            (string.int->string frame.end-line)
+            "|"
+            (string.int->string frame.end-column)
+            "|"
+            (string.int->string frame.origin-path-id)
+            "|"
+            (string.int->string frame.macro-name-id)
+            ";"))
+        (set! cursor frame.previous)))
+    out))
+
+(define (ownership-expansion-bytes [expansion : i64]) : i64
+  (ci.intern-expansion-bytes expansion))
+
+(define (ownership-expansion-equal? [left : i64] [right : i64]) : bool
+  (ci.intern-expansion-equal? left right))
+
+(define (ownership-expansion-at [expansion : i64]) : ci.InternExpansionFrame
+  (ci.intern-expansion-at expansion))
 
 ;; Array payloads sit in single-field structs. The published seed compiler
 ;; binds a borrowed enum payload to its slot's address rather than the array
@@ -328,7 +391,7 @@
   [source : (& source OwnershipSource)]) : bool
   (let
     [units : i64
-      (+ 1 (+ source.path.bytes (string.string-length (& source.expansion))))]
+      (+ 1 (+ source.path.bytes (ownership-expansion-bytes source.expansion)))]
     (if (> units (- limit (deref work)))
       false
       (begin
@@ -363,7 +426,7 @@
         (ownership-path-copy (& source.path))
         source.line
         source.column
-        (string.copy (& source.expansion)))
+        source.expansion)
       message)))
 
 (define (ownership-loan-failure
@@ -749,7 +812,7 @@
         (ownership-placeholder-path ownership-path-body-placeholder-id)
         1
         1
-        "")]
+        (ownership-expansion-none))]
     (when (= loans 0) (return OwnershipResult.Ok))
     (while (< i blocks)
       (unless
@@ -977,7 +1040,7 @@
         (ownership-placeholder-path ownership-path-body-placeholder-id)
         1
         1
-        "")]
+        (ownership-expansion-none))]
     [types : i64 (array-length body.types)]
     [locals : i64 (array-length body.locals)]
     [places : i64 (array-length body.places)]
@@ -1423,7 +1486,7 @@
             [path : i64 instr.source.path.bytes]
             ;; `ownership-source-charge!`
             [units : i64
-              (+ 1 (+ path (string.string-length (& instr.source.expansion))))]
+              (+ 1 (+ path (ownership-expansion-bytes instr.source.expansion)))]
             (when
               (> units (- limits.max-work work))
               (return
@@ -1976,7 +2039,7 @@
     [source : OwnershipSource
       (if (ownership-index? block (array-length body.blocks))
         (ownership-source-copy (& (array-ref body.blocks block).source))
-        (OwnershipSource (ownership-path-none) 0 0 ""))]
+        (OwnershipSource (ownership-path-none) 0 0 (ownership-expansion-none)))]
     (OwnershipFailure
       OwnershipFailureKind.Resource
       block
@@ -5099,7 +5162,7 @@
         (ownership-placeholder-path ownership-path-cleanup-placeholder-id)
         1
         1
-        "")]
+        (ownership-expansion-none))]
     [i : i64 0]
     [canonical : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [present : (__tl_dyn-array bool) (__tl_make-array bool 0)]
@@ -5575,14 +5638,7 @@
     (ownership-path-copy (& source.path))
     source.line
     source.column
-    (ownership-text-copy (& source.expansion))))
-
-;; An owned copy of provenance text. Most expansion traces are empty, and an
-;; empty copy needs no allocation.
-(define (ownership-text-copy [text : (& text str)]) : String
-  (if (= (string.string-length text) 0)
-    ""
-    (string.copy text)))
+    source.expansion))
 
 (defmacro (ownership-scope-fail
   [kind : Expr]

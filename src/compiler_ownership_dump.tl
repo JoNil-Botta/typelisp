@@ -26,6 +26,7 @@
   ;; The frame counts the text printed, whatever path the caller names.
   (let
     [path : String (own.ownership-path-text (& source.path) body-path)]
+    [expansion : String (own.ownership-expansion-text source.expansion)]
     (str_cat.str-cat
       " @"
       (string.int->string (string.string-length (& path)))
@@ -36,9 +37,9 @@
       ":"
       (string.int->string source.column)
       " expansion="
-      (string.int->string (string.string-length (& source.expansion)))
+      (string.int->string (string.string-length (& expansion)))
       ":"
-      (string.copy (& source.expansion)))))
+      expansion)))
 
 (define (ownership-dump-place [place : (& place own.OwnershipPlaceId)]) : String
   (str_cat.str-cat "%p" (string.int->string place.index)))

@@ -42024,6 +42024,7 @@
   [state : TcMacroState]
   [expr-id : i64]
   [expr : ast.AstExpr]) : unit
+  (tc-global-effect-note-expr-edit! state expr-id)
   (unless
     (< (tc-macro-walk-field state dotted-macro-journal-depth) 1)
     (if (>=
@@ -42066,9 +42067,12 @@
   (while (> (tc-macro-walk-field state dotted-macro-journal-len) mark)
     (let
       [index : i64 (- (tc-macro-walk-field state dotted-macro-journal-len) 1)]
+      [expr-id : i64
+        (array-ref (tc-macro-walk-field state dotted-macro-journal-ids) index)]
+      (tc-global-effect-note-expr-edit! state expr-id)
       (ast.ast-node-pool-context-expr-set!
         (tc-dotted-macro-journal-pool-at state index)
-        (array-ref (tc-macro-walk-field state dotted-macro-journal-ids) index)
+        expr-id
         (& (tc-dotted-macro-journal-expr-at state index)))
       (tc-macro-walk-set! state dotted-macro-journal-len index)))
   (tc-macro-walk-set!
@@ -97273,6 +97277,16 @@
         unit]))
   true)
 
+;; The events needed to replay a declaration in the other collection mode.
+;; Revision zero marks an unread declaration.
+(defstruct TcGlobalEffectScan
+  (revision i64)
+  (start i64)
+  (events-end i64)
+  (inputs-end i64)
+  (contributes bool)
+  (complete bool))
+
 (defstruct TcGlobalEffectCollector
   (graph global_effects.Graph)
   (temporary-callers tc_i64_i64_map.Map)
@@ -97300,7 +97314,13 @@
   (exempt-borrow bool)
   ;; The declaration scanned holds a function value, a lambda or a call
   ;; inside an arena scope: what the indirect union's scan can find.
-  (contributes bool))
+  (contributes bool)
+  ;; Regular write collection and indirect discovery read the same syntax.
+  ;; Record the events the other mode needs in their original visit order.
+  (capture-scan bool)
+  (scan-for-discovery bool)
+  (scan-words effect_words.Vec)
+  (scan-inputs effect_words.Vec))
 
 (defstruct TcGlobalBorrowQuery
   (global i64)
@@ -97346,7 +97366,11 @@
   ;; The declarations the indirect union's first scan found contributing, so
   ;; the other graph's union scans only those; -1 before that scan.
   (union-count i64)
-  (union-declarations effect_words.Vec))
+  (union-declarations effect_words.Vec)
+  (scan-revision i64)
+  (edited-exprs tc_i64_i64_map.Map)
+  (scans (__tl_dyn-array TcGlobalEffectScan))
+  (scan-words effect_words.Vec))
 
 ;; A call the arena-store summary answers once every body is checked: kind 0
 ;; asks whether the callee may store an allocation into a global, kind 1
@@ -97443,20 +97467,56 @@
     (set! (array-ref collector.collected node) 1)
     (effect_words.push-ref! (&mut collector.pending) node)))
 
+;; The typechecker can retarget Var and Set nodes, and can restore the
+;; StructGet and StructSet produced by dotted-place normalization.
+(define (tc-global-effect-note-scan-input!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [id : i64]) : unit
+  (when
+    collector.capture-scan
+    (effect_words.push-ref! (&mut collector.scan-inputs) id)))
+
+(define (tc-global-effect-record!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [kind : i64]
+  [target : i64]) : unit
+  (when
+    (and
+      collector.capture-scan
+      (or (not collector.scan-for-discovery) (= node collector.graph.indirect)))
+    ;; The target is a declaration index or expression ID. Use the low
+    ;; three bits for the indirect caller and the kind (call, write, borrow).
+    (effect_words.push-ref!
+      (&mut collector.scan-words)
+      (+
+        (shl target 3)
+        (* kind 2)
+        (if (= node collector.graph.indirect)
+          1
+          0)))))
+
+(define (tc-global-effect-insert-call!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [caller : i64]
+  [callee : i64]) : unit
+  (global_effects.add-call! (&mut collector.graph) caller callee)
+  ;; Merely defining a lambda or taking a function value does not execute
+  ;; the indirect union. Its outgoing edges become relevant when queried.
+  (when
+    (or
+      (!= caller collector.graph.indirect)
+      (!= (array-ref collector.collected collector.graph.indirect) 0))
+    (tc-global-effect-enqueue! collector callee)))
+
 (define (tc-global-effect-add-call!
   [collector : (&mut collector TcGlobalEffectCollector)]
   [caller : i64]
   [callee : i64]) : unit
+  (tc-global-effect-record! collector caller 0 callee)
   (unless
     (or collector.prefix-only collector.address-only)
-    (global_effects.add-call! (&mut collector.graph) caller callee)
-    ;; Merely defining a lambda or taking a function value does not execute
-    ;; the indirect union. Its outgoing edges become relevant when queried.
-    (when
-      (or
-        (!= caller collector.graph.indirect)
-        (!= (array-ref collector.collected collector.graph.indirect) 0))
-      (tc-global-effect-enqueue! collector callee))))
+    (tc-global-effect-insert-call! collector caller callee)))
 
 (define (tc-global-effect-write-name!
   [ctx : TcContext]
@@ -97464,7 +97524,11 @@
   [node : i64]
   [bound : TcNameIdList]
   [name : i64]) : unit
-  (when (or collector.prefix-only collector.address-only) (return unit))
+  (when
+    (or
+      collector.prefix-only
+      (and collector.address-only (not collector.capture-scan)))
+    (return unit))
   (let
     [handle : i64 (tc-global-effect-handle ctx bound name)]
     (when
@@ -97473,10 +97537,29 @@
         (=
           (csym.compiler-symbol-handle-kind handle)
           (csym.compiler-symbol-kind-value-define)))
-      (global_effects.add-write!
-        (&mut collector.graph)
-        node
-        (csym.compiler-symbol-handle-index handle)))))
+      (let
+        [global : i64 (csym.compiler-symbol-handle-index handle)]
+        (tc-global-effect-record! collector node 1 global)
+        (unless
+          collector.address-only
+          (global_effects.add-write! (&mut collector.graph) node global))))))
+
+(define (tc-global-effect-temporary!
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [node : i64]
+  [place : i64]) : unit
+  (let
+    [head : i64
+      (tc_i64_i64_map.get-value-or (& collector.temporary-callers) place 0)]
+    [next : i64 (global_effects.link! (&mut collector.graph) node head)]
+    [cleanup : i64
+      (tc_i64_i64_map.get-value-or (& collector.typed-temporaries) place 0)]
+    (tc_i64_i64_map.insert-ref! (&mut collector.temporary-callers) place next)
+    (when
+      (>= cleanup 1)
+      ;; The inferred cleanup may arrive after the syntax is scanned. Look
+      ;; it up on replay, alongside the temporary operand itself.
+      (tc-global-effect-insert-call! collector node (- cleanup 1)))))
 
 (define (tc-global-effect-write-place!
   [ctx : TcContext]
@@ -97959,18 +98042,20 @@
   [value : i64]
   [field : i64]
   [kind : i64]) : unit
-  (tc-arena-store-effect!
-    ctx
-    collector
-    node
-    bound
-    (match (tc-move-root-projection-var-id
-      (tc-context-expr-bases ctx)
-      (tc-context-expr-get ctx place))
-      [(Some name) name]
-      [(No) -1])
-    value
-    (tc-arena-store-slot-type ctx collector place field kind)))
+  (when
+    (and collector.arena (not collector.address-only))
+    (tc-arena-store-effect!
+      ctx
+      collector
+      node
+      bound
+      (match (tc-move-root-projection-var-id
+        (tc-context-expr-bases ctx)
+        (tc-context-expr-get ctx place))
+        [(Some name) name]
+        [(No) -1])
+      value
+      (tc-arena-store-slot-type ctx collector place field kind))))
 
 ;; The arena-store key recording that a declaration calls its function
 ;; parameter `index` inside an arena-scoping form: each caller checks the
@@ -98025,6 +98110,38 @@
         collector.declaration
         (tc-arena-store-parameter-call-key head)))))
 
+(define (tc-global-effect-resolved-callee
+  [ctx : TcContext]
+  [handle : i64]
+  [indirect : i64]) : i64
+  (let
+    [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+    (cond
+      [(or
+          (= kind (csym.compiler-symbol-kind-function-define))
+          (= kind (csym.compiler-symbol-kind-defdispatch))
+          (= kind (csym.compiler-symbol-kind-struct-cleanup))
+          (= kind (csym.compiler-symbol-kind-enum-cleanup)))
+        (csym.compiler-symbol-handle-index handle)]
+      [(or
+          (= kind (csym.compiler-symbol-kind-defstruct))
+          (= kind (csym.compiler-symbol-kind-enum-variant)))
+        -1]
+      [(= kind (csym.compiler-symbol-kind-extern))
+        (match (csym.compiler-symbols-decl-at-index
+          (tc-context-symbols ctx)
+          (csym.compiler-symbol-handle-index handle))
+          [(Ok decl)
+            (match (ast.ast-decl-unwrapped (& decl))
+              [(Extern _ _ _ metadata _)
+                (match (& (deref metadata))
+                  [(ast.AstExternMetadata.Metadata (TypeLisp) _ _ _ _)
+                    (csym.compiler-symbol-handle-index handle)]
+                  [_ -1])]
+              [_ -1])]
+          [_ -1])]
+      [else indirect])))
+
 (define (tc-global-effect-callee
   [ctx : TcContext]
   [bound : TcNameIdList]
@@ -98038,33 +98155,7 @@
     [handle : i64 (tc-global-effect-handle ctx bound name)]
     (cond
       [(csym.compiler-symbols-handle-found? handle)
-        (let
-          [kind : i64 (csym.compiler-symbol-handle-kind handle)]
-          (cond
-            [(or
-                (= kind (csym.compiler-symbol-kind-function-define))
-                (= kind (csym.compiler-symbol-kind-defdispatch))
-                (= kind (csym.compiler-symbol-kind-struct-cleanup))
-                (= kind (csym.compiler-symbol-kind-enum-cleanup)))
-              (csym.compiler-symbol-handle-index handle)]
-            [(or
-                (= kind (csym.compiler-symbol-kind-defstruct))
-                (= kind (csym.compiler-symbol-kind-enum-variant)))
-              -1]
-            [(= kind (csym.compiler-symbol-kind-extern))
-              (match (csym.compiler-symbols-decl-at-index
-                (tc-context-symbols ctx)
-                (csym.compiler-symbol-handle-index handle))
-                [(Ok decl)
-                  (match (ast.ast-decl-unwrapped (& decl))
-                    [(Extern _ _ _ metadata _)
-                      (match (ast.ast-extern-metadata-abi
-                        (ast.ast-extern-metadata-box-shared-view metadata))
-                        [(TypeLisp) (csym.compiler-symbol-handle-index handle)]
-                        [_ -1])]
-                    [_ -1])]
-                [_ -1])]
-            [else indirect]))]
+        (tc-global-effect-resolved-callee ctx handle indirect)]
       [(or
           (tc-name-id-list-contains bound name)
           (tc-name-id-list-contains
@@ -98410,7 +98501,11 @@
           (tc_i64_i64_map.with-capacity 0)
           -1
           false
-          false)]
+          false
+          false
+          false
+          (effect_words.new)
+          (effect_words.new))]
       (for [index (iterator.range 0 indexed)]
         (tc-global-effect-scan-declaration! ctx (&mut collector) index)
         (when (< collector.first-contextual-declaration indexed) (break)))
@@ -98436,33 +98531,76 @@
     (return unit))
   (let
     [entry : i64 collector.bindings.len]
-    [expr : ast.AstExpr (tc-context-expr-get ctx id)]
+    [source-id : i64 id]
+    [expr : ast.AstExpr (tc-context-expr-get ctx source-id)]
+    ;; Keep the leaf ID for invalidation while passing transparently through
+    ;; span and macro-provenance wrappers.
+    (while true
+      (match (& expr)
+        [(or (Spanned inner _) (MacroExpansion inner _ _))
+          (set! source-id inner)
+          (set! expr (tc-context-expr-get ctx source-id))]
+        [_ (break)]))
     (match (tc-global-shared-view expr)
       [(or (Quote _) (Quasiquote _) (Comptime _) (TypeLiteral _)) unit]
-      [(or (Spanned inner _) (MacroExpansion inner _ _))
-        (tc-global-effect-scan! ctx collector node bound inner call-head)]
-      [(Var _)
+      [(Var name)
+        ;; The rewrite sites only retarget declared enum variants and dotted
+        ;; places. A qualified variant can also be restored via the journal.
+        (when
+          (and
+            collector.capture-scan
+            (or
+              (tc-bare-variant-declared-name? ctx name)
+              (>=
+                (tc-dotted-name-first-dot-id
+                  (tc-context-structural-session ctx)
+                  name)
+                0)))
+          (effect_words.push-ref! (&mut collector.scan-inputs) source-id))
         (unless
           (or call-head collector.prefix-only)
           (let
+            [handle : i64 (tc-global-effect-handle ctx bound name)]
             [target : i64
-              (tc-global-effect-callee ctx bound expr collector.graph.indirect)]
+              (if (csym.compiler-symbols-handle-found? handle)
+                (tc-global-effect-resolved-callee
+                  ctx
+                  handle
+                  collector.graph.indirect)
+                -1)]
             (when
               (and (>= target 0) (!= target collector.graph.indirect))
               (set! collector.contributes true)
-              (global_effects.add-call!
-                (&mut collector.graph)
-                (if collector.arena
-                  (tc-arena-store-decl-node ctx target collector.graph.indirect)
-                  collector.graph.indirect)
-                target)
-              (when
-                (!= (array-ref collector.collected collector.graph.indirect) 0)
-                (tc-global-effect-enqueue! collector target)))))]
+              (if collector.arena
+                (begin
+                  (global_effects.add-call!
+                    (&mut collector.graph)
+                    (tc-arena-store-decl-node
+                      ctx
+                      target
+                      collector.graph.indirect)
+                    target)
+                  (when
+                    (!=
+                      (array-ref collector.collected collector.graph.indirect)
+                      0)
+                    (tc-global-effect-enqueue! collector target)))
+                (begin
+                  (tc-global-effect-record!
+                    collector
+                    collector.graph.indirect
+                    0
+                    target)
+                  (tc-global-effect-insert-call!
+                    collector
+                    collector.graph.indirect
+                    target))))))]
       [(Call func args)
         (let
           [callee : i64
-            (if (or collector.prefix-only collector.address-only)
+            (if (or
+              collector.prefix-only
+              (and collector.address-only (not collector.capture-scan)))
               -1
               (tc-global-effect-callee
                 ctx
@@ -98850,10 +98988,22 @@
       [_
         (match (tc-global-shared-view expr)
           [(Set name value)
+            (when
+              (and
+                collector.capture-scan
+                (>=
+                  (tc-dotted-name-first-dot-id
+                    (tc-context-structural-session ctx)
+                    name)
+                  0))
+              (effect_words.push-ref! (&mut collector.scan-inputs) source-id))
             (tc-global-effect-write-name! ctx collector node bound name)
             ;; Assigning a body binder stores nothing outside the body.
-            (unless
-              (tc-name-id-list-contains bound name)
+            (when
+              (and
+                collector.arena
+                (not collector.address-only)
+                (not (tc-name-id-list-contains bound name)))
               (tc-arena-store-effect!
                 ctx
                 collector
@@ -98873,7 +99023,10 @@
               value
               -1
               0)]
+          [(StructGet _ _)
+            (tc-global-effect-note-scan-input! collector source-id)]
           [(StructSet place field value)
+            (tc-global-effect-note-scan-input! collector source-id)
             (tc-global-effect-write-place! ctx collector node bound place)
             (tc-arena-store-place-effect!
               ctx
@@ -98931,6 +99084,7 @@
             ;; unless the call's effects land in an explicit arena.
             (when
               (and
+                collector.arena
                 mutable
                 (not
                   (let
@@ -98962,31 +99116,14 @@
             (when
               (and
                 (not collector.prefix-only)
-                (not collector.address-only)
+                (or (not collector.address-only) collector.capture-scan)
                 (tc-borrow-operand-id-temporary?
                   (tc-context-expr-bases ctx)
                   place))
-              (let
-                [head : i64
-                  (tc_i64_i64_map.get-value-or
-                    (& collector.temporary-callers)
-                    place
-                    0)]
-                [next : i64
-                  (global_effects.link! (&mut collector.graph) node head)]
-                (tc_i64_i64_map.insert-ref!
-                  (&mut collector.temporary-callers)
-                  place
-                  next)
-                (let
-                  [cleanup : i64
-                    (tc_i64_i64_map.get-value-or
-                      (& collector.typed-temporaries)
-                      place
-                      0)]
-                  (when
-                    (> cleanup 0)
-                    (tc-global-effect-add-call! collector node (- cleanup 1))))))]
+              (tc-global-effect-record! collector node 2 place)
+              (unless
+                collector.address-only
+                (tc-global-effect-temporary! collector node place)))]
           [(ArrayTake place live _)
             (tc-global-effect-write-place! ctx collector node bound place)
             (tc-global-effect-write-place! ctx collector node bound live)]
@@ -99284,6 +99421,10 @@
               (tc_i64_i64_map.with-capacity 0)
               false
               -1
+              (effect_words.new)
+              1
+              (tc_i64_i64_map.with-capacity 0)
+              (__tl_make-array TcGlobalEffectScan count)
               (effect_words.new)))
           (set!
             address
@@ -99297,6 +99438,145 @@
           address)))
     (unsafe
       (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))))
+
+;; Edits can change a later walk without changing the declaration table.
+;; Edges that were already published keep the original collection semantics.
+(define (tc-global-effect-note-expr-edit! [owner : TcMacroState] [id : i64]) : unit
+  (let
+    [address : i64
+      (tc-macro-state-slot-address
+        owner
+        tc-macro-state-slot-global-call-effects)]
+    (when
+      (!= address 0)
+      (let
+        [state : (MutPtr TcGlobalCallEffects)
+          (unsafe
+            (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))]
+        [revision : i64
+          (unsafe
+            (+ (deref state).scan-revision 1))]
+        [edits : tc_i64_i64_map.Map
+          (unsafe
+            (deref state).edited-exprs)]
+        [enclosing : i64 (arena.tl_arena_current)]
+        (unsafe
+          (arena.tl_arena_set (deref state).arena))
+        (tc_i64_i64_map.insert-ref! (&mut edits) id revision)
+        (unsafe
+          (set! (deref state).edited-exprs edits)
+          (set! (deref state).scan-revision revision)
+          (arena.tl_arena_set enclosing))))))
+
+(define (tc-global-effect-scan-current?
+  [state : (Ptr TcGlobalCallEffects)]
+  [scan : TcGlobalEffectScan]
+  [words : (& words effect_words.Vec)]
+  [revision : i64]) : bool
+  (when (= scan.revision 0) (return false))
+  (when (= scan.revision revision) (return true))
+  (let
+    [edits : tc_i64_i64_map.Map
+      (unsafe
+        (deref state).edited-exprs)]
+    [input : i64 scan.events-end]
+    (while (< input scan.inputs-end)
+      (when
+        (>
+          (tc_i64_i64_map.get-value-or
+            (& edits)
+            (array-ref words.slots input)
+            0)
+          scan.revision)
+        (return false))
+      (+= input 1)))
+  true)
+
+(define (tc-global-effect-summarize-declaration!
+  [ctx : TcContext]
+  [state : (MutPtr TcGlobalCallEffects)]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [index : i64]) : unit
+  (when
+    collector.arena
+    (tc-global-effect-scan-declaration! ctx collector index)
+    (return unit))
+  (let
+    [revision : i64
+      (unsafe
+        (deref state).scan-revision)]
+    [scan : TcGlobalEffectScan
+      (unsafe
+        (array-ref (deref state).scans index))]
+    [words : effect_words.Vec
+      (unsafe
+        (deref state).scan-words)]
+    ;; A normal scan may have saved only the indirect events for discovery.
+    ;; A normal replay needs every event, including the declaration's writes.
+    (if (and
+      (or collector.address-only scan.complete)
+      (tc-global-effect-scan-current?
+        (unsafe
+          (ptr-cast state : (Ptr TcGlobalCallEffects)))
+        scan
+        (& words)
+        revision))
+      (let
+        [cursor : i64 scan.start]
+        (set! collector.contributes scan.contributes)
+        (while (< cursor scan.events-end)
+          (let
+            [code : i64 (array-ref words.slots cursor)]
+            [target : i64 (shr code 3)]
+            [shared : bool (= (bit-and code 1) 1)]
+            [node : i64
+              (if shared
+                collector.graph.indirect
+                index)]
+            (when
+              (or shared (not collector.address-only))
+              (match (bit-and (shr code 1) 3)
+                [0 (tc-global-effect-insert-call! collector node target)]
+                [1
+                  (global_effects.add-write! (&mut collector.graph) node target)]
+                [_ (tc-global-effect-temporary! collector node target)]))
+            (+= cursor 1))))
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [start : i64 (effect_words.len (& words))]
+        (set! collector.capture-scan true)
+        (set! collector.scan-for-discovery (not collector.address-only))
+        (set! collector.scan-words.len 0)
+        (set! collector.scan-inputs.len 0)
+        (set! collector.contributes false)
+        (tc-global-effect-scan-declaration! ctx collector index)
+        (set! collector.capture-scan false)
+        (unsafe
+          (arena.tl_arena_set (deref state).arena))
+        (for [cursor
+          (iterator.range 0 (effect_words.len (& collector.scan-words)))]
+          (effect_words.push-ref!
+            (&mut words)
+            (array-ref collector.scan-words.slots cursor)))
+        (let
+          [events-end : i64 (effect_words.len (& words))]
+          (for [cursor
+            (iterator.range 0 (effect_words.len (& collector.scan-inputs)))]
+            (effect_words.push-ref!
+              (&mut words)
+              (array-ref collector.scan-inputs.slots cursor)))
+          (unsafe
+            (set!
+              (array-ref (deref state).scans index)
+              (TcGlobalEffectScan
+                revision
+                start
+                events-end
+                (effect_words.len (& words))
+                collector.contributes
+                (not collector.scan-for-discovery)))
+            (set! (deref state).scan-words words)
+            (arena.tl_arena_set enclosing)))))))
 
 (define (tc-global-call-effects-collect!
   [ctx : TcContext]
@@ -99343,7 +99623,11 @@
               (deref state).tagged)
             -1
             false
-            false)]
+            false
+            false
+            false
+            (effect_words.new)
+            (effect_words.new))]
         [cursor : i64 0]
         [union : effect_words.Vec
           (unsafe
@@ -99370,14 +99654,16 @@
                 (set! collector.address-only true)
                 (if (>= union-count 0)
                   (for [index (iterator.range 0 union-count)]
-                    (tc-global-effect-scan-declaration!
+                    (tc-global-effect-summarize-declaration!
                       ctx
+                      state
                       (&mut collector)
                       (effect_words.get (& union) index 0)))
                   (for [index (iterator.range 0 collector.graph.indirect)]
                     (set! collector.contributes false)
-                    (tc-global-effect-scan-declaration!
+                    (tc-global-effect-summarize-declaration!
                       ctx
+                      state
                       (&mut collector)
                       index)
                     (when
@@ -99388,7 +99674,11 @@
                   (< union-count 0)
                   (set! union-count (effect_words.len (& found))))]
               [else
-                (tc-global-effect-scan-declaration! ctx (&mut collector) node)]))
+                (tc-global-effect-summarize-declaration!
+                  ctx
+                  state
+                  (&mut collector)
+                  node)]))
           (+= cursor 1))
         (unsafe
           (arena.tl_arena_set (deref state).arena))
@@ -100380,7 +100670,11 @@
             (deref state).tagged)
           -1
           false
-          false)]
+          false
+          false
+          false
+          (effect_words.new)
+          (effect_words.new))]
       [mask : i64 0]
       (tc-global-effect-scan-declaration! ctx (&mut collector) node)
       (for [index (iterator.range 0 63)]

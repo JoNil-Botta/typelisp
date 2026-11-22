@@ -334,7 +334,6 @@
 ;; session and the job stay put. Only `true` answers are kept: the first leaf
 ;; that resolves to something else is rebuilt instead of probed again.
 (defstruct TcTypeResolutionLeafMemoEntry
-  (job-epoch i64)
   (type-name-generation i64)
   (session-owner i64)
   (session-generation i64)
@@ -45953,8 +45952,9 @@
 
 ;; One direct-mapped table in the job's resolution cache remembers the `Var`
 ;; leaves `tc-type-rebuild-resolves-to-itself?` proved unchanged. A slot holds
-;; one entry: equal means the leaf resolves to itself under the same job epoch,
-;; type-name resolution generation, structural session and intern table.
+;; one entry: equal means the leaf resolves to itself under the same type-name
+;; resolution generation, structural session and intern table. Every expansion
+;; walk advances the generation, so no entry crosses a program boundary.
 (define tc-type-resolution-leaf-memo-capacity : i64
   1024)
 
@@ -46007,7 +46007,7 @@
     [entry : (& data TcTypeResolutionLeafMemoEntry)
       (& (array-ref data.leaf-slots slot))]
     (if (and
-      (= entry.job-epoch data.epoch)
+      (> generation 0)
       (= entry.type-name-generation generation)
       (= entry.session-owner session-owner)
       (= entry.session-generation session-generation)
@@ -46025,11 +46025,10 @@
               name)
             ty)]
         (when
-          same
+          (and same (> generation 0))
           (set!
             (array-ref data.leaf-slots slot)
             (TcTypeResolutionLeafMemoEntry
-              data.epoch
               generation
               session-owner
               session-generation

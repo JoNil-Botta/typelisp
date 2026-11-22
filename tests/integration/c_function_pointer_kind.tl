@@ -4,18 +4,14 @@
     `42
     `1))
 
-(defmacro (c-empty [T : type (:kind c-function)]) : Expr
-  ;; lint-allow: removed-init -- Preserve Init syntax coverage until #7951.
-  `(init : ,T))
-
 (defmacro (c-null [T : type (:kind c-function)]) : Expr
   `(ptr-null : ,T))
 
 (define (safe-empty) : (CFunc nullable (-> i64 i64))
-  (c-empty (CFunc nullable (-> i64 i64))))
+  (c-null (CFunc nullable (-> i64 i64))))
 
 (define (unsafe-empty) : (CFunc unsafe-nullable (-> i64 i64))
-  (c-empty (CFunc unsafe-nullable (-> i64 i64))))
+  (c-null (CFunc unsafe-nullable (-> i64 i64))))
 
 (define (main) : i64
   (if (and

@@ -2197,7 +2197,6 @@ x509_service_dns_pointer_reject|check-fail|tests/safety/x509_service_dns_pointer
 x509_service_reference_escape_reject|check-fail|tests/safety/x509_service_reference_escape_reject.tl|-|region-tagged value cannot escape with-arena
 x509_service_reference_store_reject|check-fail|tests/safety/x509_service_reference_store_reject.tl|-|region value would escape
 opaque_foreign_variant_reject|check-fail|tests/safety/opaque_foreign_variant_reject.tl|-|typecheck: cannot construct the opaque type opaque_dep/State outside its module family
-opaque_foreign_init_reject|check-fail|tests/safety/opaque_foreign_init_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_field_reject|check-fail|tests/safety/opaque_foreign_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_field_borrow_reject|check-fail|tests/safety/opaque_foreign_field_borrow_reject.tl|-|typecheck: cannot borrow a field of the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_unsafe_field_reject|check-fail|tests/safety/opaque_foreign_unsafe_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
@@ -2463,7 +2462,6 @@ mir_slice_split_halves_ok|run-exit|tests/safety/mir_slice_split_halves_ok.tl|42|
 mir_slice_split_source_write_reject|check-fail|tests/safety/mir_slice_split_source_write_reject.tl|tests/safety/mir_slice_split_source_write_reject.tl:11:24|cannot assign to borrowed place `items[0]`
 mir_slice_child_parent_reuse_ok|run-exit|tests/safety/mir_slice_child_parent_reuse_ok.tl|42|-
 mir_slice_element_place_ok|run-exit|tests/safety/mir_slice_element_place_ok.tl|42|-
-mir_init_default_ok|run-exit|tests/safety/mir_init_default_ok.tl|42|-
 mir_immediate_lambda_ref_capture_ok|run-exit|tests/safety/mir_immediate_lambda_ref_capture_ok.tl|42|-
 mir_immediate_lambda_consumed_capture_reject|check-fail|tests/safety/mir_immediate_lambda_consumed_capture_reject.tl|tests/safety/mir_immediate_lambda_consumed_capture_reject.tl:13:37|use of moved value `text`
 mir_ptr_addr_of_element_ok|run-exit|tests/safety/mir_ptr_addr_of_element_ok.tl|42|-

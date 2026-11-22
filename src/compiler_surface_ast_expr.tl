@@ -564,9 +564,6 @@
       [(TypeLiteral ty-id)
         (codec.surface-ast-write-i64! out 45)
         (codec.surface-ast-write-i64! out ty-id)]
-      [(Init maybe-ty-id)
-        (codec.surface-ast-write-i64! out 46)
-        (codec.surface-ast-write-i64! out maybe-ty-id)]
       [(Comptime inner)
         (codec.surface-ast-write-i64! out 47)
         (codec.surface-ast-write-i64! out inner)]
@@ -928,7 +925,6 @@
           (codec.surface-ast-read-i64! reader)
           (codec.surface-ast-read-i64! reader))]
       [(= tag 45) (TypeLiteral (codec.surface-ast-read-i64! reader))]
-      [(= tag 46) (Init (codec.surface-ast-read-i64! reader))]
       [(= tag 47) (Comptime (codec.surface-ast-read-i64! reader))]
       [(= tag 48) (Quote (codec.surface-ast-read-i64! reader))]
       [(= tag 49) (Quasiquote (codec.surface-ast-read-i64! reader))]

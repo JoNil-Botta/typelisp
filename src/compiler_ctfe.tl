@@ -3037,7 +3037,6 @@
     [(WithScratch _) "with-scratch"]
     [(InArena _ _) "in-arena"]
     [(WithResource _) "with"]
-    [(Init _) "init"]
     [(Comptime _) "comptime"]
     [(Quote _) "quote"]
     [(Quasiquote _) "quasiquote"]
@@ -4972,13 +4971,6 @@
               reflections
               (ctfe-type-literal-type env ty-id)))
           fuel))]
-    [(Init _)
-      (Err
-        (box
-          (ctfe-diagnostic-at-expr
-            (ComptimeEvaluation)
-            (& (clone (owned_view.compiler-owned-reference-shared-view expr)))
-            "comptime: init is a runtime-only expression")))]
     [(Literal lit)
       (ctfe-eval-literal (& lit) expr (ctfe-env-structural-session env) fuel)]
     [(Var name) (ctfe-eval-var name expr env fuel)]
@@ -13759,23 +13751,6 @@
       (Ok (ast.ast-expr-break-with-pools (ctfe-env-pools env)) (Expr) fuel)]
     [(Continue)
       (Ok (ast.ast-expr-continue-with-pools (ctfe-env-pools env)) (Expr) fuel)]
-    [(Init maybe-ty-id)
-      (match (ctfe-quote-maybe-type
-        (&
-          (ast.ast-maybe-type-from-id-with-pools
-            (& (ctfe-env-pools env))
-            maybe-ty-id))
-        env
-        (& expr)
-        fuel)
-        [(Ok quoted-ty next-fuel)
-          (Ok
-            (ast.ast-expr-init-maybe-with-pools
-              (ctfe-env-pools env)
-              (& quoted-ty))
-            (Expr)
-            next-fuel)]
-        [(Err diag) (Err diag)])]
     [(PtrNull ty-id)
       (match (ctfe-quote-type (ctfe-ty-get env ty-id) env (& expr) fuel)
         [(Ok quoted-ty next-fuel)

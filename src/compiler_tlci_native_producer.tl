@@ -491,7 +491,6 @@
     [(Try _) "try"]
     [(Tuple _) "tuple"]
     [(TupleRef _ _) "tuple-ref"]
-    [(Init _) "init"]
     [(Lambda _) "lambda"]
     [(DynArray _) "dyn-array"]
     [(Array _) "array"]
@@ -2025,34 +2024,6 @@
                   "0"
                   "0")
                 (+ value-opened type-opened 1))))))]
-    ;; Typed Init: quote the annotation as a type value, then let the
-    ;; host reconstruct the same Init node as interpreted quasiquote. Refs
-    ;; #5606.
-    [(Init maybe-ty-id)
-      (match (compiler_ast_types.ast-maybe-type-from-id-with-pools
-        context.pools
-        maybe-ty-id)
-        [(Some ty)
-          (let
-            [type-opened : i64
-              (embedded-native-template-type-ops
-                context
-                params
-                ty
-                ops
-                ops-count)]
-            (if (< type-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-init)
-                  "0"
-                  "0"
-                  "0")
-                (+ type-opened 1))))]
-        [_ -1])]
     [(Set name-id value-node)
       (let
         [value-opened : i64

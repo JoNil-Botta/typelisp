@@ -1,4 +1,4 @@
-;; Types written in `init`, `ptr-null`, `make-array`, `cast`, `ptr-cast` and
+;; Types written in `ptr-null`, `make-array`, `cast`, `ptr-cast` and
 ;; `int->ptr` forms name the
 ;; caller's lifetime like annotations do, and a top-level name spelled like it
 ;; does not shadow it, also in an SPMD helper call's arguments.
@@ -9,8 +9,6 @@
 
 (define (first [p : (& a i64)]) : i64
   (let
-    ;; lint-allow: removed-init -- This test is about init's written type.
-    [o : (RefOpt a) (init : (RefOpt a))]
     [q : (Ptr (& a i64)) (ptr-null : (Ptr (& a i64)))]
     [arr : (Array (Ptr (& a i64)) 2) (make-array (Ptr (& a i64)) 2)]
     (let

@@ -109,17 +109,16 @@
           (+ (cast (ptr-read typed) : i64) (cast (ptr-read bytes) : i64))
           0)))))
 
-(define (init-forms [comptime T : type] [comptime n : i64]) : i64
+(define (cast-forms [comptime T : type] [comptime n : i64]) : i64
   (let
-    ;; lint-allow: removed-init -- Preserve Init syntax coverage until #7951.
-    [zero : T (cast (init : i64) : T)]
+    [zero : T (cast 0 : T)]
     [flag : bool (> n 0)]
     (if flag
       (+ (cast zero : i64) n)
       0)))
 
 (define (nested-forms [comptime T : type] [comptime n : i64]) : i64
-  (+ (let-forms (type T) (+ n 1)) (init-forms (type T) n)))
+  (+ (let-forms (type T) (+ n 1)) (cast-forms (type T) n)))
 
 (define (results-ok?
   [lets : i64]

@@ -5754,18 +5754,6 @@
               owner
               (spec-owner-type-get owner ty-id)
               (& subs.types)))))]
-    [(Init maybe-ty-id)
-      (Ok
-        (ast.ast-expr-init-maybe-with-pools
-          (spec-owner-pools owner)
-          (&
-            (spec-substitute-maybe-type-with-owner
-              owner
-              (&
-                (ast.ast-maybe-type-from-id-with-pools
-                  (& (spec-owner-pools owner))
-                  maybe-ty-id))
-              (& subs.types)))))]
     [(FixedMakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-owner-expr-get owner len-box)]

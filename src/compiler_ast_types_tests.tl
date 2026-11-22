@@ -233,7 +233,6 @@
     [(WithScratch _) 67]
     [(or (InArena _ _) (BoxTake _)) 65]
     [(TypeLiteral _) 26]
-    [(Init _) 61]
     [(Comptime _) 27]
     [(SpmdReduce _) 28]
     [(SpmdScan _) 68]

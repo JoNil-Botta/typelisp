@@ -1,4 +1,3 @@
-;; lint-allow: removed-init -- Source strings retain Init semantic coverage until #7951.
 ;; compiler_parse_core_tests.tl - White-box tests for the parser: declarations,
 ;; expressions, patterns, metadata, spans, error paths and compiler-parse-smoke.
 (import stdlib.iterator)
@@ -1928,48 +1927,23 @@
     (ptr-write! p (ptr-read p))
     (ptr->int (ptr-cast (ptr-offset (int->ptr n : (MutPtr i64)) 1) : (Ptr i64)))))"))
 
-(define (compiler-parse-init-ok?) : bool
-  (match (parser.parse-ast-source "(define (main) : i64 (init : i64))")
-    [(Ok (Program decls-box))
-      (match (ast.ast-decl-list-step (deref decls-box))
-        [(Cons (DefFn decl-meta _ _ _ body-box _) done-box)
-          (let
-            [done : ast.AstDeclList done-box]
-            (and
-              (ast_tests.ast-decl-list-empty? (& done))
-              (match (ast.ast-expr-unspan (& (ast.ast-node-get body-box)))
-                [(Init ty-id)
-                  (match (ast.ast-maybe-type-from-id ty-id)
-                    [(Some inner)
-                      (match inner
-                        [(I64) true]
-                        [_ false])]
-                    [_ false])]
-                [_ false])))]
-        [_ false])]
-    [(Err _) false]))
-
-(define (compiler-parse-contextual-init-ok?) : bool
-  (match (parser.parse-ast-source
-    "(define (init) : i64 7) (define (main) : i64 (init))")
-    [(Ok (Program decls-box))
-      (match (ast.ast-decl-list-step (deref decls-box))
-        [(Cons _ rest)
-          (match (ast.ast-decl-list-step rest)
-            [(Cons (DefFn decl-meta _ _ _ body-box _) done-box)
-              (let
-                [done : ast.AstDeclList done-box]
-                (and
-                  (ast_tests.ast-decl-list-empty? (& done))
-                  (match (ast.ast-expr-unspan (& (ast.ast-node-get body-box)))
-                    [(Init ty-id)
-                      (match (ast.ast-maybe-type-from-id ty-id)
-                        [(No) true]
-                        [_ false])]
-                    [_ false])))]
-            [_ false])]
-        [_ false])]
-    [(Err _) false]))
+;; `(init)` and `(init : T)` were removed (#7951). Each reports exactly one
+;; parse diagnostic, coded E0100 (removed syntax), naming the replacement.
+(define (compiler-parse-removed-init-error-ok?) : bool
+  (let
+    [message : String
+      "parse: init was removed; use (T ...), (make-array T n), (__tl_make-array), or pass a T in"]
+    (and
+      (compiler-parse-error-ok? "(define (main) : i64 (init))" (clone message))
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (init : i64))"
+        (clone message))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (init))"
+        (cdiag.compiler-diagnostic-code-parse))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (init : i64))"
+        (cdiag.compiler-diagnostic-code-parse)))))
 
 (define (compiler-parse-init-call-name-ok?) : bool
   (compiler-parse-ok?
@@ -5120,8 +5094,7 @@
         (compiler-parse-extern-varargs-metadata-rejected-ok?)
         (compiler-parse-extern-function-head-varargs-ok?)
         (compiler-parse-raw-pointer-ops-ok?)
-        (compiler-parse-init-ok?)
-        (compiler-parse-contextual-init-ok?)
+        (compiler-parse-removed-init-error-ok?)
         (compiler-parse-init-call-name-ok?)
         (reader_tests.symbol-id-preservation-ok?)
         (compiler-parse-source-symbol-ids-preserved-ok?)

@@ -5975,19 +5975,6 @@
     ;; `(lane-value v)` in a serialized lane is `v` itself.
     [(ast.AstExpr.LaneValue value-box)
       (tc-infer-selected-id ctx env value-box expected source sink)]
-    ;; `(init : T)`: a fresh default value of `T`.
-    [(ast.AstExpr.Init _)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-init)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
-        syntax
-        expected
-        source
-        sink)]
     [(ast.AstExpr.SpmdProgramIndex)
       (tc-infer-selected-form
         ctx
@@ -33334,10 +33321,6 @@
 (define (tc-selected-form-code-program-count) : i64
   143)
 
-;; `(init : T)` (SPEC default initialization): a fresh value.
-(define (tc-selected-form-code-init) : i64
-  145)
-
 ;; A comparison of move-only operands, each read through a shared borrow
 ;; (`tc-selected-borrowing-comparison?`): the result is a fresh bool.
 (define (tc-selected-form-code-compare) : i64
@@ -48143,10 +48126,6 @@
          (Syscall items))
       (tc-source-expr-list-policy-ok ctx expr-bases items)]
     [(TypeLiteral ty-id) (tc-source-type-policy-ok ctx (ast.ty-node-get ty-id))]
-    [(Init maybe-ty-id)
-      (tc-source-maybe-type-policy-ok
-        ctx
-        (ast.ast-maybe-type-from-id maybe-ty-id))]
     [(If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr
@@ -57873,17 +57852,6 @@
                   (cdiag.compiler-diagnostic-box-shared-view diag)]
                 (Err
                   (cdiag.compiler-diagnostic-typecheck-error-text (& diag-view)))))]))]
-    [(Init maybe-ty-id)
-      (match (ast.ast-maybe-type-from-id maybe-ty-id)
-        [(No) (tc-init-expr ctx env expected)]
-        [(Some ty)
-          (let
-            [actual (try (tc-init-expr ctx env ty))]
-            (if (tc-type-compatible?
-              (tc-global-shared-view expected)
-              (tc-global-shared-view actual))
-              (Ok (tc-contextual-result-type expected actual))
-              (Ok actual)))])]
     [(Box inner-box)
       (match (tc-type-strip-region (tc-resolve-type ctx expected))
         [(Box inner-ty)
@@ -89017,7 +88985,7 @@
                 projected)
               "cannot dereference by value the"))])]
     [(Err _)
-      ;; Preserve contextual inference for `(deref (box (init)))`.
+      ;; Preserve contextual inference for `(deref (box value))`.
       (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]))
 
 (define (tc-box-set-inner-type [ctx : TcContext] [box-ty : ast.AstType]) : ResultTcType
@@ -89096,17 +89064,50 @@
                   target-context))]
             (Ok (Unit))))))))
 
-(define (tc-init-unsupported-message [ctx : TcContext] [ty : ast.AstType]) : String
-  (str_cat.str-cat
-    (cdiag.compiler-diagnostic-typecheck-tag (TypeMismatch))
-    "typecheck: init unsupported type "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+;; Why a storage shape has no zero value, as the ZII classifier below reports
+;; it. The tokens are stable: diagnostics and fixtures name them.
+(defenum TcNotZiiReason
+  (StringHandle)
+  (DynBuffer)
+  (Box)
+  (Function)
+  (Reference)
+  (NonNullCFunc)
+  (Never)
+  (SyntaxValue)
+  (ReprC)
+  (CleanupOwner)
+  (Unsupported))
 
-(define (tc-init-cleanup-owning-message [ctx : TcContext] [ty : ast.AstType]) : String
-  (str_cat.str-cat
-    (cdiag.compiler-diagnostic-typecheck-tag (ResourceOwnership))
-    "typecheck: init does not support cleanup-owning aggregate "
-    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
+;; The stable reason token diagnostics and tests name.
+(define (tc-not-zii-reason-text [reason : TcNotZiiReason]) : String
+  (match reason
+    [(StringHandle) "string-handle"]
+    [(DynBuffer) "dynamic-buffer"]
+    [(Box) "box"]
+    [(Function) "function"]
+    [(Reference) "reference"]
+    [(NonNullCFunc) "non-null-cfunc"]
+    [(Never) "never"]
+    [(SyntaxValue) "syntax-value"]
+    [(ReprC) "repr-c"]
+    [(CleanupOwner) "cleanup-owner"]
+    [(Unsupported) "unsupported"]))
+
+(define (tc-make-array-not-zii-message
+  [ctx : TcContext]
+  [elem : ast.AstType]
+  [reason : TcNotZiiReason]) : String
+  (tc-kind-message
+    (match reason
+      [(CleanupOwner) (ResourceOwnership)]
+      [_ (TypeMismatch)])
+    (str_cat.str-cat
+      "typecheck: make-array element type "
+      (tc-type-render (tc-type-without-regions (tc-resolve-type ctx elem)))
+      " is not zero-initializable (reason: "
+      (tc-not-zii-reason-text reason)
+      "); construct the elements explicitly")))
 
 (define (tc-init-aggregate-layout-ok [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (let
@@ -89235,9 +89236,9 @@
           [field-ctx : TcContext
             (tc-init-nominal-field-context-id ctx struct-name-id)]
           (if (ast.ast-struct-repr-c? repr)
-            (Err "typecheck: init supports only default-layout structs")
+            (Err (tc-make-array-not-zii-message ctx struct-ty (ReprC)))
             (if (ast.ast-struct-cleanup? cleanup)
-              (Err (tc-init-cleanup-owning-message ctx struct-ty))
+              (Err (tc-make-array-not-zii-message ctx struct-ty (CleanupOwner)))
               (let
                 [_
                   (try
@@ -89264,7 +89265,7 @@
     (match decl
       [(TcEnumDecl cleanup variants)
         (if (ast.ast-enum-cleanup? cleanup)
-          (Err (tc-init-cleanup-owning-message ctx enum-ty))
+          (Err (tc-make-array-not-zii-message ctx enum-ty (CleanupOwner)))
           (let
             [_
               (try
@@ -89272,7 +89273,7 @@
                   field-ctx
                   (tc-global-shared-view enum-ty)))]
             (if (ast.ast-variant-def-list-empty? (& variants))
-              (Err "typecheck: init requires enum with at least one variant")
+              (Err (tc-make-array-not-zii-message ctx enum-ty (Unsupported)))
               (match (ast.ast-variant-def-list-get
                 (& variants)
                 0
@@ -89300,7 +89301,7 @@
         [(CFunc _ mode)
           (if (ast.ast-c-function-mode-nullable? mode)
             Ok
-            (Err "typecheck: init cannot create a non-null C function pointer"))]
+            (Err (tc-make-array-not-zii-message ctx resolved (NonNullCFunc))))]
         [(DynArray elem)
           (let
             [elem-ty : ast.AstType
@@ -89311,7 +89312,11 @@
               (Err
                 (tc-kind-message
                   (TypeMismatch)
-                  "typecheck: init dynamic array element type is not supported"))))]
+                  (str_cat.str-cat
+                    "typecheck: make-array element type "
+                    (tc-type-render
+                      (tc-type-without-regions (tc-resolve-type ctx resolved)))
+                    " holds an unsupported dynamic array element type")))))]
         [(Box elem) (tc-init-type-supported ctx env (ast.ty-node-get elem))]
         [(Tuple elems)
           (let
@@ -89322,7 +89327,7 @@
               (ast.ast-type-list-box-shared-view elems)))]
         [(Array elem count)
           (if (< count 0)
-            (Err "typecheck: init fixed array length must be non-negative")
+            (Err (tc-make-array-not-zii-message ctx resolved (Unsupported)))
             (let
               [_ (try (tc-init-aggregate-layout-ok ctx resolved))]
               (tc-init-type-supported ctx env (ast.ty-node-get elem))))]
@@ -89330,7 +89335,7 @@
           (tc-init-struct-supported ctx env name resolved)]
         [(or (Enum name) (EnumArgs name _))
           (tc-init-enum-supported ctx env name resolved)]
-        [_ (Err (tc-init-unsupported-message ctx resolved))]))))
+        [_ (Err (tc-make-array-not-zii-message ctx resolved (Unsupported)))]))))
 
 (define (tc-init-expr [ctx : TcContext] [env : TcTypeEnv] [ty : ast.AstType]) : ResultTcType
   (let
@@ -89345,37 +89350,9 @@
 ;; whether the all-zero bytes of a runtime storage shape are a valid value of
 ;; its type. It is the one rule `make-array` / `__tl_make-array` typechecking and
 ;; lowering's zero-fill and shared-fill strategies ask.
-(defenum TcNotZiiReason
-  (StringHandle)
-  (DynBuffer)
-  (Box)
-  (Function)
-  (Reference)
-  (NonNullCFunc)
-  (Never)
-  (SyntaxValue)
-  (ReprC)
-  (CleanupOwner)
-  (Unsupported))
-
 (defenum TcZiiClass
   (Zii)
   (NotZii TcNotZiiReason))
-
-;; The stable reason token diagnostics and tests name.
-(define (tc-not-zii-reason-text [reason : TcNotZiiReason]) : String
-  (match reason
-    [(StringHandle) "string-handle"]
-    [(DynBuffer) "dynamic-buffer"]
-    [(Box) "box"]
-    [(Function) "function"]
-    [(Reference) "reference"]
-    [(NonNullCFunc) "non-null-cfunc"]
-    [(Never) "never"]
-    [(SyntaxValue) "syntax-value"]
-    [(ReprC) "repr-c"]
-    [(CleanupOwner) "cleanup-owner"]
-    [(Unsupported) "unsupported"]))
 
 ;; An aggregate reports its highest-ranked reason. 0: the element still has a
 ;; shared, allocation-free value fill (the empty string); 1: its value fill
@@ -89541,27 +89518,12 @@
                     (tc-type-list-zii-class field-ctx (& field-types) depth))])])])]
     [(Err _) (NotZii (Unsupported))]))
 
-(define (tc-make-array-not-zii-message
-  [ctx : TcContext]
-  [elem : ast.AstType]
-  [reason : TcNotZiiReason]) : String
-  (tc-kind-message
-    (match reason
-      [(CleanupOwner) (ResourceOwnership)]
-      [_ (TypeMismatch)])
-    (str_cat.str-cat
-      "typecheck: make-array element type "
-      (tc-type-render (tc-type-without-regions (tc-resolve-type ctx elem)))
-      " is not zero-initializable (reason: "
-      (tc-not-zii-reason-text reason)
-      "); construct the elements explicitly")))
-
 ;; `make-array` / `__tl_make-array` element check. A foreign opaque element is
-;; a representation error, reported as `init` reports it, rather than a
-;; zero-initialization reason. A type the classifier rejects is reported with
-;; its reason; every other type keeps the init rules, which still validate the
-;; value-fill element types (String, dynamic buffers, boxes), so the classifier
-;; never admits a type those rules reject.
+;; a representation error, not a zero-initialization reason. A type the
+;; classifier rejects is reported with its reason; every other type keeps the
+;; init rules, which still validate the value-fill element types (String,
+;; dynamic buffers, boxes), so the classifier never admits a type those rules
+;; reject.
 (define (tc-make-array-element-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -91682,13 +91644,6 @@
               (tc-expr-id ctx env virtual-id))
             (tc-var-expr-after-local-field-check ctx env name name-text))))]
     [(TypeLiteral ty-id) (tc-type-literal-expr-type ctx ty-id)]
-    [(Init maybe-ty-id)
-      (match (ast.ast-maybe-type-from-id maybe-ty-id)
-        [(Some ty) (tc-init-expr ctx env ty)]
-        [(No)
-          (Err
-            ;; lint-allow: removed-init -- Preserve the syntax diagnostic until #7951.
-            "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")])]
     [(Ann inner-box ty-id)
       (let
         [want-ty : ast.AstType
@@ -108124,22 +108079,6 @@
             stuple
             (Int index (reader.sp-text-id (string.int->string index)) span)
             span)))]
-    [(Init maybe-ty-id)
-      (match (ast.ast-maybe-type-from-id maybe-ty-id)
-        [(No)
-          (Ok
-            (reader.spanned-sexpr-list1
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "init") span)
-              span))]
-        [(Some ty)
-          (let
-            [sty (try (macro-type-to-spanned-sexpr owner ty span origin))]
-            (Ok
-              (macro-form2-id
-                (cbi.compiler-builtin-ctfe "init")
-                (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
-                sty
-                span)))])]
     [(TypeLiteral ty-id)
       (let
         [sty
@@ -113830,14 +113769,6 @@
       (ast.ast-expr-type-literal-with-pools
         env.pools
         (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
-    [(Init maybe-ty-id)
-      (ast.ast-expr-init-maybe-with-pools
-        env.pools
-        (&
-          (macro-hygiene-maybe-type
-            (ast.ast-maybe-type-from-id maybe-ty-id)
-            env
-            macro-name)))]
     [(Comptime inner-box)
       (let
         [inner : i64 inner-box]
@@ -122305,7 +122236,6 @@
     [(Literal _) (Ok (ast.ast-node-push expr))]
     [(Var _) (Ok (ast.ast-node-push expr))]
     [(TypeLiteral _) (Ok (ast.ast-node-push expr))]
-    [(Init _) (Ok (ast.ast-node-push expr))]
     [(PtrNull _) (Ok (ast.ast-node-push expr))]
     [(Break) (Ok (ast.ast-node-push expr))]
     [(Continue) (Ok (ast.ast-node-push expr))]
@@ -124935,7 +124865,7 @@
         expr-bases
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(or (Literal _) (Var _) (BinaryData _) (SpmdProgramIndex)
-         (SpmdProgramCount) (TypeLiteral _) (Init _) (PtrNull _) (ProgramArgc)
+         (SpmdProgramCount) (TypeLiteral _) (PtrNull _) (ProgramArgc)
          (ProgramArgv) (ProgramEnvp))
       false]
     [(Call func-box args)
@@ -125464,7 +125394,7 @@
   [expr : ast.AstExpr]) : bool
   (match expr
     [(TypeLiteral _) true]
-    [(or (Literal _) (Var _) (Init _) (PtrNull _) (ProgramArgc) (ProgramArgv)
+    [(or (Literal _) (Var _) (PtrNull _) (ProgramArgc) (ProgramArgv)
          (ProgramEnvp) (BinaryData _) (SpmdProgramIndex) (SpmdProgramCount))
       false]
     [(or (PtrAddrOf place) (Spanned place _) (MacroExpansion place _ _)

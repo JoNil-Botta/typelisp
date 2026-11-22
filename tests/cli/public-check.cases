@@ -824,7 +824,7 @@ file spmd-scan-prefix-type.tl
   (begin
     (spmd-scan sum
       ([i : i64 0 3]
-       [prefix : stdlib.iterator.I64Range (init)])
+       [prefix : stdlib.iterator.I64Range (stdlib.iterator.range 0 3)])
       i unit)
     0))
 end-file

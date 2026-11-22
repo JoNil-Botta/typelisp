@@ -825,21 +825,19 @@
   compiler-comptime-host-callback-expr-box-get
   compiler-comptime-host-callback-expr-box-take
   compiler-comptime-host-callback-expr-float-literal
-  ;; Computed-scrutinee probes and cast/init templates (refs #5604, #5606).
+  ;; Computed-scrutinee probes and cast templates (refs #5604, #5606).
   ;; The two probes share operand-type-kind-eq's shape -- operand index in
   ;; `a`, caller bytes in `b`/`c`, 1/0 as data and a negative
   ;; malformed-request sentinel -- so they bypass the status latch the same
   ;; way: operand-expr-type-kind-eq compares the type-kind of an Expr
   ;; operand's produced type, and operand-type-key-eq compares a type
   ;; operand's canonical key. expr-cast pops the type value then the operand
-  ;; expression and pushes the cast node the parser produces. expr-init pops
-  ;; one type value and pushes the typed Init node. The embedded image
-  ;; and its consumer are always the same source-bound binary.
+  ;; expression and pushes the cast node the parser produces. The embedded
+  ;; image and its consumer are always the same source-bound binary.
   compiler-comptime-host-callback-operand-expr-type-kind-eq
   compiler-comptime-host-callback-operand-type-key-eq
   compiler-comptime-host-callback-expr-cast
   compiler-comptime-host-callback-expr-ann
-  compiler-comptime-host-callback-expr-init
   ;; Raw-pointer and `unsafe` template node kinds (refs #5605). expr-unsafe
   ;; pops an expression list and pushes the `(unsafe ...)` node;
   ;; expr-ptr-read, expr-ptr-addr-of, expr-ptr-to-int, and expr-string-data

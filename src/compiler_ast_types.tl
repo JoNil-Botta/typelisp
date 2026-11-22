@@ -1098,10 +1098,6 @@
   (BoxSet i64 i64)
   ;; Compile-time-only type value literal: `(type T)`.
   (TypeLiteral i64)
-  ;; Zero/identity initialization. Typed Init carries `AstMaybeType.Some T`;
-  ;; contextual Init carries `AstMaybeType.No` until type checking/lowering sees
-  ;; an expected type.
-  (Init i64)
   ;; Compile-time evaluation form `(comptime expr)`. Parsed and
   ;; type-checked (as the inner expression's type); evaluated by CTFE.
   (Comptime i64)
@@ -1807,20 +1803,15 @@
   4096)
 
 ;; --- sentinel encodings for the AstExpr row ---
-;; `AstExpr.Init` and `AstExpr.Borrow` carry a single i64 instead of an inline
-;; `AstMaybeType` or `AstBorrowLifetime`, which would widen the row, with -1 as
-;; the "absent" encoding, which is safe in both cases: an AstTypeId is a pool
-;; index (>= 0) and a borrow lifetime name is an intern id (>= 0).
-;;
-;; The AstMaybeType twins are pool-aware because the payload is a type; the
-;; borrow-lifetime twins are not, because the payload is a name id that
-;; needs no pool.
-(define ast-maybe-type-id-absent : i64
+;; `AstExpr.Borrow` carries a single i64 instead of an inline
+;; `AstBorrowLifetime`, which would widen the row, with -1 as the "absent"
+;; encoding, which is safe because a borrow lifetime name is an intern id (>= 0).
+(define ast-borrow-lifetime-id-absent : i64
   -1)
 
 (define (ast-borrow-lifetime-to-id [lifetime : AstBorrowLifetime]) : i64
   (match lifetime
-    [(Inferred) ast-maybe-type-id-absent]
+    [(Inferred) ast-borrow-lifetime-id-absent]
     [(Named name) name]))
 
 (define (ast-borrow-lifetime-from-id [id : i64]) : AstBorrowLifetime
@@ -7380,7 +7371,7 @@
 ;;   expr     expression node ids: operands, list items, let initializers,
 ;;            match-arm bodies, resource init/cleanup, and the for-owned slots
 ;;            (a for-owned-step without an item annotation has no slot 3)
-;;   type-id  type node ids, including Init's annotation when present (>= 0)
+;;   type-id  type node ids of an expression's own type annotation (>= 0)
 ;;   type     inline AstTypes: parameter types, let and lambda-result
 ;;            annotations when present, and the Foreach/SPMD index, prefix and
 ;;            slot types
@@ -7743,10 +7734,6 @@
       [(AstExpr.BoxTake a) (ast-fold-1 ,c ,s ,e a ,@x)]
       [(AstExpr.BoxSet a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
       [(AstExpr.TypeLiteral t) (ast-fold-1 ,c ,s ,ti t ,@x)]
-      [(AstExpr.Init t)
-        (if (< t 0)
-          ,s
-          (ast-fold-1 ,c ,s ,ti t ,@x))]
       [(AstExpr.Comptime a) (ast-fold-1 ,c ,s ,e a ,@x)]
       [(AstExpr.Quote a) (ast-fold-1 ,c ,s ,e a ,@x)]
       [(AstExpr.Quasiquote a) (ast-fold-1 ,c ,s ,e a ,@x)]
@@ -8111,11 +8098,6 @@
       [(AstExpr.BoxTake a) (AstExpr.BoxTake (,e ,@x a))]
       [(AstExpr.BoxSet a b) (AstExpr.BoxSet (,e ,@x a) (,e ,@x b))]
       [(AstExpr.TypeLiteral t) (AstExpr.TypeLiteral (,ti ,@x t))]
-      [(AstExpr.Init t)
-        (AstExpr.Init
-          (if (< t 0)
-            t
-            (,ti ,@x t)))]
       [(AstExpr.Comptime a) (AstExpr.Comptime (,e ,@x a))]
       [(AstExpr.Quote a) (AstExpr.Quote (,e ,@x a))]
       [(AstExpr.Quasiquote a) (AstExpr.Quasiquote (,e ,@x a))]
@@ -8766,13 +8748,6 @@
       [(AstExpr.TypeLiteral t0)
         (match ,r
           [(AstExpr.TypeLiteral t1) (,ti ,@x t0 t1)]
-          [_ false])]
-      [(AstExpr.Init t0)
-        (match ,r
-          [(AstExpr.Init t1)
-            (if (< t0 0)
-              (< t1 0)
-              (and (>= t1 0) (,ti ,@x t0 t1)))]
           [_ false])]
       [(AstExpr.Comptime a0)
         (match ,r
@@ -9426,37 +9401,6 @@
 (define (ast-expr-box-set [target : i64] [value : i64]) : i64
   (ast-node-push (BoxSet target value)))
 
-;: Intern a maybe-type into the installed type pool, `-1` for absent.
-(define (ast-maybe-type-to-id [maybe-ty : (& AstMaybeType)]) : i64
-  (match maybe-ty
-    [(No) ast-maybe-type-id-absent]
-    [(Some ty) (ty-node-push (& ty))]))
-
-(define (ast-maybe-type-from-id [id : i64]) : AstMaybeType
-  (if (< id 0)
-    (No)
-    (Some (ty-node-get id))))
-
-(define (ast-maybe-type-to-id-with-pools
-  [pools : AstNodePoolContext]
-  [maybe-ty : (& AstMaybeType)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view maybe-ty)
-    [(No) ast-maybe-type-id-absent]
-    [(Some ty) (ast-node-pool-context-type-push pools ty)]))
-
-(define (ast-maybe-type-from-id-with-pools
-  [pools : (& pools AstNodePoolContext)]
-  [id : i64]) : AstMaybeType
-  (if (< id 0)
-    (No)
-    (Some (ast-node-pool-context-type-get pools id))))
-
-(define (ast-expr-init-maybe [maybe-ty : (& AstMaybeType)]) : i64
-  (ast-node-push (Init (ast-maybe-type-to-id maybe-ty))))
-
-(define (ast-expr-init [ty : AstType]) : i64
-  (ast-expr-init-maybe (& (Some ty))))
-
 (define (ast-expr-comptime [inner : i64]) : i64
   (ast-node-push (Comptime inner)))
 
@@ -9957,19 +9901,6 @@
   [target : i64]
   [value : i64]) : i64
   (ast-node-pool-context-expr-push pools (BoxSet target value)))
-
-(define (ast-expr-init-maybe-with-pools
-  [pools : AstNodePoolContext]
-  [maybe-ty : (& AstMaybeType)]) : i64
-  (ast-node-pool-context-expr-push
-    pools
-    (Init (ast-maybe-type-to-id-with-pools pools maybe-ty))))
-
-(define (ast-expr-init-with-pools [pools : AstNodePoolContext] [ty : AstType]) : i64
-  (ast-expr-init-maybe-with-pools pools (& (Some ty))))
-
-(define (ast-expr-init-contextual-with-pools [pools : AstNodePoolContext]) : i64
-  (ast-expr-init-maybe-with-pools pools (& (No))))
 
 (define (ast-expr-comptime-with-pools
   [pools : AstNodePoolContext]

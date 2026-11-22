@@ -348,8 +348,8 @@ buffers behind the vector/slice surface, FFI/runtime buffers, and
 compiler-internal pools. Its value is a pointer to inline fat storage
 `(data_ptr : u64, length : i64)`; the stored length is always non-negative;
 allocation rejects negative lengths, traps if `length * sizeof(type)` would
-overflow an `i64` byte count, and initializes every live element according to
-the ZII `init` rules in section 5.12.1. It is not valid as a global
+overflow an `i64` byte count, and initializes every live element with the
+zero value of its type (section 5.12.1). It is not valid as a global
 initializer, and public APIs must not expose it as a growable collection
 type. `__tl_dyn-array` is accepted only as the private transitional spelling;
 there is no public unsized `Array` alias.
@@ -630,7 +630,8 @@ Examples:
      constructor `V` or `(V args...)` in a position with an expected enum type
      that declares `V` means that enum's variant, ahead of other enums'
      variants, imports and module-level values. The expected-type positions
-     are the ones where contextual `(init)` works (§5.12.1); the expected enum
+     are annotated bindings and define results, function arguments, and
+     constructor and array-literal element positions; the expected enum
      need not be imported by the current module. If a module-level function,
      value or struct constructor named `V` is also visible unqualified there,
      the reference is ambiguous and must be qualified.
@@ -861,7 +862,7 @@ immediate referent of `Ptr`, `MutPtr`, `&` or `&mut`, including inside
 function types. Code there that does any of the following is rejected with
 E0221, even inside `unsafe`:
 
-- uses a constructor or nullary variant of the type, or `(init : T)`;
+- uses a constructor or nullary variant of the type;
 - projects, sets or borrows one of its fields;
 - matches one of its variants or struct patterns, owned or borrowed;
 - writes the type by value: a parameter, result, `let` annotation, struct field,
@@ -5669,77 +5670,16 @@ integer/`char` ↔ float conversions (float → integer truncates toward zero).
 A cast yields exactly its target type, so casting a region-tagged numeric scalar
 to a plain type drops the tag (§3.9). Aggregates cannot be cast.
 
-### 5.12.1 `(init : T)` and contextual `(init)` - zero/identity initialization
+### 5.12.1 Zero value of each type
 
-TypeLisp follows Zero Is Initialization (ZII): `init` constructs a valid
-initialized source value for its type. It does not expose arbitrary zero-bit
-states. For example, `String` initializes to a valid empty string handle, an
-enum initializes through a real variant constructor, and a default-layout
-struct initializes by recursively initializing its fields.
-
-There are two source forms:
-
-- `(init : T)` is the explicit form. It carries the target type in the source.
-- `(init)` is contextual. It is accepted only where an expected type is known,
-  such as an annotated `define`, annotated `let`, declared function return,
-  function argument, struct/enum constructor field, fixed or dynamic array
-  literal element, array element assignment, or private `__tl_array-push!` position.
-  Ambiguous `(init)`
-  is rejected with a diagnostic asking for `(init : T)` or an annotation.
-
-An expected type reaches through the tails of `if`, `match`, `let`, `begin`
-and `unsafe`, and a `set!` of a typed place supplies its place's type. The same
-expected-type positions resolve bare enum variant constructors such as `(Ok x)`
-and `None` against the expected enum (§3.5.1).
-
-`init` is compatible with ordinary functions named `init`: `(init)` and
-`(init : T)` are parser-owned special forms, while `(init arg...)` is parsed
-as an ordinary call unless the first argument is `:`.
-
-ZII eligibility:
-
-| Type shape | `init` value |
-|------------|--------------|
-| Signed/unsigned integers | numeric zero of that width |
-| `f64`, `f32` | `0.0` |
-| `bool` | `false` |
-| `char` | NUL byte (`'\0'`) |
-| `unit` | `unit` |
-| `(Ptr T)`, `(MutPtr T)` | typed null raw pointer |
-| `String` | valid empty string |
-| `(__tl_dyn-array T)` | valid empty private dynamic buffer; `__tl_make-array` uses the same element rules for live elements |
-| `(Tuple T0 T1 ...)` | tuple of recursively initialized elements |
-| `(Array T N)` | fixed array of `N` recursively initialized elements; `N` must be non-negative |
-| Default-layout `defstruct` without cleanup | constructor with every field recursively initialized |
-| `defenum` without cleanup | first declared variant, with payload fields recursively initialized |
-| `(Box T)` | `box` containing recursively initialized `T` |
-
-Unsupported or ambiguous cases are rejected rather than producing invalid
-values. Rejected cases include function/closure values, references, `never`,
-`Expr`/`ExprList`, `(:repr c)` structs, cleanup-owning structs/enums, empty
-enums, negative fixed-array lengths, unsupported private dynamic-buffer
-element types, and recursive aggregate layouts that fail finite-layout
-analysis.
-
-Cleanup-owning aggregates are not initialized by `init`: constructing one
-would also commit to cleanup execution and failure behavior, so they require
-explicit constructors.
-
-```lisp test=ignore name=init-expression-examples reason="illustrates source surface"
-(defstruct Point (x i64) (y i64))
-(defenum MaybeI64 (None) (Some i64))
-
-(define zero : i64 (init))
-
-(define (main) : i64
-  (let
-    [p : Point (init)]                 ; (Point 0 0)
-    [m : MaybeI64 (init : MaybeI64)]   ; first variant, None
-    [xs : (Array i64 4) (init)]        ; four zero elements
-    (+ zero (+ p.x (array-ref xs 0)))))
-```
-
-#### Zero value of each type
+TypeLisp follows Zero Is Initialization (ZII) as a representation fact: the
+all-zero bit pattern of a storage shape either is a valid value of its type or
+it is not. There is no source form that constructs a value of an arbitrary
+type; write the value out. `(T ...)` builds an aggregate, `(make-array T n)`
+or private `(__tl_make-array)` hands out zeroed element storage, and a generic
+`T` takes the caller's value. `(init)` and `(init : T)` are E0100; `(init arg
+...)` is an ordinary call, so a zero-argument function named `init` cannot be
+called.
 
 A type is ZII (Zero Is Initialization) when the all-zero bit pattern of its
 storage is a valid value of the type. This is a representation fact, not a
@@ -8811,7 +8751,7 @@ runtime contracts:
 - `__tl_make-array` checks the runtime length before allocation: a negative
   length or `length * sizeof(type)` overflow calls the same `tl_oob_abort`
   trap used by bounds checks. For positive lengths every live element is
-  initialized per the `init` eligibility rules in section 5.12.1; bulk
+  initialized with the zero value of its type (section 5.12.1); bulk
   zero/fill helpers are implementation details, and safe code observes
   initialized source values.
 - `__tl_array-data` returns a raw
@@ -9805,7 +9745,7 @@ including through import aliases and generated expressions. Its constructor
 has the ordinary unsafe-callable effect and cannot be erased into a plain
 function value. The caller must establish that the raw handle identifies a
 live arena for every use of the resulting wrapper. Zero identifies the
-runtime's default arena; `(init : arena.Arena)` therefore remains valid.
+runtime's default arena, so an `unsafe` construction from `0` names it.
 Reading `.handle` produces an inert integer and is safe. Writing that field,
 replacing it, or exposing an exclusive reference to it requires `unsafe` and
 the same live-handle obligation. The rule belongs to the canonical arena
@@ -9848,11 +9788,10 @@ mutable, or valid for the requested type.
 - Raw pointers are nullable and copyable. `ptr-null` creates a typed null
   pointer, and `ptr-null?` checks for null without dereferencing.
 - Typed C code pointers also support `ptr-null?`. `ptr-null` accepts
-  `(CFunc nullable (-> ...))` and `(CFunc unsafe-nullable (-> ...))`;
-  `init` produces the same zero value for these modes. Neither form can create
-  `non-null` or `unsafe-non-null` values. Testing a pointer does not call it or
-  remove its unsafe-call effect, and a boolean test does not implicitly change
-  a nullable variable's type.
+  `(CFunc nullable (-> ...))` and `(CFunc unsafe-nullable (-> ...))`, and it
+  cannot create `non-null` or `unsafe-non-null` values. Testing a pointer does
+  not call it or remove its unsafe-call effect, and a boolean test does not
+  implicitly change a nullable variable's type.
 - Pointer equality, ordering, provenance, and bounds are otherwise
   unspecified. Only null testing is part of the safe surface.
 - `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`,

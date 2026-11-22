@@ -310,6 +310,7 @@ array_field_store_growth|all|0,1,2|tests/integration/array_field_store_growth.tl
 inline_array_field_store_growth|all|0,1,2|tests/integration/inline_array_field_store_growth.tl|42|-|-|stdlib/test.tl|-
 zero_array_field_growth|all|0,1,2|tests/integration/zero_array_field_growth.tl|42|-|-|stdlib/test.tl|-
 zero_array_field_explicit_init|all|0,1,2|tests/integration/zero_array_field_explicit_init.tl|42|-|-|stdlib/test.tl|-
+make_array_zero_aggregates|all|0,1,2|tests/integration/make_array_zero_aggregates.tl|42|-|-|-|-
 two_field_array_growth|all|0,1,2|tests/integration/two_field_array_growth.tl|42|-|-|stdlib/test.tl|-
 set_inline_array_value_before_bounds_trap|all|0,1,2|tests/safety/set_inline_array_value_before_bounds_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:11:47: shift count out of range: count=-1 width=64\n
 set_inline_array_field_value_before_bounds_trap|all|0,1,2|tests/safety/set_inline_array_field_value_before_bounds_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:14:49: shift count out of range: count=-1 width=64\n

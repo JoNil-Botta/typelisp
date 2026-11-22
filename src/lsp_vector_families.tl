@@ -1,6 +1,8 @@
 ;; lsp_vector_families.tl - vector-backed LSP state collections.
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.vector)
+(import stdlib.string)
 (import compiler_semantic_index)
 
 (defstruct LspDeclEntry
@@ -15,12 +17,27 @@
   (form-end-col i64)
   (symbol-kind i64))
 
+(clone_gen.gen-clone LspDeclEntry)
+
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
+
+(define (clone-lsp-decl-vec [source : (& source lsp_decl_vec.Vec)]) : lsp_decl_vec.Vec
+  (let
+    [out : lsp_decl_vec.Vec
+      (lsp_decl_vec.with-capacity (lsp_decl_vec.capacity source))]
+    [items : (& source (Slice LspDeclEntry)) (lsp_decl_vec.view source)]
+    (for [index (iterator.range 0 (length items))]
+      (lsp_decl_vec.push-ref!
+        (&mut out)
+        (clone-lsp-decl-entry (& (array-ref items index)))))
+    out))
 
 (defenum LspCheckCache
   (LspCheckCacheInvalid)
   (LspCheckCacheOk)
   (LspCheckCacheErr String))
+
+(clone_gen.gen-clone LspCheckCache)
 
 ;; Ordered URI set used by diagnostic publication. `len` is a persistent
 ;; snapshot boundary: later appends may share spare slots, while growth copies
@@ -29,12 +46,32 @@
   (slots (__tl_dyn-array String))
   (len i64))
 
+(define (clone-lsp-diagnostic-uris [source : (& LspDiagnosticUris)]) : LspDiagnosticUris
+  (let
+    [count : i64 source.len]
+    [slots : (__tl_dyn-array String)
+      (__tl_make-array String (array-length source.slots))]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (string.copy (& (array-ref source.slots index)))))
+    (LspDiagnosticUris slots count)))
+
 (defstruct LspSemanticSnapshot
   (index compiler_semantic_index.CompilerSemanticSourceIndex)
   (version i64)
   (source-path String)
   (source-text String)
   (present bool))
+
+(define (clone-lsp-semantic-snapshot [source : (& LspSemanticSnapshot)]) : LspSemanticSnapshot
+  (LspSemanticSnapshot
+    (compiler_semantic_index.clone-compiler-semantic-source-index
+      (& source.index))
+    source.version
+    (string.copy (& source.source-path))
+    (string.copy (& source.source-text))
+    source.present))
 
 (defstruct LspDocument
   (uri String)
@@ -50,7 +87,30 @@
   (check-cache LspCheckCache)
   (semantic LspSemanticSnapshot))
 
+(define (clone-lsp-document [source : (& LspDocument)]) : LspDocument
+  (LspDocument
+    (string.copy (& source.uri))
+    (string.copy (& source.path))
+    (string.copy (& source.text))
+    source.version
+    (clone-lsp-diagnostic-uris (& source.diagnostic-uris))
+    (clone-lsp-decl-vec (& source.decls))
+    source.decls-valid
+    (clone-lsp-check-cache (& source.check-cache))
+    (clone-lsp-semantic-snapshot (& source.semantic))))
+
 (import (vector.vector LspDocument core) as lsp_document_vec)
+
+(define (clone-lsp-document-vec [source : (& source lsp_document_vec.Vec)]) : lsp_document_vec.Vec
+  (let
+    [out : lsp_document_vec.Vec
+      (lsp_document_vec.with-capacity (lsp_document_vec.capacity source))]
+    [items : (& source (Slice LspDocument)) (lsp_document_vec.view source)]
+    (for [index (iterator.range 0 (length items))]
+      (lsp_document_vec.push-ref!
+        (&mut out)
+        (clone-lsp-document (& (array-ref items index)))))
+    out))
 
 ;; Normalized client workspace identity. `uri` is the canonical file URI
 ;; derived from the normalized absolute `path`; client order is preserved.

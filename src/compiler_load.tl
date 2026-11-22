@@ -1,4 +1,5 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -14741,15 +14742,21 @@
   (alias String)
   (path String))
 
+(clone_gen.gen-clone CompilerPkgDep)
+
 ;: Alias->path dependency list from a parsed manifest, in manifest order.
 (defstruct CompilerPkgDepList
   (slots (__tl_dyn-array CompilerPkgDep))
   (len i64))
 
+(clone_gen.gen-clone CompilerPkgDepList)
+
 ;: Package dependencies preserve manifest order for deterministic builds while
 ;: indexing aliases for duplicate detection and `pkg:<alias>/...` resolution.
 (defstruct CompilerPkgDeps
   (ordered CompilerPkgDepList))
+
+(clone_gen.gen-clone CompilerPkgDeps)
 
 ;: Package artifact kind: binary executable or static library.
 (defenum CompilerPkgKind
@@ -14827,7 +14834,7 @@
 (define (compiler-pkg-dep-list-at
   [deps : (& deps CompilerPkgDepList)]
   [index : i64]) : CompilerPkgDep
-  (clone (array-ref deps.slots index)))
+  (clone-compiler-pkg-dep (& (array-ref deps.slots index))))
 
 (define (compiler-pkg-dep-list-empty) : CompilerPkgDepList
   (CompilerPkgDepList (__tl_make-array CompilerPkgDep 0) 0))
@@ -14841,7 +14848,7 @@
     (for [index (iterator.range 0 n)]
       (set!
         (array-ref dst (+ dst-offset index))
-        (clone (array-ref src.slots index))))))
+        (clone-compiler-pkg-dep (& (array-ref src.slots index)))))))
 
 ;: Append `dep`. Every push right-sizes a fresh array, so callers that keep
 ;: extending the same list from several branches never share a buffer.
@@ -14886,7 +14893,7 @@
     [(CompilerPkgKindLib)
       (let
         [deps : CompilerPkgDepList
-          (compiler-pkg-deps-list (clone manifest.deps))]
+          (compiler-pkg-deps-list (clone-compiler-pkg-deps (& manifest.deps)))]
         (if (= (compiler-pkg-dep-list-count (& deps)) 0)
           (NoDependency)
           (Dependency (compiler-pkg-dep-list-at (& deps) 0))))]))

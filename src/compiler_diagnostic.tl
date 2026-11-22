@@ -1,4 +1,5 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.arena)
@@ -28,6 +29,8 @@
   (end-line i64)
   (end-col i64))
 
+(clone_gen.gen-clone CompilerDiagnosticSpan)
+
 (defstruct CompilerDiagnosticLabel
   (span CompilerDiagnosticSpan)
   (label CompilerDiagnosticMaybeString))
@@ -52,14 +55,20 @@
   (span CompilerDiagnosticSpan)
   (replacement String))
 
+(clone_gen.gen-clone CompilerDiagnosticTextEdit)
+
 (defstruct CompilerDiagnosticTextEditSeq
   (slots (__tl_dyn-array CompilerDiagnosticTextEdit))
   (len i64))
+
+(clone_gen.gen-clone CompilerDiagnosticTextEditSeq)
 
 (defstruct CompilerDiagnosticFix
   (title String)
   (applicability CompilerDiagnosticApplicability)
   (edits CompilerDiagnosticTextEditSeq))
+
+(clone_gen.gen-clone CompilerDiagnosticFix)
 
 (defstruct CompilerDiagnosticFixSeq
   (slots (__tl_dyn-array CompilerDiagnosticFix))
@@ -1118,9 +1127,7 @@
 
 (define (compiler-diagnostic-copy-text-edit-ref
   [edit : (& edit CompilerDiagnosticTextEdit)]) : CompilerDiagnosticTextEdit
-  (CompilerDiagnosticTextEdit
-    (compiler-diagnostic-copy-span-ref (& edit.span))
-    (string.copy (& edit.replacement))))
+  (clone-compiler-diagnostic-text-edit edit))
 
 (define (compiler-diagnostic-copy-text-edit-list
   [edits : CompilerDiagnosticTextEditSeq]) : CompilerDiagnosticTextEditSeq
@@ -1195,6 +1202,9 @@
     (compiler-diagnostic-copy-label-list-ref (& diag.secondary))
     (compiler-diagnostic-copy-note-list-ref (& diag.notes))
     (compiler-diagnostic-copy-fix-list-ref (& diag.fixes))))
+
+(define (clone-compiler-diagnostic [diag : (& CompilerDiagnostic)]) : CompilerDiagnostic
+  (compiler-diagnostic-copy-ref diag))
 
 (define (compiler-diagnostic-position-before-or-equal?
   [left-line : i64]

@@ -1,3 +1,4 @@
+(import stdlib.clone as clone_gen)
 (import cli_option_core as cli_option)
 
 ;; lsp_frame_core.tl - Main-free selfhost LSP stdio framing and JSON-RPC slice.
@@ -492,6 +493,8 @@
   (eof bool)
   (stdout String)
   (stderr String))
+
+(clone_gen.gen-clone LspFrameMemoryState)
 
 (define lsp-frame-memory-state : LspFrameMemoryState
   (LspFrameMemoryState
@@ -13488,7 +13491,7 @@
     (match (lsp-json-field-ref message (& key))
       [(Found id)
         (if (lsp-json-rpc-id? id)
-          (clone (deref id))
+          (json.clone-json id)
           JsonNull)]
       [(Missing) JsonNull])))
 
@@ -13787,7 +13790,10 @@
                   [(Found id)
                     (unsafe
                       ;; unsafe: stdout text lives in the arena of the global lsp-frame-memory-state.owner handle
-                      (lsp-write-error (clone (deref id)) -32602 error-message))]
+                      (lsp-write-error
+                        (json.clone-json id)
+                        -32602
+                        error-message))]
                   [(Missing) unit]))
               true]))
         (return (Continue state)))
@@ -14910,7 +14916,7 @@
             (if (= (json.list-count-ref items) 0)
               (Err "path must not be empty")
               (if (lsp-json-list-all-strings? items)
-                (Ok (clone (deref items)))
+                (Ok (json.clone-json-seq items))
                 (Err "path entries must be strings")))]
           [_ (Err "path must be an array")])]
       [(Missing) (Err "Missing path parameter")])))

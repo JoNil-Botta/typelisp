@@ -2745,7 +2745,8 @@
               [(Continue next)
                 (let
                   [transport : lsp.LspFrameMemoryState
-                    (clone lsp.lsp-frame-memory-state)]
+                    (lsp.clone-lsp-frame-memory-state
+                      (& lsp.lsp-frame-memory-state))]
                   [unchanged : bool
                     (and
                       (= next.owner-arena owner)
@@ -2777,3 +2778,46 @@
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":42}}}"
         false))
     (io.panic "invalid parameter dispatch changed state or notification output")))
+
+(test
+  lsp-semantic-snapshot-clone-owns-live-prefix
+  (let
+    [owners : i64 sem.compiler-semantic-source-index-live-owners]
+    [source : lvf.LspSemanticSnapshot
+      (lvf.LspSemanticSnapshot
+        (sem.compiler-semantic-source-index-empty-owned)
+        1
+        "/source.tl"
+        ""
+        true)]
+    (set!
+      source.index.canonical-symbols
+      (in-arena
+        (unsafe
+          (arena.Arena source.index.owner-arena))
+        (let
+          [keys : (__tl_dyn-array String) (__tl_make-array String 2)]
+          (set! (array-ref keys 0) (string.copy "symbol"))
+          keys)))
+    (set! source.index.canonical-symbol-len 1)
+    (let
+      [copy : lvf.LspSemanticSnapshot
+        (lvf.clone-lsp-semantic-snapshot (& source))]
+      (unless
+        (and
+          (> copy.index.owner-arena 0)
+          (!= copy.index.owner-arena source.index.owner-arena)
+          (= sem.compiler-semantic-source-index-live-owners (+ owners 2)))
+        (io.panic "cloned semantic snapshot must have a separate owner"))
+      (lsp.lsp-semantic-snapshot-release! (&mut source))
+      (unless
+        (and
+          (= (array-length copy.index.canonical-symbols) 1)
+          (string.eq
+            (sem.compiler-semantic-source-index-canonical-key (& copy.index) 0)
+            "symbol"))
+        (io.panic "cloned semantic snapshot must retain its live keys"))
+      (lsp.lsp-semantic-snapshot-release! (&mut copy))
+      (unless
+        (= sem.compiler-semantic-source-index-live-owners owners)
+        (io.panic "cloned semantic snapshot owner must be released")))))

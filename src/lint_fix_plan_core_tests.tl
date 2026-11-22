@@ -51,7 +51,7 @@
   [replacement : String]
   [applicability : diag.CompilerDiagnosticApplicability]) : planner.LintFixCandidate
   (let
-    [path : String (clone source.path)]
+    [path : String (string.copy (& source.path))]
     [edit : diag.CompilerDiagnosticTextEdit
       (diag.compiler-diagnostic-text-edit-new
         (diag.CompilerDiagnosticSpan "" 1 start 1 end)
@@ -76,11 +76,12 @@
       (planner.snapshot "a.tl" "abcdef\n" 7 true)]
     [batch : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (one-candidate
           (candidate "a" source 2 4 "Z" CompilerDiagnosticMachineApplicable))
         (planner.machine-only))]
-    [applied : planner.LintFixSnapshotSeq (planner.apply (clone batch))]
+    [applied : planner.LintFixSnapshotSeq
+      (planner.apply (planner.clone-lint-fix-plan (& batch)))]
     (and
       batch.publishable
       (= batch.outcomes.len 1)
@@ -95,8 +96,8 @@
       (candidate "maybe" source 2 4 "Z" CompilerDiagnosticMaybeIncorrect)]
     [skipped : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone stale))
-        (one-candidate (clone candidate))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& stale)))
+        (one-candidate (planner.clone-lint-fix-candidate (& candidate)))
         (planner.machine-only))]
     [admitted : planner.LintFixPlan
       (planner.plan
@@ -120,11 +121,11 @@
       (planner.snapshot "unicode.tl" "é\r\nend" 0 true)]
     [utf : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (one-candidate
           (candidate
             "utf"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             2
             3
             "z"
@@ -132,11 +133,11 @@
         (planner.machine-only))]
     [crlf : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (one-candidate
           (candidate
             "crlf"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             4
             5
             "z"
@@ -174,23 +175,41 @@
   (let
     [source : planner.LintFixSnapshot (planner.snapshot "a.tl" "abcdef" 7 true)]
     [early : planner.LintFixCandidate
-      (candidate "z" (clone source) 2 3 "Z" CompilerDiagnosticMachineApplicable)]
+      (candidate
+        "z"
+        (planner.clone-lint-fix-snapshot (& source))
+        2
+        3
+        "Z"
+        CompilerDiagnosticMachineApplicable)]
     [late : planner.LintFixCandidate
-      (candidate "a" (clone source) 5 6 "Y" CompilerDiagnosticMachineApplicable)]
+      (candidate
+        "a"
+        (planner.clone-lint-fix-snapshot (& source))
+        5
+        6
+        "Y"
+        CompilerDiagnosticMachineApplicable)]
     [forward : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
-        (two-candidates (clone early) (clone late))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
+        (two-candidates
+          (planner.clone-lint-fix-candidate (& early))
+          (planner.clone-lint-fix-candidate (& late)))
         (planner.machine-only))]
     [backward : planner.LintFixPlan
       (planner.plan
         (one-snapshot source)
         (two-candidates late early)
         (planner.machine-only))]
+    [forward-applied : planner.LintFixSnapshotSeq
+      (planner.apply (planner.clone-lint-fix-plan (& forward)))]
     [forward-text : String
-      (clone (array-ref (planner.apply (clone forward)).slots 0).source)]
+      (string.copy (& (array-ref forward-applied.slots 0).source))]
+    [backward-applied : planner.LintFixSnapshotSeq
+      (planner.apply (planner.clone-lint-fix-plan (& backward)))]
     [backward-text : String
-      (clone (array-ref (planner.apply (clone backward)).slots 0).source)]
+      (string.copy (& (array-ref backward-applied.slots 0).source))]
     (and
       forward.publishable
       backward.publishable
@@ -205,22 +224,34 @@
   (let
     [source : planner.LintFixSnapshot (planner.snapshot "a.tl" "abcdef" 7 true)]
     [first : planner.LintFixCandidate
-      (candidate "a" (clone source) 2 4 "Z" CompilerDiagnosticMachineApplicable)]
+      (candidate
+        "a"
+        (planner.clone-lint-fix-snapshot (& source))
+        2
+        4
+        "Z"
+        CompilerDiagnosticMachineApplicable)]
     [second : planner.LintFixCandidate
-      (candidate "b" (clone source) 3 5 "Y" CompilerDiagnosticMachineApplicable)]
+      (candidate
+        "b"
+        (planner.clone-lint-fix-snapshot (& source))
+        3
+        5
+        "Y"
+        CompilerDiagnosticMachineApplicable)]
     [overlap : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
-        (two-candidates (clone first) second)
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
+        (two-candidates (planner.clone-lint-fix-candidate (& first)) second)
         (planner.machine-only))]
     [duplicate : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (two-candidates
-          (clone first)
+          (planner.clone-lint-fix-candidate (& first))
           (candidate
             "b"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             2
             4
             "Z"
@@ -228,12 +259,12 @@
         (planner.machine-only))]
     [same-id : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (two-candidates
           first
           (candidate
             "a"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             5
             6
             "Y"
@@ -279,11 +310,13 @@
       (__tl_make-array planner.LintFixSourceIdentity 2)]
     [edits : (__tl_dyn-array diag.CompilerDiagnosticTextEdit)
       (__tl_make-array diag.CompilerDiagnosticTextEdit 2)]
-    (set! (array-ref snapshots 0) (clone a))
-    (set! (array-ref snapshots 1) (clone b))
+    (set! (array-ref snapshots 0) (planner.clone-lint-fix-snapshot (& a)))
+    (set! (array-ref snapshots 1) (planner.clone-lint-fix-snapshot (& b)))
     ;; Deliberately reverse identities: outcome metadata belongs to a.tl.
     (set! (array-ref identities 0) (planner.source-identity b))
-    (set! (array-ref identities 1) (planner.source-identity (clone a)))
+    (set!
+      (array-ref identities 1)
+      (planner.source-identity (planner.clone-lint-fix-snapshot (& a))))
     (set!
       (array-ref edits 0)
       (diag.compiler-diagnostic-text-edit-new
@@ -312,7 +345,8 @@
           (planner.LintFixSnapshotSeq snapshots 2)
           (one-candidate candidate)
           (planner.machine-only))]
-      [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
+      [applied : planner.LintFixSnapshotSeq
+        (planner.apply (planner.clone-lint-fix-plan (& plan)))]
       (and
         plan.publishable
         (= plan.edits.len 2)
@@ -345,13 +379,16 @@
           (diag.compiler-diagnostic-with-fix
             (diag.compiler-diagnostic-simple "many.tl" 1 1 "lint")
             (& fix))
-          (one-identity (planner.source-identity (clone source))))]
+          (one-identity
+            (planner.source-identity
+              (planner.clone-lint-fix-snapshot (& source)))))]
       [plan : planner.LintFixPlan
         (planner.plan
           (one-snapshot source)
           (one-candidate candidate)
           (planner.machine-only))]
-      [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
+      [applied : planner.LintFixSnapshotSeq
+        (planner.apply (planner.clone-lint-fix-plan (& plan)))]
       (and
         plan.publishable
         (= plan.edits.len 17)
@@ -363,18 +400,18 @@
       (planner.snapshot "touch.tl" "abcdef" 3 true)]
     [touching : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (two-candidates
           (candidate
             "left"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             2
             4
             "L"
             CompilerDiagnosticMachineApplicable)
           (candidate
             "right"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             4
             6
             "R"
@@ -382,18 +419,18 @@
         (planner.machine-only))]
     [same-position : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (two-candidates
           (candidate
             "insert-a"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             3
             3
             "X"
             CompilerDiagnosticMachineApplicable)
           (candidate
             "insert-b"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             3
             3
             "Y"
@@ -401,11 +438,11 @@
         (planner.machine-only))]
     [nested : planner.LintFixPlan
       (planner.plan
-        (one-snapshot (clone source))
+        (one-snapshot (planner.clone-lint-fix-snapshot (& source)))
         (two-candidates
           (candidate
             "insert"
-            (clone source)
+            (planner.clone-lint-fix-snapshot (& source))
             3
             3
             "X"
@@ -431,7 +468,7 @@
     [valid : planner.LintFixCandidate
       (candidate
         "valid"
-        (clone source)
+        (planner.clone-lint-fix-snapshot (& source))
         1
         2
         "X"
@@ -439,7 +476,7 @@
     [missing : planner.LintFixCandidate
       (candidate
         "missing"
-        (clone source)
+        (planner.clone-lint-fix-snapshot (& source))
         2
         3
         "Y"
@@ -455,7 +492,8 @@
           (one-snapshot source)
           (two-candidates missing valid)
           (planner.machine-only))]
-      [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
+      [applied : planner.LintFixSnapshotSeq
+        (planner.apply (planner.clone-lint-fix-plan (& plan)))]
       (and
         (not plan.publishable)
         (= plan.edits.len 1)
@@ -511,8 +549,10 @@
 (define (redundant-begin-plan [source : String]) : planner.LintFixPlan
   (let
     [findings : lint_core.LintFindings
-      (redundant-begin-findings (clone source))]
-    [count : i64 (lint_core.lint-findings-count (clone findings))]
+      (redundant-begin-findings (string.copy (& source)))]
+    [count : i64
+      (lint_core.lint-findings-count
+        (lint_core.clone-lint-findings (& findings)))]
     [snap : planner.LintFixSnapshot (planner.snapshot "fix.tl" source 1 true)]
     [slots : (__tl_dyn-array planner.LintFixCandidate)
       (__tl_make-array planner.LintFixCandidate count)]
@@ -532,7 +572,9 @@
                     finding.span
                     finding.message)
                   (& fix))
-                (one-identity (planner.source-identity (clone snap)))))]
+                (one-identity
+                  (planner.source-identity
+                    (planner.clone-lint-fix-snapshot (& snap))))))]
           [(lint_core.LintFixUnavailable _ _)
             (io.panic "redundant-begin finding without a fix")])))
     (planner.plan
@@ -544,7 +586,9 @@
   (let
     [batch : planner.LintFixPlan (redundant-begin-plan source)]
     (assert batch.publishable "redundant-begin fixes should plan cleanly")
-    (clone (array-ref (planner.apply batch).slots 0).source)))
+    (let
+      [applied : planner.LintFixSnapshotSeq (planner.apply batch)]
+      (string.copy (& (array-ref applied.slots 0).source)))))
 
 (define (formatted [source : String]) : String
   (match (format_rules.format-rules-render-source-width-result source 80)
@@ -558,17 +602,18 @@
   [applied : String]
   [canonical : String]) : bool
   (let
-    [fixed : String (redundant-begin-applied (clone source))]
+    [fixed : String (redundant-begin-applied (string.copy (& source)))]
     (and
       (=
         (lint_core.lint-findings-count (redundant-begin-findings source))
         findings)
       (string.eq fixed applied)
       (=
-        (lint_core.lint-findings-count (redundant-begin-findings (clone fixed)))
+        (lint_core.lint-findings-count
+          (redundant-begin-findings (string.copy (& fixed))))
         0)
       (string.eq (formatted fixed) canonical)
-      (string.eq (formatted (clone canonical)) canonical))))
+      (string.eq (formatted (string.copy (& canonical))) canonical))))
 
 (test
   lint-redundant-begin-fix-round-trip

@@ -12,6 +12,7 @@
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
 ;# metadata and the lint core verified by `compiler-lint-self-test` in the
 ;# `lint_core_tests.tl` companion (driver: `src/tests/lint_smoke.tl`).
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_diagnostic as cdiag)
@@ -32,6 +33,8 @@
   (LintFixUnavailable String String)
   (LintFixAvailable cdiag.CompilerDiagnosticFix))
 
+(clone_gen.gen-clone LintFixDecision)
+
 (define (lint-fix-unproven) : LintFixDecision
   (LintFixUnavailable
     "rule-safety-unproven"
@@ -46,6 +49,8 @@
   (depth i64)
   (span ast.AstSourceSpan)
   (fix LintFixDecision))
+
+(clone_gen.gen-clone LintFinding)
 
 (define (lint-rule-nested-if-ladder-value-message) : String
   "nested if-ladder: value dispatch chain; prefer bracket-arm cond or match")
@@ -530,6 +535,17 @@
 (defstruct LintFindings
   (slots (__tl_dyn-array LintFinding))
   (len i64))
+
+(define (clone-lint-findings [source : (& LintFindings)]) : LintFindings
+  (let
+    [count : i64 source.len]
+    [slots : (__tl_dyn-array LintFinding)
+      (__tl_make-array LintFinding (array-length source.slots))]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-lint-finding (& (array-ref source.slots index)))))
+    (LintFindings slots count)))
 
 (defenum LintMaybeFinding
   (No)

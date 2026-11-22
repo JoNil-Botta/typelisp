@@ -862,7 +862,7 @@
           (return (package-lock-stage-write-opened path (& source) handle))]
         [(ErrIoFile error)
           (unless
-            (package-lock-io-already-exists? (& (clone error)))
+            (package-lock-io-already-exists? (& (io.clone-io-error (& error))))
             (return
               (Err
                 (package-lock-transaction-error
@@ -962,7 +962,7 @@
     [(ErrIoUnit error)
       (if (and
         (< attempt 100)
-        (package-lock-io-retryable-replace? (& (clone error))))
+        (package-lock-io-retryable-replace? (& (io.clone-io-error (& error)))))
         (match (time.sleep-ms 10)
           [(ErrTimeUnit sleep-error) (Err (time.error-message sleep-error))]
           [(OkTimeUnit)

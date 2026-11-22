@@ -10647,8 +10647,14 @@
 ;; edge of the pass (P28's single-caller inlining cliff -- several callers here
 ;; would keep it out of line), so the body is written out the way
 ;; compiler-reg-extend-segment-after-words! spells its segment bridge inline.
-(define (compiler-reg-ref-mark-word!
+;; `marks` keeps the boolean "referenced at all" fact and `refs` counts one
+;; reference per visited value; the frame-order pass ranks a frame's colours by
+;; those counts. Both stores ride the one walk: a second walk that only counted
+;; was ~2.8x this pass (Cachegrind Ir on the opt1 self-compile), and it also had
+;; to re-resolve every instruction's uses.
+(define (compiler-reg-ref-walk-word!
   [marks : (&mut marks (__tl_dyn-array bool))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
   [bits : i64]
   [var-base : i64]) : unit
   (if (= bits 0)
@@ -10656,12 +10662,19 @@
     (let
       [var : i64 (+ var-base (compiler-reg-low-bit-index32 bits))]
       (if (and (>= var 0) (< var (array-length marks)))
-        (set! (array-ref marks var) true)
+        (begin
+          (set! (array-ref marks var) true)
+          (set! (array-ref refs var) (+ (array-ref refs var) 1)))
         unit)
-      (compiler-reg-ref-mark-word! marks (bit-and bits (- bits 1)) var-base))))
+      (compiler-reg-ref-walk-word!
+        marks
+        refs
+        (bit-and bits (- bits 1))
+        var-base))))
 
-(define (compiler-reg-ref-mark-set-words!
+(define (compiler-reg-ref-walk-set-words!
   [marks : (&mut marks (__tl_dyn-array bool))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
   [set : (& live.CompilerLiveI64Set)]
   [word-index : i64]) : unit
   (unless
@@ -10671,26 +10684,30 @@
       [bits : i64 (live.compiler-live-set-word-at-bounded set word-index)]
       (if (= bits 0)
         unit
-        (compiler-reg-ref-mark-word!
+        (compiler-reg-ref-walk-word!
           marks
+          refs
           bits
           (* word-index (live.compiler-live-set-word-bits)))))
-    (compiler-reg-ref-mark-set-words! marks set (+ word-index 1))))
+    (compiler-reg-ref-walk-set-words! marks refs set (+ word-index 1))))
 
-(define (compiler-reg-ref-mark-instr!
+(define (compiler-reg-ref-walk-instr!
   [marks : (&mut marks (__tl_dyn-array bool))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
   [instr : (& ir.CompilerIrInstr)]) : unit
   (let
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
     [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
     (if (< id-count 0)
       (begin
-        (compiler-reg-ref-mark-set-words!
+        (compiler-reg-ref-walk-set-words!
           marks
+          refs
           (& (live.compiler-live-instr-uses instr))
           0)
-        (compiler-reg-ref-mark-set-words!
+        (compiler-reg-ref-walk-set-words!
           marks
+          refs
           (& (live.compiler-live-instr-defs instr))
           0))
       (begin
@@ -10700,26 +10717,52 @@
           (let
             [var : i64 (array-ref ids index)]
             (if (and (>= var 0) (< var (array-length marks)))
-              (set! (array-ref marks var) true)
+              (begin
+                (set! (array-ref marks var) true)
+                (set! (array-ref refs var) (+ (array-ref refs var) 1)))
               unit)))
         (let
           [def-var : i64 (ir.compiler-ir-instr-dst instr)]
           (if (and (>= def-var 0) (< def-var (array-length marks)))
-            (set! (array-ref marks def-var) true)
+            (begin
+              (set! (array-ref marks def-var) true)
+              (set! (array-ref refs def-var) (+ (array-ref refs def-var) 1)))
             unit))))))
 
-(define (compiler-reg-ref-mark-seq!
+;; AddrOf's storage span per addressed value: a value whose address escapes is
+;; read and written through that pointer as a whole block, so its neighbours
+;; travel with it and the frame order must keep them together. Only this walk
+;; sees `storage-words`, and it is a separate function so that
+;; compiler-reg-ref-walk-instr! stays small enough to inline (P28 above).
+(define (compiler-reg-ref-walk-span!
+  [addressed : (&mut addressed (__tl_dyn-array i64))]
+  [instr : (& ir.CompilerIrInstr)]) : unit
+  (match (& instr)
+    [(AddrOf _ src storage-words)
+      (when
+        (and (>= src 0) (< src (array-length addressed)))
+        (if (> storage-words (array-ref addressed src))
+          (set! (array-ref addressed src) storage-words)
+          unit))]
+    [_ unit]))
+
+(define (compiler-reg-ref-walk-seq!
   [marks : (&mut marks (__tl_dyn-array bool))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [addressed : (&mut addressed (__tl_dyn-array i64))]
   [instrs : (& ir.CompilerIrInstrSeq)]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
     [count : i64 instrs.len]
     (for [index (iterator.range 0 count)]
-      (compiler-reg-ref-mark-instr! marks (& (array-ref slots index))))))
+      (compiler-reg-ref-walk-span! addressed (& (array-ref slots index)))
+      (compiler-reg-ref-walk-instr! marks refs (& (array-ref slots index))))))
 
-(define (compiler-reg-ref-marks-blocks!
+(define (compiler-reg-ref-walk-blocks!
   [marks : (&mut marks (__tl_dyn-array bool))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [addressed : (&mut addressed (__tl_dyn-array i64))]
   [blocks : (& ir.CompilerIrBlockList)]) : unit
   (match blocks
     [(Array seq)
@@ -10727,7 +10770,8 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-borrow seq i)
-            [(Block _ instrs) (compiler-reg-ref-mark-seq! marks (& instrs))])))]))
+            [(Block _ instrs)
+              (compiler-reg-ref-walk-seq! marks refs addressed (& instrs))])))]))
 
 (define (compiler-reg-ref-counts-blocks-weighted!
   [counts : (&mut counts (__tl_dyn-array i64))]
@@ -30223,6 +30267,11 @@
         ;; Boolean, not a count: the only question asked below is whether the
         ;; variable is referenced at all (see compiler-reg-ref-marks-blocks!).
         [references : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+        ;; Reference counts per value, filled by the same walk: the frame-order
+        ;; pass below ranks the frame colours by these totals.
+        [ref-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        ;; AddrOf's storage span per addressed value (see the frame-order pass).
+        [addressed : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [remap : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         ;; `colorable` is not cleared here: `__tl_make-array` zero-fills its
         ;; backing store (bool's default is the all-zero byte), so every element
@@ -30264,10 +30313,19 @@
               (compiler-reg-global-shared-view intervals)
               (&mut references))
             ;; Stack-only plans are built on these final blocks and no
-            ;; allocation rewrite can have introduced an interval-less value.
-            (if stack-only?
-              unit
-              (compiler-reg-ref-marks-blocks! (&mut references) blocks))
+            ;; allocation rewrite can have introduced an interval-less value,
+            ;; so the marks add nothing there. The walk exists for the counts
+            ;; and the AddrOf spans, which only the frame order reads, so a
+            ;; frame that cannot leave the red zone skips it: `slots` bounds
+            ;; the slot region the backend sizes, and 8*slots <= 128 means no
+            ;; slot in it can pay a disp32 (see the frame-order pass).
+            (if (or (not stack-only?) (> (* 8 slots) 128))
+              (compiler-reg-ref-walk-blocks!
+                (&mut references)
+                (&mut ref-counts)
+                (&mut addressed)
+                blocks)
+              unit)
             (compiler-reg-spmd-wide-param-references! params (&mut references)))]
         [var-tys : (__tl_dyn-array ast.AstType)
           (__tl_make-array ast.AstType vars)]
@@ -30518,10 +30576,12 @@
           (if (<= (* 8 (compiler-reg-max slot-count param-floor)) 128)
             unit
             (compiler-reg-color-order-slot-ids-by-references
-              blocks
               group-vars
               vector-stack-words
               assignment-index
+              (& addressed)
+              (& ref-counts)
+              (not empty-assignments?)
               (&mut remap)
               vars
               stack-prefix
@@ -30569,53 +30629,22 @@
 ;; keyed by slot-vars or by the id itself, never by the old parameter ids.
 ;; Parameter slots still stay private: the permutation is a bijection, so the
 ;; "never shared" property the pins established is preserved.
-;; One count per value: every use and every def, plus one for AddrOf's storage
-;; var, whose lea the value walk does not visit (compiler-backend-count-instr-uses
-;; counts it the same way). Weightless on purpose: the order below compares
-;; static frame-reference counts, not execution frequencies.
-(define (compiler-reg-color-slot-reference-instr!
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [addressed : (&mut addressed (__tl_dyn-array i64))]
-  [instr : (& ir.CompilerIrInstr)]) : unit
-  (match (& instr)
-    [(AddrOf _ src storage-words)
-      (compiler-reg-ref-counts-add-var-weighted! counts src 1)
-      (when
-        (and (>= src 0) (< src (array-length addressed)))
-        (if (> storage-words (array-ref addressed src))
-          (set! (array-ref addressed src) storage-words)
-          unit))]
-    [_ (compiler-reg-ref-counts-add-instr-weighted! counts (& instr) 1)]))
+;; How many reference-count classes a frame's movable colours are ranked into.
+;; Only the top of the frame is within disp8 reach, so the classes only have to
+;; separate the hottest colours from the rest; 32 keeps the common counts exact.
+(define (compiler-reg-color-slot-order-classes) : i64
+  32)
 
-(define (compiler-reg-color-slot-reference-seq!
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [addressed : (&mut addressed (__tl_dyn-array i64))]
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : unit
+;; A slot's class: its reference count, capped at the top class.
+(define (compiler-reg-color-slot-order-class [references : i64]) : i64
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    (for [index (iterator.range 0 count)]
-      (compiler-reg-color-slot-reference-instr!
-        counts
-        addressed
-        (& (array-ref slots index))))))
+    [top : i64 (- (compiler-reg-color-slot-order-classes) 1)]
+    (if (> references top)
+      top
+      references)))
 
-(define (compiler-reg-color-slot-reference-counts!
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [addressed : (&mut addressed (__tl_dyn-array i64))]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
-  (match blocks
-    [(Array seq)
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (for [index (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-borrow seq index)
-            [(Block _ instrs)
-              (compiler-reg-color-slot-reference-seq!
-                counts
-                addressed
-                (& instrs))])))]))
-
+;; Mark every id in [from, to] as fixed. Ids outside the array are skipped:
+;; a wide value's span can reach past the slot count.
 (define (compiler-reg-color-mark-fixed-range!
   [fixed : (&mut fixed (__tl_dyn-array bool))]
   [from : i64]
@@ -30629,58 +30658,37 @@
       (+= id 1))))
 
 (define (compiler-reg-color-order-slot-ids-by-references
-  [blocks : (& ir.CompilerIrBlockList)]
   [group-vars : (& live.CompilerLiveI64Set)]
   [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]
   [assignment-index : CompilerRegAssignmentTable]
+  ;; AddrOf's storage span per addressed value, and the reference count per
+  ;; value: both are filled by the one IR walk the caller already runs.
+  [addressed : (& addressed (__tl_dyn-array i64))]
+  [ref-counts : (& ref-counts (__tl_dyn-array i64))]
+  [has-assignments : bool]
   [remap : (&mut remap (__tl_dyn-array i64))]
   [vars : i64]
   [stack-prefix : i64]
   [storage-prefix : i64]
   [slot-count : i64]) : unit
   (let
-    [references : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    ;; AddrOf's storage span per addressed value: a value whose address escapes
-    ;; is read and written through that pointer as a whole block, so its
-    ;; neighbours travel with it and none of them may move on its own.
-    [addressed : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    [_counted : unit
-      (compiler-reg-color-slot-reference-counts!
-        (&mut references)
-        (&mut addressed)
-        blocks)]
-    ;; Per-SLOT totals: a shared colour scores every reference of every value
-    ;; that lives in it. An id no stack value occupies keeps -1 and is left
-    ;; where it is; the same holds for a register-homed value, whose free id is
-    ;; not a frame slot at all.
+    ;; Per-SLOT totals, one pass over the values: an id's entry is 0 while no
+    ;; stack value occupies it, else 1 + the sum of its values' reference counts
+    ;; (that bias keeps the zero-fill of __tl_make-array the "empty" default, so
+    ;; this needs no seeding pass). An id no stack value occupies is left where
+    ;; it is, and so is a register-homed value's free id: it is not a frame slot.
+    ;; The same pass records the id ranges that may not move (fixed): ids that
+    ;; hold more than one plain 8-byte slot, ids that name an ABI-fixed home,
+    ;; group pair ids and AddrOf storage spans (see the header above).
     [slot-references : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
     [fixed : (__tl_dyn-array bool)
       (__tl_make-array bool (compiler-reg-max vars slot-count))]
-    [_seeded : unit
-      (for [id (iterator.range 0 slot-count)]
-        (set! (array-ref slot-references id) (- 0 1)))]
-    [_aggregated : unit
-      (for [var (iterator.range 0 vars)]
-        (let
-          [id : i64 (array-ref remap var)]
-          (if (and
-            (>= id 0)
-            (< id slot-count)
-            (compiler-reg-color-var-lives-in-slot? assignment-index var))
-            (set!
-              (array-ref slot-references id)
-              (+
-                (compiler-reg-max (array-ref slot-references id) 0)
-                (array-ref references var)))
-            unit)))]
-    ;; Ids that hold more than one plain 8-byte slot, or that name an ABI-fixed
-    ;; home: they keep their offsets (see the header above).
     [_fixed-storage : unit
       (compiler-reg-color-mark-fixed-range!
         (&mut fixed)
         stack-prefix
         (- storage-prefix 1))]
-    [_fixed-wide-and-groups : unit
+    [_aggregated : unit
       (for [var (iterator.range 0 vars)]
         (let
           [base : i64 (array-ref remap var)]
@@ -30708,51 +30716,81 @@
                   (&mut fixed)
                   (- (+ base 1) span)
                   base)
-                unit)))))]
-    [order : (__tl_dyn-array CompilerRegInterval)
-      (__tl_make-array CompilerRegInterval slot-count)]
-    [order-count : i64 0]
-    [_ranked : unit
-      (for [id (iterator.range 0 slot-count)]
-        (if (and
-          (>= (array-ref slot-references id) 0)
-          (not (array-ref fixed id)))
-          (begin
-            ;; The negated count as `start` turns the (start, var) ascending
-            ;; colour sort into (count desc, id asc): deterministic, and it
-            ;; reuses the heapsort instead of adding a second one.
-            (set!
-              (array-ref order order-count)
-              (CompilerRegInterval id (- 0 (array-ref slot-references id)) 0))
-            (set! order-count (+ order-count 1)))
-          unit))]
-    [_sorted : unit (compiler-reg-color-heapsort (& order) order-count)]
-    ;; old id -> new id for the colours that move; -1 keeps an id in place.
-    [moved : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
-    [_cleared : unit
-      (for [id (iterator.range 0 slot-count)]
-        (set! (array-ref moved id) (- 0 1)))]
-    [_assigned : unit
+                unit))
+            (if (and
+              (< base slot-count)
+              (or
+                (not has-assignments)
+                (compiler-reg-color-var-lives-in-slot? assignment-index var)))
+              (set!
+                (array-ref slot-references base)
+                (+
+                  (array-ref slot-references base)
+                  (array-ref ref-counts var)
+                  1))
+              unit))))]
+    ;; Rank the movable colours in linear time. A slot pays a disp32 until it
+    ;; is within 16 ids of the top of the frame, so only the ORDER by reference
+    ;; count matters, not the exact ranks: count classes, hottest to the largest
+    ;; ids, ties in old id order. A histogram over the classes is O(slots +
+    ;; classes) per function; the (start, var) heapsort this replaces cost 4.3x
+    ;; the whole rest of the pass, because every heap swap copied a 24-byte
+    ;; interval through compiler-reg-color-interval-copy.
+    [class-count : i64 (compiler-reg-color-slot-order-classes)]
+    [histogram : (__tl_dyn-array i64) (__tl_make-array i64 class-count)]
+    ;; Movable ids, descending: position p names the (p+1)-th largest free id.
+    [dest : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
+    [dest-count : i64 0]
+    [_histogram : unit
       (let
         [id : i64 (- slot-count 1)]
-        (for [rank (iterator.range 0 order-count)]
-          (while (and
-            (>= id 0)
-            (or (< (array-ref slot-references id) 0) (array-ref fixed id)))
-            (-= id 1))
-          (when
-            (>= id 0)
+        (while (>= id 0)
+          (if (and
+            (> (array-ref slot-references id) 0)
+            (not (array-ref fixed id)))
             (let
-              [hottest : CompilerRegInterval (array-ref order rank)]
-              (set! (array-ref moved hottest.var) id))
-            (-= id 1))))]
+              [class : i64
+                (compiler-reg-color-slot-order-class
+                  (array-ref slot-references id))]
+              (set! (array-ref dest dest-count) id)
+              (set!
+                (array-ref histogram class)
+                (+ (array-ref histogram class) 1))
+              (set! dest-count (+ dest-count 1)))
+            unit)
+          (-= id 1)))]
+    ;; Class bands, hottest first, each starting at its offset in `dest`.
+    [class-base : (__tl_dyn-array i64) (__tl_make-array i64 class-count)]
+    [class-next : (__tl_dyn-array i64) (__tl_make-array i64 class-count)]
+    [_bands : unit
+      (let
+        [class : i64 (- class-count 1)]
+        [at : i64 0]
+        (while (>= class 0)
+          (set! (array-ref class-base class) at)
+          (set! at (+ at (array-ref histogram class)))
+          (-= class 1)))]
+    ;; old id -> new id + 1 for the colours that move; a zero-fill entry keeps
+    ;; an id in place, so this needs no clearing pass either.
+    [moved : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
+    [_placed : unit
+      (for [position (iterator.range 0 dest-count)]
+        (let
+          [id : i64 (array-ref dest position)]
+          [class : i64
+            (compiler-reg-color-slot-order-class (array-ref slot-references id))]
+          [at : i64 (array-ref class-next class)]
+          (set!
+            (array-ref moved id)
+            (+ (array-ref dest (+ (array-ref class-base class) at)) 1))
+          (set! (array-ref class-next class) (+ at 1))))]
     [_applied : unit
       (for [var (iterator.range 0 vars)]
         (let
           [id : i64 (array-ref remap var)]
           (if (and (>= id 0) (< id slot-count))
             (let
-              [next : i64 (array-ref moved id)]
+              [next : i64 (- (array-ref moved id) 1)]
               (if (>= next 0)
                 (set! (array-ref remap var) next)
                 unit))

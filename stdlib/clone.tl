@@ -346,26 +346,34 @@
             ,root-key-expr
             ,path-expr))
         (let
-          ;; A shared borrow exposes the underlying shape of a region-tagged
-          ;; value and strips any nested allocation region tags. An owned
-          ;; String exposes its unsized str view.
-          [value-type : comptime.Expr
+          ;; The shared borrow strips allocation region tags from its
+          ;; referent. Preserve T for other kinds, including unsupported
+          ;; references, whose own borrow can have a different referent.
+          [use-referent? : bool
             (match kind
-              ["region"
-                (let
-                  [referent : comptime.Expr
-                    (comptime.reference-element-type source-type)]
-                  (if (string-eq (type-kind referent) "str")
-                    (type String)
-                    referent))]
-              [(or "tuple" "array" "dyn-array" "box")
-                (comptime.reference-element-type source-type)]
-              [_ T])]
-          `(stdlib.clone.clone-borrowed-value
-            ,value-type
-            ,source
-            ,root-key-expr
-            ,path-expr)))
+              ["region" true]
+              ["tuple" true]
+              ["array" true]
+              ["dyn-array" true]
+              ["box" true]
+              [_ false])]
+          [value-type : comptime.Expr
+            (if use-referent?
+              (comptime.reference-element-type source-type)
+              T)]
+          (if (if (string-eq kind "region")
+            (string-eq (type-kind value-type) "str")
+            false)
+            `(stdlib.clone.clone-borrowed-value
+              String
+              ,source
+              ,root-key-expr
+              ,path-expr)
+            `(stdlib.clone.clone-borrowed-value
+              ,value-type
+              ,source
+              ,root-key-expr
+              ,path-expr))))
       ;; Only a Copy payload binds by value; its copy is the clone.
       source)))
 
@@ -468,27 +476,41 @@
 ;: (`if`, `let`, or `match`), call `clone.deep` in each result position.
 ;: A nominal type must expose its generated clone function from its owner.
 (defmacro (deep [value : comptime.Expr]) : comptime.Expr
-  (match value
-    [(or (comptime.Expr.If _ _ _) (comptime.Expr.Begin _))
-      (comptime.comptime-error
-        "clone.deep: clone each branch or block result separately")]
-    [_
+  (let
+    [T : comptime.Expr (comptime.expr-type value)]
+    [kind : String (type-kind T)]
+    [needs-binding? : bool
+      (match kind
+        ["tuple" true]
+        ["array" true]
+        ["dyn-array" true]
+        ["box" true]
+        ["region" true]
+        [_ false])]
+    (if needs-binding?
       (let
-        [T : comptime.Expr (comptime.expr-type value)]
-        [kind : String (type-kind T)]
-        (match kind
-          [(or "unit" "never" "bool" "char" "i64" "i32" "i16" "i8" "u64" "u32"
-               "u16" "u8" "f64" "f32")
-            value]
-          [(or "tuple" "array" "dyn-array" "box" "region")
-            (let
-              [name : String (comptime.syntax-name-fresh "__clone_deep_source")]
-              [source : comptime.Expr (comptime.expr-var name)]
-              (comptime.expr-shared-let-scope
-                name
-                value
-                `(stdlib.clone.clone-value ,T ,source "" "clone.deep")))]
-          [_ `(stdlib.clone.clone-borrowed-value ,T (& ,value) "" "clone.deep")]))]))
+        [name : String (comptime.syntax-name-fresh "__clone_deep_source")]
+        [source : comptime.Expr (comptime.expr-var name)]
+        (comptime.expr-shared-let-scope
+          name
+          value
+          `(stdlib.clone.clone-value ,T ,source "" "clone.deep")))
+      (match kind
+        ["unit" value]
+        ["never" value]
+        ["bool" value]
+        ["char" value]
+        ["i64" value]
+        ["i32" value]
+        ["i16" value]
+        ["i8" value]
+        ["u64" value]
+        ["u32" value]
+        ["u16" value]
+        ["u8" value]
+        ["f64" value]
+        ["f32" value]
+        [_ `(stdlib.clone.clone-borrowed-value ,T (& ,value) "" "clone.deep")]))))
 
 ;: Generate the body of an ordinary clone function for a struct root.
 (defmacro (clone-struct-root [T : type] [root-key-expr : comptime.Expr]) : comptime.Expr

@@ -684,7 +684,7 @@ clone_deep_function_reject|check-fail|tests/safety/clone_deep_function_reject.tl
 clone_deep_reference_reject|check-fail|tests/safety/clone_deep_reference_reject.tl|-|gen-clone: unsupported type ref_source_i64 at clone.deep
 clone_deep_pointer_reject|check-fail|tests/safety/clone_deep_pointer_reject.tl|-|gen-clone: unsupported type ptr_i64 at clone.deep[0]
 clone_deep_cleanup_reject|check-fail|tests/safety/clone_deep_cleanup_reject.tl|-|gen-clone: unsupported cleanup-owning type struct_Resource at clone.deep
-clone_deep_conditional_reject|check-fail|tests/safety/clone_deep_conditional_reject.tl|-|clone.deep: clone each branch or block result separately
+clone_deep_conditional_reject|check-fail|tests/safety/clone_deep_conditional_reject.tl|-|use of moved value `left`
 reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`

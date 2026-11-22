@@ -31497,7 +31497,9 @@
         ctx
         type-env
         (lower-context-expr-get ctx place-box))]
-    [(or (Set _ _) (StructSet _ _ _) (BoxSet _ _)) (Ok (Unit))]
+    [(or (Set _ _) (StructSet _ _ _) (BoxSet _ _) (While _ _) (ArraySet _ _ _)
+         (ArrayPush _ _))
+      (Ok (Unit))]
     [(Return _) (Ok (Never))]
     [_ (Err "lower: expression result type is not fast-pathable")]))
 

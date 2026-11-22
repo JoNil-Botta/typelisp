@@ -116,6 +116,15 @@
           (syscall 11 control 4096))
         (unsafe
           (syscall 11 input 65536))
-        (if (and (= waited child) (= (bit-and status 0x7f) 11) unchanged)
+        (if (and
+          (= waited child)
+          (= (bit-and status 0x7f) 11)
+          unchanged
+          ;; The harness reads these two cells through gdb once the child has
+          ;; died, so the program has to name them too: a global no instruction
+          ;; reads is provably unobservable inside the module and opt2 drops
+          ;; its stores (and then the prune drops the cell).
+          (> stack-base 0)
+          (> heap-sentinel 0))
           42
           1)))))

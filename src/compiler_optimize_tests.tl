@@ -3616,9 +3616,11 @@
         [(Program functions _) functions])]
     [survivors : ir.CompilerIrFunctionSeq
       (match (opt.opt-prune-unreachable-program
+        (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-global-seq-empty)
         (owned_view.compiler-owned-shared-view out)
         (& (ir.compiler-ir-extern-seq-empty))
+        false
         false)
         [(Program _ functions) functions])]
     ;; The stage output still holds the pruned bodies, whose chunk the carry
@@ -86647,3 +86649,446 @@ return
       "a stage that deletes addr_of without reinstalling fails")
     (test.assert-true missing? "a stage without a contract row fails")
     (opt.opt-rewrite-ice-capture! false)))
+
+;; --- dead stores to a store-only global --------------------------------------
+;;
+;; The store-only rule rides the prune's reachability walk (see OptReachState:
+;; a global in `globals` but not in `reads` is stored and named nowhere else), so
+;; every fixture here goes through `opt-prune-unreachable-program` with its
+;; `strip-store-only?` argument. Each refused fact is one fixture: a `Global`
+;; read, a read that only a `Load` performs, a `prov`ided extern entry (the only
+;; export marker IR has), `(& g)`, a store through that address, and an address
+;; held by another global's INITIALIZER, which no body mentions. `ds_store` is
+;; stored and never named again: it is the one global the prune drops.
+(defstruct OptDsTestSymbols
+  (store-only i64)
+  (read i64)
+  (load i64)
+  (exported i64)
+  (addressed i64)
+  (pointer i64)
+  ;; stored, never named by a body, and addressed only from another global's
+  ;; initializer.
+  (initializer-addr i64)
+  (holder i64)
+  (writer i64)
+  (reader i64)
+  (main i64)
+  (probe i64))
+
+(define (opt-ds-test-symbols) : OptDsTestSymbols
+  (OptDsTestSymbols
+    (opt-test-symbol "ds_store")
+    (opt-test-symbol "ds_read")
+    (opt-test-symbol "ds_load")
+    (opt-test-symbol "ds_exported")
+    (opt-test-symbol "ds_addressed")
+    (opt-test-symbol "ds_pointer")
+    (opt-test-symbol "ds_initializer_addr")
+    (opt-test-symbol "ds_holder")
+    (opt-test-symbol "ds_writer")
+    (opt-test-symbol "ds_reader")
+    (opt-test-symbol "main")
+    (opt-test-symbol "ds_probe")))
+
+(define (opt-ds-test-globals [symbols : OptDsTestSymbols]) : ir.CompilerIrGlobalSeq
+  (let
+    [builder : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 10)]
+    (opt-test-global-builder-push!
+      (&mut builder)
+      symbols.store-only
+      (I64)
+      (I64 1))
+    (opt-test-global-builder-push! (&mut builder) symbols.read (I64) (I64 1))
+    (opt-test-global-builder-push! (&mut builder) symbols.load (I64) (I64 1))
+    (opt-test-global-builder-push!
+      (&mut builder)
+      symbols.exported
+      (I64)
+      (I64 1))
+    (opt-test-global-builder-push!
+      (&mut builder)
+      symbols.addressed
+      (I64)
+      (I64 1))
+    (opt-test-global-builder-push! (&mut builder) symbols.pointer (I64) (I64 1))
+    (opt-test-global-builder-push!
+      (&mut builder)
+      symbols.initializer-addr
+      (I64)
+      (I64 1))
+    (opt-test-global-builder-push!
+      (&mut builder)
+      symbols.holder
+      (U64)
+      (GlobalAddr symbols.initializer-addr))
+    (ir.compiler-ir-global-builder-to-seq builder)))
+
+;; `ds_store` is the only global this body mentions more than once: every store
+;; below is the whole story for its cell.
+(define (opt-ds-test-writer [symbols : OptDsTestSymbols]) : ir.CompilerIrFunction
+  (Function
+    symbols.writer
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    10
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (opt-test-instrs
+          (irt.instr "%9 = mov 7 : i64")
+          (ir.CompilerIrInstr.Store symbols.store-only (Var 9) (I64))
+          (ir.CompilerIrInstr.Store symbols.read (I64 7) (I64))
+          (ir.CompilerIrInstr.Store symbols.load (I64 7) (I64))
+          (ir.CompilerIrInstr.Store symbols.exported (I64 7) (I64))
+          (ir.CompilerIrInstr.Store symbols.addressed (I64 7) (I64))
+          (ir.CompilerIrInstr.Store symbols.pointer (I64 7) (I64))
+          (ir.CompilerIrInstr.Store symbols.initializer-addr (I64 7) (I64))
+          (ir.CompilerIrInstr.Return (Some (I64 0))))))
+    Ordinary))
+
+;; One reader per refused fact: a `Global` read, a read that only a `Load`
+;; performs, `(& g)` (an escape, also what a pointer write goes through), and a
+;; store through that pointer.
+(define (opt-ds-test-reader [symbols : OptDsTestSymbols]) : ir.CompilerIrFunction
+  (Function
+    symbols.reader
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    8
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (opt-test-instrs
+          (ir.CompilerIrInstr.Mov 1 (Global symbols.read) (I64))
+          (ir.CompilerIrInstr.Load 2 (Global symbols.load) (I64))
+          (ir.CompilerIrInstr.Gep
+            3
+            (GlobalAddr symbols.addressed)
+            (I64 1)
+            (I64))
+          (ir.CompilerIrInstr.Mov 4 (GlobalAddr symbols.pointer) (U64))
+          (ir.CompilerIrInstr.StorePtr (Var 4) (I64 9) (I64))
+          (ir.CompilerIrInstr.Return (Some (Var 1))))))
+    Ordinary))
+
+;; The prune walks only what "main" reaches, so the fixture needs one that calls
+;; both bodies.
+(define (opt-ds-test-main [symbols : OptDsTestSymbols]) : ir.CompilerIrFunction
+  (Function
+    symbols.main
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    4
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (opt-test-instrs
+          (irt.instr "%1 = call ds_writer() : i64")
+          (irt.instr "%2 = call ds_reader() : i64")
+          (ir.CompilerIrInstr.Return (Some (Var 2))))))
+    Ordinary))
+
+(define (opt-ds-test-count-store-instr
+  [name : i64]
+  [acc : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match (opt.opt-instr-target instr)
+    [(Store target)
+      (if (= target name)
+        (+ acc 1)
+        acc)]
+    [_ acc]))
+
+(define (opt-ds-test-count-store
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [name : i64]) : i64
+  (let
+    [start : i64 0]
+    (opt.opt-blocks-fold blocks start opt-ds-test-count-store-instr name)))
+
+(define (opt-ds-test-count-global-use
+  [global-name : i64]
+  [_role : ir.CompilerIrOperandRole]
+  [acc : i64]
+  [value : ir.CompilerIrValue]) : i64
+  (match (& value)
+    [(Global name)
+      (if (= (ir.compiler-ir-symbol-id name) global-name)
+        (+ acc 1)
+        acc)]
+    [_ acc]))
+
+(define (opt-ds-test-instr-global-uses
+  [global-name : i64]
+  [acc : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (ir.compiler-ir-instr-fold-uses
+    instr
+    acc
+    opt-ds-test-count-global-use
+    global-name))
+
+(define (opt-ds-test-count-var-def-instr
+  [var : i64]
+  [acc : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (if (= (ir.compiler-ir-instr-dst (& instr)) var)
+    (+ acc 1)
+    acc))
+
+(define (opt-ds-test-count-var-def
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [var : i64]) : i64
+  (let
+    [start : i64 0]
+    (opt.opt-blocks-fold blocks start opt-ds-test-count-var-def-instr var)))
+
+;; One named function's body out of a kept function list: its store count for
+;; `global-name`, or its count of definitions of `var` (`which` picks one).
+(define (opt-ds-test-function-count-from
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [function-name : i64]
+  [which : i64]
+  [name-or-var : i64]
+  [index : i64]) : i64
+  (if (>= index (ir.compiler-ir-function-seq-count functions))
+    (- 0 1)
+    (let
+      [func : ir.CompilerIrFunction
+        (ir.compiler-ir-function-seq-ref functions index)]
+      (match (& func)
+        [(Function name _ _ _ _ _)
+          (if (= (ir.compiler-ir-symbol-id name) function-name)
+            (let
+              [blocks : ir.CompilerIrBlockList
+                (opt.opt-function-blocks (& func))]
+              (if (= which 0)
+                (opt-ds-test-count-store (& blocks) name-or-var)
+                (if (= which 1)
+                  (opt-ds-test-count-var-def (& blocks) name-or-var)
+                  (opt-ds-test-count-global-uses (& blocks) name-or-var))))
+            (opt-ds-test-function-count-from
+              functions
+              function-name
+              which
+              name-or-var
+              (+ index 1)))]))))
+
+(define (opt-ds-test-store-count
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [function-name : i64]
+  [global-name : i64]) : i64
+  (opt-ds-test-function-count-from functions function-name 0 global-name 0))
+
+(define (opt-ds-test-var-defs
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [function-name : i64]
+  [var : i64]) : i64
+  (opt-ds-test-function-count-from functions function-name 1 var 0))
+
+(define (opt-ds-test-global-uses
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [function-name : i64]
+  [global-name : i64]) : i64
+  (opt-ds-test-function-count-from functions function-name 2 global-name 0))
+
+(define (opt-ds-test-count-global-uses
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [global-name : i64]) : i64
+  (let
+    [start : i64 0]
+    (opt.opt-blocks-fold blocks start opt-ds-test-instr-global-uses global-name)))
+
+(define (opt-ds-test-global-defines?
+  [globals : (& globals ir.CompilerIrGlobalSeq)]
+  [name : i64]) : bool
+  (for [index (iterator.range 0 (ir.compiler-ir-global-seq-count globals))]
+    (match (ir.compiler-ir-global-seq-borrow globals index)
+      [(Global global-name _ _)
+        (when (= (ir.compiler-ir-symbol-id global-name) name) (return true))]))
+  false)
+
+(define (compiler-optimize-dead-global-store-self-test) : i64
+  (let
+    [symbols : OptDsTestSymbols (opt-ds-test-symbols)]
+    [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [globals : ir.CompilerIrGlobalSeq (opt-ds-test-globals symbols)]
+    [writer : ir.CompilerIrFunction (opt-ds-test-writer symbols)]
+    [reader : ir.CompilerIrFunction (opt-ds-test-reader symbols)]
+    [main-fn : ir.CompilerIrFunction (opt-ds-test-main symbols)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& writer)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& reader)
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& main-fn)
+                (& (ir.compiler-ir-function-seq-empty)))))))]
+    ;; `ds_exported` carries the only export marker IR has: a `provided`
+    ;; extern entry under its own name.
+    [externs : ir.CompilerIrExternSeq
+      (let
+        [builder : ir.CompilerIrExternBuilder
+          (ir.compiler-ir-extern-builder-with-capacity 1)]
+        (ir.compiler-ir-extern-builder-push!
+          (&mut builder)
+          (opt-mod-ref-test-extern symbols.exported symbols.exported true))
+        (ir.compiler-ir-extern-builder-snapshot-seq (& builder)))]
+    [pruned : opt.OptPrunedProgram
+      (opt.opt-prune-unreachable-program
+        type-segment-bases
+        globals
+        functions
+        (& externs)
+        false
+        true)]
+    [kept-globals : ir.CompilerIrGlobalSeq
+      (opt.opt-pruned-program-globals (& pruned))]
+    [kept-functions : ir.CompilerIrFunctionSeq
+      (opt.opt-pruned-program-functions pruned)]
+    ;; The read lives ONLY in a function, so the walk has to see it either in
+    ;; the callee or, after inlining, in the caller that took the body over;
+    ;; the level-2 inliner really moves the `Global` operand, and the store the
+    ;; caller itself performs must survive both spellings.
+    [probe : ir.CompilerIrFunction
+      (Function
+        symbols.probe
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        8
+        (ir.compiler-ir-blocks
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "entry")
+            (opt-test-instrs
+              (ir.CompilerIrInstr.Mov 1 (Global symbols.read) (I64))
+              (ir.CompilerIrInstr.Return (Some (Var 1))))))
+        Ordinary)]
+    [inline-main : ir.CompilerIrFunction
+      (Function
+        symbols.main
+        (ir.compiler-ir-param-seq-empty)
+        (I64)
+        8
+        (ir.compiler-ir-blocks
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "entry")
+            (opt-test-instrs
+              (ir.CompilerIrInstr.Store symbols.read (I64 2) (I64))
+              (irt.instr "%2 = call ds_probe() : i64")
+              (ir.CompilerIrInstr.Return (Some (Var 2))))))
+        Ordinary)]
+    [inline-module : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& inline-main)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& probe)
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [caller-uses-before : i64
+      (opt-ds-test-global-uses (& inline-module) symbols.main symbols.read)]
+    [inlined : ir.CompilerIrFunctionSeq
+      (opt-test-inline-program-functions type-segment-bases inline-module 2)]
+    [inlined-pruned : opt.OptPrunedProgram
+      (opt.opt-prune-unreachable-program
+        type-segment-bases
+        (opt-ds-test-globals symbols)
+        inlined
+        (& (ir.compiler-ir-extern-seq-empty))
+        false
+        true)]
+    [inlined-functions : ir.CompilerIrFunctionSeq
+      (opt.opt-pruned-program-functions inlined-pruned)]
+    (cond
+      ;; the store-only cell and its stores are gone
+      [(opt-ds-test-global-defines? (& kept-globals) symbols.store-only) 1]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& kept-functions)
+              symbols.writer
+              symbols.store-only)
+            0))
+        2]
+      ;; the definition the dropped store was the only user of is dead too
+      [(not (= (opt-ds-test-var-defs (& kept-functions) symbols.writer 9) 0)) 3]
+      ;; a `Global` read keeps the cell and its store
+      [(not (opt-ds-test-global-defines? (& kept-globals) symbols.read)) 4]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& kept-functions)
+              symbols.writer
+              symbols.read)
+            1))
+        5]
+      ;; a read that ONLY a `Load` performs is a read
+      [(not (opt-ds-test-global-defines? (& kept-globals) symbols.load)) 6]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& kept-functions)
+              symbols.writer
+              symbols.load)
+            1))
+        7]
+      ;; a provided extern entry names the symbol: kept
+      [(not (opt-ds-test-global-defines? (& kept-globals) symbols.exported)) 8]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& kept-functions)
+              symbols.writer
+              symbols.exported)
+            1))
+        9]
+      ;; `(& g)` and a store through it: kept
+      [(not (opt-ds-test-global-defines? (& kept-globals) symbols.addressed))
+        10]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& kept-functions)
+              symbols.writer
+              symbols.addressed)
+            1))
+        11]
+      [(not (opt-ds-test-global-defines? (& kept-globals) symbols.pointer)) 12]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& kept-functions)
+              symbols.writer
+              symbols.pointer)
+            1))
+        13]
+      ;; an address held by another global's initializer is an escape too
+      [(not
+          (opt-ds-test-global-defines?
+            (& kept-globals)
+            symbols.initializer-addr))
+        14]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& kept-functions)
+              symbols.writer
+              symbols.initializer-addr)
+            1))
+        15]
+      [(not (= caller-uses-before 0)) 16]
+      ;; a read inside a callee the inliner moved into the caller still keeps
+      ;; the caller's own store
+      [(opt.opt-function-seq-defines? (& inlined-functions) "ds_probe") 17]
+      [(not
+          (=
+            (opt-ds-test-store-count
+              (& inlined-functions)
+              symbols.main
+              symbols.read)
+            1))
+        18]
+      [else 42])))

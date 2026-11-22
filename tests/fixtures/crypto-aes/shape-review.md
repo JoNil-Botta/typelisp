@@ -207,3 +207,17 @@ line is a `movq`/`movl`/`movups`/`set*` store whose destination is a
 `N(%rsp)` slot, and no remaining line in that body reads that slot. Every
 branch, call, table reference, address form and wipe instruction is
 byte-identical, so the fixed-work and wipe properties above are unchanged.
+
+## Linux opt2 private argument entries
+
+The Linux opt2 AES and GCM pins include each private entry called by an audited
+function or falling through into one. Each entry pin covers the register copy
+and the ordinary label it reaches. The GCM open-path order check resolves the
+private entries to those labels.
+
+For both audit programs, moving each copy back to its original call site and
+restoring the original target reproduced the main-branch assembly exactly.
+This comparison covered the complete emitted programs, including the round
+loops, address operands, and final wipes. There were 22 retargeted calls in the
+AES audit and 36 in GCM. The other target and optimization pairs retain their
+existing pins.

@@ -49735,14 +49735,25 @@
 ;; two branches instead of one per link, and no per-link compare. This is the
 ;; bit-test cluster a C compiler forms from the same source.
 ;;
-;; The rewrite only replaces the chain head's terminator: the remaining link
-;; blocks are no longer reachable through it and drop out with the reachability
-;; filter, so a link some other edge still enters keeps working unchanged and no
-;; phi predecessor moves. Link blocks must therefore be pure -- their own
-;; compare plus their branch, nothing else -- and every link must test the same
-;; var, which is what makes dropping the path they describe sound. Windows wider
-;; than 64, chains shorter than the profitability floor, mixed test values and
-;; side-effecting links are refused rather than split.
+;; The floor leaves one shape unclaimed, and it is the commonest one: a single
+;; two-sided range, `(and (>= v lo) (<= v hi))` or its complement
+;; `(or (< v lo) (> v hi))`. That is two test blocks and one guard, with no
+;; window left to mask -- clang emits `(v - lo) <u (hi - lo + 1)` -- so it is
+;; worth folding at two links, and the guard is the one the whole-window run
+;; below already emits: `d = v - lo` read unsigned against `hi - lo`. `or` is
+;; the same pair with both tests negated (`Lt` reads as `Ge`, `Le` as `Gt`) and
+;; both branch senses swapped, so one reader and one normalization cover both
+;; spellings: the fold is `d <=u hi - lo` to the inner block's remaining exit,
+;; and the emitted instruction is the same either way.
+;;
+;; The head is KEPT -- only its terminator changes -- so it may carry the bounds
+;; check, load or call that produced the tested value, and a compare value
+;; numbering reused from a dominator; what it may not do is redefine that value
+;; after the compare. The second block is dropped, so it must hold only its
+;; test. Both tests are signed compares on one i64 value and the range is
+;; `lo <= hi` in signed order; both bounds have passed `opt-bit-test-bound-ok?`,
+;; so `hi - lo` is exact and the unsigned compare is the same test as clang's.
+;;
 ;; Two branches plus a subtract, a range compare, a shift and a mask test cost
 ;; about as much as three tests taken in sequence, and a refused chain costs
 ;; nothing, so the floor sits where the average walk of the chain being replaced
@@ -49762,6 +49773,19 @@
 ;; masked offset.
 (define (opt-bit-test-plan-vars) : i64
   6)
+
+;; A two-sided range pair introduces only its offset and its guard.
+(define (opt-bit-test-range-plan-vars) : i64
+  2)
+
+;; What a plan's guard covers: a window mask run, or the two-sided range pair,
+;; which is the same `d = v - lo; d <=u hi - lo` guard with no window left to
+;; mask because the pair covers all of it.
+(define (opt-bit-test-plan-mask-kind) : i64
+  0)
+
+(define (opt-bit-test-plan-range-kind) : i64
+  1)
 
 (define (opt-bit-test-window-width) : i64
   64)
@@ -49799,6 +49823,36 @@
 
 (define (opt-bit-test-lower-kind? [kind : i64]) : bool
   (or (= kind 4) (= kind 5)))
+
+;; The inclusive bounds a lower-bound test and an upper-bound test spell, in
+;; either order: a test that excludes its own bound (`>` and `<`) moves it
+;; inward by one. Every bound has passed `opt-bit-test-bound-ok?` and `lo <= hi`
+;; is checked by each caller, so neither difference can leave i64.
+(define (opt-bit-test-range-lo
+  [kind : i64]
+  [bound : i64]
+  [other-kind : i64]
+  [other-bound : i64]) : i64
+  (if (opt-bit-test-lower-kind? kind)
+    (if (= kind 4)
+      (+ bound 1)
+      bound)
+    (if (= other-kind 4)
+      (+ other-bound 1)
+      other-bound)))
+
+(define (opt-bit-test-range-hi
+  [kind : i64]
+  [bound : i64]
+  [other-kind : i64]
+  [other-bound : i64]) : i64
+  (if (opt-bit-test-upper-kind? kind)
+    (if (= kind 2)
+      (- bound 1)
+      bound)
+    (if (= other-kind 2)
+      (- other-bound 1)
+      other-bound)))
 
 (define (opt-bit-test-upper-kind? [kind : i64]) : bool
   (or (= kind 2) (= kind 3)))
@@ -50004,13 +50058,72 @@
               [(Phi _ _ _) false]
               [_ true]))])]))
 
+;; A compare's result has to be read by its own branch alone: a var read
+;; anywhere else would keep a dropped block's value live.
+(define (opt-bit-test-single-use?
+  [uses : (& uses (__tl_dyn-array i64))]
+  [var : i64]) : bool
+  (and (>= var 0) (< var (array-length uses)) (= (array-ref uses var) 1)))
+
+;; Whether some instruction ahead of the terminator defines `var`. Callers use
+;; it to find a block's own test; `-1` asks for nothing, since no instruction
+;; defines it.
+(define (opt-bit-test-defines?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [var : i64]) : bool
+  (if (>= index stop)
+    false
+    (if (=
+      (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-borrow instrs index))
+      var)
+      true
+      (opt-bit-test-defines? instrs (+ index 1) stop var))))
+
+;; Every instruction ahead of a block's terminator is effect-free and, unless it
+;; is the one test the block is kept for, defines nothing anyone reads. A phi is
+;; never droppable: it reads its inputs by predecessor label, so it belongs to
+;; the block it opens. Lowering leaves the literal `mov`s its compare already
+;; reads by value behind, and DCE has not run yet here, so they are still in the
+;; block.
+(define (opt-bit-test-droppable?
+  [uses : (& uses (__tl_dyn-array i64))]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [cond-var : i64]) : bool
+  (if (>= index stop)
+    true
+    (let
+      [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+      [dst : i64 (ir.compiler-ir-instr-dst instr)]
+      (if (and
+        (opt-flag-exit-pure-instr? instr)
+        (match instr
+          [(Phi _ _ _) false]
+          [_ true])
+        (or
+          (and (>= cond-var 0) (= dst cond-var))
+          (and
+            (>= dst 0)
+            (< dst (array-length uses))
+            (= (array-ref uses dst) 0))))
+        (opt-bit-test-droppable? uses instrs (+ index 1) stop cond-var)
+        false))))
+
 ;; Forwarding is followed only while the block behind it does not open with a
 ;; phi: a phi reads its input by predecessor label, so the last forwarding block
-;; ahead of a merge is where an edge has to keep landing.
+;; ahead of a merge is where an edge has to keep landing. `loose?` also follows
+;; a block that computes dead values and jumps -- the `mov false; jump join` arm
+;; lowering gives each side of an `and`/`or` -- where a chain link only follows
+;; a block that holds nothing but its jump.
 (define (opt-bit-test-resolve-label
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [label : i64]
-  [hops : i64]) : i64
+  [hops : i64]
+  [loose? : bool]) : i64
   (if (<= hops 0)
     label
     (match (opt-cfg-index-find-block index label)
@@ -50018,14 +50131,33 @@
       [(Some block)
         (match block
           [(Block _ instrs)
-            (if (= (ir.compiler-ir-instr-seq-count instrs) 1)
-              (match (ir.compiler-ir-instr-seq-borrow instrs 0)
-                [(Jump next)
-                  (if (opt-bit-test-block-phi-free? index next)
-                    (opt-bit-test-resolve-label index next (- hops 1))
-                    label)]
-                [_ label])
-              label)])])))
+            (let
+              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              (if (= count 0)
+                label
+                (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
+                  [(Jump next)
+                    (let
+                      [forward? : bool
+                        (if loose?
+                          (opt-bit-test-droppable?
+                            uses
+                            (& instrs)
+                            0
+                            (- count 1)
+                            (- 0 1))
+                          (= count 1))]
+                      (if (and
+                        forward?
+                        (opt-bit-test-block-phi-free? index next))
+                        (opt-bit-test-resolve-label
+                          uses
+                          index
+                          next
+                          (- hops 1)
+                          loose?)
+                        label))]
+                  [_ label])))])])))
 
 (define (opt-bit-test-ones [width : i64]) : i64
   (if (>= width 64)
@@ -50041,6 +50173,7 @@
 ;; the upper-bound block and whose false edge is the chain's continuation; the
 ;; upper-bound block shares that continuation. Either bound may come first.
 (define (opt-bit-test-parse-range-link
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [value-var : i64]
@@ -50060,9 +50193,11 @@
             [inner-bound : i64 (opt-bit-test-fact-bound facts inner-cond)]
             [inner-next : i64
               (opt-bit-test-resolve-label
+                uses
                 index
                 inner-no
-                (opt-bit-test-max-hops))]
+                (opt-bit-test-max-hops)
+                false)]
             [paired? : bool
               (and
                 inner-pure?
@@ -50076,22 +50211,8 @@
                   (and
                     (opt-bit-test-upper-kind? kind)
                     (opt-bit-test-lower-kind? inner-kind))))]
-            [lo : i64
-              (if (opt-bit-test-lower-kind? kind)
-                (if (= kind 4)
-                  (+ bound 1)
-                  bound)
-                (if (= inner-kind 4)
-                  (+ inner-bound 1)
-                  inner-bound))]
-            [hi : i64
-              (if (opt-bit-test-upper-kind? kind)
-                (if (= kind 2)
-                  (- bound 1)
-                  bound)
-                (if (= inner-kind 2)
-                  (- inner-bound 1)
-                  inner-bound))]
+            [lo : i64 (opt-bit-test-range-lo kind bound inner-kind inner-bound)]
+            [hi : i64 (opt-bit-test-range-hi kind bound inner-kind inner-bound)]
             (if (and
               paired?
               (<= lo hi)
@@ -50101,13 +50222,16 @@
                 hi
                 (opt-bit-test-ones (+ (- hi lo) 1))
                 (opt-bit-test-resolve-label
+                  uses
                   index
                   inner-yes
-                  (opt-bit-test-max-hops))
+                  (opt-bit-test-max-hops)
+                  false)
                 next)
               (No)))])]))
 
 (define (opt-bit-test-parse-link
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [value-var : i64]
@@ -50125,9 +50249,19 @@
             [fact-var : i64 (opt-bit-test-fact-value facts cond-var)]
             [bound : i64 (opt-bit-test-fact-bound facts cond-var)]
             [true-label : i64
-              (opt-bit-test-resolve-label index yes (opt-bit-test-max-hops))]
+              (opt-bit-test-resolve-label
+                uses
+                index
+                yes
+                (opt-bit-test-max-hops)
+                false)]
             [next : i64
-              (opt-bit-test-resolve-label index no (opt-bit-test-max-hops))]
+              (opt-bit-test-resolve-label
+                uses
+                index
+                no
+                (opt-bit-test-max-hops)
+                false)]
             (if (or
               (and (not head?) (not pure?))
               (= kind 0)
@@ -50136,6 +50270,7 @@
               (if (= kind 1)
                 (Some bound bound 1 true-label next)
                 (opt-bit-test-parse-range-link
+                  uses
                   index
                   facts
                   value-var
@@ -50185,6 +50320,7 @@
   (Some i64 i64))
 
 (define (opt-bit-test-collect-chain
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
@@ -50206,6 +50342,7 @@
     [walking? : bool true]
     (while (and walking? (< count limit))
       (match (opt-bit-test-parse-link
+        uses
         index
         facts
         value-var
@@ -50330,12 +50467,14 @@
   (masks (__tl_dyn-array i64))
   (trues (__tl_dyn-array i64))
   (falses (__tl_dyn-array i64))
+  (kinds (__tl_dyn-array i64))
   (used (__tl_dyn-array i64)))
 
 (define (opt-bit-test-plans-new) : OptBitTestPlans
   (let
     [size : i64 (opt-bit-test-max-plans)]
     (OptBitTestPlans
+      (__tl_make-array i64 size)
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
@@ -50350,6 +50489,7 @@
 
 (define (opt-bit-test-plans-add!
   [plans : OptBitTestPlans]
+  [kind : i64]
   [head : i64]
   [value-var : i64]
   [base : i64]
@@ -50368,7 +50508,38 @@
       (set! (array-ref plans.masks slot) mask)
       (set! (array-ref plans.trues slot) true-label)
       (set! (array-ref plans.falses slot) false-label)
+      (set! (array-ref plans.kinds slot) kind)
       (set! (array-ref plans.used 0) (+ slot 1)))))
+
+(define (opt-bit-test-plan-vars-of
+  [plans : (& plans OptBitTestPlans)]
+  [slot : i64]) : i64
+  (if (= (array-ref plans.kinds slot) (opt-bit-test-plan-range-kind))
+    (opt-bit-test-range-plan-vars)
+    (opt-bit-test-plan-vars)))
+
+;; Plans reserve their own vars in slot order, so a range pair's two do not
+;; leave a mask run's four unused ids behind. `stop` plans are counted.
+(define (opt-bit-test-plans-frame-upto
+  [plans : (& plans OptBitTestPlans)]
+  [frame : i64]
+  [stop : i64]) : i64
+  (let
+    [next : i64 frame]
+    (for [slot (iterator.range 0 stop)]
+      (+= next (opt-bit-test-plan-vars-of plans slot)))
+    next))
+
+(define (opt-bit-test-plan-base
+  [plans : (& plans OptBitTestPlans)]
+  [slot : i64]
+  [frame : i64]) : i64
+  (opt-bit-test-plans-frame-upto plans frame slot))
+
+(define (opt-bit-test-plans-frame
+  [plans : (& plans OptBitTestPlans)]
+  [frame : i64]) : i64
+  (opt-bit-test-plans-frame-upto plans frame (opt-bit-test-plans-count plans)))
 
 (define (opt-bit-test-plans-slot
   [plans : (& plans OptBitTestPlans)]
@@ -50418,6 +50589,7 @@
 ;; beside it, a run of range links, and a chain too sparse for a table keep
 ;; the bit test.
 (define (opt-bit-test-run-inside-table-chain?
+  [uses : (& uses (__tl_dyn-array i64))]
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
@@ -50448,6 +50620,7 @@
         ;; Forward: equality links after the run's false edge.
         (while (and walking? (< steps (opt-bit-test-max-links)))
           (match (opt-bit-test-parse-link
+            uses
             index
             facts
             value-var
@@ -50477,6 +50650,7 @@
                 [pred : i64 (opt-label-ref preds 0)]
                 [pure : OptBitTestMaybeLink
                   (opt-bit-test-parse-link
+                    uses
                     index
                     facts
                     value-var
@@ -50487,6 +50661,7 @@
                   (match (& pure)
                     [(No)
                       (opt-bit-test-parse-link
+                        uses
                         index
                         facts
                         value-var
@@ -50515,11 +50690,305 @@
           (> outside 0)
           (opt-switch-span-admissible? (+ length outside) (+ (- high low) 1)))))))
 
+(defenum OptBitTestRangePair
+  (No)
+  ;; lo, hi, in-range target, out-of-range target
+  (Some i64 i64 i64 i64))
+
+;; `or` over two bounds of one value is `and` over their negations: `Lt` reads as
+;; `Ge` and `Le` as `Gt`, which is `7 - kind` for the four ordered kinds, and both
+;; branch senses swap with it. Reading the `or` form that way lets one reader and
+;; one bound normalization serve both spellings.
+(define (opt-bit-test-flip-kind [kind : i64]) : i64
+  (- 7 kind))
+
+;; One past the instruction defining `var`, or -1 when this block is not where
+;; the head's compare lives -- value numbering reuses a compare from a dominating
+;; block, and the block's own instructions are then all after it.
+(define (opt-bit-test-compare-end
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [var : i64]) : i64
+  (if (>= index stop)
+    (- 0 1)
+    (if (=
+      (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-borrow instrs index))
+      var)
+      (+ index 1)
+      (opt-bit-test-compare-end instrs (+ index 1) stop var))))
+
+(define (opt-bit-test-no-def-range?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [stop : i64]
+  [var : i64]) : bool
+  (if (>= index stop)
+    true
+    (if (=
+      (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-borrow instrs index))
+      var)
+      false
+      (opt-bit-test-no-def-range? instrs (+ index 1) stop var))))
+
+;; The rewrite keeps the whole head and replaces only its terminator, so the
+;; value the pair tests must still be the one the head's compare read: nothing
+;; after that compare may redefine it. An effect ahead of the test is fine --
+;; bounds checks, loads and calls stay where they are.
+(define (opt-bit-test-head-keeps-value?
+  [block : (& ir.CompilerIrBlock)]
+  [cond-var : i64]
+  [value-var : i64]) : bool
+  (match block
+    [(Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [end : i64 (opt-bit-test-compare-end (& instrs) 0 (- count 1) cond-var)]
+        (opt-bit-test-no-def-range?
+          (& instrs)
+          (if (< end 0)
+            0
+            end)
+          (- count 1)
+          value-var))]))
+
+;; One test bounds below, the other above; two bounds on the same side are not a
+;; range and are left to whatever folds them.
+(define (opt-bit-test-paired-bound? [kind : i64] [other : i64]) : bool
+  (if (opt-bit-test-lower-kind? kind)
+    (opt-bit-test-upper-kind? other)
+    (opt-bit-test-lower-kind? other)))
+
+;; A block the pair drops may hold only the test it is dropped for: it must
+;; define that compare here, read it nowhere else, and define nothing else
+;; anyone reads.
+(define (opt-bit-test-block-dropped-only?
+  [uses : (& uses (__tl_dyn-array i64))]
+  [block : (& ir.CompilerIrBlock)]
+  [cond-var : i64]) : bool
+  (and
+    (opt-bit-test-single-use? uses cond-var)
+    (match block
+      [(Block _ instrs)
+        (let
+          [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+          (and
+            (opt-bit-test-defines? (& instrs) 0 (- count 1) cond-var)
+            (opt-bit-test-droppable? uses (& instrs) 0 (- count 1) cond-var)))])))
+
+;; The pair's inclusive bounds, `No` when they disagree: a pair whose bounds are
+;; ordered the other way admits nothing and would fold to one edge. Every bound
+;; has passed `opt-bit-test-bound-ok?`, so neither difference can leave i64.
+(define (opt-bit-test-range-bounds
+  [kind : i64]
+  [bound : i64]
+  [inner-kind : i64]
+  [inner-bound : i64]
+  [in-range : i64]
+  [out-range : i64]) : OptBitTestRangePair
+  (let
+    [lo : i64 (opt-bit-test-range-lo kind bound inner-kind inner-bound)]
+    [hi : i64 (opt-bit-test-range-hi kind bound inner-kind inner-bound)]
+    (if (> lo hi)
+      (No)
+      (Some lo hi in-range out-range))))
+
+;; The `or` reading of the same two blocks, once an `and` reading has failed.
+(define (opt-bit-test-range-retry
+  [uses : (& uses (__tl_dyn-array i64))]
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptBitTestCompareFacts)]
+  [value-var : i64]
+  [kind : i64]
+  [bound : i64]
+  [yes : i64]
+  [no : i64]
+  [flip? : bool]) : OptBitTestRangePair
+  (if flip?
+    (No)
+    (opt-bit-test-range-try uses index facts value-var kind bound yes no true)))
+
+;; The pair as two tests of one value. `inner-label` is the block the head
+;; continues to and `shared` the exit both blocks leave on: the `and` form
+;; continues on the head's true edge and shares the inner block's false one, the
+;; `or` form on the other side of both, which is the same pair with its kinds
+;; negated.
+(define (opt-bit-test-range-try
+  [uses : (& uses (__tl_dyn-array i64))]
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptBitTestCompareFacts)]
+  [value-var : i64]
+  [kind : i64]
+  [bound : i64]
+  [yes : i64]
+  [no : i64]
+  [flip? : bool]) : OptBitTestRangePair
+  (let
+    [inner-label : i64
+      (opt-bit-test-resolve-label
+        uses
+        index
+        (if flip?
+          no
+          yes)
+        (opt-bit-test-max-hops)
+        true)]
+    [shared : i64
+      (opt-bit-test-resolve-label
+        uses
+        index
+        (if flip?
+          yes
+          no)
+        (opt-bit-test-max-hops)
+        true)]
+    [test-kind : i64
+      (if flip?
+        (opt-bit-test-flip-kind kind)
+        kind)]
+    (match (opt-cfg-index-find-block index inner-label)
+      [(No)
+        (opt-bit-test-range-retry
+          uses
+          index
+          facts
+          value-var
+          kind
+          bound
+          yes
+          no
+          flip?)]
+      [(Some block)
+        (match (opt-bit-test-block-branch (& block) false)
+          [(No)
+            (opt-bit-test-range-retry
+              uses
+              index
+              facts
+              value-var
+              kind
+              bound
+              yes
+              no
+              flip?)]
+          [(Some inner-cond inner-yes inner-no _)
+            (let
+              [inner-kind : i64
+                (if flip?
+                  (opt-bit-test-flip-kind
+                    (opt-bit-test-fact-kind facts inner-cond))
+                  (opt-bit-test-fact-kind facts inner-cond))]
+              [inner-var : i64 (opt-bit-test-fact-value facts inner-cond)]
+              [inner-bound : i64 (opt-bit-test-fact-bound facts inner-cond)]
+              [inner-shared : i64
+                (opt-bit-test-resolve-label
+                  uses
+                  index
+                  (if flip?
+                    inner-yes
+                    inner-no)
+                  (opt-bit-test-max-hops)
+                  true)]
+              [in-range : i64
+                (opt-bit-test-resolve-label
+                  uses
+                  index
+                  (if flip?
+                    inner-no
+                    inner-yes)
+                  (opt-bit-test-max-hops)
+                  true)]
+              (if (or
+                (< inner-kind 2)
+                (!= inner-var value-var)
+                (not (opt-bit-test-paired-bound? test-kind inner-kind))
+                (not
+                  (opt-bit-test-block-dropped-only? uses (& block) inner-cond))
+                (!= inner-shared shared)
+                (= in-range shared)
+                (= in-range inner-label))
+                (opt-bit-test-range-retry
+                  uses
+                  index
+                  facts
+                  value-var
+                  kind
+                  bound
+                  yes
+                  no
+                  flip?)
+                (opt-bit-test-range-bounds
+                  test-kind
+                  bound
+                  inner-kind
+                  inner-bound
+                  in-range
+                  shared)))])])))
+
+;; A two-sided range test on one value with literal bounds is two test blocks
+;; and folds to one unsigned range compare. The pair's guard is the one a
+;; whole-window run emits, so this is a plan (of the range kind) rather than a
+;; rewrite of its own.
+(define (opt-bit-test-plan-range!
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptBitTestCompareFacts)]
+  [uses : (& uses (__tl_dyn-array i64))]
+  [plans : OptBitTestPlans]
+  [skip : OptLabelSet]
+  [block : (& ir.CompilerIrBlock)]) : OptLabelSet
+  (match block
+    [(Block head-label _)
+      (match (opt-bit-test-block-branch block false)
+        [(No) skip]
+        [(Some head-cond yes no _)
+          (let
+            [kind : i64 (opt-bit-test-fact-kind facts head-cond)]
+            [value-var : i64 (opt-bit-test-fact-value facts head-cond)]
+            [bound : i64 (opt-bit-test-fact-bound facts head-cond)]
+            (if (or
+              (< kind 2)
+              (< value-var 0)
+              (not (opt-bit-test-head-keeps-value? block head-cond value-var)))
+              skip
+              (match (opt-bit-test-range-try
+                uses
+                index
+                facts
+                value-var
+                kind
+                bound
+                yes
+                no
+                false)
+                [(No) skip]
+                [(Some lo hi in-range out-range)
+                  (if (or
+                    (= in-range head-label)
+                    (= out-range head-label)
+                    (not (opt-bit-test-block-phi-free? index in-range))
+                    (not (opt-bit-test-block-phi-free? index out-range)))
+                    skip
+                    (begin
+                      (opt-bit-test-plans-add!
+                        plans
+                        (opt-bit-test-plan-range-kind)
+                        head-label
+                        value-var
+                        lo
+                        (- hi lo)
+                        0
+                        in-range
+                        out-range)
+                      (opt-label-add skip head-label)))])))])]))
+
+;; A classifier chain over one value, when its leading run is long enough to pay
+;; for a mask. Returns `skip` with the chain's labels added when it plans.
 (define (opt-bit-test-plan-head!
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
   [plans : OptBitTestPlans]
+  [uses : (& uses (__tl_dyn-array i64))]
   [skip : OptLabelSet]
   [block : (& ir.CompilerIrBlock)]) : OptLabelSet
   (match block
@@ -50531,12 +51000,14 @@
           (if (< value-var 0)
             skip
             (match (opt-bit-test-collect-chain
+              uses
               index
               facts
               chain
               value-var
               head-label)
-              [(No) skip]
+              [(No)
+                (opt-bit-test-plan-range! index facts uses plans skip block)]
               [(Some count true-label)
                 (let
                   [length : i64 (opt-bit-test-run-length chain count 0)]
@@ -50550,6 +51021,7 @@
                     (opt-bit-test-block-phi-free? index false-label)
                     (not
                       (opt-bit-test-run-inside-table-chain?
+                        uses
                         index
                         facts
                         chain
@@ -50562,6 +51034,7 @@
                       [top : i64 (opt-bit-test-run-top chain length)]
                       (opt-bit-test-plans-add!
                         plans
+                        (opt-bit-test-plan-mask-kind)
                         head-label
                         value-var
                         base
@@ -50570,13 +51043,14 @@
                         true-label
                         false-label)
                       (opt-bit-test-skip-links chain length skip))
-                    skip))]))))]))
+                    (opt-bit-test-plan-range! index facts uses plans skip block)))]))))]))
 
 (define (opt-bit-test-plan-blocks!
   [index : (& index OptCfgIndex)]
   [facts : (& facts OptBitTestCompareFacts)]
   [chain : (& chain OptBitTestChain)]
   [plans : OptBitTestPlans]
+  [uses : (& uses (__tl_dyn-array i64))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [skip : OptLabelSet]) : unit
   (match blocks
@@ -50587,8 +51061,9 @@
         facts
         chain
         (compiler-opt-global-shared-view plans)
+        uses
         rest
-        (opt-bit-test-plan-head! index facts chain plans skip block))]))
+        (opt-bit-test-plan-head! index facts chain plans uses skip block))]))
 
 (define (opt-bit-test-candidate-label [head : i64] [suffix : i64]) : i64
   (ir.compiler-ir-label
@@ -50635,6 +51110,10 @@
       (let
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [prefix-end : i64 (- count 1)]
+        ;; A base of zero subtracts nothing: the guard reads the value itself,
+        ;; which the backend would otherwise emit as a register move per test.
+        ;; A mask block still needs the offset, so a masked run keeps the Sub.
+        [offset? : bool (or mask? (!= base 0))]
         [builder : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity (+ count 3))]
         (ir.compiler-ir-instr-builder-append-seq-range!
@@ -50647,20 +51126,24 @@
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Mov mask-var (I64 mask) (U64))))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (ir.CompilerIrInstr.BinOp
-            offset-var
-            (Sub)
-            (Var value-var)
-            (I64 base)
-            (U64)))
+        (when
+          offset?
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.BinOp
+              offset-var
+              (Sub)
+              (Var value-var)
+              (I64 base)
+              (U64))))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.BinOp
             guard-var
             (Le)
-            (Var offset-var)
+            (if offset?
+              (Var offset-var)
+              (Var value-var))
             (I64 width)
             (U64)))
         (ir.compiler-ir-instr-builder-push!
@@ -50729,13 +51212,28 @@
                   (owned_view.compiler-owned-reference-shared-view block))
                 (opt-bit-test-rewrite-blocks! out rest all-blocks plans frame))
               (let
-                [mask-label : i64 (opt-bit-test-fresh-label all-blocks label 0)]
-                [first-var : i64 (+ frame (* slot (opt-bit-test-plan-vars)))]
+                [mask-run? : bool
+                  (= (array-ref plans.kinds slot) (opt-bit-test-plan-mask-kind))]
                 [mask? : bool
-                  (not
-                    (opt-bit-test-mask-full?
-                      (array-ref plans.masks slot)
-                      (array-ref plans.widths slot)))]
+                  (and
+                    mask-run?
+                    (not
+                      (opt-bit-test-mask-full?
+                        (array-ref plans.masks slot)
+                        (array-ref plans.widths slot))))]
+                [first-var : i64 (opt-bit-test-plan-base plans slot frame)]
+                ;; A mask run reserves the mask, offset and guard in that order;
+                ;; a range pair has no mask, so its guard is its whole test and
+                ;; branches straight to its in-range target.
+                [offset-var : i64
+                  (if mask-run?
+                    (+ first-var 1)
+                    first-var)]
+                [guard-var : i64 (+ offset-var 1)]
+                [guard-target : i64
+                  (if mask?
+                    (opt-bit-test-fresh-label all-blocks label 0)
+                    (array-ref plans.trues slot))]
                 (ir.compiler-ir-block-builder-push!
                   out
                   (opt-bit-test-rewrite-head
@@ -50745,19 +51243,17 @@
                     (array-ref plans.widths slot)
                     (array-ref plans.masks slot)
                     (array-ref plans.falses slot)
-                    (if mask?
-                      mask-label
-                      (array-ref plans.trues slot))
+                    guard-target
                     mask?
                     first-var
-                    (+ first-var 1)
-                    (+ first-var 2)))
+                    offset-var
+                    guard-var))
                 (when
                   mask?
                   (ir.compiler-ir-block-builder-push!
                     out
                     (opt-bit-test-mask-block
-                      mask-label
+                      guard-target
                       (array-ref plans.trues slot)
                       (array-ref plans.falses slot)
                       first-var
@@ -50781,10 +51277,14 @@
         [_ false])]
     [_ false]))
 
-;; Cheap pre-scan: a chain link is a two-instruction block whose compare tests a
-;; var against an i64 literal and whose branch reads that compare. A function
-;; without at least the profitability floor's worth of them cannot hold a
-;; convertible chain.
+;; Cheap pre-scan, without an index: collect the labels of the function's
+;; link-shaped blocks -- a two-instruction block whose compare tests a var
+;; against an i64 literal and whose branch reads that compare -- and ask whether
+;; any terminator enters one. One entry per block, never the module's label
+;; count: this runs on every function. A pair needs exactly that, its head branching to
+;; its second test, and a chain has it by construction: a range link's true edge
+;; enters its second test, and an equality link's false edge enters a forwarding
+;; block that jumps to the next link.
 (define (opt-bit-test-block-is-link-shaped? [block : (& ir.CompilerIrBlock)]) : bool
   (match block
     [(Block _ instrs)
@@ -50804,22 +51304,73 @@
           [_ false])
         false)]))
 
-(define (opt-bit-test-count-link [seen : i64] [block : ir.CompilerIrBlock]) : i64
-  (if (opt-bit-test-block-is-link-shaped? (& block))
-    (+ seen 1)
-    seen))
+(define (opt-bit-test-mark-link-labels
+  [labels : (&mut labels (__tl_dyn-array i64))]
+  [count : i64]
+  [block : ir.CompilerIrBlock]) : i64
+  (match block
+    [(Block label _)
+      (if (opt-bit-test-block-is-link-shaped? (& block))
+        (begin
+          (set! (array-ref labels count) label)
+          (+ count 1))
+        count)]))
+
+(define (opt-bit-test-link-marked?
+  [labels : (& labels (__tl_dyn-array i64))]
+  [count : i64]
+  [label : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index count))
+      (if (= (array-ref labels index) label)
+        (set! found true)
+        unit)
+      (+= index 1))
+    found))
+
+(define (opt-bit-test-enters-link?
+  [labels : (& labels (__tl_dyn-array i64))]
+  [count : i64]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(Block label instrs)
+      (let
+        [instr-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (< instr-count 1)
+          false
+          (match (ir.compiler-ir-instr-seq-borrow instrs (- instr-count 1))
+            [(Branch _ yes no)
+              (or
+                (and
+                  (!= yes label)
+                  (opt-bit-test-link-marked? labels count yes))
+                (and (!= no label) (opt-bit-test-link-marked? labels count no)))]
+            [(Jump next)
+              (and
+                (!= next label)
+                (opt-bit-test-link-marked? labels count next))]
+            [_ false])))]))
 
 (define (opt-bit-test-blocks-have-candidate?
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [seen : i64]) : bool
-  (>=
-    (opt-blocks-fold-block blocks seen opt-bit-test-count-link)
-    (opt-bit-test-min-links)))
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
+  (let
+    [labels : (__tl_dyn-array i64)
+      (__tl_make-array i64 (ir.compiler-ir-block-list-count blocks))]
+    [start-count : i64 0]
+    [count : i64
+      (opt-blocks-fold-block
+        blocks
+        start-count
+        opt-bit-test-mark-link-labels
+        (&mut labels))]
+    (opt-blocks-any-block? blocks opt-bit-test-enters-link? (& labels) count)))
 
 (define (opt-bit-test-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ frame blocks _)
-      (if (not (opt-bit-test-blocks-have-candidate? blocks 0))
+      (if (not (opt-bit-test-blocks-have-candidate? blocks))
         (Result func false)
         (let
           [facts : OptBitTestCompareFacts
@@ -50827,12 +51378,15 @@
           [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
           [chain : OptBitTestChain (opt-bit-test-chain-new)]
           [plans : OptBitTestPlans (opt-bit-test-plans-new)]
+          [uses : (__tl_dyn-array i64)
+            (opt-collect-blocks-uses-array frame blocks)]
           [_planned : unit
             (opt-bit-test-plan-blocks!
               index
               facts
               chain
               (compiler-opt-global-shared-view plans)
+              uses
               (ir.compiler-ir-block-list-view blocks)
               (Nil))]
           [planned : i64 (opt-bit-test-plans-count plans)]
@@ -50852,7 +51406,7 @@
                           blocks
                           plans
                           frame)))
-                    (+ frame (* planned (opt-bit-test-plan-vars)))
+                    (opt-bit-test-plans-frame plans frame)
                     true)))))))]))
 
 (define (optimize-function-max-iterations) : i64

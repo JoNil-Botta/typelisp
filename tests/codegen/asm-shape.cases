@@ -221,7 +221,7 @@ source tests/integration/hoist_priority.tl
 in fn _tl_hoist_priority_spread
 count-fixed = 1 movabsq $-8543223828751151131
 count >= 3 ^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$
-count >= 1 ^[[:space:]]+movq \$26544357[0-9]+, %r
+count >= 1 ^[[:space:]]+movl \$26544357[0-9]+, %(e[a-z]+|r[0-9]+d)$
 in fn _tl_hoist_priority_tie
 count-fixed = 1 movabsq $3141592653589
 count-fixed = 2 movabsq $-8543223828751151131
@@ -289,10 +289,10 @@ match ^\.L[^ ]*_if_else\.[0-9.]+:$
 case wide-const-hoist
 source tests/integration/wide_const_hoist.tl
 in fn _tl_wide_const_hoist_wide_leaf
-count-fixed = 1 movabsq $2654435761
+count-fixed = 1 movl $2654435761
 count >= 2 ^[[:space:]]+(imulq|xorq) %r[a-z0-9]+, %r[a-z0-9]+$
 in fn _tl_wide_const_hoist_wide_call
-count-fixed = 2 movq $2654435761
+count-fixed = 2 movl $2654435761
 
 # A two-word call result lands directly in a caller-saved register pair.
 case group-pair-home
@@ -599,7 +599,7 @@ source tests/integration/checked_depth0_site.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_checked_depth0_site_probe
 not-match ^[[:space:]]+call _tl_checked_depth0_site_hash_words$
-match ^[[:space:]]+movq \$2166136261, %r
+match ^[[:space:]]+movl \$2166136261, %(e[a-z]+|r[0-9]+d)$
 match ^\.L[A-Za-z0-9_]+_inl\.
 in asm
 match ^_tl_checked_depth0_site_hash_words:$
@@ -624,7 +624,7 @@ source tests/integration/checked_cheap_tier_claim.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_checked_cheap_tier_claim_probe
 not-match ^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$
-match ^[[:space:]]+movq \$2166136261, %r
+match ^[[:space:]]+movl \$2166136261, %(e[a-z]+|r[0-9]+d)$
 not-match ^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$
 in asm
 count = 0 ^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$
@@ -1090,26 +1090,26 @@ match movb[ ]
 case mask-test-admission
 source tests/integration/bit_test_mask_admission.tl
 in fn _tl_bit_test_mask_admission_parity_set
-count = 1 ^[[:space:]]+testq [$]1, %r[a-z0-9]+$
-after ^[[:space:]]+testq [$]1, %r[a-z0-9]+$
+count = 1 ^[[:space:]]+testb [$]1, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
+after ^[[:space:]]+testb [$]1, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
 next-line ^[[:space:]]+je[ ]
-not-match ^[[:space:]]+andq [$]1, %r
-not-match ^[[:space:]]+cmpq [$]1, %r
+not-match ^[[:space:]]+and[bwlq] [$]1, %[a-z0-9]+$
+not-match ^[[:space:]]+cmp[bwlq] [$]1, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_bit3_clear
-count = 1 ^[[:space:]]+testq [$]8, %r[a-z0-9]+$
-after ^[[:space:]]+testq [$]8, %r[a-z0-9]+$
+count = 1 ^[[:space:]]+testb [$]8, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
+after ^[[:space:]]+testb [$]8, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
 next-line ^[[:space:]]+jne[ ]
-not-match ^[[:space:]]+andq [$]8, %r
+not-match ^[[:space:]]+and[bwlq] [$]8, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_pair_both_set
-match ^[[:space:]]+andq [$]3, %r
+match ^[[:space:]]+andl [$]3, %(e[a-z]+|r[0-9]+d)$
 match ^[[:space:]]+cmpq [$]3, %r
-not-match ^[[:space:]]+testq [$]3, %r
+not-match ^[[:space:]]+test[bwlq] [$]3, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_mismatched_const
-match ^[[:space:]]+andq [$]4, %r
+match ^[[:space:]]+andl [$]4, %(e[a-z]+|r[0-9]+d)$
 match ^[[:space:]]+cmpq [$]1, %r
-not-match ^[[:space:]]+testq [$]4, %r
+not-match ^[[:space:]]+test[bwlq] [$]4, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_mask_le
-match ^[[:space:]]+andq [$]1, %r
+match ^[[:space:]]+andl [$]1, %(e[a-z]+|r[0-9]+d)$
 match ^[[:space:]]+cmpq [$]1, %r
 in fn _tl_bit_test_mask_admission_dynamic_mask
 match ^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$

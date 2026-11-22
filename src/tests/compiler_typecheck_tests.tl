@@ -3203,6 +3203,9 @@
 (defenum EscapeResult
   (EscapeOk EscapePayload)
   (EscapeNone))
+(import stdlib.clone as clone_gen)
+(clone_gen.gen-clone EscapePayload)
+(clone_gen.gen-clone EscapeResult)
 (define (main) : EscapeResult
   (let
     [scratch : Arena (arena-make)]
@@ -3228,7 +3231,7 @@
   (let
     [scratch : Arena (arena-make)]
     (with-escape scratch inc)))")
-      "typecheck: with-escape result type is not clone-supported: (-> i64 i64)")))
+      "with-escape clone-out of (-> i64 i64): gen-clone: unsupported type fn_i64_nil_to_i64 at result")))
 
 ;; #8776: with-escape and with-scratch check their body under a region scoped
 ;; to the form, so a body allocation cannot outlive it through a store, a

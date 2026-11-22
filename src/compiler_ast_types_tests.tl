@@ -274,7 +274,8 @@
     [(Xgetbv _) 59]
     [(Syscall _) 60]
     [(ForeachActive _ _) 83]
-    [(LaneValue _) 84]))
+    [(LaneValue _) 84]
+    [(CloneOut _ _) 85]))
 
 (define (ast-decl-tag [decl : ast.AstDecl]) : i64
   (match decl

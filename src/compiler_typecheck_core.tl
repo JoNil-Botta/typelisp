@@ -78554,6 +78554,9 @@
         target-1
         target-2
         (tc-name-id-list-add bound (tc-env-key-source-id-or-neg session lane)))]
+    ;; The expansion prescan is this walk's only caller: a scratch form also
+    ;; needs expansion, for its clone-out step.
+    [(or (WithScratch _) (WithEscape _ _)) true]
     [_
       (tc-expr-list-uses-free-source-id?
         session
@@ -122448,6 +122451,39 @@
                     (box
                       (tc-expr-diag (tc-context-expr-bases ctx) body message)))]))))])))
 
+;; Expand a scratch FORM and give it its clone-out step, which reports at SPAN
+;; when given.
+(define (macro-expand-scratch-form
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [form : ast.AstExpr]
+  [span : TcMaybeAstSourceSpan]) : ResultMacroExpr
+  (match form
+    [(WithEscape scratch-box body)
+      (let
+        [nscratch (try (macro-expand-node ctx env decls depth scratch-box))]
+        [nbody (try (macro-expand-exprs ctx env decls depth body))]
+        (macro-expand-clone-out
+          ctx
+          env
+          decls
+          depth
+          (ast.ast-expr-with-escape nscratch nbody)
+          span))]
+    [(WithScratch body)
+      (let
+        [nbody (try (macro-expand-exprs ctx env decls depth body))]
+        (macro-expand-clone-out
+          ctx
+          env
+          decls
+          depth
+          (ast.ast-expr-with-scratch nbody)
+          span))]
+    [_ (Ok (ast.ast-node-push form))]))
+
 ;; The scratch BODY's type for choosing its clone-out step, errors dropped.
 ;; Expansion does not track the form's expected type; a body that only checks
 ;; against one, such as a bare variant constructor, is retried against the
@@ -122484,7 +122520,8 @@
   [env : TcTypeEnv]
   [decls : ast.AstDeclList]
   [depth : i64]
-  [form : i64]) : ResultMacroExpr
+  [form : i64]
+  [span : TcMaybeAstSourceSpan]) : ResultMacroExpr
   (let
     [form-name : String
       (match (tc-context-expr-get ctx form)
@@ -122494,13 +122531,16 @@
       (match (tc-context-expr-get ctx form)
         [(or (WithEscape _ body) (WithScratch body)) body]
         [_ (ast.ast-expr-list-new)])]
-    ;; The step reports at the form's first body expression.
+    ;; Without the form's span, the step reports at its first body expression.
     [first-span : TcMaybeAstSourceSpan
-      (if (> body.len 0)
-        (tc-expr-maybe-span
-          (tc-context-expr-bases ctx)
-          (tc-context-expr-get ctx (ast.ast-expr-list-get (& body) 0 0)))
-        (TcMaybeAstSourceSpan.No))]
+      (match span
+        [(Some _) span]
+        [(No)
+          (if (> body.len 0)
+            (tc-expr-maybe-span
+              (tc-context-expr-bases ctx)
+              (tc-context-expr-get ctx (ast.ast-expr-list-get (& body) 0 0)))
+            (TcMaybeAstSourceSpan.No))])]
     [name : i64 (tc-clone-out-result-name)]
     [result : i64 (ast.ast-node-push (Var name))]
     [body-ty : ResultTcType (tc-clone-out-body-type ctx env body)]
@@ -122880,7 +122920,19 @@
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
       (let
-        [ninner (try (macro-expand-node ctx env decls depth inner-box))]
+        [ninner
+          (try
+            (match (tc-context-expr-get ctx inner-box)
+              ;; A scratch form's clone-out step reports at the form.
+              [(or (WithEscape _ _) (WithScratch _))
+                (macro-expand-scratch-form
+                  ctx
+                  env
+                  decls
+                  depth
+                  (tc-context-expr-get ctx inner-box)
+                  (Some span))]
+              [_ (macro-expand-node ctx env decls depth inner-box)]))]
         (Ok (ast.ast-expr-spanned ninner span)))]
     ;; The code under an expansion node, or under a caller-origin marker, was
     ;; written in the node's origin file; a macro call there is invoked from it.
@@ -123295,25 +123347,8 @@
               depth
               body))]
         (Ok (ast.ast-node-push (WithRegion region nbody))))]
-    [(WithEscape scratch-box body)
-      (let
-        [nscratch (try (macro-expand-node ctx env decls depth scratch-box))]
-        [nbody (try (macro-expand-exprs ctx env decls depth body))]
-        (macro-expand-clone-out
-          ctx
-          env
-          decls
-          depth
-          (ast.ast-expr-with-escape nscratch nbody)))]
-    [(WithScratch body)
-      (let
-        [nbody (try (macro-expand-exprs ctx env decls depth body))]
-        (macro-expand-clone-out
-          ctx
-          env
-          decls
-          depth
-          (ast.ast-expr-with-scratch nbody)))]
+    [(or (WithEscape _ _) (WithScratch _))
+      (macro-expand-scratch-form ctx env decls depth expr No)]
     [(CloneOut form-box _) (macro-expand-node ctx env decls depth form-box)]
     [(InArena arena-box body)
       (let
@@ -128285,6 +128320,7 @@
   [unless-id : i64]) : bool
   ;; One walk matching both ids; per-Var comparison is the exact id form of
   ;; the two string-keyed walks it replaces (see tc-env-key-source-id-or-neg).
+  ;; A scratch form needs expansion too, for its clone-out step.
   (tc-expr-uses-free-source-id? session expr-bases expr when-id unless-id Nil))
 
 (define (macro-decl-needs-expansion?

@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-10445.725	Lowering reuses checked scalar binary types and guarded nominal resolutions, avoiding repeated type queries.

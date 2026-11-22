@@ -11111,8 +11111,6 @@
         (arena.tl_arena_set scratch-root))]
     [source : String
       (compiler-load-session-state-read-source-text load-state (& path))]
-    [expr-mark : i64 (ast.ast-node-pool-context-expr-len pools)]
-    [type-mark : i64 (ast.ast-node-pool-context-type-len pools)]
     [origin-storage : i64
       (parser.compiler-parse-origin-storage
         (parser.compiler-parse-control-from-cfg cfgs))]
@@ -11144,7 +11142,6 @@
           [out : parser.ResultAstProgramDiagnostic (Err stable-diag)]
           (parser.compiler-parse-origin-rollback! origin-storage origin-mark)
           (reader.sp-node-pool-truncate! records-start)
-          (ast.ast-node-pool-context-reset-to! pools expr-mark type-mark)
           (unsafe
             (arena.tl_arena_destroy scratch-root))
           out)])))

@@ -1,6 +1,8 @@
 ;; compiler_parse_core_tests.tl - White-box tests for the parser: declarations,
 ;; expressions, patterns, metadata, spans, error paths and compiler-parse-smoke.
 (import stdlib.iterator)
+(import stdlib.arena)
+(import compiler_allocation_profile as allocation_profile)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.test)
@@ -245,6 +247,39 @@
   (test.assert-true
     (parser-test-owns-parsed-strings?)
     "parsed import and include paths own their bytes"))
+
+(test
+  compiler-parse-failed-form-releases-temporary-payloads
+  (let
+    [pool-arena : arena.Arena (arena.make)]
+    [owner : i64 (arena.raw-handle pool-arena)]
+    [pools (ast.ast-node-pool-context-new-with-capacities-in-arena 16 16 owner)]
+    [source : String
+      "(module outer (module inner (include-str name \"a-file-path.txt\"))) (define (good [x : (Box (Tuple i64 i64))]) : i64 3) (define (f [x : i64]) (:bad-option x) : i64 x)"]
+    [before : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)]
+    (for [iteration (iterator.range 0 3)]
+      (test.assert-true
+        (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
+          "input.tl"
+          (& source)
+          (parser.compiler-cfg-empty)
+          pools)
+          [(Err _) true]
+          [_ false])
+        "malformed function metadata fails after parsing nested modules")
+      (when
+        (= iteration 0)
+        (set!
+          before
+          (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+            owner))))
+    (test.assert-i64-eq
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)
+      before
+      "reparsing the failed file leaves its temporaries outside the pool")
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    (arena.destroy-safe! pool-arena)))
 
 (test
   compiler-parse-origin-columns-failed-and-inactive-forms

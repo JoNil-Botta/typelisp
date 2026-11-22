@@ -20,6 +20,7 @@
 (import sym_i64_env)
 (import stdlib.string)
 (import stdlib.option)
+(import stdlib.vector)
 (import stdlib.arena)
 (import token)
 (import (option.option i64) as option_i64)
@@ -2358,6 +2359,25 @@
   (intern-owner (__tl_dyn-array ci.InternCompatState))
   (semantic-origins (__tl_dyn-array i64)))
 
+(defstruct ParseAstDeclVec
+  (slots (__tl_dyn-array ast.AstDecl))
+  (spans (__tl_dyn-array ast.AstSourceSpan))
+  (semantic-origins ParseSemanticOriginVec)
+  (origin-storage i64)
+  (len i64))
+
+;; Nested modules finish before their parent. Keep their collectors and scratch
+;; boxes until the entire diagnostic parse succeeds, then commit in that order.
+(defstruct ParsePendingModule
+  (items ParseAstDeclVec)
+  (body (MutPtr ast.AstDeclList)))
+
+(import (vector.vector ParsePendingModule core) as pending_modules)
+
+(defenum ParseModuleLists
+  (Current)
+  (Pending (__tl_dyn-array pending_modules.Vec)))
+
 ;; Kept inline in each parser entry frame so spanned-node arena rewinds cannot
 ;; invalidate the diagnostic span and dispatch-control fast path.
 (defstruct CompilerParseInvocationFrame
@@ -2366,7 +2386,8 @@
   (start-col i64)
   (end-line i64)
   (end-col i64)
-  (control i64))
+  (control i64)
+  (modules ParseModuleLists))
 
 (define compiler-parse-state-control-keys-addr : i64
   0)
@@ -2967,15 +2988,6 @@
       (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
       result]
     [_ result]))
-
-(define (ast-expr-wrap-span
-  [pools : ast.AstNodePoolContext]
-  [expr : i64]
-  [s : reader.SpannedSexpr]) : i64
-  (ast.ast-expr-spanned-with-pools
-    pools
-    expr
-    (ast-source-span-from-source-span (reader.spanned-sexpr-span s))))
 
 (define (compiler-parse-tag-unknown) : i64
   0)
@@ -7275,10 +7287,10 @@
   (let
     [parsed-items (try (parse-ast-expr-list dispatch pools items))]
     (Ok
-      (ast-expr-wrap-span
+      (ast.ast-expr-push-with-source-span
         pools
-        (ast.ast-expr-bracket-clause-with-pools pools parsed-items)
-        s))))
+        (BracketClause parsed-items)
+        (ast-source-span-from-source-span (reader.spanned-sexpr-span s))))))
 
 (define (parse-ast-call-arg-maybe
   [dispatch : sym_i64_env.SymI64Env]
@@ -9755,91 +9767,66 @@
   (let
     [result : ResultAstExpr
       (match (reader.spanned-sexpr-view s)
-        [(Int n text _)
+        [(Int n text span)
           (Ok
-            (ast-expr-wrap-span
+            (ast.ast-expr-push-with-source-span
               pools
-              (ast.ast-node-pool-context-expr-push
-                pools
-                (Literal (Int n (reader.sp-text-copy (& text)))))
-              s))]
-        [(Float text _)
+              (Literal (Int n (reader.sp-text-copy (& text))))
+              (ast-source-span-from-source-span span)))]
+        [(Float text span)
           (Ok
-            (ast-expr-wrap-span
+            (ast.ast-expr-push-with-source-span
               pools
-              (ast.ast-node-pool-context-expr-push
-                pools
-                (Literal (Float (reader.sp-text-copy (& text)))))
-              s))]
-        [(Str string-id _)
+              (Literal (Float (reader.sp-text-copy (& text))))
+              (ast-source-span-from-source-span span)))]
+        [(Str string-id span)
           (Ok
-            (ast-expr-wrap-span
+            (ast.ast-expr-push-with-source-span
               pools
-              (ast.ast-node-pool-context-expr-push
-                pools
-                (Literal (String (ci.intern-id-value string-id))))
-              s))]
-        [(Char c _)
+              (Literal (String (ci.intern-id-value string-id)))
+              (ast-source-span-from-source-span span)))]
+        [(Char c span)
           (Ok
-            (ast-expr-wrap-span
+            (ast.ast-expr-push-with-source-span
               pools
-              (ast.ast-node-pool-context-expr-push pools (Literal (Char c)))
-              s))]
+              (Literal (Char c))
+              (ast-source-span-from-source-span span)))]
         [(Sym name span)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
-            (cond
-              [(= tag (compiler-parse-tag-lit-true))
-                (Ok
-                  (ast-expr-wrap-span
-                    pools
-                    (ast.ast-node-pool-context-expr-push
-                      pools
-                      (Literal (Bool true)))
-                    s))]
-              [(= tag (compiler-parse-tag-lit-false))
-                (Ok
-                  (ast-expr-wrap-span
-                    pools
-                    (ast.ast-node-pool-context-expr-push
-                      pools
-                      (Literal (Bool false)))
-                    s))]
-              [(= tag (compiler-parse-tag-unit))
-                (Ok
-                  (ast-expr-wrap-span
-                    pools
-                    (ast.ast-node-pool-context-expr-push pools (Literal Unit))
-                    s))]
-              [else
-                ;; This is a source candidate, not a claimed field use. The
-                ;; helper rejects generated syntax identities and plain
-                ;; names before reading dotted-name metadata.
-                (compiler-parse-semantic-dotted-field-origins! name span)
-                (Ok
-                  (ast-expr-wrap-span
-                    pools
-                    (ast.ast-node-pool-context-expr-push pools (Var name-id))
-                    s))]))]
-        [(List (slice head & _) _)
+            [node : ast.AstExpr
+              (cond
+                [(= tag (compiler-parse-tag-lit-true)) (Literal (Bool true))]
+                [(= tag (compiler-parse-tag-lit-false)) (Literal (Bool false))]
+                [(= tag (compiler-parse-tag-unit)) (Literal Unit)]
+                [else
+                  (compiler-parse-semantic-dotted-field-origins! name span)
+                  (Var name-id)])]
+            (Ok
+              (ast.ast-expr-push-with-source-span
+                pools
+                node
+                (ast-source-span-from-source-span span))))]
+        [(List (slice head & _) span)
           (let
             [rest (reader.spanned-sexpr-drop s 1)]
-            (match (reader.spanned-sexpr-view head)
-              [(Sym op _)
-                (if (=
-                  (ci.intern-syntax-id-value op)
-                  (cbi.compiler-builtin-ctfe "cfg"))
-                  (match (parse-ast-cfg-expr dispatch pools rest)
-                    [(Ok parsed) (Ok (ast-expr-wrap-span pools parsed s))]
-                    [(Err message) (Err message)])
-                  (match (parse-ast-list-expr dispatch pools head rest)
-                    [(Ok parsed) (Ok (ast-expr-wrap-span pools parsed s))]
-                    [(Err message) (Err message)]))]
-              [_
-                (match (parse-ast-list-expr dispatch pools head rest)
-                  [(Ok parsed) (Ok (ast-expr-wrap-span pools parsed s))]
-                  [(Err message) (Err message)])]))]
+            [parsed : ResultAstExpr
+              (match head
+                [(Sym op _)
+                  (if (=
+                    (ci.intern-syntax-id-value op)
+                    (cbi.compiler-builtin-ctfe "cfg"))
+                    (parse-ast-cfg-expr dispatch pools rest)
+                    (parse-ast-list-expr dispatch pools head rest))]
+                [_ (parse-ast-list-expr dispatch pools head rest)])]
+            (match parsed
+              [(Ok id)
+                (Ok
+                  (ast.ast-node-pool-context-expr-push
+                    pools
+                    (Spanned id (ast-source-span-from-source-span span))))]
+              [(Err message) (Err message)]))]
         [_
           (Err
             (parse-kind-message (MalformedForm) "parse: malformed expression"))])]
@@ -11558,25 +11545,13 @@
   [name : i64]
   [body : (& program (Slice reader.SpannedSexpr))]) : ResultAstDecl
   (let
+    [invocation : i64
+      (compiler-parse-env-marker-value
+        dispatch
+        compiler-parse-invocation-marker-id)]
     [previous-capture : CompilerParseSemanticOriginCaptureState
       (compiler-parse-semantic-origin-capture-current)]
-    ;; Nested collectors share the enclosing collector's scratch owner.
-    [scratch : i64
-      (if (= previous-capture.vec-addr 0)
-        (arena.tl_arena_current)
-        (let
-          [parent : ParseSemanticOriginVec
-            (unsafe
-              (ptr-read
-                (int->ptr
-                  previous-capture.vec-addr
-                  : (Ptr ParseSemanticOriginVec))))]
-          parent.arena-handle))]
-    [out : ParseAstDeclVec
-      (in-arena
-        (unsafe
-          (arena.Arena scratch))
-        (parse-ast-decl-vec-new dispatch))]
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
     [result : ResultAstDecl
       (match (parse-ast-module-body-forms-into-vec
         dispatch
@@ -11586,10 +11561,30 @@
           (ptr-addr-of out.semantic-origins))
         (&mut out))
         [(Ok)
-          (Ok
-            (ast.ast-decl-module-body-id
-              name
-              (parse-ast-decl-vec-to-list (& out))))]
+          (match (if (= invocation 0)
+            (ParseModuleLists.Current)
+            (unsafe
+              (ptr-read
+                (int->ptr invocation : (Ptr CompilerParseInvocationFrame))).modules))
+            [(Current)
+              (Ok
+                (ast.ast-decl-module-body-id
+                  name
+                  (parse-ast-decl-vec-to-list (& out))))]
+            [(Pending cell)
+              (let
+                [body : (Box ast.AstDeclList)
+                  (box (ast.ast-decl-list-with-capacity 0))]
+                [address : (MutPtr ast.AstDeclList)
+                  (unsafe
+                    (ptr-read
+                      (ptr-cast
+                        (ptr-addr-of body)
+                        : (Ptr (MutPtr ast.AstDeclList)))))]
+                (pending_modules.push-ref!
+                  (&mut (array-ref cell 0))
+                  (ParsePendingModule out address))
+                (Ok (ModuleBody name body)))])]
         [(Err message) (Err message)])]
     (compiler-parse-semantic-origin-capture-restore! previous-capture)
     result))
@@ -12403,13 +12398,6 @@
       [(Decls decls) (Decls decls)]
       [(Err message) (Err (cdiag.compiler-diagnostic-untagged-message message))])))
 
-(defstruct ParseAstDeclVec
-  (slots (__tl_dyn-array ast.AstDecl))
-  (spans (__tl_dyn-array ast.AstSourceSpan))
-  (semantic-origins ParseSemanticOriginVec)
-  (origin-storage i64)
-  (len i64))
-
 (define (parse-ast-decl-vec-fallback) : ast.AstDecl
   (Module cbi.compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt))
 
@@ -12487,10 +12475,7 @@
   [span : ast.AstSourceSpan]) : unit
   (if (< v.len (array-length v.slots))
     unit
-    (in-arena
-      (unsafe
-        (arena.Arena v.semantic-origins.arena-handle))
-      (parse-ast-decl-vec-grow v)))
+    (parse-ast-decl-vec-grow v))
   (let
     [index : i64 v.len]
     (set! (array-ref v.slots index) value)
@@ -12611,6 +12596,23 @@
     (compiler-parse-decl-origin-register-selected! items (& out))
     (compiler-parse-semantic-origin-register-selected! items (& out))
     out))
+
+(define (parse-ast-decl-vec-to-pool-list
+  [items : (& items ParseAstDeclVec)]
+  [pools : ast.AstNodePoolContext]) : ast.AstDeclList
+  (let
+    [owner : i64 (ast.ast-node-pool-context-base-arena pools)]
+    (if (= owner (arena.tl_arena_current))
+      (parse-ast-decl-vec-to-list items)
+      (let
+        [out : ast.AstDeclList
+          (in-arena
+            (unsafe
+              (arena.Arena owner))
+            (ast.ast-persist-parsed-decls pools (& items.slots) items.len))]
+        (compiler-parse-decl-origin-register-selected! items (& out))
+        (compiler-parse-semantic-origin-register-selected! items (& out))
+        out))))
 
 ;; Wrappers are declarations semantically, but declaration-shape errors belong
 ;; to the declaration inside them. Keep the innermost source form's bounds.
@@ -12774,7 +12776,7 @@
         base-dispatch
         compiler-parse-state-marker-id)]
     [invocation : CompilerParseInvocationFrame
-      (CompilerParseInvocationFrame 0 0 0 0 0 0)]
+      (CompilerParseInvocationFrame 0 0 0 0 0 0 Current)]
     [invocation-address : i64
       (cast
         (unsafe
@@ -13125,7 +13127,7 @@
         base-dispatch
         compiler-parse-state-marker-id)]
     [invocation : CompilerParseInvocationFrame
-      (CompilerParseInvocationFrame 0 0 0 0 0 0)]
+      (CompilerParseInvocationFrame 0 0 0 0 0 0 Current)]
     [invocation-address : i64
       (cast
         (unsafe
@@ -13228,10 +13230,7 @@
               semantic-origins
               out.len
               (compiler-parse-binding-origins-enabled dispatch))
-            (match (in-arena
-              (unsafe
-                (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
-              (parse-ast-decl-maybe-with-pools dispatch pools spanned-form))
+            (match (parse-ast-decl-maybe-with-pools dispatch pools spanned-form)
               [(SomeDecl decl)
                 (parse-ast-decl-vec-push-with-span
                   out
@@ -13310,11 +13309,21 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [toks : (& (__tl_dyn-array token.SpannedToken))]
-  [cur : (& (__tl_dyn-array i64))]) : ResultAstDeclListDiagnostic
+  [cur : (& (__tl_dyn-array i64))]
+  [modules : (& modules ParseModuleLists)]) : ResultAstDeclListDiagnostic
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
+    [start : i64 (ast.ast-node-pool-context-expr-len pools)]
+    [type-start : i64 (ast.ast-node-pool-context-type-len pools)]
     [origin-mark : CompilerParseOriginCheckpoint
       (compiler-parse-origin-checkpoint out.origin-storage)]
+    [previous : i64
+      (match modules
+        [(Pending _)
+          (ast.ast-parsed-type-payload-arena-swap!
+            (& pools)
+            (arena.tl_arena_current))]
+        [(Current) -1])]
     [result : ResultParseAstDeclVecDiagnostic
       (parse-ast-program-forms-diagnostic-into-vec
         path
@@ -13325,14 +13334,33 @@
         (unsafe
           (ptr-addr-of out.semantic-origins))
         (&mut out))]
+    (match modules
+      [(Pending _)
+        (ast.ast-parsed-type-payload-arena-swap! (& pools) previous)
+        unit]
+      [(Current) unit])
     (match result
       [(Ok)
-        (Ok
-          (in-arena
-            (unsafe
-              (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
-            (parse-ast-decl-vec-to-list (& out))))]
+        (match modules
+          [(Pending cell)
+            (let
+              [pending (& (array-ref cell 0))]
+              (for [i (iterator.range 0 pending.len)]
+                (let
+                  [entry (& (array-ref pending.slots i))]
+                  (unsafe
+                    (ptr-write!
+                      entry.body
+                      (parse-ast-decl-vec-to-pool-list (& entry.items) pools)))))
+              (in-arena
+                (unsafe
+                  (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
+                (ast.ast-persist-parsed-type-payloads! pools type-start)
+                (ast.ast-persist-parsed-expr-payloads! pools start)))]
+          [(Current) unit])
+        (Ok (parse-ast-decl-vec-to-pool-list (& out) pools))]
       [(Err error)
+        (ast.ast-node-pool-context-reset-to! pools start type-start)
         (compiler-parse-origin-rollback! out.origin-storage origin-mark)
         (Err error)])))
 
@@ -13349,8 +13377,18 @@
       (compiler-parse-env-marker-value
         base-dispatch
         compiler-parse-state-marker-id)]
+    [modules : ParseModuleLists
+      (if (=
+        (arena.tl_arena_current)
+        (ast.ast-node-pool-context-base-arena pools))
+        Current
+        (let
+          [cell : (__tl_dyn-array pending_modules.Vec)
+            (__tl_make-array pending_modules.Vec 1)]
+          (set! (array-ref cell 0) (pending_modules.with-capacity 1))
+          (Pending cell)))]
     [invocation : CompilerParseInvocationFrame
-      (CompilerParseInvocationFrame 0 0 0 0 0 0)]
+      (CompilerParseInvocationFrame 0 0 0 0 0 0 modules)]
     [invocation-address : i64
       (cast
         (unsafe
@@ -13374,7 +13412,13 @@
     (let
       [decls
         (try
-          (parse-ast-program-forms-diagnostic path dispatch pools toks (& cur)))]
+          (parse-ast-program-forms-diagnostic
+            path
+            dispatch
+            pools
+            toks
+            (& cur)
+            (& invocation.modules)))]
       (Ok
         (in-arena
           (unsafe

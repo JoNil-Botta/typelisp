@@ -14363,8 +14363,8 @@ f:
         (I64)
         (be_state.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
-      (has "    testq $1, %r13\n    setne %r13b\n")
-      (lacks "    andq $1"))))
+      (has "    testb $1, %r13b\n    setne %r13b\n")
+      (lacks "    andq $1" "    andl $1"))))
 
 (define (compiler-backend-scalar-select-ok?) : bool
   (and
@@ -30418,7 +30418,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $254, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $254, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30428,7 +30428,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $256, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $256, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30438,7 +30438,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $65280, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $65280, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30479,10 +30479,16 @@ entry:
               (and
                 (be_state.backend-and4
                   (asm-has? byte-asm "    movzbq %r12b, %r12\n")
-                  (asm-lacks? byte-asm "    andq $255, %r12\n")
+                  (asm-lacks?
+                    byte-asm
+                    "    andq $255, %r12\n"
+                    "    andl $255, %r12d\n")
                   (asm-has? word-asm "    movzwq %r12w, %r12\n")
-                  (asm-lacks? word-asm "    andq $65535, %r12\n"))
-                (asm-has? negative-asm "    andq $254, %r12\n"))]
+                  (asm-lacks?
+                    word-asm
+                    "    andq $65535, %r12\n"
+                    "    andl $65535, %r12d\n"))
+                (asm-has? negative-asm "    andl $254, %r12d\n"))]
             [(Err _) false])]
         [(Err _) false])]
     [(Err _) false]))
@@ -30949,9 +30955,9 @@ entry:
         (asm-has? asm "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
         (asm-has? asm "    movabsq $-8543223828751151131, %r8\n    imulq %r8\n")
         (asm-has? asm "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
-        ;; M-F folds the power-of-2 modulo mask into an immediate `andq`
+        ;; M-F folds the power-of-2 modulo mask into an immediate `andl`
         ;; (was `movabsq $7, %r8; andq %r8, %rax`).
-        (asm-has? asm "    andq $7, %rax\n")
+        (asm-has? asm "    andl $7, %eax\n")
         (asm-lacks? asm "    idivq %r8\n")
         (asm-lacks? asm "    divq %r8\n")
         (asm-lacks? asm "    call tl_div_abort\n")

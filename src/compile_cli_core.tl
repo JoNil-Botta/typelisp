@@ -37,7 +37,7 @@
 (import build_run_core)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_allocation_profile as allocation_profile)
-(import compiler_backend as backend)
+(import compiler_backend_peephole as be_peephole)
 (import compiler_backend_object as be_object)
 (import compiler_diagnostic as cdiag)
 (import compiler_load as load)
@@ -1327,7 +1327,7 @@
     (be_state.compiler-backend-peephole-carry-safe-reset-with-backend-state!
       backend-state
       (be_state.compiler-backend-state-stream-state backend-state))
-    (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
+    (be_peephole.compiler-backend-peephole-owner-global-reset-with-backend-state!
       backend-state
       (be_state.compiler-backend-state-stream-state backend-state))
     (be_operand.compiler-backend-state-slot-frame-cache-storage-ensure!

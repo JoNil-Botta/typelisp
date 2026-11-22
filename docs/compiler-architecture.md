@@ -28,8 +28,11 @@ planning. Its shared backend layers start with `compiler_backend_state`.
 `compiler_backend_operands` builds on state, and
 `compiler_backend_program_facts` uses operands and state.
 `compiler_backend_program_data` uses operands, program facts and state, and
-`compiler_backend_object` adds program data to those three. The imports form
-an acyclic graph rooted at the backend entry module.
+`compiler_backend_object` adds program data to those three.
+`compiler_backend_peephole` owns the peephole passes over emitted lines and
+`compiler_backend_simd` owns AVX2 and AVX-512 vector emission; both build
+directly on operands, program facts and state. The imports form an acyclic
+graph rooted at the backend entry module.
 
 The embedded TLCI catalog decodes only the prelude surface or requested
 native macro images, sharing one immutable Huffman model. Multi-entry batches

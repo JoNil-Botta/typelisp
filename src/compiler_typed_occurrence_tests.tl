@@ -68,7 +68,7 @@
       (own.ownership-body-path "fixture.tl")
       7
       11
-      "macro expansion"))
+      (own.ownership-expansion-frame 0 1 2 3 4 5 6 7)))
     [(typed.TypedOriginResult.Ok id) id]
     [(typed.TypedOriginResult.Err _)
       (io.panic "typed occurrence: fixture origin")]))
@@ -535,7 +535,11 @@
       (match (typed.typed-origin-add!
         (&mut store)
         (& lease)
-        (own.OwnershipSource (own.ownership-body-path "too expensive") 1 1 ""))
+        (own.OwnershipSource
+          (own.ownership-body-path "too expensive")
+          1
+          1
+          (own.ownership-expansion-none)))
         [(typed.TypedOriginResult.Err error)
           (match error
             [(typed.TypedError.Budget) true]

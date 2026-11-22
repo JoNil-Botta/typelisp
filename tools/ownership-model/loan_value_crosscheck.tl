@@ -33,7 +33,7 @@
     (core.ownership-body-path "loan-value-case.tl")
     line
     1
-    "concrete value operation"))
+    (core.ownership-expansion-none)))
 
 (define (flag? [bits : i64] [index : i64]) : bool
   (!= (bit-and bits (shl 1 index)) 0))

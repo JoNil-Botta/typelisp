@@ -3,7 +3,6 @@
 ;; to this one caller-owned body; nothing survives or is cached across bodies.
 ;; Validate the complete mapping and every remapped reference before mutation.
 (import compiler_ownership_core as core)
-(import stdlib.string)
 
 (define (has-owner? [operation : (& operation core.OwnershipOperation)]) : bool
   ;; Exhaustive so a new operation requires an explicit identity-map decision.
@@ -168,7 +167,7 @@
                     (core.ownership-charge!
                       (&mut bytes)
                       65536
-                      (string.string-length (& owner.source.expansion))))
+                      (core.ownership-expansion-bytes owner.source.expansion)))
                   (return false))
                 (set! index (+ index 1)))))))
       (set! index 0)

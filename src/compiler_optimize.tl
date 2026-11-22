@@ -113670,6 +113670,11 @@
 (define opt-inline-checked-target-blocks : i64
   0)
 
+;; Capture the armed target's own frequency. The trace frequency follows the
+;; walk and may describe another call by the time the verdict runs.
+(define opt-inline-checked-target-frequency : i64
+  0)
+
 ;; Verdicts spent on the caller being walked, against the per-caller cap, and
 ;; the relaxed one spent against its own.
 (define opt-inline-checked-caller-verdicts : i64
@@ -114333,6 +114338,7 @@
   (set! opt-inline-checked-prior-blocks 0)
   (set! opt-inline-checked-accepted-blocks 0)
   (set! opt-inline-checked-target-blocks 0)
+  (set! opt-inline-checked-target-frequency 0)
   (set! opt-inline-checked-scanning? true))
 
 ;; ...and the per-GENERATION reset, run when a caller's rounds ended with a keep
@@ -115232,6 +115238,7 @@
                   (+ opt-inline-caller-checked-blocks added-blocks))
                 (opt-inline-checked-max-blocks)))
             (set! opt-inline-checked-target-blocks added-blocks)
+            (set! opt-inline-checked-target-frequency frequency)
             (set!
               opt-inline-checked-callee-slot
               (match (opt-function-index-slot index callee-name)
@@ -116453,6 +116460,56 @@
   (NoSitePlan)
   (SitePlan OptInlineSitePlan))
 
+(define (opt-inline-site-has-string-literal? [np : i64]) : bool
+  (for [slot
+    (iterator.range 0 (opt-inline-cost-min np (opt-inline-checked-literal-max)))]
+    (when
+      (= (array-ref opt-inline-checked-current-literals (* 2 slot)) 2)
+      (return true)))
+  false)
+
+;; Price growth across the callee's references. The estimate includes the
+;; cloned instructions and branches and credits the retired call boundary.
+;; A single-reference absorption can retire the standalone body. Preserve the
+;; existing small-fanout decisions too, where the census can credit absorption.
+(define (opt-inline-band-copy-size-ok?
+  [index : (& OptFunctionIndex)]
+  [census : (& OptInlineCensus)]
+  [refs : i64]
+  [np : i64]
+  [callee-instrs : i64]
+  [added-blocks : i64]) : bool
+  (if (or
+    (<= refs (opt-inline-dup-max-refcount))
+    (not opt-inline-caller-facts-ready?)
+    (not (opt-inline-synth-ready?)))
+    true
+    (let
+      [growth : i64
+        (- (+ (* 4 callee-instrs) (* 2 (- added-blocks 1))) (+ 6 (* 3 np)))]
+      (if (<= growth 0)
+        true
+        (let
+          [frequency : i64 (opt-inline-checked-caller-count index census)]
+          [frequency-budget : i64
+            (+ 450 (* 12 (opt-inline-cost-min frequency 2048)))]
+          [loop-credit : i64
+            (if (opt-inline-bounds-loop-site-in-loop?)
+              8
+              1)]
+          (or
+            (<= refs (/ (* frequency-budget loop-credit) growth))
+            ;; Hot wrappers can have low synthetic counts. Literal descriptors
+            ;; can also fold away whole arms after cloning. Give these sites
+            ;; more room while still bounding their total duplication.
+            (and
+              (<= refs (/ (* 24576 loop-credit) growth))
+              (or
+                (<= callee-instrs 32)
+                (and
+                  (> (opt-inline-checked-literal-count-now) 0)
+                  (opt-inline-site-has-string-literal? np))))))))))
+
 (define (opt-inline-multiblock-site-plan
   [callee : (& ir.CompilerIrFunction)]
   [cargs : (& cargs ir.CompilerIrCallArgs)]
@@ -116711,7 +116768,17 @@
             [inline? : bool
               (and
                 (or (not converted-callee?) converted-leaf-ok?)
-                (or band-admits? checked?))]
+                (or
+                  checked?
+                  (and
+                    band-admits?
+                    (opt-inline-band-copy-size-ok?
+                      index
+                      census
+                      refs
+                      np
+                      callee-instrs
+                      added-blocks))))]
             ;; True only when the hot-loop-leaf gate is what admits this
             ;; site: its blocks spend the gate's own fuel, not the shared
             ;; accumulator the caller's banked absorptions draw on.
@@ -117997,7 +118064,15 @@
   [checked : (& ir.CompilerIrFunction)]
   [banked : (& ir.CompilerIrFunction)]
   [banked-cost : i64]) : bool
-  (match (opt-inline-checked-callee-at index opt-inline-checked-callee-slot)
+  (match (if (and
+    (> opt-inline-checked-generation 1)
+    opt-inline-checked-target-relaxed?
+    (> opt-inline-checked-site-depth 0)
+    (>= opt-inline-checked-target-blocks 12)
+    (> opt-inline-checked-target-frequency 0)
+    (<= opt-inline-checked-target-frequency 64))
+    (OptMaybeFunction.No)
+    (opt-inline-checked-callee-at index opt-inline-checked-callee-slot))
     [(Some callee)
       (opt-inline-checked-verdict-reclaiming
         type-segment-bases
@@ -118008,8 +118083,8 @@
         opt-inline-checked-site-weight
         opt-inline-checked-callee-params
         banked-cost)]
-    ;; No callee to price against: the site cannot be justified, so it goes --
-    ;; and the state the next round is priced against is unchanged.
+    ;; Keep the banked state when the callee is missing or the rescan finds a
+    ;; large, cold expansion. The loop-weighted verdict overcredits rare arms.
     [(No)
       (opt-inline-checked-publish-margin! false)
       (set! opt-inline-checked-next-state-cost banked-cost)

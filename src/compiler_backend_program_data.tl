@@ -2426,12 +2426,17 @@
 
 (define (compiler-backend-runtime-functions-for-target
   [target : be_state.CompilerBackendTarget]
-  [features : runtime_common.CompilerBackendRuntimeFeatures]) : String
+  [features : runtime_common.CompilerBackendRuntimeFeatures]
+  [closed : bool]) : String
   (match target
     [(be_state.CompilerBackendTarget.Linux)
-      (runtime_linux.compiler-backend-runtime-functions features)]
+      (runtime_linux.compiler-backend-runtime-functions-for-executable
+        features
+        closed)]
     [(be_state.CompilerBackendTarget.Windows)
-      (runtime_windows.compiler-backend-runtime-functions features)]))
+      (runtime_windows.compiler-backend-runtime-functions-for-executable
+        features
+        closed)]))
 
 (define (compiler-backend-runtime-externs-for-target
   [target : be_state.CompilerBackendTarget]

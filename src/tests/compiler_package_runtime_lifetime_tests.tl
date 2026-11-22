@@ -125,6 +125,7 @@
                             (Scalar)
                             level
                             emit-entry
+                            false
                             false)))
                         [(Ok asm _) (in-arena home (string.copy asm))]
                         [(Err diag _)

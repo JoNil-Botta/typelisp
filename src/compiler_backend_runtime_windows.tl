@@ -1,5 +1,6 @@
 ;; compiler_backend_runtime_windows.tl - Windows backend runtime leaf emitter.
 (import compiler_backend_runtime_common as runtime_common)
+(import compiler_backend_runtime_prune as runtime_prune)
 (import compiler_backend_runtime_sanitize as sanitize)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
@@ -2080,15 +2081,33 @@ tl_tlci_call_macro_entry:
 ")
 
 (define (compiler-backend-runtime-windows-render
+  [closed : bool]
   [enabled : bool]
   [id : x64_template.CompilerX64ExecutableTemplateId]
   [text : String]) : String
   (if enabled
-    (x64_catalog.compiler-x64-template-render-assembly id (WindowsX64) text)
+    (let
+      [body : String
+        (x64_catalog.compiler-x64-template-render-assembly id (WindowsX64) text)]
+      (if closed
+        (match id
+          [(or (WindowsRuntimeMemcpy) (WindowsRuntimeArrayZero)
+               (WindowsRuntimeArena) (WindowsRuntimeAlloc))
+            (runtime_prune.optional-bundle body)]
+          [(or (WindowsRuntimeMemchr) (WindowsRuntimeMemFill8)
+               (WindowsRuntimeTlciImage) (WindowsRuntimeThread))
+            (runtime_prune.optional-fragment body)]
+          [_ body])
+        body))
     ""))
 
 (define (compiler-backend-runtime-functions
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
+  (compiler-backend-runtime-functions-for-executable features false))
+
+(define (compiler-backend-runtime-functions-for-executable
+  [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]
+  [closed : bool]) : String
   (let
     [profile : bool features.profile]
     [arena-debug : bool features.arena-debug]
@@ -2096,30 +2115,37 @@ tl_tlci_call_macro_entry:
       (runtime_common.compiler-backend-runtime-arena-debug-text? arena-debug)]
     (str_cat.str-cat
       (compiler-backend-runtime-windows-render
+        closed
         true
         (WindowsRuntimeMemcpy)
         (compiler-backend-runtime-memcpy-functions))
       (compiler-backend-runtime-windows-render
+        closed
         true
         (WindowsRuntimeMemchr)
         (compiler-backend-runtime-memchr-functions))
       (compiler-backend-runtime-windows-render
+        closed
         true
         (WindowsRuntimeArrayZero)
         (compiler-backend-runtime-array-zero-functions))
       (compiler-backend-runtime-windows-render
+        closed
         true
         (WindowsRuntimeMemFill8)
         (compiler-backend-runtime-mem-fill8-functions))
       (compiler-backend-runtime-windows-render
+        closed
         true
         (WindowsRuntimeTlciImage)
         (compiler-backend-runtime-tlci-entry-functions))
       (compiler-backend-runtime-windows-render
+        closed
         features.tlci-macro-entry
         (WindowsRuntimeTlciMacro)
         (compiler-backend-runtime-tlci-macro-entry-functions))
       (compiler-backend-runtime-windows-render
+        closed
         true
         (x64_catalog.compiler-x64-template-with-sanitizer
           (x64_catalog.compiler-x64-template-select-four
@@ -2137,14 +2163,17 @@ tl_tlci_call_macro_entry:
               debug-text))
           (compiler-backend-runtime-windows-arena-functions profile debug-text)))
       (compiler-backend-runtime-windows-render
+        closed
         profile
         (CommonProfile)
         (runtime_common.compiler-backend-runtime-profile-functions))
       (compiler-backend-runtime-windows-render
+        closed
         features.startup-profile
         (CommonStartupProfile)
         (runtime_common.compiler-backend-runtime-startup-profile-functions true))
       (compiler-backend-runtime-windows-render
+        closed
         features.alloc
         (x64_catalog.compiler-x64-template-select-four
           (WindowsRuntimeAlloc)
@@ -2161,6 +2190,7 @@ tl_tlci_call_macro_entry:
             profile
             debug-text)))
       (compiler-backend-runtime-windows-render
+        closed
         (and
           features.alloc
           (runtime_common.compiler-backend-runtime-features-leaf? features 32))
@@ -2171,10 +2201,12 @@ tl_tlci_call_macro_entry:
           (compiler-backend-current-arena-store "%r13")
           false))
       (compiler-backend-runtime-windows-render
+        closed
         features.region-mark
         (WindowsRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))
       (compiler-backend-runtime-windows-render
+        closed
         features.region-reset
         (x64_catalog.compiler-x64-template-with-sanitizer
           (x64_catalog.compiler-x64-template-select-four
@@ -2194,14 +2226,17 @@ tl_tlci_call_macro_entry:
             profile
             debug-text)))
       (compiler-backend-runtime-windows-render
+        closed
         true
         (WindowsRuntimeThread)
         (compiler-backend-runtime-windows-thread-functions))
       (compiler-backend-runtime-windows-render
+        closed
         features.backtrace
         (WindowsRuntimeBacktrace)
         (compiler-backend-runtime-windows-backtrace-functions))
       (compiler-backend-runtime-windows-render
+        closed
         true
         (if features.startup-profile
           (WindowsRuntimeLibcShimStartupProfile)

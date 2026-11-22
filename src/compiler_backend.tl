@@ -5,6 +5,7 @@
 (import compiler_backend_simd as be_simd)
 (import compiler_backend_object as be_object)
 (import compiler_backend_program_data as be_data)
+(import compiler_backend_runtime_prune as runtime_prune)
 (import compiler_backend_operands as be_operand)
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
@@ -22984,6 +22985,14 @@
   [scratch : i64]) : be_state.ResultCompilerBackend
   (let
     [backend-state : be_state.CompilerBackendState program-index.backend-state]
+    [optional-runtime : bool
+      (and
+        (be_state.compiler-backend-state-closed-executable? backend-state)
+        (match (& func)
+          [(Function name _ _ _ _ _)
+            (be_scalar.compiler-backend-optional-runtime-function?
+              backend-state
+              name)]))]
     [result : be_state.ResultCompilerBackend
       (if (compiler-backend-emit-function-direct?
         (be_state.compiler-backend-global-shared-view func))
@@ -23043,7 +23052,11 @@
     ;; the remaining global sentinels in the caller arena; function-owned
     ;; cleanup above deliberately stays inactive after retirement.
     (compiler-backend-clear-function-emit-state! backend-state)
-    result))
+    (if optional-runtime
+      (match result
+        [(Ok body) (Ok (runtime_prune.optional-fragment body))]
+        [(Err message) (Err message)])
+      result)))
 
 (define (compiler-backend-emit-functions-buffer-raw-into
   [type-segment-bases : i64]
@@ -24054,7 +24067,9 @@ tl_shared_object_init:
                                 (if emit-entry
                                   (be_data.compiler-backend-runtime-functions-for-target
                                     target
-                                    runtime-features)
+                                    runtime-features
+                                    (be_state.compiler-backend-state-closed-executable?
+                                      program-index.backend-state))
                                   "")))
                             (cond
                               [(not emit-entry) ""]
@@ -25018,7 +25033,11 @@ tl_shared_object_init:
           emit-entry
           crt-entry
           profile-state))]
-    (Ok (text_buf.render buf))))
+    [asm : String (text_buf.render buf)]
+    (Ok
+      (if (be_state.compiler-backend-state-closed-executable? backend-state)
+        (runtime_prune.prune asm)
+        asm))))
 
 (define (compiler-backend-lower-mode-for-target
   [target : be_state.CompilerBackendTarget]

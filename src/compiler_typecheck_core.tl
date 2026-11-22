@@ -97185,7 +97185,8 @@
   (start i64)
   (events-end i64)
   (inputs-end i64)
-  (contributes bool))
+  (contributes bool)
+  (complete bool))
 
 (defstruct TcGlobalEffectCollector
   (graph global_effects.Graph)
@@ -98034,9 +98035,9 @@
           [(Ok decl)
             (match (ast.ast-decl-unwrapped (& decl))
               [(Extern _ _ _ metadata _)
-                (match (ast.ast-extern-metadata-abi
-                  (ast.ast-extern-metadata-box-shared-view metadata))
-                  [(TypeLisp) (csym.compiler-symbol-handle-index handle)]
+                (match (& (deref metadata))
+                  [(ast.AstExternMetadata.Metadata (TypeLisp) _ _ _ _)
+                    (csym.compiler-symbol-handle-index handle)]
                   [_ -1])]
               [_ -1])]
           [_ -1])]
@@ -98436,7 +98437,7 @@
     ;; Keep the leaf ID for invalidation while passing transparently through
     ;; span and macro-provenance wrappers.
     (while true
-      (match (tc-global-shared-view expr)
+      (match (& expr)
         [(or (Spanned inner _) (MacroExpansion inner _ _))
           (set! source-id inner)
           (set! expr (tc-context-expr-get ctx source-id))]
@@ -99411,12 +99412,16 @@
     [words : effect_words.Vec
       (unsafe
         (deref state).scan-words)]
-    (if (tc-global-effect-scan-current?
-      (unsafe
-        (ptr-cast state : (Ptr TcGlobalCallEffects)))
-      scan
-      (& words)
-      revision)
+    ;; A normal scan may have saved only the indirect events for discovery.
+    ;; A normal replay needs every event, including the declaration's writes.
+    (if (and
+      (or collector.address-only scan.complete)
+      (tc-global-effect-scan-current?
+        (unsafe
+          (ptr-cast state : (Ptr TcGlobalCallEffects)))
+        scan
+        (& words)
+        revision))
       (let
         [cursor : i64 scan.start]
         (set! collector.contributes scan.contributes)
@@ -99469,7 +99474,8 @@
                 start
                 events-end
                 (effect_words.len (& words))
-                collector.contributes))
+                collector.contributes
+                (not collector.scan-for-discovery)))
             (set! (deref state).scan-words words)
             (arena.tl_arena_set enclosing)))))))
 

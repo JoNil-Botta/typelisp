@@ -4702,7 +4702,7 @@
   (compiler-load-include-bin-def-with-pools
     pools
     name
-    (lzss.compiler-lzss-encode contents)))
+    (with-scratch (lzss.compiler-lzss-encode contents))))
 
 (define (compiler-load-include-def-with-pools
   [kind : CompilerLoadIncludeKind]

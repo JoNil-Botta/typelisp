@@ -119449,6 +119449,39 @@
           [_ unit])]))
   false)
 
+(define (opt-reach-program
+  [index : (& OptFunctionIndex)]
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]
+  [all-functions? : bool]) : OptReachState
+  (let
+    [global-capacity : i64
+      (opt-function-index-capacity (ir.compiler-ir-global-seq-count globals))]
+    [initial : OptReachState
+      (State
+        (opt_i64_i64_map.with-capacity
+          (opt-function-index-capacity (opt-function-index-count index)))
+        (opt-reach-worklist-new)
+        (opt_i64_i64_map.with-capacity global-capacity)
+        0
+        (opt_i64_i64_map.with-capacity global-capacity))]
+    [roots : OptReachState
+      (if all-functions?
+        initial
+        (opt-reach-add-function-leaf index (& initial) "main"))]
+    ;; Opt0 emits every function and retains every non-static global. Scan
+    ;; all those bodies and initializer values so none can name omitted data.
+    (when
+      all-functions?
+      (for [slot (iterator.range 0 (opt-function-index-count index))]
+        (set! roots (opt-reach-add-function-slot roots slot))))
+    (opt-reach-process
+      index
+      (opt-reach-globals
+        index
+        (& (opt-reach-add-provided-externs index externs (& roots)))
+        globals))))
+
 ;; `strip-store-only?` asks the same walk for the globals whose only use is a
 ;; direct `Store` (see OptReachState) and, when it finds any, drops those globals
 ;; and their stores from the kept program. Only the prune that runs on the
@@ -119468,38 +119501,11 @@
   (if (opt-function-seq-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
-      [reachable : opt_i64_i64_map.Map
-        (opt_i64_i64_map.with-capacity
-          (opt-function-index-capacity (opt-function-seq-count functions)))]
-      [reachable-globals : opt_i64_i64_map.Map
-        (opt_i64_i64_map.with-capacity
-          (opt-function-index-capacity
-            (ir.compiler-ir-global-seq-count globals)))]
-      [initial : OptReachState
-        (State
-          reachable
-          (opt-reach-worklist-new)
-          reachable-globals
-          0
-          (opt_i64_i64_map.with-capacity
-            (opt-function-index-capacity
-              (ir.compiler-ir-global-seq-count globals))))]
-      [roots : OptReachState
-        (if static-arrays-only?
-          initial
-          (opt-reach-add-function-leaf index (& initial) "main"))]
-      ;; Opt0 emits every function and retains every non-static global. Scan
-      ;; all those bodies and initializer values so none can name omitted data.
-      (when
-        static-arrays-only?
-        (for [slot (iterator.range 0 (opt-function-index-count (& index)))]
-          (set! roots (opt-reach-add-function-slot roots slot))))
-      (match (opt-reach-process
+      (match (opt-reach-program
         (& index)
-        (opt-reach-globals
-          index
-          (& (opt-reach-add-provided-externs index externs (& roots)))
-          (& globals)))
+        (& globals)
+        externs
+        static-arrays-only?)
         [(State reachable-out _ reachable-globals-out _ reachable-reads-out)
           (let
             [capacity : i64
@@ -119543,15 +119549,20 @@
   [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
   (match program
     [(Program globals functions externs authority)
-      (match (opt-prune-unreachable-program
-        0
-        (owned_view.compiler-owned-shared-view globals)
-        functions
-        (& externs)
-        false
-        false)
-        [(Program _ kept)
-          (ir.CompilerIrProgram.Program globals kept externs authority)])]))
+      (let
+        [kept : ir.CompilerIrFunctionSeq
+          (if (opt-function-seq-defines? functions "main")
+            (let
+              [index : OptFunctionIndex
+                (opt-function-index-build (& functions))]
+              (match (opt-reach-program (& index) (& globals) (& externs) false)
+                [(State reachable _ _ _ _)
+                  (opt-filter-reachable-functions
+                    (& index)
+                    (& functions)
+                    (& reachable))]))
+            functions)]
+        (ir.CompilerIrProgram.Program globals kept externs authority))]))
 
 (define (opt-direct-call-self-recursive-instr?
   [name : i64]

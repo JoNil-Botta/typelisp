@@ -28,7 +28,7 @@
     (own.ownership-body-path "cleanup-authored.tl")
     (+ index 1)
     1
-    ""))
+    (own.ownership-expansion-none)))
 
 (define (cleanup-test-instr [operation : own.OwnershipOperation] [index : i64]) : own.OwnershipInstruction
   (own.OwnershipInstruction operation (cleanup-test-source index)))

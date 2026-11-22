@@ -13239,7 +13239,7 @@
         (ownership.ownership-body-path "selected.tl")
         7
         3
-        "")
+        (ownership.ownership-expansion-none))
       (tc_core.tc-selected-capture store lease (&mut bindings)))
       [(tc_core.TcSelectedResult.Ok _ occurrence _)
         (match occurrence
@@ -13393,7 +13393,7 @@
           (ownership.ownership-body-path "generated.tl")
           3
           4
-          "test expansion")
+          (ownership.ownership-expansion-frame 0 1 2 3 4 5 6 7))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13418,7 +13418,7 @@
           (ownership.ownership-body-path "query.tl")
           1
           1
-          "")
+          (ownership.ownership-expansion-none))
         tc_core.TcSelectedSink.Query)
         [(tc_core.TcSelectedResult.Ok _ occurrence _)
           (match occurrence
@@ -13489,7 +13489,7 @@
           (ownership.ownership-body-path "unary.tl")
           3
           2
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13566,7 +13566,7 @@
           (ownership.ownership-body-path "unary.tl")
           8
           2
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13583,7 +13583,7 @@
           (ownership.ownership-body-path "unary.tl")
           9
           2
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13683,7 +13683,7 @@
           (ownership.ownership-body-path "binary.tl")
           3
           2
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13718,7 +13718,7 @@
           (ownership.ownership-body-path "binary.tl")
           5
           2
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13740,7 +13740,7 @@
           (ownership.ownership-body-path "binary.tl")
           7
           2
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -13855,7 +13855,7 @@
           (ownership.ownership-body-path "literal-probe.tl")
           7
           2
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14015,7 +14015,7 @@
           (ownership.ownership-body-path "bad.tl")
           2
           1
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14039,7 +14039,7 @@
           (ownership.ownership-body-path "unsupported.tl")
           2
           1
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14065,7 +14065,7 @@
           (ownership.ownership-body-path "budget.tl")
           2
           1
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14129,7 +14129,7 @@
           (ownership.ownership-body-path "query-pools.tl")
           1
           1
-          "")
+          (ownership.ownership-expansion-none))
         tc_core.TcSelectedSink.Query)
         [(tc_core.TcSelectedResult.Err message _)
           (string.eq
@@ -14148,7 +14148,7 @@
           (ownership.ownership-body-path "query-pools.tl")
           1
           1
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14167,7 +14167,7 @@
           (ownership.ownership-body-path "query-pools.tl")
           1
           1
-          "")
+          (ownership.ownership-expansion-none))
         tc_core.TcSelectedSink.Query)
         [(tc_core.TcSelectedResult.Err message _)
           (string.eq
@@ -14195,7 +14195,7 @@
           (ownership.ownership-body-path "query-pools.tl")
           1
           1
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14302,7 +14302,7 @@
           (ownership.ownership-body-path "selected.tl")
           7
           3
-          ""))
+          (ownership.ownership-expansion-none)))
         [(typed.TypedOriginResult.Ok id) id]
         [_ (io.panic "selected normalization: origin")])]
     [binder : typed.TypedBinderId
@@ -14706,7 +14706,7 @@
           (ownership.ownership-body-path "selected.tl")
           7
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14730,7 +14730,7 @@
           (ownership.ownership-body-path "selected.tl")
           7
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -14883,7 +14883,7 @@
           (ownership.ownership-body-path "selected-let.tl")
           7
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15016,7 +15016,7 @@
           (ownership.ownership-body-path "selected-let.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15042,7 +15042,7 @@
           (ownership.ownership-body-path "selected-let.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15158,7 +15158,7 @@
           (ownership.ownership-body-path "selected-set.tl")
           7
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15232,7 +15232,7 @@
           (ownership.ownership-body-path "selected-set.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15338,7 +15338,7 @@
           (ownership.ownership-body-path "selected-return.tl")
           7
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15433,7 +15433,7 @@
           (ownership.ownership-body-path "selected-return.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15455,7 +15455,7 @@
           (ownership.ownership-body-path "selected-return.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15487,7 +15487,7 @@
           (ownership.ownership-body-path "selected-return.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15549,7 +15549,7 @@
           (ownership.ownership-body-path "selected-return.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15573,7 +15573,7 @@
           (ownership.ownership-body-path "selected-return.tl")
           9
           3
-          "")
+          (ownership.ownership-expansion-none))
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)
@@ -15623,7 +15623,7 @@
         (ownership.ownership-body-path "selected.tl")
         7
         3
-        "")]
+        (ownership.ownership-expansion-none))]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
     [name : i64 (ci.intern "selected-parameter")]
@@ -15975,7 +15975,7 @@
         (ownership.ownership-body-path "selected-tuple.tl")
         4
         9
-        "")]
+        (ownership.ownership-expansion-none))]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
     [params : ast.AstParamList (ast.ast-param-list-new)]
@@ -16280,7 +16280,7 @@
         (ownership.ownership-body-path "selected-array.tl")
         4
         9
-        "")]
+        (ownership.ownership-expansion-none))]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
     [params : ast.AstParamList (ast.ast-param-list-new)]
@@ -16785,7 +16785,7 @@
             (ownership.ownership-body-path "selected-while.tl")
             19
             3
-            "")
+            (ownership.ownership-expansion-none))
           (tc_core.tc-selected-capture
             (&mut store)
             (& lease)

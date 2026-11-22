@@ -33,7 +33,7 @@
     (core.ownership-body-path "cleanup-case.tl")
     (+ event 1)
     1
-    "concrete cleanup event"))
+    (core.ownership-expansion-none)))
 
 (define (root [owner : model.Owner]) : core.OwnershipPlaceId
   (place (* 3 (model.owner-index owner))))
@@ -493,7 +493,9 @@
             (= left.source.path.bytes right.source.path.bytes)
             (= left.source.line right.source.line)
             (= left.source.column right.source.column)
-            (string.eq left.source.expansion right.source.expansion)
+            (core.ownership-expansion-equal?
+              left.source.expansion
+              right.source.expansion)
             (string.eq left.message right.message))])]))
 
 (define (case-mode?

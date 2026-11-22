@@ -1135,12 +1135,15 @@
 (define (compiler-symbols-add-value-id
   [symbols : (& CompilerSymbols)]
   [name-id : i64]
-  [display-name : String]
+  [module-id : i64]
+  [decl-name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& values) name-id)
-        (Err (compiler-symbols-duplicate-value-message display-name))
+        (Err
+          (compiler-symbols-duplicate-value-message
+            (compiler-symbol-module-key-by-id module-id decl-name-id)))
         (begin
           (compiler-symbol-map-bind-id! (&mut values) name-id handle)
           (Ok
@@ -1149,12 +1152,15 @@
 (define (compiler-symbols-add-type-id
   [symbols : (& CompilerSymbols)]
   [name-id : i64]
-  [display-name : String]
+  [module-id : i64]
+  [decl-name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& types) name-id)
-        (Err (compiler-symbols-duplicate-type-message display-name))
+        (Err
+          (compiler-symbols-duplicate-type-message
+            (compiler-symbol-module-key-by-id module-id decl-name-id)))
         (begin
           (compiler-symbol-map-bind-id! (&mut types) name-id handle)
           (Ok
@@ -1163,12 +1169,15 @@
 (define (compiler-symbols-add-macro-id
   [symbols : (& CompilerSymbols)]
   [name-id : i64]
-  [display-name : String]
+  [module-id : i64]
+  [decl-name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& macros) name-id)
-        (Err (compiler-symbols-duplicate-macro-message display-name))
+        (Err
+          (compiler-symbols-duplicate-macro-message
+            (compiler-symbol-module-key-by-id module-id decl-name-id)))
         (begin
           (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
           (Ok
@@ -1199,7 +1208,8 @@
 (define (compiler-symbols-add-root-macro-id
   [symbols : (& CompilerSymbols)]
   [name-id : i64]
-  [display-name : String]
+  [module-id : i64]
+  [decl-name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
@@ -1216,7 +1226,9 @@
                   decls
                   owner-names
                   decl-count)))
-            (Err (compiler-symbols-duplicate-macro-message display-name)))]
+            (Err
+              (compiler-symbols-duplicate-macro-message
+                (compiler-symbol-module-key-by-id module-id decl-name-id))))]
         [(None)
           (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
           (Ok
@@ -1225,7 +1237,8 @@
 (define (compiler-symbols-add-root-value-id
   [symbols : (& CompilerSymbols)]
   [name-id : i64]
-  [display-name : String]
+  [module-id : i64]
+  [decl-name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
@@ -1242,7 +1255,9 @@
                   decls
                   owner-names
                   decl-count)))
-            (Err (compiler-symbols-duplicate-value-message display-name)))]
+            (Err
+              (compiler-symbols-duplicate-value-message
+                (compiler-symbol-module-key-by-id module-id decl-name-id))))]
         [(None)
           (compiler-symbol-map-bind-id! (&mut values) name-id handle)
           (Ok
@@ -1255,16 +1270,21 @@
   [handle : i64]) : ResultCompilerSymbols
   (let
     [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
-    [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
     [next
       (try
         (if (compiler-symbol-root-module-id? module-id)
           (compiler-symbols-add-root-value-id
             symbols
             key-id
-            display-name
+            module-id
+            name-id
             handle)
-          (compiler-symbols-add-value-id symbols key-id display-name handle)))]
+          (compiler-symbols-add-value-id
+            symbols
+            key-id
+            module-id
+            name-id
+            handle)))]
     (if (compiler-symbols-comptime-module-id? module-id)
       (Ok next)
       (Ok
@@ -1285,9 +1305,9 @@
   [handle : i64]) : ResultCompilerSymbols
   (let
     [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
-    [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
     [next
-      (try (compiler-symbols-add-type-id symbols key-id display-name handle))]
+      (try
+        (compiler-symbols-add-type-id symbols key-id module-id name-id handle))]
     (if (compiler-symbols-comptime-module-id? module-id)
       (Ok next)
       (Ok
@@ -1437,16 +1457,21 @@
   [handle : i64]) : ResultCompilerSymbols
   (let
     [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
-    [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
     [next
       (try
         (if (compiler-symbol-root-module-id? module-id)
           (compiler-symbols-add-root-macro-id
             symbols
             key-id
-            display-name
+            module-id
+            name-id
             handle)
-          (compiler-symbols-add-macro-id symbols key-id display-name handle)))]
+          (compiler-symbols-add-macro-id
+            symbols
+            key-id
+            module-id
+            name-id
+            handle)))]
     (Ok
       (compiler-symbols-add-macro-alias-key-id
         (& next)
@@ -3306,8 +3331,6 @@
         (compiler-enum-qualified-variant-name-id enum-name-id name-id)]
       [qualified-key-id : i64
         (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
-      [qualified-display-name : String
-        (compiler-symbol-module-key-by-id module-id qualified-name-id)]
       [module-name-key-id : i64
         (compiler-symbol-module-key-id-by-id module-id name-id)]
       [name-key-id : i64 (compiler-symbol-name-id-key name-id)]
@@ -3321,7 +3344,7 @@
           (if (compiler-symbol-map-contains-id? (& variants) qualified-key-id)
             (Err
               (compiler-registries-duplicate-variant-message
-                qualified-display-name))
+                (compiler-symbol-module-key-by-id module-id qualified-name-id)))
             (begin
               (compiler-symbol-map-bind-id!
                 (&mut variants)

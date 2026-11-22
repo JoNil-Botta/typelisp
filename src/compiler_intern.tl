@@ -9,6 +9,7 @@
 ;; allocation extents without pulling collection or formatting modules into them.
 ;;
 (import compiler_abort as abort)
+(import compiler_expansion_trace as expansion_trace)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
@@ -2076,6 +2077,7 @@
 
 (define (intern-compat-state-reset! [state : (&mut state InternCompatState)]) : unit
   (begin
+    (expansion_trace.compiler-expansion-trace-reset!)
     (set! (array-ref state.pool-count 0) 0)
     (set! (array-ref state.generated-next-id 0) (- (intern-capacity) 1))
     (cfg
@@ -4668,6 +4670,7 @@
 ;: Reset the intern table for a fresh compile.
 (define (intern-reset!) : unit
   (begin
+    (expansion_trace.compiler-expansion-trace-reset!)
     (set! intern-pool-count 0)
     (intern-reset-name-cache!)
     (set! intern-generated-next-id (- (intern-capacity) 1))

@@ -43,6 +43,7 @@
 (import compiler_load as load)
 (import compiler_intern as ci)
 (import compiler_ir_types as ir)
+(import compiler_lower as lower)
 (import compiler_optimize as opt)
 (import compiler_driver_core)
 (cfg
@@ -1324,6 +1325,8 @@
       (compiler_driver_core.compiler-driver-state-backend state)]
     [typecheck-state : tc_core.TcJobState
       (compiler_driver_core.compiler-driver-state-typecheck state)]
+    [macro-state : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state typecheck-state)]
     (be_state.compiler-backend-peephole-carry-safe-reset-with-backend-state!
       backend-state
       (be_state.compiler-backend-state-stream-state backend-state))
@@ -1341,9 +1344,11 @@
     (tc_core.tc-agg-regwords-cache-storage-ensure-for-job! typecheck-state)
     (tc_core.tc-lazy-import-stub-storage-ensure-for-job! typecheck-state)
     (tc_core.tc-agg-layout-cache-table-storage-ensure-for-job! typecheck-state)
-    (tc_core.macro-unqualified-import-cache-storage-ensure!
-      (tc_core.tc-job-state-macro-state
-        (compiler_driver_core.compiler-driver-state-typecheck state)))
+    (tc_core.tc-type-handle-cache-storage-ensure-for-job! typecheck-state)
+    (tc_core.macro-unqualified-import-cache-storage-ensure! macro-state)
+    (tc_core.macro-alias-cache-storage-ensure! macro-state)
+    (lower.compiler-lower-function-memo-storage-ensure!
+      (compiler_driver_core.compiler-driver-state-owned-lower-state (& state)))
     ;; The decoded image is fixed batch infrastructure too. Initialize its
     ;; bytes before entry 0; admission and mapping still require each entry's
     ;; fresh source proofs.

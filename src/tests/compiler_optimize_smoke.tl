@@ -4085,3 +4085,7 @@
 (test
   licm-disjoint-field-pipeline
   (smoke-require-42 (ot.compiler-optimize-licm-field-pipeline-self-test)))
+
+(test
+  dead-global-store
+  (smoke-require-42 (ot.compiler-optimize-dead-global-store-self-test)))

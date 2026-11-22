@@ -422,6 +422,7 @@ licm_desc_hoist|all|-|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl|-
 licm_memclean_global_promote|all|-|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl|-
 cpuid_operand_homes|all|-|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl|-
 global_cell_writer_loop_reads|all|-|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl|-
+global_store_only_dead|all|0,2|tests/integration/global_store_only_dead.tl|42|-|-|-|-
 lftr_counter_retire|all|-|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl|-
 licm_alias_stress|all|-|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl|-
 replace_handle_element|all|-,0,2|tests/integration/replace_handle_element.tl|42|-|-|stdlib/string.tl|-

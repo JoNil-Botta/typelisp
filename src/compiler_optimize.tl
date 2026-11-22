@@ -102619,6 +102619,88 @@
       (opt-pass-with-ctx-result (& simd) (& state))
       (opt-pass-with-block-ctx (& rotation) state))))
 
+;; --- dead_global_store --------------------------------------------------------
+;;
+;; opt-store-only-globals states the proof; this is the rewrite it feeds, and
+;; the prune that runs on the FINISHED bodies calls it (its `strip-store-only?`
+;; argument). That placement is the point: the rule needs "no read anywhere in
+;; the module", and the last reads of benchmarks/callgraph_scc's
+;; `cg-site-weight` survive almost the whole pipeline -- each store is followed
+;; by a `mov` reading the cell back, and only the last round's `dce_late`
+;; forwards that read to the stored value. The prune's walk is the one that
+;; sees the final use set, and the inliner (the pipeline's only instruction
+;; producer) ran long before it, so nothing can add a `Global g` operand after
+;; the answer is taken.
+;;
+;; The drop leaves the stored value dead in a function the pipeline has already
+;; finished, so each changed function runs the pipeline's own DCE fixpoint and
+;; is observed under this slot name, which is what `--trace-passes` and
+;; scripts/measure-pass-firing.sh report.
+(define (opt-store-only-global-target?
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(Store name _ _)
+      (opt_i64_i64_map.contains? (& store-only) (ir.compiler-ir-symbol-id name))]
+    [_ false]))
+
+(define (opt-store-only-global-instr-seq
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count (& instrs))]
+    [kept : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [instr : ir.CompilerIrInstr
+          (ir.compiler-ir-instr-seq-ref (& instrs) index)]
+        (unless
+          (opt-store-only-global-target? store-only (& instr))
+          (ir.compiler-ir-instr-builder-push! (&mut kept) instr))))
+    (ir.compiler-ir-instr-builder-to-seq kept)))
+
+(define (opt-store-only-global-function
+  [type-segment-bases : i64]
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-function-blocks (& func))]
+    (if (not (opt-blocks-any? blocks opt-store-only-global-target? store-only))
+      func
+      (let
+        [stripped : ir.CompilerIrBlockList
+          (opt-blocks-map-seq blocks opt-store-only-global-instr-seq store-only)]
+        (compiler-opt-debug-observe-function
+          type-segment-bases
+          "dead_global_store"
+          (opt-function-with-frame-blocks
+            (& func)
+            (opt-function-frame (& func))
+            (opt-dce-block-list-array-fixpoint
+              (opt-function-frame (& func))
+              (& stripped)
+              8)))))))
+
+;; The store-only strip over a kept function list. A function the set does not
+;; name is shared, not copied, so the prune pays this walk only for the bodies
+;; that actually lose an instruction.
+(define (opt-store-only-global-function-seq
+  [type-segment-bases : i64]
+  [store-only : (& store-only opt_i64_i64_map.Map)]
+  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    (for [index (iterator.range 0 functions.len)]
+      (let
+        [func : ir.CompilerIrFunction
+          (ir.compiler-ir-function-seq-ref (& functions) index)]
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (opt-store-only-global-function type-segment-bases store-only func))))
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
 (define (optimize-function-once-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -105817,8 +105899,18 @@
             (owned_view.compiler-owned-reference-shared-view (& worklist.items))
             next-len))))))
 
+;; `globals` is every global a body's `Store` target names plus every global a
+;; `Global`/`GlobalAddr` operand (or a global's initializer) names; `reads` is
+;; the second of those alone, so `globals` minus `reads` is exactly the set of
+;; globals whose only use is a direct store -- the answer the store-only rule
+;; needs, collected by the walk the prune already runs.
 (defenum OptReachState
-  (State opt_i64_i64_map.Map OptReachWorklist opt_i64_i64_map.Map i64))
+  (State
+    opt_i64_i64_map.Map
+    OptReachWorklist
+    opt_i64_i64_map.Map
+    i64
+    opt_i64_i64_map.Map))
 
 (defenum OptRuntimeStringHelper
   (No)
@@ -118366,7 +118458,7 @@
 
 (define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
   (match (compiler-opt-global-shared-view state)
-    [(State reachable worklist globals runtime-helper-mask)
+    [(State reachable worklist globals runtime-helper-mask reads)
       (if (opt_i64_i64_map.contains? (& reachable) slot)
         state
         (let
@@ -118376,18 +118468,34 @@
             next-reachable
             (opt-reach-worklist-push worklist slot)
             globals
-            runtime-helper-mask)))]))
+            runtime-helper-mask
+            reads)))]))
 
 (define (opt-reach-add-global [state : OptReachState] [name : i64]) : OptReachState
   (match (compiler-opt-global-shared-view state)
-    [(State reachable worklist globals runtime-helper-mask)
+    [(State reachable worklist globals runtime-helper-mask reads)
       (let
         [name-id : i64 (ir.compiler-ir-symbol-id name)]
         (if (or (< name-id 0) (opt_i64_i64_map.contains? (& globals) name-id))
           state
           (begin
             (opt_i64_i64_map.insert-ref! (&mut globals) name-id 1)
-            (State reachable worklist globals runtime-helper-mask))))]))
+            (State reachable worklist globals runtime-helper-mask reads))))]))
+
+;; A `Global`/`GlobalAddr` operand names a cell something can observe: a read of
+;; it, an escape of its address, or (from a global's initializer) an address it
+;; stores for later. Those globals are recorded in `reads`, which the store-only
+;; rule subtracts from `globals`.
+(define (opt-reach-add-read-global [state : OptReachState] [name : i64]) : OptReachState
+  (match (opt-reach-add-global state name)
+    [(State reachable worklist globals runtime-helper-mask reads)
+      (let
+        [name-id : i64 (ir.compiler-ir-symbol-id name)]
+        (if (or (< name-id 0) (opt_i64_i64_map.contains? (& reads) name-id))
+          (State reachable worklist globals runtime-helper-mask reads)
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut reads) name-id 1)
+            (State reachable worklist globals runtime-helper-mask reads))))]))
 
 (define (opt-reach-add-function-leaf-from
   [index : (& index OptFunctionIndex)]
@@ -118460,15 +118568,20 @@
     [(No) state]
     [(Some helper helper-bit)
       (match (& state)
-        [(State _ _ _ runtime-helper-mask)
+        [(State _ _ _ runtime-helper-mask _)
           (if (not (= (bit-and runtime-helper-mask helper-bit) 0))
             state
             ;; A self-compile contains hundreds of calls to these helpers. The
             ;; leaf scan retains every source-path spelling, but only needs to run
             ;; once per fixed runtime helper.
             (match (opt-reach-add-function-leaf index (& state) (& helper))
-              [(State reachable worklist globals mask)
-                (State reachable worklist globals (bit-or mask helper-bit))]))])]))
+              [(State reachable worklist globals mask reads)
+                (State
+                  reachable
+                  worklist
+                  globals
+                  (bit-or mask helper-bit)
+                  reads)]))])]))
 
 (define (opt-reach-add-call-target
   [index : (& index OptFunctionIndex)]
@@ -118488,7 +118601,7 @@
   [value : (& ir.CompilerIrValue)]) : OptReachState
   (match value
     [(or (Global name) (GlobalAddr name))
-      (opt-reach-add-function index (opt-reach-add-global state name) name)]
+      (opt-reach-add-function index (opt-reach-add-read-global state name) name)]
     [(or (Function name) (RuntimeGlobal name))
       (opt-reach-add-function index state name)]
     [_ state]))
@@ -118546,13 +118659,13 @@
   [index : (& OptFunctionIndex)]
   [state : OptReachState]) : OptReachState
   (match (compiler-opt-global-shared-view state)
-    [(State reachable worklist globals runtime-helper-mask)
+    [(State reachable worklist globals runtime-helper-mask reads)
       (match (opt-reach-worklist-pop (& worklist))
         [(Empty) state]
         [(Item slot rest)
           (let
             [popped : OptReachState
-              (State reachable rest globals runtime-helper-mask)]
+              (State reachable rest globals runtime-helper-mask reads)]
             (opt-reach-process
               index
               (opt-reach-function
@@ -118646,6 +118759,7 @@
 (define (opt-filter-reachable-globals
   [globals : (& ir.CompilerIrGlobalSeq)]
   [reachable : (& opt_i64_i64_map.Map)]
+  [store-only : (& store-only opt_i64_i64_map.Map)]
   [static-arrays-only? : bool]) : ir.CompilerIrGlobalSeq
   (let
     [builder : ir.CompilerIrGlobalBuilder
@@ -118662,9 +118776,14 @@
                     [(StaticArray _) false]
                     [_ true])
                   (opt-runtime-global? (& ty) (& value)))
-                (opt_i64_i64_map.contains?
-                  reachable
-                  (ir.compiler-ir-symbol-id name)))
+                (and
+                  (opt_i64_i64_map.contains?
+                    reachable
+                    (ir.compiler-ir-symbol-id name))
+                  (not
+                    (opt_i64_i64_map.contains?
+                      (& store-only)
+                      (ir.compiler-ir-symbol-id name)))))
               (ir.compiler-ir-global-builder-push! (&mut builder) global))])))
     (ir.compiler-ir-global-builder-snapshot-seq (& builder))))
 
@@ -118776,11 +118895,19 @@
           [_ unit])]))
   false)
 
+;; `strip-store-only?` asks the same walk for the globals whose only use is a
+;; direct `Store` (see OptReachState) and, when it finds any, drops those globals
+;; and their stores from the kept program. Only the prune that runs on the
+;; finished bodies asks for it: before the pipeline a cell that nothing names yet
+;; is not yet dead, and the DCE that retires the stored values is only worth its
+;; walk once the pipeline has finished rewriting.
 (define (opt-prune-unreachable-program
+  [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]
   [externs : (& ir.CompilerIrExternSeq)]
-  [static-arrays-only? : bool]) : OptPrunedProgram
+  [static-arrays-only? : bool]
+  [strip-store-only? : bool]) : OptPrunedProgram
   (when
     (and static-arrays-only? (not (opt-static-array-globals? (& globals))))
     (return (Program globals functions)))
@@ -118795,7 +118922,14 @@
           (opt-function-index-capacity
             (ir.compiler-ir-global-seq-count globals)))]
       [initial : OptReachState
-        (State reachable (opt-reach-worklist-new) reachable-globals 0)]
+        (State
+          reachable
+          (opt-reach-worklist-new)
+          reachable-globals
+          0
+          (opt_i64_i64_map.with-capacity
+            (opt-function-index-capacity
+              (ir.compiler-ir-global-seq-count globals))))]
       [roots : OptReachState
         (if static-arrays-only?
           initial
@@ -118812,15 +118946,39 @@
           index
           (& (opt-reach-add-provided-externs index externs (& roots)))
           (& globals)))
-        [(State reachable-out _ reachable-globals-out _)
-          (Program
-            (opt-filter-reachable-globals
-              (& globals)
-              (& reachable-globals-out)
-              static-arrays-only?)
-            (if static-arrays-only?
-              functions
-              (opt-filter-reachable-functions index (& functions) reachable-out)))]))
+        [(State reachable-out _ reachable-globals-out _ reachable-reads-out)
+          (let
+            [capacity : i64
+              (opt-function-index-capacity
+                (ir.compiler-ir-global-seq-count globals))]
+            [store-only : opt_i64_i64_map.Map
+              (if strip-store-only?
+                (opt-store-only-globals
+                  (& globals)
+                  externs
+                  (& reachable-globals-out)
+                  (& reachable-reads-out)
+                  capacity)
+                (opt_i64_i64_map.with-capacity 1))]
+            [kept-functions : ir.CompilerIrFunctionSeq
+              (if static-arrays-only?
+                functions
+                (opt-filter-reachable-functions
+                  index
+                  (& functions)
+                  reachable-out))]
+            (Program
+              (opt-filter-reachable-globals
+                (& globals)
+                (& reachable-globals-out)
+                (& store-only)
+                static-arrays-only?)
+              (if (= (opt_i64_i64_map.len (& store-only)) 0)
+                kept-functions
+                (opt-store-only-global-function-seq
+                  type-segment-bases
+                  (& store-only)
+                  kept-functions))))]))
     (Program globals functions)))
 
 (define (opt-direct-call-self-recursive-instr?
@@ -121355,6 +121513,58 @@
     [out : OptConstLengths (clone built)]
     (unsafe
       (arena.tl_arena_destroy scratch))
+    out))
+
+;; --- dead stores to a store-only global ---------------------------------------
+;;
+;; WHY IT IS SOUND. A direct `Store @g` is the only instruction that writes g's
+;; cell, and a `Global g` operand is every read of that cell -- plus every
+;; escape of its address, since a `(& g)` is `GlobalAddr g` and handing the cell
+;; to a callee needs a `Global g` operand. OptReachState's walk already tells
+;; those apart for the prune: `globals` gains a name from a `Store` target or a
+;; `Global`/`GlobalAddr` operand, `reads` gains it from the operand alone, and a
+;; global's INITIALIZER is walked too (so `global @alias = &@g`, which no body
+;; mentions, counts as a read of g). A global in `globals` but not in `reads`
+;; is therefore stored somewhere and named nowhere else.
+;;
+;; Such a cell still has no observer only when two shell facts hold, and both
+;; need the extern list: no `Extern` entry names its symbol (an `extern`
+;; declaration or a provided export promises the definition to other objects),
+;; and this module defines its storage -- a `.comm` runtime global
+;; (opt-runtime-global?: non-unit cell, no IR initializer) is kept for the same
+;; reason opt-filter-reachable-globals retains it unconditionally.
+(define (opt-extern-name-set
+  [externs : (& ir.CompilerIrExternSeq)]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    (for [index (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
+      (match (ir.compiler-ir-extern-seq-borrow externs index)
+        [(Extern name-id _ _ _ _ _ _ _ _)
+          (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)]))
+    out))
+
+(define (opt-store-only-globals
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]
+  [stored : (& stored opt_i64_i64_map.Map)]
+  [reads : (& reads opt_i64_i64_map.Map)]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [declared : opt_i64_i64_map.Map (opt-extern-name-set externs capacity)]
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    (for [index (iterator.range 0 (ir.compiler-ir-global-seq-count globals))]
+      (match (ir.compiler-ir-global-seq-borrow globals index)
+        [(Global name ty value)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            (when
+              (and
+                (opt_i64_i64_map.contains? (& stored) id)
+                (not (opt_i64_i64_map.contains? (& reads) id))
+                (not (opt_i64_i64_map.contains? (& declared) id))
+                (not (opt-runtime-global? (& ty) (& value))))
+              (opt_i64_i64_map.insert-ref! (&mut out) id 1)))]))
     out))
 
 ;; Build the per-program summaries: the function-count-gated call maps
@@ -128734,7 +128944,13 @@
       (if (= level 0)
         (let
           [pruned : OptPrunedProgram
-            (opt-prune-unreachable-program globals functions (& externs) true)]
+            (opt-prune-unreachable-program
+              type-segment-bases
+              globals
+              functions
+              (& externs)
+              true
+              false)]
           ;; Pruning keeps the program's return-storage authority.
           [retained : ir.CompilerIrProgram
             (Program
@@ -128846,9 +129062,11 @@
                       (ir.compiler-source-spans-escape (& inline-arena-spans))]
                     [pruned : OptPrunedProgram
                       (opt-prune-unreachable-program
+                        type-segment-bases
                         (compiler-opt-global-shared-view globals)
                         reachable-functions
                         (& externs)
+                        false
                         false)]
                     [pruned-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals pruned)]
@@ -128947,11 +129165,16 @@
                           ;; function referenced only from one still follows the
                           ;; existing reachability rule even if that global is
                           ;; later filtered from the emitted program.
+                          ;; Level 2 only: opt0/opt1 are the cheap modes by
+                          ;; contract, and the prune there reports the store as
+                          ;; a live use exactly as it always has.
                           (opt-prune-unreachable-program
+                            type-segment-bases
                             globals
                             optimized-functions
                             (& externs)
-                            false)]
+                            false
+                            (>= level 2))]
                         [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionSeq

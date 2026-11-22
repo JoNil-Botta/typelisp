@@ -6234,9 +6234,11 @@
 ;; refuses the copy for the same reason. `setcc` and `movzb` read EFLAGS and
 ;; write none, so the comparison's own flags survive the materialisation and the
 ;; adjacent branch takes its `jcc` directly instead of spending a `test` to
-;; recompute what it already has. The address-taking global keeps opt2 from
-;; inlining the shape away; each case is its own program so every assertion
-;; reads the same `_tl_fr_lt` body.
+;; recompute what it already has. The sink global keeps opt2 from inlining the
+;; shape away, and the fixture's `main` READS it: a cell nothing reads is
+;; provably unobservable inside the module, and opt2 drops its stores, which
+;; would take the `movb` out of the measured window. Each case is its own
+;; program so every assertion reads the same `_tl_fr_lt` body.
 ;;
 ;; Signed `<` with the false edge falling through to the then-block: the branch
 ;; jumps on the INVERSE of the boolean's own condition.
@@ -6251,7 +6253,7 @@
       (set! fr-sink flag)
       t)))
 (define fr-keep : (-> i64 i64 i64) fr-lt)
-(define (main) : i64 0)")
+(define (main) : i64 (if fr-sink 1 0))")
 
 ;; Unsigned `<` takes the unsigned condition on both halves.
 (define compiler-backend-flags-reuse-ult-source : String
@@ -6265,7 +6267,7 @@
       (set! fr-sink flag)
       t)))
 (define fr-keep : (-> u64 u64 i64) fr-lt)
-(define (main) : i64 0)")
+(define (main) : i64 (if fr-sink 1 0))")
 
 ;; A negated condition only exchanges the successors, so the reused `jcc` is the
 ;; comparison's own with the labels swapped.
@@ -6280,7 +6282,7 @@
       (set! fr-sink flag)
       t)))
 (define fr-keep : (-> i64 i64 i64) fr-lt)
-(define (main) : i64 0)")
+(define (main) : i64 (if fr-sink 1 0))")
 
 ;; Float comparisons are excluded, as they are from every other fusion here.
 (define compiler-backend-flags-reuse-f64-source : String
@@ -6294,7 +6296,7 @@
       (set! fr-sink flag)
       t)))
 (define fr-keep : (-> f64 f64 i64) fr-lt)
-(define (main) : i64 0)")
+(define (main) : i64 (if fr-sink 1 0))")
 
 ;; The window is closed at zero instructions: storing the boolean BEFORE the
 ;; branch puts something between the materialisation and the jump -- here a
@@ -6310,7 +6312,7 @@
       (if flag (set! t (* a 3)) (set! t (+ b 7)))
       t)))
 (define fr-keep : (-> i64 i64 i64) fr-lt)
-(define (main) : i64 0)")
+(define (main) : i64 (if fr-sink 1 0))")
 
 ;; The boolean materialises in every case. Integers retain `movzb`; floats
 ;; initialize the result and guard `setcc` with their unordered parity branch.

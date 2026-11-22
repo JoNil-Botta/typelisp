@@ -2795,7 +2795,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [plan : be_state.CompilerBackendRuntimePlan]
   [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match (be_state.compiler-backend-global-shared-view blocks)
+  (match blocks
     [(Array seq)
       (compiler-backend-object-block-seq
         type-segment-bases

@@ -16207,7 +16207,7 @@
     (Name state lambda-id)))
 
 ;; A terminator ends its block. What is lowered after one (the operands and
-;; consumers after a diverging `return`, `break` or `continue`) is emitted into
+;; consumers after a diverging `return`, `break`, `continue` or call) is emitted into
 ;; a fresh block nothing branches to, as rustc's MIR builder continues in a new
 ;; block after a diverging expression; `lower-state-build-blocks` drops the
 ;; blocks control cannot reach, so none of it reaches a pass or a backend.

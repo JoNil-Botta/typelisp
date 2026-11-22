@@ -18438,7 +18438,7 @@
         [(Block _ instrs)
           (for [index (iterator.range 0 (- instrs.len 1))]
             (when
-              (optimize.opt-cfg-terminator-instr?
+              (ir.compiler-ir-instr-terminator?
                 (& (array-ref instrs.slots index)))
               (return false)))])
       (lower-test-block-exits? rest)]))

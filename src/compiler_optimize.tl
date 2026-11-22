@@ -10732,14 +10732,19 @@
       (opt-function-rewrite-unchanged original original-context))))
 
 (define (opt-function-ctx-commit
+  [pass : String]
+  [verified? : bool]
   [func : (& ir.CompilerIrFunction)]
   [context : (& OptCfgContext)]
   [plan : (& OptBlockRewriteResult)]) : OptFunctionCtxResult
-  (opt-function-rewrite-ctx-result
-    (opt-function-rewrite-commit
-      (owned_view.compiler-owned-reference-shared-view func)
-      (owned_view.compiler-owned-reference-shared-view context)
-      (owned_view.compiler-owned-reference-shared-view plan))))
+  (let
+    [func (owned_view.compiler-owned-reference-shared-view func)]
+    [context (owned_view.compiler-owned-reference-shared-view context)]
+    [plan (owned_view.compiler-owned-reference-shared-view plan)]
+    (opt-function-rewrite-ctx-result
+      (if verified?
+        (opt-function-rewrite-commit-verified pass func context plan)
+        (opt-function-rewrite-commit func context plan)))))
 
 ;; The loop passes' form: no candidate precheck, and the context is handed on
 ;; without the changed flag.
@@ -10756,9 +10761,10 @@
   (match result
     [(Result next next-context _) (Result next next-context)]))
 
-;; The commit for a pass that runs where no context is threaded: the rewrite is
-;; kept only when the verifier accepts it on its own.
+;; These passes have no threaded verification result. Check the input on
+;; rejection to distinguish a pass bug from an input outside the SSA contract.
 (define (opt-function-pass-commit
+  [pass : String]
   [func : ir.CompilerIrFunction]
   [plan : (& OptBlockRewriteResult)]) : OptFunctionPassResult
   (match (owned_view.compiler-owned-reference-shared-view plan)
@@ -10768,11 +10774,18 @@
         (let
           [next : ir.CompilerIrFunction
             (opt-function-with-frame-blocks func frame blocks)]
-          (match (opt-verify-post
-            "opt-function-pass-commit"
-            (opt-verify-function (& next)))
+          (match (opt-verify-post pass (opt-verify-function (& next)))
             [(Ok) (Result next true)]
-            [(Err _) (Result func false)])))]))
+            [(Err reason)
+              (when
+                (opt-verify-ok?
+                  (&
+                    (opt-verify-at
+                      (str_cat.str-cat "entry." (string.copy (& pass)))
+                      (opt-verify-post "entry" (opt-verify-function (& func))))))
+                (opt-rewrite-ice!
+                  (opt-rewrite-ice-message pass (& func) reason)))
+              (Result func false)])))]))
 
 (define (opt-cfg-context-all-blocks-reachable?
   [context : (& context OptCfgContext)]) : bool
@@ -11649,12 +11662,19 @@
       use-block
       use-pos)))
 
-(define (opt-owned-handle-type? [ty : (& ast.AstType)]) : bool
+(define (opt-owned-handle-type?
+  [type-segment-bases : i64]
+  [ty : (& ast.AstType)]) : bool
   (match ty
     [(or (DynArray _) (String)) true]
+    [(or (Region _ inner) (Invalidate _ inner))
+      (opt-owned-handle-type?
+        type-segment-bases
+        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
     [_ false]))
 
 (define (opt-verify-instr-uses
+  [type-segment-bases : i64]
   [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
@@ -11664,7 +11684,7 @@
   (match instr
     [(AddrOf _ src _) (opt-verify-var-use defs doms src block-id pos)]
     [(StoreOwned ptr value ty)
-      (if (not (opt-owned-handle-type? ty))
+      (if (not (opt-owned-handle-type? type-segment-bases ty))
         (Err "optimizer verify: store_owned requires DynArray or String")
         (opt-verify-two
           (& (opt-verify-value-use defs doms ptr block-id pos))
@@ -11737,6 +11757,7 @@
     [_ (opt-verify-uses defs doms block-id pos instr)]))
 
 (define (opt-verify-instr-seq-uses-from
+  [type-segment-bases : i64]
   [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
@@ -11753,6 +11774,7 @@
         [_
           (try
             (opt-verify-instr-uses
+              type-segment-bases
               defs
               doms
               proof
@@ -11933,6 +11955,7 @@
             (opt-verify-phi-predecessors-by-label pred-map rest))])]))
 
 (define (opt-verify-block-uses
+  [type-segment-bases : i64]
   [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
@@ -11947,6 +11970,7 @@
             [_
               (try
                 (opt-verify-instr-seq-uses-from
+                  type-segment-bases
                   defs
                   doms
                   proof
@@ -11954,9 +11978,16 @@
                   (& instrs)
                   0
                   1))]
-            (opt-verify-block-uses defs doms proof rest (+ block-id 1)))])]))
+            (opt-verify-block-uses
+              type-segment-bases
+              defs
+              doms
+              proof
+              rest
+              (+ block-id 1)))])]))
 
 (define (opt-verify-instr-seq-uses-contextual
+  [type-segment-bases : i64]
   [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
@@ -11965,6 +11996,7 @@
   [pos : i64]) : ResultCompilerOptimizeVerify
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (opt-verify-instr-uses
+      type-segment-bases
       defs
       doms
       proof
@@ -11986,6 +12018,7 @@
   (Ok))
 
 (define (opt-verify-block-uses-contextual
+  [type-segment-bases : i64]
   [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
@@ -12000,6 +12033,7 @@
             [_
               (try
                 (opt-verify-instr-seq-uses-contextual
+                  type-segment-bases
                   defs
                   doms
                   proof
@@ -12007,6 +12041,7 @@
                   (& instrs)
                   1))]
             (opt-verify-block-uses-contextual
+              type-segment-bases
               defs
               doms
               proof
@@ -12031,6 +12066,7 @@
                 (__tl_make-array bool 0)
                 (__tl_make-array i64 0))]
             (opt-verify-block-uses
+              (ast.ast-node-pool-reader-type-segment-bases)
               defs
               doms
               (&mut proof)
@@ -12041,41 +12077,57 @@
 ;; exactly this function; final IR that fails that proof is not checked here at
 ;; all, so this entry point takes the facts rather than re-deriving them.
 (define (opt-verify-final-function-body-with-defs
+  [type-segment-bases : i64]
   [defs : (& OptVerifyDefs)]
   [func : (& func ir.CompilerIrFunction)]
-  [context : (& OptCfgContext)]) : ResultCompilerOptimizeVerify
+  [index : OptCfgIndex]) : ResultCompilerOptimizeVerify
   (match func
     [(Function _ _ _ _ blocks _)
       (let
         [doms : OptDomInfo
-          (owned_view.compiler-owned-reference-shared-view (& context.doms))]
-        [pred-map : OptPredMap
-          (owned_view.compiler-owned-reference-shared-view (& context.pred-map))]
-        [_ (try (opt-verify-phi-predecessors-blocks pred-map blocks))]
+          (opt-cfg-dominators-with
+            (compiler-opt-global-shared-view index)
+            (opt-cfg-entry-label blocks))]
+        [_ (try (opt-verify-phi-predecessors-by-id (& index) blocks))]
         [proof : (OptSretStorageProof func)
           (OptSretStorageProof
             blocks
             (__tl_make-array bool 0)
             (__tl_make-array i64 0))]
         (opt-verify-block-uses-contextual
+          type-segment-bases
           defs
           doms
           (&mut proof)
           (ir.compiler-ir-block-list-view blocks)
           0))]))
 
-;; The structural CFG contract, read off the context's index rather than
-;; recomputed. `context` must be valid for the function's blocks, which is the
-;; standing pairing invariant for every `*-with-context` entry point.
-(define (opt-verify-structure [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
-  (let
-    [index (& context.index)]
-    (cond
-      [(not (opt-cfg-index-labels-unique? index))
-        (Err "optimizer verify: duplicate block label")]
-      [(not index.targets-known)
-        (Err "optimizer verify: unknown successor label")]
-      [else (Ok)])))
+;; A rewrite with the same CFG can reuse the index. Read instruction ordering
+;; from the current body so the check also works with a stale block cache.
+(define (opt-verify-structure
+  [index : (& index OptCfgIndex)]
+  [blocks : (& ir.CompilerIrBlockList)]) : ResultCompilerOptimizeVerify
+  (cond
+    [(not (opt-cfg-index-labels-unique? index))
+      (Err "optimizer verify: duplicate block label")]
+    [(not index.targets-known)
+      (Err "optimizer verify: unknown successor label")]
+    [else
+      (match blocks
+        [(Array seq)
+          (for [block (iterator.range 0 seq.len)]
+            (match (& (array-ref seq.slots block))
+              [(Block label instrs)
+                (for [i (iterator.range 0 (- instrs.len 1))]
+                  (when
+                    (ir.compiler-ir-instr-terminator?
+                      (& (array-ref instrs.slots i)))
+                    (return
+                      (Err
+                        (str_cat.str-cat
+                          "optimizer verify: instruction after terminator in block "
+                          (ir.compiler-ir-label-text label))))))]))])
+      (Ok)]))
 
 ;; Test-only defects are applied to actual pass outputs. The full verifier
 ;; remains the oracle and each named output is probed once per matrix run.
@@ -12298,7 +12350,11 @@
     (let
       [func : ir.CompilerIrFunction
         (owned_view.compiler-owned-reference-shared-view func)]
-      [_ (try (opt-verify-structure context))]
+      [_
+        (try
+          (opt-verify-structure
+            (& context.index)
+            (& (opt-function-blocks func))))]
       [_ (try (opt-verify-function-body-with-context (& func) context))]
       [catalog : ir.CompilerIrReturnStorageIndex
         (ir.compiler-ir-return-storage-index-empty)]
@@ -12327,7 +12383,9 @@
         [context (opt-cfg-context-build blocks)]
         (opt-verify-function-with-context func context))]))
 
-(define (opt-verify-final-function [func : (& func ir.CompilerIrFunction)]) : ResultCompilerOptimizeVerify
+(define (opt-verify-final-function-with-bases
+  [type-segment-bases : i64]
+  [func : (& func ir.CompilerIrFunction)]) : ResultCompilerOptimizeVerify
   (opt-verify-test-result
     func
     (& (opt-cfg-context-build (opt-function-blocks func)))
@@ -12335,9 +12393,8 @@
     (match (owned_view.compiler-owned-reference-shared-view func)
       [(Function _ params _ vars blocks _)
         (let
-          [context : OptCfgContext
-            (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-          [_ (try (opt-verify-structure context))]
+          [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
+          [_ (try (opt-verify-structure (& index) (& blocks)))]
           ;; Final backend IR is not required to be SSA. Apply dominance/use
           ;; checks when it is SSA-shaped; otherwise the structural CFG checks
           ;; are the valid final-IR contract. The SSA-shape decision and the
@@ -12345,12 +12402,19 @@
           (match (opt-var-defs-index-checked (& params) vars blocks)
             [(Index defs)
               (opt-verify-final-function-body-with-defs
+                type-segment-bases
                 (& defs)
                 func
-                (& context))]
+                index)]
             [(Duplicate) (Ok)]))])))
 
+(define (opt-verify-final-function [func : (& func ir.CompilerIrFunction)]) : ResultCompilerOptimizeVerify
+  (opt-verify-final-function-with-bases
+    (ast.ast-node-pool-reader-type-segment-bases)
+    func))
+
 (define (opt-verify-function-seq-from
+  [type-segment-bases : i64]
   [functions : (& ir.CompilerIrFunctionSeq)]) : ResultCompilerOptimizeVerify
   (for [index (iterator.range 0 functions.len)]
     (let
@@ -12358,7 +12422,7 @@
         (compiler-opt-global-array-element-shared-view functions.slots index)]
       (match (& func)
         [(Function name _ _ _ _ _)
-          (match (opt-verify-final-function func)
+          (match (opt-verify-final-function-with-bases type-segment-bases func)
             [(Ok) unit]
             [(Err message)
               (return
@@ -12370,9 +12434,6 @@
                     message)))])])))
   (Ok))
 
-(define (opt-verify-function-seq [functions : (& ir.CompilerIrFunctionSeq)]) : ResultCompilerOptimizeVerify
-  (opt-verify-function-seq-from functions))
-
 (define (opt-verify-program-with-owners
   [pools : ast.AstNodePoolContext]
   [interns : (& interns ci.InternCompatState)]
@@ -12380,6 +12441,7 @@
   (match program
     [(ir.CompilerIrProgram.Program _ functions externs authority)
       (let
+        [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
         [catalog : ir.CompilerIrReturnStorageIndex
           (ir.compiler-ir-return-storage-index-authorized
             pools
@@ -12396,7 +12458,7 @@
           (return
             (ResultCompilerOptimizeVerify.Err
               (str_cat.str-cat "optimizer verify: " catalog.problem))))
-        (match (opt-verify-function-seq (& functions))
+        (match (opt-verify-function-seq-from bases (& functions))
           [(ResultCompilerOptimizeVerify.Err message)
             (return (ResultCompilerOptimizeVerify.Err message))]
           [(ResultCompilerOptimizeVerify.Ok) unit])
@@ -12405,7 +12467,7 @@
             [func : ir.CompilerIrFunction
               (ir.compiler-ir-function-seq-ref functions i)]
             (match (opt-verify-return-storage-function-with-bases
-              (ast.ast-node-pool-context-type-segment-bases pools)
+              bases
               catalog.type-count
               func
               catalog)
@@ -15546,6 +15608,8 @@
           (opt-verify-post
             "ssa"
             (opt-function-ctx-commit
+              "ssa"
+              false
               fallback
               context
               (& (Result next-blocks next-frame true))))))]))
@@ -16909,14 +16973,6 @@
         [_ unit]))
     out))
 
-(define (opt-cfg-terminator-instr? [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (match instr
-    [(or (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Return _)
-         (TailCall _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
-         (TotalEnumSwitch _ _ _ _ _))
-      true]
-    [_ false]))
-
 (define (opt-cfg-instr-seq-can-fallthrough?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
   (let
@@ -16929,7 +16985,7 @@
             (compiler-opt-global-array-element-shared-view
               instrs.slots
               (- count 1))]
-          (opt-cfg-terminator-instr? instr))))))
+          (ir.compiler-ir-instr-terminator? instr))))))
 
 (define (opt-cfg-block-successors-with-next
   [block : (& ir.CompilerIrBlock)]
@@ -27016,7 +27072,7 @@
     (when
       (let
         [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-        (opt-cfg-terminator-instr? instr))
+        (ir.compiler-ir-instr-terminator? instr))
       (return index)))
   count)
 
@@ -35313,7 +35369,7 @@
       true
       (let
         [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
-        (if (and (= index (- count 1)) (opt-cfg-terminator-instr? instr))
+        (if (and (= index (- count 1)) (ir.compiler-ir-instr-terminator? instr))
           true
           (if (opt-flag-exit-pure-instr? instr)
             (opt-flag-exit-block-pure? instrs (+ index 1))
@@ -40798,7 +40854,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [context : (& context OptCfgContext)]) : bool
   (and
-    (opt-verify-ok? (& (opt-verify-structure context)))
+    (opt-verify-ok? (& (opt-verify-structure (& context.index) blocks)))
     (opt-verify-ok?
       (& (opt-verify-phi-predecessors-blocks context.pred-map blocks)))))
 
@@ -47603,6 +47659,7 @@
           (match (opt-verify-at
             "cfg_straighten"
             (opt-function-pass-commit
+              "cfg_straighten"
               (owned_view.compiler-owned-reference-shared-view func)
               (& (Result next-blocks frame changed))))
             [(Result next next-changed?)
@@ -49709,6 +49766,7 @@
               (opt-verify-at
                 "switch"
                 (opt-function-pass-commit
+                  "switch"
                   func
                   (&
                     (Result
@@ -51395,6 +51453,7 @@
             (opt-verify-at
               "bit_test"
               (opt-function-pass-commit
+                "bit_test"
                 func
                 (&
                   (Result
@@ -70854,6 +70913,8 @@
                       (opt-verify-post
                         "unroll_mb"
                         (opt-function-ctx-commit
+                          "unroll_mb"
+                          true
                           (& func)
                           (& context)
                           (& (Result mb-blocks mb-frame mb-changed)))))])))])])))
@@ -94516,7 +94577,10 @@
           [(Result next folded)
             (opt-verify-at
               "uniform_phi"
-              (opt-function-pass-commit func (& (Result next frame folded))))]))]))
+              (opt-function-pass-commit
+                "uniform_phi"
+                func
+                (& (Result next frame folded))))]))]))
 
 ;; A rotation retires the header's top test, mints a landing block and clones
 ;; the guard into the preheader and the latch, so it never leaves both the block
@@ -96872,6 +96936,7 @@
                         (opt-verify-at
                           "if_convert"
                           (opt-function-pass-commit
+                            "if_convert"
                             func
                             (&
                               (Result
@@ -99867,6 +99932,7 @@
         (opt-verify-at
           "ubound"
           (opt-function-pass-commit
+            "ubound"
             (owned_view.compiler-owned-reference-shared-view func)
             (&
               (Result

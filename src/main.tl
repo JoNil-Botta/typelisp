@@ -303,8 +303,8 @@ Output:
 (define (cli-compile-help-text) : String
   "Usage:
     typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic | --no-entry] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
-    typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--no-entry] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
-    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--no-entry] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--no-entry] [--verify-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
+    typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--no-entry] [--verify-ir] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
 
 Summary:
     Generate assembly, an IR summary, or a deterministic textual IR dump.

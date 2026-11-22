@@ -432,6 +432,7 @@ INTEGRATION_POOL_PEAK_LABEL=
 integration_batch_group_run() {
     _compile_group=$1
     shift
+    set -- "$@" --verify-ir
     case "$_compile_group" in
         embedded | stage-stdlib) ;;
         embedded-opt0 | stage-stdlib-opt0 | embedded-opt1 | stage-stdlib-opt1 | embedded-opt2 | stage-stdlib-opt2)
@@ -2447,7 +2448,7 @@ EOF
         _level_want=${_level_case#*:}
         integration_batch_group_run "$_level_group" printf '%s\n' \
             > "$_dir/level.argv"
-        : > "$_dir/level.expected.argv"
+        printf '%s\n' --verify-ir > "$_dir/level.expected.argv"
         if [ "$_level_want" != default ]; then
             printf '%s\n' --opt-level "$_level_want" >> "$_dir/level.expected.argv"
         fi
@@ -4292,7 +4293,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
+                "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4300,7 +4301,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
+                "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4316,7 +4317,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src_rel --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
+                "compile $work_src_rel --verify-ir --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
@@ -4370,7 +4371,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" \
+                "$COMPILER" compile "$work_src_rel" --verify-ir \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4378,7 +4379,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" \
+                "$COMPILER" compile "$work_src_rel" --verify-ir \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4396,7 +4397,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src_rel --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
+                "compile $work_src_rel --verify-ir --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue

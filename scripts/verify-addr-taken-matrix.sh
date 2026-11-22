@@ -74,7 +74,7 @@ run_program() {
         _obj=$WORKDIR/work/$_name.opt$_level.$OBJ_EXT
         _bin=$WORKDIR/work/$_name.opt$_level$BIN_EXT
         _log=$WORKDIR/work/$_name.opt$_level.log
-        if ! "$COMPILER" compile "$_source" -o "$_asm" \
+        if ! "$COMPILER" compile "$_source" --verify-ir -o "$_asm" \
             --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
             --opt-level "$_level" > "$_log" 2>&1; then
             tail -n 5 "$_log" 2>/dev/null | sed 's/^/  /' >&2 || true

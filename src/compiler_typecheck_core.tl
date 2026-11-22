@@ -104795,11 +104795,7 @@
 
 (define (macro-segmented-clone-seed-for-program [state : TcJobState]) : MacroSegmentedCloneSeed
   (let
-    [empty : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
-    [names : clone_support.CloneNameSet
-      (clone_support.clone-name-set-with-capacity
-        (macro-segmented-program-decl-count state)
-        empty.aliases)]
+    [names : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
     [rows : MacroSegmentedCloneRows
       (MacroSegmentedCloneRows
         (__tl_make-array ast.AstDeclList 16)

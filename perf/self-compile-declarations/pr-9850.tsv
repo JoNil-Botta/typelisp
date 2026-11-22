@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-4583	the embedded .tlci catalog expands each 16-frame group at most once per compile (67 -> 10 group expansions in a self-compile) instead of on every frame lookup; same frames are produced, no work is skipped

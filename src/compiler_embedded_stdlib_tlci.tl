@@ -143,7 +143,8 @@
 ;;   does not happen (H4).
 ;; * Loaded entry records, liveness cells and failure messages live here.
 ;;   Executable mappings and their catalog indexes are still released at pass
-;;   close; compressed bytes are static and decoded entry bytes are transient.
+;;   close; compressed bytes are static and expanded groups have a separate
+;;   arena that is destroyed when macro expansion and lowering finish.
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 
@@ -200,6 +201,37 @@
 (define compiler-embedded-stdlib-tlci-last-image : i64
   -1)
 
+(defstruct CompilerEmbeddedStdlibTlciCachedGroup
+  (ready bool)
+  (bytes (__tl_dyn-array u8)))
+
+(define compiler-embedded-stdlib-tlci-group-cache-owner : i64
+  0)
+(define compiler-embedded-stdlib-tlci-group-cache-scope-depth : i64
+  0)
+(define compiler-embedded-stdlib-tlci-group-cache : (__tl_dyn-array
+    CompilerEmbeddedStdlibTlciCachedGroup)
+  (__tl_make-array CompilerEmbeddedStdlibTlciCachedGroup 0))
+
+(define (compiler-embedded-stdlib-tlci-group-cache-close!) : unit
+  (when
+    (and
+      (= compiler-embedded-stdlib-tlci-group-cache-scope-depth 0)
+      (> compiler-embedded-stdlib-tlci-group-cache-owner 0))
+    (let
+      [owner : i64 compiler-embedded-stdlib-tlci-group-cache-owner]
+      (set! compiler-embedded-stdlib-tlci-group-cache-owner 0)
+      (ast.compiler-arena-retire-protected-owner! owner))))
+
+;; Lowering can fire additional macros after the main macro pass unmaps its
+;; images. Keep their decoded groups available until that lowering returns.
+(define (compiler-embedded-stdlib-tlci-group-cache-scope-enter!) : unit
+  (+= compiler-embedded-stdlib-tlci-group-cache-scope-depth 1))
+
+(define (compiler-embedded-stdlib-tlci-group-cache-scope-leave!) : unit
+  (-= compiler-embedded-stdlib-tlci-group-cache-scope-depth 1)
+  (compiler-embedded-stdlib-tlci-group-cache-close!))
+
 (cfg
   compile-profile
   (define (compiler-embedded-stdlib-tlci-cache-bytes) : i64
@@ -207,7 +239,9 @@
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes
         compiler-embedded-stdlib-tlci-table-owner)
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-        compiler-embedded-stdlib-tlci-session-arena-handle))))
+        compiler-embedded-stdlib-tlci-session-arena-handle)
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        compiler-embedded-stdlib-tlci-group-cache-owner))))
 
 (define (compiler-embedded-stdlib-tlci-frames-ensure!) : bool
   (if (> compiler-embedded-stdlib-tlci-table-owner 0)
@@ -251,32 +285,77 @@
         (set! compiler-embedded-stdlib-tlci-table-owner owner)
         true))))
 
-;; Native macro images are read one group at a time: a request expands the
-;; group its frame belongs to, and the bytes belong to the asking compile's
-;; arena, so this module never keeps the catalog resident.
-(define (compiler-embedded-stdlib-tlci-group-bytes
-  [group : i64]
-  [raw-limit : i64]) : frames.ResultCompilerEmbeddedStdlibTlciFramesGroup
+;; Expand a group on its first native lookup. Publish the array while its
+;; ultimate owner is active, before a caller's scratch arena can claim it.
+(define (compiler-embedded-stdlib-tlci-group-cache-ensure!
+  [catalog : (& catalog frames.CompilerEmbeddedStdlibTlciFrames)]
+  [group : i64]) : unit
   (when
-    (not (compiler-embedded-stdlib-tlci-frames-ensure!))
-    (return (Err "embedded stdlib tlci: catalog unavailable")))
-  (let
-    [catalog : frames.CompilerEmbeddedStdlibTlciFrames
-      (array-ref compiler-embedded-stdlib-tlci-frames 0)]
-    (when
-      (or (< group 0) (>= group catalog.groups))
-      (return (Err "embedded stdlib tlci: invalid group")))
-    (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+    (= compiler-embedded-stdlib-tlci-group-cache-owner 0)
+    (set!
+      compiler-embedded-stdlib-tlci-group-cache-owner
+      (arena.tl_arena_make_small))
+    (ast.compiler-arena-debug-protect-never-reset!
+      compiler-embedded-stdlib-tlci-group-cache-owner)
+    (in-arena
+      (unsafe
+        (arena.Arena compiler-embedded-stdlib-tlci-group-cache-owner))
+      (set!
+        compiler-embedded-stdlib-tlci-group-cache
+        (__tl_make-array CompilerEmbeddedStdlibTlciCachedGroup catalog.groups))))
+  (unless
+    (array-ref compiler-embedded-stdlib-tlci-group-cache group).ready
+    (in-arena
+      (unsafe
+        (arena.Arena compiler-embedded-stdlib-tlci-group-cache-owner))
+      (let
+        [bytes : (__tl_dyn-array u8)
+          (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+            (& payload.embedded-stdlib-tlci-bytes)
+            catalog
+            group
+            0
+            (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
+            [(Ok bytes) bytes]
+            [(Err _) (__tl_make-array u8 0)])]
+        (set!
+          (array-ref compiler-embedded-stdlib-tlci-group-cache group)
+          (CompilerEmbeddedStdlibTlciCachedGroup
+            true
+            (owned_view.compiler-owned-shared-view bytes)))))))
+
+(define (compiler-embedded-stdlib-tlci-slice-frame
+  [catalog : (& catalog frames.CompilerEmbeddedStdlibTlciFrames)]
+  [group : i64]
+  [offset : i64]
+  [raw : i64]
+  [cache-native? : bool]) : (__tl_dyn-array u8)
+  (if cache-native?
+    (begin
+      (compiler-embedded-stdlib-tlci-group-cache-ensure! catalog group)
+      (if (>
+        (+ offset raw)
+        (array-length
+          (array-ref compiler-embedded-stdlib-tlci-group-cache group).bytes))
+        (__tl_make-array u8 0)
+        (tlci.tlci-slice-bytes
+          (& (array-ref compiler-embedded-stdlib-tlci-group-cache group).bytes)
+          offset
+          raw)))
+    (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
       (& payload.embedded-stdlib-tlci-bytes)
       catalog
       group
-      raw-limit
-      (& (array-ref compiler-embedded-stdlib-tlci-model 0)))))
+      (+ offset raw)
+      (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
+      [(Ok bytes) (tlci.tlci-slice-bytes (& bytes) offset raw)]
+      [(Err _) (__tl_make-array u8 0)])))
 
 ;; Frame `index`, expanded from its group and checked against the record's
 ;; checksum word.
-(define (compiler-embedded-stdlib-tlci-decode-frame [index : i64]) : (__tl_dyn-array
-    u8)
+(define (compiler-embedded-stdlib-tlci-decode-frame
+  [index : i64]
+  [cache-native? : bool]) : (__tl_dyn-array u8)
   (when
     (not (compiler-embedded-stdlib-tlci-frames-ensure!))
     (return (__tl_make-array u8 0)))
@@ -297,15 +376,6 @@
             (& payload.embedded-stdlib-tlci-bytes)
             catalog
             index)]
-        ;; A group is tokenized as one window, so a frame boundary inside it
-        ;; need not fall on a token boundary; the soft prefix decode finishes
-        ;; the token that crosses it.
-        [group : (__tl_dyn-array u8)
-          (match (compiler-embedded-stdlib-tlci-group-bytes
-            (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
-            (+ offset raw))
-            [(Ok bytes) bytes]
-            [(Err _) (return (__tl_make-array u8 0))])]
         [record : i64
           (frames.compiler-embedded-stdlib-tlci-frames-record catalog index)]
         [expected : i64
@@ -313,7 +383,12 @@
             (& payload.embedded-stdlib-tlci-bytes)
             (+ record 40))]
         [frame : (__tl_dyn-array u8)
-          (tlci.tlci-slice-bytes (& group) offset raw)]
+          (compiler-embedded-stdlib-tlci-slice-frame
+            (& catalog)
+            (frames.compiler-embedded-stdlib-tlci-frames-group-of index)
+            offset
+            raw
+            cache-native?)]
         (when
           (or
             (< (array-length frame) 56)
@@ -347,7 +422,7 @@
         (while (< index catalog.count)
           (set!
             (array-ref images index)
-            (compiler-embedded-stdlib-tlci-decode-frame index))
+            (compiler-embedded-stdlib-tlci-decode-frame index false))
           (set! index (+ index 1)))
         (match (frames.compiler-embedded-stdlib-tlci-frames-aggregate
           (& images)
@@ -380,7 +455,7 @@
   (if (> compiler-embedded-stdlib-tlci-decoded-owner 0)
     (compiler-embedded-stdlib-tlci-decoded-shared-view)
     (if (<= owner 0)
-      (compiler-embedded-stdlib-tlci-decode-frame 0)
+      (compiler-embedded-stdlib-tlci-decode-frame 0 false)
       (in-arena
         (unsafe
           (arena.Arena owner))
@@ -391,7 +466,7 @@
             (with-scratch
               (unsafe
                 ;; unsafe: decode tables live in the arena of the callee's own bare handle, not this one
-                (compiler-embedded-stdlib-tlci-decode-frame 0)))]
+                (compiler-embedded-stdlib-tlci-decode-frame 0 false)))]
           (set!
             (array-ref compiler-embedded-stdlib-tlci-decoded 0)
             (owned_view.compiler-owned-shared-view bytes))
@@ -427,7 +502,7 @@
       [else
         (let
           [bytes : (__tl_dyn-array u8)
-            (compiler-embedded-stdlib-tlci-decode-frame index)]
+            (compiler-embedded-stdlib-tlci-decode-frame index true)]
           (match (compiler-comptime-host-load-from-bytes
             (compiler-embedded-stdlib-tlci-session-arena)
             (& bytes))
@@ -536,6 +611,7 @@
         resolved))))
 
 (define (compiler-embedded-stdlib-tlci-session-close!) : unit
+  (compiler-embedded-stdlib-tlci-group-cache-close!)
   (for [index
     (iterator.range
       0

@@ -51872,6 +51872,9 @@
           (opt.opt-natural-loop-header left)
           (opt.opt-natural-loop-header right))
         (= (opt.opt-natural-loop-latch left) (opt.opt-natural-loop-latch right))
+        (=
+          (opt.opt-natural-loop-latch-count left)
+          (opt.opt-natural-loop-latch-count right))
         (= (opt.opt-label-count left-labels) (opt.opt-label-count right-labels))
         (= (array-length left-seq) (array-length right-seq))
         (match (opt.opt-natural-loop-preheader left)
@@ -52139,16 +52142,11 @@
       (let
         [blocks (opt-natural-loop-multi-backedge-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
-    [multi-left : opt.OptMaybeNaturalLoop
+    [multi-loop : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
         (opt_natural_loop_vec.view multi-loops)
         (ir.compiler-ir-label "loop")
         (ir.compiler-ir-label "left"))]
-    [multi-right : opt.OptMaybeNaturalLoop
-      (opt.opt-natural-loop-find
-        (opt_natural_loop_vec.view multi-loops)
-        (ir.compiler-ir-label "loop")
-        (ir.compiler-ir-label "right"))]
     [preheadered-single-blocks : ir.CompilerIrBlockList
       (opt.opt-loop-preheaders-blocks (& (opt-ssa-loop-blocks)))]
     [preheadered-nested-blocks : ir.CompilerIrBlockList
@@ -52278,29 +52276,33 @@
           (=
             (opt.opt-natural-loop-list-count
               (opt_natural_loop_vec.view multi-loops))
-            2))
+            1))
         22]
-      [(not (= (opt-natural-loop-maybe-body-count multi-left) 2)) 23]
+      [(not (= (opt-natural-loop-maybe-body-count multi-loop) 3)) 23]
       [(not
           (opt-natural-loop-maybe-body-contains?
-            multi-left
+            multi-loop
             (ir.compiler-ir-label "left")))
         24]
       [(not
           (opt-natural-loop-maybe-body-contains?
-            multi-left
+            multi-loop
             (ir.compiler-ir-label "loop")))
         25]
-      [(not (= (opt-natural-loop-maybe-body-count multi-right) 2)) 26]
+      [(not
+          (match (& multi-loop)
+            [(No) false]
+            [(Some loop) (= (opt.opt-natural-loop-latch-count loop) 2)]))
+        26]
       [(not
           (opt-natural-loop-maybe-body-contains?
-            multi-right
+            multi-loop
             (ir.compiler-ir-label "right")))
         27]
       [(not
-          (opt-natural-loop-maybe-body-contains?
-            multi-right
-            (ir.compiler-ir-label "loop")))
+          (opt-natural-loop-maybe-preheader-label?
+            multi-loop
+            (ir.compiler-ir-label "entry")))
         28]
       [(not (= (opt-natural-loop-maybe-body-block-count single) 2)) 29]
       [(not
@@ -52363,36 +52365,29 @@
             outer
             (ir.compiler-ir-label "outer-latch")))
         40]
-      [(not (= (opt-natural-loop-maybe-body-block-count multi-left) 2)) 41]
+      [(not (= (opt-natural-loop-maybe-body-block-count multi-loop) 3)) 41]
       [(not
           (opt-natural-loop-maybe-body-block-label-at?
-            multi-left
+            multi-loop
             0
             (ir.compiler-ir-label "loop")))
         43]
       [(not
           (opt-natural-loop-maybe-body-block-label-at?
-            multi-left
+            multi-loop
             1
             (ir.compiler-ir-label "left")))
         44]
-      [(not (= (opt-natural-loop-maybe-body-block-count multi-right) 2)) 45]
       [(not
           (opt-natural-loop-maybe-body-block-label-at?
-            multi-right
-            0
-            (ir.compiler-ir-label "loop")))
-        46]
-      [(not
-          (opt-natural-loop-maybe-body-block-label-at?
-            multi-right
-            1
+            multi-loop
+            2
             (ir.compiler-ir-label "right")))
         47]
       [(not
           (opt-natural-loop-maybe-body-contains-id?
             multi-index
-            multi-right
+            multi-loop
             (ir.compiler-ir-label "right")))
         48]
       [(not
@@ -52479,6 +52474,7 @@
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
     [raw : ir.CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 0 (& raw))]
     [rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
         (ast.ast-node-pool-reader-context-current)
@@ -59896,27 +59892,49 @@
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [m0 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 0))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 0)))]
     [m0-again : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (ir.compiler-ir-global-shared-view m0))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (ir.compiler-ir-global-shared-view m0)))]
     [m1 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 1))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 1)))]
     [m2 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 2))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 2)))]
     [m3 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 3))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 3)))]
     [m4 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 4))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 4)))]
     [m5 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 5))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 5)))]
     [m6 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 6))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 6)))]
     [m7 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 7))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 7)))]
     [m8 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 8))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 8)))]
     [m9 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 9))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 9)))]
     [word-func : ir.CompilerIrFunction
       (opt.opt-unroll-function
         bases
@@ -59924,7 +59942,9 @@
     [word-combined : ir.CompilerIrBlockList
       (opt.opt-load-combine-blocks
         (opt.opt-function-frame word-func)
-        (opt.opt-function-blocks word-func))]
+        (opt-test-addr-taken-blocks
+          (opt.opt-function-frame word-func)
+          (opt.opt-function-blocks word-func)))]
     (cond
       ;; The exact compose folds: one i64 load, the chain elements deleted by
       ;; the pass itself (shifts are trapping per `ir.compiler-ir-binop-may-fault?`, so DCE
@@ -63721,6 +63741,7 @@
 (define (opt-cs-test-apply [func : ir.CompilerIrFunction]) : OptCsTestResult
   (match func
     [(Function name params ret-ty frame blocks function-abi)
+      (opt.opt-function-addr-taken-install! frame (& blocks))
       (match (opt.opt-counter-sink-blocks (& params) frame (& blocks))
         [(Result next changed)
           (Result (Function name params ret-ty frame next function-abi) changed)])]))

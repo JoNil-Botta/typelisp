@@ -1313,4 +1313,7 @@ float_neg_mixed_f64_first|all|0,1,2|tests/integration/float_neg_mixed_f64_first.
 float_neg_mixed_f32_first|all|0,1,2|tests/integration/float_neg_mixed_f32_first.tl|42|-|-|-|-
 region_read_plain_operand|all|0,1,2|tests/integration/region_read_plain_operand.tl|42|-|-|-|-
 match_ref_binder_write_controls|all|0,1,2|tests/integration/match_ref_binder_write_controls.tl|42|-|-|-|-
+box_loop_continue|all|0,1,2|tests/integration/box_loop_continue.tl|13|-|-|-|-
+dynarray_loop_continue|all|0,1,2|tests/integration/dynarray_loop_continue.tl|13|-|-|-|-
+continue_array_len|all|0,1,2|tests/integration/continue_array_len.tl|8|-|-|-|-
 range_pair_bounds|all|0,2|tests/integration/range_pair_bounds.tl|42|47 0 0 1 1 0 1 0 0\n48 1 1 0 0 0 1 0 0\n57 1 1 0 0 0 1 0 0\n58 0 0 1 1 0 1 0 0\n-9223372036854775808 0 0 1 1 0 1 0 1\n9223372036854775807 0 0 1 1 0 1 1 0\n-6 0 0 1 1 0 1 0 0\n-5 0 0 1 1 1 1 0 0\n5 0 0 1 1 1 1 0 0\n6 0 0 1 1 0 1 0 0\n0 0 0 1 1 1 1 0 0\n|47 48 57 58 -9223372036854775808 9223372036854775807 -6 -5 5 6 0|stdlib/io.tl stdlib/string.tl|-

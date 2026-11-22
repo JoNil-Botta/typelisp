@@ -565,6 +565,8 @@ clone_read_receiver_lent|all|0,1,2|tests/integration/clone_read_receiver_lent.tl
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
+enum_same_name_clone|all|0,1,2|tests/integration/enum_same_name_clone.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
+enum_same_name_scratch|all|0,1,2|tests/integration/enum_same_name_scratch.tl|42|-|-|-|-
 clone_dynarray_scalar_bulk|all|-|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_generated_vector_element|all|-|tests/integration/clone_generated_vector_element.tl|42|-|-|stdlib/vector.tl stdlib/string.tl|-
 generated_macro_clone_handoff|all|-|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
@@ -619,6 +621,8 @@ div_zero_trap|all|-|tests/safety/division_by_zero_trap.tl|135|-|-|-|expected-std
 dot_field_access|all|-|tests/integration/dot_field_access.tl|0|-|-|-|-
 dotted_field_place_parity|all|-|tests/integration/dotted_field_place_parity.tl|42|-|-|stdlib/vector.tl|-
 enum_match|all|-|tests/integration/enum_match.tl|42|-|-|-|-
+enum_same_name_qualified|all|0,1,2|tests/integration/enum_same_name_qualified.tl|42|-|-|-|-
+enum_same_name_import|all|0,1,2|tests/integration/enum_same_name_import.tl|42|-|-|enum_same_name_provider.tl|-
 enum_payload_owner|all|-|tests/integration/enum_payload_owner_root.tl|42|-|-|enum_payload_owner_matcher.tl enum_payload_owner_provider.tl|-
 box_pattern_direct|all|-|tests/integration/box_pattern_direct.tl|42|-|-|-|-
 box_pattern_enum_payload|all|-|tests/integration/box_pattern_enum_payload.tl|42|-|-|-|-

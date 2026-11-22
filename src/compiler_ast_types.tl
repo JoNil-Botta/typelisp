@@ -8225,14 +8225,16 @@
   (start i64)
   (end i64))
 
-;; The stack outlives any one compile session: a batch driver compiles each
-;; source in a scratch arena and destroys it, so growing into the pool's base
-;; arena would leave this global pointing at freed memory. Capture the
-;; global-init arena, as `ast-node-canonical-span-records` does.
+;; The stack lives in the global-init arena for the whole program, like the
+;; canonical span records: growing into a transient lowering scratch arena
+;; would leave the global pointing at freed memory. The initial capacity is
+;; allocated here, at global-init, both so the first walk pays no allocation
+;; and so a profile of a batch compile sees the buffer in its baseline rather
+;; than as growth during its first entry.
 (define ast-expr-child-range-stack-arena : i64
   (arena.tl_arena_current))
 (define ast-expr-child-range-stack : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
+  (__tl_make-array i64 16384))
 (define ast-expr-child-range-stack-top : i64
   0)
 

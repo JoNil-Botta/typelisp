@@ -4,6 +4,7 @@
 (import compiler_backend_state as be_state)
 (import build_run_core as build)
 (import compiler_backend as backend)
+(import compiler_backend_scalar as be_scalar)
 (import compiler_backend_object as be_object)
 (import compiler_intern as ci)
 (import stdlib.vector)
@@ -58,7 +59,7 @@
         [raw : String
           (str_cat.str-cat
             ".text\n.globl combo\n.type combo,@function\ncombo:\n"
-            (backend.compiler-backend-emit-stack-sub
+            (be_scalar.compiler-backend-emit-stack-sub
               (be_state.compiler-backend-target-policy-new
                 (be_state.CompilerBackendTarget.Linux))
               entry)
@@ -93,7 +94,7 @@
                 32768
                 4096))
               (be_operand.compiler-backend-emit-stack-probe size)
-              (backend.compiler-backend-emit-stack-sub
+              (be_scalar.compiler-backend-emit-stack-sub
                 (be_state.compiler-backend-target-policy-new
                   (be_state.CompilerBackendTarget.Linux))
                 size)))]

@@ -47,7 +47,7 @@
     (string.string-length (array-ref items 1))))
 
 (define (slice-clone-first [items : (& (Slice String))]) : String
-  (clone (array-ref items 0)))
+  (string.copy (& (array-ref items 0))))
 
 (define (slice-replace-first [items : (&mut (Slice String))]) : String
   (replace! (array-ref items 0) "slice"))
@@ -59,7 +59,7 @@
   `(array-ref ,items 0))
 
 (define (clone-first [items : (& (Array String 2))]) : String
-  (clone (read-first items)))
+  (string.copy (& (read-first items))))
 
 (define (touch [value : (&mut i64)]) : unit
   (set! (deref value) 7))

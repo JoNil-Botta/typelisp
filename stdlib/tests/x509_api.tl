@@ -92,8 +92,8 @@
     [start : String "500101000000Z"]
     [end : String "491231235959Z"]
     [tbs : byte_buf.ByteBuf (hex prefix)]
-    (set! tbs (append tbs (hex (clone algorithm))))
-    (set! tbs (append tbs (hex (clone name))))
+    (set! tbs (append tbs (hex (string.copy (& algorithm)))))
+    (set! tbs (append tbs (hex (string.copy (& name)))))
     (set!
       tbs
       (append
@@ -106,7 +106,9 @@
     (set! tbs (append tbs (hex name)))
     (set!
       tbs
-      (append tbs (tlv 48 (append (hex (clone algorithm)) (tlv 3 (zeros 33))))))
+      (append
+        tbs
+        (tlv 48 (append (hex (string.copy (& algorithm))) (tlv 3 (zeros 33))))))
     (set! tbs (append tbs (hex unique)))
     (when
       (> (byte_buf.len extension) 0)
@@ -178,7 +180,7 @@
         [bytes : byte_buf.ByteBuf
           (synthetic-profile
             (byte_buf.new)
-            (clone (array-ref prefixes index))
+            (string.copy (& (array-ref prefixes index)))
             "")]
         (expect-rejected (byte_buf.as-bytes (& bytes)))
         unit)
@@ -414,7 +416,7 @@
     [index : i64 0]
     (while (< index 7)
       (let
-        [text : String (clone (array-ref texts index))]
+        [text : String (string.copy (& (array-ref texts index)))]
         (match (pem.decode-certificates
           (byte_buf.str-as-bytes (& text))
           (pem.default-limits))
@@ -454,7 +456,7 @@
     [index : i64 0]
     (while (< index 13)
       (let
-        [text : String (clone (array-ref bad index))]
+        [text : String (string.copy (& (array-ref bad index)))]
         (match (time.parse (byte_buf.str-as-bytes (& text)) 24 100)
           [(time.TimeOk _) (test.assert-true false "invalid time accepted")]
           [(time.TimeErr error)
@@ -632,7 +634,8 @@
     (while (< index 256)
       (set! seed (% (* seed 48271) 2147483647))
       (let
-        [bytes : byte_buf.ByteBuf (byte_buf.from-string (clone rsa-pem))]
+        [bytes : byte_buf.ByteBuf
+          (byte_buf.from-string (string.copy (& rsa-pem)))]
         [position : i64 (% seed (byte_buf.len bytes))]
         (set! seed (% (* seed 48271) 2147483647))
         (byte_buf.bytes-set!
@@ -780,10 +783,14 @@
           (expect-rejected (byte_buf.as-bytes (& trailing)))
           unit)]))
   (let
-    [bundle : String (str_cat.str-cat (clone rsa-pem) "text\n" (clone rsa-pem))]
+    [bundle : String
+      (str_cat.str-cat
+        (string.copy (& rsa-pem))
+        "text\n"
+        (string.copy (& rsa-pem)))]
     [bad : String
       (str_cat.str-cat
-        (clone rsa-pem)
+        (string.copy (& rsa-pem))
         "-----BEGIN CERTIFICATE-----\nBQA=\n-----END CERTIFICATE-----\n")]
     (match (x509.parse-pem
       (byte_buf.str-as-bytes (& bundle))
@@ -1062,32 +1069,35 @@
     [label : String (service-repeat 97 63)]
     [maximum : String
       (str_cat.str-cat
-        (clone label)
+        (string.copy (& label))
         "."
-        (clone label)
+        (string.copy (& label))
         "."
-        (clone label)
+        (string.copy (& label))
         "."
         (service-repeat 98 61))]
     [certificate : x509.Certificate
-      (service-certificate (service-dns (clone maximum)))]
-    (service-match (& certificate) (clone maximum) 0)
-    (service-match (& certificate) (str_cat.str-cat (clone maximum) ".") 0)
+      (service-certificate (service-dns (string.copy (& maximum))))]
+    (service-match (& certificate) (string.copy (& maximum)) 0)
+    (service-match
+      (& certificate)
+      (str_cat.str-cat (string.copy (& maximum)) ".")
+      0)
     (service-input-error
-      (str_cat.str-cat (clone maximum) "a")
+      (str_cat.str-cat (string.copy (& maximum)) "a")
       (x509.DnsNameTooLong))
     (service-input-error
-      (str_cat.str-cat (clone maximum) "a.")
+      (str_cat.str-cat (string.copy (& maximum)) "a.")
       (x509.DnsNameTooLong))
     (service-input-error (service-repeat 97 64) (x509.InvalidDnsName))
     (let
       [other : String
         (str_cat.str-cat
-          (clone label)
+          (string.copy (& label))
           "."
-          (clone label)
+          (string.copy (& label))
           "."
-          (clone label)
+          (string.copy (& label))
           "."
           (service-repeat 98 60)
           "c")]
@@ -1137,7 +1147,8 @@
     (while (< index 11)
       (let
         [certificate : x509.Certificate
-          (service-certificate (service-dns (clone (array-ref invalid index))))]
+          (service-certificate
+            (service-dns (string.copy (& (array-ref invalid index)))))]
         [references : x509.ServiceReferences (service-refs "a.test")]
         (service-error
           (& certificate)
@@ -1264,7 +1275,7 @@
   (let
     [references : x509.ServiceReferences (x509.service-references-new)]
     [record : x509.ServiceReference
-      (x509.Dns (x509.ServiceDnsName (clone input)))]
+      (x509.Dns (x509.ServiceDnsName (string.copy (& input))))]
     [certificate : x509.Certificate (x509.empty-certificate)]
     (match (x509.service-reference-add!
       (&mut references)

@@ -82,7 +82,10 @@
         (test.assert-string-eq (& actual) (& expected) message))]))
 
 (define (assert-encode-text [text : String] [expected : String]) : unit
-  (assert-encode-buffer (byte_buf.str-as-bytes (& text)) expected (clone text)))
+  (assert-encode-buffer
+    (byte_buf.str-as-bytes (& text))
+    expected
+    (string.copy (& text))))
 
 (define (assert-decode-text [encoded : String] [expected : String]) : unit
   (match (base64.decode (byte_buf.str-as-bytes (& encoded)) 1024)
@@ -137,14 +140,14 @@
         (test.assert-i64-eq
           encoded-length
           (expected-encoded-length input-length)
-          (clone message))
+          (string.copy (& message)))
         (match (base64.encode input 1024)
           [(base64.Base64EncodeErr _) (fail message)]
           [(base64.Base64EncodeOk encoded)
             (test.assert-i64-eq
               (byte_buf.len encoded)
               encoded-length
-              (clone message))
+              (string.copy (& message)))
             (match (base64.decode (byte_buf.as-bytes (& encoded)) 1024)
               [(base64.Base64DecodeErr _) (fail message)]
               [(base64.Base64DecodeOk decoded)
@@ -153,13 +156,13 @@
                   (test.assert-i64-eq
                     (byte_buf.len decoded)
                     input-length
-                    (clone message))
+                    (string.copy (& message)))
                   (while (< index input-length)
                     (begin
                       (test.assert-i64-eq
                         (cast (byte_buf.ref decoded index) : i64)
                         (cast (byte_buf.bytes-ref input index) : i64)
-                        (clone message))
+                        (string.copy (& message)))
                       (set! index (+ index 1))))
                   unit)])])])))
 

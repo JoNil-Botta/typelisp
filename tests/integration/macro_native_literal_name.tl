@@ -26,9 +26,10 @@
 (define (main) : i64
   (let
     [value : Point (Point (string.append "o" "rigin") 3 4)]
-    [copy : Point (clone value)]
-    [shape : Shape (Line (clone value) (Point (string.append "e" "nd") 10 20))]
-    [shape-copy : Shape (clone shape)]
+    [copy : Point (clone-point (& value))]
+    [shape : Shape
+      (Line (clone-point (& value)) (Point (string.append "e" "nd") 10 20))]
+    [shape-copy : Shape (clone-shape (& shape))]
     [line-sum : i64
       (match shape-copy
         [(Line a b) (+ a.x a.y b.x b.y)]

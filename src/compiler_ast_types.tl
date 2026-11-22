@@ -2031,7 +2031,7 @@
     ;; The row view is consumed by this match before recursion. This walker
     ;; never installs, resets, grows, or rewrites an expression pool, so no
     ;; view survives a generation or exact-row mutation boundary.
-    (match (ast-expr-segment-bases-shared-view expr-segment-bases id)
+    (match (ast-expr-segment-bases-get expr-segment-bases id)
       [(or (Spanned inner _) (MacroExpansion inner _ _))
         (if (or (< inner 0) (>= inner count) (= inner id))
           -1
@@ -5231,42 +5231,28 @@
 ;; Addressing is `ast-node-get`'s without its process-global load, so a
 ;; read-only walk that hoists the pointer once pays less per node than the
 ;; installed-pool fast path, and much less than a per-node
-;; `AstNodePoolContext` read.
-(define (ast-expr-segment-bases-get [segment-bases : i64] [id : i64]) : AstExpr
-  (let
-    [biased-base : i64
-      (unsafe
-        (ptr-read
-          (ptr-offset
-            (int->ptr segment-bases : (Ptr i64))
-            (shr id ast-expr-node-pool-segment-shift))))]
-    (unsafe
-      (ptr-read
-        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
-
-;; Immediate representation-level view of one row in the current pool
-;; generation. Segments never relocate, so appending or rewriting other rows
-;; cannot invalidate the address; reset/generation handoff and rewriting this
-;; exact row still end the view's lifetime. Keeping this as a macro lets
-;; aggregate call lowering hand the stable row directly to the callee instead
-;; of returning it through a second 32-byte value slot.
-(defmacro (ast-expr-segment-bases-shared-view
-  [segment-bases : Expr]
-  [id : Expr]) : Expr
+;; `AstNodePoolContext` read. It is a macro because the row is one 32-byte
+;; value: inlining hands it straight to the caller instead of through a call
+;; and a returned-value slot. Both arguments are bound once, so either may have
+;; effects, and every name in the expansion is module-qualified because callers
+;; in other modules expand it.
+(defmacro (ast-expr-segment-bases-get [segment-bases : Expr] [id : Expr]) : Expr
   `(let
-    [bases-address : i64 ,segment-bases]
-    [row-id : i64 ,id]
-    [biased-base : i64
+    [seg-get-bases : i64 ,segment-bases]
+    [seg-get-id : i64 ,id]
+    [seg-get-biased-base : i64
       (unsafe
         (ptr-read
           (ptr-offset
-            (int->ptr bases-address : (Ptr i64))
-            (shr row-id ast-expr-node-pool-segment-shift))))]
+            (int->ptr seg-get-bases : (Ptr i64))
+            (shr seg-get-id compiler_ast_types.ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr
-          (+ biased-base (* row-id (ast-expr-node-bytes)))
-          : (Ptr AstExpr))))))
+          (+
+            seg-get-biased-base
+            (* seg-get-id (compiler_ast_types.ast-expr-node-bytes)))
+          : (Ptr compiler_ast_types.AstExpr))))))
 
 ;; Segment-bases pointer of the context's live expr-pool cell. A grow appends to
 ;; this table in place and never moves it, and a push rewrites the cell without
@@ -8209,6 +8195,74 @@
       ast-child-unit
       (&mut ids))
     ids))
+
+;; A walker that lists a node's expression children with `ast-expr-child-ids`
+;; allocates a fresh list for a sequence it reads once by index and drops. A
+;; child range is that sequence on one shared LIFO stack: no allocation per
+;; node, every child id read by index, closed in the frame that opened it.
+;; Ranges nest, and a close pops every id the range pushed. The compiler has no
+;; threads, so one process-global stack serves every caller; it grows by
+;; doubling, as `ast-node-protected-journal-grow!` does.
+(defstruct AstExprChildRange
+  (start i64)
+  (end i64))
+
+;; The stack outlives any one compile session: a batch driver compiles each
+;; source in a scratch arena and destroys it, so growing into the pool's base
+;; arena would leave this global pointing at freed memory. Capture the
+;; global-init arena, as `ast-node-canonical-span-records` does.
+(define ast-expr-child-range-stack-arena : i64
+  (arena.tl_arena_current))
+(define ast-expr-child-range-stack : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define ast-expr-child-range-stack-top : i64
+  0)
+
+(define (ast-expr-child-range-stack-grow!) : unit
+  (let
+    [old : (__tl_dyn-array i64)
+      (ast-global-shared-view ast-expr-child-range-stack)]
+    [old-capacity : i64 (array-length old)]
+    [new-capacity : i64
+      (if (= old-capacity 0)
+        1024
+        (* old-capacity 2))]
+    [next : (__tl_dyn-array i64)
+      (in-arena
+        (unsafe
+          (arena.Arena ast-expr-child-range-stack-arena))
+        (__tl_make-array i64 new-capacity))]
+    (for [i (iterator.range 0 ast-expr-child-range-stack-top)]
+      (set! (array-ref next i) (array-ref old i)))
+    (set! ast-expr-child-range-stack next)))
+
+(define (ast-expr-child-range-push! [child : i64]) : unit
+  (let
+    [top : i64 ast-expr-child-range-stack-top]
+    (when
+      (>= top (array-length ast-expr-child-range-stack))
+      (ast-expr-child-range-stack-grow!))
+    (set! (array-ref ast-expr-child-range-stack top) child)
+    (set! ast-expr-child-range-stack-top (+ top 1))))
+
+(define (ast-expr-child-range-open! [expr : AstExpr]) : AstExprChildRange
+  (let
+    [start : i64 ast-expr-child-range-stack-top]
+    (ast-expr-for-each-child
+      expr
+      ast-expr-child-range-push!
+      ast-child-unit
+      ast-child-unit
+      ast-child-unit)
+    (AstExprChildRange start ast-expr-child-range-stack-top)))
+
+;; The range names the region the id belongs to; the stack itself is global, so
+;; only the index is read here.
+(define (ast-expr-child-range-get [_range : AstExprChildRange] [index : i64]) : i64
+  (array-ref ast-expr-child-range-stack index))
+
+(define (ast-expr-child-range-close! [range : AstExprChildRange]) : unit
+  (set! ast-expr-child-range-stack-top range.start))
 
 (defmacro (ast-expr-take-child-id [ids : Expr] [next : Expr] [_replaced : Expr]) : Expr
   `(begin
@@ -11773,18 +11827,14 @@
               [owned-expr : AstExpr
                 (ast-compaction-remap-expr
                   remap
-                  (ast-expr-segment-bases-shared-view
-                    remap.source-expr-bases
-                    id))]
+                  (ast-expr-segment-bases-get remap.source-expr-bases id))]
               (ast-compaction-remap-dest-expr-set! remap id owned-expr)
               id)
             (let
               [new-expr : AstExpr
                 (ast-compaction-remap-expr
                   remap
-                  (ast-expr-segment-bases-shared-view
-                    remap.source-expr-bases
-                    id))]
+                  (ast-expr-segment-bases-get remap.source-expr-bases id))]
               [new-id : i64
                 (ast-compaction-remap-dest-expr-push remap new-expr)]
               (unsafe
@@ -12354,9 +12404,7 @@
       ;; Only Copy wrapper IDs survive reassignment of this shallow snapshot.
       (match (ast-place-shared-view current)
         [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
-          (set!
-            current
-            (ast-expr-segment-bases-shared-view segment-bases inner-id))]
+          (set! current (ast-expr-segment-bases-get segment-bases inner-id))]
         [_ (return current)]))
     current))
 

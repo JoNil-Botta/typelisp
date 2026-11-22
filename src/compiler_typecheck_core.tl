@@ -17616,14 +17616,21 @@
                (ast.AstExpr.PtrAddrOf place-box))
             (or
               (tc-selected-place-roots-at? ctx env place-box root)
-              (tc-selected-writes-root-children?
-                ctx
-                env
-                (ast.ast-expr-child-ids (tc-context-expr-get ctx expr-id))
-                0
-                root
-                global?
-                budget))]
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open!
+                    (tc-context-expr-get ctx expr-id))]
+                [result : bool
+                  (tc-selected-writes-root-children?
+                    ctx
+                    env
+                    children
+                    children.start
+                    root
+                    global?
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result))]
           [(ast.AstExpr.Borrow mutable? _ place-box)
             (or
               (and
@@ -17633,14 +17640,21 @@
           [(ast.AstExpr.Call _ _)
             (or
               global?
-              (tc-selected-writes-root-children?
-                ctx
-                env
-                (ast.ast-expr-child-ids (tc-context-expr-get ctx expr-id))
-                0
-                root
-                global?
-                budget))]
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open!
+                    (tc-context-expr-get ctx expr-id))]
+                [result : bool
+                  (tc-selected-writes-root-children?
+                    ctx
+                    env
+                    children
+                    children.start
+                    root
+                    global?
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result))]
           ;; Forms that bind or update state through payload fields other
           ;; than expression children are not decomposed.
           [(ast.AstExpr.Foreach _) true]
@@ -17651,30 +17665,37 @@
           [(ast.AstExpr.ForOwnedState _) true]
           [(ast.AstExpr.ForOwnedStep _) true]
           [_
-            (tc-selected-writes-root-children?
-              ctx
-              env
-              (ast.ast-expr-child-ids (tc-context-expr-get ctx expr-id))
-              0
-              root
-              global?
-              budget)]))]))
+            (let
+              [children : ast.AstExprChildRange
+                (ast.ast-expr-child-range-open!
+                  (tc-context-expr-get ctx expr-id))]
+              [result : bool
+                (tc-selected-writes-root-children?
+                  ctx
+                  env
+                  children
+                  children.start
+                  root
+                  global?
+                  budget)]
+              (ast.ast-expr-child-range-close! children)
+              result)]))]))
 
 (define (tc-selected-writes-root-children?
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [root : i64]
   [global? : bool]
   [budget : (&mut budget i64)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     false
     (or
       (tc-selected-writes-root?
         ctx
         env
-        (ast.ast-expr-list-get (& children) index -1)
+        (ast.ast-expr-child-range-get children index)
         root
         global?
         budget)

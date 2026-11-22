@@ -26903,23 +26903,29 @@
             [_ false])]
         (and
           children-ok
-          (lower-snapshot-effect-free-children?
-            ctx
-            (ast.ast-expr-child-ids expr)
-            0
-            budget))))))
+          (let
+            [children : ast.AstExprChildRange
+              (ast.ast-expr-child-range-open! expr)]
+            [result : bool
+              (lower-snapshot-effect-free-children?
+                ctx
+                children
+                children.start
+                budget)]
+            (ast.ast-expr-child-range-close! children)
+            result))))))
 
 (define (lower-snapshot-effect-free-children?
   [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [budget : (&mut budget i64)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     true
     (and
       (lower-snapshot-effect-free?
         ctx
-        (ast.ast-expr-list-get (& children) index -1)
+        (ast.ast-expr-child-range-get children index)
         budget)
       (lower-snapshot-effect-free-children? ctx children (+ index 1) budget))))
 
@@ -26979,13 +26985,20 @@
                  (ast.AstExpr.PtrAddrOf place-box))
               (or
                 (lower-snapshot-place-roots-at? ctx type-env place-box root)
-                (lower-snapshot-writes-root-children?
-                  ctx
-                  type-env
-                  (ast.ast-expr-child-ids (lower-global-shared-view expr))
-                  0
-                  root
-                  budget))]
+                (let
+                  [children : ast.AstExprChildRange
+                    (ast.ast-expr-child-range-open!
+                      (lower-global-shared-view expr))]
+                  [result : bool
+                    (lower-snapshot-writes-root-children?
+                      ctx
+                      type-env
+                      children
+                      children.start
+                      root
+                      budget)]
+                  (ast.ast-expr-child-range-close! children)
+                  result))]
             [(ast.AstExpr.Borrow mutable? _ place-box)
               (or
                 (and
@@ -27002,13 +27015,19 @@
             [(ast.AstExpr.ForOwnedState _) true]
             [(ast.AstExpr.ForOwnedStep _) true]
             [_
-              (lower-snapshot-writes-root-children?
-                ctx
-                type-env
-                (ast.ast-expr-child-ids expr)
-                0
-                root
-                budget)]))))))
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open! expr)]
+                [result : bool
+                  (lower-snapshot-writes-root-children?
+                    ctx
+                    type-env
+                    children
+                    children.start
+                    root
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result)]))))))
 
 ;; Whether the place at `place-box` is storage of `root`: a name that may
 ;; denote it, through inline projections. A place reached through a
@@ -27029,17 +27048,17 @@
 (define (lower-snapshot-writes-root-children?
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [root : i64]
   [budget : (&mut budget i64)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     false
     (or
       (lower-snapshot-writes-root?
         ctx
         type-env
-        (ast.ast-expr-list-get (& children) index -1)
+        (ast.ast-expr-child-range-get children index)
         root
         budget)
       (lower-snapshot-writes-root-children?
@@ -27258,11 +27277,17 @@
     (match (& body)
       [(ast.AstExpr.PtrAddrOf _) false]
       [_
-        (lower-raw-address-free-children?
-          ctx
-          (ast.ast-expr-child-ids body)
-          0
-          (&mut budget))])))
+        (let
+          [children : ast.AstExprChildRange
+            (ast.ast-expr-child-range-open! body)]
+          [result : bool
+            (lower-raw-address-free-children?
+              ctx
+              children
+              children.start
+              (&mut budget))]
+          (ast.ast-expr-child-range-close! children)
+          result)])))
 
 (define (lower-raw-address-free-expr?
   [ctx : tc_core.TcContext]
@@ -27285,11 +27310,17 @@
                 (lower-raw-address-free-pointer? ctx pointer budget)
                 (lower-raw-address-free-expr? ctx value budget))]
             [_
-              (lower-raw-address-free-children?
-                ctx
-                (ast.ast-expr-child-ids expr)
-                0
-                budget)]))))))
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open! expr)]
+                [result : bool
+                  (lower-raw-address-free-children?
+                    ctx
+                    children
+                    children.start
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result)]))))))
 
 (define (lower-raw-address-free-pointer?
   [ctx : tc_core.TcContext]
@@ -27320,15 +27351,15 @@
 
 (define (lower-raw-address-free-children?
   [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [budget : (&mut budget i64)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     true
     (and
       (lower-raw-address-free-expr?
         ctx
-        (ast.ast-expr-list-get (& children) index -1)
+        (ast.ast-expr-child-range-get children index)
         budget)
       (lower-raw-address-free-children? ctx children (+ index 1) budget))))
 
@@ -27456,13 +27487,19 @@
             (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
             (let
               [complete : bool
-                (lower-loop-written-roots-children?
-                  ctx
-                  (ast.ast-expr-child-ids expr)
-                  0
-                  roots
-                  set-values
-                  precheck)]
+                (let
+                  [children : ast.AstExprChildRange
+                    (ast.ast-expr-child-range-open! expr)]
+                  [result : bool
+                    (lower-loop-written-roots-children?
+                      ctx
+                      children
+                      children.start
+                      roots
+                      set-values
+                      precheck)]
+                  (ast.ast-expr-child-range-close! children)
+                  result)]
               (when
                 (!= child-mode previous-mode)
                 (set! precheck.mode previous-mode))
@@ -27470,19 +27507,19 @@
 
 (define (lower-loop-written-roots-children?
   [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [roots : (&mut roots lower_i64_i64_map.Map)]
   [set-values : (&mut set-values lower_i64_i64_map.Map)]
   [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     true
     (and
       (lower-loop-written-roots-scan!
         ctx
         (lower-context-expr-get
           ctx
-          (ast.ast-expr-list-get (& children) index -1))
+          (ast.ast-expr-child-range-get children index))
         roots
         set-values
         precheck)
@@ -27538,12 +27575,18 @@
         (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
         (let
           [complete : bool
-            (lower-loop-set-values-children?
-              ctx
-              (ast.ast-expr-child-ids expr)
-              0
-              set-values
-              precheck)]
+            (let
+              [children : ast.AstExprChildRange
+                (ast.ast-expr-child-range-open! expr)]
+              [result : bool
+                (lower-loop-set-values-children?
+                  ctx
+                  children
+                  children.start
+                  set-values
+                  precheck)]
+              (ast.ast-expr-child-range-close! children)
+              result)]
           (when
             (!= child-mode previous-mode)
             (set! precheck.mode previous-mode))
@@ -27551,18 +27594,18 @@
 
 (define (lower-loop-set-values-children?
   [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [set-values : (&mut set-values lower_i64_i64_map.Map)]
   [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     true
     (and
       (lower-loop-set-values-collect!
         ctx
         (lower-context-expr-get
           ctx
-          (ast.ast-expr-list-get (& children) index -1))
+          (ast.ast-expr-child-range-get children index))
         set-values
         precheck)
       (lower-loop-set-values-children?
@@ -27623,25 +27666,31 @@
               [(ast.AstExpr.Set name _)
                 (lower-written-roots-note-name! ctx name roots)]
               [_ true])
-            (lower-written-roots-note-mention-children!
-              ctx
-              (ast.ast-expr-child-ids expr)
-              0
-              roots
-              budget)))))))
+            (let
+              [children : ast.AstExprChildRange
+                (ast.ast-expr-child-range-open! expr)]
+              [result : bool
+                (lower-written-roots-note-mention-children!
+                  ctx
+                  children
+                  children.start
+                  roots
+                  budget)]
+              (ast.ast-expr-child-range-close! children)
+              result)))))))
 
 (define (lower-written-roots-note-mention-children!
   [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [roots : (&mut roots lower_i64_i64_map.Map)]
   [budget : (&mut budget i64)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     true
     (and
       (lower-written-roots-note-mentions!
         ctx
-        (ast.ast-expr-list-get (& children) index -1)
+        (ast.ast-expr-child-range-get children index)
         roots
         budget)
       (lower-written-roots-note-mention-children!
@@ -27765,31 +27814,43 @@
     (and
       own-write
       (if scan-children?
-        (lower-written-roots-scan-children!
-          ctx
-          (ast.ast-expr-child-ids (lower-global-shared-view expr))
-          0
-          roots
-          budget)
-        (lower-written-roots-note-mention-children!
-          ctx
-          (ast.ast-expr-child-ids expr)
-          0
-          roots
-          budget)))))
+        (let
+          [children : ast.AstExprChildRange
+            (ast.ast-expr-child-range-open! (lower-global-shared-view expr))]
+          [result : bool
+            (lower-written-roots-scan-children!
+              ctx
+              children
+              children.start
+              roots
+              budget)]
+          (ast.ast-expr-child-range-close! children)
+          result)
+        (let
+          [children : ast.AstExprChildRange
+            (ast.ast-expr-child-range-open! expr)]
+          [result : bool
+            (lower-written-roots-note-mention-children!
+              ctx
+              children
+              children.start
+              roots
+              budget)]
+          (ast.ast-expr-child-range-close! children)
+          result)))))
 
 (define (lower-written-roots-scan-children!
   [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [roots : (&mut roots lower_i64_i64_map.Map)]
   [budget : (&mut budget i64)]) : bool
-  (if (>= index children.len)
+  (if (>= index children.end)
     true
     (and
       (lower-written-roots-scan!
         ctx
-        (ast.ast-expr-list-get (& children) index -1)
+        (ast.ast-expr-child-range-get children index)
         roots
         budget)
       (lower-written-roots-scan-children! ctx children (+ index 1) roots budget))))
@@ -47332,15 +47393,22 @@
               (if (or in-call? (= written 1))
                 -1
                 written)
-              (lower-alias-scan-children
-                ctx
-                type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
-                name
-                written
-                in-call?
-                budget))]
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open!
+                    (lower-context-expr-get ctx expr-id))]
+                [result : i64
+                  (lower-alias-scan-children
+                    ctx
+                    type-env
+                    children
+                    children.start
+                    name
+                    written
+                    in-call?
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result))]
           ;; An element of the binding is loaded after its index runs.
           [(ast.AstExpr.ArrayRef _ index-box)
             (if (lower-snapshot-place-roots-at? ctx type-env expr-id name)
@@ -47357,15 +47425,22 @@
                 (if (or in-call? (not (= after 0)))
                   -1
                   after))
-              (lower-alias-scan-children
-                ctx
-                type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
-                name
-                written
-                in-call?
-                budget))]
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open!
+                    (lower-context-expr-get ctx expr-id))]
+                [result : i64
+                  (lower-alias-scan-children
+                    ctx
+                    type-env
+                    children
+                    children.start
+                    name
+                    written
+                    in-call?
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result))]
           [(ast.AstExpr.Set target value-box)
             (if (lower-snapshot-name-may-denote-root? ctx type-env target name)
               -1
@@ -47389,27 +47464,41 @@
             (if (lower-snapshot-place-roots-at? ctx type-env place-box name)
               -1
               (lower-alias-scan-written
-                (lower-alias-scan-children
-                  ctx
-                  type-env
-                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                  0
-                  name
-                  written
-                  in-call?
-                  budget)))]
+                (let
+                  [children : ast.AstExprChildRange
+                    (ast.ast-expr-child-range-open!
+                      (lower-context-expr-get ctx expr-id))]
+                  [result : i64
+                    (lower-alias-scan-children
+                      ctx
+                      type-env
+                      children
+                      children.start
+                      name
+                      written
+                      in-call?
+                      budget)]
+                  (ast.ast-expr-child-range-close! children)
+                  result)))]
           [(or (ast.AstExpr.PtrWrite _ _) (ast.AstExpr.Call _ _)
                (ast.AstExpr.Syscall _))
             (lower-alias-scan-written
-              (lower-alias-scan-children
-                ctx
-                type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
-                name
-                written
-                true
-                budget))]
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open!
+                    (lower-context-expr-get ctx expr-id))]
+                [result : i64
+                  (lower-alias-scan-children
+                    ctx
+                    type-env
+                    children
+                    children.start
+                    name
+                    written
+                    true
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result))]
           [(ast.AstExpr.If condition left right)
             (let
               [after : i64
@@ -47459,40 +47548,51 @@
           ;; writes of this one.
           [(ast.AstExpr.While _ _)
             (let
-              [children : ast.AstExprList
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))]
+              [children : ast.AstExprChildRange
+                (ast.ast-expr-child-range-open!
+                  (lower-context-expr-get ctx expr-id))]
               [once : i64
                 (lower-alias-scan-children
                   ctx
                   type-env
-                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                  0
+                  children
+                  children.start
                   name
                   written
                   in-call?
                   budget)]
-              (lower-alias-scan-children
-                ctx
-                type-env
-                children
-                0
-                name
-                once
-                in-call?
-                budget))]
+              [again : i64
+                (lower-alias-scan-children
+                  ctx
+                  type-env
+                  children
+                  children.start
+                  name
+                  once
+                  in-call?
+                  budget)]
+              (ast.ast-expr-child-range-close! children)
+              again)]
           ;; A closure captures by value when it is made: a mention is a read
           ;; whose later use this walk cannot place.
           [(ast.AstExpr.Lambda _)
             (if (<
-              (lower-alias-scan-children
-                ctx
-                type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
-                name
-                written
-                true
-                budget)
+              (let
+                [children : ast.AstExprChildRange
+                  (ast.ast-expr-child-range-open!
+                    (lower-context-expr-get ctx expr-id))]
+                [result : i64
+                  (lower-alias-scan-children
+                    ctx
+                    type-env
+                    children
+                    children.start
+                    name
+                    written
+                    true
+                    budget)]
+                (ast.ast-expr-child-range-close! children)
+                result)
               0)
               -1
               written)]
@@ -47502,20 +47602,27 @@
                (ast.AstExpr.ForOwnedStep _))
             -1]
           [_
-            (lower-alias-scan-children
-              ctx
-              type-env
-              (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-              0
-              name
-              written
-              in-call?
-              budget)]))]))
+            (let
+              [children : ast.AstExprChildRange
+                (ast.ast-expr-child-range-open!
+                  (lower-context-expr-get ctx expr-id))]
+              [result : i64
+                (lower-alias-scan-children
+                  ctx
+                  type-env
+                  children
+                  children.start
+                  name
+                  written
+                  in-call?
+                  budget)]
+              (ast.ast-expr-child-range-close! children)
+              result)]))]))
 
 (define (lower-alias-scan-children
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [children : ast.AstExprList]
+  [children : ast.AstExprChildRange]
   [index : i64]
   [name : i64]
   [written : i64]
@@ -47524,13 +47631,13 @@
   (let
     [state : i64 written]
     [at : i64 index]
-    (while (and (>= state 0) (< at children.len))
+    (while (and (>= state 0) (< at children.end))
       (set!
         state
         (lower-alias-scan
           ctx
           type-env
-          (ast.ast-expr-list-get (& children) at -1)
+          (ast.ast-expr-child-range-get children at)
           name
           state
           in-call?

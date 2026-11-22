@@ -904,8 +904,10 @@
 ;; test keeps it; build_cli_core.tl and four other self-compile bodies).
 (define (lender-test-kd-source) : String
   "(import stdlib.arena)
+(import stdlib.clone as clone_gen)
 (import stdlib.string)
 (defenum Outcome (Fail String) (Done String))
+(clone_gen.gen-clone Outcome)
 (define (mk [n : i64]) : Outcome
   (if (> n 0) (Outcome.Done (string.int->string n)) (Outcome.Fail (string.int->string n))))
 (define (pick [n : i64]) : Outcome

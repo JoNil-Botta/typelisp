@@ -3147,55 +3147,58 @@
     (compiler-typecheck-make-array-zii-diagnostics-ok?)
     (compiler-typecheck-inline-layout-tests-ok?)))
 
+(define (compiler-typecheck-with-escape-stdlib-source [src : String]) : String
+  (str_cat.str-cat "(import stdlib.arena)\n(import stdlib.string)\n" src))
+
 (define (compiler-typecheck-with-escape-string-source) : String
-  (compiler-typecheck-with-arena-source
+  (compiler-typecheck-with-escape-stdlib-source
     "(define (main) : String
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch (string.int->string 42))))"))
 
 (define (compiler-typecheck-with-escape-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : i64
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch 40 42)))"))
     (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))
     ;; The clone-out lands in the arena active around the form, so inside
     ;; `with-arena r` the result carries r: used there it checks, and returned
     ;; from the form it is a region escape.
     (compiler-typecheck-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : i64
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-arena r
       (with-escape scratch (string.int->string 42))
       0)))"))
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : String
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-arena r
       (with-escape scratch (string.int->string 42)))))")
       "typecheck: region-tagged value cannot escape with-arena 'r'")
     (compiler-typecheck-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : (__tl_dyn-array i64)
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch (__tl_make-array i64 4))))"))
     (compiler-typecheck-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : (Box String)
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch (box (string.int->string 4)))))"))
     (compiler-typecheck-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(defstruct EscapePayload
   (name String)
   (items (__tl_dyn-array String))
@@ -3208,7 +3211,7 @@
 (clone_gen.gen-clone EscapeResult)
 (define (main) : EscapeResult
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch
       (let
         [items : (__tl_dyn-array String) (__tl_make-array String 2)]
@@ -3225,13 +3228,13 @@
   (with-escape true 1))"
       "typecheck: with-escape arena must be Arena")
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : (-> i64 i64)
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch inc)))")
-      "with-escape clone-out of (-> i64 i64): gen-clone: unsupported type fn_i64_nil_to_i64 at result")))
+      "with-escape clone-out of (-> i64 i64): gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep")))
 
 ;; #8776: with-escape and with-scratch check their body under a region scoped
 ;; to the form, so a body allocation cannot outlive it through a store, a
@@ -3387,10 +3390,10 @@
 (define (main) : i64
   (size))")
     (compiler-typecheck-ok?
-      (compiler-typecheck-with-arena-source
+      (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : i64
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (array-length
       (with-escape scratch
         (with-arena r (array-length (__tl_make-array i64 4)))

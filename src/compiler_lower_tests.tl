@@ -9398,6 +9398,9 @@
 "
     src))
 
+(define (compiler-lower-with-escape-stdlib-source [src : String]) : String
+  (str_cat.str-cat "(import stdlib.arena)\n(import stdlib.string)\n" src))
+
 (define (compiler-lower-with-escape-scalar-source) : String
   (compiler-lower-with-arena-source
     "(define (main) : i64
@@ -9406,17 +9409,17 @@
     (with-escape scratch 40 42)))"))
 
 (define (compiler-lower-with-escape-string-source) : String
-  (compiler-lower-with-arena-source
+  (compiler-lower-with-escape-stdlib-source
     "(define (main) : String
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch (string.int->string 42))))"))
 
 (define (compiler-lower-with-escape-array-source) : String
-  (compiler-lower-with-arena-source
+  (compiler-lower-with-escape-stdlib-source
     "(define (main) : (__tl_dyn-array String)
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch
       (let
         [items : (__tl_dyn-array String) (__tl_make-array String 2)]
@@ -9426,24 +9429,27 @@
           items)))))"))
 
 (define (compiler-lower-with-escape-box-source) : String
-  (compiler-lower-with-arena-source
+  (compiler-lower-with-escape-stdlib-source
     "(define (main) : (Box String)
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch (box (string.int->string 42)))))"))
 
 (define (compiler-lower-with-escape-owning-source) : String
-  (compiler-lower-with-arena-source
-    "(defstruct EscapePayload
+  (compiler-lower-with-escape-stdlib-source
+    "(import stdlib.clone as clone_gen)
+(defstruct EscapePayload
   (name String)
   (items (__tl_dyn-array String))
   (cell (Box String)))
 (defenum EscapeResult
   (Ok EscapePayload)
   (None))
+(clone_gen.gen-clone EscapePayload)
+(clone_gen.gen-clone EscapeResult)
 (define (main) : EscapeResult
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch
       (let
         [items : (__tl_dyn-array String) (__tl_make-array String 2)]
@@ -9489,7 +9495,11 @@
         (compiler-lower-with-escape-arena-shape-ok?
           (compiler-lower-with-escape-box-source))
         (> (lower-test-functions-call-count functions "tl_alloc") 0)
-        (> (lower-test-functions-call-count functions "tl_substring") 0))]
+        (>
+          (lower-test-functions-call-count
+            functions
+            "stdlib/string.tl::stdlib.string/copy")
+          0))]
     [_ false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
@@ -9512,7 +9522,11 @@
         (and
           (compiler-lower-with-escape-arena-shape-ok?
             (compiler-lower-with-escape-string-source))
-          (> (lower-test-functions-call-count functions "tl_substring") 0))]
+          (>
+            (lower-test-functions-call-count
+              functions
+              "stdlib/string.tl::stdlib.string/copy")
+            0))]
       [_ false])
     (compiler-lower-with-escape-array-shape-ok?)
     (compiler-lower-with-escape-box-shape-ok?)
@@ -9524,16 +9538,9 @@
   (with-scratch 40 42))"))
 
 (define (compiler-lower-with-scratch-string-source) : String
-  (compiler-lower-with-arena-source
+  (compiler-lower-with-escape-stdlib-source
     "(define (main) : String
   (with-scratch (string.int->string 42)))"))
-
-(define (compiler-lower-runtime-substring-scratch-source) : String
-  (str_cat.str-cat
-    "(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
-  (unsafe (string-from-bytes (ptr-offset src start) len)))
-"
-    (compiler-lower-with-scratch-string-source)))
 
 (define (compiler-lower-runtime-substring-scratch-paths) : ast.AstDeclPathList
   (ast.ast-decl-root-path-cons "stdlib/runtime.tl" (ast.ast-decl-path-list-new)))
@@ -9586,14 +9593,17 @@
         (ast.ast-decl-root-path-cons "app.tl" (ast.ast-decl-path-list-new))))))
 
 (define (compiler-lower-with-scratch-owning-source) : String
-  (compiler-lower-with-arena-source
-    "(defstruct ScratchPayload
+  (compiler-lower-with-escape-stdlib-source
+    "(import stdlib.clone as clone_gen)
+(defstruct ScratchPayload
   (name String)
   (items (__tl_dyn-array String))
   (cell (Box String)))
 (defenum ScratchResult
   (Ok ScratchPayload)
   (None))
+(clone_gen.gen-clone ScratchPayload)
+(clone_gen.gen-clone ScratchResult)
 (define (main) : ScratchResult
   (with-scratch
     (let
@@ -9643,29 +9653,29 @@
         (and
           (compiler-lower-with-scratch-arena-shape-ok?
             (compiler-lower-with-scratch-string-source))
-          (> (lower-test-functions-call-count functions "tl_substring") 0))]
+          (>
+            (lower-test-functions-call-count
+              functions
+              "stdlib/string.tl::stdlib.string/copy")
+            0))]
       [_ false])
     (compiler-lower-with-scratch-owning-shape-ok?)))
 
 (define (compiler-lower-runtime-substring-scratch-reachable-ok?) : bool
-  (match (parser.parse-ast-source
-    (& (compiler-lower-runtime-substring-scratch-source)))
-    [(Ok program)
-      (match (lower-test-functions
-        (lower-compiler-program-with-decl-paths
-          "app.tl"
-          program
-          (compiler-lower-runtime-substring-scratch-paths)))
-        [(Some functions)
-          (and
-            (lower-test-function-defined?
-              functions
-              "stdlib/runtime.tl::substring")
-            (>
-              (lower-test-function-call-count functions "main" "tl_substring")
-              0))]
-        [_ false])]
-    [(Err _) false]))
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-with-scratch-string-source)))
+    [(Some functions)
+      (and
+        (lower-test-function-defined?
+          functions
+          "stdlib/string.tl::stdlib.string/copy")
+        (>
+          (lower-test-function-call-count
+            functions
+            "main"
+            "stdlib/string.tl::stdlib.string/copy")
+          0))]
+    [_ false]))
 
 (define (compiler-lower-runtime-substring-call-reachable-ok?) : bool
   (match (parser.parse-ast-source

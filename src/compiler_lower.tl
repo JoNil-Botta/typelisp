@@ -32926,16 +32926,25 @@
     [(WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr (lower-context-expr-get ctx scratch-box)]
-        (lower-with-escape ctx state env type-env scratch body -1))]
-    [(WithScratch body) (lower-with-scratch ctx state env type-env body -1)]
+        (lower-with-escape ctx state env type-env scratch body -1 expr-ty))]
+    [(WithScratch body)
+      (lower-with-scratch ctx state env type-env body -1 expr-ty)]
     [(CloneOut form-box step-box)
       (match (tc_core.tc-clone-out-form ctx form-box)
         [(WithEscape scratch-box body)
           (let
             [scratch : ast.AstExpr (lower-context-expr-get ctx scratch-box)]
-            (lower-with-escape ctx state env type-env scratch body step-box))]
+            (lower-with-escape
+              ctx
+              state
+              env
+              type-env
+              scratch
+              body
+              step-box
+              expr-ty))]
         [(WithScratch body)
-          (lower-with-scratch ctx state env type-env body step-box)]
+          (lower-with-scratch ctx state env type-env body step-box expr-ty)]
         [_
           (Err
             (box
@@ -48465,7 +48474,8 @@
   [result-name : i64]
   [step : i64]
   [body-value : ir.CompilerIrValue]
-  [body-ty : ast.AstType]) : ResultLowerExpr
+  [body-ty : ast.AstType]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
   (if (< step 0)
     (ResultLowerExpr.Ok (LowerExpr.Expr state body-value body-ty))
     (match (match (& body-value)
@@ -48474,11 +48484,13 @@
       [_ (lower-materialize state body-value (clone body-ty))])
       [(ResultLowerExpr.Ok
           (LowerExpr.Expr bound-state (ir.CompilerIrValue.Var var-id) _))
-        (lower-expr
+        (lower-expr-expected
           ctx
           bound-state
           (sym_i64_env.sym-i64-bind-id env result-name var-id)
           (tc_core.tc-bind-id type-env result-name body-ty)
+          (lower-context-expr-get ctx step)
+          expected-ty
           (lower-context-expr-get ctx step))]
       [(ResultLowerExpr.Ok _)
         (ResultLowerExpr.Err
@@ -48497,7 +48509,8 @@
   [result-name : i64]
   [step : i64]
   [body-value : ir.CompilerIrValue]
-  [body-ty : ast.AstType]) : ResultLowerExpr
+  [body-ty : ast.AstType]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
   (let
     [escaped-lowered : LowerExpr
       (try
@@ -48509,7 +48522,8 @@
           result-name
           step
           body-value
-          body-ty))]
+          body-ty
+          expected-ty))]
     (match escaped-lowered
       [(Expr escaped-state escaped-value escaped-ty)
         (lower-with-escape-cleanup
@@ -48527,14 +48541,22 @@
   [enclosing-value : ir.CompilerIrValue]
   [mark-value : ir.CompilerIrValue]
   [body : ast.AstExprList]
-  [step : i64]) : ResultLowerExpr
+  [step : i64]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
   (let
     [result-name : i64 (tc_core.tc-clone-out-result-name)]
     [result-region : i64 (tc_core.tc-scratch-body-region (& body))]
     [region-type-env : tc_core.TcTypeEnv
       (tc_core.tc-push-region type-env result-region)]
     [body-lowered : LowerExpr
-      (try (lower-begin ctx state env region-type-env body))]
+      (try
+        (lower-begin-expected
+          ctx
+          state
+          env
+          region-type-env
+          body
+          (tc_core.tc-type-without-regions (clone expected-ty))))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
         (let
@@ -48571,7 +48593,8 @@
                       result-name
                       step
                       body-value
-                      body-ty)]))]))])))
+                      body-ty
+                      expected-ty)]))]))])))
 
 (define (lower-with-escape
   [ctx : tc_core.TcContext]
@@ -48580,7 +48603,8 @@
   [type-env : tc_core.TcTypeEnv]
   [scratch : ast.AstExpr]
   [body : ast.AstExprList]
-  [step : i64]) : ResultLowerExpr
+  [step : i64]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
   (let
     [enclosing-lowered : LowerExpr
       (try
@@ -48632,7 +48656,8 @@
                             enclosing-value
                             mark-value
                             body
-                            step)]))]))]))])))
+                            step
+                            expected-ty)]))]))]))])))
 
 (define (lower-with-scratch-final-restore
   [state : LowerState]
@@ -48689,7 +48714,8 @@
   [result-name : i64]
   [step : i64]
   [body-value : ir.CompilerIrValue]
-  [body-ty : ast.AstType]) : ResultLowerExpr
+  [body-ty : ast.AstType]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
   (let
     [escaped-lowered : LowerExpr
       (try
@@ -48701,7 +48727,8 @@
           result-name
           step
           body-value
-          body-ty))]
+          body-ty
+          expected-ty))]
     (match escaped-lowered
       [(Expr escaped-state escaped-value escaped-ty)
         (lower-with-scratch-cleanup
@@ -48717,14 +48744,22 @@
   [type-env : tc_core.TcTypeEnv]
   [enclosing-value : ir.CompilerIrValue]
   [body : ast.AstExprList]
-  [step : i64]) : ResultLowerExpr
+  [step : i64]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
   (let
     [result-name : i64 (tc_core.tc-clone-out-result-name)]
     [result-region : i64 (tc_core.tc-scratch-body-region (& body))]
     [region-type-env : tc_core.TcTypeEnv
       (tc_core.tc-push-region type-env result-region)]
     [body-lowered : LowerExpr
-      (try (lower-begin ctx state env region-type-env body))]
+      (try
+        (lower-begin-expected
+          ctx
+          state
+          env
+          region-type-env
+          body
+          (tc_core.tc-type-without-regions (clone expected-ty))))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
         (let
@@ -48760,7 +48795,8 @@
                       result-name
                       step
                       body-value
-                      body-ty)]))]))])))
+                      body-ty
+                      expected-ty)]))]))])))
 
 (define (lower-with-scratch
   [ctx : tc_core.TcContext]
@@ -48768,7 +48804,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [body : ast.AstExprList]
-  [step : i64]) : ResultLowerExpr
+  [step : i64]
+  [expected-ty : ast.AstType]) : ResultLowerExpr
   (let
     [enclosing-lowered : LowerExpr
       (try
@@ -48806,7 +48843,8 @@
                       type-env
                       enclosing-value
                       body
-                      step)]))]))])))
+                      step
+                      expected-ty)]))]))])))
 
 (define (lower-if-merge
   [ctx : tc_core.TcContext]

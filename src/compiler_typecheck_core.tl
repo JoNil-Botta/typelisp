@@ -90944,6 +90944,59 @@
     [body-ty : ast.AstType (try (tc-scratch-body-type ctx env body expected))]
     (tc-clone-out-type ctx env "with-scratch" region name body-ty step)))
 
+;; Copy non-function types leave a scratch form by value without a clone call.
+(define (tc-clone-out-copy-value? [ctx : TcContext] [ty : ast.AstType]) : bool
+  (and
+    (tc-type-copyable? ctx (clone ty))
+    (match (tc-type-without-regions (tc-resolve-type ctx ty))
+      [(or (Func _ _) (CFunc _ _)) false]
+      [_ true])))
+
+(define (tc-clone-out-strip-copy-region-list
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]
+  [region : i64]) : ast.AstTypeList
+  (if (>= index (ast.ast-type-list-len types))
+    (ast.ast-type-list-new)
+    (let
+      [item : ast.AstType
+        (tc-clone-out-strip-copy-region
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+          region)]
+      (ast.ast-type-cons
+        (& item)
+        (& (tc-clone-out-strip-copy-region-list ctx types (+ index 1) region))))))
+
+;; `tc-tag-region` tags every nominal and tuple in a scratch body without
+;; checking whether it is Copy. A Copy non-function value carries no scratch
+;; allocation, so drop only `Region` tags naming the form's scratch `region`
+;; while keeping every other region, reference lifetime, and lifetime argument.
+(define (tc-clone-out-strip-copy-region
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [region : i64]) : ast.AstType
+  (if (not (tc-clone-out-copy-value? ctx (clone ty)))
+    ty
+    (match ty
+      [(Region tag inner)
+        (let
+          [stripped : ast.AstType
+            (tc-clone-out-strip-copy-region ctx (ast.ty-node-get inner) region)]
+          (if (= tag region)
+            stripped
+            (ast.ast-ty-region tag (& stripped))))]
+      [(Tuple elems)
+        (ast.ast-ty-tuple
+          (tc-clone-out-strip-copy-region-list ctx (& (deref elems)) 0 region))]
+      [(Array elem count)
+        (ast.ast-ty-array
+          (& (tc-clone-out-strip-copy-region ctx (ast.ty-node-get elem) region))
+          count)]
+      [_ ty])))
+
 ;; The form's type: its clone-out step's type, which must not carry the body
 ;; REGION. The step reads the body result through the hidden binding NAME. A
 ;; form without a step (-1) yields the body result itself.
@@ -90959,7 +91012,7 @@
     ;; The scratch arena is still live while the step runs: its region stays
     ;; visible, so the step may borrow the result, without being the active
     ;; allocation region. A binding named by the region makes it visible.
-    [out-ty : ast.AstType
+    [step-ty : ast.AstType
       (if (< step 0)
         body-ty
         (try
@@ -90967,6 +91020,7 @@
             ctx
             (tc-bind-id (tc-bind-id env region ast.AstType.Unit) name body-ty)
             step)))]
+    [out-ty : ast.AstType (tc-clone-out-strip-copy-region ctx step-ty region)]
     (if (tc-type-contains-region (tc-global-shared-view out-ty) region)
       (Err (tc-clone-out-escape-message ctx form out-ty))
       (Ok out-ty))))
@@ -122549,11 +122603,7 @@
       (match body-ty
         [(Ok ty)
           ;; A function value is not cloned out; the clone step reports it.
-          (if (and
-            (tc-type-copyable? ctx (clone ty))
-            (match (tc-type-without-regions (tc-resolve-type ctx (clone ty)))
-              [(or (Func _ _) (CFunc _ _)) false]
-              [_ true]))
+          (if (tc-clone-out-copy-value? ctx (clone ty))
             result
             (let
               [args : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]

@@ -91,7 +91,7 @@
 ;: `clone-<kebab-name>` from `(gen-clone T)`.
 ;; lint-allow: function-name-case -- private compiler clone-out bridge
 (defmacro (__tl-clone-out [value : Expr]) : Expr
-  `(stdlib.clone.clone-value ,(comptime.expr-type value) (& ,value) "" "result"))
+  `(stdlib.clone.deep ,value))
 
 ;: Short-circuiting boolean conjunction.
 ;:

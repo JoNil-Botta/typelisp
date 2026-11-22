@@ -1469,6 +1469,12 @@
   ;; synthesize a String snapshot or source substring call.
   (tltest-reach-mark-name-id names cbi.compiler-builtin-id-runtime-substring))
 
+;; Harness pruning runs before macro expansion expands `with-scratch`,
+;; `with-escape`, or `clone.deep` into calls to owner-written `clone-<name>`
+;; hooks. Mark a sentinel so those hooks and their callees survive pruning.
+(define (tltest-reach-mark-clone-out-hooks [names : tltest_name_map.Map]) : tltest_name_map.Map
+  (tltest-reach-mark-name-id names (ci.intern "__tl-clone-out")))
+
 (define (tltest-reach-mark-atomic-runtime-for-call
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]
@@ -1490,13 +1496,19 @@
     [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
     [runtime-names : tltest_name_map.Map
       (tltest-reach-mark-atomic-runtime-for-call session name-id names)]
+    [clone-names : tltest_name_map.Map
+      (if (string.eq
+        (ci.intern-str (tltest-reach-name-dot-leaf-id session name-id))
+        "deep")
+        (tltest-reach-mark-clone-out-hooks runtime-names)
+        runtime-names)]
     (cond
       [(or
           (= base-id cbi.compiler-builtin-id-clone)
           (= base-id cbi.compiler-builtin-id-runtime-substring)
           (= base-id (cbi.compiler-builtin-ctfe-ref 93)))
-        (tltest-reach-mark-string-snapshot-runtime runtime-names)]
-      [else runtime-names])))
+        (tltest-reach-mark-string-snapshot-runtime clone-names)]
+      [else clone-names])))
 
 (define (tltest-reach-mark-expr-list
   [session : cis.InternStructuralSessionHandle]
@@ -1550,11 +1562,17 @@
                 called-names)]
             [_ called-names])]
         (tltest-reach-mark-expr-list session args runtime-names))]
-    [(or (Lambda _) (WithEscape _ _) (WithScratch _))
+    [(Lambda _)
       (tltest-reach-mark-children
         session
         node-id
         (tltest-reach-mark-string-snapshot-runtime names))]
+    [(or (WithEscape _ _) (WithScratch _))
+      (tltest-reach-mark-children
+        session
+        node-id
+        (tltest-reach-mark-clone-out-hooks
+          (tltest-reach-mark-string-snapshot-runtime names)))]
     [(ForOwnedState payload)
       (tltest-reach-mark-expr
         session
@@ -1784,7 +1802,17 @@
         [(No)
           (if (tltest-reachable-name-marked? session names name)
             (tltest-reach-mark-expr session body names)
-            names)])]
+            (if (and
+              (tltest-reachable-name-marked?
+                session
+                names
+                (ci.intern "__tl-clone-out"))
+              (string.is-string-prefix-at (& (ci.intern-str name)) "clone-" 0))
+              (tltest-reach-mark-expr
+                session
+                body
+                (tltest-reach-mark-name-id names name))
+              names))])]
     [(DefDispatch _ _ variants)
       ;; Dispatch declarations survive harness pruning even when uncalled.
       ;; Typechecking needs every variant; the fixpoint follows their bodies.

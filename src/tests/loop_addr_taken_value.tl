@@ -358,6 +358,18 @@
 (define (reset!) : unit
   (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "empty:\nreturn"))))
 
+;; A raw pass fixture is off-pipeline: it installs the address-taken set for the
+;; body it hands the pass.
+(define (install-addr-taken [func : (& func ir.CompilerIrFunction)]) : unit
+  (opt.opt-function-addr-taken-install!
+    (opt.opt-function-frame func)
+    (& (opt.opt-function-blocks func))))
+
+(define (install-addr-taken-blocks
+  [frame : i64]
+  [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (opt.opt-function-addr-taken-install! frame blocks))
+
 (define (valid? [func : (& func ir.CompilerIrFunction)]) : bool
   (opt.opt-verify-ok? (& (opt.opt-verify-function func))))
 
@@ -405,6 +417,7 @@
     (let
       [func (lftr-function mode)]
       [_reset (reset!)]
+      [_addr-taken (install-addr-taken (& func))]
       [out
         (match (opt.opt-lftr-function-with-context-result
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -422,6 +435,7 @@
     (let
       [func (lftr-iv-function which)]
       [_reset (reset!)]
+      [_addr-taken (install-addr-taken (& func))]
       [_valid
         (test.assert-true (valid? (& func)) "the LFTR fixture is valid IR")]
       [out
@@ -742,6 +756,7 @@
     (let
       [func (ubound-function (= mutable 1))]
       [_reset (reset!)]
+      [_addr-taken (install-addr-taken (& func))]
       [_valid
         (test.assert-true (valid? (& func)) "the ubound fixture is valid IR")]
       (test.assert-true
@@ -814,6 +829,7 @@
          %3 = mov %0 : i64
          %4 = addr_of %3
          return %3")]
+    [_addr-taken (install-addr-taken-blocks 8 (& blocks))]
     [_install (opt.opt-loop-taint-install! 8 (& blocks))]
     (test.assert-true
       (and
@@ -859,10 +875,7 @@
           context.index
           (__tl_make-array opt.OptBoolBranchDef 0)
           false)]
-      [_reset
-        (opt.opt-function-addr-taken-install!
-          0
-          (& (irt.blocks "empty:\nreturn")))]
+      [_addr-taken (install-addr-taken (& func))]
       [found?
         (match (opt.opt-cfg-find-block
           blocks
@@ -913,10 +926,7 @@
              return 0
              }"))]
       [blocks (opt.opt-function-blocks func)]
-      [_reset
-        (opt.opt-function-addr-taken-install!
-          0
-          (& (irt.blocks "empty:\nreturn")))]
+      [_addr-taken (install-addr-taken (& func))]
       [out
         (match (opt.opt-unroll-simd-function-with-context-result
           (ast.ast-node-pool-reader-type-segment-bases)

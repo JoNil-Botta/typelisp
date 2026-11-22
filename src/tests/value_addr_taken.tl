@@ -10,7 +10,22 @@
 (import (hashmap.hashmap i64 i64) as imap)
 
 (define (reset!) : unit
-  (opt.opt-loop-taint-install! 0 (& (irt.blocks "entry:\nreturn"))))
+  (let
+    [empty : ir.CompilerIrBlockList (irt.blocks "entry:\nreturn")]
+    (taint! 0 (& empty))))
+
+;; The loop-taint closure is built from the installed address-taken set, so a
+;; raw fixture installs that first; a pipeline run's pass manager did.
+(define (taint! [frame : i64] [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (opt.opt-function-addr-taken-install! frame blocks)
+  (opt.opt-loop-taint-install! frame blocks))
+
+;; A raw pass fixture is off-pipeline: it installs the address-taken set for the
+;; body it hands the pass. The pass manager does this inside a pipeline run.
+(define (install! [func : (& func ir.CompilerIrFunction)]) : unit
+  (opt.opt-function-addr-taken-install!
+    (opt.opt-function-frame func)
+    (& (opt.opt-function-blocks func))))
 
 (define (valid! [func : (& ir.CompilerIrFunction)]) : unit
   (test.assert-true
@@ -63,6 +78,8 @@
   (match func
     [(Function name params ret frame blocks abi)
       (let
+        [_addr-taken : unit
+          (opt.opt-function-addr-taken-install! frame (& blocks))]
         [next
           (opt.opt-divrem-safety-blocks-with-context
             frame
@@ -126,6 +143,7 @@
     (reset!)
     (let
       [func (mul-function (= mode 1))]
+      [_addr-taken (install! (& func))]
       [_valid (valid! (& func))]
       [out (opt.opt-const-global-mul-shift-final (& (constants)) func)]
       (valid! (& out))
@@ -168,6 +186,7 @@
     (reset!)
     (let
       [func (call-function (= mode 1))]
+      [_addr-taken (install! (& func))]
       [out (opt.opt-pure-call-dedupe-function (& (call-memory)) (& func))]
       (valid! (& func))
       (valid! (& out))
@@ -218,6 +237,7 @@
      }")))
 
 (define (loop-run [gep? : bool] [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (install! (& func))
   (if gep?
     (match (opt.opt-gep-offset-function-with-context-result
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -295,7 +315,8 @@
     (let
       [func (gep-function mode true)]
       [blocks (opt.opt-function-blocks func)]
-      [_install (opt.opt-loop-taint-install! 24 (& blocks))]
+      [_addr-taken (install! (& func))]
+      [_install (taint! 24 (& blocks))]
       [out
         (opt.opt-gep-offset-prepare-preheaders
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -316,32 +337,29 @@
   (let
     [tainted (loop-function 1 false)]
     [blocks (opt.opt-function-blocks tainted)]
-    [_install (opt.opt-loop-taint-install! 24 (& blocks))]
+    [_install (taint! 24 (& blocks))]
     [out (div-run (div-function false))]
     (test.assert-i64-eq
       (count (& out) 1)
       1
-      "divrem clears stale function taint")
-    (opt.opt-loop-taint-install! 24 (& blocks))
+      "divrem reads the installed set rather than the stale taint")
     (let
-      [out
-        (opt.opt-const-global-mul-shift-final
-          (& (constants))
-          (mul-function false))]
+      [func (mul-function false)]
+      [_addr-taken (install! (& func))]
+      [out (opt.opt-const-global-mul-shift-final (& (constants)) func)]
       (test.assert-i64-eq
         (count (& out) 2)
         1
-        "mul_shift clears stale function taint"))
-    (opt.opt-loop-taint-install! 24 (& blocks))
+        "mul_shift reads the installed set rather than the stale taint"))
     (let
       [func (call-function false)]
+      [_addr-taken (install! (& func))]
       [out (opt.opt-pure-call-dedupe-function (& (call-memory)) (& func))]
       (test.assert-i64-eq
         (count (& out) 3)
         1
-        "pure-call clears stale function taint"))
+        "pure-call reads the installed set rather than the stale taint"))
     (for [kind (iterator.range 0 2)]
-      (opt.opt-loop-taint-install! 24 (& blocks))
       (let
         [out
           (loop-run
@@ -351,7 +369,7 @@
               (loop-function 0 false)))]
         (test.assert-true
           (> (opt.opt-function-frame (& out)) 24)
-          "loop pass clears stale function taint")))))
+          "a loop pass reads the installed set rather than the stale taint")))))
 
 ;; The other storage object must not turn off unrelated rewrites.
 (test
@@ -418,6 +436,7 @@
       (reset!)
       (let
         [func (scalar-function (= kind 1) mode)]
+        [_addr-taken (install! (& func))]
         [_valid (valid! (& func))]
         [out
           (if (= kind 1)
@@ -442,7 +461,7 @@
   (let
     [func (scalar-function false 1)]
     [blocks (opt.opt-function-blocks func)]
-    [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+    [_install (taint! 8 (& blocks))]
     [facts : opt.OptDivRemFacts
       (Cons
         (opt.OptDivRemFact.Fact
@@ -472,7 +491,7 @@
   (let
     [func (mul-function true)]
     [blocks (opt.opt-function-blocks func)]
-    [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+    [_install (taint! 8 (& blocks))]
     [copies (imap.with-capacity 1)]
     [counts (imap.with-capacity 1)]
     [mov (irt.instr "%1 = mov @wide_power : i64")]
@@ -519,7 +538,7 @@
     (let
       [func (fact-function mode)]
       [blocks (opt.opt-function-blocks func)]
-      [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+      [_install (taint! 8 (& blocks))]
       [defs : (__tl_dyn-array i64) (__tl_make-array i64 8)]
       [env (imap.with-capacity 1)]
       (for [id (iterator.range 0 8)]
@@ -546,7 +565,7 @@
     (let
       [func (fact-function mode)]
       [blocks (opt.opt-function-blocks func)]
-      [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+      [_install (taint! 8 (& blocks))]
       [sites : opt.OptPureCallTable
         (Cons
           (opt.OptPureCallEntry
@@ -569,7 +588,7 @@
             3
             0))]
       [blocks (opt.opt-function-blocks func)]
-      [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+      [_install (taint! 8 (& blocks))]
       [defs : (__tl_dyn-array i64) (__tl_make-array i64 8)]
       [env (imap.with-capacity 1)]
       [changed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -615,7 +634,7 @@
       (let
         [func (fact-function mode)]
         [blocks (opt.opt-function-blocks func)]
-        [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+        [_install (taint! 8 (& blocks))]
         [args : ir.CompilerIrCallArgs
           (cond
             [(= form 0) (Nil)]
@@ -644,7 +663,7 @@
   (let
     [old (div-function true)]
     [old-blocks (opt.opt-function-blocks old)]
-    [_old (opt.opt-loop-taint-install! 8 (& old-blocks))]
+    [_old (taint! 8 (& old-blocks))]
     [no-mul
       (opt.opt-const-global-mul-shift-final
         (& (constants))
@@ -654,15 +673,14 @@
       1
       "no Mul leaves the function unchanged")
     (let
-      [clean
-        (opt.opt-const-global-mul-shift-final
-          (& (constants))
-          (mul-function false))]
+      [func (mul-function false)]
+      [_addr-taken (install! (& func))]
+      [clean (opt.opt-const-global-mul-shift-final (& (constants)) func)]
       (test.assert-i64-eq
         (count (& clean) 2)
         1
-        "next Mul candidate installs its own set"))
-    (opt.opt-loop-taint-install! 8 (& old-blocks))
+        "next Mul candidate reads the installed set"))
+    (taint! 8 (& old-blocks))
     (let
       [func
         (irt.func
@@ -752,7 +770,7 @@
                   (& func)
                   24
                   (opt.opt-bool-branch-clone-blocks (& staged)))))]
-          [_fresh (opt.opt-loop-taint-install! 24 (& staged))]
+          [_fresh (taint! 24 (& staged))]
           [after (opt.opt-loop-tainted? (& staged) labels)]
           (test.assert-true
             (= before after)
@@ -793,7 +811,7 @@
 (define (outside-gep-region-clean? [func : (& ir.CompilerIrFunction)]) : bool
   (let
     [blocks (opt.opt-function-blocks func)]
-    [_install (opt.opt-loop-taint-install! 24 (& blocks))]
+    [_install (taint! 24 (& blocks))]
     [loops
       (opt.opt-cfg-natural-loops-with-context
         (opt.opt-bool-branch-clone-blocks (& blocks))

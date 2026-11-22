@@ -1272,16 +1272,20 @@
   [call-memory : opt_i64_i64_map.Map]
   [cells : opt.OptGlobalCellSummary]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (opt.opt-gvn-blocks-with-context-and-call-memory-result
-    profile-state
-    type-segment-bases
-    (& context)
-    (& params)
-    (& call-memory)
-    cells
-    0
-    (& blocks))
-    [(Result out-blocks _) out-blocks]))
+  (let
+    ;; A raw pass fixture is off-pipeline: it installs the set for the body it
+    ;; hands the pass.
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 0 (& blocks))]
+    (match (opt.opt-gvn-blocks-with-context-and-call-memory-result
+      profile-state
+      type-segment-bases
+      (& context)
+      (& params)
+      (& call-memory)
+      cells
+      0
+      (& blocks))
+      [(Result out-blocks _) out-blocks])))
 
 (define (opt-gvn-blocks
   [type-segment-bases : i64]
@@ -6215,11 +6219,13 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         8
         (& (ir.compiler-ir-param-seq-empty))
-        (irt.blocks
-          "entry:
+        (opt-test-addr-taken-blocks
+          8
+          (irt.blocks
+            "entry:
              %0 = mov 20 : i64
              %1 = mov 22 : i64
-             %2 = add %0, %1 : i64"))]
+             %2 = add %0, %1 : i64")))]
     [fold-noop-result : opt.OptBlockListPassResult
       (opt.optimize-block-list-for-function-pass
         (profile_state.compiler-profile-state-metrics
@@ -6228,8 +6234,10 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         1
         (& (ir.compiler-ir-param-seq-empty))
-        (irt.blocks "entry:
-             return 42"))]
+        (opt-test-addr-taken-blocks
+          1
+          (irt.blocks "entry:
+             return 42")))]
     (compiler-optimize-self-test-require!
       "fold pass reports a real rewrite"
       (match fold-fire-result
@@ -9053,6 +9061,8 @@
 
 (define (opt-load-sink-run [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlock
   (let
+    ;; A raw walk is off-pipeline: it installs the set for its own fixture.
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 32 (& blocks))]
     [sunk : ir.CompilerIrBlockList (opt.opt-load-sink-blocks 32 blocks)]
     (match (ir.compiler-ir-block-list-view sunk)
       [(slice block & _)
@@ -9241,6 +9251,8 @@
 
 (define (opt-store-addr-sink-run [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlock
   (let
+    ;; A raw walk is off-pipeline: it installs the set for its own fixture.
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 32 (& blocks))]
     [sunk : ir.CompilerIrBlockList (opt.opt-store-addr-sink-blocks 32 blocks)]
     (match (ir.compiler-ir-block-list-view sunk)
       [(slice block & _)
@@ -9449,7 +9461,10 @@
       (let
         [text (clone (array-ref refused index))]
         [expected (irt.blocks (clone text))]
-        [actual (opt.opt-load-sink-blocks 32 (irt.blocks text))]
+        [fixture (irt.blocks text)]
+        [_addr-taken : unit
+          (opt.opt-function-addr-taken-install! 32 (& fixture))]
+        [actual (opt.opt-load-sink-blocks 32 (clone fixture))]
         (test.assert-true
           (opt.opt-block-list-eq
             (ast.ast-node-pool-reader-type-segment-bases)
@@ -10615,6 +10630,11 @@
   (let
     [func : ir.CompilerIrFunction
       (opt-successor-sink-test-function name blocks)]
+    ;; A raw walk is off-pipeline: it installs the set for its own fixture.
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt.opt-function-frame func)
+        (& (opt.opt-function-blocks func)))]
     (match (opt.opt-successor-sink-function-with-context-result
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt.opt-cfg-context-build (opt.opt-function-blocks func))
@@ -11529,6 +11549,8 @@
 (define (compiler-optimize-bounds-dom-addr-taken-self-test) : i64
   (let
     [blocks : ir.CompilerIrBlockList (opt-bounds-dom-addr-taken-blocks)]
+    ;; A raw walk is off-pipeline: it installs the set for its own fixture.
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 12 (& blocks))]
     [before : i64
       (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view blocks))]
     [after : ir.CompilerIrBlockList
@@ -30542,7 +30564,9 @@
               (opt-addr-taken-gvn-blocks)))]
         (opt.opt-function-blocks func))]
     [affine : ir.CompilerIrBlockList
-      (opt.opt-affine-fold-blocks 16 (opt-addr-taken-affine-blocks))]
+      (opt.opt-affine-fold-blocks
+        16
+        (opt-test-addr-taken-blocks 16 (opt-addr-taken-affine-blocks)))]
     [fold : ir.CompilerIrBlockList
       (opt.opt-blocks-build
         (opt-addr-taken-fold-blocks)
@@ -45479,6 +45503,7 @@
 (test
   gep-offset-exit-gep-base-must-reach-preheader
   (for [mode (iterator.range 0 2)]
+    (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "entry:\nreturn")))
     (opt.opt-loop-taint-install! 0 (& (irt.blocks "entry:\nreturn")))
     (let
       [after? : bool (= mode 1)]
@@ -47110,6 +47135,10 @@
           7
           (clone blocks)
           Ordinary)]
+      [_addr-taken : unit
+        (opt.opt-function-addr-taken-install!
+          (opt.opt-function-frame function)
+          (& (opt.opt-function-blocks function)))]
       [rewritten : ir.CompilerIrFunction
         (opt.opt-gep-split-function
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -50789,9 +50818,12 @@
 
 (define (compiler-optimize-affine-env-reference-self-test) : i64
   (let
+    ;; The env reads the address-taken set the pass manager installed; this
+    ;; fixture takes no address.
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install! 0 (& (ir.compiler-ir-blocks)))]
     [frame : i64 33]
-    [env : opt.OptAffineEnv
-      (opt.opt-affine-env-new frame (__tl_make-array bool frame))]
+    [env : opt.OptAffineEnv (opt.opt-affine-env-new frame)]
     [expected : (__tl_dyn-array opt.OptAffineRec)
       (__tl_make-array opt.OptAffineRec frame)]
     [binds : i64 0]
@@ -50851,12 +50883,13 @@
 
 (define (compiler-optimize-affine-env-boundary-self-test) : i64
   (let
-    [env : opt.OptAffineEnv
-      (opt.opt-affine-env-new 1100 (__tl_make-array bool 1100))]
-    [other : opt.OptAffineEnv
-      (opt.opt-affine-env-new 4 (__tl_make-array bool 4))]
-    [empty : opt.OptAffineEnv
-      (opt.opt-affine-env-new 0 (__tl_make-array bool 0))]
+    ;; The env reads the address-taken set the pass manager installed; this
+    ;; fixture takes no address.
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install! 0 (& (ir.compiler-ir-blocks)))]
+    [env : opt.OptAffineEnv (opt.opt-affine-env-new 1100)]
+    [other : opt.OptAffineEnv (opt.opt-affine-env-new 4)]
+    [empty : opt.OptAffineEnv (opt.opt-affine-env-new 0)]
     [binds : i64 0]
     (when
       (not
@@ -51047,13 +51080,19 @@
 (define (compiler-optimize-affine-self-test) : i64
   (let
     [lcg : ir.CompilerIrBlockList
-      (opt.opt-affine-fold-blocks 16 (opt-affine-lcg-test-blocks))]
+      (opt.opt-affine-fold-blocks
+        16
+        (opt-test-addr-taken-blocks 16 (opt-affine-lcg-test-blocks)))]
     [lcg-block : ir.CompilerIrBlock (opt-affine-test-first-block lcg)]
     [counter : ir.CompilerIrBlockList
-      (opt.opt-affine-fold-blocks 16 (opt-affine-counter-test-blocks))]
+      (opt.opt-affine-fold-blocks
+        16
+        (opt-test-addr-taken-blocks 16 (opt-affine-counter-test-blocks)))]
     [counter-block : ir.CompilerIrBlock (opt-affine-test-first-block counter)]
     [two-use : ir.CompilerIrBlockList
-      (opt.opt-affine-fold-blocks 16 (opt-affine-two-use-test-blocks))]
+      (opt.opt-affine-fold-blocks
+        16
+        (opt-test-addr-taken-blocks 16 (opt-affine-two-use-test-blocks)))]
     [two-use-block : ir.CompilerIrBlock (opt-affine-test-first-block two-use)]
     (cond
       ;; ((x*5+3)*5+3)*5+3 == x*125 + 93: the second pair reads x*25 + 18 ...
@@ -62912,7 +62951,7 @@
         (& summaries)
         (& (irt.params "overlap=%26:str, unknown=%35:str"))
         38
-        (opt-sl-test-blocks))]
+        (opt-test-addr-taken-blocks 38 (opt-sl-test-blocks)))]
     (cond
       [(not (= (opt-sl-test-folded (& rewritten) 2) 4)) 10]
       [(not (= (opt-sl-test-folded (& rewritten) 4) 9)) 20]
@@ -62953,7 +62992,7 @@
         (& summaries)
         (& (irt.params params))
         96
-        blocks)]
+        (opt-test-addr-taken-blocks 96 blocks))]
     [expected : ir.CompilerIrInstr (irt.instr expected-text)]
     (test.assert-true
       (=
@@ -71351,14 +71390,16 @@ done:
     (ast.ast-node-pool-reader-type-segment-bases)
     8
     (& (ir.compiler-ir-param-seq-empty))
-    (irt.blocks
-      "entry:
+    (opt-test-addr-taken-blocks
+      8
+      (irt.blocks
+        "entry:
          %1 = add %0, 1 : i64
          %4 = add %0, 1 : i64
        b1:
          %2 = add %0, 1 : i64
          %3 = add %0, 1 : i64
-         return %3"))
+         return %3")))
     [(Result blocks _)
       (test.assert-i64-eq
         (opt-cse-block-arith-count (& blocks) "entry")
@@ -79483,6 +79524,11 @@ done:
     [cells : opt.OptGlobalCellSummary
       (owned_view.compiler-owned-reference-shared-view cells)]
     [inner : ir.CompilerIrFunction (opt-guard-sink-test-function name blocks)]
+    ;; A raw pass fixture is off-pipeline: it installs the set for its own body.
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt.opt-function-frame inner)
+        (& (opt.opt-function-blocks inner)))]
     [func
       (match (opt.opt-guard-sink-function-with-context-result
         (& cells)
@@ -83609,7 +83655,10 @@ done:
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (opt.compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
+      ;; A raw pass fixture is off-pipeline: it installs the set for the body it
+      ;; hands the pass.
+      (opt.opt-function-addr-taken-install! frame (& blocks))
       (opt.opt-global-value-number-function-with-context
         type-segment-bases
         (& (opt.opt-cfg-context-build blocks))
@@ -86032,3 +86081,64 @@ return
     (opt-test-qualified-instr-effect-count)
     1
     "every effect query in compiler_optimize.tl goes through opt-instr-effect"))
+
+;; The per-stage address-taken contract is checked by every stage in a test
+;; build, so a stage that creates an `addr_of` or leaves a stale superset fails
+;; the pipeline that runs it. These are the check's own three failure paths.
+;; A raw pass fixture is off-pipeline: the pass reads the address-taken set the
+;; pass manager installed for its pipeline run, so a direct caller installs it
+;; for the body it hands the pass.
+(define (opt-test-addr-taken-blocks
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (opt.opt-function-addr-taken-install! frame (& blocks))
+  blocks)
+
+(test
+  opt-addr-taken-check-stage-catches-contract-breaks
+  (let
+    [frame : i64 2]
+    [quiet : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump 0))))]
+    [loud : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.AddrOf 1 0 1))))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    ;; The installed set is exact for both fixtures' own bodies.
+    [_quiet : unit (opt.opt-function-addr-taken-install! frame (& quiet))]
+    [_same : unit (opt.opt-addr-taken-check-stage! "fold" frame (& quiet))]
+    [exact? : bool (string.eq (opt.opt-rewrite-ice-last) "")]
+    ;; A stage that creates an `addr_of` is caught.
+    [_created : unit (opt.opt-addr-taken-check-stage! "fold" frame (& loud))]
+    [created? : bool
+      (string.eq
+        (opt.opt-rewrite-ice-last)
+        "optimizer: internal error: stage `fold` created addr_of")]
+    ;; A stage that deletes one without reinstalling is caught too.
+    [_capture-stale : unit (opt.opt-rewrite-ice-capture! true)]
+    [_loud : unit (opt.opt-function-addr-taken-install! frame (& loud))]
+    [_stale : unit (opt.opt-addr-taken-check-stage! "fold" frame (& quiet))]
+    [stale? : bool
+      (string.eq
+        (opt.opt-rewrite-ice-last)
+        "optimizer: internal error: stage `fold` left a stale superset without refresh")]
+    [_capture-missing : unit (opt.opt-rewrite-ice-capture! true)]
+    ;; Every pipeline stage needs a row.
+    [_missing : unit
+      (opt.opt-addr-taken-check-stage! "not_a_stage" frame (& quiet))]
+    [missing? : bool
+      (string.eq
+        (opt.opt-rewrite-ice-last)
+        "optimizer: internal error: stage `not_a_stage` is missing from opt-addr-taken-contract")]
+    (test.assert-true exact? "an exact stage output passes the rescan")
+    (test.assert-true created? "a stage that creates addr_of fails the rescan")
+    (test.assert-true
+      stale?
+      "a stage that deletes addr_of without reinstalling fails")
+    (test.assert-true missing? "a stage without a contract row fails")
+    (opt.opt-rewrite-ice-capture! false)))

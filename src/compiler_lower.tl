@@ -30559,9 +30559,14 @@
 (define (lower-binary-result-type-fast
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
+  [left-id : i64]
+  [right-id : i64]
   [op : ast.AstBinOp]
   [left : ast.AstExpr]
   [right : ast.AstExpr]) : tc_core.ResultTcType
+  (let
+    [fact (tc_core.tc-checked-binary-fact-lookup ctx left-id right-id (& op) 0)]
+    (when (> fact 0) (return (Ok (tc_core.tc-checked-binary-fact-result fact)))))
   (let
     [binop-types : tc_core.TcBinOpTypes
       (try
@@ -30582,10 +30587,31 @@
 (define (lower-binop-types-with-result
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
+  [left-id : i64]
+  [right-id : i64]
   [op : ast.AstBinOp]
   [left : ast.AstExpr]
   [right : ast.AstExpr]
   [expr-ty : ast.AstType]) : tc_core.ResultTcBinOpTypes
+  ;; The checked shift gives a computed count its intrinsic type. The
+  ;; legacy result-directed query can contextualize that expression.
+  (unless
+    (tc_core.tc-shift-binop? op)
+    (let
+      [expected-tag (tc_core.tc-checked-binary-scalar-tag (& expr-ty))]
+      (when
+        (> expected-tag 0)
+        (let
+          [fact
+            (tc_core.tc-checked-binary-fact-lookup
+              ctx
+              left-id
+              right-id
+              (& op)
+              expected-tag)]
+          (when
+            (> fact 0)
+            (return (Ok (tc_core.tc-checked-binary-fact-types fact))))))))
   (let
     [operand-expected : ast.AstType
       (tc_core.tc-type-without-regions
@@ -31379,7 +31405,14 @@
       (let
         [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
         [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (lower-binary-result-type-fast ctx type-env op left right))]
+        (lower-binary-result-type-fast
+          ctx
+          type-env
+          left-box
+          right-box
+          op
+          left
+          right))]
     [(If _ then-branch-box else-branch-box)
       (let
         [then-branch : ast.AstExpr (lower-context-expr-get ctx then-branch-box)]
@@ -31935,7 +31968,14 @@
       (let
         [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
         [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-        (match (lower-binary-result-type-fast ctx type-env op left right)
+        (match (lower-binary-result-type-fast
+          ctx
+          type-env
+          left-box
+          right-box
+          op
+          left
+          right)
           [(Ok expr-ty)
             (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
           [(Err _) (lower-expr-typechecked ctx state env type-env expr origin)]))]
@@ -32211,6 +32251,8 @@
         (match (lower-binop-types-with-result
           ctx
           type-env
+          left-box
+          right-box
           op
           (lower-global-shared-view left)
           (lower-global-shared-view right)

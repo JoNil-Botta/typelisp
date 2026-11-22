@@ -1106,6 +1106,135 @@
 ;; Freezing copies the live facts, their persisted types and both maps into a
 ;; fresh generation, dropping the doubling history of the array and maps.
 (test
+  checked-binary-facts-distinguish-roles-and-declarations
+  (let
+    [pools (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools)]
+    [facts
+      (tc_core.tc-job-state-checked-let-binding-facts
+        (tc_core.tc-context-job-state ctx))]
+    [left
+      (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "operand-a")))]
+    [right
+      (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "operand-b")))]
+    [op : ast.AstBinOp (Add)]
+    [expr : ast.AstExpr (Binary op left right)]
+    [i32-tag (tc_core.tc-checked-binary-scalar-tag (& (ast.AstType.I32)))]
+    [i64-tag (tc_core.tc-checked-binary-scalar-tag (& (ast.AstType.I64)))]
+    (tc_core.tc-checked-let-binding-facts-begin! facts false)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (tc_core.tc-checked-binary-fact-record!
+      ctx
+      (& expr)
+      (& op)
+      0
+      (& (I64))
+      (& (I64))
+      (& (I64)))
+    (tc_core.tc-checked-binary-fact-record!
+      ctx
+      (& expr)
+      (& op)
+      i32-tag
+      (& (I32))
+      (& (I32))
+      (& (I32)))
+    (tc_core.tc-checked-let-binding-facts-freeze! facts)
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
+    (unless
+      (and
+        (match (tc_core.tc-checked-binary-fact-types
+          (tc_core.tc-checked-binary-fact-lookup ctx left right (& op) 0))
+          [(TcBinOpTypes (I64) (I64) (I64)) true]
+          [_ false])
+        (match (tc_core.tc-checked-binary-fact-types
+          (tc_core.tc-checked-binary-fact-lookup ctx left right (& op) i32-tag))
+          [(TcBinOpTypes (I32) (I32) (I32)) true]
+          [_ false])
+        (=
+          (tc_core.tc-checked-binary-fact-lookup ctx left right (& op) i64-tag)
+          0)
+        (=
+          (tc_core.tc-checked-binary-fact-lookup
+            ctx
+            left
+            right
+            (& (ast.AstBinOp.Sub))
+            0)
+          0)
+        (= (tc_core.tc-checked-binary-fact-lookup ctx right left (& op) 0) 0))
+      (io.panic
+        "checked binary fact confused a role, expected type, operator or child"))
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 8)
+    (unless
+      (= (tc_core.tc-checked-binary-fact-lookup ctx left right (& op) 0) 0)
+      (io.panic "checked binary fact crossed declarations"))
+    (tc_core.tc-checked-let-binding-facts-finish! facts)))
+
+(define (tc-checked-nominal-test-context
+  [pools : ast.AstNodePoolContext]
+  [job : tc_core.TcJobState]
+  [source : (& str)]) : tc_core.TcContext
+  (let
+    [program (ast.ast-program (tc-module-carry-test-decls pools source))]
+    [symbols
+      (match (csym.build-compiler-symbols (& program))
+        [(Ok value) value]
+        [(Err message) (io.panic message)])]
+    [registries
+      (match (csym.build-compiler-registries-with-symbols
+        (& program)
+        (& symbols))
+        [(Ok value) value]
+        [(Err message) (io.panic message)])]
+    (tc_core.tc-context-new-with-source-names-and-job-state
+      program
+      symbols
+      registries
+      ""
+      cbi.compiler-builtin-id-fix-empty
+      pools
+      (ci.intern-source-name-session-capture-active-handle)
+      job)))
+
+(test
+  checked-nominal-facts-reject-replaced-symbol-owners
+  (let
+    [pools (ast.ast-node-pool-context-capture-active)]
+    [job (tc_core.tc-job-state-new)]
+    [struct-ctx
+      (tc-checked-nominal-test-context
+        pools
+        job
+        "(defstruct CheckedOwner (x i64))")]
+    [enum-ctx
+      (tc-checked-nominal-test-context
+        pools
+        job
+        "(defenum CheckedOwner (Empty))")]
+    [facts (tc_core.tc-job-state-checked-let-binding-facts job)]
+    [name (ci.intern "CheckedOwner")]
+    (tc_core.tc-checked-let-binding-facts-begin! facts false)
+    (match (tc_core.tc-resolve-type-rebuild struct-ctx (Var name))
+      [(Struct _) unit]
+      [_ (io.panic "checked nominal fixture did not resolve its struct")])
+    (tc_core.tc-checked-let-binding-facts-freeze! facts)
+    ;; Reset the older name-to-handle cache so the fallback sees the new map.
+    (tc_core.tc-resolve-type-name-cache-reset-for-state!
+      (tc_core.tc-job-state-nominal-cache job))
+    (match (tc_core.tc-resolve-type-rebuild enum-ctx (Var name))
+      [(Enum _) unit]
+      [_ (io.panic "checked nominal fact crossed symbol map owners")])
+    (tc_core.tc-checked-let-binding-facts-finish! facts)))
+
+(test
   tc-checked-let-binding-facts-freeze-compacts
   (let
     [job : tc_core.TcJobState (tc_core.tc-job-state-new)]

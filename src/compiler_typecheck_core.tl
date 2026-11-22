@@ -255,6 +255,25 @@
   (Missing)
   (Inconsistent))
 
+;; A bucket keeps its first binary key so a conflicting observation can never
+;; become usable again after a collision. The two roles use independent slots.
+(defstruct TcCheckedBinaryFact
+  (declaration-and-op i64)
+  (left-id i64)
+  (right-id i64)
+  (plain i32)
+  (contextual i32))
+
+(defstruct TcCheckedNominalFact
+  (name-id i64)
+  (module-id i64)
+  (type-module-id i64)
+  ;; Zero is an empty bucket. Otherwise tag 1 is Struct and tag 2 is Enum.
+  (tag i64)
+  (resolved-id i64)
+  (symbol-revision csym.CompilerSymbolMapRevision)
+  (field-revision csym.CompilerSymbolMapRevision))
+
 (defstruct TcCheckedLetBindingFactStateData
   (enabled bool)
   (complete-required bool)
@@ -265,6 +284,12 @@
   (len i64)
   (by-hash tc_i64_i64_map.Map)
   (declaration-ordinals tc_i64_i64_map.Map)
+  (binary-facts (__tl_dyn-array TcCheckedBinaryFact))
+  (binary-pool-cell i64)
+  (binary-expr-limit i64)
+  (nominal-facts (__tl_dyn-array TcCheckedNominalFact))
+  (nominal-session i64)
+  (nominal-generation i64)
   ;; Facts can contain aggregate AstType payloads. Keep the whole generation in
   ;; a separately resettable arena rather than leaking boxes into the job arena.
   (payload-arena i64)
@@ -814,6 +839,12 @@
         0
         (tc_i64_i64_map.with-capacity 1)
         (tc_i64_i64_map.with-capacity 1)
+        (__tl_make-array TcCheckedBinaryFact 0)
+        0
+        0
+        (__tl_make-array TcCheckedNominalFact 0)
+        0
+        -1
         0
         0
         (arena.tl_arena_current)))
@@ -2264,7 +2295,17 @@
             (set! (deref data).by-hash (tc_i64_i64_map.with-capacity 1))
             (set!
               (deref data).declaration-ordinals
-              (tc_i64_i64_map.with-capacity 1)))
+              (tc_i64_i64_map.with-capacity 1))
+            (set!
+              (deref data).binary-facts
+              (__tl_make-array TcCheckedBinaryFact 0))
+            (set!
+              (deref data).nominal-facts
+              (__tl_make-array TcCheckedNominalFact 0)))
+          (set! (deref data).binary-pool-cell 0)
+          (set! (deref data).binary-expr-limit 0)
+          (set! (deref data).nominal-session 0)
+          (set! (deref data).nominal-generation -1)
           (set! (deref data).enabled false)
           (set! (deref data).complete-required false)
           (set! (deref data).recording false)
@@ -2376,6 +2417,12 @@
                 count
                 (clone data.by-hash)
                 (clone data.declaration-ordinals)
+                (clone data.binary-facts)
+                data.binary-pool-cell
+                data.binary-expr-limit
+                (clone data.nominal-facts)
+                data.nominal-session
+                data.nominal-generation
                 fresh
                 data.return-arena
                 data.owner-arena)))]
@@ -45880,14 +45927,119 @@
           name-text
           name
           (ast.ast-lifetime-list-box-shared-view lifetimes)))]
-    [(Var name)
-      (let
-        [name-text : String
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)]
-        (tc-resolve-type-name ctx name-text name))]
+    [(Var name) (tc-resolve-checked-nominal ctx name)]
     [_ ty]))
+
+;; A bounded direct-mapped table keeps just the last resolved nominal in each
+;; bucket. Name ids are meaningful only in the same structural name session.
+(define (tc-resolve-checked-nominal [ctx : TcContext] [name : i64]) : ast.AstType
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [state : TcCheckedLetBindingFactState
+      (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
+    [data : (MutPtr TcCheckedLetBindingFactStateData)
+      (tc-checked-let-binding-fact-state-ptr state)]
+    (unsafe
+      (when
+        (and
+          (deref data).enabled
+          (not (deref data).complete-required)
+          (> session.address 0))
+        (return (tc-resolve-checked-nominal-with-facts ctx name session data))))
+    (tc-resolve-type-name
+      ctx
+      (tc-hygiene-name-text-id-for-session session name)
+      name)))
+
+(define (tc-resolve-checked-nominal-with-facts
+  [ctx : TcContext]
+  [name : i64]
+  [session : cis.InternStructuralSessionHandle]
+  [data : (MutPtr TcCheckedLetBindingFactStateData)]) : ast.AstType
+  (let
+    [capacity : i64 16384]
+    [index : i64
+      (bit-and
+        (+
+          (* 4099 ctx.module-id)
+          (* 2029 ctx.type-module-id)
+          name
+          (shr name 22))
+        (- capacity 1))]
+    [generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [registries : (& ctx csym.CompilerRegistries) (tc-context-registries ctx)]
+    (unsafe
+      (when
+        (and (deref data).recording (= (deref data).nominal-session 0))
+        (in-arena
+          (arena.Arena (deref data).payload-arena)
+          (set!
+            (deref data).nominal-facts
+            (__tl_make-array TcCheckedNominalFact capacity)))
+        (set! (deref data).nominal-session session.address)
+        (set! (deref data).nominal-generation generation))
+      (let
+        [same-session? : bool
+          (and
+            (= session.address (deref data).nominal-session)
+            (= generation (deref data).nominal-generation))]
+        (when
+          (and same-session? (not (deref data).recording))
+          (let
+            [fact
+              (tc-global-array-element-shared-view
+                (deref data).nominal-facts
+                index)]
+            (when
+              (and
+                (> fact.tag 0)
+                (= fact.name-id name)
+                (= fact.module-id ctx.module-id)
+                (= fact.type-module-id ctx.type-module-id)
+                (match symbols
+                  [(CompilerSymbols _ types _ _ _ _)
+                    (csym.compiler-symbol-map-revision-current?
+                      types
+                      (& fact.symbol-revision))])
+                (match registries
+                  [(CompilerRegistries _ fields _)
+                    (csym.compiler-symbol-map-revision-current?
+                      fields
+                      (& fact.field-revision))]))
+              (return
+                (if (= fact.tag 2)
+                  (Enum fact.resolved-id)
+                  (Struct fact.resolved-id))))))
+        (let
+          [ty : ast.AstType
+            (tc-resolve-type-name
+              ctx
+              (tc-hygiene-name-text-id-for-session session name)
+              name)]
+          (when
+            (and same-session? (deref data).recording)
+            (match (& ty)
+              [(or (Struct resolved) (Enum resolved))
+                (let
+                  [lease
+                    (csym.compiler-resolution-lease-capture symbols registries)]
+                  (set!
+                    (array-ref (deref data).nominal-facts index)
+                    (TcCheckedNominalFact
+                      name
+                      ctx.module-id
+                      ctx.type-module-id
+                      (match (& ty)
+                        [(Enum _) 2]
+                        [_ 1])
+                      resolved
+                      lease.symbol-revision
+                      lease.field-revision)))]
+              [_ unit]))
+          ty)))))
 
 ;; True when `tc-resolve-type` would give back a type equal to `ty` in the
 ;; current state. The walk follows tc-resolve-type-rebuild exactly -- the same
@@ -56170,6 +56322,227 @@
         (tc-global-shared-view source)
         sink))))
 
+;; Scalar tags occupy a nibble each. Zero marks an empty lane and -1
+;; permanently disables a lane whose observations disagreed.
+(define (tc-checked-binary-scalar-tag [ty : (& ast.AstType)]) : i64
+  (let
+    [tag (ast.ast-type-tag ty)]
+    (if (<= tag 12)
+      tag
+      0)))
+
+(define (tc-checked-binary-scalar-type [tag : i64]) : ast.AstType
+  (cond
+    [(= tag 1) (I64)]
+    [(= tag 2) (I32)]
+    [(= tag 3) (I16)]
+    [(= tag 4) (I8)]
+    [(= tag 5) (U64)]
+    [(= tag 6) (U32)]
+    [(= tag 7) (U16)]
+    [(= tag 8) (U8)]
+    [(= tag 9) (F64)]
+    [(= tag 10) (F32)]
+    [(= tag 11) (Bool)]
+    [(= tag 12) (Char)]
+    [else (Never)]))
+
+(define (tc-checked-binary-op-tag [op : (& ast.AstBinOp)]) : i64
+  (match op
+    [(Add) 1]
+    [(Sub) 2]
+    [(Mul) 3]
+    [(Div) 4]
+    [(Mod) 5]
+    [(Eq) 6]
+    [(Ne) 7]
+    [(Lt) 8]
+    [(Le) 9]
+    [(Gt) 10]
+    [(Ge) 11]
+    [(And) 12]
+    [(Or) 13]
+    [(BitAnd) 14]
+    [(BitOr) 15]
+    [(BitXor) 16]
+    [(Shl) 17]
+    [(Shr) 18]))
+
+(define tc-checked-binary-fact-capacity : i64
+  262144)
+
+(define (tc-checked-binary-fact-index [left : i64]) : i64
+  (bit-and (bit-xor left (shr left 18)) (- tc-checked-binary-fact-capacity 1)))
+
+(define (tc-checked-binary-fact-syntax-key
+  [ordinal : i64]
+  [op : (& ast.AstBinOp)]) : i64
+  (+ (* ordinal 32) (tc-checked-binary-op-tag op)))
+
+(define (tc-checked-binary-fact-pack
+  [expected : i64]
+  [left : (& ast.AstType)]
+  [right : (& ast.AstType)]
+  [result : (& ast.AstType)]) : i32
+  (let
+    [l (tc-checked-binary-scalar-tag left)]
+    [r (tc-checked-binary-scalar-tag right)]
+    [t (tc-checked-binary-scalar-tag result)]
+    (if (and (> l 0) (> r 0) (> t 0))
+      (cast (+ l (shl r 4) (shl t 8) (shl expected 12)) : i32)
+      -1)))
+
+(define (tc-checked-binary-fact-merge [prior : i32] [value : i32]) : i32
+  (if (or (= prior 0) (= prior value))
+    value
+    -1))
+
+(define (tc-checked-binary-fact-record!
+  [ctx : TcContext]
+  [expr : (& ast.AstExpr)]
+  [op : (& ast.AstBinOp)]
+  [expected-tag : i64]
+  [left : (& ast.AstType)]
+  [right : (& ast.AstType)]
+  [result : (& ast.AstType)]) : unit
+  (let
+    [state (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
+    [data (tc-checked-let-binding-fact-state-ptr state)]
+    (unsafe
+      (let
+        [ordinal (deref data).current-declaration-ordinal]
+        (when
+          (and
+            (deref data).recording
+            (not (deref data).complete-required)
+            (>= ordinal 0))
+          (match expr
+            [(Binary _ l r)
+              (let
+                [pools (tc-context-pools ctx)]
+                [pool-cell (ast.ast-node-pool-context-expr-cell-address pools)]
+                (when
+                  (= (deref data).binary-pool-cell 0)
+                  (in-arena
+                    (arena.Arena (deref data).payload-arena)
+                    (set!
+                      (deref data).binary-facts
+                      (__tl_make-array
+                        TcCheckedBinaryFact
+                        tc-checked-binary-fact-capacity)))
+                  (set! (deref data).binary-pool-cell pool-cell)
+                  (set!
+                    (deref data).binary-expr-limit
+                    (ast.ast-node-pool-context-expr-len pools)))
+                (when
+                  (and
+                    (= pool-cell (deref data).binary-pool-cell)
+                    (>= l 0)
+                    (< l (deref data).binary-expr-limit)
+                    (>= r 0)
+                    (< r (deref data).binary-expr-limit))
+                  (let
+                    [key (tc-checked-binary-fact-syntax-key ordinal op)]
+                    [index (tc-checked-binary-fact-index l)]
+                    [fact
+                      (tc-global-array-element-shared-view
+                        (deref data).binary-facts
+                        index)]
+                    (when
+                      (or
+                        (= fact.declaration-and-op 0)
+                        (and
+                          (= fact.declaration-and-op key)
+                          (= fact.left-id l)
+                          (= fact.right-id r)))
+                      (let
+                        [value
+                          (tc-checked-binary-fact-pack
+                            expected-tag
+                            left
+                            right
+                            result)]
+                        (set!
+                          (array-ref (deref data).binary-facts index)
+                          (if (= expected-tag 0)
+                            (TcCheckedBinaryFact
+                              key
+                              l
+                              r
+                              (tc-checked-binary-fact-merge fact.plain value)
+                              fact.contextual)
+                            (TcCheckedBinaryFact
+                              key
+                              l
+                              r
+                              fact.plain
+                              (tc-checked-binary-fact-merge
+                                fact.contextual
+                                value)))))))))]
+            [_ unit]))))))
+
+(define (tc-checked-binary-fact-lookup
+  [ctx : TcContext]
+  [l : i64]
+  [r : i64]
+  [op : (& ast.AstBinOp)]
+  [expected-tag : i64]) : i64
+  (let
+    [state (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))]
+    [data (tc-checked-let-binding-fact-state-view state)]
+    (unsafe
+      (let
+        [ordinal (deref data).current-declaration-ordinal]
+        (if (and
+          (>= ordinal 0)
+          (not (deref data).recording)
+          (> (deref data).binary-expr-limit 0)
+          (=
+            (deref data).binary-pool-cell
+            (ast.ast-node-pool-context-expr-cell-address (tc-context-pools ctx))))
+          (let
+            [fact
+              (tc-global-array-element-shared-view
+                (deref data).binary-facts
+                (tc-checked-binary-fact-index l))]
+            (if (and
+              (= fact.left-id l)
+              (= fact.right-id r)
+              (=
+                fact.declaration-and-op
+                (tc-checked-binary-fact-syntax-key ordinal op)))
+              (if (= expected-tag 0)
+                (cast fact.plain : i64)
+                (let
+                  [contextual (cast fact.contextual : i64)]
+                  [plain (cast fact.plain : i64)]
+                  (cond
+                    [(and
+                        (> contextual 0)
+                        (= (shr contextual 12) expected-tag)
+                        (= (bit-and (shr contextual 8) 15) expected-tag))
+                      contextual]
+                    ;; An intrinsic scalar result of the requested type uses
+                    ;; that type for its operands whenever the operator admits
+                    ;; contextual typing. Comparisons remain intrinsic.
+                    [(and
+                        (= contextual 0)
+                        (> plain 0)
+                        (= (shr plain 8) expected-tag))
+                      plain]
+                    [else 0])))
+              0))
+          0)))))
+
+(define (tc-checked-binary-fact-result [fact : i64]) : ast.AstType
+  (tc-checked-binary-scalar-type (bit-and (shr fact 8) 15)))
+
+(define (tc-checked-binary-fact-types [fact : i64]) : TcBinOpTypes
+  (TcBinOpTypes
+    (tc-checked-binary-scalar-type (bit-and fact 15))
+    (tc-checked-binary-scalar-type (bit-and (shr fact 4) 15))
+    (tc-checked-binary-fact-result fact)))
+
 (define (tc-infer-selected-binary-plain
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -56190,7 +56563,7 @@
         [(ast.AstExpr.Binary _ id _) (typed.TypedSyntax.Source id)]
         [_ typed.TypedSyntax.Generated])]
     [right-syntax : typed.TypedSyntax
-      (match expr
+      (match (tc-global-shared-view expr)
         [(ast.AstExpr.Binary _ _ id) (typed.TypedSyntax.Source id)]
         [_ typed.TypedSyntax.Generated])]
     (match (tc-infer-selected-binop-types
@@ -56207,7 +56580,15 @@
         (TcSelectedResult.Err message next)]
       [(TcSelectedBinOpResult.Ok types left-child right-child next)
         (match types
-          [(TcBinOpTypes _ _ result-ty)
+          [(TcBinOpTypes left-ty right-ty result-ty)
+            (tc-checked-binary-fact-record!
+              ctx
+              (& expr)
+              (& op)
+              0
+              (& left-ty)
+              (& right-ty)
+              (& result-ty))
             (tc-selected-publish-binary
               (ResultTcType.Ok result-ty)
               syntax
@@ -56401,8 +56782,23 @@
               (tc-global-shared-view source)
               next)
               [(TcSelectedResult.Ok right-ty right-occurrence ready)
-                (match (tc-binop-type op left-ty right-ty)
+                (match (tc-binop-type
+                  op
+                  (tc-global-shared-view left-ty)
+                  (tc-global-shared-view right-ty))
                   [(ResultTcType.Ok result-ty)
+                    (let
+                      [expected-tag (tc-checked-binary-scalar-tag (& expected))]
+                      (when
+                        (> expected-tag 0)
+                        (tc-checked-binary-fact-record!
+                          ctx
+                          (& expr)
+                          (& op)
+                          expected-tag
+                          (& left-ty)
+                          (& right-ty)
+                          (& result-ty))))
                     (tc-selected-publish-binary
                       (if (tc-type-compatible?
                         (tc-global-shared-view expected)

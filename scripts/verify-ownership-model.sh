@@ -27,8 +27,9 @@ RUNNER_SHELL=$(command -v sh)
 SOURCE_MODEL="$ROOT/tools/ownership-model/main.tl"
 SOURCE_COMPARE="$ROOT/tools/ownership-model/crosscheck.tl"
 SOURCE_CORE="$ROOT/src/compiler_ownership_core.tl"
-SOURCE_EXPANSION="$ROOT/src/compiler_expansion_trace.tl"
+SOURCE_INTERN="$ROOT/src/compiler_intern.tl"
 SOURCE_ABORT="$ROOT/src/compiler_abort.tl"
+SOURCE_OWNED_VIEW="$ROOT/src/compiler_owned_view.tl"
 SOURCE_MUTATION="$ROOT/tools/ownership-model/mutation_witness.tl"
 SOURCE_LOAN_MODEL="$ROOT/tools/ownership-model/loan_model.tl"
 SOURCE_LOAN_MAIN="$ROOT/tools/ownership-model/loan_main.tl"
@@ -59,7 +60,7 @@ input_identities() {
         > "$WORKDIR/stdlib-files.unsorted"
     LC_ALL=C sort "$WORKDIR/stdlib-files.unsorted" > "$WORKDIR/stdlib-files.txt"
     [ -s "$WORKDIR/stdlib-files.txt" ] || fail "stdlib source inventory is empty"
-    sha256sum "$COMPILER" "$SOURCE_MODEL" "$SOURCE_COMPARE" "$SOURCE_CORE" "$SOURCE_EXPANSION" "$SOURCE_ABORT" "$SOURCE_MUTATION"
+    sha256sum "$COMPILER" "$SOURCE_MODEL" "$SOURCE_COMPARE" "$SOURCE_CORE" "$SOURCE_INTERN" "$SOURCE_ABORT" "$SOURCE_OWNED_VIEW" "$SOURCE_MUTATION"
     sha256sum "$SOURCE_LOAN_MODEL" "$SOURCE_LOAN_MAIN" "$SOURCE_LOAN_COMPARE" "$SOURCE_LOAN_MUTATION"
     sha256sum "$SOURCE_LOAN_CASES" "$SOURCE_CLEANUP_MODEL" "$SOURCE_CLEANUP_MAIN" "$SOURCE_CLEANUP_MUTATION"
     sha256sum "$SOURCE_CLEANUP_CASES"
@@ -77,7 +78,6 @@ git rev-parse HEAD > "$WORKDIR/source-commit.txt"
 cp "$SOURCE_MODEL" "$WORKDIR/model.source.tl"
 cp "$SOURCE_COMPARE" "$WORKDIR/crosscheck.source.tl"
 cp "$SOURCE_CORE" "$WORKDIR/core.source.tl"
-cp "$SOURCE_EXPANSION" "$WORKDIR/expansion-trace.source.tl"
 cp "$SOURCE_MUTATION" "$WORKDIR/mutation-witness.source.tl"
 cp "$SOURCE_LOAN_MODEL" "$WORKDIR/loan-model.source.tl"
 cp "$SOURCE_LOAN_MAIN" "$WORKDIR/loan-main.source.tl"
@@ -94,6 +94,13 @@ cp "$SOURCE_CLEANUP_MUTATION" "$WORKDIR/cleanup-mutation-witness.source.tl"
 cp "$SOURCE_LOAN_LAWS" "$WORKDIR/loan-laws.source.tl"
 cp "$SOURCE_LOAN_VALUE" "$WORKDIR/loan-value-crosscheck.source.tl"
 cp "$SOURCE_ALLOCATION_MODEL" "$WORKDIR/allocation-model.source.tl"
+
+# Source copies that mutate the core also need its direct compiler imports.
+copy_core_dependencies() {
+    cp "$SOURCE_INTERN" "$1/compiler_intern.tl"
+    cp "$SOURCE_ABORT" "$1/compiler_abort.tl"
+    cp "$SOURCE_OWNED_VIEW" "$1/compiler_owned_view.tl"
+}
 
 bounded() {
     _phase=$1
@@ -233,10 +240,9 @@ printf 'mutation\tobligation\twitness\n' > "$WORKDIR/mutations.tsv"
 for mutation in consume-drop move-drop join-drop-predecessor; do
     mutant_dir="$WORKDIR/mutation-$mutation"
     mkdir -p "$mutant_dir"
+    copy_core_dependencies "$mutant_dir"
     cp "$SOURCE_MODEL" "$mutant_dir/main.tl"
     cp "$SOURCE_COMPARE" "$mutant_dir/crosscheck.tl"
-    cp "$SOURCE_EXPANSION" "$mutant_dir/compiler_expansion_trace.tl"
-    cp "$SOURCE_ABORT" "$mutant_dir/compiler_abort.tl"
     mutant="$mutant_dir/compiler_ownership_core.tl"
     case "$mutation" in
         consume-drop)
@@ -360,12 +366,11 @@ done
 for mutation in parent-retention shared-write end-demand loan-join second-successor backedge issue-conflict ancestor-retention grant-ancestors definition-retention parent-reissue; do
     mutant_dir="$WORKDIR/loan-mutation-$mutation"
     mkdir -p "$mutant_dir"
+    copy_core_dependencies "$mutant_dir"
     cp "$SOURCE_LOAN_MODEL" "$mutant_dir/loan_model.tl"
     cp "$SOURCE_LOAN_MAIN" "$mutant_dir/loan_main.tl"
     cp "$SOURCE_LOAN_CASES" "$mutant_dir/loan_cases.tl"
     cp "$SOURCE_LOAN_COMPARE" "$mutant_dir/loan_crosscheck.tl"
-    cp "$SOURCE_EXPANSION" "$mutant_dir/compiler_expansion_trace.tl"
-    cp "$SOURCE_ABORT" "$mutant_dir/compiler_abort.tl"
     case "$mutation" in
         parent-retention)
             original='        (set! cursor (ownership-loan-parent (& (array-ref body.loans cursor))))))))'
@@ -481,10 +486,9 @@ done
 for mutation in copy-destination consume-copy move-source branch return; do
     mutant_dir="$WORKDIR/loan-value-mutation-$mutation"
     mkdir -p "$mutant_dir"
+    copy_core_dependencies "$mutant_dir"
     cp "$SOURCE_LOAN_MODEL" "$mutant_dir/loan_model.tl"
     cp "$SOURCE_LOAN_VALUE" "$mutant_dir/loan_value_crosscheck.tl"
-    cp "$SOURCE_EXPANSION" "$mutant_dir/compiler_expansion_trace.tl"
-    cp "$SOURCE_ABORT" "$mutant_dir/compiler_abort.tl"
     case "$mutation" in
         copy-destination)
             original='[(OwnershipOperation.Copy source dest)
@@ -659,9 +663,8 @@ done
 for mutation in join expiry borrow; do
     mutant_dir="$WORKDIR/loan-laws-mutation-$mutation"
     mkdir -p "$mutant_dir"
+    copy_core_dependencies "$mutant_dir"
     cp "$SOURCE_LOAN_LAWS" "$mutant_dir/loan_laws.tl"
-    cp "$SOURCE_EXPANSION" "$mutant_dir/compiler_expansion_trace.tl"
-    cp "$SOURCE_ABORT" "$mutant_dir/compiler_abort.tl"
     case "$mutation" in
         join)
             original='(define (ownership-loan-state-join [a : i64] [b : i64]) : i64
@@ -772,13 +775,12 @@ done
 for mutation in auto-use discharge partial-discharge construction-leak premature-activation field-order dropped-loop lost-later-failure numeric-order; do
     mutant_dir="$WORKDIR/cleanup-mutation-$mutation"
     mkdir -p "$mutant_dir"
+    copy_core_dependencies "$mutant_dir"
     cp "$SOURCE_CLEANUP_MODEL" "$mutant_dir/cleanup_model.tl"
     cp "$SOURCE_CLEANUP_CASES" "$mutant_dir/cleanup_cases.tl"
     cp "$SOURCE_CLEANUP_RENAME" "$mutant_dir/cleanup_rename.tl"
     cp "$SOURCE_CLEANUP_COMPARE" "$mutant_dir/cleanup_crosscheck.tl"
     cp "$SOURCE_CLEANUP_CFG" "$mutant_dir/cleanup_cfg_crosscheck.tl"
-    cp "$SOURCE_EXPANSION" "$mutant_dir/compiler_expansion_trace.tl"
-    cp "$SOURCE_ABORT" "$mutant_dir/compiler_abort.tl"
     source="$mutant_dir/cleanup_crosscheck.tl"
     original2=''
     replacement2=''

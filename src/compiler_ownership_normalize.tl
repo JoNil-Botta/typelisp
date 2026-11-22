@@ -6,7 +6,6 @@
 (import compiler_intern as ci)
 (import compiler_typed_occurrence as typed)
 (import compiler_ownership_core as own)
-(import compiler_expansion_trace as expansion_trace)
 (cfg ownership-mir-dump (import compiler_ownership_dump as ownership_dump))
 (cfg ownership-mir-dump (import stdlib.io))
 (cfg arena-lender-dump (import stdlib.io))
@@ -4159,12 +4158,12 @@
   (if (= source.expansion 0)
     (own.ownership-source-copy source)
     (let
-      [first : expansion_trace.CompilerExpansionFrame
+      [first : ci.InternExpansionFrame
         (own.ownership-expansion-at source.expansion)]
       (if (= first.invocation-path-id -1)
         (own.ownership-source-copy source)
         (let
-          [last : expansion_trace.CompilerExpansionFrame first]
+          [last : ci.InternExpansionFrame first]
           [cursor : i64 first.previous]
           (while (!= cursor 0)
             (set! last (own.ownership-expansion-at cursor))

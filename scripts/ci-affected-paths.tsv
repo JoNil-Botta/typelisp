@@ -258,7 +258,9 @@ src/compiler_embedded_stdlib_payload.tl	stage2-selfhost-compile-manifest,embedde
 src/compiler_embedded_stdlib.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_float.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_global_effects.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_intern.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_intern.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly,stage2-ownership-model	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_abort.tl	stage2-ownership-model	@compiler	Direct tracked input named by its owning verifier.
+src/compiler_owned_view.tl	stage2-ownership-model	@compiler	Direct tracked input named by its owning verifier.
 src/compiler_ir_return_storage_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ir_return_storage.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ir_types.tl	stage2-selfhost-compile-manifest,stage2-core-ir-dependency-boundary	@compiler	Direct tracked input named by its owning verifier or compile manifest.

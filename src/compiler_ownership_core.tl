@@ -4,7 +4,8 @@
 ;; solving. Provenance expansion frames are the one shared table: a source
 ;; carries their id and renders text only for diagnostics.
 (import stdlib.string)
-(import compiler_expansion_trace as expansion_trace)
+(import stdlib.str_cat_runtime as str_cat)
+(import compiler_intern as ci)
 
 ;; Numeric indices have meaning only within one immutable body revision. No
 ;; arithmetic packs a source name, field ordinal, or pool id into an identity.
@@ -97,7 +98,7 @@
   (expansion i64))
 
 (define (ownership-expansion-none) : i64
-  (expansion_trace.compiler-expansion-trace-none))
+  (ci.intern-expansion-none))
 
 (define (ownership-expansion-frame
   [previous : i64]
@@ -108,7 +109,7 @@
   [end-column : i64]
   [origin-path-id : i64]
   [macro-name-id : i64]) : i64
-  (expansion_trace.compiler-expansion-trace-push
+  (ci.intern-expansion-push
     previous
     invocation-path-id
     start-line
@@ -119,16 +120,41 @@
     macro-name-id))
 
 (define (ownership-expansion-text [expansion : i64]) : String
-  (expansion_trace.compiler-expansion-trace-text expansion))
+  (let
+    [out : String ""]
+    [cursor : i64 expansion]
+    (while (ci.intern-expansion-live? cursor)
+      (let
+        [frame : ci.InternExpansionFrame (ci.intern-expansion-at cursor)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            (string.int->string frame.invocation-path-id)
+            "|"
+            (string.int->string frame.start-line)
+            "|"
+            (string.int->string frame.start-column)
+            "|"
+            (string.int->string frame.end-line)
+            "|"
+            (string.int->string frame.end-column)
+            "|"
+            (string.int->string frame.origin-path-id)
+            "|"
+            (string.int->string frame.macro-name-id)
+            ";"))
+        (set! cursor frame.previous)))
+    out))
 
 (define (ownership-expansion-bytes [expansion : i64]) : i64
-  (expansion_trace.compiler-expansion-trace-bytes expansion))
+  (ci.intern-expansion-bytes expansion))
 
 (define (ownership-expansion-equal? [left : i64] [right : i64]) : bool
-  (expansion_trace.compiler-expansion-trace-equal? left right))
+  (ci.intern-expansion-equal? left right))
 
-(define (ownership-expansion-at [expansion : i64]) : expansion_trace.CompilerExpansionFrame
-  (expansion_trace.compiler-expansion-trace-at expansion))
+(define (ownership-expansion-at [expansion : i64]) : ci.InternExpansionFrame
+  (ci.intern-expansion-at expansion))
 
 ;; Array payloads sit in single-field structs. The published seed compiler
 ;; binds a borrowed enum payload to its slot's address rather than the array

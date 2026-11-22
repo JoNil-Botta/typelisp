@@ -9,7 +9,6 @@
 ;; allocation extents without pulling collection or formatting modules into them.
 ;;
 (import compiler_abort as abort)
-(import compiler_expansion_trace as expansion_trace)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
@@ -2077,7 +2076,6 @@
 
 (define (intern-compat-state-reset! [state : (&mut state InternCompatState)]) : unit
   (begin
-    (expansion_trace.compiler-expansion-trace-reset!)
     (set! (array-ref state.pool-count 0) 0)
     (set! (array-ref state.generated-next-id 0) (- (intern-capacity) 1))
     (cfg
@@ -2089,7 +2087,8 @@
       (intern-active-structural-sync! (& state.structural-table-cell))
       unit)
     (set! (array-ref state.reset-generation 0) (intern-generation-allocate!))
-    (set! (array-ref state.map-ready 0) true)))
+    (set! (array-ref state.map-ready 0) true)
+    (intern-expansion-reset!)))
 
 (define (intern-compat-state-reset-to!
   [state : (&mut state InternCompatState)]
@@ -4670,7 +4669,6 @@
 ;: Reset the intern table for a fresh compile.
 (define (intern-reset!) : unit
   (begin
-    (expansion_trace.compiler-expansion-trace-reset!)
     (set! intern-pool-count 0)
     (intern-reset-name-cache!)
     (set! intern-generated-next-id (- (intern-capacity) 1))
@@ -4683,7 +4681,8 @@
     (intern-structural-session-reset! (&mut intern-structural-table-cell))
     (intern-active-structural-sync! (& intern-structural-table-cell))
     (set! intern-reset-generation (intern-generation-allocate!))
-    (set! intern-map-ready true)))
+    (set! intern-map-ready true)
+    (intern-expansion-reset!)))
 
 (define (intern-reset-to! [mark : i64]) : unit
   (begin
@@ -5322,3 +5321,252 @@
 
 (define (intern-qualified-base [id : i64]) : String
   (intern-str (intern-qualified-base-id id)))
+
+;; --- Macro-expansion provenance frames -------------------------------------
+;;
+;; An ownership source carries the id of its innermost expansion frame. The
+;; frames share the intern table's persistent arena and reset generation; text
+;; is rendered by the ownership core only when a diagnostic or dump asks.
+(defstruct InternExpansionFrame
+  ;; The enclosing trace, or 0 for the outermost frame.
+  (previous i64)
+  (invocation-path-id i64)
+  (start-line i64)
+  (start-column i64)
+  (end-line i64)
+  (end-column i64)
+  (origin-path-id i64)
+  (macro-name-id i64)
+  ;; The rendered byte count of this frame and its enclosing frames, so
+  ;; charges and copies read it in O(1).
+  (bytes i64))
+
+(define intern-expansion-segment-capacity : i64
+  128)
+
+;; 40960 segments keep 5 Mi frames addressable. The small first segment keeps
+;; the batch live-memory baseline below its 4 MiB drift budget.
+(define intern-expansion-max-segments : i64
+  40960)
+(define intern-expansion-segments : (__tl_dyn-array i64)
+  (__tl_make-array i64 intern-expansion-max-segments))
+(define intern-expansion-current : (__tl_dyn-array InternExpansionFrame)
+  (__tl_make-array InternExpansionFrame 0))
+(define intern-expansion-arena : i64
+  0)
+(define intern-expansion-used : i64
+  0)
+(define intern-expansion-count : i64
+  0)
+
+;; Old ids stay harmless across a reset: an id from an earlier generation
+;; renders as the empty trace instead of reading a reused segment.
+(define intern-expansion-generation : i64
+  1)
+
+;; The most recently pushed frame is also the most common parent of the next
+;; one, so its byte count is cached to keep provenance pushes off the table.
+(define intern-expansion-last-id : i64
+  0)
+(define intern-expansion-last-bytes : i64
+  0)
+
+(define (intern-expansion-none) : i64
+  0)
+
+(define (intern-expansion-live? [id : i64]) : bool
+  (and (> id 0) (= (shr id 32) intern-expansion-generation)))
+
+(define (intern-expansion-int-bytes [value : i64]) : i64
+  (if (< value 0)
+    (let
+      [remaining : i64 value]
+      [digits : i64 2]
+      (while (<= remaining -10)
+        (set! remaining (/ remaining 10))
+        (set! digits (+ digits 1)))
+      digits)
+    (cond
+      [(< value 10) 1]
+      [(< value 100) 2]
+      [(< value 1000) 3]
+      [(< value 10000) 4]
+      [(< value 100000) 5]
+      [(< value 1000000) 6]
+      [(< value 10000000) 7]
+      [(< value 100000000) 8]
+      [(< value 1000000000) 9]
+      [(< value 10000000000) 10]
+      [(< value 100000000000) 11]
+      [(< value 1000000000000) 12]
+      [(< value 10000000000000) 13]
+      [(< value 100000000000000) 14]
+      [(< value 1000000000000000) 15]
+      [(< value 10000000000000000) 16]
+      [(< value 100000000000000000) 17]
+      [(< value 1000000000000000000) 18]
+      [else 19])))
+
+(define (intern-expansion-frame-bytes
+  [invocation-path-id : i64]
+  [start-line : i64]
+  [start-column : i64]
+  [end-line : i64]
+  [end-column : i64]
+  [origin-path-id : i64]
+  [macro-name-id : i64]) : i64
+  (+
+    7
+    (+
+      (intern-expansion-int-bytes invocation-path-id)
+      (+
+        (intern-expansion-int-bytes start-line)
+        (+
+          (intern-expansion-int-bytes start-column)
+          (+
+            (intern-expansion-int-bytes end-line)
+            (+
+              (intern-expansion-int-bytes end-column)
+              (+
+                (intern-expansion-int-bytes origin-path-id)
+                (intern-expansion-int-bytes macro-name-id)))))))))
+
+(define (intern-expansion-next-segment!) : unit
+  (let
+    [segment-index : i64
+      (/ intern-expansion-count intern-expansion-segment-capacity)]
+    (when
+      (>= segment-index intern-expansion-max-segments)
+      (abort.compiler-abort "tl: compiler expansion trace capacity exhausted\n"))
+    (when
+      (= intern-expansion-arena 0)
+      (set! intern-expansion-arena (tl_arena_make)))
+    (let
+      [enclosing : i64 (tl_arena_current)]
+      [_switch : unit
+        (unsafe
+          (tl_arena_set intern-expansion-arena))]
+      [segment : (__tl_dyn-array InternExpansionFrame)
+        (__tl_make-array InternExpansionFrame intern-expansion-segment-capacity)]
+      [_restore : unit
+        (unsafe
+          (tl_arena_set enclosing))]
+      (set!
+        (array-ref intern-expansion-segments segment-index)
+        (cast
+          (unsafe
+            (ptr->int (__tl_array-data segment)))
+          : i64))
+      (set! intern-expansion-current segment)
+      (set! intern-expansion-used 0))))
+
+;; Append one frame enclosing `previous` and return its id (never 0).
+(define (intern-expansion-push
+  [previous : i64]
+  [invocation-path-id : i64]
+  [start-line : i64]
+  [start-column : i64]
+  [end-line : i64]
+  [end-column : i64]
+  [origin-path-id : i64]
+  [macro-name-id : i64]) : i64
+  (when
+    (or
+      (= intern-expansion-used intern-expansion-segment-capacity)
+      (= (array-length intern-expansion-current) 0))
+    (intern-expansion-next-segment!))
+  (let
+    [index : i64 intern-expansion-used]
+    [previous-bytes : i64
+      (if (= previous intern-expansion-last-id)
+        intern-expansion-last-bytes
+        (intern-expansion-bytes previous))]
+    [frame : InternExpansionFrame
+      (InternExpansionFrame
+        previous
+        invocation-path-id
+        start-line
+        start-column
+        end-line
+        end-column
+        origin-path-id
+        macro-name-id
+        (+
+          previous-bytes
+          (intern-expansion-frame-bytes
+            invocation-path-id
+            start-line
+            start-column
+            end-line
+            end-column
+            origin-path-id
+            macro-name-id)))]
+    [new-id : i64
+      (bit-or (shl intern-expansion-generation 32) (+ intern-expansion-count 1))]
+    (set! (array-ref intern-expansion-current index) frame)
+    (set! intern-expansion-used (+ index 1))
+    (set! intern-expansion-count (+ intern-expansion-count 1))
+    (set! intern-expansion-last-id new-id)
+    (set! intern-expansion-last-bytes frame.bytes)
+    new-id))
+
+(define (intern-expansion-at [id : i64]) : InternExpansionFrame
+  (if (not (intern-expansion-live? id))
+    (InternExpansionFrame 0 0 0 0 0 0 0 0 0)
+    (let
+      [index : i64 (- (bit-and id 4294967295) 1)]
+      (if (or (< index 0) (>= index intern-expansion-count))
+        (InternExpansionFrame 0 0 0 0 0 0 0 0 0)
+        (let
+          [segment-index : i64 (/ index intern-expansion-segment-capacity)]
+          [offset : i64 (% index intern-expansion-segment-capacity)]
+          [segment : (Ptr InternExpansionFrame)
+            (unsafe
+              (int->ptr
+                (cast (array-ref intern-expansion-segments segment-index) : u64)
+                : (Ptr InternExpansionFrame)))]
+          (unsafe
+            (ptr-read (ptr-offset segment offset))))))))
+
+(define (intern-expansion-bytes [id : i64]) : i64
+  (if (= id intern-expansion-last-id)
+    intern-expansion-last-bytes
+    (if (not (intern-expansion-live? id))
+      0
+      (intern-expansion-at id).bytes)))
+
+(define (intern-expansion-equal? [left : i64] [right : i64]) : bool
+  (if (= left right)
+    true
+    (if (or
+      (not (intern-expansion-live? left))
+      (not (intern-expansion-live? right)))
+      false
+      (let
+        [left-frame : InternExpansionFrame (intern-expansion-at left)]
+        [right-frame : InternExpansionFrame (intern-expansion-at right)]
+        (and
+          (= left-frame.bytes right-frame.bytes)
+          (= left-frame.invocation-path-id right-frame.invocation-path-id)
+          (= left-frame.start-line right-frame.start-line)
+          (= left-frame.start-column right-frame.start-column)
+          (= left-frame.end-line right-frame.end-line)
+          (= left-frame.end-column right-frame.end-column)
+          (= left-frame.origin-path-id right-frame.origin-path-id)
+          (= left-frame.macro-name-id right-frame.macro-name-id)
+          (intern-expansion-equal? left-frame.previous right-frame.previous))))))
+
+(define (intern-expansion-reset!) : unit
+  (set! intern-expansion-last-id 0)
+  (set! intern-expansion-last-bytes 0)
+  (when
+    (!= intern-expansion-arena 0)
+    (unsafe
+      (tl_arena_destroy intern-expansion-arena)))
+  (set! intern-expansion-arena 0)
+  (set! intern-expansion-used 0)
+  (set! intern-expansion-count 0)
+  (set! intern-expansion-generation (+ intern-expansion-generation 1))
+  ;; Allocate the first segment here, outside the measured macro-capture
+  ;; region, rather than on the first expansion push.
+  (intern-expansion-next-segment!))

@@ -17717,7 +17717,7 @@
       [capacity : i64 (ci.intern-capacity)]
       (if (and (>= name 0) (< name capacity))
         (and
-          (tc-dotted-local-field-name-id? env name)
+          (tc-dotted-local-field-name-id? ctx env name)
           (or
             (not (and (>= root 0) (< root capacity)))
             (= (ci.intern-leading-dot-id name) root)))
@@ -41580,6 +41580,7 @@
       prefix-id)))
 
 (define (tc-source-leading-segment-wins-over-exact-id-from-dot?
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]
   [first-dot : i64]) : bool
@@ -41587,25 +41588,19 @@
     false
     (let
       [prefix-id : i64 (ci.intern-leading-dot-id name-id)]
-      (if (< prefix-id 0)
-        false
-        (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)))))
-
-;; Variant taking the already-interned `name-id` to avoid re-hashing `name` on
-;; the hot resolution path. The prefix comes from intern metadata recorded with
-;; the first dot.
-(define (tc-source-leading-segment-wins-over-exact-from-id?
-  [env : TcTypeEnv]
-  [_name : (& _name str)]
-  [name-id : i64]
-  [first-dot : i64]) : bool
-  (if (or (<= first-dot 0) (< name-id 0) (>= name-id (ci.intern-capacity)))
-    false
-    (let
-      [prefix-id : i64 (ci.intern-leading-dot-id name-id)]
-      (if (< prefix-id 0)
-        false
-        (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)))))
+      (and
+        (>= prefix-id 0)
+        (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)
+        ;; A bare variant can bind the same name as its enum. A lexical
+        ;; binding or a struct value still provides an ordinary field root.
+        (match (tc-enum-qualified-variant-lookup-handle ctx name-id)
+          [(Some _)
+            (or
+              (tc-name-lexically-bound-id? env prefix-id)
+              (match (tc-lookup-visible-id ctx env prefix-id)
+                [(Ok ty) (not (tc-variant-constructor-shaped-type? ctx ty))]
+                [(Err _) false]))]
+          [(None) true])))))
 
 (define (tc-dotted-field-index-message [name : String]) : String
   (str_cat.str-cat
@@ -41689,7 +41684,10 @@
                 source-id
                 (+ (- name-id old-source-id) source-id)))])])))
 
-(define (tc-dotted-local-field-name-id? [env : TcTypeEnv] [name-id : i64]) : bool
+(define (tc-dotted-local-field-name-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
   (if (or (< name-id 0) (>= name-id (ci.intern-capacity)))
     false
     (let
@@ -41698,6 +41696,7 @@
       (if (< first-dot 0)
         false
         (tc-source-leading-segment-wins-over-exact-id-from-dot?
+          ctx
           env
           name-id
           first-dot)))))
@@ -41773,6 +41772,7 @@
         (if (< first-dot 0)
           false
           (if (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            ctx
             env
             name-id
             first-dot)
@@ -41891,8 +41891,11 @@
   [name-id : i64]) : ResultTcExprId
   (tc-dotted-local-field-expr-id-from-source-name-id session name-id))
 
-(define (tc-dotted-local-field-expr-id [env : TcTypeEnv] [name-id : i64]) : ResultTcExprId
-  (if (tc-dotted-local-field-name-id? env name-id)
+(define (tc-dotted-local-field-expr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : ResultTcExprId
+  (if (tc-dotted-local-field-name-id? ctx env name-id)
     (tc-dotted-local-field-expr-id-after-check
       (tc-type-env-structural-session env)
       name-id)
@@ -41914,11 +41917,12 @@
       [_ (Err "typecheck: internal dotted field target mismatch")])))
 
 (define (tc-dotted-local-field-set-expr-id
+  [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [name-id : i64]
   [value : i64]) : ResultTcExprId
-  (if (tc-dotted-local-field-name-id? env name-id)
+  (if (tc-dotted-local-field-name-id? ctx env name-id)
     (tc-dotted-local-field-set-expr-id-after-check
       expr-bases
       (tc-type-env-structural-session env)
@@ -44661,9 +44665,9 @@
             [(No) (Ok name)]))
         (if (and
           check-local-field
-          (tc-source-leading-segment-wins-over-exact-from-id?
+          (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            ctx
             env
-            name
             name-id
             first-dot))
           (Ok name)
@@ -44738,9 +44742,9 @@
             [(No) (Ok name name-id)]))
         (if (and
           check-local-field
-          (tc-source-leading-segment-wins-over-exact-from-id?
+          (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            ctx
             env
-            name
             name-id
             first-dot))
           (Ok name name-id)
@@ -63290,6 +63294,7 @@
       (if (or
         (< first-dot 0)
         (tc-source-leading-segment-wins-over-exact-id-from-dot?
+          ctx
           env
           source-id
           first-dot))

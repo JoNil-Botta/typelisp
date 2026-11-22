@@ -3165,16 +3165,6 @@
     "    .long \\pc - .\n    .long \\path - .\n    .long \\line\n    .long \\column\n"
     "    .popsection\n    .set .L_tl_abort_used_\\kind, 1\n    .endm\n"))
 
-(define (compiler-backend-abort-kind-thunk [symbol : (& symbol str)]) : String
-  (str_cat.str-cat
-    "    .ifdef .L_tl_abort_used_"
-    symbol
-    "\n.L_tl_abort_"
-    symbol
-    ":\n    leaq 1f(%rip), %r11\n    jmp .L_tl_abort_lookup\n1:\n    jmp "
-    symbol
-    "\n    .endif\n"))
-
 ;; Only volatile scratch registers are touched before the call. The frame
 ;; pointer describes both incoming stack alignments (a SysV abort-only leaf
 ;; can call from its red zone), and Win64 gets its own outgoing shadow space.
@@ -3197,10 +3187,10 @@
         "    .pushsection .rdata$TLAS,\"dr\"\n"
         "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
       ".L_tl_abort_table_end:\n    .popsection\n    .text\n"
-      (compiler-backend-abort-kind-thunk "tl_oob_abort_at")
-      (compiler-backend-abort-kind-thunk "tl_div_abort_at")
-      (compiler-backend-abort-kind-thunk "tl_shift_abort_at")
-      (compiler-backend-abort-kind-thunk "tl_panic_at")
+      "    .irp kind, tl_oob_abort_at, tl_div_abort_at, tl_shift_abort_at, tl_panic_at\n"
+      "    .ifdef .L_tl_abort_used_\\kind\n.L_tl_abort_\\kind:\n"
+      "    leaq 1f(%rip), %r11\n    jmp .L_tl_abort_lookup\n1:\n    jmp \\kind\n"
+      "    .endif\n    .endr\n"
       (if windows?
         "    .seh_proc .L_tl_abort_lookup\n.L_tl_abort_lookup:\n    pushq %rbp\n    .seh_pushreg %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n    leaq 64(%rsp), %rbp\n    .seh_setframe %rbp, 64\n    .seh_endprologue\n    andq $-16, %rsp\n"
         (if (compiler_ir_types.compiler-debug-info-enabled?)

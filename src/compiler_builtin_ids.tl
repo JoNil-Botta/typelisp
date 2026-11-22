@@ -1756,7 +1756,8 @@
           (ctfe 326 "expr-binding-clause-init-callee")
           (ctfe 327 "expr-call-args")
           ;; The by-name struct pattern head (compiler_parse_core.tl).
-          (ctfe 328 "fields")))
+          (ctfe 328 "fields")
+          (ctfe 329 "current-module")))
         [(comptime.Expr.Call _ items) items]
         [_
           (comptime.comptime-error

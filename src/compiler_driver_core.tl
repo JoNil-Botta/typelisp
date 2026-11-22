@@ -1548,7 +1548,7 @@
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-intern-start-metric
-      (compiler-driver-profile-arena-bytes (ci.intern-persistent-arena-handle)))
+      (compiler_typecheck_core.compiler-tc-intern-storage-bytes))
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-enclosing-handle-metric
@@ -1629,11 +1629,12 @@
             state
             compiler-driver-load-profile-surface-start-metric))]
       [interns : i64
-        (compiler-driver-profile-owner-delta
-          (ci.intern-persistent-arena-handle)
-          (compiler-driver-profile-value
-            state
-            compiler-driver-load-profile-intern-start-metric))]
+        (compiler-driver-profile-nonnegative
+          (-
+            (compiler_typecheck_core.compiler-tc-intern-storage-bytes)
+            (compiler-driver-profile-value
+              state
+              compiler-driver-load-profile-intern-start-metric)))]
       [enclosing-handle : i64
         (compiler-driver-profile-value
           state
@@ -1650,7 +1651,10 @@
             enclosing-handle
             (compiler_ast_types.ast-node-pool-context-type-storage-arena pools))
           (= enclosing-handle surface-arena)
-          (= enclosing-handle (ci.intern-persistent-arena-handle)))
+          (= enclosing-handle (ci.intern-persistent-arena-handle))
+          (= enclosing-handle (ci.intern-structural-records-arena-handle))
+          (= enclosing-handle (ci.intern-structural-map-arena-handle))
+          (= enclosing-handle (ci.intern-expansion-arena-handle)))
           0
           (compiler-driver-profile-owner-delta
             enclosing-handle

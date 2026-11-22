@@ -5606,3 +5606,24 @@
   (set! intern-expansion-used 0)
   (set! intern-expansion-count 0)
   (set! intern-expansion-generation (+ intern-expansion-generation 1)))
+
+(cfg
+  compile-profile
+  (define (intern-structural-records-arena-handle) : i64
+    (if (> (array-length intern-structural-table-cell) 0)
+      (__tl-project-field
+        (array-ref intern-structural-table-cell 0)
+        records-arena)
+      0)))
+
+(cfg
+  compile-profile
+  (define (intern-structural-map-arena-handle) : i64
+    (if (> (array-length intern-structural-table-cell) 0)
+      (__tl-project-field (array-ref intern-structural-table-cell 0) map-arena)
+      0)))
+
+(cfg
+  compile-profile
+  (define (intern-expansion-arena-handle) : i64
+    intern-expansion-arena))

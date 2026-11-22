@@ -65909,7 +65909,7 @@
 (define (opt-le-family
   [cells : (& cells opt.OptGlobalCellSummary)]
   [name : i64]) : i64
-  (opt.opt-len-eq-encoded-family (opt.opt-len-eq-lookup cells.len-eq name)))
+  (opt.opt-len-eq-family-of cells.len-eq name))
 
 (define (opt-le-fits? [cells : (& cells opt.OptGlobalCellSummary)] [name : i64]) : bool
   (opt.opt-len-eq-len-fits? cells.len-eq name))
@@ -66008,6 +66008,238 @@
 
 (define (opt-le-check-count [blocks : ir.CompilerIrBlockList]) : i64
   (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view blocks)))
+
+;; IR text gives ordinary call symbols their own identities. Bind only the
+;; fixture's runtime calls to the compiler builtin ids used by lowering.
+(define (opt-le-raw-test-runtime
+  [allocator : i64]
+  [abort : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [builder (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
+    (for [i (iterator.range 0 instrs.len)]
+      (let
+        [instr (ir.compiler-ir-instr-seq-ref (& instrs) i)]
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (match instr
+            [(Call dst name args ty)
+              (Call
+                dst
+                (cond
+                  [(= name allocator) cbi.compiler-builtin-id-tl-alloc]
+                  [(= name abort) cbi.compiler-builtin-id-tl-oob-abort]
+                  [else name])
+                args
+                ty)]
+            [_ instr]))))
+    (ir.compiler-ir-instr-builder-to-seq builder)))
+
+(define (opt-le-raw-test-functions [functions : (& ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    [allocator : i64 (opt-test-symbol "tl_alloc")]
+    [abort : i64 (opt-test-symbol "tl_oob_abort")]
+    (for [i (iterator.range 0 functions.len)]
+      (let
+        [func (ir.compiler-ir-function-seq-ref functions i)]
+        [blocks (opt.opt-function-blocks (& func))]
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (opt.opt-function-with-frame-blocks
+            (& func)
+            (opt.opt-function-frame (& func))
+            (opt.opt-blocks-map-seq
+              blocks
+              opt-le-raw-test-runtime
+              allocator
+              abort)))))
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
+(define (opt-le-raw-test-cells [writer : String]) : opt.OptGlobalCellSummary
+  (match (irt.program
+    (str_cat.str-cat
+      "global @raw-a : (__tl_dyn-array i64) = runtime-init@init-a
+       global @raw-b : (__tl_dyn-array i64) = runtime-init@init-b
+       function @init-a() -> (__tl_dyn-array i64) vars 4 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         return %1
+       }
+       function @init-b() -> (__tl_dyn-array i64) vars 4 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         return %1
+       }
+       function @read-raw(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       "
+      writer))
+    [(Program globals functions _ _)
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [functions (opt-le-raw-test-functions (& functions))]
+        [facts (opt.opt-program-facts-build functions)]
+        [call-memory
+          (opt.opt-call-memory-build type-segment-bases (& functions) 8)]
+        (opt.opt-global-cell-summary-build-with-call-memory
+          type-segment-bases
+          (& globals)
+          functions
+          facts
+          call-memory))]))
+
+(define (opt-le-raw-test-checks [writer : String] [checks : String]) : i64
+  (let
+    [cells (opt-le-raw-test-cells writer)]
+    (opt-le-check-count
+      (opt-le-bounds-dom
+        (& cells)
+        (opt-test-symbol "read-raw")
+        (irt.blocks checks)))))
+
+(test
+  len-eq-raw-reset-families
+  (test.assert-i64-eq
+    (opt-le-raw-test-checks
+      "function @reset(n=%0:i64) -> unit vars 10 {
+       entry:
+         %1 = call tl_alloc(64) : u64
+         %2 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %3 = gep %2, 0 : u8
+         store_ptr %3, %1 : u64
+         %4 = gep %2, 8 : u8
+         store_ptr %4, %0 : i64
+         store @raw-a, %2 : (__tl_dyn-array i64)
+         %5 = le %0, 8 : i64
+         branch %5, ready, trap
+       trap:
+         %6 = call tl_oob_abort() : unit
+         jump ready
+       ready:
+         %7 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %8 = gep %7, 0 : u8
+         store_ptr %8, %1 : u64
+         %9 = gep %7, 8 : u8
+         store_ptr %9, %0 : i64
+         store @raw-b, %7 : (__tl_dyn-array i64)
+         return
+       }"
+      "entry:
+         %1 = gep @raw-a, 1 : i64
+         %2 = load %1 : i64
+         bounds_check %0, %2 message \"first\"
+         %3 = mov @raw-b : (__tl_dyn-array i64)
+         %4 = gep %3, 1 : i64
+         %5 = load %4 : i64
+         bounds_check %0, %5 message \"second\"
+         return %0")
+    1
+    "raw resets separated by an abort guard update together on returning paths"))
+
+(test
+  len-eq-raw-mutable-descriptor
+  (let
+    [writers : (Array String 4)
+      (array
+        "function @push() -> unit vars 2 {
+         entry:
+           %0 = gep @raw-b, 0 : u8
+           store_ptr %0, 0 : u64
+           %1 = gep @raw-b, 8 : u8
+           store_ptr %1, 1 : i64
+           return
+         }"
+        "function @change-header(cell=%0:u64) -> unit vars 2 {
+         entry:
+           %1 = gep %0, 8 : u8
+           store_ptr %1, 1 : i64
+           return
+         }
+         function @push() -> unit vars 1 {
+         entry:
+           %0 = call change-header(@raw-b) : unit
+           return
+         }"
+        "function @copy-header() -> unit vars 2 {
+         entry:
+           %0 = gep @raw-b, 8 : u8
+           %1 = call tl_alloc(8) : u64
+           store_ptr %1, 1 : i64
+           copy_bytes %0, %1, 8
+           return
+         }"
+        "function @opaque() -> unit vars 1 {
+         entry:
+           %0 = call unknown(@raw-b) : unit
+           return
+         }")]
+    (for [i (iterator.range 0 (array-length writers))]
+      (test.assert-i64-eq
+        (opt-le-raw-test-checks
+          (string.copy (& (array-ref writers i)))
+          "entry:
+             %1 = gep @raw-a, 1 : i64
+             %2 = load %1 : i64
+             bounds_check %0, %2 message \"first\"
+             %3 = gep @raw-b, 1 : i64
+             %4 = load %3 : i64
+             bounds_check %0, %4 message \"second\"
+             return %0")
+        2
+        "a descriptor write or an opaque call preserves both bounds checks"))))
+
+(test
+  len-eq-constant-cell-length
+  (let
+    [in-range : String
+      "entry:
+         %1 = gep @raw-a, 1 : i64
+         %2 = load %1 : i64
+         bounds_check 7, %2 message \"in-range\"
+         return %0"]
+    (test.assert-i64-eq
+      (opt-le-raw-test-checks "" (string.copy (& in-range)))
+      0
+      "the initializer is the only writer and index 7 fits length 8")
+    (test.assert-i64-eq
+      (opt-le-raw-test-checks
+        "function @reset() -> unit vars 4 {
+         entry:
+           %0 = call tl_alloc(16) : u64
+           %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+           %2 = gep %1, 0 : u8
+           store_ptr %2, %0 : u64
+           %3 = gep %1, 8 : u8
+           store_ptr %3, 2 : i64
+           store @raw-a, %1 : (__tl_dyn-array i64)
+           return
+         }"
+        in-range)
+      1
+      "reallocating the cell at a different length preserves the check")
+    (test.assert-i64-eq
+      (opt-le-raw-test-checks
+        ""
+        "entry:
+           %1 = gep @raw-a, 1 : i64
+           %2 = load %1 : i64
+           bounds_check 8, %2 message \"at-end\"
+           return %0")
+      1
+      "index 8 is out of bounds at length 8")))
 
 ;; `v.len` read out of one cell, the array length of another: the shape
 ;; `(when (< var (i64vec.len (& v))) (gvn-ref w var))` leaves.

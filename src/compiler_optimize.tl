@@ -55266,9 +55266,10 @@
 ;; --- P-B: reading the length-equality table inside bounds_dom ----------------
 ;;
 ;; The table is a fact about global CELLS; a check speaks about IR values. The
-;; bridge is one spelling: `array-length g.slots` is
-;; `load (gep (load (gep @g, 0)), 1)` and the Vec's `.len` field is
-;; `load (gep @g, 1)`. Both are recovered here through a def table that carries
+;; bridge for `array-length g.slots` is `load (gep (load (gep @g, 0)), 1)`.
+;; For a raw array it is `load (gep @g, 1)`, possibly through a typed move
+;; of the descriptor handle. The same direct word-1 load on a Vec reads its
+;; `.len` field. These are recovered through a def table that carries
 ;; the `Load`/`Gep` definitions the pass's other tables (BinOps, Phis) do not.
 ;;
 ;; `on?` is the whole gate: it is false whenever the program has no families, or
@@ -55325,7 +55326,7 @@
     (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
       (match (compiler-opt-global-shared-view instr)
-        [(or (Load dst _ _) (Gep dst _ _ _))
+        [(or (Load dst _ _) (Gep dst _ _ _) (Mov dst (Global _) (DynArray _)))
           (if (and (>= dst 0) (< dst (array-length defs)))
             (set! (array-ref defs dst) (OptBoolBranchDef.Some instr 0))
             unit)]
@@ -55555,9 +55556,30 @@
     [(Global name) (ir.compiler-ir-symbol-id name)]
     [_ (- 0 1)]))
 
-;; The global whose `.slots` array this length value measures, or -1. The base
-;; the chain bottoms out in is either `@g` itself or -- GAP-1 -- a parameter of
-;; this function that every call site passes `@g`.
+;; Resolve the raw descriptor itself or a typed move of its handle.
+(define (opt-len-eq-raw-base
+  [use : (& use OptLenEqUse)]
+  [copies : (& copies opt_i64_i64_map.Map)]
+  [value : (& ir.CompilerIrValue)]) : i64
+  (let
+    [resolved : ir.CompilerIrValue
+      (opt-bounds-dom-resolve
+        copies
+        (owned_view.compiler-owned-reference-shared-view value))]
+    [direct : i64 (opt-arg-global-of-value (& use.args) (& resolved))]
+    (if (>= direct 0)
+      direct
+      (match (& resolved)
+        [(Var var)
+          (match (opt-len-eq-use-def use var)
+            [(Some instr _)
+              (match instr
+                [(Mov _ src (DynArray _)) (opt-len-eq-global-of (& src))]
+                [_ (- 0 1)])]
+            [(No) (- 0 1)])]
+        [_ (- 0 1)]))))
+
+;; The global whose descriptor this length value measures, or -1.
 (define (opt-len-eq-slots-global
   [type-segment-bases : i64]
   [use : (& use OptLenEqUse)]
@@ -55569,14 +55591,23 @@
       [args (& use.args)]
       (match (opt-len-eq-loaded-word type-segment-bases use copies value 1)
         [(Some slots)
-          (match (opt-len-eq-loaded-word
-            type-segment-bases
-            use
-            copies
-            (& slots)
-            0)
-            [(Some cell) (opt-arg-global-of-value args (& cell))]
-            [(No) (- 0 1)])]
+          (let
+            [raw : i64 (opt-len-eq-raw-base use copies (& slots))]
+            (if (opt-len-eq-raw-member? use.table raw)
+              raw
+              (match (opt-len-eq-loaded-word
+                type-segment-bases
+                use
+                copies
+                (& slots)
+                0)
+                [(Some cell)
+                  (let
+                    [global : i64 (opt-arg-global-of-value args (& cell))]
+                    (if (opt-len-eq-raw-member? use.table global)
+                      (- 0 1)
+                      global))]
+                [(No) (- 0 1)])))]
         [(No) (- 0 1)]))))
 
 ;; The global whose Vec `.len` FIELD this value reads, or -1. Same two bases as
@@ -55613,13 +55644,18 @@
         (opt-len-eq-slots-global type-segment-bases use copies length)]
       (if (< global 0)
         false
-        (opt-len-eq-facts-scan?
-          type-segment-bases
-          use
-          copies
-          facts
-          index
-          global)))))
+        (or
+          (match index
+            [(I64 i)
+              (and (>= i 0) (< i (opt-len-eq-constant use.table global)))]
+            [_ false])
+          (opt-len-eq-facts-scan?
+            type-segment-bases
+            use
+            copies
+            facts
+            index
+            global))))))
 
 (define (opt-len-eq-facts-scan?
   [type-segment-bases : i64]
@@ -55858,8 +55894,7 @@
                   (compiler-opt-global-shared-view clen))]
               (if (or
                 (opt-bounds-contains cur-facts cidx fact-len)
-                ;; P-B: the same index, checked against a length-equal
-                ;; member of the same family.
+                ;; P-B: a constant bound or a prior check on a peer.
                 (opt-len-eq-facts-cover?
                   env.type-segment-bases
                   len-eq
@@ -59262,10 +59297,9 @@
   ;; (opt-nonneg-globals-build). The unsigned range-check merge reads it; empty
   ;; below level 2, where the merge simply finds one fewer source.
   (nonneg opt_i64_i64_map.Map)
-  ;; P-B's static length-equality families over global Vec cells
-  ;; (opt-len-eq-build): global symbol id -> family id and the `Vec.len` field
-  ;; invariant, packed by opt-len-eq-encode. Empty below level 2 and in every
-  ;; program without a qualifying group.
+  ;; P-B's length families over global Vec and raw array cells. A nonnegative
+  ;; symbol id keys a packed family/layout entry. A negated family id keys an
+  ;; optional constant length.
   (len-eq opt_i64_i64_map.Map)
   ;; The functions in which that relation may be READ (opt-len-eq-clean-build):
   ;; those no execution of which writes a member's cell. Outside them two
@@ -82608,12 +82642,20 @@
 
 (define (opt-bce-mb-len-eq-global
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
+  [table : (& opt_i64_i64_map.Map)]
   [type-segment-bases : i64]
   [value : (& value ir.CompilerIrValue)]) : i64
   (match (opt-bce-mb-len-eq-word all-blocks type-segment-bases value 1)
     [(Some slots)
       (match (opt-bce-mb-len-eq-word all-blocks type-segment-bases slots 0)
-        [(Some cell) (opt-len-eq-global-of (& cell))]
+        [(Some cell)
+          (let
+            [global : i64 (opt-len-eq-global-of (& cell))]
+            ;; This spelling loads the Vec's slots descriptor. On a raw
+            ;; cell, word 0 instead loads the element buffer.
+            (if (opt-len-eq-raw-member? table global)
+              (- 0 1)
+              global))]
         [(No) (- 0 1)])]
     [(No) (- 0 1)]))
 
@@ -82635,8 +82677,8 @@
         [table (opt-bce-mb-descriptor-len-eq descriptor)]
         (opt-len-eq-same-family?
           table
-          (opt-bce-mb-len-eq-global all-blocks bases anchor)
-          (opt-bce-mb-len-eq-global all-blocks bases length))))))
+          (opt-bce-mb-len-eq-global all-blocks (& table) bases anchor)
+          (opt-bce-mb-len-eq-global all-blocks (& table) bases length))))))
 
 ;; The fusion fallback for a check no single-array derivation reached: on a
 ;; dominating anchor the guard gains `Lj <=u Lk` (once per array pair, however
@@ -123356,7 +123398,7 @@
               capacity)]
           (OptGlobalModRef true index writes))])))
 
-;; --- P-B: static length-equality families over global Vec cells --------------
+;; --- P-B: static length families over global Vec and raw array cells ---------
 ;;
 ;; A struct-of-arrays workload indexes several parallel global `Vec`s with the
 ;; SAME index, and every one of them carries its own `bounds_check` because
@@ -123367,31 +123409,27 @@
 ;; saves. This summary makes the relation STATIC.
 ;;
 ;; WHAT IS PROVEN. Two global cells `g1`, `g2` are LENGTH-EQUAL when, at every
-;; program point a reader can observe, `array-length g1.slots` equals
-;; `array-length g2.slots`. The proof is a whole-program one and rests on four
-;; conditions, each checked below:
+;; program point a reader can observe, their backing arrays have the same
+;; length. A cell with only its initializer write also has a constant length.
+;; The whole-program proof rests on four conditions:
 ;;
 ;;  (1) EVERY writer of the cell is visible. The cell is written only by
-;;      `CompilerIrInstr.Store g, v` instructions and by the hidden startup
+;;      `CompilerIrInstr.Store g, v`, whole-Vec copies, and the hidden startup
 ;;      store of its `RuntimeGlobal` initializer. An address-taken global is
 ;;      refused outright (a `store_ptr` through the address would be invisible),
 ;;      and so is a global whose box pointer reaches a callee that may write
 ;;      through it.
 ;;
-;;  (2) THE ARRAY WORDS ARE IMMUTABLE ONCE STORED. The `.slots` word of the box
-;;      and the length word of the descriptor it names can only be reached
-;;      through the global (nothing else holds the freshly allocated box), so
-;;      the walk refuses a global as soon as any `store_ptr`/`copy_bytes` in the
-;;      program addresses a value derived from `@g` without an intervening
-;;      `Load`, or as soon as such a value is handed to a callee whose
-;;      call-memory summary admits a write through that parameter. That is what
-;;      drops a member a `push-ref!`-style grow writes: the grow writes the
-;;      `.slots` word of a `&mut` parameter, which the callee summary reports as
-;;      a parameter write.
+;;  (2) THE ARRAY WORDS ARE IMMUTABLE ONCE STORED. Track addresses in a
+;;      Vec and its loaded descriptor, or directly in a raw descriptor.
+;;      Refuse a store or copy through such an address, or a call that may
+;;      write through it. Loading the descriptor's data pointer reaches the
+;;      element buffer, whose writes leave both header words intact.
 ;;
 ;;  (3) EVERY WRITER IS A RESET REGION. The stores are grouped into REGIONS: a
-;;      region is a straight-line run inside one block, broken by every call
-;;      whose callee is not proven free of reads of any candidate global. Two
+;;      region is a straight-line run, including allocation guard edges whose
+;;      alternative ends in a runtime abort. Calls that may read a candidate
+;;      global break a region. Two
 ;;      globals written in the same region receive arrays whose lengths are the
 ;;      same SSA value. No reader can therefore observe a half-updated group:
 ;;      the only code that runs between two stores of a region is inside calls
@@ -123445,9 +123483,28 @@
   (= (- encoded (* (/ encoded 2) 2)) 1))
 
 (define (opt-len-eq-lookup [table : (& table opt_i64_i64_map.Map)] [name : i64]) : i64
-  (match (opt_i64_i64_map.get (& table) name)
-    [(LookupFound encoded) encoded]
-    [(LookupMissing) 0]))
+  (if (< name 0)
+    0
+    (match (opt_i64_i64_map.get (& table) name)
+      [(LookupFound encoded) encoded]
+      [(LookupMissing) 0])))
+
+;; In the cell table (as opposed to the constructor table) bit 1 distinguishes
+;; raw descriptors from Vecs. Negative family ids key the optional constants.
+(define (opt-len-eq-family-of [table : (& opt_i64_i64_map.Map)] [name : i64]) : i64
+  (/ (opt-len-eq-lookup table name) 4))
+
+(define (opt-len-eq-raw-member? [table : (& opt_i64_i64_map.Map)] [name : i64]) : bool
+  (opt-len-eq-encoded-fits? (/ (opt-len-eq-lookup table name) 2)))
+
+(define (opt-len-eq-constant [table : (& opt_i64_i64_map.Map)] [name : i64]) : i64
+  (let
+    [family : i64 (opt-len-eq-family-of table name)]
+    (if (= family 0)
+      (- 0 1)
+      (match (opt_i64_i64_map.get table (- 0 family))
+        [(LookupFound len) len]
+        [(LookupMissing) (- 0 1)]))))
 
 ;; Do two global cells hold arrays of one length?
 (define (opt-len-eq-same-family?
@@ -123457,8 +123514,8 @@
   (if (= a b)
     (> (opt-len-eq-lookup table a) 0)
     (let
-      [fa : i64 (opt-len-eq-encoded-family (opt-len-eq-lookup table a))]
-      [fb : i64 (opt-len-eq-encoded-family (opt-len-eq-lookup table b))]
+      [fa : i64 (opt-len-eq-family-of table a)]
+      [fb : i64 (opt-len-eq-family-of table b)]
       (and (> fa 0) (= fa fb)))))
 
 ;; Does this global carry `len <= array-length slots`?
@@ -123493,14 +123550,21 @@
   ;; The REGION each var was last defined in, filled by the program walk as it
   ;; goes: a token expression may only read operands whose value was fixed
   ;; before its region began.
-  (rdef (__tl_dyn-array i64)))
+  (rdef (__tl_dyn-array i64))
+  (uses (__tl_dyn-array i64))
+  (used-before-def? (__tl_dyn-array bool))
+  (raw? (__tl_dyn-array bool)))
 
-(define (opt-len-eq-defs-new [frame : i64]) : OptLenEqDefs
+(define (opt-len-eq-defs-new [frame : i64] [raw? : bool]) : OptLenEqDefs
   (let
     [size : i64
       (if (> frame 0)
         frame
         1)]
+    [raw-size : i64
+      (if raw?
+        size
+        0)]
     (OptLenEqDefs
       (__tl_make-array OptBoolBranchDef size)
       (__tl_make-array ir.CompilerIrValue size)
@@ -123511,7 +123575,10 @@
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
-      (__tl_make-array i64 size))))
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 raw-size)
+      (__tl_make-array bool raw-size)
+      (__tl_make-array bool raw-size))))
 
 ;; The single definition of `var`, or `No`. A var with more than one
 ;; definition names more than one runtime value, so no fact may follow it.
@@ -123678,10 +123745,20 @@
   [tables : OptLenEqDefs]
   [scratch : (&mut scratch (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
+  (when
+    (> (array-length tables.uses) 0)
+    (opt-collect-instr-uses-array
+      (compiler-opt-global-shared-view tables.uses)
+      (& instr)))
   (match (opt-instr-def-var (& instr))
     [(Some dst)
       (when
         (and (>= dst 0) (< dst (array-length tables.defs)))
+        (when
+          (and
+            (< dst (array-length tables.uses))
+            (> (array-ref tables.uses dst) 0))
+          (set! (array-ref tables.used-before-def? dst) true))
         (set!
           (array-ref tables.defs dst)
           (OptBoolBranchDef.Some (compiler-opt-global-shared-view instr) 0))
@@ -123711,12 +123788,87 @@
       (opt-len-eq-defs-record-args! (& tables) (& args))]
     [_ unit]))
 
+;; A fresh descriptor is initialized in the allocation block. Each word
+;; address must be used solely by its store, and the descriptor itself by the
+;; two GEPs and the publication, so no alias can rewrite either word.
+(define (opt-len-eq-raw-word?
+  [type-segment-bases : i64]
+  [tables : (& tables OptLenEqDefs)]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [descriptor : i64]
+  [length? : bool]) : bool
+  (match (ir.compiler-ir-instr-seq-borrow instrs index)
+    [(Gep dst (Var base) offset ty)
+      (and
+        (= base descriptor)
+        (= (opt-len-eq-def-count tables dst) 1)
+        (= (array-ref tables.uses dst) 1)
+        (if length?
+          (opt-bounds-object-length-slot? type-segment-bases offset ty)
+          (opt-len-eq-word0? offset))
+        (match (ir.compiler-ir-instr-seq-borrow instrs (+ index 1))
+          [(StorePtr (Var address) _ store-ty)
+            (and
+              (= address dst)
+              (opt-type-eq
+                type-segment-bases
+                store-ty
+                (&
+                  (if length?
+                    (I64)
+                    (U64)))))]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-len-eq-raw-allocs!
+  [type-segment-bases : i64]
+  [tables : OptLenEqDefs]
+  [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (match blocks
+    [(Array seq)
+      (for [id (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-borrow seq id)
+          [(Block _ instrs)
+            (for [pos
+              (iterator.range 0 (- (ir.compiler-ir-instr-seq-count instrs) 4))]
+              (match (ir.compiler-ir-instr-seq-borrow instrs pos)
+                [(Call dst name (One (I64 16)) (DynArray _))
+                  (when
+                    (and
+                      (or
+                        (ir.compiler-ir-symbol-eq?
+                          name
+                          cbi.compiler-builtin-id-tl-alloc)
+                        (ir.compiler-ir-symbol-eq?
+                          name
+                          cbi.compiler-builtin-id-tl-alloc-global))
+                      (= (opt-len-eq-def-count (& tables) dst) 1)
+                      (= (array-ref tables.uses dst) 3)
+                      (opt-len-eq-raw-word?
+                        type-segment-bases
+                        (& tables)
+                        instrs
+                        (+ pos 1)
+                        dst
+                        false)
+                      (opt-len-eq-raw-word?
+                        type-segment-bases
+                        (& tables)
+                        instrs
+                        (+ pos 3)
+                        dst
+                        true))
+                    (set! (array-ref tables.raw? dst) true))]
+                [_ unit]))]))]))
+
 (define (opt-len-eq-defs-build
   [type-segment-bases : i64]
   [frame : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : OptLenEqDefs
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [raw? : bool]) : OptLenEqDefs
   (let
-    [tables : OptLenEqDefs (opt-len-eq-defs-new frame)]
+    [tables : OptLenEqDefs (opt-len-eq-defs-new frame raw?)]
     [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (opt-blocks-visit
       blocks
@@ -123724,13 +123876,18 @@
       type-segment-bases
       (compiler-opt-global-shared-view tables)
       (&mut scratch))
+    (when
+      raw?
+      (opt-len-eq-raw-allocs!
+        type-segment-bases
+        (compiler-opt-global-shared-view tables)
+        blocks))
     tables))
 
 ;; --- what a stored value's array length is -----------------------------------
 (defenum OptLenEqLength
   (No)
-  ;; The `array-length` of the Vec's `.slots`, and whether its `.len` field
-  ;; carries that same value.
+  ;; The descriptor length, and whether the Vec's `.len` field carries it.
   (Some ir.CompilerIrValue bool))
 
 ;; A direct callee, an unnameable one, or no call at all.
@@ -123851,8 +124008,18 @@
   [tables : (& tables OptLenEqDefs)]
   [ctors : (& opt_i64_i64_map.Map)]
   [var : i64]
-  [depth : i64]) : OptLenEqLength
-  (match (opt-len-eq-vec-length tables ctors var depth)
+  [depth : i64]
+  [raw? : bool]) : OptLenEqLength
+  (match (if raw?
+    (if (and
+      (>= var 0)
+      (< var (array-length tables.raw?))
+      (array-ref tables.raw? var))
+      (OptLenEqLength.Some
+        (compiler-opt-global-array-element-shared-view tables.w1 var)
+        false)
+      (OptLenEqLength.No))
+    (opt-len-eq-vec-length tables ctors var depth))
     [(No) (No)]
     [(Some len fits?)
       (Some
@@ -123996,7 +124163,7 @@
         0
         (let
           [tables : OptLenEqDefs
-            (opt-len-eq-defs-build type-segment-bases frame blocks)]
+            (opt-len-eq-defs-build type-segment-bases frame blocks false)]
           [ret : i64
             (opt-len-eq-ctor-return-var (ir.compiler-ir-block-list-view blocks))]
           [count : i64 (ir.compiler-ir-param-seq-count params)]
@@ -124004,7 +124171,8 @@
             tables
             (& (opt_i64_i64_map.with-capacity 1))
             ret
-            0)
+            0
+            false)
             [(No) 0]
             [(Some value fits?)
               (match value
@@ -124158,6 +124326,19 @@
           true
           (opt-len-eq-mentions? set rest)))]))
 
+(define (opt-len-eq-callee-clean?
+  [known : (& opt_i64_i64_map.Map)]
+  [clean : (& opt_i64_i64_map.Map)]
+  [callee : i64]) : bool
+  (if (opt_i64_i64_map.contains? known callee)
+    (opt_i64_i64_map.contains? clean callee)
+    (match (opt-direct-call-effect callee)
+      [(Unknown)
+        (and
+          (= callee (opt-effect-callee callee))
+          (cbi.compiler-builtin-backend-tl-alloc-id? callee))]
+      [_ true])))
+
 ;; One function's local verdict for a closure round. `reads?` distinguishes the
 ;; READ-free closure (a callee that may observe a half-updated group breaks a
 ;; reset region) from the WRITE-free one (a function that may reset the group
@@ -124193,10 +124374,7 @@
       (match (opt-len-eq-call instr)
         [(None) true]
         [(Opaque) false]
-        [(Direct callee)
-          (or
-            (not (opt_i64_i64_map.contains? (& known) callee))
-            (opt_i64_i64_map.contains? (& clean) callee))]))))
+        [(Direct callee) (opt-len-eq-callee-clean? known clean callee)]))))
 
 (define (opt-len-eq-blocks-clean?
   [set : (& set opt_i64_i64_map.Map)]
@@ -124230,9 +124408,8 @@
 
 ;; --- the program walk --------------------------------------------------------
 ;;
-;; `box` marks a var derived from `@g` with no `Load` in between -- an address
-;; INTO the Vec box. `desc` marks a var loaded out of such an address: the
-;; `.slots` descriptor, whose word 1 is the array length this summary is about.
+;; `box` marks addresses in a Vec cell. `desc` marks addresses derived from
+;; a Vec's loaded `.slots` pointer or directly from a raw array cell.
 ;; A `gep` of a `desc` var addresses the descriptor's own words; the element
 ;; storage is reached only through a further `Load`, which is exactly where the
 ;; taint stops, so element writes cost nothing and descriptor writes refuse.
@@ -124272,6 +124449,7 @@
 (defstruct OptLenEqCtx
   (type-segment-bases i64)
   (cand opt_i64_i64_map.Map)
+  (raw opt_i64_i64_map.Map)
   (ctors opt_i64_i64_map.Map)
   (call-memory opt_i64_i64_map.Map)
   (known opt_i64_i64_map.Map)
@@ -124349,6 +124527,7 @@
   [bad : (&mut bad opt_i64_i64_map.Map)]
   [callee : i64]
   [direct? : bool]
+  [returns-unit? : bool]
   [args : (& ir.CompilerIrCallArgs)]) : unit
   (let
     [count : i64 (opt-len-eq-args-count args)]
@@ -124366,7 +124545,13 @@
                     [_ (- 0 1)])))]
             (if (< named 0)
               unit
-              (if (and direct? (opt-len-eq-arg-safe? ctx callee index))
+              (if (and
+                direct?
+                (opt-len-eq-arg-safe? ctx callee index)
+                ;; A result could carry the descriptor into an untracked alias.
+                (or
+                  returns-unit?
+                  (not (opt_i64_i64_map.contains? (& ctx.raw) named))))
                 unit
                 (opt-len-eq-refuse! bad named))))]
         [(No) unit]))))
@@ -124431,6 +124616,7 @@
   [ctx : (& OptLenEqCtx)]
   [taint : (& taint OptLenEqTaint)]
   [tables : (& OptLenEqDefs)]
+  [bad : (&mut bad opt_i64_i64_map.Map)]
   [dst : i64]
   [source : (& ir.CompilerIrValue)]
   [load? : bool]) : unit
@@ -124443,7 +124629,9 @@
     (if (>= named 0)
       (if load?
         unit
-        (opt-len-eq-taint-set! (&mut taint-box) dst named))
+        (if (opt_i64_i64_map.contains? (& ctx.raw) named)
+          (opt-len-eq-taint-raw! bad tables (&mut taint-desc) dst named)
+          (opt-len-eq-taint-set! (&mut taint-box) dst named)))
       (match source
         [(Var var)
           (if (or (< var 0) (>= var (array-length taint-box)))
@@ -124460,9 +124648,32 @@
                     (opt-len-eq-taint-set! (&mut taint-box) dst (- b 1))
                     unit)
                   (if (> d 0)
-                    (opt-len-eq-taint-set! (&mut taint-desc) dst (- d 1))
+                    (let
+                      [owner : i64 (- d 1)]
+                      (if (opt_i64_i64_map.contains? (& ctx.raw) owner)
+                        (opt-len-eq-taint-raw!
+                          bad
+                          tables
+                          (&mut taint-desc)
+                          dst
+                          owner)
+                        (opt-len-eq-taint-set! (&mut taint-desc) dst owner)))
                     unit)))))]
         [_ unit]))))
+
+;; The walk tracks a single root per var in block order. A raw root assigned
+;; to a var with multiple definitions or an earlier use must be refused.
+(define (opt-len-eq-taint-raw!
+  [bad : (&mut bad opt_i64_i64_map.Map)]
+  [tables : (& tables OptLenEqDefs)]
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [dst : i64]
+  [owner : i64]) : unit
+  (if (or
+    (not (= (opt-len-eq-def-count tables dst) 1))
+    (array-ref tables.used-before-def? dst))
+    (opt-len-eq-refuse! bad owner)
+    (opt-len-eq-taint-set! slots dst owner)))
 
 ;; Record one write of candidate cell `id`: the stored value's array length,
 ;; or a refusal when the walk cannot name it in this region.
@@ -124475,7 +124686,12 @@
   [value : (& value ir.CompilerIrValue)]) : unit
   (match value
     [(Var var)
-      (match (opt-len-eq-length-of tables (& ctx.ctors) var 2)
+      (match (opt-len-eq-length-of
+        tables
+        (& ctx.ctors)
+        var
+        2
+        (opt_i64_i64_map.contains? (& ctx.raw) id))
         [(Some len fits?)
           (if (opt-len-eq-token-ok? tables (opt-len-eq-region ctx) len)
             (opt-len-eq-writes-push!
@@ -124504,9 +124720,7 @@
           (compiler-opt-global-shared-view ctx.known)]
         [read-free : opt_i64_i64_map.Map
           (compiler-opt-global-shared-view ctx.read-free)]
-        (if (and
-          (opt_i64_i64_map.contains? (& known) callee)
-          (not (opt_i64_i64_map.contains? (& read-free) callee)))
+        (if (not (opt-len-eq-callee-clean? (& known) (& read-free) callee))
           (opt-len-eq-region-break! (compiler-opt-global-shared-view ctx))
           unit))])
   (opt-len-eq-note-def!
@@ -124516,11 +124730,11 @@
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(Gep dst base offset _)
       (opt-len-eq-refuse-value! ctx taint bad offset)
-      (opt-len-eq-propagate! (& ctx) taint (& tables) dst (& base) false)]
+      (opt-len-eq-propagate! (& ctx) taint (& tables) bad dst (& base) false)]
     [(or (Mov dst src _) (Cast dst src _ _) (Bitcast dst src _ _))
-      (opt-len-eq-propagate! (& ctx) taint (& tables) dst (& src) false)]
+      (opt-len-eq-propagate! (& ctx) taint (& tables) bad dst (& src) false)]
     [(Load dst src _)
-      (opt-len-eq-propagate! (& ctx) taint (& tables) dst (& src) true)]
+      (opt-len-eq-propagate! (& ctx) taint (& tables) bad dst (& src) true)]
     ;; An aggregate global assigned in place: a copy into the global's own
     ;; storage from offset 0 that covers both modelled words (`.slots` and
     ;; `.len`, 16 bytes) is that cell's write, as `Store g, v` is for a boxed
@@ -124529,6 +124743,10 @@
       (opt-len-eq-refuse-value! ctx taint bad value)
       (if (and
         (>= size 16)
+        (not
+          (opt_i64_i64_map.contains?
+            (& ctx.raw)
+            (ir.compiler-ir-symbol-id name)))
         (opt_i64_i64_map.contains? (& ctx.cand) (ir.compiler-ir-symbol-id name)))
         (opt-len-eq-record-write!
           ctx
@@ -124554,18 +124772,21 @@
           bad
           (ir.compiler-ir-symbol-id name)
           (& value)))]
-    [(or (Call _ name args _) (TailCall name args _))
+    [(or (Call _ name args ty) (TailCall name args ty))
       (opt-len-eq-check-args!
         ctx
         taint
         bad
         (ir.compiler-ir-symbol-id name)
         true
+        (match (& ty)
+          [(Unit) true]
+          [_ false])
         (& args))]
     [(or (CallIndirect _ callee args _) (CallIndirectC _ callee args _)
          (TailCallIndirect callee args _))
       (opt-len-eq-refuse-value! ctx taint bad callee)
-      (opt-len-eq-check-args! ctx taint bad 0 false (& args))]
+      (opt-len-eq-check-args! ctx taint bad 0 false false (& args))]
     [(or (UnOp _ _ src _) (Branch src _ _) (TotalEnumBranch src _ _)
          (Switch src _ _ _) (TotalEnumSwitch src _ _ _ _) (Word _ src _ _)
          (Splat _ src _ _))
@@ -124594,30 +124815,102 @@
       (opt-len-eq-refuse-instr! (& ctx) bad instr)
       (set! (array-ref unmodelled 0) 1)]))
 
+;; Extend a straight-line region over the guards that lower array allocation.
+;; On continuing paths there is exactly one edge out of the preceding block
+;; and exactly one edge into this one. A block that immediately calls a
+;; nonreturning runtime helper cannot observe or continue a partial reset.
+(define (opt-len-eq-trap-block? [block : (& ir.CompilerIrBlock)]) : bool
+  (match block
+    [(Block _ instrs)
+      (and
+        (> (ir.compiler-ir-instr-seq-count instrs) 0)
+        (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+          [(Call _ name (Nil) _) (opt-direct-call-noreturn? name)]
+          [_ false]))]))
+
+(define (opt-len-eq-only-edge?
+  [edges : (& edges OptCfgCsr)]
+  [traps : (& traps (__tl_dyn-array bool))]
+  [from : i64]
+  [to : i64]) : bool
+  (let
+    [found? : bool false]
+    (for [pos
+      (iterator.range
+        (array-ref edges.offsets from)
+        (array-ref edges.offsets (+ from 1)))]
+      (let
+        [target : i64 (array-ref edges.edges pos)]
+        (unless
+          (array-ref traps target)
+          (if (= target to)
+            (set! found? true)
+            (return false)))))
+    found?))
+
+(define (opt-len-eq-raw-write?
+  [raw : (& opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match (& instr)
+    [(Store name _ _)
+      (opt_i64_i64_map.contains? raw (ir.compiler-ir-symbol-id name))]
+    [_ false]))
+
 (define (opt-len-eq-scan-blocks!
   [ctx : OptLenEqCtx]
   [taint : (& taint OptLenEqTaint)]
   [tables : OptLenEqDefs]
   [unmodelled : (&mut unmodelled (__tl_dyn-array i64))]
   [bad : (&mut bad opt_i64_i64_map.Map)]
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (opt-len-eq-region-break! (compiler-opt-global-shared-view ctx))
-      (match block
-        [(Block _ instrs)
-          (let
-            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            (for [index (iterator.range 0 count)]
-              (opt-len-eq-scan-instr!
-                (compiler-opt-global-shared-view ctx)
-                taint
-                (compiler-opt-global-shared-view tables)
-                unmodelled
-                bad
-                (ir.compiler-ir-instr-seq-borrow instrs index))))])
-      (opt-len-eq-scan-blocks! ctx taint tables unmodelled bad rest)]))
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [join? : bool]) : unit
+  (let
+    [cfg-index : OptCfgIndex
+      (if join?
+        (opt-cfg-index-build blocks)
+        (opt-cfg-index-build (& (ir.compiler-ir-block-list-empty))))]
+    [traps : (__tl_dyn-array bool)
+      (__tl_make-array bool (opt-cfg-index-block-count (& cfg-index)))]
+    [previous : i64 (- 0 1)]
+    (for [id (iterator.range 0 (array-length traps))]
+      (set!
+        (array-ref traps id)
+        (opt-len-eq-trap-block?
+          (opt-cfg-index-block-at blocks (& cfg-index) id))))
+    (match blocks
+      [(Array seq)
+        (for [id (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (unless
+            (and join? (array-ref traps id))
+            (unless
+              (and
+                join?
+                (>= previous 0)
+                cfg-index.labels-unique
+                cfg-index.targets-known
+                (opt-len-eq-only-edge?
+                  (& cfg-index.succs)
+                  (& traps)
+                  previous
+                  id)
+                (opt-len-eq-only-edge?
+                  (& cfg-index.preds)
+                  (& traps)
+                  id
+                  previous))
+              (opt-len-eq-region-break! (compiler-opt-global-shared-view ctx)))
+            (set! previous id)
+            (match (ir.compiler-ir-block-seq-borrow seq id)
+              [(Block _ instrs)
+                (for [pos
+                  (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                  (opt-len-eq-scan-instr!
+                    (compiler-opt-global-shared-view ctx)
+                    taint
+                    (compiler-opt-global-shared-view tables)
+                    unmodelled
+                    bad
+                    (ir.compiler-ir-instr-seq-borrow instrs pos)))])))])))
 
 (define (opt-len-eq-scan-function!
   [ctx : OptLenEqCtx]
@@ -124628,15 +124921,24 @@
       (let
         [taint : OptLenEqTaint (opt-len-eq-taint-new frame)]
         [tables : OptLenEqDefs
-          (opt-len-eq-defs-build ctx.type-segment-bases frame blocks)]
+          (opt-len-eq-defs-build
+            ctx.type-segment-bases
+            frame
+            blocks
+            (> (opt_i64_i64_map.len (& ctx.raw)) 0))]
         [unmodelled : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        [join? : bool
+          (and
+            (> (opt_i64_i64_map.len (& ctx.raw)) 0)
+            (opt-blocks-any? blocks opt-len-eq-raw-write? (& ctx.raw)))]
         (opt-len-eq-scan-blocks!
           ctx
           taint
           tables
           (&mut unmodelled)
           bad
-          (ir.compiler-ir-block-list-view blocks))
+          blocks
+          join?)
         (unless
           (= (array-ref unmodelled 0) 0)
           (opt-len-eq-refuse-taints! bad (& taint.box))
@@ -124664,13 +124966,15 @@
             blocks)))
         (opt_i64_i64_map.insert-ref! bad owner 1)
         (let
+          [raw? : bool (opt_i64_i64_map.contains? (& ctx.raw) owner)]
           [tables : OptLenEqDefs
-            (opt-len-eq-defs-build ctx.type-segment-bases frame blocks)]
+            (opt-len-eq-defs-build ctx.type-segment-bases frame blocks raw?)]
           (match (opt-len-eq-length-of
             tables
             (& ctx.ctors)
             (opt-len-eq-ctor-return-var (ir.compiler-ir-block-list-view blocks))
-            2)
+            2
+            raw?)
             [(Some len fits?)
               (match (& len)
                 [(I64 _) (opt-len-eq-writes-push! ctx.writes owner 0 len fits?)]
@@ -124780,7 +125084,25 @@
             (set! (array-ref cursor 0) (+ (array-ref cursor 0) 1)))
           (opt-len-eq-fill-admitted! writes bad rest out cursor))])))
 
+(define (opt-len-eq-raw-candidates
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [cand : (& opt_i64_i64_map.Map)]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [raw : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    (for [index (iterator.range 0 globals.len)]
+      (match (ir.compiler-ir-global-seq-borrow globals index)
+        [(Global name (DynArray _) _)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            (when
+              (opt_i64_i64_map.contains? cand id)
+              (opt_i64_i64_map.insert-ref! (&mut raw) id 1)))]
+        [_ unit]))
+    raw))
+
 (define (opt-len-eq-assign
+  [raw : (& opt_i64_i64_map.Map)]
   [writes : (& writes OptLenEqWrites)]
   [bad : (& bad opt_i64_i64_map.Map)]
   [names : OptLabelSet]
@@ -124821,14 +125143,29 @@
               (array-ref members j)))
             (set! (array-ref families j) next)
             unit))
+        (let
+          [member : i64 (array-ref members i)]
+          [first : i64 (opt-len-eq-writes-next writes member 0)]
+          (when
+            (=
+              (opt-len-eq-writes-next writes member (+ first 1))
+              (array-ref writes.count 0))
+            (match (& (array-ref writes.len first))
+              [(I64 length)
+                (opt_i64_i64_map.insert-ref! (&mut out) (- 0 next) length)]
+              [_ unit])))
         (+= next 1)))
     (for [i (iterator.range 0 count)]
-      (opt_i64_i64_map.insert-ref!
-        (&mut out)
-        (array-ref members i)
-        (opt-len-eq-encode
-          (array-ref families i)
-          (opt-len-eq-writes-fit? writes (array-ref members i)))))
+      (let
+        [member : i64 (array-ref members i)]
+        (opt_i64_i64_map.insert-ref!
+          (&mut out)
+          member
+          (opt-len-eq-encode
+            (opt-len-eq-encode
+              (array-ref families i)
+              (opt_i64_i64_map.contains? raw member))
+            (opt-len-eq-writes-fit? writes member)))))
     out))
 
 ;; Build the length-equality table, or decline. `addr-taken` is the program's
@@ -124860,10 +125197,13 @@
         (let
           [clean : opt_i64_i64_map.Map
             (opt-len-eq-clean-map program cand.map true capacity)]
+          [raw : opt_i64_i64_map.Map
+            (opt-len-eq-raw-candidates globals (& cand.map) capacity)]
           [ctx : OptLenEqCtx
             (OptLenEqCtx
               type-segment-bases
               cand.map
+              raw
               (opt-len-eq-ctors-build
                 type-segment-bases
                 functions
@@ -124886,7 +125226,7 @@
             functions)
           (if (= (array-ref ctx.writes.count 1) 1)
             (opt_i64_i64_map.with-capacity 1)
-            (opt-len-eq-assign ctx.writes bad cand.names capacity)))))))
+            (opt-len-eq-assign (& ctx.raw) ctx.writes bad cand.names capacity)))))))
 
 ;; Functions in which the LE relation may be read: no execution of them writes a
 ;; member's cell, so every length a member's array reports inside one of them

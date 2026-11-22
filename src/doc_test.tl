@@ -15,7 +15,6 @@
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
-(import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)

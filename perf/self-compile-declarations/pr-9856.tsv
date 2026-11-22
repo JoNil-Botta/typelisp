@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-11372.019	While, ArraySet and ArrayPush now fast-path their Unit result type in lowering instead of a full typecheck query; CI own cost -1,269,849,156 Ir (M(T) 110,394,505,991 vs M(B) 111,664,355,147)

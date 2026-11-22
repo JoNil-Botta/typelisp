@@ -2031,7 +2031,7 @@
     ;; The row view is consumed by this match before recursion. This walker
     ;; never installs, resets, grows, or rewrites an expression pool, so no
     ;; view survives a generation or exact-row mutation boundary.
-    (match (ast-expr-segment-bases-get expr-segment-bases id)
+    (match (ast-expr-segment-bases-row expr-segment-bases id)
       [(or (Spanned inner _) (MacroExpansion inner _ _))
         (if (or (< inner 0) (>= inner count) (= inner id))
           -1
@@ -5231,11 +5231,29 @@
 ;; Addressing is `ast-node-get`'s without its process-global load, so a
 ;; read-only walk that hoists the pointer once pays less per node than the
 ;; installed-pool fast path, and much less than a per-node
-;; `AstNodePoolContext` read. It is a macro because the row is one 32-byte
-;; value: inlining hands it straight to the caller instead of through a call
-;; and a returned-value slot. Both arguments are bound once, so either may have
-;; effects, and every name in the expansion is module-qualified because callers
-;; in other modules expand it.
+;; `AstNodePoolContext` read. The row is one 32-byte value, so both spellings
+;; are macros: inlining hands it straight to the caller instead of through a
+;; call and a returned-value slot. A macro cannot name its own module, so this
+;; module's own callers expand `ast-expr-segment-bases-row`, whose expansion is
+;; unqualified, and imported callers expand `ast-expr-segment-bases-get`, whose
+;; expansion is module-qualified. The two spell the same address arithmetic and
+;; must stay in step. Both arguments are bound once, so either may have effects.
+(defmacro (ast-expr-segment-bases-row [segment-bases : Expr] [id : Expr]) : Expr
+  `(let
+    [seg-get-bases : i64 ,segment-bases]
+    [seg-get-id : i64 ,id]
+    [seg-get-biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr seg-get-bases : (Ptr i64))
+            (shr seg-get-id ast-expr-node-pool-segment-shift))))]
+    (unsafe
+      (ptr-read
+        (int->ptr
+          (+ seg-get-biased-base (* seg-get-id (ast-expr-node-bytes)))
+          : (Ptr AstExpr))))))
+
 (defmacro (ast-expr-segment-bases-get [segment-bases : Expr] [id : Expr]) : Expr
   `(let
     [seg-get-bases : i64 ,segment-bases]
@@ -5307,7 +5325,7 @@
 (define (ast-node-pool-context-expr-get
   [pools : (& pools AstNodePoolContext)]
   [id : i64]) : AstExpr
-  (ast-expr-segment-bases-get
+  (ast-expr-segment-bases-row
     (ast-node-pool-context-expr-segment-bases pools)
     id))
 
@@ -11827,14 +11845,14 @@
               [owned-expr : AstExpr
                 (ast-compaction-remap-expr
                   remap
-                  (ast-expr-segment-bases-get remap.source-expr-bases id))]
+                  (ast-expr-segment-bases-row remap.source-expr-bases id))]
               (ast-compaction-remap-dest-expr-set! remap id owned-expr)
               id)
             (let
               [new-expr : AstExpr
                 (ast-compaction-remap-expr
                   remap
-                  (ast-expr-segment-bases-get remap.source-expr-bases id))]
+                  (ast-expr-segment-bases-row remap.source-expr-bases id))]
               [new-id : i64
                 (ast-compaction-remap-dest-expr-push remap new-expr)]
               (unsafe
@@ -12404,7 +12422,7 @@
       ;; Only Copy wrapper IDs survive reassignment of this shallow snapshot.
       (match (ast-place-shared-view current)
         [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
-          (set! current (ast-expr-segment-bases-get segment-bases inner-id))]
+          (set! current (ast-expr-segment-bases-row segment-bases inner-id))]
         [_ (return current)]))
     current))
 

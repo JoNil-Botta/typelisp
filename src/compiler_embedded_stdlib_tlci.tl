@@ -242,7 +242,9 @@
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes
         compiler-embedded-stdlib-tlci-session-arena-handle)
       (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-        compiler-embedded-stdlib-tlci-group-cache-owner))))
+        compiler-embedded-stdlib-tlci-group-cache-owner)
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        compiler-comptime-host-batch-cache-arena))))
 
 (define (compiler-embedded-stdlib-tlci-frames-ensure!) : bool
   (if (> compiler-embedded-stdlib-tlci-table-owner 0)

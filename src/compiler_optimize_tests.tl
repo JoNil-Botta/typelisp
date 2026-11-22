@@ -57890,7 +57890,6 @@
         (opt.opt-call-memory-blocks-need-roots? summaries blocks)
         (opt.opt-call-memory-blocks-write-memory? blocks)
         (opt.opt-call-memory-candidate-blocks
-          (& (opt-test-block-marks (& blocks)))
           type-segment-bases
           8
           summaries
@@ -57973,7 +57972,6 @@
     [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
     [summaries (opt_i64_i64_map.with-capacity 1)]
     (opt.opt-call-memory-candidate-blocks
-      (& (opt-test-block-marks (& blocks)))
       type-segment-bases
       0
       summaries
@@ -58557,7 +58555,6 @@
         [functions (opt-cl-test-functions cl-symbols)]
         [facts : opt.OptProgramFacts (opt.opt-program-facts-build functions)]
         (opt.opt-cl-build-in-scratch
-          (& facts.index.local-marks)
           type-segment-bases
           (& globals)
           functions
@@ -66345,7 +66342,6 @@
         2)]
     [optimized
       (opt.opt-global-snapshot-function
-        (& (opt-test-block-marks (& (opt.opt-function-blocks fixture))))
         (& summaries)
         (& summaries.global-cell.call-memory)
         (opt.OptGlobalSnapshotPolicy false false)
@@ -66719,10 +66715,8 @@
         (& (ir.compiler-ir-extern-seq-empty))
         (& before-inline)
         2)]
-    [index (opt.opt-program-index-build (& before-inline))]
     [normalized
       (opt.opt-global-snapshot-normalize-functions
-        (& index.local-marks)
         (& summaries)
         (& summaries.global-cell.call-memory)
         (opt.OptGlobalSnapshotPolicy false false)

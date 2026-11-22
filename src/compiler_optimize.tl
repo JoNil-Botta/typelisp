@@ -21449,8 +21449,7 @@
         (NotObservable "renames values, never an addr_of source")]
       [(string.eq pass "global_cell") (Shared)]
       [(string.eq pass "gvn") (Shared)]
-      [(string.eq pass "bounds_dom")
-        (NotObservable "counts addr_of sources from the blocks, not the set")]
+      [(string.eq pass "bounds_dom") (Shared)]
       [(string.eq pass "sccp") (NotObservable "folds constants and phis")]
       [(string.eq pass "phi_cmp_fold")
         (NotObservable "rewrites compares and phis")]
@@ -105792,28 +105791,12 @@
         (opt-callgraph-row-insert! targets start callee))]
     [(None) unit]))
 
-;; The summary index owns one row per function. Unmarked rows share one empty
-;; array. Replace a row at its first AddrOf before setting any bit in it.
-(define (opt-program-mark-local!
-  [rows : (&mut rows (__tl_dyn-array (__tl_dyn-array bool)))]
-  [slot : i64]
-  [frame : i64]
-  [src : i64]) : unit
-  (when
-    (and (>= src 0) (< src frame))
-    (when
-      (= (array-length (array-ref rows slot)) 0)
-      (set! (array-ref rows slot) (__tl_make-array bool frame)))
-    (set! (array-ref (array-ref rows slot) src) true)))
-
 ;; Deliberately call-only: address-taken function values are reachability roots,
 ;; but they are not direct call-graph edges for the inliner. `direct-only?`
 ;; keeps the plain `Call`/`TailCall` edges alone, the graph the whole-program
 ;; summaries close over (OptProgramIndex).
 (define (opt-callgraph-instr!
   [index : (& index OptFunctionIndex)]
-  [marks : (&mut marks (__tl_dyn-array (__tl_dyn-array bool)))]
-  [frame : i64]
   [direct-only? : bool]
   [targets : (&mut targets opt_dense_i64_vec.Vec)]
   [seen : (&mut seen (__tl_dyn-array i64))]
@@ -105821,8 +105804,6 @@
   [stamp : i64]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
-    [(AddrOf _ src _)
-      (when direct-only? (opt-program-mark-local! marks (- stamp 1) frame src))]
     [(or (Call _ name _ _) (TailCall name _ _))
       (opt-callgraph-add-callee! index targets seen start stamp name)]
     [(CallCAbiStoreResult payload-box)
@@ -105841,31 +105822,22 @@
 
 (define (opt-callgraph-build-with
   [index : (& index OptFunctionIndex)]
-  [marks : (&mut marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [direct-only? : bool]) : OptCallGraph
   (let
     [count : i64 (opt-function-index-count index)]
     [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     [targets : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
-    [unmarked : (__tl_dyn-array bool) (__tl_make-array bool 0)]
     [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (for [slot (iterator.range 0 count)]
       (let
         [start : i64 (opt_dense_i64_vec.len (& targets))]
         (set! (array-ref offsets slot) start)
         (match (opt-function-index-at-slot index slot)
-          [(Function _ _ _ frame blocks _)
-            (when
-              direct-only?
-              (set!
-                (array-ref marks slot)
-                (compiler-opt-global-shared-view unmarked)))
+          [(Function _ _ _ _ blocks _)
             (opt-blocks-visit
               blocks
               opt-callgraph-instr!
               index
-              marks
-              frame
               direct-only?
               (&mut targets)
               (&mut seen)
@@ -105901,10 +105873,7 @@
     low))
 
 (define (opt-callgraph-build [index : (& index OptFunctionIndex)]) : OptCallGraph
-  (opt-callgraph-build-with
-    index
-    (&mut (__tl_make-array (__tl_dyn-array bool) 0))
-    false))
+  (opt-callgraph-build-with index false))
 
 (define (opt-inline-census-capacity [index : (& index OptFunctionIndex)]) : i64
   (opt-function-index-capacity (opt-function-index-count index)))
@@ -118714,18 +118683,15 @@
 (defstruct OptProgramIndex
   (functions OptFunctionIndex)
   (calls OptCallGraph)
-  (scc OptSccResult)
-  (local-marks (__tl_dyn-array (__tl_dyn-array bool))))
+  (scc OptSccResult))
 
 (define (opt-program-index-build
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramIndex
   (let
     [index : OptFunctionIndex (opt-function-index-build functions)]
-    [marks : (__tl_dyn-array (__tl_dyn-array bool))
-      (__tl_make-array (__tl_dyn-array bool) functions.len)]
-    [calls : OptCallGraph (opt-callgraph-build-with index (&mut marks) true)]
+    [calls : OptCallGraph (opt-callgraph-build-with index true)]
     [scc : OptSccResult (opt-scc-compute calls)]
-    (OptProgramIndex index calls scc marks)))
+    (OptProgramIndex index calls scc)))
 
 ;; --- extern effect identities -------------------------------------------------
 ;;
@@ -118808,19 +118774,16 @@
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptProgramFacts
   (let
     [count : i64 (opt-function-seq-count functions)]
-    [index : OptProgramIndex
-      (if (<= count (opt-summary-function-limit))
-        (opt-program-index-build functions)
-        (opt-program-index-empty))]
     [disqualified : OptGlobalDisqualifications
       (opt-const-globals-disqualified
-        (&mut index)
         (opt-function-index-capacity count)
         functions)]
     (match disqualified
       [(OptGlobalDisqualifications disq addr-taken)
         (OptProgramFacts
-          index
+          (if (<= count (opt-summary-function-limit))
+            (opt-program-index-build functions)
+            (opt-program-index-empty))
           disq
           (opt-global-cell-scan-functions
             (& (opt-global-cell-scan-new))
@@ -119480,8 +119443,13 @@
           (opt-call-memory-summary-add-unknown summary))]
       [_ (opt-call-memory-summary-add-root-write summary params root)])))
 
+;; The address-taken marks the program-wide summaries (call memory, mod-ref,
+;; global objects) classify every instruction with: none, since a frame-slot
+;; write is invisible to callers and globals.
+(define opt-summary-addr-taken-none : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
+
 (define (opt-call-memory-candidate-instr
-  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
   [params : ir.CompilerIrParamSeq]
@@ -119521,18 +119489,11 @@
         (& args))]
     [(Alloc _ _) summary]
     [_
-      (match (opt-instr-effect marks (& instr))
+      (match (opt-instr-effect (& opt-summary-addr-taken-none) (& instr))
         [(or (Pure) (MemoryRead) (ControlFlow)) summary]
-        ;; The store forms above account for their external effects. A write
-        ;; introduced only by the destination slot stays in this activation.
-        [(MemoryWrite)
-          (if (opt-addr-taken-def? marks (& instr))
-            summary
-            (opt-call-memory-summary-add-unknown summary))]
         [_ (opt-call-memory-summary-add-unknown summary)])]))
 
 (define (opt-call-memory-candidate-blocks
-  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [summary : i64]
   [summaries : (& summaries opt_i64_i64_map.Map)]
@@ -119544,7 +119505,6 @@
     (owned_view.compiler-owned-reference-shared-view blocks)
     summary
     opt-call-memory-candidate-instr
-    marks
     type-segment-bases
     summaries
     (owned_view.compiler-owned-reference-shared-view params)
@@ -119586,7 +119546,6 @@
   (opt-blocks-any? blocks opt-call-memory-instr-writes-memory?))
 
 (define (opt-call-memory-function-candidate
-  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [summaries : (& summaries opt_i64_i64_map.Map)]
@@ -119595,7 +119554,6 @@
     [(Function _ params _ _ blocks _)
       (if (not (opt-call-memory-blocks-need-roots? summaries blocks))
         (opt-call-memory-candidate-blocks
-          marks
           type-segment-bases
           0
           summaries
@@ -119607,7 +119565,6 @@
           [sources : OptValueSources
             (opt-call-memory-sources (& params) blocks)]
           (opt-call-memory-candidate-blocks
-            marks
             type-segment-bases
             0
             summaries
@@ -119640,14 +119597,12 @@
   0)
 
 (define (opt-call-memory-candidate-verdict
-  [marks : (& marks (__tl_dyn-array bool))]
   [type-segment-bases : i64]
   [descriptor-globals : (& descriptor-globals opt_i64_i64_map.Map)]
   [summaries : (& summaries opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : i64
   (if (= opt-call-memory-scratch 0)
     (opt-call-memory-function-candidate
-      marks
       type-segment-bases
       descriptor-globals
       summaries
@@ -119660,7 +119615,6 @@
       [mark : i64 (arena.tl_region_mark)]
       [verdict : i64
         (opt-call-memory-function-candidate
-          marks
           type-segment-bases
           descriptor-globals
           summaries
@@ -119873,7 +119827,6 @@
                   [_seen : unit (set! (array-ref computed-at slot) tick)]
                   [row : i64
                     (opt-call-memory-candidate-verdict
-                      (& (array-ref index.local-marks slot))
                       type-segment-bases
                       descriptor-globals
                       rows
@@ -119956,49 +119909,15 @@
       (&mut out))
     out))
 
-(define (opt-const-globals-disq-with-marks
-  [marks : (&mut marks (__tl_dyn-array (__tl_dyn-array bool)))]
-  [slot : i64]
-  [frame : i64]
-  [scan : OptGlobalDisqualifications]
-  [instr : ir.CompilerIrInstr]) : OptGlobalDisqualifications
-  (match (& instr)
-    [(AddrOf _ src _) (opt-program-mark-local! marks slot frame src)]
-    [_ unit])
-  (opt-const-globals-disq-instr scan instr))
-
 (define (opt-const-globals-disqualified
-  [index : (&mut index OptProgramIndex)]
   [capacity : i64]
   [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptGlobalDisqualifications
-  (let
-    [scan
-      (OptGlobalDisqualifications
-        (opt_i64_i64_map.with-capacity capacity)
-        (opt_i64_i64_map.with-capacity capacity))]
-    (if (<= functions.len (opt-summary-function-limit))
-      (opt-functions-fold functions scan opt-const-globals-disq-instr)
-      (let
-        [unmarked : (__tl_dyn-array bool) (__tl_make-array bool 0)]
-        (set!
-          index.local-marks
-          (__tl_make-array (__tl_dyn-array bool) functions.len))
-        (for [slot (iterator.range 0 functions.len)]
-          (match (ir.compiler-ir-function-seq-borrow functions slot)
-            [(Function _ _ _ frame blocks _)
-              (set!
-                (array-ref index.local-marks slot)
-                (compiler-opt-global-shared-view unmarked))
-              (set!
-                scan
-                (opt-blocks-fold
-                  blocks
-                  scan
-                  opt-const-globals-disq-with-marks
-                  (&mut index.local-marks)
-                  slot
-                  frame))]))
-        scan))))
+  (opt-functions-fold
+    functions
+    (OptGlobalDisqualifications
+      (opt_i64_i64_map.with-capacity capacity)
+      (opt_i64_i64_map.with-capacity capacity))
+    opt-const-globals-disq-instr))
 
 ;; An ordinary operand only earns substitution when it fits a signed 32-bit
 ;; immediate, so
@@ -121241,7 +121160,6 @@
 ;; The build writes no module state, so nothing else can point into the
 ;; scratch.
 (define (opt-cl-build-in-scratch
-  [local-marks : (& local-marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
@@ -121264,7 +121182,6 @@
             globals
             (&
               (opt-global-snapshot-normalize-functions
-                local-marks
                 (& summaries)
                 call-memory
                 (OptGlobalSnapshotPolicy false false)
@@ -121311,7 +121228,6 @@
             (opt-const-divisors-build globals facts.disq))]
         [lengths : OptConstLengths
           (opt-cl-build-in-scratch
-            (& facts.index.local-marks)
             type-segment-bases
             globals
             reachable-functions
@@ -122333,7 +122249,6 @@
 ;; Internal callees contribute through the call-graph closure. External calls
 ;; seed their re-entry effect here so it propagates through internal callers.
 (define (opt-global-mod-ref-instr-mask
-  [marks : (& marks (__tl_dyn-array bool))]
   [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [mask : i64]
@@ -122350,7 +122265,9 @@
       ;; than `Unknown`; its target is a function of this program, so name it
       ;; here.
       [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
-      [_ (opt-global-mod-ref-effect-mask (opt-instr-effect marks (& instr)))])))
+      [_
+        (opt-global-mod-ref-effect-mask
+          (opt-instr-effect (& opt-summary-addr-taken-none) (& instr)))])))
 
 ;; Every function's row: its own writes, closed over its direct calls.
 (define (opt-global-mod-ref-writes
@@ -122369,7 +122286,6 @@
               blocks
               (cast 0 : i64)
               opt-global-mod-ref-instr-mask
-              (& (array-ref program.local-marks slot))
               program
               index))]))
     (opt-program-closed-rows-map program (&mut rows) 0 capacity)))
@@ -123074,7 +122990,6 @@
 
 ;; One instruction's OWN storage writes, callees excluded.
 (define (opt-global-obj-instr-own-mask
-  [marks : (& marks (__tl_dyn-array bool))]
   [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : (& owners opt_i64_i64_map.Map)]
@@ -123091,10 +123006,11 @@
         0
         (opt-external-call-write-mask name))]
     [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
-    [_ (opt-global-mod-ref-effect-mask (opt-instr-effect marks instr))]))
+    [_
+      (opt-global-mod-ref-effect-mask
+        (opt-instr-effect (& opt-summary-addr-taken-none) instr))]))
 
 (define (opt-global-obj-own-instr!
-  [marks : (& marks (__tl_dyn-array bool))]
   [program : (& program OptProgramIndex)]
   [index : (& index opt_i64_i64_map.Map)]
   [owners : OptGlobalObjOwners]
@@ -123122,7 +123038,7 @@
     (opt-global-obj-escape-refs! refs.ref-list escaped index)
     (bit-or
       mask
-      (opt-global-obj-instr-own-mask marks program index owners.map (& instr)))))
+      (opt-global-obj-instr-own-mask program index owners.map (& instr)))))
 
 ;; --- pass 0: what every call site passes to every parameter ------------------
 ;;
@@ -123280,7 +123196,6 @@
                   blocks
                   (cast 0 : i64)
                   opt-global-obj-own-instr!
-                  (& (array-ref program.local-marks slot))
                   program
                   index
                   (compiler-opt-global-shared-view owners)
@@ -128034,9 +127949,9 @@
       cell
       uses)))
 
-;; The caller has found a candidate capture in this function.
+;; The caller has found a candidate capture in this function. Only such a
+;; function pays for the scan of its address-taken vars.
 (define (opt-global-snapshot-function
-  [marks : (& marks (__tl_dyn-array bool))]
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [policy : OptGlobalSnapshotPolicy]
@@ -128044,6 +127959,8 @@
   (match func
     [(Function name params ret-ty frame blocks function-abi)
       (let
+        [marks : (__tl_dyn-array bool)
+          (opt-addr-taken-marks-blocks frame (& blocks))]
         [sources : OptValueSources
           (opt-bounds-dom-sources (& params) (& blocks))]
         [uses : (__tl_dyn-array i64)
@@ -128058,7 +127975,7 @@
           (opt-blocks-map-seq
             blocks
             opt-global-snapshot-seq
-            marks
+            (& marks)
             (& summaries.global-cell)
             call-memory
             (& sources)
@@ -128096,16 +128013,11 @@
         summaries.priced?
         (not (opt-global-snapshot-function-candidate? (& summaries) (& input))))
         input
-        (begin
-          (opt-addr-taken-refresh!
-            (opt-function-frame input)
-            (& (opt-function-blocks input)))
-          (opt-global-snapshot-function
-            (& opt-function-addr-taken.marks)
-            (& summaries)
-            (& summaries.global-cell.call-memory)
-            (OptGlobalSnapshotPolicy false true)
-            input)))]
+        (opt-global-snapshot-function
+          (& summaries)
+          (& summaries.global-cell.call-memory)
+          (OptGlobalSnapshotPolicy false true)
+          input))]
     (match (compiler-opt-global-shared-view func)
       [(Function name params ret-ty frame blocks function-abi)
         (let
@@ -134765,7 +134677,6 @@
   false)
 
 (define (opt-global-snapshot-normalize-functions
-  [local-marks : (& local-marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
   [policy : OptGlobalSnapshotPolicy]
@@ -134781,12 +134692,7 @@
         (ir.compiler-ir-function-builder-push!
           (&mut builder)
           (if (opt-global-snapshot-function-candidate? summaries (& func))
-            (opt-global-snapshot-function
-              (& (array-ref local-marks slot))
-              summaries
-              call-memory
-              policy
-              func)
+            (opt-global-snapshot-function summaries call-memory policy func)
             func))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
@@ -134808,7 +134714,6 @@
 ;; intermediate block lists are dead once the copy is made. A function without
 ;; a candidate is kept as is.
 (define (opt-global-snapshot-normalize-functions-retained
-  [local-marks : (& local-marks (__tl_dyn-array (__tl_dyn-array bool)))]
   [pools : ast.AstNodePoolContext]
   [summaries : (& summaries OptProgramSummaries)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -134827,12 +134732,7 @@
             [rewritten : ir.CompilerIrFunction
               (in-arena
                 scratch
-                (opt-global-snapshot-function
-                  (& (array-ref local-marks slot))
-                  summaries
-                  call-memory
-                  policy
-                  func))]
+                (opt-global-snapshot-function summaries call-memory policy func))]
             [kept : ir.CompilerIrFunction
               (ir.compiler-ir-clone-function pools (& rewritten))]
             (arena.rewind-safe! phase)
@@ -134860,7 +134760,6 @@
     (let
       [summaries (opt-program-summaries-empty)]
       (opt-global-snapshot-normalize-functions-retained
-        (& index.local-marks)
         pools
         (& summaries)
         (& opt-pure-call-inline-memory)

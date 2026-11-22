@@ -116460,6 +116460,14 @@
   (NoSitePlan)
   (SitePlan OptInlineSitePlan))
 
+(define (opt-inline-site-has-string-literal? [np : i64]) : bool
+  (for [slot
+    (iterator.range 0 (opt-inline-cost-min np (opt-inline-checked-literal-max)))]
+    (when
+      (= (array-ref opt-inline-checked-current-literals (* 2 slot)) 2)
+      (return true)))
+  false)
+
 ;; Price growth across the callee's references. The estimate includes the
 ;; cloned instructions and branches and credits the retired call boundary.
 ;; A single-reference absorption can retire the standalone body. Preserve the
@@ -116485,17 +116493,22 @@
           [frequency : i64 (opt-inline-checked-caller-count index census)]
           [frequency-budget : i64
             (+ 450 (* 12 (opt-inline-cost-min frequency 2048)))]
-          ;; Hot wrappers can have a low synthetic count. Give short bodies
-          ;; room at those sites while still bounding their total duplication.
-          [budget : i64
-            (if (and (<= callee-instrs 32) (< frequency-budget 24576))
-              24576
-              frequency-budget)]
           [loop-credit : i64
             (if (opt-inline-bounds-loop-site-in-loop?)
               8
               1)]
-          (<= refs (/ (* budget loop-credit) growth)))))))
+          (or
+            (<= refs (/ (* frequency-budget loop-credit) growth))
+            ;; Hot wrappers can have low synthetic counts. Literal descriptors
+            ;; can also fold away whole arms after cloning. Give these sites
+            ;; more room while still bounding their total duplication.
+            (and
+              (<= refs (/ (* 24576 loop-credit) growth))
+              (or
+                (<= callee-instrs 32)
+                (and
+                  (> (opt-inline-checked-literal-count-now) 0)
+                  (opt-inline-site-has-string-literal? np))))))))))
 
 (define (opt-inline-multiblock-site-plan
   [callee : (& ir.CompilerIrFunction)]

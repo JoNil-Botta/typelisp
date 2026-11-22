@@ -3,6 +3,7 @@
 ;; of them. The host side of the batch format is covered by
 ;; src/tests/comptime_host_smoke.tl, and the gates that compile every stdlib
 ;; macro through both routes cover the end-to-end expansions. Refs #8274.
+(import compiler_object as cobj)
 (import stdlib.iterator)
 (import compiler_tlci_native_producer as producer)
 (import compiler_tlci_native_image as native_image)
@@ -141,12 +142,14 @@
     [(Ok image)
       (let
         [offsets : (__tl_dyn-array i64)
-          (producer.embedded-native-entry-offsets (clone image) 1)]
+          (producer.embedded-native-entry-offsets
+            (cobj.clone-compiler-object-image (& image))
+            1)]
         (test.assert-i64-eq (array-length offsets) 1 "one registered entry")
         (test.assert-i64-eq
           (array-ref offsets 0)
           (native_image.compiler-tlci-native-entry-offset
-            (clone image)
+            (cobj.clone-compiler-object-image (& image))
             "tlci_macro_entry_0")
           "registration selects the C export")
         (test.assert-true
@@ -486,19 +489,19 @@
     (while (< round 3)
       (test.assert-owned-string-eq
         (producer-owner-source (& a))
-        (clone a.serial-source)
+        (string.copy (& a.serial-source))
         "A ignores installed expression/type pools and intern names")
       (test.assert-owned-string-eq
         (producer-owner-reasons)
-        (clone a.serial-reasons)
+        (string.copy (& a.serial-reasons))
         "A's unsupported-body diagnostic is stable")
       (test.assert-owned-string-eq
         (producer-owner-source (& b))
-        (clone b.serial-source)
+        (string.copy (& b.serial-source))
         "B ignores installed expression/type pools and intern names")
       (test.assert-owned-string-eq
         (producer-owner-reasons)
-        (clone b.serial-reasons)
+        (string.copy (& b.serial-reasons))
         "B's unsupported-body diagnostic is stable")
       (test.assert-true
         (>
@@ -517,7 +520,7 @@
     (ast.ast-node-pool-context-reset-to! a.context.pools 0 0)
     (test.assert-owned-string-eq
       (producer-owner-source (& b))
-      (clone b.serial-source)
+      (string.copy (& b.serial-source))
       "resetting A preserves B's captured source")
     (test.assert-i64-eq
       (ci.intern-active-table-id)

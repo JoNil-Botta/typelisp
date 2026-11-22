@@ -78,21 +78,21 @@
         (Section
           (Rodata)
           (cobj.compiler-object-data-record-builder-finish rodata2)
-          (clone empty-instrs)))]
+          (cobj.clone-compiler-object-x64-instr-list (& empty-instrs))))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
         (Section
           (Data)
           (cobj.compiler-object-data-record-builder-finish data2)
-          (clone empty-instrs)))]
+          (cobj.clone-compiler-object-x64-instr-list (& empty-instrs))))]
     [sections4 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections3
         (Section
           (Bss)
           (cobj.compiler-object-data-record-builder-finish bss2)
-          (clone empty-instrs)))]
+          (cobj.clone-compiler-object-x64-instr-list (& empty-instrs))))]
     [symbols0 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-with-capacity 6)]
     [symbols1 : cobj.CompilerObjectSymbolBuilder

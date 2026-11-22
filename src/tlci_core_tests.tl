@@ -2,6 +2,7 @@
 ;; out of the production module. The inline test below runs the self-test; the
 ;; loader tests, the inspect tests and tests/tlci/corpus_emit.tl reuse the
 ;; fixtures.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.io)
@@ -518,7 +519,7 @@
   (match (tlci.tlci-emit-image (& image))
     [(Err _) false]
     [(Ok bytes)
-      (match (tlci.tlci-parse-image (& (clone bytes)))
+      (match (tlci.tlci-parse-image (& (clone.deep bytes)))
         [(Err _) false]
         [(Ok parsed)
           (match (tlci.tlci-emit-image (& parsed))
@@ -583,7 +584,7 @@
       [(Err _) false]
       [(Ok parsed)
         (and
-          (tlci-test-v2-parsed-shape? (clone parsed))
+          (tlci-test-v2-parsed-shape? (tlci.clone-tlci-metadata (& parsed)))
           (string.eq source (tlci.tlci-metadata-emit (& parsed))))])))
 
 (define (tlci-test-dense-spmd-sequences?) : bool
@@ -991,11 +992,11 @@
       (tlci.TlciAuxSection
         tlci.tlci-aux-kind-package-identity
         1
-        (clone identity)))
+        (clone.deep identity)))
     (set!
       (array-ref sections 1)
-      (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone ast)))
-    (match (tlci.tlci-aux-pack-rodata (& (clone base)) sections)
+      (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone.deep ast)))
+    (match (tlci.tlci-aux-pack-rodata (& (clone.deep base)) sections)
       [(Err _) false]
       [(Ok packed)
         (and
@@ -1133,7 +1134,7 @@
       (tlci.TlciAuxSection
         tlci.tlci-aux-kind-package-identity
         1
-        (clone identity)))
+        (clone.deep identity)))
     (set!
       (array-ref sections 1)
       (tlci.TlciAuxSection

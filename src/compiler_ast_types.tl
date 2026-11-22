@@ -2,6 +2,7 @@
 ;; Pooled IDs and source views retain their owner's lifetime and identity;
 ;; see docs/compiler-state-and-facts.md before changing shared accessors.
 ;; Parser/typechecker registries and inferred/lowered facts live elsewhere.
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
@@ -836,6 +837,46 @@
 (defstruct AstPatternList
   (slots (__tl_dyn-array AstPattern))
   (len i64))
+
+(clone_gen.gen-clone AstTypeList)
+
+(clone_gen.gen-clone AstLifetimeList)
+
+(clone_gen.gen-clone AstType)
+
+(clone_gen.gen-clone AstMaybeType)
+
+(clone_gen.gen-clone AstLiteral)
+
+;; Rebuild the recursive pattern payloads and copy each list's live slots.
+;; Emit the hooks before their dependents so inline-test pruning retains them.
+(defmacro (declare-ast-pattern-clones) : Decls
+  `(begin
+    (define (clone-ast-pattern [pattern : (& AstPattern)]) : AstPattern
+      (match pattern
+        [(Var name ty) (Var name (clone-ast-maybe-type ty))]
+        [(Tuple items) (Tuple (box (clone-ast-pattern-list items)))]
+        [(Wildcard) Wildcard]
+        [(Binding name) (Binding name)]
+        [(Variant name items)
+          (Variant name (box (clone-ast-pattern-list items)))]
+        [(Literal literal) (Literal (clone-ast-literal literal))]
+        [(Array items) (Array (box (clone-ast-pattern-list items)))]
+        [(Slice items rest?) (Slice (box (clone-ast-pattern-list items)) rest?)]
+        [(Or items) (Or (box (clone-ast-pattern-list items)))]
+        [(Fields items) (Fields (box (clone-ast-pattern-list items)))]
+        [(Field name items) (Field name (box (clone-ast-pattern-list items)))]))
+    (define (clone-ast-pattern-list [items : (& AstPatternList)]) : AstPatternList
+      (let
+        [slots : (__tl_dyn-array AstPattern)
+          (__tl_make-array AstPattern (array-length items.slots))]
+        (for [index (iterator.range 0 items.len)]
+          (set!
+            (array-ref slots index)
+            (clone-ast-pattern (& (array-ref items.slots index)))))
+        (AstPatternList slots items.len)))))
+
+(declare-ast-pattern-clones)
 
 ;; A Box owns its payload, so by-value ownership correctly forbids extracting an
 ;; owner-bearing list with `__tl-box-place`. These read-only walkers need the
@@ -5803,6 +5844,46 @@
   (slots (__tl_dyn-array AstExprBindingClause))
   (len i64))
 
+(clone_gen.gen-clone AstExprList)
+
+(clone_gen.gen-clone AstExprClauseList)
+
+(clone_gen.gen-clone AstExprBindingClause)
+
+(clone_gen.gen-clone AstExprBindingClauseList)
+
+(clone_gen.gen-clone AstParam)
+
+(clone_gen.gen-clone AstParamList)
+
+(clone_gen.gen-clone AstLetBinding)
+
+(clone_gen.gen-clone AstLetBindingList)
+
+(clone_gen.gen-clone AstLet)
+
+(clone_gen.gen-clone AstResourceBindingList)
+
+(clone_gen.gen-clone AstWithResource)
+
+(clone_gen.gen-clone AstMatchArm)
+
+(clone_gen.gen-clone AstMatchArmList)
+
+(clone_gen.gen-clone AstMatch)
+
+(clone_gen.gen-clone AstLambda)
+
+(clone_gen.gen-clone AstForeach)
+
+(clone_gen.gen-clone AstSpmdScan)
+
+(clone_gen.gen-clone AstSpmdCompact)
+
+(clone_gen.gen-clone AstSpmdReduce)
+
+(clone_gen.gen-clone AstExpr)
+
 (defenum AstMaybeModuleName
   (No)
   (Some i64))
@@ -5953,6 +6034,150 @@
   (offset i64)
   (len i64)
   (prependable bool))
+
+(clone_gen.gen-clone AstGeneratedDeclMeta)
+
+(clone_gen.gen-clone AstDeclMetaValue)
+
+(clone_gen.gen-clone AstDeclMeta)
+
+(clone_gen.gen-clone AstImportSpec)
+
+(clone_gen.gen-clone AstDispatchVariantList)
+
+(clone_gen.gen-clone AstExternAbi)
+
+(clone_gen.gen-clone AstExternLinkInput)
+
+(clone_gen.gen-clone AstExternLinkInputList)
+
+(clone_gen.gen-clone AstImportedSpmdSpecializationList)
+
+(clone_gen.gen-clone AstImportedSpmdCallable)
+
+(clone_gen.gen-clone AstImportedSpmdCallableList)
+
+(clone_gen.gen-clone AstImportedSpmdMetadata)
+
+(clone_gen.gen-clone AstExternMetadata)
+
+(clone_gen.gen-clone AstFieldDef)
+
+(clone_gen.gen-clone AstFieldDefList)
+
+(clone_gen.gen-clone AstFieldAligns)
+
+(clone_gen.gen-clone AstStructRepr)
+
+(clone_gen.gen-clone AstMacroTypeKindList)
+
+(clone_gen.gen-clone AstMacroParam)
+
+(clone_gen.gen-clone AstMacroParamList)
+
+(clone_gen.gen-clone AstSpmdParamClassList)
+
+(clone_gen.gen-clone AstSpmdSpecialization)
+
+(clone_gen.gen-clone AstSpmdSpecializationList)
+
+(clone_gen.gen-clone AstFnMetadata)
+
+(clone_gen.gen-clone AstTestIgnoreReason)
+
+(clone_gen.gen-clone AstTestMetadataValue)
+
+(clone_gen.gen-clone AstTestMetadata)
+
+(clone_gen.gen-clone AstVariantPayloadCleanupList)
+
+(clone_gen.gen-clone AstVariantDef)
+
+(clone_gen.gen-clone AstVariantDefList)
+
+;; Preserve declaration payloads and list layout while rebuilding recursive boxes.
+(define (clone-ast-decl [decl : (& AstDecl)]) : AstDecl
+  (match decl
+    [(Module name) (Module name)]
+    [(ModuleBody name items)
+      (ModuleBody name (box (clone-ast-decl-list items)))]
+    [(Def meta name ty init)
+      (Def (clone-ast-decl-meta meta) name (clone-ast-maybe-type ty) init)]
+    [(DefFn meta name params ret body fn-meta)
+      (DefFn
+        (clone-ast-decl-meta meta)
+        name
+        (clone-ast-param-list params)
+        (clone-ast-type ret)
+        body
+        (clone-ast-fn-metadata fn-meta))]
+    [(DefMacro meta name params ret body)
+      (DefMacro
+        (clone-ast-decl-meta meta)
+        name
+        (clone-ast-macro-param-list params)
+        (clone-ast-type ret)
+        body)]
+    [(Extern meta name kind extern-meta ty)
+      (Extern
+        (clone-ast-decl-meta meta)
+        name
+        kind
+        (box (clone-ast-extern-metadata extern-meta))
+        (clone-ast-type ty))]
+    [(DefEnum meta name cleanup variants)
+      (DefEnum
+        (clone-ast-decl-meta meta)
+        name
+        cleanup
+        (clone-ast-variant-def-list variants))]
+    [(DefEnumLifetimes meta name lifetimes cleanup variants)
+      (DefEnumLifetimes
+        (clone-ast-decl-meta meta)
+        name
+        (clone-ast-lifetime-list lifetimes)
+        cleanup
+        (clone-ast-variant-def-list variants))]
+    [(DefStruct meta name repr cleanup fields)
+      (DefStruct
+        (clone-ast-decl-meta meta)
+        name
+        (clone-ast-struct-repr repr)
+        cleanup
+        (clone-ast-field-def-list fields))]
+    [(DefStructLifetimes meta name lifetimes repr cleanup fields)
+      (DefStructLifetimes
+        (clone-ast-decl-meta meta)
+        name
+        (clone-ast-lifetime-list lifetimes)
+        (clone-ast-struct-repr repr)
+        cleanup
+        (clone-ast-field-def-list fields))]
+    [(Import meta spec)
+      (Import (clone-ast-decl-meta meta) (clone-ast-import-spec spec))]
+    [(IncludeStr name file) (IncludeStr name (string.copy file))]
+    [(IncludeStrComptime name file)
+      (IncludeStrComptime name (string.copy file))]
+    [(IncludeStrLzss name file) (IncludeStrLzss name (string.copy file))]
+    [(IncludeBin name file) (IncludeBin name (string.copy file))]
+    [(DefDispatch meta name variants)
+      (DefDispatch
+        (clone-ast-decl-meta meta)
+        name
+        (clone-ast-dispatch-variant-list variants))]
+    [(Test name body meta span)
+      (Test name body (clone-ast-test-metadata meta) span)]
+    [(Unsafe inner) (Unsafe (box (clone-ast-decl inner)))]))
+
+(define (clone-ast-decl-list [decls : (& AstDeclList)]) : AstDeclList
+  (let
+    [slots : (__tl_dyn-array AstDecl)
+      (__tl_make-array AstDecl (array-length decls.slots))]
+    (for [index (iterator.range decls.offset (+ decls.offset decls.len))]
+      (set!
+        (array-ref slots index)
+        (clone-ast-decl (& (array-ref decls.slots index)))))
+    (AstDeclList slots decls.offset decls.len decls.prependable)))
 
 (define (ast-decl-list-box-shared-view [value : (Box AstDeclList)]) : AstDeclList
   (let

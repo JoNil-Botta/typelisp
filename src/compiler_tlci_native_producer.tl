@@ -1636,7 +1636,7 @@
               -1
               (let
                 [ret-opened : i64
-                  (match (clone maybe-ret)
+                  (match (compiler_ast_types.clone-ast-maybe-type (& maybe-ret))
                     [(No) 0]
                     [(Some ret-ty)
                       (embedded-native-template-type-ops

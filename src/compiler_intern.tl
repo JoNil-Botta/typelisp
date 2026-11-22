@@ -5346,28 +5346,32 @@
 
 ;; 40960 segments keep 5 Mi frames addressable. The small first segment keeps
 ;; the batch live-memory baseline below its 4 MiB drift budget.
-(define intern-expansion-max-segments : i64
-  40960)
+(define intern-expansion-segments-initial-capacity : i64
+  64)
 
 ;; The first segment is a process-lifetime global, so it is present in the
-;; batch memory baseline and costs no drift; later segments live in `arena`.
+;; batch memory baseline and costs no drift; later segments, and a directory
+;; that outgrows its static start, live in `arena`.
 (define intern-expansion-first : (__tl_dyn-array InternExpansionFrame)
   (__tl_make-array InternExpansionFrame intern-expansion-segment-capacity))
 (define intern-expansion-current : (__tl_dyn-array InternExpansionFrame)
   (unsafe
     (ptr-read (ptr-addr-of intern-expansion-first))))
 
-(define (intern-expansion-segments-new) : (__tl_dyn-array i64)
+(define (intern-expansion-segments-static-new) : (__tl_dyn-array i64)
   (let
     [segments : (__tl_dyn-array i64)
-      (__tl_make-array i64 intern-expansion-max-segments)]
+      (__tl_make-array i64 intern-expansion-segments-initial-capacity)]
     (set!
       (array-ref segments 0)
       (cast (intern-i64-array-address intern-expansion-current) : i64))
     segments))
 
+(define intern-expansion-segments-static : (__tl_dyn-array i64)
+  (intern-expansion-segments-static-new))
 (define intern-expansion-segments : (__tl_dyn-array i64)
-  (intern-expansion-segments-new))
+  (unsafe
+    (ptr-read (ptr-addr-of intern-expansion-segments-static))))
 (define intern-expansion-arena : i64
   0)
 (define intern-expansion-used : i64
@@ -5452,9 +5456,6 @@
     [segment-index : i64
       (/ intern-expansion-count intern-expansion-segment-capacity)]
     (when
-      (>= segment-index intern-expansion-max-segments)
-      (abort.compiler-abort "tl: compiler expansion trace capacity exhausted\n"))
-    (when
       (= intern-expansion-arena 0)
       (set! intern-expansion-arena (tl_arena_make)))
     (let
@@ -5462,6 +5463,20 @@
       [_switch : unit
         (unsafe
           (tl_arena_set intern-expansion-arena))]
+      [_grow : unit
+        (when
+          (>= segment-index (array-length intern-expansion-segments))
+          (let
+            [old-length : i64 (array-length intern-expansion-segments)]
+            [grown : (__tl_dyn-array i64)
+              (__tl_make-array i64 (* 2 old-length))]
+            [index : i64 0]
+            (while (< index old-length)
+              (set!
+                (array-ref grown index)
+                (array-ref intern-expansion-segments index))
+              (set! index (+ index 1)))
+            (set! intern-expansion-segments grown)))]
       [segment : (__tl_dyn-array InternExpansionFrame)
         (__tl_make-array InternExpansionFrame intern-expansion-segment-capacity)]
       [_restore : unit
@@ -5585,8 +5600,9 @@
     (unsafe
       (ptr-read (ptr-addr-of intern-expansion-first))))
   (set!
-    (array-ref intern-expansion-segments 0)
-    (cast (intern-i64-array-address intern-expansion-current) : i64))
+    intern-expansion-segments
+    (unsafe
+      (ptr-read (ptr-addr-of intern-expansion-segments-static))))
   (set! intern-expansion-used 0)
   (set! intern-expansion-count 0)
   (set! intern-expansion-generation (+ intern-expansion-generation 1)))

@@ -5354,7 +5354,8 @@
 (define intern-expansion-first : (__tl_dyn-array InternExpansionFrame)
   (__tl_make-array InternExpansionFrame intern-expansion-segment-capacity))
 (define intern-expansion-current : (__tl_dyn-array InternExpansionFrame)
-  (intern-global-shared-view intern-expansion-first))
+  (unsafe
+    (ptr-read (ptr-addr-of intern-expansion-first))))
 
 (define (intern-expansion-segments-new) : (__tl_dyn-array i64)
   (let
@@ -5581,7 +5582,8 @@
   (set! intern-expansion-arena 0)
   (set!
     intern-expansion-current
-    (intern-global-shared-view intern-expansion-first))
+    (unsafe
+      (ptr-read (ptr-addr-of intern-expansion-first))))
   (set!
     (array-ref intern-expansion-segments 0)
     (cast (intern-i64-array-address intern-expansion-current) : i64))

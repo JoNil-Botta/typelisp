@@ -79731,6 +79731,13 @@
         cfgs
         cache-scope))))
 
+(define (lower-program-has-module-macro-import? [program : (& ast.AstProgram)]) : bool
+  (match program
+    [(Program decls)
+      (any? [i (iterator.range 0 (ast.ast-decl-list-len decls))]
+        (tc_core.macro-decl-module-import-placeholder?
+          (ast.ast-decl-list-ref decls i)))]))
+
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
   [lower-state : CompilerLowerState]
   [load-state : load.CompilerLoadSessionState]
@@ -79785,8 +79792,16 @@
         (match generated-result
           [(Ok generated generated-paths)
             (let
-              [detach-before-macro? : bool
+              [checked-pools? : bool
                 (compiler-lower-checked-dest-pools-active? lower-state)]
+              ;; A module-macro import guarantees a structural change. Expand it
+              ;; in the load pools and keep the frontend alive for borrowed include
+              ;; data until the final copy. Other programs can retire the frontend
+              ;; early and retain the first compacted AST on an unchanged walk.
+              [detach-before-macro? : bool
+                (and
+                  checked-pools?
+                  (not (lower-program-has-module-macro-import? (& generated))))]
               [generated-compaction : ast.AstProgramCompaction
                 (if detach-before-macro?
                   (ast.ast-program-compact-with-pools
@@ -79815,7 +79830,7 @@
                   generated-paths)]
               [_clear-source-derived-caches : unit
                 (when
-                  detach-before-macro?
+                  checked-pools?
                   (lower-clear-macro-expanded-source-caches-into-pools!
                     job-state
                     macro-pools)
@@ -79888,9 +79903,9 @@
                             (tc_core.macro-expand-program-structurally-changed?
                               (tc_core.tc-job-state-macro-state job-state))]
                           [retain-macro-source? : bool
-                            (and checked-detach? (not macro-changed?))]
+                            (and detach-before-macro? (not macro-changed?))]
                           [detach-load-pools? : bool
-                            (and checked-detach? macro-changed?)]
+                            (and checked-detach? (not retain-macro-source?))]
                           [_detach-profile-decision : unit
                             (cfg
                               compile-profile

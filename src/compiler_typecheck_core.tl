@@ -27011,7 +27011,7 @@
 ;; columns followed by the body-fact hit/miss columns, one slot per profiled
 ;; site, then the macro walk's splice counters (compiler-tc-splice-profile,
 ;; relative 18-35). Relative slots 108-118 and 126-127 map to the driver/loader
-;; lifetime ledger; relative slots 120-125 and 128-131 retain macro lifetime
+;; lifetime ledger; relative slots 120-125, 128-132 and 138-140 retain macro lifetime
 ;; boundary starts. Keeping the six equal-width families contiguous makes reset/render
 ;; order deterministic without reintroducing array owners in this leaf module.
 (cfg
@@ -27045,7 +27045,7 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    139))
+    141))
 
 (cfg
   (any compile-profile test)
@@ -27075,7 +27075,9 @@
   (counters.defslots
     compiler-tc-macro-lifetime-cache-start
     138
-    (compiler-tc-macro-lifetime-start-cache-bytes-metric)))
+    (compiler-tc-macro-lifetime-start-cache-bytes-metric)
+    (compiler-tc-macro-lifetime-start-reader-bytes-metric)
+    (compiler-tc-macro-lifetime-start-module-index-bytes-metric)))
 
 (cfg
   compile-profile
@@ -45113,6 +45115,36 @@
       (unsafe
         (ptr-write! (ptr-offset keys index) -1)))))
 
+(define (tc-type-handle-cache-storage-ensure! [state : TcTypeHandleCacheState]) : unit
+  (let
+    [data : (MutPtr TcTypeHandleCacheStateData)
+      (tc-type-handle-cache-state-ptr state)]
+    (unsafe
+      (when
+        (= (deref data).keys-address 0)
+        (in-arena
+          (arena.Arena (deref data).owner-arena)
+          (let
+            [keys : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            [handles : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            [move-kinds : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            (set!
+              (deref data).handles-address
+              (cast (ptr->int (__tl_array-data handles)) : i64))
+            (set!
+              (deref data).move-kinds-address
+              (cast (ptr->int (__tl_array-data move-kinds)) : i64))
+            (set!
+              (deref data).keys-address
+              (cast (ptr->int (__tl_array-data keys)) : i64))))))))
+
+(define (tc-type-handle-cache-storage-ensure-for-job! [state : TcJobState]) : unit
+  (tc-type-handle-cache-storage-ensure!
+    (tc-nominal-cache-type-handles (tc-job-state-nominal-cache state))))
+
 ;; Symbol construction is append-only, but an addition may retain the same
 ;; backing allocation. Rebind on either the owner pointer or map generation;
 ;; clearing the direct map also prevents stale entries if a job later returns
@@ -45122,53 +45154,15 @@
   [symbols : (& symbols csym.CompilerSymbols)]
   [lookup-id : i64]
   [key : i64]) : i64
+  (tc-type-handle-cache-storage-ensure! state)
   (unsafe
     (let
       [stamp : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp symbols)]
       [data : (MutPtr TcTypeHandleCacheStateData)
         (tc-type-handle-cache-state-ptr state)]
-      [keys-address : i64
-        (if (> (deref data).keys-address 0)
-          (deref data).keys-address
-          (in-arena
-            (unsafe
-              (arena.Arena (deref data).owner-arena))
-            (let
-              [keys : (__tl_dyn-array i64)
-                (__tl_make-array i64 tc-type-handle-cache-capacity)]
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data keys) : (Ptr i64)))
-                : i64))))]
-      [handles-address : i64
-        (if (> (deref data).handles-address 0)
-          (deref data).handles-address
-          (in-arena
-            (unsafe
-              (arena.Arena (deref data).owner-arena))
-            (let
-              [handles : (__tl_dyn-array i64)
-                (__tl_make-array i64 tc-type-handle-cache-capacity)]
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data handles) : (Ptr i64)))
-                : i64))))]
-      [move-kinds-address : i64
-        (if (> (deref data).move-kinds-address 0)
-          (deref data).move-kinds-address
-          (in-arena
-            (unsafe
-              (arena.Arena (deref data).owner-arena))
-            (let
-              [move-kinds : (__tl_dyn-array i64)
-                (__tl_make-array i64 tc-type-handle-cache-capacity)]
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data move-kinds) : (Ptr i64)))
-                : i64))))]
       (begin
-        (tc-type-handle-cache-clear-keys! keys-address)
-        (set! (deref data).keys-address keys-address)
-        (set! (deref data).handles-address handles-address)
-        (set! (deref data).move-kinds-address move-kinds-address)
+        (tc-type-handle-cache-clear-keys! (deref data).keys-address)
         (set! (deref data).symbols-owner stamp.owner)
         (set! (deref data).symbols-generation stamp.generation)
         (cfg
@@ -102977,6 +102971,32 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-intern-storage-bytes) : i64
+    (let
+      [persistent : i64 (ci.intern-persistent-arena-handle)]
+      [records : i64 (ci.intern-structural-records-arena-handle)]
+      [map : i64 (ci.intern-structural-map-arena-handle)]
+      [expansion : i64 (ci.intern-expansion-arena-handle)]
+      (+
+        (compiler-tc-macro-lifetime-arena-bytes persistent)
+        (+
+          (if (and (!= records 0) (!= records persistent))
+            (compiler-tc-macro-lifetime-arena-bytes records)
+            0)
+          (+
+            (if (and (!= map 0) (!= map persistent) (!= map records))
+              (compiler-tc-macro-lifetime-arena-bytes map)
+              0)
+            (if (and
+              (!= expansion 0)
+              (!= expansion persistent)
+              (!= expansion records)
+              (!= expansion map))
+              (compiler-tc-macro-lifetime-arena-bytes expansion)
+              0)))))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-lifetime-row
     [boundary : String]
     [owner : String]
@@ -103023,6 +103043,17 @@
     (let
       [metrics-address : u64 (compiler-tc-profile-metrics-address job-state)]
       [enclosing-handle : i64 (arena.tl_arena_current)]
+      (compiler-tc-profile-metric-set!
+        metrics-address
+        compiler-tc-macro-lifetime-start-reader-bytes-metric
+        (compiler-tc-macro-lifetime-arena-bytes
+          (cload.compiler-load-reader-node-pool-arena-handle)))
+      (compiler-tc-profile-metric-set!
+        metrics-address
+        compiler-tc-macro-lifetime-start-module-index-bytes-metric
+        (compiler-tc-macro-lifetime-arena-bytes
+          (tc-module-decl-index-arena-for-state
+            (tc-job-state-macro-state job-state))))
       (compiler-tc-profile-metric-set!
         metrics-address
         compiler-tc-macro-lifetime-start-cache-bytes-metric
@@ -103075,8 +103106,7 @@
       (compiler-tc-profile-metric-set!
         metrics-address
         compiler-tc-macro-lifetime-start-intern-bytes-metric
-        (compiler-tc-macro-lifetime-arena-bytes
-          (ci.intern-persistent-arena-handle))))))
+        (compiler-tc-intern-storage-bytes)))))
 
 (cfg
   compile-profile
@@ -103125,6 +103155,20 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-type-pool-metric))]
+      ;; Expansion appends reader rows and builds a module index in dedicated
+      ;; arenas. Charge only their growth since entry, including on job reuse.
+      [reader-pool : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (cload.compiler-load-reader-node-pool-arena-handle)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-reader-bytes-metric))]
+      [module-index : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (tc-module-decl-index-arena-for-state state)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-module-index-bytes-metric))]
       [symbols-current : i64
         (compiler-tc-macro-lifetime-arena-bytes
           (tc-macro-walk-field state macro-live-symbols-arena))]
@@ -103155,15 +103199,19 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-scoped-env-bytes-metric))]
-      ;; Spellings interned during expansion (generated names, hygiene
-      ;; renames) persist in the intern arena for the whole session.
+      ;; Spellings, structural records, and expansion provenance frames created
+      ;; during expansion persist in intern-owned arenas for the whole session.
       [intern-handle : i64 (ci.intern-persistent-arena-handle)]
+      [intern-records-handle : i64 (ci.intern-structural-records-arena-handle)]
+      [intern-map-handle : i64 (ci.intern-structural-map-arena-handle)]
+      [intern-expansion-handle : i64 (ci.intern-expansion-arena-handle)]
       [interns : i64
-        (compiler-tc-macro-lifetime-owner-delta
-          intern-handle
-          (compiler-tc-profile-metric-value
-            metrics-address
-            compiler-tc-macro-lifetime-start-intern-bytes-metric))]
+        (compiler-tc-macro-lifetime-nonnegative
+          (-
+            (compiler-tc-intern-storage-bytes)
+            (compiler-tc-profile-metric-value
+              metrics-address
+              compiler-tc-macro-lifetime-start-intern-bytes-metric)))]
       [job-owner : i64
         (if (or
           (= job-owner-handle (ast.ast-node-pool-context-base-arena pools))
@@ -103195,7 +103243,10 @@
             job-owner-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
           (= job-owner-handle scoped-env-handle)
-          (= job-owner-handle intern-handle))
+          (= job-owner-handle intern-handle)
+          (= job-owner-handle intern-records-handle)
+          (= job-owner-handle intern-map-handle)
+          (= job-owner-handle intern-expansion-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             job-owner-handle
@@ -103238,7 +103289,10 @@
             enclosing-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
           (= enclosing-handle scoped-env-handle)
-          (= enclosing-handle intern-handle))
+          (= enclosing-handle intern-handle)
+          (= enclosing-handle intern-records-handle)
+          (= enclosing-handle intern-map-handle)
+          (= enclosing-handle intern-expansion-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             enclosing-handle
@@ -103254,6 +103308,8 @@
       [named : i64
         (+
           embedded-cache
+          reader-pool
+          module-index
           interns
           (+
             scoped-env
@@ -103309,6 +103365,20 @@
         "cache"
         cumulative-alloc
         scoped-env
+        peak-delta)
+      (compiler-tc-macro-lifetime-emit-row!
+        (string.copy (& boundary))
+        "reader-node-pool"
+        "transfer"
+        cumulative-alloc
+        reader-pool
+        peak-delta)
+      (compiler-tc-macro-lifetime-emit-row!
+        (string.copy (& boundary))
+        "module-decl-index"
+        "cache"
+        cumulative-alloc
+        module-index
         peak-delta)
       (compiler-tc-macro-lifetime-emit-row!
         (tc-global-shared-view boundary)
@@ -104872,11 +104942,7 @@
 
 (define (macro-segmented-clone-seed-for-program [state : TcJobState]) : MacroSegmentedCloneSeed
   (let
-    [empty : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
-    [names : clone_support.CloneNameSet
-      (clone_support.clone-name-set-with-capacity
-        (macro-segmented-program-decl-count state)
-        empty.aliases)]
+    [names : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
     [rows : MacroSegmentedCloneRows
       (MacroSegmentedCloneRows
         (__tl_make-array ast.AstDeclList 16)
@@ -115871,6 +115937,19 @@
             (tc-global-shared-view targets))
           targets))]))
 
+(define (macro-alias-cache-storage-ensure! [state : TcMacroState]) : unit
+  (let
+    [data : (MutPtr TcMacroImportIndexStateData)
+      (tc-macro-import-index-state-ptr state)]
+    (unsafe
+      (when
+        (= (array-length (deref data).alias-module-keys) 0)
+        (in-arena
+          (arena.Arena (tc-macro-state-owner-arena state))
+          (set! (deref data).alias-module-keys (__tl_make-array i64 16384))
+          (set! (deref data).alias-qualifier-keys (__tl_make-array i64 16384))
+          (set! (deref data).alias-values (__tl_make-array i64 16384)))))))
+
 (define (macro-alias-cache-initialize! [state : TcMacroState]) : unit
   (let
     [table-id : i64 (tc-macro-state-source-name-table-id state)]
@@ -115883,30 +115962,18 @@
         (= (array-ref (deref data).control 1) table-id)
         (= (array-ref (deref data).control 2) reset-generation))
         unit
-        (let
-          [owner : i64 (tc-macro-state-owner-arena state)]
-          [i : i64 0]
-          (in-arena
-            (unsafe
-              (arena.Arena owner))
-            (when
-              (= (array-length (deref data).alias-module-keys) 0)
-              (set! (deref data).alias-module-keys (__tl_make-array i64 16384))
-              (set!
-                (deref data).alias-qualifier-keys
-                (__tl_make-array i64 16384))
-              (set! (deref data).alias-values (__tl_make-array i64 16384)))
-            (while (< i 16384)
-              (set! (array-ref (deref data).alias-module-keys i) 0)
-              (set! i (+ i 1)))
-            (set! (array-ref (deref data).control 0) 0)
-            (set! (array-ref (deref data).control 1) table-id)
-            (set! (array-ref (deref data).control 2) reset-generation)
-            (set! (array-ref (deref data).control 3) 1)
-            (set! (array-ref (deref data).control 4) 0)
-            (set! (array-ref (deref data).control 5) 0)
-            (set! (array-ref (deref data).control 6) 0)
-            (set! (array-ref (deref data).control 23) 0)))))))
+        (begin
+          (macro-alias-cache-storage-ensure! state)
+          (for [i (iterator.range 0 16384)]
+            (set! (array-ref (deref data).alias-module-keys i) 0))
+          (set! (array-ref (deref data).control 0) 0)
+          (set! (array-ref (deref data).control 1) table-id)
+          (set! (array-ref (deref data).control 2) reset-generation)
+          (set! (array-ref (deref data).control 3) 1)
+          (set! (array-ref (deref data).control 4) 0)
+          (set! (array-ref (deref data).control 5) 0)
+          (set! (array-ref (deref data).control 6) 0)
+          (set! (array-ref (deref data).control 23) 0))))))
 
 (define (macro-alias-cache-ensure! [state : TcMacroState]) : unit
   (let
@@ -120512,8 +120579,9 @@
               capture-result)
               [(Err diag) (Err diag)]
               [(Ok operands count base-env syntax-pools)
-                (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-                  (tc-context-ctfe-macro-state ctx))
+                (ctfe_support.ctfe-begin-macro-expansion!
+                  (tc-context-ctfe-macro-state ctx)
+                  (tc-context-module-id ctx))
                 (macro-result-provenance-reset-with-captured-body!
                   (tc-context-ctfe-macro-state ctx)
                   (macro-binding-prefix-transformer?
@@ -120752,8 +120820,9 @@
   [expanded-args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
   (begin
-    (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-      (tc-context-ctfe-macro-state ctx))
+    (ctfe_support.ctfe-begin-macro-expansion!
+      (tc-context-ctfe-macro-state ctx)
+      (tc-context-module-id ctx))
     (macro-result-provenance-reset-with-captured-body!
       (tc-context-ctfe-macro-state ctx)
       captured-body?)
@@ -120860,8 +120929,9 @@
       ;; Both routes publish per-transformer syntax metadata. Reset before
       ;; native dispatch as well as before an interpreted fallback so an
       ;; earlier expansion cannot leak either marker into this result.
-      (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-        (tc-context-ctfe-macro-state ctx))
+      (ctfe_support.ctfe-begin-macro-expansion!
+        (tc-context-ctfe-macro-state ctx)
+        (tc-context-module-id ctx))
       (macro-result-provenance-reset-with-captured-body!
         (tc-context-ctfe-macro-state ctx)
         (macro-binding-prefix-transformer?

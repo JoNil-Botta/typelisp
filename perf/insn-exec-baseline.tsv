@@ -25,7 +25,7 @@ benchmark/typelisp/cfg_domloops	559564130
 benchmark/c-scalar/cfg_domloops	423071025
 benchmark/typelisp/gvn_table	709942679
 benchmark/c-scalar/gvn_table	620750566
-benchmark/typelisp/intern_table	384565912
+benchmark/typelisp/intern_table	370419131
 benchmark/c-scalar/intern_table	296291631
 benchmark/typelisp/lex_source	455891011
 benchmark/c-scalar/lex_source	549230984
@@ -35,7 +35,7 @@ benchmark/typelisp/peephole_lines	420295485
 benchmark/c-scalar/peephole_lines	442194743
 benchmark/typelisp/read_sexpr	731292542
 benchmark/c-scalar/read_sexpr	598159390
-benchmark/typelisp/callgraph_scc	450362951
+benchmark/typelisp/callgraph_scc	449718691
 benchmark/c-scalar/callgraph_scc	341685483
 benchmark/typelisp/ssa_construct	629929672
 benchmark/c-scalar/ssa_construct	448154598

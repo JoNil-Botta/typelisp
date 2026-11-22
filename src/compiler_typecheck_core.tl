@@ -45115,6 +45115,36 @@
       (unsafe
         (ptr-write! (ptr-offset keys index) -1)))))
 
+(define (tc-type-handle-cache-storage-ensure! [state : TcTypeHandleCacheState]) : unit
+  (let
+    [data : (MutPtr TcTypeHandleCacheStateData)
+      (tc-type-handle-cache-state-ptr state)]
+    (unsafe
+      (when
+        (= (deref data).keys-address 0)
+        (in-arena
+          (arena.Arena (deref data).owner-arena)
+          (let
+            [keys : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            [handles : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            [move-kinds : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            (set!
+              (deref data).handles-address
+              (cast (ptr->int (__tl_array-data handles)) : i64))
+            (set!
+              (deref data).move-kinds-address
+              (cast (ptr->int (__tl_array-data move-kinds)) : i64))
+            (set!
+              (deref data).keys-address
+              (cast (ptr->int (__tl_array-data keys)) : i64))))))))
+
+(define (tc-type-handle-cache-storage-ensure-for-job! [state : TcJobState]) : unit
+  (tc-type-handle-cache-storage-ensure!
+    (tc-nominal-cache-type-handles (tc-job-state-nominal-cache state))))
+
 ;; Symbol construction is append-only, but an addition may retain the same
 ;; backing allocation. Rebind on either the owner pointer or map generation;
 ;; clearing the direct map also prevents stale entries if a job later returns
@@ -45124,53 +45154,15 @@
   [symbols : (& symbols csym.CompilerSymbols)]
   [lookup-id : i64]
   [key : i64]) : i64
+  (tc-type-handle-cache-storage-ensure! state)
   (unsafe
     (let
       [stamp : csym.CompilerSymbolsMapStamp
         (csym.compiler-symbols-type-map-stamp symbols)]
       [data : (MutPtr TcTypeHandleCacheStateData)
         (tc-type-handle-cache-state-ptr state)]
-      [keys-address : i64
-        (if (> (deref data).keys-address 0)
-          (deref data).keys-address
-          (in-arena
-            (unsafe
-              (arena.Arena (deref data).owner-arena))
-            (let
-              [keys : (__tl_dyn-array i64)
-                (__tl_make-array i64 tc-type-handle-cache-capacity)]
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data keys) : (Ptr i64)))
-                : i64))))]
-      [handles-address : i64
-        (if (> (deref data).handles-address 0)
-          (deref data).handles-address
-          (in-arena
-            (unsafe
-              (arena.Arena (deref data).owner-arena))
-            (let
-              [handles : (__tl_dyn-array i64)
-                (__tl_make-array i64 tc-type-handle-cache-capacity)]
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data handles) : (Ptr i64)))
-                : i64))))]
-      [move-kinds-address : i64
-        (if (> (deref data).move-kinds-address 0)
-          (deref data).move-kinds-address
-          (in-arena
-            (unsafe
-              (arena.Arena (deref data).owner-arena))
-            (let
-              [move-kinds : (__tl_dyn-array i64)
-                (__tl_make-array i64 tc-type-handle-cache-capacity)]
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data move-kinds) : (Ptr i64)))
-                : i64))))]
       (begin
-        (tc-type-handle-cache-clear-keys! keys-address)
-        (set! (deref data).keys-address keys-address)
-        (set! (deref data).handles-address handles-address)
-        (set! (deref data).move-kinds-address move-kinds-address)
+        (tc-type-handle-cache-clear-keys! (deref data).keys-address)
         (set! (deref data).symbols-owner stamp.owner)
         (set! (deref data).symbols-generation stamp.generation)
         (cfg
@@ -115910,6 +115902,19 @@
             (tc-global-shared-view targets))
           targets))]))
 
+(define (macro-alias-cache-storage-ensure! [state : TcMacroState]) : unit
+  (let
+    [data : (MutPtr TcMacroImportIndexStateData)
+      (tc-macro-import-index-state-ptr state)]
+    (unsafe
+      (when
+        (= (array-length (deref data).alias-module-keys) 0)
+        (in-arena
+          (arena.Arena (tc-macro-state-owner-arena state))
+          (set! (deref data).alias-module-keys (__tl_make-array i64 16384))
+          (set! (deref data).alias-qualifier-keys (__tl_make-array i64 16384))
+          (set! (deref data).alias-values (__tl_make-array i64 16384)))))))
+
 (define (macro-alias-cache-initialize! [state : TcMacroState]) : unit
   (let
     [table-id : i64 (tc-macro-state-source-name-table-id state)]
@@ -115922,30 +115927,18 @@
         (= (array-ref (deref data).control 1) table-id)
         (= (array-ref (deref data).control 2) reset-generation))
         unit
-        (let
-          [owner : i64 (tc-macro-state-owner-arena state)]
-          [i : i64 0]
-          (in-arena
-            (unsafe
-              (arena.Arena owner))
-            (when
-              (= (array-length (deref data).alias-module-keys) 0)
-              (set! (deref data).alias-module-keys (__tl_make-array i64 16384))
-              (set!
-                (deref data).alias-qualifier-keys
-                (__tl_make-array i64 16384))
-              (set! (deref data).alias-values (__tl_make-array i64 16384)))
-            (while (< i 16384)
-              (set! (array-ref (deref data).alias-module-keys i) 0)
-              (set! i (+ i 1)))
-            (set! (array-ref (deref data).control 0) 0)
-            (set! (array-ref (deref data).control 1) table-id)
-            (set! (array-ref (deref data).control 2) reset-generation)
-            (set! (array-ref (deref data).control 3) 1)
-            (set! (array-ref (deref data).control 4) 0)
-            (set! (array-ref (deref data).control 5) 0)
-            (set! (array-ref (deref data).control 6) 0)
-            (set! (array-ref (deref data).control 23) 0)))))))
+        (begin
+          (macro-alias-cache-storage-ensure! state)
+          (for [i (iterator.range 0 16384)]
+            (set! (array-ref (deref data).alias-module-keys i) 0))
+          (set! (array-ref (deref data).control 0) 0)
+          (set! (array-ref (deref data).control 1) table-id)
+          (set! (array-ref (deref data).control 2) reset-generation)
+          (set! (array-ref (deref data).control 3) 1)
+          (set! (array-ref (deref data).control 4) 0)
+          (set! (array-ref (deref data).control 5) 0)
+          (set! (array-ref (deref data).control 6) 0)
+          (set! (array-ref (deref data).control 23) 0))))))
 
 (define (macro-alias-cache-ensure! [state : TcMacroState]) : unit
   (let
@@ -120551,8 +120544,9 @@
               capture-result)
               [(Err diag) (Err diag)]
               [(Ok operands count base-env syntax-pools)
-                (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-                  (tc-context-ctfe-macro-state ctx))
+                (ctfe_support.ctfe-begin-macro-expansion!
+                  (tc-context-ctfe-macro-state ctx)
+                  (tc-context-module-id ctx))
                 (macro-result-provenance-reset-with-captured-body!
                   (tc-context-ctfe-macro-state ctx)
                   (macro-binding-prefix-transformer?
@@ -120791,8 +120785,9 @@
   [expanded-args : ast.AstExprList]
   [env : ctfe_support.CtfeEnv]) : ResultMacroValueEnv
   (begin
-    (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-      (tc-context-ctfe-macro-state ctx))
+    (ctfe_support.ctfe-begin-macro-expansion!
+      (tc-context-ctfe-macro-state ctx)
+      (tc-context-module-id ctx))
     (macro-result-provenance-reset-with-captured-body!
       (tc-context-ctfe-macro-state ctx)
       captured-body?)
@@ -120899,8 +120894,9 @@
       ;; Both routes publish per-transformer syntax metadata. Reset before
       ;; native dispatch as well as before an interpreted fallback so an
       ;; earlier expansion cannot leak either marker into this result.
-      (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-        (tc-context-ctfe-macro-state ctx))
+      (ctfe_support.ctfe-begin-macro-expansion!
+        (tc-context-ctfe-macro-state ctx)
+        (tc-context-module-id ctx))
       (macro-result-provenance-reset-with-captured-body!
         (tc-context-ctfe-macro-state ctx)
         (macro-binding-prefix-transformer?

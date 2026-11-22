@@ -793,7 +793,7 @@ contains vpaddq
 in fn _tl_map_fused_reduce_i64_reduce_map_shift
 contains vpsllvq
 contains vpaddq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 
 # -------------------------------------------------------------------- scans
 
@@ -1282,19 +1282,19 @@ mode avx2
 in fn _tl_masked_if_shift_value_types_case_i32
 contains vpsllv
 contains vpsravd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains %ymm
 in fn _tl_masked_if_shift_value_types_case_u32
 contains vpsllv
 contains vpsrlvd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains %ymm
 in fn _tl_masked_if_shift_value_types_case_i64
 contains vpsllv
 contains vpsrlvq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains vpcmpgtq
 contains vpsllvq
@@ -1303,7 +1303,7 @@ contains %ymm
 in fn _tl_masked_if_shift_value_types_case_u64
 contains vpsllv
 contains vpsrlvq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains %ymm
 
@@ -1313,25 +1313,25 @@ mode avx512
 in fn _tl_masked_if_shift_value_types_case_i32
 contains vpsllv
 contains vpsravd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 in fn _tl_masked_if_shift_value_types_case_u32
 contains vpsllv
 contains vpsrlvd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 in fn _tl_masked_if_shift_value_types_case_i64
 contains vpsllv
 contains vpsravq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 in fn _tl_masked_if_shift_value_types_case_u64
 contains vpsllv
 contains vpsrlvq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 
@@ -1341,19 +1341,19 @@ mode avx2
 in fn _tl_map_shift_value_types_case_i32
 contains vpsllv
 contains vpsravd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains %ymm
 in fn _tl_map_shift_value_types_case_u32
 contains vpsllv
 contains vpsrlvd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains %ymm
 in fn _tl_map_shift_value_types_case_i64
 contains vpsllv
 contains vpsrlvq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains vpcmpgtq
 contains vpsllvq
@@ -1362,7 +1362,7 @@ contains %ymm
 in fn _tl_map_shift_value_types_case_u64
 contains vpsllv
 contains vpsrlvq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains vpmovmskb
 contains %ymm
 
@@ -1372,25 +1372,25 @@ mode avx512
 in fn _tl_map_shift_value_types_case_i32
 contains vpsllv
 contains vpsravd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 in fn _tl_map_shift_value_types_case_u32
 contains vpsllv
 contains vpsrlvd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 in fn _tl_map_shift_value_types_case_i64
 contains vpsllv
 contains vpsravq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 in fn _tl_map_shift_value_types_case_u64
 contains vpsllv
 contains vpsrlvq
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 contains kortest
 match %zmm[0-9]+|%k[0-7]
 
@@ -1406,7 +1406,7 @@ contains vpsravd
 contains vpackusdw
 contains vpackuswb
 contains vpermd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 not-match ^[[:space:]]+(salb|sarb|shrb)[[:space:]]
 in fn _tl_byte_shift_value_types_run_direct_u8
 narrow ranges:foreach_avx2_body~foreach_tail_header
@@ -1416,7 +1416,7 @@ contains vpsrlvd
 contains vpackusdw
 contains vpackuswb
 contains vpermd
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 not-match ^[[:space:]]+(salb|sarb|shrb)[[:space:]]
 
 # Word shifts widen on AVX2 and use native word shifts on AVX-512.
@@ -1425,7 +1425,7 @@ source tests/spmd/word_shift_value_types.tl
 mode avx2 avx512
 in fn _tl_word_shift_value_types_run_direct_i16
 narrow ranges:foreach_avx2_body~foreach_tail_header
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 not-match ^[[:space:]]+(salw|sarw|shrw)[[:space:]]
 if-mode avx2
 contains vpmovsxwd
@@ -1440,7 +1440,7 @@ not-match vpmov(sx|zx)wd|vpackusdw
 end-if
 in fn _tl_word_shift_value_types_run_direct_u16
 narrow ranges:foreach_avx2_body~foreach_tail_header
-contains call tl_shift_abort
+match call (\.L_tl_abort_)?tl_shift_abort
 not-match ^[[:space:]]+(salw|sarw|shrw)[[:space:]]
 if-mode avx2
 contains vpmovzxwd
@@ -1552,14 +1552,14 @@ source tests/spmd/native_slice_surface_i64.tl
 mode scalar
 opt 2
 in fn _tl_native_slice_surface_i64_masked_slice_foreach
-count-fixed = 4 call tl_oob_abort_at
+count-fixed = 4 call .L_tl_abort_tl_oob_abort_at
 
 case native-slice-multi-output
 source tests/spmd/native_slice_multi_output_i64.tl
 mode avx2 avx512
 opt 2
 in fn _tl_native_slice_multi_output_i64_map_two_outputs
-count = 4 ^[[:space:]]+call[[:space:]]+tl_oob_abort(_at)?
+count = 4 ^[[:space:]]+call[[:space:]]+(tl_oob_abort|\.L_tl_abort_tl_oob_abort_at)$
 contains vpaddq
 contains vpsubq
 if-mode avx2

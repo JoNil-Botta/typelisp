@@ -3151,6 +3151,103 @@
     "    .section .rdata$TLBT,\"dr\"\n"
     "    .section .typelisp_backtrace,\"a\",@progbits\n"))
 
+;; The row travels with its call through speculative function emission and
+;; cold-stub placement. Only an assembled row opens the table and marks its
+;; kind as used. The two displacements are relative to their own fields.
+(define (compiler-backend-abort-table-prefix
+  [target : be_state.CompilerBackendTarget]) : String
+  (str_cat.str-cat
+    "    .macro .tl_abort_row pc, path, line, column, kind\n"
+    (if (be_state.compiler-backend-target-coff? target)
+      "    .pushsection .rdata$TLAS,\"dr\"\n"
+      "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
+    "    .ifndef .L_tl_abort_table\n    .balign 4\n.L_tl_abort_table:\n    .endif\n"
+    "    .long \\pc - .\n    .long \\path - .\n    .long \\line\n    .long \\column\n"
+    "    .popsection\n    .set .L_tl_abort_used_\\kind, 1\n    .endm\n"))
+
+(define (compiler-backend-abort-kind-thunk [symbol : (& symbol str)]) : String
+  (str_cat.str-cat
+    "    .ifdef .L_tl_abort_used_"
+    symbol
+    "\n.L_tl_abort_"
+    symbol
+    ":\n    leaq 1f(%rip), %r11\n    jmp .L_tl_abort_lookup\n1:\n    jmp "
+    symbol
+    "\n    .endif\n"))
+
+;; Only volatile scratch registers are touched before the call. The frame
+;; pointer describes both incoming stack alignments (a SysV abort-only leaf
+;; can call from its red zone), and Win64 gets its own outgoing shadow space.
+;; The existing runtime readers see the same four-word descriptor.
+(define (compiler-backend-abort-table-trailer
+  [target : be_state.CompilerBackendTarget]) : String
+  (let
+    [windows? : bool (be_state.compiler-backend-target-coff? target)]
+    [site-reg : String
+      (if windows?
+        "%rcx"
+        "%rdi")]
+    [site-offset : i64
+      (if windows?
+        32
+        0)]
+    (str_cat.str-cat
+      "    .section .text\n    .ifdef .L_tl_abort_table\n"
+      (if windows?
+        "    .pushsection .rdata$TLAS,\"dr\"\n"
+        "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
+      ".L_tl_abort_table_end:\n    .popsection\n    .text\n"
+      (compiler-backend-abort-kind-thunk "tl_oob_abort_at")
+      (compiler-backend-abort-kind-thunk "tl_div_abort_at")
+      (compiler-backend-abort-kind-thunk "tl_shift_abort_at")
+      (compiler-backend-abort-kind-thunk "tl_panic_at")
+      (if windows?
+        "    .seh_proc .L_tl_abort_lookup\n.L_tl_abort_lookup:\n    pushq %rbp\n    .seh_pushreg %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n    leaq 64(%rsp), %rbp\n    .seh_setframe %rbp, 64\n    .seh_endprologue\n    andq $-16, %rsp\n"
+        (if (compiler_ir_types.compiler-debug-info-enabled?)
+          ".L_tl_abort_lookup:\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"
+          ".L_tl_abort_lookup:\n    pushq %rbp\n    movq %rsp, %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"))
+      "    movq 8(%rbp), %rax\n    leaq .L_tl_abort_table(%rip), %r10\n"
+      "2:\n    leaq .L_tl_abort_table_end(%rip), "
+      site-reg
+      "\n    cmpq "
+      site-reg
+      ", %r10\n    jae 3f\n    movslq (%r10), "
+      site-reg
+      "\n    addq %r10, "
+      site-reg
+      "\n    cmpq %rax, "
+      site-reg
+      "\n    je 4f\n    addq $16, %r10\n    jmp 2b\n3:\n    ud2\n"
+      "4:\n    leaq "
+      (string.int->string site-offset)
+      "(%rsp), "
+      site-reg
+      "\n    movslq 8(%r10), %rax\n    movq %rax, 16("
+      site-reg
+      ")\n    movslq 12(%r10), %rax\n    movq %rax, 24("
+      site-reg
+      ")\n    movslq 4(%r10), %rax\n    leaq 4(%r10,%rax), %rax\n"
+      "    movq (%rax), %r10\n    movq %r10, ("
+      site-reg
+      ")\n    movq 8(%rax), %rax\n    movq %rax, 8("
+      site-reg
+      ")\n    call *%r11\n    ud2\n.L_tl_abort_lookup_end:\n"
+      (cond
+        [windows? "    .seh_endproc\n"]
+        [(compiler_ir_types.compiler-debug-info-enabled?) "    .cfi_endproc\n"]
+        [else ""])
+      (if (compiler_ir_types.compiler-debug-info-enabled?)
+        (str_cat.str-cat
+          (compiler-backend-backtrace-map-section target)
+          "    .balign 8\n    .quad .L_tl_abort_lookup\n    .quad .L_tl_abort_lookup_end\n"
+          "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
+          "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
+          ;; An empty name and line -1 mark the abort lookup frame, which
+          ;; must not consume a slot in the runtime's backtrace frame budget.
+          "    .quad -1\n    .quad 0\n    .text\n")
+        "")
+      "    .endif\n")))
+
 (define (compiler-backend-backtrace-string-section
   [target : be_state.CompilerBackendTarget]) : String
   (if (be_state.compiler-backend-target-coff? target)
@@ -3400,54 +3497,36 @@
       "_"
       suffix)))
 
-(define (compiler-backend-abort-site-load-arg0
+(define (compiler-backend-abort-site-return-label
   [backend-state : be_state.CompilerBackendState]
-  [label : (& label str)]) : String
-  (str_cat.str-cat
-    "    leaq "
-    label
-    "(%rip), "
-    (compiler-backend-abort-arg-reg backend-state 0)
-    "\n"))
-
-(define (compiler-backend-abort-site-descriptor-after-call
-  [backend-state : be_state.CompilerBackendState]
-  [label : String]) : String
+  [label : String]
+  [symbol : String]) : String
   (let
-    [end-label : String (str_cat.str-cat label "_end")]
     [function-state : be_state.CompilerBackendFunctionState
       (be_state.compiler-backend-state-function-state backend-state)]
     [path : String
       (be_state.compiler-backend-function-state-string
         function-state
         be_state.compiler-backend-function-string-abort-site-path)]
-    [shared-object : bool
-      (be_state.compiler-backend-state-emission-target-policy backend-state).shared-object]
-    ;; Under the shared-object code model the descriptor's path word needs a
-    ;; load-time relocation, so it lives in `.data.rel.ro` instead of inline.
     (str_cat.str-cat
-      (if shared-object
-        "    .pushsection .data.rel.ro,\"aw\",@progbits\n    .balign 8\n"
-        (str_cat.str-cat "    jmp " end-label "\n    .balign 8\n"))
       label
-      ":\n    .quad "
-      (be_facts.compiler-backend-string-data-label path)
-      "\n    .quad "
-      (string.int->string (string.string-length path))
-      "\n    .quad "
+      ":\n    .tl_abort_row "
+      label
+      ", "
+      (be_operand.compiler-backend-string-fat-label path)
+      ", "
       (string.int->string
         (be_state.compiler-backend-function-state-i64
           function-state
           be_state.compiler-backend-function-i64-abort-site-line))
-      "\n    .quad "
+      ", "
       (string.int->string
         (be_state.compiler-backend-function-state-i64
           function-state
           be_state.compiler-backend-function-i64-abort-site-column))
-      "\n"
-      (if shared-object
-        "    .popsection\n"
-        (str_cat.str-cat end-label ":\n")))))
+      ", "
+      symbol
+      "\n")))
 
 ;; SAVE-SECOND runs before SAVE-FIRST. The top of stack is therefore the first
 ;; reported value and can be popped straight into ABI argument 1.
@@ -3464,18 +3543,18 @@
     (str_cat.str-cat
       save-second
       save-first
-      (compiler-backend-abort-site-load-arg0 backend-state label)
+      "    # tl_abort_operand_stage\n"
       "    popq "
       (compiler-backend-abort-arg-reg backend-state 1)
       "\n    popq "
       (compiler-backend-abort-arg-reg backend-state 2)
       "\n"
       (be_operand.compiler-backend-emit-call-space-sub call-space)
-      "    call "
+      "    call .L_tl_abort_"
       symbol
       "\n"
-      (be_operand.compiler-backend-emit-call-space-add call-space)
-      (compiler-backend-abort-site-descriptor-after-call backend-state label))))
+      (compiler-backend-abort-site-return-label backend-state label symbol)
+      (be_operand.compiler-backend-emit-call-space-add call-space))))
 
 ;; Shift source-located aborts carry a fourth boolean argument indicating
 ;; whether the count is unsigned.  Keep this setup separate from the legacy
@@ -3495,7 +3574,7 @@
     (str_cat.str-cat
       save-width
       save-count
-      (compiler-backend-abort-site-load-arg0 backend-state label)
+      "    # tl_abort_operand_stage\n"
       "    popq "
       (compiler-backend-abort-arg-reg backend-state 1)
       "\n    popq "
@@ -3508,11 +3587,11 @@
       (compiler-backend-abort-arg-reg backend-state 3)
       "\n"
       (be_operand.compiler-backend-emit-call-space-sub call-space)
-      "    call "
+      "    call .L_tl_abort_"
       symbol
       "\n"
-      (be_operand.compiler-backend-emit-call-space-add call-space)
-      (compiler-backend-abort-site-descriptor-after-call backend-state label))))
+      (compiler-backend-abort-site-return-label backend-state label symbol)
+      (be_operand.compiler-backend-emit-call-space-add call-space))))
 
 (define (compiler-backend-abort-normalized-push-asm
   [type-segment-bases : i64]
@@ -3564,11 +3643,12 @@
           ", "
           arg1
           "\n"
-          (compiler-backend-abort-site-load-arg0 backend-state label)
-          "    call tl_panic_at\n")]
-      (str_cat.str-cat
-        (string.replace asm needle replacement)
-        (compiler-backend-abort-site-descriptor-after-call backend-state label)))))
+          "    call .L_tl_abort_tl_panic_at\n"
+          (compiler-backend-abort-site-return-label
+            backend-state
+            label
+            "tl_panic_at"))]
+      (string.replace asm needle replacement))))
 
 (define (compiler-backend-float-value-register
   [backend-state : be_state.CompilerBackendState]

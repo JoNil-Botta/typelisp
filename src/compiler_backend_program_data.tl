@@ -2337,11 +2337,9 @@
 ;; A Linux shared object needs object code with no text relocation, no
 ;; local-exec TLS and no exported internal symbol. The emission keeps the
 ;; executable code everywhere else, so the model is applied by one pass over
-;; the finished assembly (`compiler-backend-shared-object-assembly`) plus two
-;; emission changes the pass cannot make: the program has no entry, only
-;; `tl_shared_object_init`, and an abort-site descriptor is placed in
-;; `.data.rel.ro` instead of inline in `.text`. The executable code model's
-;; output is unchanged.
+;; the finished assembly (`compiler-backend-shared-object-assembly`) plus
+;; one emission change the pass cannot make: `tl_shared_object_init` takes
+;; the place of the executable entry point.
 ;; The register a TLS store borrows under the shared-object code model, by
 ;; enclosing function, or "" for none. An initial-exec store reaches the
 ;; variable through its GOT offset, which must be loaded into a register first.

@@ -1108,7 +1108,7 @@
 (test
   checked-binary-facts-distinguish-roles-and-declarations
   (let
-    [pools (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools (ast.ast-node-pool-context-new-with-capacities 2048 8)]
     [ctx
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -1124,10 +1124,13 @@
       (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "operand-a")))]
     [right
       (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "operand-b")))]
+    [filler (ci.intern "filler")]
     [op : ast.AstBinOp (Add)]
     [expr : ast.AstExpr (Binary op left right)]
     [i32-tag (tc_core.tc-checked-binary-scalar-tag (& (ast.AstType.I32)))]
     [i64-tag (tc_core.tc-checked-binary-scalar-tag (& (ast.AstType.I64)))]
+    (for [_index (iterator.range 2 1025)]
+      (ast.ast-node-pool-context-expr-push pools (Var filler)))
     (tc_core.tc-checked-let-binding-facts-begin! facts false)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
     (tc_core.tc-checked-binary-fact-record!
@@ -1146,6 +1149,39 @@
       (& (I32))
       (& (I32))
       (& (I32)))
+    (for [index (iterator.range 2 514)]
+      (tc_core.tc-checked-binary-fact-record!
+        ctx
+        (& (Binary op (+ left index) right))
+        (& op)
+        0
+        (& (I64))
+        (& (I64))
+        (& (I64))))
+    (tc_core.tc-checked-binary-fact-record!
+      ctx
+      (& (Binary op (+ left 2) right))
+      (& op)
+      0
+      (& (I32))
+      (& (I32))
+      (& (I32)))
+    (tc_core.tc-checked-binary-fact-record!
+      ctx
+      (& (Binary op (+ left 1024) right))
+      (& op)
+      0
+      (& (I64))
+      (& (I64))
+      (& (I64)))
+    (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 8)
+    (unless
+      (unsafe
+        (=
+          (array-length
+            (deref (tc_core.tc-checked-let-binding-fact-state-view facts)).binary-facts)
+          2048))
+      (io.panic "checked binary facts did not grow past half capacity"))
     (tc_core.tc-checked-let-binding-facts-freeze! facts)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
     (unless
@@ -1169,7 +1205,18 @@
             (& (ast.AstBinOp.Sub))
             0)
           0)
-        (= (tc_core.tc-checked-binary-fact-lookup ctx right left (& op) 0) 0))
+        (= (tc_core.tc-checked-binary-fact-lookup ctx right left (& op) 0) 0)
+        (=
+          (tc_core.tc-checked-binary-fact-lookup ctx (+ left 2) right (& op) 0)
+          -1)
+        (=
+          (tc_core.tc-checked-binary-fact-lookup
+            ctx
+            (+ left 1024)
+            right
+            (& op)
+            0)
+          0))
       (io.panic
         "checked binary fact confused a role, expected type, operator or child"))
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 8)

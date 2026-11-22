@@ -766,7 +766,8 @@
         opt-level
         mode
         cfgs
-        (source-tool-linux-crt-entry? target link-inputs))
+        (source-tool-linux-crt-entry? target link-inputs)
+        (source-tool-link-inputs-empty? link-inputs))
         [(Ok asm advisories)
           (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (Ok (source-tool-augment-assembly-for-target asm target))]
@@ -1683,7 +1684,8 @@
                 opt-level
                 mode
                 cfgs
-                crt-entry))])]
+                crt-entry
+                (source-tool-link-inputs-empty? link-inputs)))])]
       [(Lowered lowered spans lower-state)
         (source-tool-render-object-result
           target

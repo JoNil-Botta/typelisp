@@ -119535,6 +119535,24 @@
                   kept-functions))))]))
     (Program globals functions)))
 
+;; Startup already consumes the optimized global sequence. Use that very
+;; sequence for reachability as well, so an initializer whose storage was
+;; removed cannot keep its body or its private callees alive. Keep the global
+;; sequence itself: its order and effects are part of the startup schedule.
+(define (compiler-optimize-prune-orphan-initializers
+  [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
+  (match program
+    [(Program globals functions externs authority)
+      (match (opt-prune-unreachable-program
+        0
+        (owned_view.compiler-owned-shared-view globals)
+        functions
+        (& externs)
+        false
+        false)
+        [(Program _ kept)
+          (ir.CompilerIrProgram.Program globals kept externs authority)])]))
+
 (define (opt-direct-call-self-recursive-instr?
   [name : i64]
   [instr : ir.CompilerIrInstr]) : bool

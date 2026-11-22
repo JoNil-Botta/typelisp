@@ -3315,6 +3315,14 @@
       (compiler-backend-stdlib-io-panic-name? backend-state name)]
     [_ false]))
 
+(define (compiler-backend-optional-runtime-function?
+  [backend-state : be_state.CompilerBackendState]
+  [name : i64]) : bool
+  (or
+    (be_operand.compiler-backend-stdlib-runtime-function-name?
+      (& (be_state.compiler-backend-symbol-text-state backend-state name)))
+    (compiler-backend-stdlib-io-panic-name? backend-state name)))
+
 (define (compiler-backend-abort-site-active?
   [backend-state : be_state.CompilerBackendState]) : bool
   (be_state.compiler-backend-function-state-bool?

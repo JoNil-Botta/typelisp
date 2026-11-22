@@ -26066,6 +26066,7 @@ entry:
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
     (compiler-backend-mul-scale-add-shapes-ok?)
+    (compiler-backend-lea-pair-shapes-ok?)
     (be_state.backend-and4
       (compiler-backend-gep-fold-sub-shape-ok?)
       (compiler-backend-gep-fold-zero-shape-ok?)
@@ -27096,6 +27097,94 @@ entry:
     (compiler-backend-mul-pow2-test-asm factor dst-reg)
     (has expected)
     (lacks "imulq")))
+
+;; LEA selection across a sole-use pair: `%1` is read only by the next
+;; instruction, so the pair is one `leaq` into `%2`'s home and `%1` is never
+;; written. `tail` follows the pair.
+(define (compiler-backend-lea-pair-test-asm
+  [first : ir.CompilerIrInstr]
+  [second : ir.CompilerIrInstr]
+  [tail : ir.CompilerIrInstrSeq]) : be_state.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler-backend-test-instr-seq-prepend
+      first
+      (compiler-backend-test-instr-seq-prepend second tail))
+    (regalloc.compiler-reg-assignments-prepend
+      (& (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r12)))
+      (regalloc.compiler-reg-assignments-prepend
+        (&
+          (regalloc.CompilerRegAssignment 1 (Register cabi.compiler-reg-id-rdx)))
+        (regalloc.compiler-reg-assignments-prepend
+          (&
+            (regalloc.CompilerRegAssignment
+              2
+              (Register cabi.compiler-reg-id-rcx)))
+          (regalloc.compiler-reg-assignments-prepend
+            (&
+              (regalloc.CompilerRegAssignment
+                4
+                (Register cabi.compiler-reg-id-rbx)))
+            (regalloc.compiler-reg-assignment-table-empty)))))
+    6))
+
+(define (compiler-backend-lea-pair-shapes-ok?) : bool
+  (and
+    ;; x*3 + 2: the product and the displacement in one SIB form.
+    (asm-ok?
+      (compiler-backend-lea-pair-test-asm
+        (BinOp 1 (Mul) (Var 0) (I64 3) (I64))
+        (BinOp 2 (Add) (Var 1) (I64 2) (I64))
+        (irt.instrs "%3 = mov %2 : i64"))
+      (has "    leaq 2(%r12,%r12,2), %rcx\n")
+      (lacks "addq" "%rdx"))
+    ;; y + (x - 48): the immediate add's index plus the other operand.
+    (asm-ok?
+      (compiler-backend-lea-pair-test-asm
+        (BinOp 1 (Sub) (Var 0) (I64 48) (I64))
+        (BinOp 2 (Add) (Var 4) (Var 1) (I64))
+        (irt.instrs "%3 = mov %2 : i64"))
+      (has "    leaq -48(%rbx,%r12), %rcx\n")
+      (lacks "addq" "%rdx"))
+    ;; y + x*4: a 2/4/8 product leaves the base slot free.
+    (asm-ok?
+      (compiler-backend-lea-pair-test-asm
+        (BinOp 1 (Mul) (Var 0) (I64 4) (I64))
+        (BinOp 2 (Add) (Var 1) (Var 4) (I64))
+        (irt.instrs "%3 = mov %2 : i64"))
+      (has "    leaq (%rbx,%r12,4), %rcx\n")
+      (lacks "%rdx"))
+    ;; The next instruction compares the sum: its flags are read after the
+    ;; add (the `testq` drop), so the pair stays two instructions.
+    (asm-ok?
+      (compiler-backend-lea-pair-test-asm
+        (BinOp 1 (Mul) (Var 0) (I64 3) (I64))
+        (BinOp 2 (Add) (Var 1) (I64 2) (I64))
+        (irt.instrs
+          "%5 = eq %2, 0 : i64
+                     %3 = mov %5 : bool"))
+      (has "%rdx")
+      (lacks "leaq 2(%r12"))
+    ;; x*3 + y: a 3/5/9 product fills both SIB roles, so nothing fuses.
+    (asm-ok?
+      (compiler-backend-lea-pair-test-asm
+        (BinOp 1 (Mul) (Var 0) (I64 3) (I64))
+        (BinOp 2 (Add) (Var 1) (Var 4) (I64))
+        (irt.instrs "%3 = mov %2 : i64"))
+      (has "    leaq (%r12,%r12,2), %rdx\n"))
+    ;; y + x*8 with `y` a forwarded addr-of: its allocator home never receives
+    ;; the address, so the pair stays two instructions and the add reads the
+    ;; materialized frame address.
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (irt.instrs
+          "%5 = addr_of %3
+           %1 = mul %0, 8 : i64
+           %2 = add %1, %5 : i64
+           %4 = mov %2 : i64")
+        (reg-homes "%0=%r12 %1=%rdx %2=%rcx %5=%rbx")
+        6)
+      (has "(%rbp), ")
+      (lacks "(%rbx,%r12,8)" "%rbx"))))
 
 (define (compiler-backend-mul-scale-add-shapes-ok?) : bool
   (and

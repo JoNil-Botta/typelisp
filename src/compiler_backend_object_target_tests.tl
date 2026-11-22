@@ -12,12 +12,14 @@
         (object_target.compiler-backend-object-parts-empty)
         true
         true
+        false
         false)]
     [windows-image : cobj.CompilerObjectImage
       (object_windows.compiler-backend-object-target-windows-image
         (object_target.compiler-backend-object-parts-empty)
         true
         true
+        false
         false)]
     [linux-sections : cobj.CompilerObjectSectionList linux-image.sections]
     [windows-sections : cobj.CompilerObjectSectionList windows-image.sections]
@@ -101,13 +103,15 @@
         (object_target.compiler-backend-object-parts-empty)
         false
         true
-        true)]
+        true
+        false)]
     [windows-image : cobj.CompilerObjectImage
       (object_windows.compiler-backend-object-target-windows-image
         (object_target.compiler-backend-object-parts-empty)
         false
         true
-        true)]
+        true
+        false)]
     (test.assert-true
       (not
         (cobj.compiler-object-symbol-list-contains?

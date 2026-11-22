@@ -65,13 +65,21 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [macro-entry : bool]
   [emit-entry : bool]
-  [crt-entry : bool]) : cobj.CompilerObjectImage
+  [crt-entry : bool]
+  [closed : bool]) : cobj.CompilerObjectImage
   (let
+    [image-entry : bool
+      (or
+        (not closed)
+        (cobj.compiler-object-relocation-builder-targets?
+          (& parts.relocations)
+          "tl_tlci_call_image_entry"))]
     [with-tlci : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-tlci-entry-runtime-text
         parts
         (compiler-backend-object-tlci-entry-bytes)
         (compiler-backend-object-tlci-macro-entry-bytes)
+        image-entry
         macro-entry
         (LinuxX64)
         (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectTlciImageContribution)

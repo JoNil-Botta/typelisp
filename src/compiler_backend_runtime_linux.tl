@@ -1,5 +1,6 @@
 ;; compiler_backend_runtime_linux.tl - Linux backend runtime leaf emitter.
 (import compiler_backend_runtime_common as runtime_common)
+(import compiler_backend_runtime_prune as runtime_prune)
 (import compiler_backend_runtime_sanitize as sanitize)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
@@ -1386,15 +1387,30 @@ tl_backtrace_stack_set:
 ")
 
 (define (compiler-backend-runtime-linux-render
+  [closed : bool]
   [enabled : bool]
   [id : x64_template.CompilerX64ExecutableTemplateId]
   [text : String]) : String
   (if enabled
-    (x64_catalog.compiler-x64-template-render-assembly id (LinuxX64) text)
+    (let
+      [body : String
+        (x64_catalog.compiler-x64-template-render-assembly id (LinuxX64) text)]
+      (if closed
+        (match id
+          [(or (LinuxRuntimeMemcpy) (LinuxRuntimeArrayZero) (LinuxRuntimeArena)
+               (LinuxRuntimeAlloc))
+            (runtime_prune.optional-bundle body)]
+          [_ body])
+        body))
     ""))
 
 (define (compiler-backend-runtime-functions
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
+  (compiler-backend-runtime-functions-for-executable features false))
+
+(define (compiler-backend-runtime-functions-for-executable
+  [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]
+  [closed : bool]) : String
   (let
     [profile : bool features.profile]
     [arena-debug : bool features.arena-debug]
@@ -1402,42 +1418,52 @@ tl_backtrace_stack_set:
       (runtime_common.compiler-backend-runtime-arena-debug-text? arena-debug)]
     (str_cat.str-cat
       (compiler-backend-runtime-linux-render
+        closed
         true
         (LinuxRuntimeMemcpy)
         (compiler-backend-runtime-memcpy-functions))
       (compiler-backend-runtime-linux-render
+        closed
         (runtime_common.compiler-backend-runtime-features-leaf? features 4)
         (LinuxRuntimeCopyFwd)
         (compiler-backend-runtime-copy-fwd-functions))
       (compiler-backend-runtime-linux-render
+        closed
         (runtime_common.compiler-backend-runtime-features-leaf? features 8)
         (LinuxRuntimeCopy8Fwd)
         (compiler-backend-runtime-copy8-fwd-functions))
       (compiler-backend-runtime-linux-render
+        closed
         (runtime_common.compiler-backend-runtime-features-leaf? features 1)
         (LinuxRuntimeMemchr)
         (compiler-backend-runtime-memchr-functions))
       (compiler-backend-runtime-linux-render
+        closed
         true
         (LinuxRuntimeArrayZero)
         (compiler-backend-runtime-array-zero-functions))
       (compiler-backend-runtime-linux-render
+        closed
         (runtime_common.compiler-backend-runtime-features-leaf? features 16)
         (LinuxRuntimeMemFill8)
         (compiler-backend-runtime-mem-fill8-functions))
       (compiler-backend-runtime-linux-render
+        closed
         (runtime_common.compiler-backend-runtime-features-leaf? features 2)
         (LinuxRuntimeTlciImage)
         (compiler-backend-runtime-tlci-entry-functions))
       (compiler-backend-runtime-linux-render
+        closed
         features.tlci-macro-entry
         (LinuxRuntimeTlciMacro)
         (compiler-backend-runtime-tlci-macro-entry-functions))
       (compiler-backend-runtime-linux-render
+        closed
         features.backtrace
         (LinuxRuntimeBacktrace)
         (compiler-backend-runtime-backtrace-functions))
       (compiler-backend-runtime-linux-render
+        closed
         true
         (x64_catalog.compiler-x64-template-with-sanitizer
           (x64_catalog.compiler-x64-template-select-four
@@ -1453,14 +1479,17 @@ tl_backtrace_stack_set:
             (compiler-backend-runtime-linux-arena-functions profile debug-text))
           (compiler-backend-runtime-linux-arena-functions profile debug-text)))
       (compiler-backend-runtime-linux-render
+        closed
         profile
         (CommonProfile)
         (runtime_common.compiler-backend-runtime-profile-functions))
       (compiler-backend-runtime-linux-render
+        closed
         features.startup-profile
         (CommonStartupProfile)
         (runtime_common.compiler-backend-runtime-startup-profile-functions true))
       (compiler-backend-runtime-linux-render
+        closed
         features.alloc
         (x64_catalog.compiler-x64-template-select-four
           (LinuxRuntimeAlloc)
@@ -1477,6 +1506,7 @@ tl_backtrace_stack_set:
             profile
             debug-text)))
       (compiler-backend-runtime-linux-render
+        closed
         (and
           features.alloc
           (runtime_common.compiler-backend-runtime-features-leaf? features 32))
@@ -1487,10 +1517,12 @@ tl_backtrace_stack_set:
           (compiler-backend-current-arena-store "%r13")
           true))
       (compiler-backend-runtime-linux-render
+        closed
         features.region-mark
         (LinuxRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))
       (compiler-backend-runtime-linux-render
+        closed
         features.region-reset
         (x64_catalog.compiler-x64-template-with-sanitizer
           (x64_catalog.compiler-x64-template-select-four

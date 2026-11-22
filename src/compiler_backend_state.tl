@@ -1219,7 +1219,10 @@
   ;; start mark) rewound by `compiler-backend-copy-thunks-reset!`, so no thunk
   ;; key, body or table outlives the emission that registered it.
   (copy-thunk-arena i64)
-  (copy-thunk-mark i64))
+  (copy-thunk-mark i64)
+  ;; The caller owns the complete native link and has supplied no foreign
+  ;; objects or link options. Assembly and library requests leave this false.
+  (closed-executable bool))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1292,7 +1295,8 @@
         (__tl_make-array String 0)
         0
         0
-        0))
+        0
+        false))
     (CompilerBackendState
       (cast
         (unsafe
@@ -1323,6 +1327,17 @@
   [state : CompilerBackendState]) : bool
   (unsafe
     (deref (compiler-backend-state-view state)).shared-object-code-model))
+
+(define (compiler-backend-state-closed-executable?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).closed-executable))
+
+(define (compiler-backend-state-set-closed-executable!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).closed-executable enabled)))
 
 (define (compiler-backend-state-set-shared-object-code-model!
   [state : CompilerBackendState]

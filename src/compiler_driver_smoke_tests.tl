@@ -589,7 +589,8 @@
     (compiler_optimize.compiler-optimize-default-level)
     (Scalar)
     (compiler_cfg_core.compiler-cfg-empty)
-    true)
+    true
+    false)
     [(Ok _ _) false]
     [(Err diag _)
       (let

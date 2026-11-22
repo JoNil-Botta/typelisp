@@ -10,6 +10,7 @@
 (import compiler_driver_core)
 (import compiler_lower)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_ast_types as ast)
 (import compiler_ir_types as ir)
 (import compiler_load as load)
@@ -861,7 +862,7 @@
       (Err
         (str_cat.str-cat
           "linux direct object unavailable: "
-          (backend.compiler-direct-object-fallback-transcript reason)))]))
+          (be_object.compiler-direct-object-fallback-transcript reason)))]))
 
 (define (source-tool-windows-direct-object-env-name) : String
   "TYPELISP_WINDOWS_DIRECT_OBJECT")
@@ -1648,7 +1649,7 @@
         [(Linux) (source-tool-render-linkable-linux-elf-object image)]
         [(Windows) (source-tool-render-linkable-windows-coff-object image)])]
     [(Unavailable category _)
-      (Err (backend.compiler-direct-object-fallback-category category))]
+      (Err (be_object.compiler-direct-object-fallback-category category))]
     [(Err diag advisories)
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))
       (Err

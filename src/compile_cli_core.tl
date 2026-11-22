@@ -38,6 +38,7 @@
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_allocation_profile as allocation_profile)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_diagnostic as cdiag)
 (import compiler_load as load)
 (import compiler_intern as ci)
@@ -750,7 +751,7 @@
                 (Ok
                   "assembly"
                   assembly-path
-                  (backend.compiler-direct-object-fallback-category category)))
+                  (be_object.compiler-direct-object-fallback-category category)))
               (Err write-status))))]
       [(Err diag advisories)
         (begin

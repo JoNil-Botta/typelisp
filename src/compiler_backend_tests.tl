@@ -15,6 +15,8 @@
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
+(import compiler_backend_program_data as be_data)
 (import compiler_lower as lower)
 (import compiler_abi as cabi)
 (import compiler_regalloc as regalloc)
@@ -1567,32 +1569,32 @@
   [backend-state : be_state.CompilerBackendState]) : bool
   (be_state.backend-and8
     (not
-      (backend.compiler-backend-object-instr-semantically-supported?
+      (be_object.compiler-backend-object-instr-semantically-supported?
         backend-state
         (UnOp 0 (Neg) (F64 (cast 0 : u64)) (F64))))
     (not
-      (backend.compiler-backend-object-instr-semantically-supported?
+      (be_object.compiler-backend-object-instr-semantically-supported?
         backend-state
         (UnOp 0 (Neg) (F64 (cast 0 : u64)) (F32))))
     (not
-      (backend.compiler-backend-object-instr-semantically-supported?
+      (be_object.compiler-backend-object-instr-semantically-supported?
         backend-state
         (UnOp 0 (Sqrt) (F64 (cast 0 : u64)) (F64))))
     (not
-      (backend.compiler-backend-object-instr-semantically-supported?
+      (be_object.compiler-backend-object-instr-semantically-supported?
         backend-state
         (UnOp 0 (Not) (F64 (cast 0 : u64)) (F32))))
-    (backend.compiler-backend-object-instr-semantically-supported?
+    (be_object.compiler-backend-object-instr-semantically-supported?
       backend-state
       (irt.instr "%0 = neg 1 : i64"))
-    (backend.compiler-backend-object-instr-semantically-supported?
+    (be_object.compiler-backend-object-instr-semantically-supported?
       backend-state
       (irt.instr "%0 = not true : bool"))
-    (backend.compiler-backend-object-instr-semantically-supported?
+    (be_object.compiler-backend-object-instr-semantically-supported?
       backend-state
       (irt.instr "%0 = bit_not 1 : u64"))
     (not
-      (backend.compiler-backend-object-instr-semantically-supported?
+      (be_object.compiler-backend-object-instr-semantically-supported?
         backend-state
         (irt.instr "%0 = sqrt 1 : i64")))))
 
@@ -1617,7 +1619,7 @@
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
     (and
-      (match (backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
         backend-state
         (ast.ast-node-pool-reader-type-segment-bases)
         empty-program
@@ -1625,7 +1627,7 @@
         (profile_state.compiler-profile-state-new))
         [(Eligible) true]
         [(Unsupported _) false])
-      (match (backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+      (match (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
         backend-state
         (ast.ast-node-pool-reader-type-segment-bases)
         runtime-global-program
@@ -1635,31 +1637,31 @@
         [(Unsupported (UnsupportedSemantics)) true]
         [_ false])
       (be_state.backend-and8
-        (backend.compiler-backend-object-semantic-value-supported?
+        (be_object.compiler-backend-object-semantic-value-supported?
           (I64 -2147483648))
-        (backend.compiler-backend-object-semantic-value-supported?
+        (be_object.compiler-backend-object-semantic-value-supported?
           (I64 2147483647))
         (not
-          (backend.compiler-backend-object-semantic-value-supported?
+          (be_object.compiler-backend-object-semantic-value-supported?
             (I64 2147483648)))
         (not
-          (backend.compiler-backend-object-instr-semantically-supported?
+          (be_object.compiler-backend-object-instr-semantically-supported?
             backend-state
             (Branch (I64 0) 1 2)))
         (not
-          (backend.compiler-backend-object-instr-semantically-supported?
+          (be_object.compiler-backend-object-instr-semantically-supported?
             backend-state
             (TailCall 1 Nil (I64))))
         (not
-          (backend.compiler-backend-object-instr-semantically-supported?
+          (be_object.compiler-backend-object-instr-semantically-supported?
             backend-state
             (irt.instr "store_ptr 0, 1 : i64")))
         (not
-          (backend.compiler-backend-object-instr-semantically-supported?
+          (be_object.compiler-backend-object-instr-semantically-supported?
             backend-state
             (irt.instr "copy_bytes 0, 1, 8")))
         (not
-          (backend.compiler-backend-object-instr-semantically-supported?
+          (be_object.compiler-backend-object-instr-semantically-supported?
             backend-state
             (BoundsCheck (I64 0) (I64 1) 0))))
       (compiler-backend-object-scalar-unop-eligibility-ok? backend-state))))
@@ -1676,7 +1678,7 @@
             [backend-state : be_state.CompilerBackendState
               (be_state.compiler-backend-state-new
                 (ci.intern-compat-state-capture-active))]
-            (backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+            (be_object.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
               backend-state
               (ast.ast-node-pool-reader-type-segment-bases)
               program
@@ -1694,7 +1696,7 @@
     [(Eligible) false]
     [(Unsupported category)
       (string.eq
-        (backend.compiler-direct-object-fallback-category category)
+        (be_object.compiler-direct-object-fallback-category category)
         expected)]))
 
 (define (compiler-backend-object-source-eligible?
@@ -1722,7 +1724,7 @@
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
   [expected : String]) : bool
-  (match (backend.compiler-backend-object-call-abi-eligibility
+  (match (be_object.compiler-backend-object-call-abi-eligibility
     (ast.ast-node-pool-reader-type-segment-bases)
     (be_state.CompilerBackendTarget.Linux)
     index
@@ -1735,7 +1737,7 @@
     [(Eligible) false]
     [(Unsupported category)
       (string.eq
-        (backend.compiler-direct-object-fallback-category category)
+        (be_object.compiler-direct-object-fallback-category category)
         expected)]))
 
 (define (compiler-backend-object-corrupt-call-abi-eligibility-ok?) : bool
@@ -1916,19 +1918,19 @@
         (not
           (let
             [ty (ast.AstType.F64)]
-            (backend.compiler-backend-object-abi-type-supported? ty)))
+            (be_object.compiler-backend-object-abi-type-supported? ty)))
         (not
           (let
             [ty (ast.AstType.Unit)]
-            (backend.compiler-backend-object-abi-type-supported? ty)))
+            (be_object.compiler-backend-object-abi-type-supported? ty)))
         (not
           (let
             [ty (ast.AstType.String)]
-            (backend.compiler-backend-object-abi-type-supported? ty)))
+            (be_object.compiler-backend-object-abi-type-supported? ty)))
         (not
           (let
             [ty (ast.AstType.Struct (ci.intern "object_abi_aggregate"))]
-            (backend.compiler-backend-object-abi-type-supported? ty)))))))
+            (be_object.compiler-backend-object-abi-type-supported? ty)))))))
 
 (define (compiler-backend-object-image-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -2562,7 +2564,7 @@
   [ty : ast.AstType]
   [hex : String]) : bool
   (string.eq
-    (backend.compiler-backend-object-binop-bytes
+    (be_object.compiler-backend-object-binop-bytes
       (ast.ast-node-pool-reader-type-segment-bases)
       op
       ty)
@@ -2573,7 +2575,7 @@
   [ty : ast.AstType]
   [hex : String]) : bool
   (string.eq
-    (backend.compiler-backend-object-zero-compare-bytes
+    (be_object.compiler-backend-object-zero-compare-bytes
       (ast.ast-node-pool-reader-type-segment-bases)
       op
       ty)
@@ -2703,9 +2705,9 @@
         (compiler-backend-test-instr-seq-prepend
           (Mov 8 (I64 0) (I64))
           (ir.compiler-ir-instr-seq-empty)))]
-    (backend.compiler-backend-object-note-flags! program-index (& instrs) 1)
+    (be_object.compiler-backend-object-note-flags! program-index (& instrs) 1)
     (=
-      (backend.compiler-backend-object-branch-flags-cc (Var 7) program-index)
+      (be_object.compiler-backend-object-branch-flags-cc (Var 7) program-index)
       0x2)))
 
 (define (compiler-backend-object-compare-source) : String
@@ -2772,45 +2774,57 @@
             (compiler-backend-test-instr-seq-prepend
               (Mov 8 (I64 0) (I64))
               (ir.compiler-ir-instr-seq-empty)))]
-        (backend.compiler-backend-object-note-flags! program-index (& instrs) 1)
+        (be_object.compiler-backend-object-note-flags!
+          program-index
+          (& instrs)
+          1)
         (set!
           ok
           (and
             (=
-              (backend.compiler-backend-object-branch-flags-cc
+              (be_object.compiler-backend-object-branch-flags-cc
                 (Var 7)
                 program-index)
               (if (= case-index 0)
                 0xc
                 -1))
             (=
-              (backend.compiler-backend-object-branch-flags-cc
+              (be_object.compiler-backend-object-branch-flags-cc
                 (Var 8)
                 program-index)
               -1)
             (=
-              (backend.compiler-backend-object-branch-flags-cc
+              (be_object.compiler-backend-object-branch-flags-cc
                 (I64 7)
                 program-index)
               -1)))
-        (backend.compiler-backend-object-note-flags! program-index (& instrs) 2)
+        (be_object.compiler-backend-object-note-flags!
+          program-index
+          (& instrs)
+          2)
         (set!
           ok
           (and
             ok
             (=
-              (backend.compiler-backend-object-branch-flags-cc
+              (be_object.compiler-backend-object-branch-flags-cc
                 (Var 7)
                 program-index)
               -1)))
-        (backend.compiler-backend-object-note-flags! program-index (& instrs) 1)
-        (backend.compiler-backend-object-note-flags! program-index (& instrs) 0)
+        (be_object.compiler-backend-object-note-flags!
+          program-index
+          (& instrs)
+          1)
+        (be_object.compiler-backend-object-note-flags!
+          program-index
+          (& instrs)
+          0)
         (set!
           ok
           (and
             ok
             (=
-              (backend.compiler-backend-object-branch-flags-cc
+              (be_object.compiler-backend-object-branch-flags-cc
                 (Var 7)
                 program-index)
               -1)))
@@ -2869,7 +2883,7 @@
         (ir.compiler-ir-extern-seq-empty)
         (ir.CompilerIrReturnStorageAuthority.None))]
     [renders : bool
-      (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+      (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program
         target
         (Scalar)
@@ -8951,52 +8965,52 @@ high:
       ;; The direct-object compare classifies through the same wrappers, and
       ;; compares at the wrapped width (#9713).
       (=
-        (backend.compiler-backend-object-compare-cc
+        (be_object.compiler-backend-object-compare-cc
           bases
           (& (ir.CompilerIrBinOp.Lt))
           invalidate-u8)
         0x2)
       (=
-        (backend.compiler-backend-object-compare-cc
+        (be_object.compiler-backend-object-compare-cc
           bases
           (& (ir.CompilerIrBinOp.Gt))
           region-u64)
         0x7)
       (=
-        (backend.compiler-backend-object-compare-cc
+        (be_object.compiler-backend-object-compare-cc
           bases
           (& (ir.CompilerIrBinOp.Lt))
           region-i64)
         0xc)
       (=
-        (backend.compiler-backend-object-compare-cc
+        (be_object.compiler-backend-object-compare-cc
           bases
           (& (ir.CompilerIrBinOp.Ge))
           region-region-u32)
         0x3)
       (string.eq
-        (backend.compiler-backend-object-binop-bytes
+        (be_object.compiler-backend-object-binop-bytes
           bases
           (& (ir.CompilerIrBinOp.Lt))
           invalidate-u8)
         (object_target.compiler-backend-object-bytes-from-hex
           "4438c00f92c0480fb6c0"))
       (string.eq
-        (backend.compiler-backend-object-zero-compare-bytes
+        (be_object.compiler-backend-object-zero-compare-bytes
           bases
           (& (ir.CompilerIrBinOp.Le))
           invalidate-u16)
         (object_target.compiler-backend-object-bytes-from-hex
           "6685c00f96c0480fb6c0"))
       (string.eq
-        (backend.compiler-backend-object-binop-bytes
+        (be_object.compiler-backend-object-binop-bytes
           bases
           (& (ir.CompilerIrBinOp.Gt))
           region-u64)
         (object_target.compiler-backend-object-bytes-from-hex
           "4c39c00f97c0480fb6c0"))
       (string.eq
-        (backend.compiler-backend-object-binop-bytes
+        (be_object.compiler-backend-object-binop-bytes
           bases
           (& (ir.CompilerIrBinOp.Ge))
           region-region-u32)
@@ -9662,7 +9676,7 @@ high:
 
 (define (compiler-backend-descriptor-pair-object-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+  (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
     (compiler-backend-descriptor-pair-object-program)
     target
     (Scalar)
@@ -9689,27 +9703,27 @@ high:
           (cobj.compiler-object-section-contains-bytes?
             sections
             (&
-              (backend.compiler-backend-object-prologue-bytes
+              (be_object.compiler-backend-object-prologue-bytes
                 (be_state.CompilerBackendTarget.Linux)
                 (be_facts.compiler-backend-frame-size 8))))
           ;; Pack word1, copy it to the next pair, then extract it.
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (backend.compiler-backend-object-store-slot-bytes 4 "%rdx")))
+            (& (be_object.compiler-backend-object-store-slot-bytes 4 "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
             (&
-              (backend.compiler-backend-object-load-rbp-disp-bytes
-                (backend.compiler-backend-object-slot-disp 4)
+              (be_object.compiler-backend-object-load-rbp-disp-bytes
+                (be_object.compiler-backend-object-slot-disp 4)
                 "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (backend.compiler-backend-object-store-slot-bytes 5 "%rdx")))
+            (& (be_object.compiler-backend-object-store-slot-bytes 5 "%rdx")))
           (cobj.compiler-object-section-contains-bytes?
             sections
             (&
-              (backend.compiler-backend-object-load-rbp-disp-bytes
-                (backend.compiler-backend-object-slot-disp 5)
+              (be_object.compiler-backend-object-load-rbp-disp-bytes
+                (be_object.compiler-backend-object-slot-disp 5)
                 "%rax")))))]
     [(Err _) false]))
 
@@ -9745,7 +9759,7 @@ high:
           (owned_view.compiler-owned-shared-view program)
           target)
         (has "    call _tl_f1\n"))
-      (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+      (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program
         target
         (Scalar)
@@ -9768,11 +9782,11 @@ high:
 (define (compiler-backend-object-windows-stack-probe-ok?) : bool
   (let
     [linux : String
-      (backend.compiler-backend-object-prologue-bytes
+      (be_object.compiler-backend-object-prologue-bytes
         (be_state.CompilerBackendTarget.Linux)
         8192)]
     [windows : String
-      (backend.compiler-backend-object-prologue-bytes
+      (be_object.compiler-backend-object-prologue-bytes
         (be_state.CompilerBackendTarget.Windows)
         8192)]
     [direct : String
@@ -9791,7 +9805,7 @@ high:
     ;; record, whose encoding compiler_machine_x64_tests pins.
     (let
       [parts : object_target.CompilerBackendObjectTargetParts
-        (backend.compiler-backend-object-add-mov-i64
+        (be_object.compiler-backend-object-add-mov-i64
           (object_target.compiler-backend-object-parts-empty)
           42
           "%rdx")]
@@ -9801,33 +9815,33 @@ high:
         [(Machine (MovRI (W64) 2 42)) true]
         [_ false]))
     (string.eq
-      (backend.compiler-backend-object-mov-wide-reg-bytes
+      (be_object.compiler-backend-object-mov-wide-reg-bytes
         6364136223846793005
         "%rax")
       (object_target.compiler-backend-object-bytes-from-hex
         "48b82d7f954c2df45158"))
     (string.eq
-      (backend.compiler-backend-object-mov-wide-reg-bytes -2147483649 "%r9")
+      (be_object.compiler-backend-object-mov-wide-reg-bytes -2147483649 "%r9")
       (object_target.compiler-backend-object-bytes-from-hex
         "49b9ffffff7fffffffff"))
     (string.eq
-      (backend.compiler-backend-object-lea-rbp-disp-bytes -64 "%rax")
+      (be_object.compiler-backend-object-lea-rbp-disp-bytes -64 "%rax")
       (object_target.compiler-backend-object-bytes-from-hex "488d45c0"))
     (compiler-backend-object-compare-zero-hex?
       (Eq)
       (I64)
       "4885c00f94c0480fb6c0")
     (string.eq
-      (backend.compiler-backend-object-divmod-bytes false false)
+      (be_object.compiler-backend-object-divmod-bytes false false)
       (object_target.compiler-backend-object-bytes-from-hex "31d249f7f0"))
     (string.eq
-      (backend.compiler-backend-object-divmod-bytes false true)
+      (be_object.compiler-backend-object-divmod-bytes false true)
       (object_target.compiler-backend-object-bytes-from-hex "31d249f7f04889d0"))
     (string.eq
-      (backend.compiler-backend-object-divmod-bytes true false)
+      (be_object.compiler-backend-object-divmod-bytes true false)
       (object_target.compiler-backend-object-bytes-from-hex "489949f7f8"))
     (string.eq
-      (backend.compiler-backend-object-divmod-bytes true true)
+      (be_object.compiler-backend-object-divmod-bytes true true)
       (object_target.compiler-backend-object-bytes-from-hex "489949f7f84889d0"))))
 
 (define (compiler-backend-reg-part-entry-ok?
@@ -10112,21 +10126,21 @@ high:
     (and
       (let
         [items
-          (backend.compiler-backend-program-collections-functions
+          (be_data.compiler-backend-program-collections-functions
             (owned_view.compiler-owned-shared-view worded))]
         (be_state.compiler-backend-symbol-list-contains-id?
           items
           (ci.intern "walked_fn")))
       (compiler-backend-string-list-contains?
-        (backend.compiler-backend-program-collections-strings
+        (be_data.compiler-backend-program-collections-strings
           (owned_view.compiler-owned-shared-view worded))
         "walked-string")
       (compiler-backend-string-list-contains?
-        (backend.compiler-backend-program-collections-strings
+        (be_data.compiler-backend-program-collections-strings
           (owned_view.compiler-owned-shared-view worded))
         "word-string")
       (compiler-backend-test-float-seq-contains?
-        (backend.compiler-backend-program-collections-floats worded)
+        (be_data.compiler-backend-program-collections-floats worded)
         (F64)
         (compiler-backend-test-f64-bits "2.5")))))
 
@@ -10192,41 +10206,41 @@ high:
       (and
         (let
           [items
-            (backend.compiler-backend-program-collections-functions
+            (be_data.compiler-backend-program-collections-functions
               (owned_view.compiler-owned-shared-view collections))]
           (be_state.compiler-backend-symbol-list-contains-id?
             items
             (ci.intern "call_fn")))
         (let
           [items
-            (backend.compiler-backend-program-collections-functions
+            (be_data.compiler-backend-program-collections-functions
               (owned_view.compiler-owned-shared-view collections))]
           (be_state.compiler-backend-symbol-list-contains-id?
             items
             (ci.intern "indirect_fn")))
         (compiler-backend-string-list-contains?
-          (backend.compiler-backend-program-collections-strings
+          (be_data.compiler-backend-program-collections-strings
             (owned_view.compiler-owned-shared-view collections))
           "global-string")
         (compiler-backend-string-list-contains?
-          (backend.compiler-backend-program-collections-strings
+          (be_data.compiler-backend-program-collections-strings
             (owned_view.compiler-owned-shared-view collections))
           "call-string")
         (compiler-backend-string-list-contains?
-          (backend.compiler-backend-program-collections-strings
+          (be_data.compiler-backend-program-collections-strings
             (owned_view.compiler-owned-shared-view collections))
           "phi-string")
         (compiler-backend-test-float-seq-contains?
-          (backend.compiler-backend-program-collections-floats
+          (be_data.compiler-backend-program-collections-floats
             (owned_view.compiler-owned-shared-view collections))
           (F64)
           (compiler-backend-test-f64-bits "8.5"))
         (compiler-backend-string-list-contains?
-          (backend.compiler-backend-program-collections-bytes
+          (be_data.compiler-backend-program-collections-bytes
             (owned_view.compiler-owned-shared-view collections))
           "arg-bytes")
         (compiler-backend-string-list-contains?
-          (backend.compiler-backend-program-collections-bytes collections)
+          (be_data.compiler-backend-program-collections-bytes collections)
           "return-bytes")))))
 
 (define (compiler-backend-ir-walker-group-metadata-array-ok?) : bool
@@ -10505,7 +10519,7 @@ high:
             (& (F64 (compiler-backend-test-f64-bits "6.25")))
             (& (ir.compiler-ir-value-seq-empty)))))]
     [packed : object_target.CompilerBackendObjectTargetParts
-      (backend.compiler-backend-object-instr
+      (be_object.compiler-backend-object-instr
         (ast.ast-node-pool-reader-type-segment-bases)
         (object_target.compiler-backend-object-parts-empty)
         (be_state.CompilerBackendTarget.Linux)
@@ -10517,7 +10531,7 @@ high:
         plan
         index)]
     [worded : object_target.CompilerBackendObjectTargetParts
-      (backend.compiler-backend-object-instr
+      (be_object.compiler-backend-object-instr
         (ast.ast-node-pool-reader-type-segment-bases)
         packed
         (be_state.CompilerBackendTarget.Linux)
@@ -16032,7 +16046,7 @@ f:
                 (and
                   (let
                     [text
-                      (backend.compiler-backend-target-entry-text-with-crt
+                      (be_data.compiler-backend-target-entry-text-with-crt
                         (be_state.CompilerBackendTarget.Linux)
                         true
                         true)]
@@ -16102,7 +16116,7 @@ f:
             (be_operand.compiler-backend-emit-stack-probe size)
             (backend.compiler-backend-emit-stack-sub policy size))]
         [object : String
-          (backend.compiler-backend-object-prologue-bytes
+          (be_object.compiler-backend-object-prologue-bytes
             (be_state.CompilerBackendTarget.Linux)
             size)]
         (if (<= size 32768)
@@ -17170,7 +17184,7 @@ f:
     [object-a1 : be_state.ResultCompilerBackendObject
       (begin
         (compiler-backend-explicit-state-install! intern-b builtin-b)
-        (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+        (be_object.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
           (owned_view.compiler-owned-shared-view program-a)
@@ -17183,7 +17197,7 @@ f:
     [object-b1 : be_state.ResultCompilerBackendObject
       (begin
         (compiler-backend-explicit-state-install! intern-a builtin-a)
-        (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+        (be_object.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
           (owned_view.compiler-owned-shared-view program-b)
@@ -17196,7 +17210,7 @@ f:
     [object-a2 : be_state.ResultCompilerBackendObject
       (begin
         (compiler-backend-explicit-state-install! intern-b builtin-b)
-        (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+        (be_object.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-a
           0
           (owned_view.compiler-owned-shared-view program-a)
@@ -17209,7 +17223,7 @@ f:
     [object-b2 : be_state.ResultCompilerBackendObject
       (begin
         (compiler-backend-explicit-state-install! intern-a builtin-a)
-        (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+        (be_object.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
           state-b
           0
           (owned_view.compiler-owned-shared-view program-b)
@@ -17877,7 +17891,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-total-switch-object-image-ok?) : bool
-  (match (backend.compiler-backend-emit-program-object-image-linux
+  (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-total-switch-test-program)
     (ir.compiler-source-spans-empty))
     [(Ok image)
@@ -17890,7 +17904,7 @@ f:
           (not
             (cobj.compiler-object-section-contains-bytes?
               sections
-              (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 5))))
+              (& (be_object.compiler-backend-object-cmp-imm32-rax-bytes 5))))
           (cobj.compiler-object-section-contains-label?
             sections
             (Rodata)
@@ -17901,7 +17915,7 @@ f:
             ".Lf0_five")
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (backend.compiler-backend-object-switch-indirect-jump-bytes)))))]
+            (& (be_object.compiler-backend-object-switch-indirect-jump-bytes)))))]
     [(Err _) false]))
 
 (define (compiler-backend-spoofed-total-switch-stays-checked?) : bool
@@ -17910,13 +17924,13 @@ f:
       (backend.compiler-backend-emit-program-linux
         (compiler-backend-spoofed-total-switch-test-program))
       (has "    cmpq $5" "    ja "))
-    (match (backend.compiler-backend-emit-program-object-image-linux
+    (match (be_object.compiler-backend-emit-program-object-image-linux
       (compiler-backend-spoofed-total-switch-test-program)
       (ir.compiler-source-spans-empty))
       [(Ok image)
         (cobj.compiler-object-section-contains-bytes?
           image.sections
-          (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 5)))]
+          (& (be_object.compiler-backend-object-cmp-imm32-rax-bytes 5)))]
       [(Err _) false])))
 
 (define (compiler-backend-switch-asm-ok?) : bool
@@ -18169,7 +18183,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-switch-object-image-ok?) : bool
-  (match (backend.compiler-backend-emit-program-object-image-linux
+  (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-switch-test-program)
     (ir.compiler-source-spans-empty))
     [(Ok image)
@@ -18220,14 +18234,14 @@ f:
             ".Lf0_two")
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 2)))
+            (& (be_object.compiler-backend-object-cmp-imm32-rax-bytes 2)))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (backend.compiler-backend-object-switch-indirect-jump-bytes)))))]
+            (& (be_object.compiler-backend-object-switch-indirect-jump-bytes)))))]
     [(Err diag) false]))
 
 (define (compiler-backend-switch-base-object-image-ok?) : bool
-  (match (backend.compiler-backend-emit-program-object-image-linux
+  (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-switch-base-test-program)
     (ir.compiler-source-spans-empty))
     [(Ok image)
@@ -18237,14 +18251,14 @@ f:
         (and
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (backend.compiler-backend-object-sub-imm32-rax-bytes 4)))
+            (& (be_object.compiler-backend-object-sub-imm32-rax-bytes 4)))
           (cobj.compiler-object-section-contains-bytes?
             sections
-            (& (backend.compiler-backend-object-cmp-imm32-rax-bytes 1)))))]
+            (& (be_object.compiler-backend-object-cmp-imm32-rax-bytes 1)))))]
     [(Err _) false]))
 
 (define (compiler-backend-switch-object-shape-diagnostic-ok?) : bool
-  (match (backend.compiler-backend-emit-program-object-image-linux
+  (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-switch-bad-shape-program)
     (ir.compiler-source-spans-empty))
     [(Err diag)
@@ -18254,7 +18268,7 @@ f:
     [(Ok _) false]))
 
 (define (compiler-backend-switch-object-phi-diagnostic-ok?) : bool
-  (match (backend.compiler-backend-emit-program-object-image-linux
+  (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-switch-phi-program)
     (ir.compiler-source-spans-empty))
     [(Err diag)
@@ -21100,10 +21114,10 @@ entry:
           (compiler-backend-program-collections-new)
           (irt.instr "%0 = tail_mask %1, %2 lanes 8"))]
       (and
-        (backend.compiler-backend-program-collections-uses-avx2-i64-lane-id?
+        (be_data.compiler-backend-program-collections-uses-avx2-i64-lane-id?
           qword)
         (not
-          (backend.compiler-backend-program-collections-uses-avx2-i64-lane-id?
+          (be_data.compiler-backend-program-collections-uses-avx2-i64-lane-id?
             dword))))))
 
 (define (compiler-backend-avx512-mask-not-assignments) : regalloc.CompilerRegAssignmentTable
@@ -24167,7 +24181,7 @@ entry:
       [(Ok plan)
         (let
           [features : runtime_common.CompilerBackendRuntimeFeatures
-            (backend.compiler-backend-runtime-features plan)]
+            (be_data.compiler-backend-runtime-features plan)]
           (and
             (be_operand.compiler-backend-plan-provides-id?
               plan
@@ -24221,7 +24235,7 @@ entry:
       [(Ok plan)
         (let
           [features : runtime_common.CompilerBackendRuntimeFeatures
-            (backend.compiler-backend-runtime-features plan)]
+            (be_data.compiler-backend-runtime-features plan)]
           (and
             (be_state.compiler-backend-runtime-tail-startup-profile?
               (be_state.compiler-backend-runtime-plan-tail plan))
@@ -24276,7 +24290,7 @@ entry:
       [(Ok plan)
         (let
           [features : runtime_common.CompilerBackendRuntimeFeatures
-            (backend.compiler-backend-runtime-features plan)]
+            (be_data.compiler-backend-runtime-features plan)]
           (and
             (be_state.compiler-backend-runtime-tail-arena-debug?
               (be_state.compiler-backend-runtime-plan-tail plan))
@@ -24475,8 +24489,8 @@ entry:
     [plan : be_state.CompilerBackendRuntimePlan
       (compiler-backend-runtime-helper-full-plan)]
     [features : runtime_common.CompilerBackendRuntimeFeatures
-      (backend.compiler-backend-runtime-features plan)]
-    (backend.compiler-backend-runtime-functions-for-target target features)))
+      (be_data.compiler-backend-runtime-features plan)]
+    (be_data.compiler-backend-runtime-functions-for-target target features)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -27940,7 +27954,7 @@ entry:
         f64
         (irt.instr "%2 = cast %0 : f32 to u64"))]
     [floats : be_state.BackendFloatSeq
-      (backend.compiler-backend-program-collections-floats both)]
+      (be_data.compiler-backend-program-collections-floats both)]
     (and
       (= floats.len 2)
       (match (__tl-project-field
@@ -28851,7 +28865,7 @@ entry:
       (and
         (let
           [needle
-            (backend.compiler-backend-float-bits-directive
+            (be_data.compiler-backend-float-bits-directive
               (F64)
               (compiler-backend-test-f64-bits "1.5"))]
           (asm-has? asm needle))
@@ -29336,7 +29350,7 @@ entry:
       (and
         (let
           [needle
-            (backend.compiler-backend-float-bits-directive
+            (be_data.compiler-backend-float-bits-directive
               (F32)
               (compiler-backend-test-f32-bits "11.0"))]
           (asm-has? asm needle))
@@ -40435,10 +40449,12 @@ b_keep:
           ;; The rebind's byte copy, and the cell address it copies into.
           (cobj.compiler-object-section-contains-bytes?
             image.sections
-            (& (backend.compiler-backend-object-inline-aggregate-copy-bytes 16)))
+            (&
+              (be_object.compiler-backend-object-inline-aggregate-copy-bytes 16)))
           (cobj.compiler-object-section-contains-bytes?
             image.sections
-            (& (backend.compiler-backend-object-inline-aggregate-copy-bytes 24)))
+            (&
+              (be_object.compiler-backend-object-inline-aggregate-copy-bytes 24)))
           (cobj.compiler-object-relocation-list-contains?
             image.relocations
             (RipAddress)
@@ -40570,7 +40586,7 @@ b_keep:
                   spans
                   (% mode 3))
                   [(Program optimized optimized-spans)
-                    (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+                    (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
                       optimized
                       target
                       (Scalar)
@@ -40689,7 +40705,7 @@ b_keep:
           "typed address emission shares the same symbol authority")
         (test.assert-true
           (asm-ok?
-            (backend.compiler-backend-global-value-asm
+            (be_data.compiler-backend-global-value-asm
               bases
               ast.AstType.I64
               (ir.CompilerIrValue.GlobalAddr name)
@@ -40701,7 +40717,7 @@ b_keep:
           "static address initializers resolve external data")
         (let
           [parts : object_target.CompilerBackendObjectTargetParts
-            (backend.compiler-backend-object-global-value
+            (be_object.compiler-backend-object-global-value
               (object_target.compiler-backend-object-parts-empty)
               "saved"
               (& (ast.AstType.I64))
@@ -41309,7 +41325,7 @@ b_keep:
 
 (define (compiler-backend-program-collections-new) : be_state.CompilerBackendProgramCollections
   (be_state.compiler-backend-program-collections-new-with-iag
-    (backend.compiler-backend-iag-census-disabled)))
+    (be_data.compiler-backend-iag-census-disabled)))
 
 (define (compiler-backend-source-span-index-build
   [spans : ir.CompilerSourceSpans]) : be_state.CompilerBackendSourceSpanIndex
@@ -41558,7 +41574,7 @@ b_keep:
         vars.count)]))
 
 (define (compiler-backend-runtime-plan [program : ir.CompilerIrProgram]) : be_state.ResultBackendRuntimePlan
-  (backend.compiler-backend-runtime-plan-with-backend-state
+  (be_data.compiler-backend-runtime-plan-with-backend-state
     (be_state.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))
     program))
@@ -41566,7 +41582,7 @@ b_keep:
 (define (compiler-backend-target-entry-text
   [target : be_state.CompilerBackendTarget]
   [emit-entry : bool]) : String
-  (backend.compiler-backend-target-entry-text-with-crt target emit-entry false))
+  (be_data.compiler-backend-target-entry-text-with-crt target emit-entry false))
 
 (define (compiler-backend-emit-program-with-spans-for-target-and-entry
   [program : ir.CompilerIrProgram]
@@ -42016,7 +42032,7 @@ b_keep:
     [(Ok program spans lower-owner)
       (let
         [result : be_state.ResultCompilerBackendObject
-          (backend.compiler-backend-emit-program-object-image-linux
+          (be_object.compiler-backend-emit-program-object-image-linux
             program
             spans)]
         (lower.compiler-lower-arena-state-release!
@@ -42042,11 +42058,11 @@ b_keep:
           (be_state.BackendStringSeq slots 1)))]
     [parts : object_target.CompilerBackendObjectTargetParts
       (if byte-payload?
-        (backend.compiler-backend-object-bytes
+        (be_object.compiler-backend-object-bytes
           (object_target.compiler-backend-object-parts-empty)
           items
           0)
-        (backend.compiler-backend-object-strings
+        (be_object.compiler-backend-object-strings
           (object_target.compiler-backend-object-parts-empty)
           items
           0))]
@@ -44347,15 +44363,15 @@ b_keep:
   [program : ir.CompilerIrProgram]) : be_state.CompilerBackendProgramCollections
   (match program
     [(Program globals functions _ _authority)
-      (backend.compiler-backend-collect-program-collections-with-iag
+      (be_data.compiler-backend-collect-program-collections-with-iag
         globals
         functions
-        (backend.compiler-backend-iag-census-disabled))]))
+        (be_data.compiler-backend-iag-census-disabled))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : ir.CompilerIrFunctionSeq]
   [externs : ir.CompilerIrExternSeq]) : be_state.ResultBackendRuntimePlan
-  (backend.compiler-backend-runtime-plan-for-with-backend-state
+  (be_data.compiler-backend-runtime-plan-for-with-backend-state
     (be_state.compiler-backend-state-new
       (ci.intern-compat-state-capture-active))
     functions
@@ -44364,7 +44380,7 @@ b_keep:
 ;; --- Shared-object code model (#8257) ---------------------------------------
 ;; The assembly pass alone, on text shaped like executable-model output.
 (define (compiler-backend-shared-object-text [text : String]) : String
-  (match (backend.compiler-backend-shared-object-assembly text)
+  (match (be_data.compiler-backend-shared-object-assembly text)
     [(Ok buf) (text_buf.render buf)]
     [(Err diag)
       (str_cat.str-cat
@@ -44555,7 +44571,8 @@ user_fn:
       (be_state.compiler-backend-target-policy-new
         (be_state.CompilerBackendTarget.Linux)).shared-object)
     (string.eq
-      (backend.compiler-direct-object-fallback-category (SharedObjectCodeModel))
+      (be_object.compiler-direct-object-fallback-category
+        (SharedObjectCodeModel))
       "shared-object-code-model")))
 
 ;; Every TLS store a Linux runtime helper makes, under the shared-object code
@@ -44571,7 +44588,7 @@ user_fn:
   (let
     [rewritten : String
       (compiler-backend-shared-object-text
-        (backend.compiler-backend-runtime-functions-for-target
+        (be_data.compiler-backend-runtime-functions-for-target
           (be_state.CompilerBackendTarget.Linux)
           (runtime_common.CompilerBackendRuntimeFeatures
             true
@@ -44745,7 +44762,7 @@ user_fn:
     (let
       [diagnostic : String
         (if object
-          (match (backend.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
             state
             (ast.ast-node-pool-reader-type-segment-bases)
             program
@@ -45555,7 +45572,7 @@ user_fn:
             (set! (array-ref slots i) (string.copy (& (array-ref values i)))))
           (be_state.BackendStringSeq slots (array-length values))))]
     [parts : object_target.CompilerBackendObjectTargetParts
-      (backend.compiler-backend-object-strings
+      (be_object.compiler-backend-object-strings
         (object_target.compiler-backend-object-parts-empty)
         items
         0)]
@@ -45898,7 +45915,7 @@ user_fn:
               (& (ir.compiler-ir-function-seq-empty)))))
         (ir.compiler-ir-extern-seq1 provided)
         (ir.CompilerIrReturnStorageAuthority.None))]
-    (match (backend.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+    (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
       (clone program)
       (be_state.CompilerBackendTarget.Windows)
       (Scalar)
@@ -46034,7 +46051,7 @@ user_fn:
 
 (define (compiler-backend-test-byte-directives [bytes : String]) : String
   (text_buf.render
-    (backend.compiler-backend-emit-byte-directives-into
+    (be_data.compiler-backend-emit-byte-directives-into
       bytes
       (text_buf.append (text_buf.empty) "<"))))
 

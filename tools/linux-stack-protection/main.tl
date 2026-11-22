@@ -4,6 +4,7 @@
 (import compiler_backend_state as be_state)
 (import build_run_core as build)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_intern as ci)
 (import stdlib.vector)
 (import (vector.vector String) as roots)
@@ -98,14 +99,14 @@
                 size)))]
         [bytes : String
           (if entry?
-            (backend.compiler-backend-object-prologue-bytes
+            (be_object.compiler-backend-object-prologue-bytes
               (be_state.CompilerBackendTarget.Linux)
               size)
             (str_cat.str-cat
-              (backend.compiler-backend-object-prologue-bytes
+              (be_object.compiler-backend-object-prologue-bytes
                 (be_state.CompilerBackendTarget.Linux)
                 0)
-              (backend.compiler-backend-object-sub-rsp-bytes size state)))]
+              (be_object.compiler-backend-object-sub-rsp-bytes size state)))]
         (io.write-file (io.arg 3) (byte_buf.str-as-bytes (& assembly)))
         (io.write-file (io.arg 4) (byte_buf.str-as-bytes (& bytes)))
         (backend.compiler-backend-state-release-final-arenas! state)

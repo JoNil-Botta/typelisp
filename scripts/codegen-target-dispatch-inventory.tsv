@@ -2,12 +2,12 @@
 # file	scope	boundary	category	token-regex	count	rationale
 src/compiler_backend.tl	compiler-backend-emit-program-linux	policy	entry	CompilerBackendTarget[.]Linux	1	Named Linux entry point for tools and tests.
 src/compiler_backend.tl	compiler-backend-emit-source	policy	entry	CompilerBackendTarget[.]Linux	1	Named Linux source entry point for tools and tests.
-src/compiler_backend.tl	compiler-backend-emit-program-object-image-linux	policy	entry	CompilerBackendTarget[.]Linux	1	Named Linux object-image entry point for tools and tests.
+src/compiler_backend_object.tl	compiler-backend-emit-program-object-image-linux	policy	entry	CompilerBackendTarget[.]Linux	1	Named Linux object-image entry point for tools and tests.
 src/compiler_backend_state.tl	compiler-backend-function-state-new	policy	abi	CompilerBackendTarget[.]Linux	1	A fresh function state defaults its abort target until the function target is installed.
 src/compiler_backend_state.tl	compiler-backend-function-state-reset!	policy	abi	CompilerBackendTarget[.]Linux	1	A reset function state defaults its abort target until the function target is installed.
 src/compiler_backend.tl	compiler-backend-lower-mode-for-target	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|CompilerLowerMode[.]LinuxAvx2|CompilerLowerMode[.]LinuxAvx512|CompilerLowerMode[.]LinuxScalar|CompilerLowerMode[.]WindowsAvx2|CompilerLowerMode[.]WindowsAvx512|CompilerLowerMode[.]WindowsScalar	12	Selects the lowerer mode for a target and backend mode.
 src/compiler_backend_state.tl	compiler-backend-raw-syscall-diagnostic	policy	abi	linux-x86_64	1	Raw syscalls are Linux-only; the diagnostic names that target as a literal.
-src/compiler_backend.tl	compiler-backend-unsupported-object-abi-category	policy	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|linux-x86_64|windows-x86_64	8	Fixed fallback category names per target and ABI context, literals because callers keep them past their scratch.
+src/compiler_backend_object.tl	compiler-backend-unsupported-object-abi-category	policy	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|linux-x86_64|windows-x86_64	8	Fixed fallback category names per target and ABI context, literals because callers keep them past their scratch.
 src/compiler_backend_state.tl	compiler-backend-state-new-with-metrics	policy	backend-mode	CompilerBackendTarget[.]Linux	1	A fresh backend state holds the Linux policy until a prepared emission installs its own.
 src/compiler_backend_state.tl	compiler-backend-target-abi	policy	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Maps a target to its ABI tables.
 src/compiler_backend_program_facts.tl	compiler-backend-target-linux?	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-linux[?]	3	Target predicate for policy construction and leaf selection.
@@ -20,18 +20,18 @@ src/compiler_backend_program_facts.tl	compiler-backend-current-arena-load	adapte
 src/compiler_backend_program_facts.tl	compiler-backend-current-arena-store	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's thread-local arena store.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	adapter	entry	compiler-backend-target-linux[?]	1	Linux CRT entry captures argv for main.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	adapter	entry	compiler-backend-target-windows[?]	1	Windows entry captures argv for main.
-src/compiler_backend.tl	compiler-backend-entry-for-target-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform process entry sequence.
+src/compiler_backend_program_data.tl	compiler-backend-entry-for-target-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform process entry sequence.
 src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	adapter	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	4	Selects the System V or Win64 outgoing-argument space computation for indirect calls and indirect tail calls.
-src/compiler_backend.tl	compiler-backend-object-image-for-target	adapter	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|target-linux|target-windows	4	Selects the ELF or COFF object-image leaf.
-src/compiler_backend.tl	compiler-backend-runtime-data-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's data section.
-src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's externs.
-src/compiler_backend.tl	compiler-backend-runtime-features-for-emission	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Linux prunes runtime leaves by use and Windows only the arena sanitizer's; both targets select the private global allocator only when referenced.
-src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's functions.
+src/compiler_backend_object.tl	compiler-backend-object-image-for-target	adapter	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|target-linux|target-windows	4	Selects the ELF or COFF object-image leaf.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-data-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's data section.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-externs-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's externs.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-features-for-emission	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Linux prunes runtime leaves by use and Windows only the arena sanitizer's; both targets select the private global allocator only when referenced.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-functions-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's functions.
 src/compiler_backend_program_facts.tl	compiler-backend-runtime-usable-end-offset	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's segment bound for inline allocation.
-src/compiler_backend.tl	compiler-backend-target-entry-text-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform entry section text.
+src/compiler_backend_program_data.tl	compiler-backend-target-entry-text-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform entry section text.
 src/compiler_backend.tl	compiler-backend-extern-metadata-symbol-ok?	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Self-test of extern symbol metadata on both targets.
 src/compiler_backend.tl	compiler-backend-windows-driver-runtime-ok?	test	test-only	CompilerBackendTarget[.]Windows	1	Self-test of the Windows driver runtime.
-src/compiler_backend.tl	compiler-backend-object-instr	adapter	abi	CompilerBackendTarget[.]Linux	1	The object encoder encodes a raw syscall only under the Linux kernel ABI.
+src/compiler_backend_object.tl	compiler-backend-object-instr	adapter	abi	CompilerBackendTarget[.]Linux	1	The object encoder encodes a raw syscall only under the Linux kernel ABI.
 src/compiler_backend.tl	compiler-backend-state-authorize-return-storage!	policy	abi	compiler-backend-target-windows[?]	2	The return-storage authority must have been captured for the target's C ABI (Win64 or System V); a mismatch is rejected.
 src/compiler_backend_object_target_linux.tl	compiler-backend-object-target-linux-image	leaf	object-format	target-linux	1	The Linux leaf owns ELF entry and image policy.
 src/compiler_backend_object_target_tests.tl	*	test	test-only	target-linux|target-windows	4	Object-target tests name the targets they exercise.

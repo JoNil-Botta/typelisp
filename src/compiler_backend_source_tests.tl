@@ -1,6 +1,7 @@
 (import compiler_backend_operands as be_operand)
 (import compiler_backend_state as be_state)
 (import compiler_backend as backend)
+(import compiler_backend_object as be_object)
 (import compiler_lower as lower)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as diagnostic)
@@ -68,7 +69,7 @@
           (match eligibility
             [(Eligible) "eligible"]
             [(Unsupported reason)
-              (backend.compiler-direct-object-fallback-category reason)])]
+              (be_object.compiler-direct-object-fallback-category reason)])]
         (backend.compiler-backend-state-release-final-arenas! state)
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas owner))

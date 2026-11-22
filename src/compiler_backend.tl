@@ -1254,7 +1254,12 @@
   ;; number of registered thunks and the next index.
   (copy-thunks backend_string_i64_map.Map)
   (copy-thunk-bodies (__tl_dyn-array String))
-  (copy-thunk-count i64))
+  (copy-thunk-count i64)
+  ;; Per-program scratch for the registry: a dedicated arena (raw handle +
+  ;; start mark) rewound by `compiler-backend-copy-thunks-reset!`, so no thunk
+  ;; key, body or table outlives the emission that registered it.
+  (copy-thunk-arena i64)
+  (copy-thunk-mark i64))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1325,6 +1330,8 @@
         CompilerBackendEmissionSymbols.None
         (backend_string_i64_map.with-capacity 1)
         (__tl_make-array String 0)
+        0
+        0
         0))
     (CompilerBackendState
       (cast
@@ -1343,6 +1350,7 @@
       [data : (MutPtr CompilerBackendStateData)
         (compiler-backend-state-ptr state)]
       [lazy-owner : i64 (deref data).lazy-table-arena]
+      [copy-thunk-owner : i64 (deref data).copy-thunk-arena]
       [representation-owner : i64 (deref data).representation-arena]
       (set! (deref data).emission-symbols CompilerBackendEmissionSymbols.None)
       (set! (deref data).lazy-table-arena 0)
@@ -1355,6 +1363,8 @@
       (set! (deref data).copy-thunks (backend_string_i64_map.with-capacity 1))
       (set! (deref data).copy-thunk-bodies (__tl_make-array String 0))
       (set! (deref data).copy-thunk-count 0)
+      (set! (deref data).copy-thunk-arena 0)
+      (set! (deref data).copy-thunk-mark 0)
       (set! (deref data).function-state-address 0)
       (set! (deref data).stream-state-address 0)
       (set!
@@ -1366,8 +1376,13 @@
         (compiler_ast_types.AstMaybeTypePoolStamp.No))
       (set! (deref data).representation-arena 0)
       (set! (deref data).representation-mark 0)
+      (set! (deref data).copy-thunk-arena 0)
+      (set! (deref data).copy-thunk-mark 0)
       (if (> lazy-owner 0)
         (arena.tl_arena_destroy lazy-owner)
+        unit)
+      (if (> copy-thunk-owner 0)
+        (arena.tl_arena_destroy copy-thunk-owner)
         unit)
       (if (and
         (> representation-owner 0)
@@ -33400,33 +33415,64 @@
   (unsafe
     (set! (deref (compiler-backend-state-ptr state)).copy-thunk-count count)))
 
-;; A fresh emission starts with no thunks. Both tables are allocated in the
-;; state's own long-lived lazy arena: the emit-time arenas are rewound and
-;; replaced around program composition, so a table allocated in the arena that
-;; happens to be current here can be reused underneath the registry. That
-;; arena is never rewound, so the entries an emission's table held outlive it.
-;; The tables are therefore created once and emptied in place -- an emission
-;; clears the map's slots and rewinds the body list, and the next one
-;; overwrites the slots it needs -- instead of being replaced, which would
-;; leave one dead table behind per program the process compiles.
+;; Arena for the registry's map and the keys and bodies it holds. It is
+;; created on first use and rewound by `compiler-backend-copy-thunks-reset!`,
+;; so nothing registered for one program survives that program's emission.
+;; The emit-time arenas cannot host the registry (they are rewound around
+;; program composition, underneath it) and the state's long-lived lazy arena
+;; must not either: its pages are never reclaimed, so every thunk table and
+;; body would still be live after the compile.
+(define (compiler-backend-copy-thunk-arena-ensure!
+  [state : CompilerBackendState]) : arena.Arena
+  (let
+    [data : (MutPtr CompilerBackendStateData)
+      (compiler-backend-state-ptr state)]
+    (unsafe
+      (if (= (deref data).copy-thunk-arena 0)
+        (let
+          [home : arena.Arena (arena.current)]
+          [owner : arena.Arena
+            (unsafe
+              (arena.Arena (arena.tl_arena_make_small)))]
+          [_set-owner : unit (arena.set! owner)]
+          [mark : arena.ArenaMark (arena.mark)]
+          (arena.set! home)
+          (set! (deref data).copy-thunk-arena (arena.raw-handle owner))
+          (set! (deref data).copy-thunk-mark (arena.mark-raw-handle mark))
+          owner)
+        (unsafe
+          (arena.Arena (deref data).copy-thunk-arena))))))
+
+;; A fresh emission starts with no thunks: reclaim the previous emission's
+;; map, keys and bodies with the program's emission, then drop every handle
+;; into them so no later read can touch the rewound pages, and recreate both
+;; tables in the arena, which now holds only them.
 (define (compiler-backend-copy-thunks-reset! [state : CompilerBackendState]) : unit
   (let
     [data : (MutPtr CompilerBackendStateData)
       (compiler-backend-state-ptr state)]
-    (in-arena
-      (compiler-backend-state-lazy-table-arena-ensure! state)
-      (unsafe
-        (if (<= (array-length (deref data).copy-thunk-bodies) 0)
-          (begin
-            (set! (deref data).copy-thunk-bodies (__tl_make-array String 0))
-            (set!
-              (deref data).copy-thunks
-              (backend_string_i64_map.with-capacity 8)))
-          (let
-            [seen : backend_string_i64_map.Map (deref data).copy-thunks]
-            (backend_string_i64_map.clear-ref! (&mut seen))
-            (set! (deref data).copy-thunks seen)))
-        (set! (deref data).copy-thunk-count 0)))))
+    (unsafe
+      (if (> (deref data).copy-thunk-arena 0)
+        (let
+          [home : arena.Arena (arena.current)]
+          [owner : arena.Arena
+            (unsafe
+              (arena.Arena (deref data).copy-thunk-arena))]
+          (unsafe
+            (arena.set! owner)
+            (arena.rewind (arena.ArenaMark (deref data).copy-thunk-mark))
+            (arena.set! home)))
+        unit)
+      (in-arena
+        (compiler-backend-copy-thunk-arena-ensure! state)
+        (let
+          [fresh : backend_string_i64_map.Map
+            (backend_string_i64_map.with-capacity 1)]
+          [bodies : (__tl_dyn-array String) (__tl_make-array String 0)]
+          (set! (deref data).copy-thunks fresh)
+          (set! (deref data).copy-thunk-bodies bodies)
+          unit))
+      (set! (deref data).copy-thunk-count 0))))
 
 (define (compiler-backend-copy-thunk-frame-base? [base : (& base str)]) : bool
   (or
@@ -33662,10 +33708,10 @@
       (let
         ;; The registry outlives this function and the emit-time arenas that
         ;; host its texts, so the thunk body and the key are built in the
-        ;; state's own arena (see compiler-backend-copy-thunks-reset!).
+        ;; state's own arena (see compiler-backend-copy-thunk-arena-ensure!).
         [chunk-call : String
           (in-arena
-            (compiler-backend-state-lazy-table-arena-ensure! backend-state)
+            (compiler-backend-copy-thunk-arena-ensure! backend-state)
             (let
               ;; The key is built first: the body call takes ownership of the
               ;; register spellings, the key only reads them.

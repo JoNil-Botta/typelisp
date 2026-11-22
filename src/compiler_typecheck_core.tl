@@ -27017,7 +27017,7 @@
 ;; columns followed by the body-fact hit/miss columns, one slot per profiled
 ;; site, then the macro walk's splice counters (compiler-tc-splice-profile,
 ;; relative 18-35). Relative slots 108-118 and 126-127 map to the driver/loader
-;; lifetime ledger; relative slots 120-125 and 128-131 retain macro lifetime
+;; lifetime ledger; relative slots 120-125, 128-132 and 138-140 retain macro lifetime
 ;; boundary starts. Keeping the six equal-width families contiguous makes reset/render
 ;; order deterministic without reintroducing array owners in this leaf module.
 (cfg
@@ -27051,7 +27051,7 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    139))
+    141))
 
 (cfg
   (any compile-profile test)
@@ -27081,7 +27081,9 @@
   (counters.defslots
     compiler-tc-macro-lifetime-cache-start
     138
-    (compiler-tc-macro-lifetime-start-cache-bytes-metric)))
+    (compiler-tc-macro-lifetime-start-cache-bytes-metric)
+    (compiler-tc-macro-lifetime-start-reader-bytes-metric)
+    (compiler-tc-macro-lifetime-start-module-index-bytes-metric)))
 
 (cfg
   compile-profile
@@ -102948,6 +102950,17 @@
       [enclosing-handle : i64 (arena.tl_arena_current)]
       (compiler-tc-profile-metric-set!
         metrics-address
+        compiler-tc-macro-lifetime-start-reader-bytes-metric
+        (compiler-tc-macro-lifetime-arena-bytes
+          (cload.compiler-load-reader-node-pool-arena-handle)))
+      (compiler-tc-profile-metric-set!
+        metrics-address
+        compiler-tc-macro-lifetime-start-module-index-bytes-metric
+        (compiler-tc-macro-lifetime-arena-bytes
+          (tc-module-decl-index-arena-for-state
+            (tc-job-state-macro-state job-state))))
+      (compiler-tc-profile-metric-set!
+        metrics-address
         compiler-tc-macro-lifetime-start-cache-bytes-metric
         (compiler-tc-macro-lifetime-cache-bytes))
       (compiler-tc-profile-metric-set!
@@ -103048,6 +103061,20 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-type-pool-metric))]
+      ;; Expansion appends reader rows and builds a module index in dedicated
+      ;; arenas. Charge only their growth since entry, including on job reuse.
+      [reader-pool : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (cload.compiler-load-reader-node-pool-arena-handle)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-reader-bytes-metric))]
+      [module-index : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (tc-module-decl-index-arena-for-state state)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-module-index-bytes-metric))]
       [symbols-current : i64
         (compiler-tc-macro-lifetime-arena-bytes
           (tc-macro-walk-field state macro-live-symbols-arena))]
@@ -103177,6 +103204,8 @@
       [named : i64
         (+
           embedded-cache
+          reader-pool
+          module-index
           interns
           (+
             scoped-env
@@ -103232,6 +103261,20 @@
         "cache"
         cumulative-alloc
         scoped-env
+        peak-delta)
+      (compiler-tc-macro-lifetime-emit-row!
+        (string.copy (& boundary))
+        "reader-node-pool"
+        "transfer"
+        cumulative-alloc
+        reader-pool
+        peak-delta)
+      (compiler-tc-macro-lifetime-emit-row!
+        (string.copy (& boundary))
+        "module-decl-index"
+        "cache"
+        cumulative-alloc
+        module-index
         peak-delta)
       (compiler-tc-macro-lifetime-emit-row!
         (tc-global-shared-view boundary)

@@ -30,6 +30,7 @@
 ;;   [1] next id, i.e. the logical length of the live revision
 ;;   [2] number of installed backing segments
 ;;   [3] address of the segment-base table this cursor governs
+;;   [4] diagnostic parse payload arena, or -1 for the pool base arena
 (define ast-type-pool-next-revision : i64
   1)
 
@@ -47,7 +48,8 @@
   [segment-bases : i64]
   [segment-count : i64]) : u64
   (let
-    [cell : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [cell : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    (set! (array-ref cell 4) -1)
     (set! (array-ref cell 0) revision)
     (set! (array-ref cell 2) segment-count)
     (set! (array-ref cell 3) segment-bases)
@@ -3687,10 +3689,14 @@
       (unsafe
         (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
     [base-arena : i64 pool.base-arena]
+    [parse-arena : i64 (ast-type-pool-revision-cell-get cell 4)]
     [persistent : AstType
       (in-arena
         (unsafe
-          (arena.Arena base-arena))
+          (arena.Arena
+            (if (= parse-arena -1)
+              base-arena
+              parse-arena)))
         (ty-node-persist (& node)))]
     [dest : (MutPtr i64)
       (unsafe
@@ -5157,6 +5163,24 @@
     ;; Ordinary explicit owners publish at their stable phase boundary.
     (ast-node-pool-compat-context-sync-installed!)
     id))
+
+(define (ast-expr-push-with-source-span
+  [pools : AstNodePoolContext]
+  [node : AstExpr]
+  [span : AstSourceSpan]) : i64
+  ;; A parsed leaf and its source wrapper are published together. The wrapper
+  ;; observes the completed semantic row through the same pool cell.
+  (let
+    [cell : (__tl_dyn-array AstExprNodePoolState)
+      (ast-expr-pool-cell pools.expr-pool)]
+    [inner : i64
+      (ast-expr-node-pool-state-push-in-place! (&mut (array-ref cell 0)) node)]
+    [outer : i64
+      (ast-expr-node-pool-state-push-in-place!
+        (&mut (array-ref cell 0))
+        (Spanned inner span))]
+    (ast-node-pool-compat-context-sync-installed!)
+    outer))
 
 ;; Scalar cell-address entrypoint for an aggregate pool embedded in a borrowed
 ;; outer state object. This avoids materializing an owned AstNodePoolContext at
@@ -11918,6 +11942,117 @@
         span)]
     [(Unsafe inner)
       (Unsafe (box (ast-compaction-remap-decl remap (& (deref inner)))))]))
+
+(define (ast-parsed-type-payload-arena-swap!
+  [pools : (& pools AstNodePoolContext)]
+  [arena : i64]) : i64
+  ;; Keep segment and dedup growth under their normal owners while a file's
+  ;; speculative type rows and their input lists are live in scratch.
+  (let
+    [cell : u64 (ast-type-pool-cell-read pools.type-pool).revision-cell]
+    [previous : i64 (ast-type-pool-revision-cell-get cell 4)]
+    (ast-type-pool-revision-cell-set! cell 4 arena)
+    previous))
+
+(define (ast-persist-parsed-type-payloads!
+  [pools : AstNodePoolContext]
+  [start : i64]) : unit
+  (let
+    [bases : i64 (ast-node-pool-context-type-segment-bases (& pools))]
+    [end : i64 (ast-node-pool-context-type-len pools)]
+    (for [id (iterator.range start end)]
+      (unsafe
+        (let
+          [base : i64
+            (ptr-read (ptr-offset (int->ptr bases : (Ptr i64)) (shr id 10)))]
+          [row : (MutPtr AstType)
+            (int->ptr (+ base (* id (ast-type-node-bytes))) : (MutPtr AstType))]
+          [node : AstType (ptr-read row)]
+          (ptr-write! row (ty-node-persist (& node))))))))
+
+(define (ast-parsed-payload-remap
+  [pools : AstNodePoolContext]
+  [key-cache : u64]) : AstProgramCompactionRemap
+  ;; Every child ID already belongs to this pool. Only inline payloads cross
+  ;; the file-scratch boundary, so no forwarding map or ID traversal is needed.
+  (AstProgramCompactionRemap
+    pools
+    pools
+    0
+    0
+    0
+    (ast-node-pool-context-expr-segment-bases pools)
+    (ast-node-pool-context-expr-len pools)
+    (ast-node-pool-context-type-len pools)
+    false
+    key-cache))
+
+(define (ast-persist-parsed-decls
+  [pools : AstNodePoolContext]
+  [slots : (& slots (__tl_dyn-array AstDecl))]
+  [count : i64]) : AstDeclList
+  (let
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [key-cache : (Array String 2) (array "" "")]
+    [remap : AstProgramCompactionRemap
+      (ast-parsed-payload-remap
+        pools
+        (unsafe
+          (ptr->int (__tl_array-data key-cache))))]
+    (for [i (iterator.range 0 count)]
+      (let
+        [decl : AstDecl (owned_view.compiler-owned-element-view slots i)]
+        (match decl
+          ;; Inner lists commit first. Box their final list without changing the
+          ;; storage key used for declaration spans and semantic occurrences.
+          [(ModuleBody name body)
+            (ast-decl-list-push
+              (&mut out)
+              (ast-decl-module-body-id name (deref body)))]
+          [_
+            (ast-decl-list-push
+              (&mut out)
+              (ast-compaction-remap-decl (& remap) (& decl)))])))
+    out))
+
+(define (ast-persist-parsed-expr-payloads!
+  [pools : AstNodePoolContext]
+  [start : i64]) : unit
+  (let
+    [remap : AstProgramCompactionRemap (ast-parsed-payload-remap pools 0)]
+    [index : i64 start]
+    (while (< index remap.shared-expr-base)
+      (let
+        [segment : i64 (shr index ast-expr-node-pool-segment-shift)]
+        [boundary : i64 (* (+ segment 1) ast-expr-node-pool-segment-size)]
+        [end : i64
+          (if (< boundary remap.shared-expr-base)
+            boundary
+            remap.shared-expr-base)]
+        [base : i64
+          (unsafe
+            (ptr-read
+              (ptr-offset
+                (int->ptr remap.source-expr-bases : (Ptr i64))
+                segment)))]
+        [address : i64 (+ base (* index (ast-expr-node-bytes)))]
+        (while (< index end)
+          (unsafe
+            (let
+              [ptr : (MutPtr AstExpr) (int->ptr address : (MutPtr AstExpr))]
+              (match (ptr-read ptr)
+                ;; These common rows carry only IDs or scalars. Every other
+                ;; variant goes through the exhaustive AST payload copier.
+                [(or (Spanned _ _) (Var _) (Binary _ _ _) (Unary _ _) (If _ _ _)
+                     (StructGet _ _) (BoxGet _) (Borrow _ _ _))
+                  unit]
+                [(Call _ _) (ptr-write! ptr (clone (ptr-read ptr)))]
+                [_
+                  (ptr-write!
+                    ptr
+                    (ast-compaction-remap-expr (& remap) (ptr-read ptr)))])))
+          (+= address (ast-expr-node-bytes))
+          (+= index 1))))))
 
 (define (ast-compaction-remap-decl-list
   [remap : (& remap AstProgramCompactionRemap)]

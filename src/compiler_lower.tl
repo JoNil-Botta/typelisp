@@ -5111,7 +5111,7 @@
   [name : String]
   [name-id : i64]) : tc_core.ResultTcType
   (cond
-    [(tc_core.tc-dotted-local-field-name-id? type-env name-id)
+    [(tc_core.tc-dotted-local-field-name-id? ctx type-env name-id)
       (let
         [virtual-id
           (try
@@ -15502,8 +15502,10 @@
         [_ -1])]
     [binding : i64 (sym_i64_env.sym-i64-lookup-id-or env root -1)]
     (when
-      (and (< binding 0) (tc_core.tc-dotted-local-field-name-id? type-env root))
-      (match (tc_core.tc-dotted-local-field-expr-id type-env root)
+      (and
+        (< binding 0)
+        (tc_core.tc-dotted-local-field-name-id? ctx type-env root))
+      (match (tc_core.tc-dotted-local-field-expr-id ctx type-env root)
         [(Ok projected)
           (lower-exposure-place!
             scan
@@ -19082,7 +19084,7 @@
         name-id
         name-id)]
     (and
-      (not (tc_core.tc-dotted-local-field-name-id? type-env source-id))
+      (not (tc_core.tc-dotted-local-field-name-id? ctx type-env source-id))
       (or
         (lower-string-concat-legacy-call-id?
           ctx
@@ -19122,6 +19124,7 @@
                     (lower-string-concat-public-source-name? raw-name)
                     (not
                       (tc_core.tc-dotted-local-field-name-id?
+                        ctx
                         type-env
                         raw-name-id))
                     (not (sym_i64_env.sym-i64-contains-id env raw-name-id))
@@ -20407,8 +20410,8 @@
   [result-ty : ast.AstType]) : ResultLowerExpr
   (match (ast.ast-expr-unspan (& place))
     [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(Ok virtual-id)
             (lower-borrow-place-address
               ctx
@@ -26938,7 +26941,7 @@
       [plain? : bool (and (>= name 0) (< name capacity))]
       (if plain?
         (and
-          (tc_core.tc-dotted-local-field-name-id? type-env name)
+          (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
           (or
             (not (and (>= root 0) (< root capacity)))
             (= (ci.intern-leading-dot-id name) root)))
@@ -28002,8 +28005,8 @@
         type-env
         (lower-context-expr-get ctx inner))]
     [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(Ok id)
             (lower-call-arg-field-place
               ctx
@@ -28083,8 +28086,8 @@
         arg-ty
         (lower-context-expr-get ctx inner))]
     [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(Ok id)
             (lower-call-arg-mut-borrow-place-as
               ctx
@@ -31915,8 +31918,8 @@
         origin
         (ast.ast-ty-dyn-array (& (U8))))]
     [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(Ok virtual-id)
             (lower-expr-origin
               ctx
@@ -32621,8 +32624,8 @@
     [(SpmdProgramCount)
       (lower-materialize-at-expr ctx state (I64 1) expr-ty origin)]
     [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(Ok virtual-id)
             (lower-expr-with-type
               ctx
@@ -32725,8 +32728,9 @@
         [name-id : i64 name]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         [name-text : String (tc_core.tc-env-key-name-text name)]
-        (if (tc_core.tc-dotted-local-field-name-id? type-env name)
+        (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
           (match (tc_core.tc-dotted-local-field-set-expr-id
+            ctx
             (tc_core.tc-context-expr-bases ctx)
             type-env
             name
@@ -40170,7 +40174,7 @@
                 origin)]
             [_ (No)]))]
       [(Var name)
-        (if (tc_core.tc-dotted-local-field-name-id? type-env name)
+        (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
           (No)
           (lower-direct-nullary-variant-into
             ctx
@@ -40721,7 +40725,7 @@
                 (tc_core.tc-context-structural-session ctx)
                 raw-name))
             (tc_core.tc-env-key-name-text raw-name))]
-        (if (tc_core.tc-dotted-local-field-name-id? type-env raw-name)
+        (if (tc_core.tc-dotted-local-field-name-id? ctx type-env raw-name)
           (let
             [first-var : i64 (lower-state-next-var state)]
             [lowered-func
@@ -45537,8 +45541,8 @@
                 origin)]
             [(ResultLowerEnv.Err error) (ResultLowerStorePlace.Err error)])])]
     [(ast.AstExpr.Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(tc_core.ResultTcExprId.Ok id)
             (lower-capture-store-place
               ctx
@@ -45648,8 +45652,8 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (ast.ast-expr-unspan (& place))
     [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(Ok virtual-id)
             (lower-mutable-place-address
               ctx
@@ -46491,7 +46495,7 @@
         (and
           (compiler-lower-function-state-raw-address-free? function-state)
           (sym_i64_env.sym-i64-contains-id env name)
-          (not (tc_core.tc-dotted-local-field-name-id? type-env name))
+          (not (tc_core.tc-dotted-local-field-name-id? ctx type-env name))
           (not
             (lower-snapshot-writes-root?
               ctx
@@ -72800,7 +72804,7 @@
             raw-name
             raw-name)]
         [raw-text : String (lower-context-intern-str ctx source-id)]
-        (if (tc_core.tc-dotted-local-field-name-id? type-env raw-name)
+        (if (tc_core.tc-dotted-local-field-name-id? ctx type-env raw-name)
           (LowerSlotStore.No state)
           (if (sym_i64_env.sym-i64-contains-id env raw-name)
             (LowerSlotStore.No state)
@@ -73009,8 +73013,8 @@
         type-env
         (& (lower-context-expr-get ctx inner)))]
     [(Var name)
-      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
-        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+      (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
           [(Ok id)
             (lower-tail-call-external-place?
               ctx
@@ -73090,7 +73094,8 @@
             (match (ast.ast-expr-unspan (& place))
               [(Var name)
                 (and
-                  (not (tc_core.tc-dotted-local-field-name-id? type-env name))
+                  (not
+                    (tc_core.tc-dotted-local-field-name-id? ctx type-env name))
                   (match (tc_core.tc-lookup-id type-env name)
                     [(Ok ty)
                       (match (tc_core.tc-type-strip-region

@@ -21,7 +21,7 @@
     (own.ownership-body-path "ownership-fixture.tl")
     line
     3
-    "fixture macro"))
+    (own.ownership-expansion-frame 0 1 2 3 4 5 6 7)))
 
 ;; Two operands parse as the type/length form when the first is nominal syntax.
 (define (ownership-test-fields [first : i64] [second : i64]) : (__tl_dyn-array
@@ -551,7 +551,7 @@
               (string.contains (& first-text) "%p3 : %t0 = %l0 field %p2 0")
               (string.contains (& first-text) "branch %p6 bb1 bb2")
               (string.contains (& first-text) "consume %p3")
-              (string.contains (& first-text) "expansion=13:fixture macro"))]
+              (string.contains (& first-text) "expansion=14:1|2|3|4|5|6|7;"))]
           [_ false])]
       [_ false])))
 
@@ -563,7 +563,7 @@
     (own.ownership-body-path (& ownership-test-shared-provenance-path))
     2
     3
-    "shared expansion"))
+    (own.ownership-expansion-frame 0 1 2 3 4 5 6 7)))
 
 (define (ownership-test-provenance-limit?) : bool
   (let
@@ -790,10 +790,14 @@
       "4294967295.4294967295")
     (let
       [source : own.OwnershipSource
-        (own.OwnershipSource (own.ownership-body-path "a:\nb") 2 7 "x:y\nz")]
+        (own.OwnershipSource
+          (own.ownership-body-path "a:\nb")
+          2
+          7
+          (own.ownership-expansion-frame 0 1 2 3 4 5 6 7))]
       (string.eq
         (dump.ownership-dump-source (& source) "a:\nb")
-        " @4:a:\nb:2:7 expansion=5:x:y\nz"))))
+        " @4:a:\nb:2:7 expansion=14:1|2|3|4|5|6|7;"))))
 
 ;; Interleaved siblings ensure the index follows projection identity rather
 ;; than assuming that the descendants of a place form a contiguous interval.

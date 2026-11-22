@@ -4714,7 +4714,7 @@
             [(TcMaybeString.Some message)
               (TcSelectedResult.Err
                 (tc-selected-expansion-framed
-                  (& source.expansion)
+                  source.expansion
                   (tc-located-error
                     (tc-selected-source-span (& source))
                     message))
@@ -6429,22 +6429,15 @@
     (ownership.ownership-path-copy (& source.path))
     (tc-selected-span-line source.line span)
     (tc-selected-span-column source.column span)
-    (str_cat.str-cat
-      (string.int->string (macro-expansion-invocation-path-id provenance-id))
-      "|"
-      (string.int->string (ast.ast-source-span-start-line span))
-      "|"
-      (string.int->string (ast.ast-source-span-start-col span))
-      "|"
-      (string.int->string (ast.ast-source-span-end-line span))
-      "|"
-      (string.int->string (ast.ast-source-span-end-col span))
-      "|"
-      (string.int->string (macro-expansion-origin-path-id provenance-id))
-      "|"
-      (string.int->string macro-name-id)
-      ";"
-      (string.copy (& source.expansion)))))
+    (ownership.ownership-expansion-frame
+      source.expansion
+      (macro-expansion-invocation-path-id provenance-id)
+      (cast (ast.ast-source-span-start-line span) : i64)
+      (cast (ast.ast-source-span-start-col span) : i64)
+      (cast (ast.ast-source-span-end-line span) : i64)
+      (cast (ast.ast-source-span-end-col span) : i64)
+      (macro-expansion-origin-path-id provenance-id)
+      macro-name-id)))
 
 ;; The next `|`/`;`-terminated field of a frame list and its end index.
 (define (tc-selected-frame-field-end [text : (& text str)] [start : i64]) : i64
@@ -6461,23 +6454,22 @@
 ;; Wrap a located message in each frame of `expansion`, innermost first, the
 ;; same nesting `tc-macro-expansion-result-with-frame` builds while an error
 ;; leaves each expansion.
-(define (tc-selected-expansion-framed
-  [expansion : (& expansion str)]
-  [message : String]) : String
+(define (tc-selected-expansion-framed [expansion : i64] [message : String]) : String
   (let
+    [text : String (ownership.ownership-expansion-text expansion)]
     [result : String message]
     [cursor : i64 0]
-    [count : i64 (string.string-length expansion)]
+    [count : i64 (string.string-length text)]
     (while (< cursor count)
       (let
         [fields : (__tl_dyn-array i64) (__tl_make-array i64 7)]
         [field : i64 0]
         (while (< field 7)
           (let
-            [end : i64 (tc-selected-frame-field-end expansion cursor)]
+            [end : i64 (tc-selected-frame-field-end text cursor)]
             (set!
               (array-ref fields field)
-              (string.>int (string.substring expansion cursor (- end cursor))))
+              (string.>int (string.substring text cursor (- end cursor))))
             (set! cursor (+ end 1))
             (set! field (+ field 1))))
         (set!
@@ -7447,7 +7439,7 @@
             (ownership.ownership-path-copy (& source.path))
             (ast.ast-source-span-start-line at)
             (ast.ast-source-span-start-col at)
-            (string.copy (& source.expansion)))]
+            source.expansion)]
         [(TcMaybeAstSourceSpan.No) source])]
     [syntax : typed.TypedSyntax
       (typed.TypedSyntax.Source
@@ -11471,7 +11463,7 @@
                                         (tc-selected-span-column
                                           source.column
                                           span)
-                                        (string.copy (& source.expansion)))]
+                                        source.expansion)]
                                     [(No)
                                       (ownership.ownership-source-copy
                                         (& source))])))
@@ -13885,7 +13877,7 @@
         (set! index (+ index 1)))
       (ResultTcUnit.Err
         (tc-selected-expansion-framed
-          (& source.expansion)
+          source.expansion
           (tc-located-error
             (tc-selected-source-span source)
             (cond
@@ -14702,7 +14694,7 @@
             (ownership.ownership-path-copy (& outer.path))
             (ast.ast-source-span-start-line at)
             (ast.ast-source-span-start-col at)
-            (string.copy (& outer.expansion)))]
+            outer.expansion)]
         [(TcMaybeAstSourceSpan.No) outer])]
     ;; 0 a place, 1 a temporary, 2 a place selected through control flow.
     [mode : i64
@@ -16983,7 +16975,7 @@
             (ownership.ownership-path-copy (& outer.path))
             (ast.ast-source-span-start-line at)
             (ast.ast-source-span-start-col at)
-            (string.copy (& outer.expansion)))]
+            outer.expansion)]
         [(TcMaybeAstSourceSpan.No) outer])]
     (if (tc-selected-operand-place? ctx (tc-context-expr-get ctx arg-id))
       (match (tc-infer-selected-place-id
@@ -17717,7 +17709,7 @@
       [capacity : i64 (ci.intern-capacity)]
       (if (and (>= name 0) (< name capacity))
         (and
-          (tc-dotted-local-field-name-id? env name)
+          (tc-dotted-local-field-name-id? ctx env name)
           (or
             (not (and (>= root 0) (< root capacity)))
             (= (ci.intern-leading-dot-id name) root)))
@@ -22821,7 +22813,9 @@
             (typed.typed-charge!
               store
               lease
-              (+ source.path.bytes (string.string-length source.expansion))))]
+              (+
+                source.path.bytes
+                (ownership.ownership-expansion-bytes source.expansion))))]
         [origin : typed.TypedOriginId
           (try
             (typed.typed-origin-add!
@@ -22831,7 +22825,7 @@
                 (ownership.ownership-path-copy (& source.path))
                 source.line
                 source.column
-                (string.copy (& source.expansion)))))]
+                source.expansion)))]
         [binder : typed.TypedBinderId
           (try
             (typed.typed-binder-add!
@@ -27017,7 +27011,7 @@
 ;; columns followed by the body-fact hit/miss columns, one slot per profiled
 ;; site, then the macro walk's splice counters (compiler-tc-splice-profile,
 ;; relative 18-35). Relative slots 108-118 and 126-127 map to the driver/loader
-;; lifetime ledger; relative slots 120-125 and 128-131 retain macro lifetime
+;; lifetime ledger; relative slots 120-125, 128-132 and 138-140 retain macro lifetime
 ;; boundary starts. Keeping the six equal-width families contiguous makes reset/render
 ;; order deterministic without reintroducing array owners in this leaf module.
 (cfg
@@ -27051,7 +27045,7 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    139))
+    141))
 
 (cfg
   (any compile-profile test)
@@ -27081,7 +27075,9 @@
   (counters.defslots
     compiler-tc-macro-lifetime-cache-start
     138
-    (compiler-tc-macro-lifetime-start-cache-bytes-metric)))
+    (compiler-tc-macro-lifetime-start-cache-bytes-metric)
+    (compiler-tc-macro-lifetime-start-reader-bytes-metric)
+    (compiler-tc-macro-lifetime-start-module-index-bytes-metric)))
 
 (cfg
   compile-profile
@@ -41580,6 +41576,7 @@
       prefix-id)))
 
 (define (tc-source-leading-segment-wins-over-exact-id-from-dot?
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]
   [first-dot : i64]) : bool
@@ -41587,25 +41584,19 @@
     false
     (let
       [prefix-id : i64 (ci.intern-leading-dot-id name-id)]
-      (if (< prefix-id 0)
-        false
-        (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)))))
-
-;; Variant taking the already-interned `name-id` to avoid re-hashing `name` on
-;; the hot resolution path. The prefix comes from intern metadata recorded with
-;; the first dot.
-(define (tc-source-leading-segment-wins-over-exact-from-id?
-  [env : TcTypeEnv]
-  [_name : (& _name str)]
-  [name-id : i64]
-  [first-dot : i64]) : bool
-  (if (or (<= first-dot 0) (< name-id 0) (>= name-id (ci.intern-capacity)))
-    false
-    (let
-      [prefix-id : i64 (ci.intern-leading-dot-id name-id)]
-      (if (< prefix-id 0)
-        false
-        (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)))))
+      (and
+        (>= prefix-id 0)
+        (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id)
+        ;; A bare variant can bind the same name as its enum. A lexical
+        ;; binding or a struct value still provides an ordinary field root.
+        (match (tc-enum-qualified-variant-lookup-handle ctx name-id)
+          [(Some _)
+            (or
+              (tc-name-lexically-bound-id? env prefix-id)
+              (match (tc-lookup-visible-id ctx env prefix-id)
+                [(Ok ty) (not (tc-variant-constructor-shaped-type? ctx ty))]
+                [(Err _) false]))]
+          [(None) true])))))
 
 (define (tc-dotted-field-index-message [name : String]) : String
   (str_cat.str-cat
@@ -41689,7 +41680,10 @@
                 source-id
                 (+ (- name-id old-source-id) source-id)))])])))
 
-(define (tc-dotted-local-field-name-id? [env : TcTypeEnv] [name-id : i64]) : bool
+(define (tc-dotted-local-field-name-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
   (if (or (< name-id 0) (>= name-id (ci.intern-capacity)))
     false
     (let
@@ -41698,6 +41692,7 @@
       (if (< first-dot 0)
         false
         (tc-source-leading-segment-wins-over-exact-id-from-dot?
+          ctx
           env
           name-id
           first-dot)))))
@@ -41773,6 +41768,7 @@
         (if (< first-dot 0)
           false
           (if (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            ctx
             env
             name-id
             first-dot)
@@ -41891,8 +41887,11 @@
   [name-id : i64]) : ResultTcExprId
   (tc-dotted-local-field-expr-id-from-source-name-id session name-id))
 
-(define (tc-dotted-local-field-expr-id [env : TcTypeEnv] [name-id : i64]) : ResultTcExprId
-  (if (tc-dotted-local-field-name-id? env name-id)
+(define (tc-dotted-local-field-expr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : ResultTcExprId
+  (if (tc-dotted-local-field-name-id? ctx env name-id)
     (tc-dotted-local-field-expr-id-after-check
       (tc-type-env-structural-session env)
       name-id)
@@ -41914,11 +41913,12 @@
       [_ (Err "typecheck: internal dotted field target mismatch")])))
 
 (define (tc-dotted-local-field-set-expr-id
+  [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [name-id : i64]
   [value : i64]) : ResultTcExprId
-  (if (tc-dotted-local-field-name-id? env name-id)
+  (if (tc-dotted-local-field-name-id? ctx env name-id)
     (tc-dotted-local-field-set-expr-id-after-check
       expr-bases
       (tc-type-env-structural-session env)
@@ -44661,9 +44661,9 @@
             [(No) (Ok name)]))
         (if (and
           check-local-field
-          (tc-source-leading-segment-wins-over-exact-from-id?
+          (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            ctx
             env
-            name
             name-id
             first-dot))
           (Ok name)
@@ -44738,9 +44738,9 @@
             [(No) (Ok name name-id)]))
         (if (and
           check-local-field
-          (tc-source-leading-segment-wins-over-exact-from-id?
+          (tc-source-leading-segment-wins-over-exact-id-from-dot?
+            ctx
             env
-            name
             name-id
             first-dot))
           (Ok name name-id)
@@ -51120,71 +51120,49 @@
     [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8)) true]
     [_ false]))
 
-(define (tc-repeat-text [piece : String] [count : i64]) : String
-  (let
-    [out : String ""]
-    (for [i (iterator.range 0 count)]
-      (set! out (str_cat.str-cat out (string.copy (& piece)) "")))
-    out))
-
-(define (tc-binary-ones [bits : i64]) : String
-  (tc-repeat-text "1" bits))
-
-(define (tc-binary-min-signed [bits : i64]) : String
-  (str_cat.str-cat "1" (tc-repeat-text "0" (- bits 1))))
-
 (define (tc-integer-literal-fits-positive-type?
   [text : String]
   [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
-    [(I8)
-      (ast.ast-int-literal-magnitude-fits-limit?
-        text
-        "127"
-        "7f"
-        (tc-binary-ones 7))]
+    [(I8) (ast.ast-int-literal-magnitude-fits-limit? text "127" "7f" "1111111")]
     [(I16)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "32767"
         "7fff"
-        (tc-binary-ones 15))]
+        "111111111111111")]
     [(I32)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "2147483647"
         "7fffffff"
-        (tc-binary-ones 31))]
+        "1111111111111111111111111111111")]
     [(I64)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "9223372036854775807"
         "7fffffffffffffff"
-        (tc-binary-ones 63))]
+        "111111111111111111111111111111111111111111111111111111111111111")]
     [(U8)
-      (ast.ast-int-literal-magnitude-fits-limit?
-        text
-        "255"
-        "ff"
-        (tc-binary-ones 8))]
+      (ast.ast-int-literal-magnitude-fits-limit? text "255" "ff" "11111111")]
     [(U16)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "65535"
         "ffff"
-        (tc-binary-ones 16))]
+        "1111111111111111")]
     [(U32)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "4294967295"
         "ffffffff"
-        (tc-binary-ones 32))]
+        "11111111111111111111111111111111")]
     [(U64)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "18446744073709551615"
         "ffffffffffffffff"
-        (tc-binary-ones 64))]
+        "1111111111111111111111111111111111111111111111111111111111111111")]
     [_ false]))
 
 (define (tc-integer-literal-fits-negative-type?
@@ -51192,29 +51170,25 @@
   [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
     [(I8)
-      (ast.ast-int-literal-magnitude-fits-limit?
-        text
-        "128"
-        "80"
-        (tc-binary-min-signed 8))]
+      (ast.ast-int-literal-magnitude-fits-limit? text "128" "80" "10000000")]
     [(I16)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "32768"
         "8000"
-        (tc-binary-min-signed 16))]
+        "1000000000000000")]
     [(I32)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "2147483648"
         "80000000"
-        (tc-binary-min-signed 32))]
+        "10000000000000000000000000000000")]
     [(I64)
       (ast.ast-int-literal-magnitude-fits-limit?
         text
         "9223372036854775808"
         "8000000000000000"
-        (tc-binary-min-signed 64))]
+        "1000000000000000000000000000000000000000000000000000000000000000")]
     [_ false]))
 
 (define (tc-integer-literal-fits-type? [text : String] [ty : ast.AstType]) : bool
@@ -56142,7 +56116,11 @@
     right
     typed.TypedSyntax.Generated
     typed.TypedSyntax.Generated
-    (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+    (ownership.OwnershipSource
+      (ownership.ownership-path-none)
+      0
+      0
+      (ownership.ownership-expansion-none))
     TcSelectedSink.Query)
     [(TcSelectedBinOpResult.Ok types _ _ _) (ResultTcBinOpTypes.Ok types)]
     [(TcSelectedBinOpResult.Err message _) (ResultTcBinOpTypes.Err message)]))
@@ -56917,7 +56895,11 @@
       left
       right
       expected
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 (define (tc-selected-publish-binary-value
@@ -57135,7 +57117,11 @@
       op
       inner
       (ast.AstMaybeType.Some expected)
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 (define (tc-selected-publish-unary
@@ -57416,7 +57402,11 @@
       then-branch-id
       else-branch-id
       (ast.AstMaybeType.Some expected)
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 (define (tc-selected-publish-if
@@ -57777,7 +57767,11 @@
       exprs
       typed.TypedSyntax.Generated
       (ast.AstMaybeType.Some expected)
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 ;; The canonical sequence checker retains precisely the child results it just
@@ -58463,7 +58457,11 @@
               body-box
               typed.TypedSyntax.Generated
               (ast.AstMaybeType.Some expected)
-              (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+              (ownership.OwnershipSource
+                (ownership.ownership-path-none)
+                0
+                0
+                (ownership.ownership-expansion-none))
               TcSelectedSink.Query))])]
     [(WithRegion region body)
       (tc-with-region-expr-scoped ctx env region body (Some expected))]
@@ -63290,6 +63288,7 @@
       (if (or
         (< first-dot 0)
         (tc-source-leading-segment-wins-over-exact-id-from-dot?
+          ctx
           env
           source-id
           first-dot))
@@ -69625,7 +69624,11 @@
       bindings
       index
       body
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 ;; Whether the lambda `init` captures a local whose selected binder is a
@@ -70221,7 +70224,9 @@
         [(typed.TypedOriginView.Err error)
           (return (TcSelectedOriginResult.Err error))]
         [(typed.TypedOriginView.Ok source)
-          (+ source.path.bytes (string.string-length source.expansion))])]
+          (+
+            source.path.bytes
+            (ownership.ownership-expansion-bytes source.expansion))])]
     [_charged : unit (try (typed.typed-charge! store lease bytes))]
     (match (typed.typed-origin-get! store lease origin)
       [(typed.TypedOriginView.Err error) (TcSelectedOriginResult.Err error)]
@@ -70231,7 +70236,7 @@
             (ownership.ownership-path-copy (& source.path))
             source.line
             source.column
-            (string.copy (& source.expansion))))])))
+            source.expansion))])))
 
 ;; A binding's initialization: its binder noted and an `Initialize` of it from
 ;; `init`, typed unit; or, for a diverging initializer, `init` itself, typed
@@ -72101,7 +72106,11 @@
       exprs
       typed.TypedSyntax.Generated
       ast.AstMaybeType.No
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 ;; A body checked against the context's expected type when it has one, and
@@ -81697,7 +81706,11 @@
       value
       -1
       typed.TypedSyntax.Generated
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 (define (tc-selected-return
@@ -91861,7 +91874,11 @@
       name
       value-box
       typed.TypedSyntax.Generated
-      (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
       TcSelectedSink.Query)))
 
 (define (tc-set-value-ok
@@ -92354,7 +92371,11 @@
               body-box
               typed.TypedSyntax.Generated
               ast.AstMaybeType.No
-              (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+              (ownership.OwnershipSource
+                (ownership.ownership-path-none)
+                0
+                0
+                (ownership.ownership-expansion-none))
               TcSelectedSink.Query))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
@@ -92375,7 +92396,11 @@
           tuple-box
           index
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(Array exprs)
       (let
@@ -92436,7 +92461,11 @@
           index-box
           ast.AstMaybeType.No
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(ArraySet array-box index-box value-box)
       (let
@@ -92573,7 +92602,11 @@
           then-branch-box
           else-branch-box
           ast.AstMaybeType.No
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(Set name value-box)
       (if (tc-dotted-place-name-id? ctx env name)
@@ -92595,7 +92628,11 @@
           inner-box
           ty-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(Borrow mutable lifetime-id place-box)
       (let
@@ -92617,7 +92654,11 @@
           op
           (tc-context-expr-get ctx inner-box)
           ast.AstMaybeType.No
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(Binary op left-box right-box)
       (let
@@ -92638,7 +92679,11 @@
           cond-box
           body-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(Foreach fe-box)
       (match (ast.ast-foreach-box-shared-view fe-box)
@@ -93088,7 +93133,11 @@
           ctx
           ty-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(PtrNullCheck inner-box)
       (tc-selected-project
@@ -93099,7 +93148,11 @@
           inner-box
           -1
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(PtrAddrOf place-box)
       (tc-selected-project
@@ -93108,7 +93161,11 @@
           env
           place-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrRead ptr-box)
       (tc-selected-project
@@ -93117,7 +93174,11 @@
           env
           ptr-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrWrite ptr-box value-box)
       (tc-selected-project
@@ -93127,7 +93188,11 @@
           ptr-box
           value-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrOffset ptr-box offset-box)
       (tc-selected-project
@@ -93137,7 +93202,11 @@
           ptr-box
           offset-box
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrCast ptr-box target-id)
       (tc-selected-project
@@ -93148,7 +93217,11 @@
           ptr-box
           target-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(ast.AstExpr.PtrToInt ptr-box)
       (tc-selected-project
@@ -93159,7 +93232,11 @@
           ptr-box
           -1
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(ast.AstExpr.IntToPtr value-box target-id)
       (tc-selected-project
@@ -93170,7 +93247,11 @@
           value-box
           target-id
           typed.TypedSyntax.Generated
-          (ownership.OwnershipSource (ownership.ownership-path-none) 0 0 "")
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
     [(StringData str-box)
       (let
@@ -97330,8 +97411,8 @@
   (origin TcMaybeAstSourceSpan)
   (label String)
   (source-path String)
-  ;; The macro expansions the call sits in (an `OwnershipSource` frame list).
-  (expansion String)
+  ;; The macro expansions the call sits in (an `OwnershipSource` trace id).
+  (expansion i64)
   (path-bound bool)
   (epoch i64)
   (next i64))
@@ -99844,7 +99925,7 @@
   ;; The file of the call, or "" for the declaration's
   ;; (`tc-global-effect-bind-query-path!`).
   [path : String]
-  [expansion : String]) : unit
+  [expansion : i64]) : unit
   (let
     [graph : global_effects.Graph
       (unsafe
@@ -99863,7 +99944,7 @@
             root
             (& primary)
             (& path)
-            (& expansion))))
+            expansion)))
       (let
         [enclosing : i64 (arena.tl_arena_current)]
         [storage : i64
@@ -99884,7 +99965,7 @@
               origin
               (string.copy (& label))
               (string.copy (& path))
-              (string.copy (& expansion))
+              expansion
               false
               (effect_words.len (& graph.links))
               (unsafe
@@ -99904,7 +99985,7 @@
   [root : i64]
   [primary : (& primary TcMaybeAstSourceSpan)]
   [path : (& path str)]
-  [expansion : (& expansion str)]) : bool
+  [expansion : i64]) : bool
   (let
     [head : i64
       (unsafe
@@ -99921,7 +100002,7 @@
             (= query.root root)
             (tc-maybe-span-eq? (& query.primary) primary)
             (string.eq (& query.source-path) path)
-            (string.eq (& query.expansion) expansion))
+            (ownership.ownership-expansion-equal? query.expansion expansion))
           (return true))
         (set! head query.next)))
     false))
@@ -100899,9 +100980,7 @@
                       (&mut out)
                       (cdiag.compiler-diagnostic-with-fallback-path
                         (tc-diag-at-start
-                          (tc-selected-expansion-framed
-                            (& query.expansion)
-                            rich))
+                          (tc-selected-expansion-framed query.expansion rich))
                         (tc-global-shared-view query.source-path)))))))
             (set! head query.next)))))
     out))
@@ -102948,6 +103027,17 @@
       [enclosing-handle : i64 (arena.tl_arena_current)]
       (compiler-tc-profile-metric-set!
         metrics-address
+        compiler-tc-macro-lifetime-start-reader-bytes-metric
+        (compiler-tc-macro-lifetime-arena-bytes
+          (cload.compiler-load-reader-node-pool-arena-handle)))
+      (compiler-tc-profile-metric-set!
+        metrics-address
+        compiler-tc-macro-lifetime-start-module-index-bytes-metric
+        (compiler-tc-macro-lifetime-arena-bytes
+          (tc-module-decl-index-arena-for-state
+            (tc-job-state-macro-state job-state))))
+      (compiler-tc-profile-metric-set!
+        metrics-address
         compiler-tc-macro-lifetime-start-cache-bytes-metric
         (compiler-tc-macro-lifetime-cache-bytes))
       (compiler-tc-profile-metric-set!
@@ -103048,6 +103138,20 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-type-pool-metric))]
+      ;; Expansion appends reader rows and builds a module index in dedicated
+      ;; arenas. Charge only their growth since entry, including on job reuse.
+      [reader-pool : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (cload.compiler-load-reader-node-pool-arena-handle)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-reader-bytes-metric))]
+      [module-index : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (tc-module-decl-index-arena-for-state state)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-module-index-bytes-metric))]
       [symbols-current : i64
         (compiler-tc-macro-lifetime-arena-bytes
           (tc-macro-walk-field state macro-live-symbols-arena))]
@@ -103177,6 +103281,8 @@
       [named : i64
         (+
           embedded-cache
+          reader-pool
+          module-index
           interns
           (+
             scoped-env
@@ -103232,6 +103338,20 @@
         "cache"
         cumulative-alloc
         scoped-env
+        peak-delta)
+      (compiler-tc-macro-lifetime-emit-row!
+        (string.copy (& boundary))
+        "reader-node-pool"
+        "transfer"
+        cumulative-alloc
+        reader-pool
+        peak-delta)
+      (compiler-tc-macro-lifetime-emit-row!
+        (string.copy (& boundary))
+        "module-decl-index"
+        "cache"
+        cumulative-alloc
+        module-index
         peak-delta)
       (compiler-tc-macro-lifetime-emit-row!
         (tc-global-shared-view boundary)
@@ -104795,11 +104915,7 @@
 
 (define (macro-segmented-clone-seed-for-program [state : TcJobState]) : MacroSegmentedCloneSeed
   (let
-    [empty : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
-    [names : clone_support.CloneNameSet
-      (clone_support.clone-name-set-with-capacity
-        (macro-segmented-program-decl-count state)
-        empty.aliases)]
+    [names : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
     [rows : MacroSegmentedCloneRows
       (MacroSegmentedCloneRows
         (__tl_make-array ast.AstDeclList 16)
@@ -133205,7 +133321,7 @@
             (ownership.ownership-path-text
               (& (array-ref deferred.calls index).path)
               (& body-path))
-            (string.copy (& (array-ref deferred.calls index).expansion))))
+            (array-ref deferred.calls index).expansion))
         (set! index (+ index 1))))))
 
 ;; Normalize a selected body. Only a body some loan of which borrows a module
@@ -133684,7 +133800,7 @@
         [else "borrow later used here, after its storage ends"])]
     (ResultTcUnit.Err
       (tc-selected-expansion-framed
-        (& diagnostic.borrow.expansion)
+        diagnostic.borrow.expansion
         (tc-rich-error-one-secondary
           (tc-selected-source-span (& diagnostic.borrow))
           (str_cat.str-cat
@@ -133703,7 +133819,7 @@
   [diagnostic : ownership_normalize.OwnershipObligationDiagnostic]) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
-      (& diagnostic.source.expansion)
+      diagnostic.source.expansion
       (tc-located-error
         (tc-selected-source-span (& diagnostic.source))
         (tc-kind-message
@@ -133719,7 +133835,7 @@
   [diagnostic : ownership_normalize.OwnershipObligationDiagnostic]) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
-      (& diagnostic.source.expansion)
+      diagnostic.source.expansion
       (tc-located-error
         (tc-selected-source-span (& diagnostic.source))
         (if (= diagnostic.exit 6)
@@ -133747,7 +133863,7 @@
     [invalidate? : bool (>= diagnostic.lifetime 0)]
     (ResultTcUnit.Err
       (tc-selected-expansion-framed
-        (& diagnostic.source.expansion)
+        diagnostic.source.expansion
         (tc-rich-error-with-help
           (tc-selected-source-span (& diagnostic.source))
           (str_cat.str-cat
@@ -133796,7 +133912,7 @@
   [diagnostic : ownership_normalize.OwnershipMoveOutDiagnostic]) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
-      (& diagnostic.source.expansion)
+      diagnostic.source.expansion
       (tc-located-error
         (tc-selected-source-span (& diagnostic.source))
         (tc-move-global-source-message diagnostic.name)))))
@@ -133856,7 +133972,7 @@
                   "` is not Copy")]
               (TcMaybeString.Some
                 (tc-selected-expansion-framed
-                  (& diagnostic.source.expansion)
+                  diagnostic.source.expansion
                   (tc-rich-error-one-secondary
                     (tc-selected-source-span (& diagnostic.source))
                     message
@@ -133873,7 +133989,7 @@
   [diagnostic : ownership_normalize.OwnershipMoveOutDiagnostic]) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
-      (& diagnostic.source.expansion)
+      diagnostic.source.expansion
       (tc-rich-error-with-help
         (tc-selected-source-span (& diagnostic.source))
         (cond
@@ -133907,7 +134023,7 @@
 (define (tc-selected-core-failure [failure : ownership.OwnershipFailure]) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
-      (& failure.source.expansion)
+      failure.source.expansion
       (tc-located-error
         (ast.ast-source-span
           failure.source.line
@@ -134003,7 +134119,7 @@
             (tc-selected-source-span (& core.source))]
           (ResultTcUnit.Err
             (tc-selected-expansion-framed
-              (& core.source.expansion)
+              core.source.expansion
               (if diagnostic.loop-carried?
                 (tc-rich-error-one-secondary
                   primary
@@ -134037,7 +134153,7 @@
             (return
               (ResultTcUnit.Err
                 (tc-selected-expansion-framed
-                  (& core.source.expansion)
+                  core.source.expansion
                   (tc-rich-error-one-secondary
                     (tc-selected-source-span (& core.source))
                     (tc-global-effect-message ctx diagnostic.name (& path))
@@ -134050,7 +134166,7 @@
             (tc-selected-path-text ctx diagnostic.name (& diagnostic.fields))]
           (ResultTcUnit.Err
             (tc-selected-expansion-framed
-              (& core.source.expansion)
+              core.source.expansion
               (if (or (= diagnostic.access 5) (= diagnostic.access 7))
                 (tc-rich-error-one-secondary
                   (tc-selected-source-span (& core.source))
@@ -134139,7 +134255,7 @@
   [diagnostic : ownership_normalize.OwnershipObligationDiagnostic]) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-selected-expansion-framed
-      (& diagnostic.source.expansion)
+      diagnostic.source.expansion
       (tc-rich-error-with-help
         (tc-selected-source-span (& diagnostic.source))
         (tc-safe-invalidation-cleanup-owner-text
@@ -134158,7 +134274,7 @@
     [(ownership_normalize.NormalizeMoveDiagnosticResult.Some move)
       (ResultTcUnit.Err
         (tc-selected-expansion-framed
-          (& move.move.expansion)
+          move.move.expansion
           (tc-rich-error-two-secondaries
             (tc-selected-source-span (& move.move))
             (tc-move-cleanup-owner-exit-message (tc-global-shared-view name))
@@ -134171,7 +134287,7 @@
     [(ownership_normalize.NormalizeMoveDiagnosticResult.No)
       (ResultTcUnit.Err
         (tc-selected-expansion-framed
-          (& diagnostic.source.expansion)
+          diagnostic.source.expansion
           (tc-rich-error-with-help
             (tc-selected-source-span (& diagnostic.source))
             (tc-move-cleanup-owner-exit-message (tc-global-shared-view name))
@@ -134429,7 +134545,7 @@
             (tc-selected-position-or-start
               (ast.ast-source-span-start-line span))
             (tc-selected-position-or-start (ast.ast-source-span-start-col span))
-            "")]
+            (ownership.ownership-expansion-none))]
         ;; A body without a span is a generated declaration's: its
         ;; parameters and unspanned forms are located at its start.
         [(TcMaybeAstSourceSpan.No)
@@ -134438,7 +134554,7 @@
               (& (tc-selected-body-path (& source-state.selected-source-path))))
             1
             1
-            "")])]
+            (ownership.ownership-expansion-none))])]
     ;; Occurrences outside any spanned form are attributed to the body.
     [root-source : ownership.OwnershipSource
       (ownership.ownership-source-copy (& binding-source))]

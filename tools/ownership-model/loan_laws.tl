@@ -346,7 +346,7 @@
     (core.ownership-body-path "loan-laws.tl")
     1
     1
-    "finite direct-status law"))
+    (core.ownership-expansion-none)))
 
 (define (law-instruction [operation : i64] [slot : i64]) : core.OwnershipInstruction
   (core.OwnershipInstruction

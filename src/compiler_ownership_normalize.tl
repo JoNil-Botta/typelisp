@@ -1972,7 +1972,7 @@
   ;; `normalize-source-charge!`
   (let
     [bytes : i64
-      (+ source.path.bytes (string.string-length (& source.expansion)))]
+      (+ source.path.bytes (own.ownership-expansion-bytes source.expansion))]
     (try (normalize-charge! state 1 bytes bytes))
     (normalize-source-clone source)))
 
@@ -1987,7 +1987,7 @@
   [work : i64]) : NormalizeUnit
   (let
     [bytes : i64
-      (+ source.path.bytes (string.string-length (& source.expansion)))]
+      (+ source.path.bytes (own.ownership-expansion-bytes source.expansion))]
     (if (own.ownership-source-valid? source)
       (normalize-charge!
         state
@@ -2006,7 +2006,7 @@
   [source : (& source own.OwnershipSource)]) : NormalizeUnit
   (let
     [bytes : i64
-      (+ source.path.bytes (string.string-length (& source.expansion)))]
+      (+ source.path.bytes (own.ownership-expansion-bytes source.expansion))]
     (normalize-charge! state 1 bytes bytes)))
 
 (define (normalize-source-clone [source : (& source own.OwnershipSource)]) : NormalizeSource
@@ -4144,55 +4144,29 @@
           kind
           (normalize-user-source (& (array-ref state.nodes path).source)))))))
 
-;; Field `field` (an integer) of the expansion frame starting at `start`
-;; (`tc-selected-expansion-framed` reads the same `|`-separated frames).
-(define (normalize-frame-field
-  [text : (& text str)]
-  [start : i64]
-  [field : i64]) : i64
-  (let
-    [count : i64 (string.string-length text)]
-    [at : i64 start]
-    [skipped : i64 0]
-    [value : i64 0]
-    [sign : i64 1]
-    (while (and (< skipped field) (< at count))
-      (when (= (string.string-ref text at) '|') (set! skipped (+ skipped 1)))
-      (set! at (+ at 1)))
-    (when
-      (and (< at count) (= (string.string-ref text at) '-'))
-      (set! sign -1)
-      (set! at (+ at 1)))
-    (while (and
-      (< at count)
-      (>= (cast (string.string-ref text at) : i64) 48)
-      (<= (cast (string.string-ref text at) : i64) 57))
-      (set!
-        value
-        (+ (* value 10) (- (cast (string.string-ref text at) : i64) 48)))
-      (set! at (+ at 1)))
-    (* sign value)))
-
 ;; `source`, or for a node a macro's template generated (its expansion's
 ;; innermost frame is not a caller's token, `-1`), the outermost invocation
 ;; it came from: the last frame's call position, without the frames (they
 ;; would place the template's own position in the macro's definition).
 (define (normalize-user-source [source : (& source own.OwnershipSource)]) : own.OwnershipSource
-  (let
-    [count : i64 (string.string-length (& source.expansion))]
-    [last : i64 (- count 2)]
-    (if (or (= count 0) (= (normalize-frame-field (& source.expansion) 0 0) -1))
-      (own.ownership-source-copy source)
-      (begin
-        (while (and
-          (>= last 0)
-          (!= (string.string-ref (& source.expansion) last) ';'))
-          (set! last (- last 1)))
-        (own.OwnershipSource
-          (own.ownership-path-copy (& source.path))
-          (normalize-frame-field (& source.expansion) (+ last 1) 1)
-          (normalize-frame-field (& source.expansion) (+ last 1) 2)
-          "")))))
+  (if (= source.expansion 0)
+    (own.ownership-source-copy source)
+    (let
+      [first : ci.InternExpansionFrame
+        (own.ownership-expansion-at source.expansion)]
+      (if (= first.invocation-path-id -1)
+        (own.ownership-source-copy source)
+        (let
+          [last : ci.InternExpansionFrame first]
+          [cursor : i64 first.previous]
+          (while (!= cursor 0)
+            (set! last (own.ownership-expansion-at cursor))
+            (set! cursor last.previous))
+          (own.OwnershipSource
+            (own.ownership-path-copy (& source.path))
+            last.start-line
+            last.start-column
+            (own.ownership-expansion-none)))))))
 
 ;; The join where the paths into a failed check of `place` in `block` first
 ;; part, and the path still holding it there.
@@ -8365,7 +8339,7 @@
             (= effect.line source.line)
             (= effect.column source.column)
             (= effect.path.id source.path.id)
-            (string.eq (& effect.expansion) (& source.expansion)))
+            (own.ownership-expansion-equal? effect.expansion source.expansion))
           (return index)))
       (set! index (+ index 1)))
     -1))

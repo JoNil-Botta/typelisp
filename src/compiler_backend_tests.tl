@@ -2127,6 +2127,8 @@
 
 (define (compiler-backend-object-tlci-macro-entry-gate-ok?) : bool
   (let
+    [expected-image : String
+      (object_linux.compiler-backend-object-tlci-entry-bytes)]
     [expected : String
       (object_linux.compiler-backend-object-tlci-macro-entry-bytes)]
     [enabled-parts : object_target.CompilerBackendObjectTargetParts
@@ -2134,6 +2136,7 @@
         (object_target.compiler-backend-object-parts-empty)
         (object_linux.compiler-backend-object-tlci-entry-bytes)
         (owned_view.compiler-owned-shared-view expected)
+        true
         true
         (LinuxX64)
         (LinuxObjectTlciImageContribution)
@@ -2146,6 +2149,7 @@
         (object_linux.compiler-backend-object-tlci-entry-bytes)
         (owned_view.compiler-owned-shared-view expected)
         false
+        false
         (LinuxX64)
         (LinuxObjectTlciImageContribution)
         (LinuxObjectTlciMacroContribution))]
@@ -2153,8 +2157,15 @@
       (cobj.compiler-object-instr-builder-finish disabled-parts.text)]
     (and
       (cobj.compiler-object-instr-list-contains-bytes? (& enabled) expected)
+      (cobj.compiler-object-instr-list-contains-bytes?
+        (& enabled)
+        expected-image)
       (not
-        (cobj.compiler-object-instr-list-contains-bytes? (& disabled) expected)))))
+        (cobj.compiler-object-instr-list-contains-bytes? (& disabled) expected))
+      (not
+        (cobj.compiler-object-instr-list-contains-bytes?
+          (& disabled)
+          expected-image)))))
 
 ;; Let-bound if-merges whose phi destination differs from both inputs: the
 ;; object emitter must copy each edge value into the phi destination slot
@@ -24502,7 +24513,10 @@ entry:
       (compiler-backend-runtime-helper-full-plan)]
     [features : runtime_common.CompilerBackendRuntimeFeatures
       (be_data.compiler-backend-runtime-features plan)]
-    (be_data.compiler-backend-runtime-functions-for-target target features)))
+    (be_data.compiler-backend-runtime-functions-for-target
+      target
+      features
+      false)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -44624,7 +44638,8 @@ user_fn:
             false
             false
             backtrace
-            63)))]
+            63)
+          false))]
     (and
       (asm-has?
         rewritten

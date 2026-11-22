@@ -2649,6 +2649,11 @@
       (Err (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))]
     [(Program optimized optimized-spans)
       (let
+        [optimized : compiler_ir_types.CompilerIrProgram
+          (if (be_state.compiler-backend-state-closed-executable? backend-state)
+            (compiler_optimize.compiler-optimize-prune-orphan-initializers
+              optimized)
+            optimized)]
         [emit-target : be_state.CompilerBackendTarget
           (if has-target
             target
@@ -2929,7 +2934,8 @@
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
-  [crt-entry : bool]) : CompilerDriverEmitted
+  [crt-entry : bool]
+  [closed-executable : bool]) : CompilerDriverEmitted
   (match lowered
     [(Ok
         program
@@ -2987,6 +2993,14 @@
         [out : CompilerDriverEmitted
           (begin
             (compiler_ast_types.ast-node-pool-reader-use! pools)
+            (be_state.compiler-backend-state-set-closed-executable!
+              backend-state
+              (and
+                closed-executable
+                (>= opt-level 2)
+                emit-entry
+                (not crt-entry)
+                (not (compiler_ir_types.compiler-debug-info-enabled?))))
             (cfg
               compile-profile
               (when
@@ -3045,7 +3059,8 @@
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerDriver
+  [crt-entry : bool]
+  [closed-executable : bool]) : ResultCompilerDriver
   (match (compiler-driver-emit-lowered-result
     (CompilerDriverOutputRoute.Assembly)
     input-path
@@ -3055,7 +3070,8 @@
     mode
     opt-level
     emit-entry
-    crt-entry)
+    crt-entry
+    closed-executable)
     [(Emitted (Assembly output) advisories) (Ok output advisories)]
     [(Emitted (Err diagnostic) advisories) (Err diagnostic advisories)]
     [_ (io.panic "compiler driver: unexpected emit result")]))
@@ -3077,6 +3093,7 @@
     mode
     opt-level
     emit-entry
+    false
     false)
     [(Emitted (Buffer output) advisories) (Ok output advisories)]
     [(Emitted (Err diagnostic) advisories) (Err diagnostic advisories)]
@@ -3090,7 +3107,8 @@
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerDriverObject
+  [crt-entry : bool]
+  [closed-executable : bool]) : ResultCompilerDriverObject
   (match (compiler-driver-emit-lowered-result
     (CompilerDriverOutputRoute.ObjectImage)
     input-path
@@ -3100,7 +3118,8 @@
     mode
     opt-level
     emit-entry
-    crt-entry)
+    crt-entry
+    closed-executable)
     [(Emitted result advisories)
       (compiler-driver-object-result result advisories)]))
 
@@ -3121,7 +3140,8 @@
     mode
     opt-level
     emit-entry
-    crt-entry)
+    crt-entry
+    false)
     [(Emitted (PackageRuntime image asm) advisories)
       (Object image asm advisories)]
     [(Emitted (Fallback asm category) advisories)
@@ -3147,7 +3167,8 @@
     mode
     opt-level
     emit-entry
-    crt-entry)
+    crt-entry
+    false)
     [(Emitted (Pic output) advisories) (Ok output advisories)]
     [(Emitted (Err diagnostic) advisories) (Err diagnostic advisories)]
     [_ (io.panic "compiler driver: unexpected emit result")]))
@@ -4564,7 +4585,8 @@
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
-  [crt-entry : bool]) : ResultCompilerDriver
+  [crt-entry : bool]
+  [closed-executable : bool]) : ResultCompilerDriver
   (let
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
@@ -4587,7 +4609,8 @@
         mode
         opt-level
         true
-        crt-entry))))
+        crt-entry
+        closed-executable))))
 
 (define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
@@ -4597,7 +4620,8 @@
   [opt-level : i64]
   [mode : be_state.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
-  [crt-entry : bool]) : ResultCompilerDriverObject
+  [crt-entry : bool]
+  [closed-executable : bool]) : ResultCompilerDriverObject
   (let
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
@@ -4617,7 +4641,8 @@
         mode
         opt-level
         true
-        crt-entry))))
+        crt-entry
+        closed-executable))))
 
 (define (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]

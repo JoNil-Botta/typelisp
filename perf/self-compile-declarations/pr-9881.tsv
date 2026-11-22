@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-6792	Defer checked AST compaction across module macro expansion and grow the clone-name set on insertion.

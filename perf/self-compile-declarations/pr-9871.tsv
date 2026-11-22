@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-7358.246	Loading preserves parser-assigned AST IDs and removes the per-file graph remap. CI measured a saving of 801,988,652 Ir.

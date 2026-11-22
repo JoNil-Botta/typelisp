@@ -1127,8 +1127,17 @@ coordinates happens before packing, with the same casts as the run accessor.
 Names, declaration keys, slots and alias ranges retain their full i64 width.
 Run directory entries retain a reader boundary for precedence against unchanged
 reader aliases and a serial for stale-handle checks. Compaction updates those
-boundaries; detached declarations share immutable occurrence ranges and retire
-scratch declaration keys. A failed parse rolls back only its appended entries;
+boundaries. During file loading the parser builds forms in file scratch and
+appends expression and type rows to the receiving pool. During the diagnostic
+parse its type cursor selects file scratch for row payloads. Pool segments and
+the dedup index keep their usual owners. On success the parser finalizes nested
+module lists before their parents and copies the appended rows’ out-of-line
+data into the pool owner without changing child IDs.
+Span slots and nested declaration list keys stay valid. Intern-backed
+AST text has owned bytes. Declaration collectors and semantic-origin vectors die
+with file scratch. Lexer buffers and reader rows retain their scan owners.
+On failure the parser truncates its AST tail. The loader copies the diagnostic
+to the caller and rolls back reader and origin rows before releasing scratch. Origin
 serials do not rewind. Reset invalidates handles before destroying the payload
 arena. Driver file cleanup retains the owner while session caches remain live.
 Production registration and lookup carry the parser capability through cfgs,

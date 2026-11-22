@@ -181,6 +181,7 @@
         (object_target.compiler-backend-object-parts-empty)
         false
         true
+        false
         false)]
     [count : i64 (cobj.compiler-object-symbol-list-count (& image.symbols))]
     [out : String ""]

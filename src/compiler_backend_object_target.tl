@@ -213,23 +213,28 @@
   [parts : CompilerBackendObjectTargetParts]
   [entry-bytes : String]
   [macro-entry-bytes : String]
+  [image-entry : bool]
   [macro-entry : bool]
   [target : x64_template.CompilerX64TemplateTarget]
   [entry-template : x64_template.CompilerX64ExecutableTemplateId]
   [macro-template : x64_template.CompilerX64ExecutableTemplateId]) : CompilerBackendObjectTargetParts
-  (x64_catalog.compiler-x64-template-assert-structured! entry-template target)
+  (when
+    image-entry
+    (x64_catalog.compiler-x64-template-assert-structured! entry-template target))
   (when
     macro-entry
     (x64_catalog.compiler-x64-template-assert-structured! macro-template target))
   (let
     [with-image-entry : CompilerBackendObjectTargetParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-bytes
-          (compiler-backend-object-add-text
-            parts
-            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
-          entry-bytes)
-        (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry$end"))]
+      (if image-entry
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-bytes
+            (compiler-backend-object-add-text
+              parts
+              (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+            entry-bytes)
+          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry$end"))
+        parts)]
     (if macro-entry
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-bytes

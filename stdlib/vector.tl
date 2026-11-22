@@ -85,6 +85,9 @@
 ;# ```
 (import stdlib.eq)
 
+;; lint-allow: unused-import
+(import stdlib.clone)
+
 ;: Bounds trap for malformed public vector representations.
 (extern (tl_oob_abort) : never)
 
@@ -532,19 +535,27 @@
                 (module ,module-name)
                 (import (eq.eq ,T) as value_eq)
                 ,@core
-                (define (from-slice [source : (& source (Slice ,T))]) : ,vec-name
+                (define (copy-from-slice!
+                  [out : (&mut out ,vec-name)]
+                  [source : (& source (Slice ,T))]) : unit
                   (let
                     [count : i64 (array-length source)]
-                    [out : ,vec-name (with-capacity count)]
                     [index : i64 0]
-                    (begin
-                      (while (< index count)
-                        (begin
-                          (push-ref!
-                            (&mut out)
-                            (clone (array-ref source index)))
-                          (set! index (+ index 1))))
-                      out)))
+                    (while (< index count)
+                      (push-ref!
+                        out
+                        (stdlib.clone.deep (array-ref source index)))
+                      (set! index (+ index 1)))))
+                (define (from-slice [source : (& source (Slice ,T))]) : ,vec-name
+                  (let
+                    [out : ,vec-name (with-capacity (array-length source))]
+                    (copy-from-slice! (&mut out) source)
+                    out))
+                (define (clone-vec [source : (& source ,vec-name)]) : ,vec-name
+                  (let
+                    [out : ,vec-name (with-capacity (capacity source))]
+                    (copy-from-slice! (&mut out) (view source))
+                    out))
                 (defenum ,pop-name
                   (Empty)
                   (Ok ,T))
@@ -657,7 +668,8 @@
                     (,pop-empty-name)
                     (let
                       [last-index : i64 (- v.len 1)]
-                      [value : ,T (clone (array-ref v.slots last-index))]
+                      [value : ,T
+                        (stdlib.clone.deep (array-ref v.slots last-index))]
                       (begin
                         (set! v.len last-index)
                         (,pop-ok-name value)))))
@@ -668,9 +680,11 @@
                   (if (>= lo hi)
                     unit
                     (let
-                      [tmp : ,T (clone (array-ref items lo))]
+                      [tmp : ,T (stdlib.clone.deep (array-ref items lo))]
                       (begin
-                        (set! (array-ref items lo) (clone (array-ref items hi)))
+                        (set!
+                          (array-ref items lo)
+                          (stdlib.clone.deep (array-ref items hi)))
                         (set! (array-ref items hi) tmp)
                         (reverse-range! items (+ lo 1) (- hi 1))))))
                 (define (reverse-ref! [v : (&mut v ,vec-name)]) : unit
@@ -691,7 +705,7 @@
                     (fold-from
                       v
                       (+ index 1)
-                      (step acc (clone (array-ref (slots v) index)))
+                      (step acc (stdlib.clone.deep (array-ref v.slots index)))
                       step)))
                 (define (fold
                   [v : (& v ,vec-name)]
@@ -708,7 +722,7 @@
                     (begin
                       (push-ref!
                         out
-                        (mapper (clone (array-ref (slots v) index))))
+                        (mapper (stdlib.clone.deep (array-ref v.slots index))))
                       (map-build-from v (+ index 1) out mapper))))
                 (define (map-from
                   [v : (& v ,vec-name)]
@@ -728,8 +742,8 @@
                   (if (>= index (len v))
                     false
                     (if (value_eq.eq
-                      (clone (array-ref (slots v) index))
-                      (clone x))
+                      (stdlib.clone.deep (array-ref v.slots index))
+                      (stdlib.clone.deep x))
                       true
                       (contains-from? v x (+ index 1)))))
                 (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool

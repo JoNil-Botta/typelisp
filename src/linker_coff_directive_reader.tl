@@ -25,6 +25,7 @@
 ;; insensitively. Without a BOM every byte must be ASCII, because decoding with
 ;; a host ANSI code page would make results host-dependent; after a BOM every
 ;; token must be strict UTF-8.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import stdlib.byte_buf_core as bytes)
@@ -65,6 +66,8 @@
   (DelayUnload)
   (DelayNoBind))
 
+(stdlib.clone.gen-clone CoffDirective)
+
 ;: `start` and `end` bound the option token in the section data (offsets count
 ;: a leading BOM). `spelling` is the token as written; payload fields drop only
 ;: the quote bytes and keep their case.
@@ -75,6 +78,8 @@
   (end i64)
   (spelling String)
   (directive CoffDirective))
+
+(stdlib.clone.gen-clone CoffDirectiveRecord)
 
 (import (vector.vector CoffDirectiveRecord) as record_vec)
 

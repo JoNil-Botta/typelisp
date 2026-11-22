@@ -72,6 +72,8 @@ run_checkout_root_self_test() (
 required_native_identities() {
     printf '%s\n' \
         stdlib.clone/deep \
+        stdlib.clone/clone-nominal-value \
+        stdlib.clone/clone-nominal-owner \
         stdlib.clone/gen-clone \
         stdlib.clone/synthesize-helpers \
         stdlib.dense_list/compiler-dense-list-operations \

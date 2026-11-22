@@ -26,6 +26,7 @@
 ;; Deferred - current language gaps, recorded as self-hosting signal:
 ;;   - Digit and whitespace classification compares each char's `i64` code
 ;;     point against ASCII constants.
+(import stdlib.clone)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -40,6 +41,8 @@
   (LParen)
   (RParen)
   (End))
+
+(stdlib.clone.gen-clone Token)
 
 (import (vector.vector Token) as token_vec)
 

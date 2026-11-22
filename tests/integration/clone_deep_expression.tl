@@ -1,12 +1,30 @@
 (import stdlib.arena)
 (import stdlib.clone)
 (import stdlib.comptime)
+(import stdlib.hashmap)
 (import stdlib.string)
+(import stdlib.vector)
 (import clone_deep_expression_owner as owner)
+
+(defstruct CopyCell
+  (count i64))
+
+(defenum CopyChoice
+  (Missing)
+  (Present CopyCell))
+
+(defstruct CopyPair
+  (left CopyChoice)
+  (right CopyChoice))
+
+(import (vector.vector CopyPair) as copy_vec)
+(import (vector.vector String) as text_vec)
+(import (hashmap.hashmap String String) as text_map)
 
 (defenum Selection
   (Empty)
-  (Selected (__tl_dyn-array owner.HTTPItem)))
+  (Selected (__tl_dyn-array owner.HTTPItem))
+  (CollectionSnapshot text_vec.Vec text_map.Map CopyCell))
 
 (clone.gen-clone Selection)
 
@@ -47,10 +65,10 @@
     [copy : Selection (clone.deep source)]
     (match copy
       [(Selected selected) (set! (array-ref selected 0).count 99)]
-      [(Empty) unit])
+      [_ unit])
     (match (& source)
       [(Selected selected) (= (array-ref selected 0).count 7)]
-      [(Empty) false])))
+      [_ false])))
 
 (define (copy-outlives-scratch?) : bool
   (let
@@ -65,6 +83,47 @@
     [intact? : bool (string.eq (array-ref copy 0) "from scratch")]
     (arena.destroy-safe! destination)
     intact?))
+
+(define (copy-nominal-elements?) : bool
+  (let
+    [items : copy_vec.Vec
+      (copy_vec.from-slice
+        (& (array (CopyPair (Present (CopyCell 42)) Missing))))]
+    [copy : copy_vec.Vec (clone.deep items)]
+    (match (copy_vec.get (& copy) 0 (CopyPair Missing Missing)).left
+      [(Present cell) (= cell.count 42)]
+      [(Missing) false])))
+
+(define (collection-hooks-copy-storage?) : bool
+  (let
+    [items : text_vec.Vec (text_vec.with-capacity 9)]
+    [entries : text_map.Map (text_map.with-capacity 16)]
+    (text_vec.push! items "original")
+    (text_map.insert! entries "live" "value")
+    (text_map.insert! entries "removed" "other")
+    (text_map.remove! entries "removed")
+    (let
+      [source : Selection (CollectionSnapshot items entries (CopyCell 42))]
+      [copy : Selection (clone.deep source)]
+      (match source
+        [(CollectionSnapshot source-items source-entries _)
+          (text_vec.set! source-items 0 "changed")
+          (text_map.clear-ref! (&mut source-entries))]
+        [_ unit])
+      (match copy
+        [(CollectionSnapshot copied-items copied-entries stamp)
+          (and
+            (= stamp.count 42)
+            (= (text_vec.capacity (& copied-items)) 9)
+            (string.eq (text_vec.get (& copied-items) 0 "") "original")
+            (= (text_map.capacity (& copied-entries)) 16)
+            (= (text_map.deleted (& copied-entries)) 1)
+            (string.eq
+              (text_map.lookup-value-or
+                (text_map.get (& copied-entries) "live")
+                "")
+              "value"))]
+        [_ false]))))
 
 (define (main) : i64
   (let
@@ -89,6 +148,8 @@
       (string.eq (array-ref temporary 0).label "changed")
       (string.eq family-text "original")
       (string.eq text-copy "original")
+      (copy-nominal-elements?)
+      (collection-hooks-copy-storage?)
       (unsafe
         (!= (ptr->int (string-data text)) (ptr->int (string-data text-copy))))
       (string.eq item.label "family")

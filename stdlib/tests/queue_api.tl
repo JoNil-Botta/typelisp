@@ -1,9 +1,12 @@
 ;: Generated deques retain String and move-only aggregate behavior.
+(import stdlib.clone)
 (import stdlib.queue)
 (import stdlib.string)
 
 (defstruct QueueApiLabel
   (text String))
+
+(stdlib.clone.gen-clone QueueApiLabel)
 
 (import (queue.deque String) as string_queue)
 (import (queue.deque QueueApiLabel) as label_queue)

@@ -477,8 +477,8 @@
 ;: A nominal type must expose its generated clone function from its owner.
 (defmacro (deep [value : comptime.Expr]) : comptime.Expr
   (let
-    [T : comptime.Expr (comptime.expr-type value)]
-    [kind : String (type-kind T)]
+    [value-type : comptime.Expr (comptime.expr-type value)]
+    [kind : String (type-kind value-type)]
     [needs-binding? : bool
       (match kind
         ["tuple" true]
@@ -494,7 +494,7 @@
         (comptime.expr-shared-let-scope
           name
           value
-          `(stdlib.clone.clone-value ,T ,source "" "clone.deep")))
+          `(stdlib.clone.clone-value ,value-type ,source "" "clone.deep")))
       (match kind
         ["unit" value]
         ["never" value]
@@ -510,7 +510,12 @@
         ["u8" value]
         ["f64" value]
         ["f32" value]
-        [_ `(stdlib.clone.clone-borrowed-value ,T (& ,value) "" "clone.deep")]))))
+        [_
+          `(stdlib.clone.clone-borrowed-value
+            ,value-type
+            (& ,value)
+            ""
+            "clone.deep")]))))
 
 ;: Generate the body of an ordinary clone function for a struct root.
 (defmacro (clone-struct-root [T : type] [root-key-expr : comptime.Expr]) : comptime.Expr

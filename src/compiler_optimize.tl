@@ -21448,7 +21448,7 @@
       [(string.eq pass "thread_branch") (NotObservable "retargets jumps")]
       [(string.eq pass "cfg") (Effect)]
       [(string.eq pass "bit_test") (NotObservable "rewrites bit tests")]
-      [(string.eq pass "switch") (NotObservable "rewrites switch dispatch")]
+      [(string.eq pass "switch") (Shared)]
       [(string.eq pass "preheaders")
         (NotObservable "splits edges, moves instructions")]
       [(string.eq pass "rotate_ssa") (NotObservable "rotates SSA form")]
@@ -48546,6 +48546,12 @@
 ;; Fold one prefix instruction into the copy facts: any definition of var D
 ;; invalidates pairs whose src or dst is D; a `Mov dst, src` then records dst as
 ;; a fresh copy of src.
+;;
+;; Address-taken vars are never recorded, in either position, and so are never
+;; resolved through either (#9420): a `Mov` names no dst for a store or call
+;; through the exposed address, so the copy keeps looking live across it while
+;; the storage it was copied from changes. Recording is the single gate -- every
+;; `Dense` state is built here, so a pair that is not recorded is not followed.
 (define (opt-switch-copy-env-note
   [env : OptSwitchCopyEnv]
   [instr : (& ir.CompilerIrInstr)]) : OptSwitchCopyEnv
@@ -48556,7 +48562,10 @@
           (opt-switch-copy-env-invalidate env dst)]
         (match instr
           [(Mov _ (Var src) _)
-            (if (< dst 0)
+            (if (or
+              (< dst 0)
+              (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)
+              (opt-addr-taken-var? (& opt-function-addr-taken.marks) src))
               without-dependents
               (match without-dependents
                 [(Empty)
@@ -48590,20 +48599,30 @@
           [_ without-dependents]))]
     [(None) env]))
 
+;; The prefix copy facts are read through the function's address-taken set, and
+;; only a chain head folds them. The set belongs to the pass manager, which
+;; marks it stale whenever an `Effect` stage runs, so the fold refreshes it
+;; first: a function whose stages leave the set current pays one flag test.
 (define (opt-switch-prefix-copies-from
+  [frame : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
   [last : i64]
   [env : OptSwitchCopyEnv]) : OptSwitchCopyEnv
   (if (>= index last)
     env
-    (opt-switch-prefix-copies-from
-      instrs
-      (+ index 1)
-      last
-      (opt-switch-copy-env-note
-        env
-        (ir.compiler-ir-instr-seq-borrow instrs index)))))
+    (let
+      [_addr-taken : unit (opt-addr-taken-refresh! frame blocks)]
+      (opt-switch-prefix-copies-from
+        frame
+        blocks
+        instrs
+        (+ index 1)
+        last
+        (opt-switch-copy-env-note
+          env
+          (ir.compiler-ir-instr-seq-borrow instrs index))))))
 
 (define (opt-switch-candidate-empty? [items : (& items OptSwitchCandidateList)]) : bool
   (match items
@@ -49092,6 +49111,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
+  [frame : i64]
   [label : i64]
   [index-var : i64]
   [prev-label : i64]
@@ -49137,6 +49157,7 @@
             blocks
             index
             uses
+            frame
             next-label
             chain-index
             label
@@ -49206,6 +49227,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
+  [frame : i64]
   [label : i64]
   [index-var : i64]
   [prev-label : i64]
@@ -49240,6 +49262,7 @@
                         blocks
                         index
                         uses
+                        frame
                         label
                         index-var
                         prev-label
@@ -49254,6 +49277,8 @@
                         prefix
                         (&
                           (opt-switch-prefix-copies-from
+                            frame
+                            blocks
                             head-instrs
                             0
                             prefix
@@ -49281,6 +49306,7 @@
                         blocks
                         index
                         uses
+                        frame
                         hop
                         index-var
                         label
@@ -49308,6 +49334,7 @@
               blocks
               index
               uses
+              frame
               label
               index-var
               prev-label
@@ -49412,6 +49439,7 @@
   [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [uses : (& uses (__tl_dyn-array i64))]
+  [frame : i64]
   [skip : OptLabelSet]) : OptSwitchRewriteResult
   (match remaining
     [(slice) (Result skip false)]
@@ -49425,12 +49453,14 @@
               all-blocks
               index
               uses
+              frame
               skip)
               [(Result next-skip _) (Result next-skip true)])
             (match (opt-switch-collect-chain
               all-blocks
               index
               uses
+              frame
               label
               (- 0 1)
               (ir.compiler-ir-label-none)
@@ -49460,6 +49490,7 @@
                     all-blocks
                     index
                     uses
+                    frame
                     next-skip)
                     [(Result final-skip _) (Result final-skip true)]))]
               [(No)
@@ -49472,6 +49503,7 @@
                   all-blocks
                   index
                   uses
+                  frame
                   skip)]))])]))
 
 ;; A switch chain can only start from a two-instruction compare-and-branch
@@ -49518,6 +49550,7 @@
               blocks
               index
               uses
+              frame
               (Nil))]
           [rewritten : ir.CompilerIrBlockList
             (ir.compiler-ir-block-builder-to-list rewritten-out)]

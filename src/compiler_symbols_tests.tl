@@ -1690,7 +1690,8 @@
     (match (csym.compiler-symbols-add-value-id
       (& (csym.compiler-symbols-empty))
       key-id
-      "left/same"
+      cbi.compiler-builtin-id-fix-left
+      cbi.compiler-builtin-id-fix-same
       handle)
       [(Ok symbols)
         (and

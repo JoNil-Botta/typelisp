@@ -9,7 +9,7 @@
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
 (import compiler_abi as cabi)
-(import compiler_backend as backend)
+(import compiler_backend_scalar as be_scalar)
 (import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
 (import compiler_regalloc as regalloc)
@@ -37,7 +37,7 @@
   [frame : i64]) : String
   (let
     [entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         (be_state.compiler-backend-target-policy-new Windows)
         (string.copy symbol)
         frame
@@ -47,9 +47,12 @@
         state)]
     [body : String
       (str_cat.str-cat
-        (backend.compiler-backend-emit-save-callee-regs assignments vars state)
+        (be_scalar.compiler-backend-emit-save-callee-regs
+          assignments
+          vars
+          state)
         "    leave\n    ret\n")]
-    (match (backend.compiler-backend-windows-framed-save-splice
+    (match (be_scalar.compiler-backend-windows-framed-save-splice
       body
       0
       ""

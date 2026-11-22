@@ -1,6 +1,8 @@
 ;; compiler_parse_core_tests.tl - White-box tests for the parser: declarations,
 ;; expressions, patterns, metadata, spans, error paths and compiler-parse-smoke.
 (import stdlib.iterator)
+(import stdlib.arena)
+(import compiler_allocation_profile as allocation_profile)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.test)
@@ -110,7 +112,7 @@
     (parser.compiler-parse-origin-reset! storage)))
 
 (test
-  compiler-parse-origin-columns-alias-order-and-copy
+  compiler-parse-origin-columns-alias-order
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [state : parser.CompilerParseState
@@ -118,17 +120,13 @@
         (ci.intern-compat-state-new))]
     [control : i64 (parser.compiler-parse-state-control-addr (& state))]
     [storage : i64 (parser.compiler-parse-origin-storage control)]
-    [source : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
     [dest : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
-    [copied : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
     [origins : parser.ParseSemanticOriginVec
       (parser.parse-semantic-origin-vec-with-capacity 2)]
     [key : i64 1125899906842624]
     [slot : i64 34359738368]
     [reader-mark : i64 (reader.sp-node-pool-len)]
-    (ast.ast-decl-list-push (&mut source) (Module 0))
     (ast.ast-decl-list-push (&mut dest) (Module 0))
-    (ast.ast-decl-list-push (&mut copied) (Module 0))
     (parser.parse-semantic-origin-vec-push!
       (&mut origins)
       (compiler-parse-origin-column-fixture 0))
@@ -137,60 +135,15 @@
       (compiler-parse-origin-column-fixture 1))
     (parser.compiler-parse-semantic-origin-register-run!
       storage
-      (& source)
+      (& dest)
       0
       (& origins)
       0
       2)
-    (parser.compiler-parse-decl-origin-copy-direct-records!
-      storage
-      (& source)
-      (& copied)
-      0
-      (parser.CompilerParseOriginCopyRange
-        reader-mark
-        (reader.sp-node-pool-len)
-        0
-        (parser.compiler-parse-origin-word storage 3)
-        false))
     (test.assert-i64-eq
-      (parser.compiler-parse-origin-word storage 2)
+      (compiler-parse-test-origin-run control (& dest)).count
       2
-      "copying declarations shares immutable occurrence payload")
-    (test.assert-i64-eq
-      (compiler-parse-test-origin-name
-        control
-        (parser.compiler-parse-decl-list-storage-key (& copied))
-        0)
-      4294967296
-      "copied run resolves before a reader row is appended")
-    (let
-      [unpublished : parser.CompilerParseSemanticOriginRun
-        (compiler-parse-test-origin-run control (& source))]
-      [runs : i64 (parser.compiler-parse-origin-word storage 3)]
-      (parser.compiler-parse-decl-origin-copy-direct-records!
-        storage
-        (& source)
-        (& dest)
-        0
-        (parser.CompilerParseOriginCopyRange
-          reader-mark
-          (reader.sp-node-pool-len)
-          0
-          runs
-          true))
-      (test.assert-i64-eq
-        (parser.compiler-parse-origin-word storage 3)
-        runs
-        "detached transfer reuses run-directory entries")
-      (test.assert-i64-eq
-        (parser.compiler-parse-semantic-origin-run-len (& unpublished))
-        0
-        "detached transfer invalidates unpublished source handles")
-      (test.assert-i64-eq
-        (compiler-parse-test-origin-run control (& dest)).count
-        2
-        "detached transfer publishes the shared range under its destination key"))
+      "declaration storage key resolves the original run")
     (parser.compiler-parse-origin-append-reference! storage key slot 0 1)
     (parser.compiler-parse-decl-origin-register-alias-record!
       (& dest)
@@ -261,6 +214,72 @@
       "sixty-three aliases reach their direct run")
     (reader.sp-node-pool-truncate! reader-mark)
     (parser.compiler-parse-origin-reset! storage)))
+
+(define (parser-test-owns-text? [text : String] [spelling : String]) : bool
+  (and
+    (string.eq text spelling)
+    (not (ast.ast-string-same-storage? (& text) (& spelling)))))
+
+(define (parser-test-owns-parsed-strings?) : bool
+  (let
+    [src : String
+      "(import stdlib.core_macros as io) (include-str payload \"data.txt\")"]
+    (match (parser.parse-ast-source-diagnostic "sample.tl" (& src))
+      [(Ok (Program decls-box))
+        (let
+          [decls : ast.AstDeclList (deref decls-box)]
+          (match (ast.ast-decl-list-step decls)
+            [(Cons (Import _ (Spec _ path (Some module-id) _ _)) tail)
+              (match (ast.ast-decl-list-step tail)
+                [(Cons (IncludeStr _ filename) _)
+                  (match (ci.intern-lookup-content "data.txt")
+                    [(InternLookupFound id)
+                      (and
+                        (parser-test-owns-text? path (ci.intern-str module-id))
+                        (parser-test-owns-text? filename (ci.intern-str id)))]
+                    [_ false])]
+                [_ false])]
+            [_ false]))]
+      [_ false])))
+
+(test
+  parsed-string-fields-own-their-bytes
+  (test.assert-true
+    (parser-test-owns-parsed-strings?)
+    "parsed import and include paths own their bytes"))
+
+(test
+  compiler-parse-failed-form-releases-temporary-payloads
+  (let
+    [pool-arena : arena.Arena (arena.make)]
+    [owner : i64 (arena.raw-handle pool-arena)]
+    [pools (ast.ast-node-pool-context-new-with-capacities-in-arena 16 16 owner)]
+    [source : String
+      "(module outer (module inner (include-str name \"a-file-path.txt\"))) (define (good [x : (Box (Tuple i64 i64))]) : i64 3) (define (f [x : i64]) (:bad-option x) : i64 x)"]
+    [before : i64
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)]
+    (for [iteration (iterator.range 0 3)]
+      (test.assert-true
+        (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
+          "input.tl"
+          (& source)
+          (parser.compiler-cfg-empty)
+          pools)
+          [(Err _) true]
+          [_ false])
+        "malformed function metadata fails after parsing nested modules")
+      (when
+        (= iteration 0)
+        (set!
+          before
+          (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+            owner))))
+    (test.assert-i64-eq
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)
+      before
+      "reparsing the failed file leaves its temporaries outside the pool")
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    (arena.destroy-safe! pool-arena)))
 
 (test
   compiler-parse-origin-columns-failed-and-inactive-forms

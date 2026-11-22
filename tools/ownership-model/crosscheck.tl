@@ -20,7 +20,7 @@
     (core.ownership-body-path "ownership-model-v1")
     line
     1
-    "independent finite model"))
+    (core.ownership-expansion-none)))
 
 (define (crosscheck-instruction [code : i64]) : core.OwnershipInstruction
   (let

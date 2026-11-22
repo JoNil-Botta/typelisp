@@ -23,7 +23,7 @@
     (core.ownership-body-path "cleanup-cfg-case.tl")
     (+ 1 (+ (* block 16) instruction))
     1
-    "cleanup CFG point"))
+    (core.ownership-expansion-none)))
 
 (define (instruction
   [operation : core.OwnershipOperation]

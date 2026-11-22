@@ -3,6 +3,7 @@
 (import compiler_backend_operands as be_operand)
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
+(import compiler_backend_scalar as be_scalar)
 (import stdlib.iterator)
 (import compiler_ir_types)
 (import compiler_ast_types)
@@ -2866,127 +2867,205 @@
             program-index
             (+ index 1)))])))
 
+(define (compiler-backend-object-emit-function
+  [type-segment-bases : i64]
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [target : be_state.CompilerBackendTarget]
+  [func : compiler_ir_types.CompilerIrFunction]
+  [plan : be_state.CompilerBackendRuntimePlan]
+  [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (match func
+    [(Function name params ret-ty vars blocks function-abi)
+      (let
+        [symbol : String
+          (be_operand.compiler-backend-function-symbol-index program-index name)]
+        [label-scope : String
+          (be_facts.compiler-backend-function-label-scope program-index name)]
+        [types : compiler_regalloc.CompilerRegVarTypes
+          (compiler_regalloc.compiler-reg-function-var-types-with-metrics
+            (&
+              (Function
+                name
+                (be_state.compiler-backend-global-shared-view params)
+                (be_state.compiler-backend-global-shared-view ret-ty)
+                vars
+                (be_state.compiler-backend-global-shared-view blocks)
+                (be_state.compiler-backend-global-shared-view function-abi)))
+            (be_state.compiler-backend-state-metrics
+              program-index.backend-state))]
+        [groups : compiler_liveness.CompilerLiveI64Set
+          (compiler_regalloc.compiler-reg-function-group-vars
+            type-segment-bases
+            (&
+              (Function
+                name
+                (be_state.compiler-backend-global-shared-view params)
+                ret-ty
+                vars
+                (be_state.compiler-backend-global-shared-view blocks)
+                function-abi))
+            types)]
+        [_group-enable : unit
+          (begin
+            (be_facts.compiler-backend-current-slot-vars-set!
+              program-index.backend-state
+              vars)
+            (be_facts.compiler-backend-group-vars-enable!
+              program-index.backend-state
+              (be_state.compiler-backend-global-shared-view groups)
+              (compiler_liveness.compiler-live-set-empty)))]
+        [emitted : object_target.CompilerBackendObjectTargetParts
+          (compiler-backend-object-blocks
+            type-segment-bases
+            (compiler-backend-object-param-spills
+              (compiler-backend-object-add-nonempty-bytes
+                (object_target.compiler-backend-object-add-text
+                  (object_target.compiler-backend-object-symbol-export-section
+                    parts
+                    (be_state.compiler-backend-global-shared-view symbol)
+                    (Text)
+                    (Function))
+                  (Label (be_state.compiler-backend-global-shared-view symbol)))
+                (compiler-backend-object-prologue-bytes
+                  target
+                  (be_facts.compiler-backend-frame-size
+                    (if (> (compiler_liveness.compiler-live-set-count groups) 0)
+                      (* vars 2)
+                      vars))))
+              target
+              (& params)
+              0)
+            target
+            symbol
+            label-scope
+            blocks
+            plan
+            program-index)]
+        [_group-disable : unit
+          (be_facts.compiler-backend-group-vars-disable!
+            program-index.backend-state)]
+        (compiler-backend-object-c-export-entry
+          type-segment-bases
+          emitted
+          target
+          program-index
+          name
+          (& params)))]))
+
 (define (compiler-backend-object-functions
   [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : be_state.CompilerBackendTarget]
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : (& compiler_ir_types.CompilerIrFunctionSeq)]
   [plan : be_state.CompilerBackendRuntimePlan]
   [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (compiler-backend-object-function-seq
-    type-segment-bases
-    (if (be_facts.compiler-backend-c-entry-shared-needed?
-      type-segment-bases
-      target
-      program-index
-      (& functions))
-      (compiler-backend-object-c-entry-shared parts)
-      parts)
-    target
-    functions
-    plan
-    program-index
-    0))
+  (let
+    [closed : bool
+      (be_state.compiler-backend-state-closed-executable?
+        program-index.backend-state)]
+    [out : object_target.CompilerBackendObjectTargetParts
+      (if (be_facts.compiler-backend-c-entry-shared-needed?
+        type-segment-bases
+        target
+        program-index
+        functions)
+        (compiler-backend-object-c-entry-shared parts)
+        parts)]
+    (for [index (iterator.range 0 functions.len)]
+      (let
+        [func (owned_view.compiler-owned-element-view functions.slots index)]
+        (match (& func)
+          [(Function name _ _ _ _ _)
+            (unless
+              (and
+                closed
+                (be_scalar.compiler-backend-optional-runtime-function?
+                  program-index.backend-state
+                  name))
+              (set!
+                out
+                (compiler-backend-object-emit-function
+                  type-segment-bases
+                  out
+                  target
+                  func
+                  plan
+                  program-index)))])))
+    out))
 
-(define (compiler-backend-object-function-seq
+;; The structured route can read the object relocation inventory directly.
+;; Emit a private prelude body only when a live relocation names its entry.
+;; Appending one body may add a relocation to another prelude entry.
+(define (compiler-backend-object-referenced-prelude
   [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : be_state.CompilerBackendTarget]
-  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : (& compiler_ir_types.CompilerIrFunctionSeq)]
   [plan : be_state.CompilerBackendRuntimePlan]
-  [program-index : be_state.CompilerBackendProgramIndex]
-  [index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
-    parts
-    (match (owned_view.compiler-owned-element-view functions.slots index)
-      [(Function name params ret-ty vars blocks function-abi)
+  [program-index : be_state.CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
+  (unless
+    (be_state.compiler-backend-state-closed-executable?
+      program-index.backend-state)
+    (return parts))
+  (let
+    [out : object_target.CompilerBackendObjectTargetParts parts]
+    [changed : bool true]
+    (while changed
+      (set! changed false)
+      (for [index (iterator.range 0 functions.len)]
         (let
-          [symbol : String
-            (be_operand.compiler-backend-function-symbol-index
-              program-index
-              name)]
-          [label-scope : String
-            (be_facts.compiler-backend-function-label-scope program-index name)]
-          [types : compiler_regalloc.CompilerRegVarTypes
-            (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-              (&
-                (Function
-                  name
-                  (be_state.compiler-backend-global-shared-view params)
-                  (be_state.compiler-backend-global-shared-view ret-ty)
-                  vars
-                  (be_state.compiler-backend-global-shared-view blocks)
-                  (be_state.compiler-backend-global-shared-view function-abi)))
-              (be_state.compiler-backend-state-metrics
-                program-index.backend-state))]
-          [groups : compiler_liveness.CompilerLiveI64Set
-            (compiler_regalloc.compiler-reg-function-group-vars
-              type-segment-bases
-              (&
-                (Function
-                  name
-                  (be_state.compiler-backend-global-shared-view params)
-                  ret-ty
-                  vars
-                  (be_state.compiler-backend-global-shared-view blocks)
-                  function-abi))
-              types)]
-          [_group-enable : unit
-            (begin
-              (be_facts.compiler-backend-current-slot-vars-set!
-                program-index.backend-state
-                vars)
-              (be_facts.compiler-backend-group-vars-enable!
-                program-index.backend-state
-                (be_state.compiler-backend-global-shared-view groups)
-                (compiler_liveness.compiler-live-set-empty)))]
-          [emitted : object_target.CompilerBackendObjectTargetParts
-            (compiler-backend-object-blocks
-              type-segment-bases
-              (compiler-backend-object-param-spills
-                (compiler-backend-object-add-nonempty-bytes
-                  (object_target.compiler-backend-object-add-text
-                    (object_target.compiler-backend-object-symbol-export-section
-                      parts
-                      (be_state.compiler-backend-global-shared-view symbol)
-                      (Text)
-                      (Function))
-                    (Label
-                      (be_state.compiler-backend-global-shared-view symbol)))
-                  (compiler-backend-object-prologue-bytes
-                    target
-                    (be_facts.compiler-backend-frame-size
-                      (if (>
-                        (compiler_liveness.compiler-live-set-count groups)
-                        0)
-                        (* vars 2)
-                        vars))))
-                target
-                (& params)
-                0)
-              target
-              symbol
-              label-scope
-              blocks
-              plan
-              program-index)]
-          [_group-disable : unit
-            (be_facts.compiler-backend-group-vars-disable!
-              program-index.backend-state)]
-          (compiler-backend-object-function-seq
-            type-segment-bases
-            (compiler-backend-object-c-export-entry
-              type-segment-bases
-              emitted
-              target
-              program-index
-              name
-              (& params))
-            target
-            functions
-            plan
-            program-index
-            (+ index 1)))])))
+          [func (owned_view.compiler-owned-element-view functions.slots index)]
+          (match (& func)
+            [(Function name _ _ _ _ _)
+              (let
+                [source-name : String
+                  (be_state.compiler-backend-symbol-text-index
+                    program-index
+                    name)]
+                (when
+                  (be_scalar.compiler-backend-optional-runtime-function?
+                    program-index.backend-state
+                    name)
+                  (let
+                    [body : String
+                      (be_operand.compiler-backend-function-symbol-index
+                        program-index
+                        name)]
+                    [export : String
+                      (be_operand.compiler-backend-index-extern-link-symbol
+                        program-index
+                        name)]
+                    (when
+                      (and
+                        (not
+                          (cobj.compiler-object-symbol-builder-contains?
+                            (& out.symbols)
+                            (& body)
+                            (Export)
+                            (Function)))
+                        (or
+                          (cobj.compiler-object-relocation-builder-targets?
+                            (& out.relocations)
+                            (& body))
+                          (cobj.compiler-object-relocation-builder-targets?
+                            (& out.relocations)
+                            (& export))
+                          (cobj.compiler-object-relocation-builder-targets?
+                            (& out.relocations)
+                            (&
+                              (be_facts.compiler-backend-closure-entry-label
+                                source-name)))))
+                      (set! changed true)
+                      (set!
+                        out
+                        (compiler-backend-object-emit-function
+                          type-segment-bases
+                          out
+                          target
+                          func
+                          plan
+                          program-index))))))]))))
+    out))
 
 (define (compiler-backend-object-c-entry-prefix-bytes [frame : i64]) : String
   (let
@@ -3714,6 +3793,7 @@
   [parts : object_target.CompilerBackendObjectTargetParts]
   [plan : be_state.CompilerBackendRuntimePlan]
   [names : be_state.BackendStringSeq]
+  [closed : bool]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index names.len)
     parts
@@ -3723,7 +3803,13 @@
           names.slots
           index)]
       (compiler-backend-object-runtime-symbols
-        (if (compiler-backend-object-runtime-symbol-provided? plan name)
+        (if (and
+          (compiler-backend-object-runtime-symbol-provided? plan name)
+          (or
+            (not closed)
+            (cobj.compiler-object-relocation-builder-targets?
+              (& parts.relocations)
+              (& name))))
           (object_target.compiler-backend-object-symbol-local-section
             parts
             name
@@ -3732,6 +3818,7 @@
           parts)
         plan
         names
+        closed
         (+ index 1)))))
 
 (define (compiler-backend-object-image-for-target
@@ -3739,20 +3826,23 @@
   [target : be_state.CompilerBackendTarget]
   [macro-entry : bool]
   [emit-entry : bool]
-  [crt-entry : bool]) : cobj.CompilerObjectImage
+  [crt-entry : bool]
+  [closed : bool]) : cobj.CompilerObjectImage
   (match target
     [(be_state.CompilerBackendTarget.Linux)
       (object_linux.compiler-backend-object-target-linux-image
         parts
         macro-entry
         emit-entry
-        crt-entry)]
+        crt-entry
+        closed)]
     [(be_state.CompilerBackendTarget.Windows)
       (object_windows.compiler-backend-object-target-windows-image
         parts
         macro-entry
         emit-entry
-        crt-entry)]))
+        crt-entry
+        closed)]))
 
 (define (compiler-backend-object-image-after-index
   [type-segment-bases : i64]
@@ -3813,35 +3903,41 @@
     [seed : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-runtime-symbols
         (compiler-backend-object-externs
-          (compiler-backend-object-sign-bit
+          (compiler-backend-object-referenced-prelude
+            type-segment-bases
             (compiler-backend-object-sign-bit
-              (compiler-backend-object-floats
-                (compiler-backend-object-bytes
-                  (compiler-backend-object-strings
-                    (compiler-backend-object-closure-descriptors
-                      (compiler-backend-object-globals
-                        (compiler-backend-object-functions
-                          type-segment-bases
-                          (object_target.compiler-backend-object-parts-empty)
+              (compiler-backend-object-sign-bit
+                (compiler-backend-object-floats
+                  (compiler-backend-object-bytes
+                    (compiler-backend-object-strings
+                      (compiler-backend-object-closure-descriptors
+                        (compiler-backend-object-globals
+                          (compiler-backend-object-functions
+                            type-segment-bases
+                            (object_target.compiler-backend-object-parts-empty)
+                            target
+                            (& functions)
+                            plan
+                            program-index)
                           target
-                          functions
-                          plan
+                          globals
                           program-index)
-                        target
-                        globals
+                        closure-names
+                        0
                         program-index)
-                      closure-names
-                      0
-                      program-index)
-                    strings
+                      strings
+                      0)
+                    bytes
                     0)
-                  bytes
-                  0)
-                floats)
-              uses-f64-neg
-              true)
-            uses-f32-neg
-            false)
+                  floats)
+                uses-f64-neg
+                true)
+              uses-f32-neg
+              false)
+            target
+            (& functions)
+            plan
+            program-index)
           externs
           plan
           runtime-index
@@ -3849,6 +3945,8 @@
           program-index)
         plan
         (compiler-backend-object-runtime-symbols-list)
+        (be_state.compiler-backend-state-closed-executable?
+          program-index.backend-state)
         0)]
     (compiler-backend-object-image-for-target
       seed
@@ -3856,7 +3954,9 @@
       (be_state.compiler-backend-runtime-tail-tlci-macro-entry?
         (be_state.compiler-backend-runtime-plan-tail plan))
       emit-entry
-      crt-entry)))
+      crt-entry
+      (be_state.compiler-backend-state-closed-executable?
+        program-index.backend-state))))
 
 (define (compiler-backend-object-semantic-binop-supported?
   [op : compiler_ir_types.CompilerIrBinOp]

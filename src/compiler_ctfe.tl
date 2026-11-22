@@ -44,7 +44,8 @@
   (source-names ci.InternSourceNameSessionHandle)
   ;; Hash-table backing arrays outlive per-file scratch arenas. Growth switches
   ;; to this owning compiler-job arena before publishing a replacement array.
-  (map-storage-arena i64))
+  (map-storage-arena i64)
+  (expansion-module-id i64))
 
 (defstruct CompilerCtfeMacroState
   (address i64))
@@ -65,7 +66,8 @@
         (ctfe_key_map.with-capacity 1)
         false
         (ci.InternSourceNameSessionHandle 0)
-        (arena.tl_arena_current)))
+        (arena.tl_arena_current)
+        -1))
     (CompilerCtfeMacroState
       (cast
         (unsafe
@@ -141,6 +143,15 @@
     (set!
       (deref (compiler-ctfe-macro-state-ptr state)).result-hygiene-free-node
       -1)))
+
+(define (ctfe-begin-macro-expansion!
+  [state : CompilerCtfeMacroState]
+  [module-id : i64]) : unit
+  (let
+    [data (compiler-ctfe-macro-state-ptr state)]
+    (unsafe
+      (set! (deref data).result-hygiene-free-node -1)
+      (set! (deref data).expansion-module-id module-id))))
 
 (define (ctfe-result-hygiene-free-note-for-state!
   [state : CompilerCtfeMacroState]
@@ -6567,6 +6578,17 @@
             " does not define value "
             name)))]))
 
+(define (ctfe-current-module
+  [state : CompilerCtfeMacroState]
+  [session : cis.InternStructuralSessionHandle]) : CompilerCtfeValue
+  (let
+    [module-id : i64
+      (unsafe
+        (deref (compiler-ctfe-macro-state-view state)).expansion-module-id)]
+    (if (or (< module-id 0) (ctfe-root-module-id? module-id))
+      (String "" cbi.compiler-builtin-id-fix-empty)
+      (ctfe-name-value-for-session session module-id))))
+
 (define (ctfe-eval-module-value-call
   [query-name : String]
   [query-kind : i64]
@@ -10048,6 +10070,19 @@
             (ctfe-eval-module-export-macro-call args expr env fuel)]
           [(= call-id (ctfe-builtin "module-hook"))
             (ctfe-eval-module-hook-call args expr env fuel)]
+          [(= call-id (ctfe-builtin "current-module"))
+            (if (= (ctfe-expr-arg-count args) 0)
+              (Ok
+                (ctfe-current-module
+                  (ctfe-env-macro-state (& env))
+                  (ctfe-env-structural-session (& env)))
+                fuel)
+              (Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "current-module expects no arguments"))))]
           [(= call-id (ctfe-builtin "module-value?"))
             (ctfe-eval-module-value-call "module-value?" 0 args expr env fuel)]
           [(= call-id (ctfe-builtin "module-value-type"))

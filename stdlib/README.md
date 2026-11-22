@@ -79,6 +79,9 @@ generated Vec family is still migrating under #4683: its currently shipped
 reference-taking operations remain `set`, `push`, and `pop`, so do not present
 Vec bang place macros as available yet.
 
+`comptime.current-module` returns the canonical module identity at a macro
+call site, or `""` in the root file.
+
 ## Current Modules
 
 Every module opens with a `;#` overview and documents each public definition

@@ -3610,6 +3610,17 @@
                         start-text
                         len-text)
                       1)))]
+              [(or
+                (string.eq head "comptime.current-module")
+                (string.eq head "current-module"))
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  (tlci_core.tlci-host-callback-name type-key)
+                  "3"
+                  (string.int->string argc)
+                  "0")
+                1]
               [(and
                   (or
                     (string.eq head "comptime.type-key")

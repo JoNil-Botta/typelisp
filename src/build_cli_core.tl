@@ -2613,7 +2613,8 @@
     mode
     opt-level
     emit-entry
-    crt-entry)
+    crt-entry
+    false)
     [(Err diag advisories)
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))
       (Err

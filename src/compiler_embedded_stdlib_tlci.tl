@@ -2947,14 +2947,13 @@
                 (Inferred))
               place-node)))))))
 
-;; Type identity reflection shares one registered callback: selector 0 is the
-;; canonical type key, selector 1 is the nominal declaration module, and
-;; selector 2 is its name. Keeping this as one host-table row avoids rebuilding
-;; and relinking another callback for every macro dispatch. Refs #6000, #5606.
+;; Identity queries share one registered callback. Selectors 0–2 consume a
+;; type and return its key, nominal module or nominal name. Selector 3 pushes
+;; the expansion module and receives the call's arity in arg-b.
 (define (compiler-comptime-host-callback-type-key
   [session : i64]
   [arg-a : i64]
-  [_arg-b : i64]
+  [arg-b : i64]
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
@@ -2976,6 +2975,14 @@
           0
           0
           true)]
+      [(= arg-a 3)
+        (if (= arg-b 0)
+          (compiler-comptime-host-push!
+            (ctfe_support.ctfe-current-module
+              (compiler-comptime-host-session-macro-state-value)
+              (compiler-comptime-host-structural-session)))
+          (compiler-comptime-host-diagnostic!
+            "current-module expects no arguments"))]
       [else tlci.tlci-host-callback-status-bad-request])))
 
 ;; Indexed nominal-name reflection. The producer leaves the type value on

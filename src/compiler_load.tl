@@ -4702,7 +4702,7 @@
   (compiler-load-include-bin-def-with-pools
     pools
     name
-    (lzss.compiler-lzss-encode contents)))
+    (with-scratch (lzss.compiler-lzss-encode contents))))
 
 (define (compiler-load-include-def-with-pools
   [kind : CompilerLoadIncludeKind]
@@ -11052,15 +11052,7 @@
     expected-module
     (parser.compiler-cfg-empty)))
 
-;; Parse a module source directly in the active (program-lifetime) arena.
-;;
-;; Parsing into a throwaway scratch arena and `clone`-ing the result back out
-;; cannot work with the flat-node AST: `AstExpr`/`AstType`/`SpannedSexpr` nodes
-;; live in persistent GLOBAL pools, not the active arena, so destroying the
-;; scratch arena leaves the cloned program pointing at pool slots whose backing
-;; list/string data has been freed. Reclaiming parse memory needs pool-aware
-;; reclamation (e.g. truncating the node pools after escaping), not arena
-;; destruction.
+;; Diagnostic parsing places persistent AST payloads in the selected node pool.
 (define (compiler-load-parse-source-diagnostic-escaping
   [path : String]
   [source : (& str)]
@@ -11086,8 +11078,7 @@
         cfgs
         pools)]
     ;; Serial package loading reads the compatibility pools after this boundary.
-    ;; Publish the compacted destination before traversing imports; the parser's
-    ;; temporary pools and arena have already been retired by the shared helper.
+    ;; Publish the appended nodes before traversing imports.
     (ast.ast-node-pool-context-install! pools)
     result))
 
@@ -11105,72 +11096,8 @@
       cfgs
       pools)))
 
-;; Parse one uncached file in disposable storage, then copy only its reachable
-;; AST into the caller's program-lifetime pools. Lexer tokens, reader forms,
-;; source text, parser scratch, and superseded temporary pool arrays are all
-;; released before import traversal continues to the next file.
-(define (compiler-load-propagate-compacted-decl-origins!
-  [origin-storage : i64]
-  [source : (& ast.AstDeclList)]
-  [dest : (& ast.AstDeclList)]
-  [range : parser.CompilerParseOriginCopyRange]) : unit
-  (parser.compiler-parse-decl-origin-copy-direct-records!
-    origin-storage
-    source
-    dest
-    0
-    range)
-  ;; Index cursors rather than two `ast-decl-list-step` walks in lockstep.
-  ;; Each step copied a 104 B row and wrote a 144 B result -- twice per
-  ;; declaration here -- to answer a tag question; only the `ModuleBody` arm
-  ;; reads a payload, and it reads it straight out of the backing slot. The
-  ;; walk still stops at the shorter of the two lists, which is what running
-  ;; either cursor to `Nil` did.
-  (let
-    [source-count : i64 (ast.ast-decl-list-len source)]
-    [dest-count : i64 (ast.ast-decl-list-len dest)]
-    [count : i64
-      (if (< source-count dest-count)
-        source-count
-        dest-count)]
-    [source-slots : (__tl_dyn-array ast.AstDecl)
-      (owned_view.compiler-owned-reference-shared-view (& source.slots))]
-    [source-offset : i64 source.offset]
-    [dest-slots : (__tl_dyn-array ast.AstDecl)
-      (owned_view.compiler-owned-reference-shared-view (& dest.slots))]
-    [dest-offset : i64 dest.offset]
-    (for [index (iterator.range 0 count)]
-      (match (owned_view.compiler-owned-element-view
-        source-slots
-        (+ source-offset index))
-        [(ModuleBody _ source-body-box)
-          (match (owned_view.compiler-owned-element-view
-            dest-slots
-            (+ dest-offset index))
-            [(ModuleBody _ dest-body-box)
-              (compiler-load-propagate-compacted-decl-origins!
-                origin-storage
-                (& (deref source-body-box))
-                (& (deref dest-body-box))
-                range)]
-            [_ unit])]
-        [_ unit]))))
-
-(define (compiler-load-propagate-compacted-program-origins!
-  [origin-storage : i64]
-  [source : (& ast.AstProgram)]
-  [dest : (& ast.AstProgram)]
-  [range : parser.CompilerParseOriginCopyRange]) : unit
-  (match source
-    [(Program source-decls-box)
-      (match dest
-        [(Program dest-decls-box)
-          (compiler-load-propagate-compacted-decl-origins!
-            origin-storage
-            (& (deref source-decls-box))
-            (& (deref dest-decls-box))
-            range)])]))
-
+;; The pool owns the AST as it is built. Release the source and parser
+;; temporaries on either exit, rolling back all appended rows on failure.
 (define (compiler-load-parse-file-diagnostic-detached-with-pools
   [load-state : CompilerLoadSessionState]
   [path : String]
@@ -11184,27 +11111,6 @@
         (arena.tl_arena_set scratch-root))]
     [source : String
       (compiler-load-session-state-read-source-text load-state (& path))]
-    [source-len : i64 (string.string-length source)]
-    ;; Source bytes are a useful low-cost predictor for parser node count. A
-    ;; modest estimate avoids both a multi-million-node reserve per file and a
-    ;; long geometric growth chain for compiler-sized modules.
-    [expr-capacity : i64
-      (let
-        [estimate : i64 (/ source-len 8)]
-        (if (< estimate 1024)
-          1024
-          estimate))]
-    [type-capacity : i64
-      (let
-        [estimate : i64 (/ source-len 128)]
-        (if (< estimate 256)
-          256
-          estimate))]
-    [scratch-pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities-in-arena
-        expr-capacity
-        type-capacity
-        scratch-root)]
     [origin-storage : i64
       (parser.compiler-parse-origin-storage
         (parser.compiler-parse-control-from-cfg cfgs))]
@@ -11216,42 +11122,16 @@
         path
         (& source)
         cfgs
-        scratch-pools)]
+        pools)]
     (match parsed
       [(Ok program)
-        (match (ast.ast-program-copy-append-with-pools
-          scratch-pools
-          pools
-          (& program))
-          [(AstProgramCompaction out-program _)
-            (let
-              [records-end : i64 (reader.sp-node-pool-len)]
-              [source-runs-end : i64
-                (parser.compiler-parse-origin-word origin-storage 3)]
-              [_origins : unit
-                (compiler-load-propagate-compacted-program-origins!
-                  origin-storage
-                  (& program)
-                  (& out-program)
-                  (parser.CompilerParseOriginCopyRange
-                    records-start
-                    records-end
-                    origin-mark.runs
-                    source-runs-end
-                    true))]
-              [_compact-origin-records : unit
-                (parser.compiler-parse-member-records-compact!
-                  origin-storage
-                  records-start
-                  records-end)]
-              [_restore-caller : unit
-                (unsafe
-                  (arena.tl_arena_set caller-arena))]
-              [out : parser.ResultAstProgramDiagnostic (Ok out-program)]
-              (ast.ast-node-pool-context-destroy-storage! scratch-pools)
-              (unsafe
-                (arena.tl_arena_destroy scratch-root))
-              out)])]
+        (unsafe
+          (arena.tl_arena_set caller-arena))
+        (let
+          [out : parser.ResultAstProgramDiagnostic (Ok program)]
+          (unsafe
+            (arena.tl_arena_destroy scratch-root))
+          out)]
       [(Err diag)
         (let
           [_restore-caller : unit
@@ -11262,7 +11142,6 @@
           [out : parser.ResultAstProgramDiagnostic (Err stable-diag)]
           (parser.compiler-parse-origin-rollback! origin-storage origin-mark)
           (reader.sp-node-pool-truncate! records-start)
-          (ast.ast-node-pool-context-destroy-storage! scratch-pools)
           (unsafe
             (arena.tl_arena_destroy scratch-root))
           out)])))

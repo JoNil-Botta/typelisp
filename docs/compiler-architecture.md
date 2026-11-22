@@ -23,16 +23,18 @@ when the three exit codes disagree or differ from the program's declared exit
 CLI, package,
 batch and LSP services orchestrate these stages.
 
-`compiler_backend` uses `compiler_backend_div_magic` for constant division
-planning. Its shared backend layers start with `compiler_backend_state`.
-`compiler_backend_operands` builds on state, and
-`compiler_backend_program_facts` uses operands and state.
-`compiler_backend_program_data` uses operands, program facts and state, and
-`compiler_backend_object` adds program data to those three.
-`compiler_backend_peephole` owns the peephole passes over emitted lines and
-`compiler_backend_simd` owns AVX2 and AVX-512 vector emission; both build
-directly on operands, program facts and state. The imports form an acyclic
-graph rooted at the backend entry module.
+`compiler_backend` drives emission and imports the nine helpers below;
+division planning comes through `compiler_backend_scalar`. The imports are
+acyclic and rooted at it. `compiler_backend_state` holds shared state and
+`compiler_backend_div_magic` plans constant division, without backend imports.
+`compiler_backend_operands` builds on state, `compiler_backend_program_facts`
+on operands, `compiler_backend_program_data` owns program literals,
+globals and runtime plans, and `compiler_backend_object` encodes instructions,
+symbols and sections above it. `compiler_backend_peephole` owns post-emission
+passes, `compiler_backend_simd` AVX2/AVX-512, `compiler_backend_scalar`
+scalar, frame-slot and cast, and `compiler_backend_calls`
+call and switch emission; all four use operands and program facts, scalar
+adds division planning, calls adds peephole, SIMD and scalar.
 
 The embedded TLCI catalog decodes only the prelude surface or requested
 native macro images, sharing one immutable Huffman model. Multi-entry batches

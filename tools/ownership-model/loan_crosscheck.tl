@@ -27,7 +27,7 @@
     (core.ownership-body-path "loan-model-case.tl")
     line
     1
-    "concrete loan trace"))
+    (core.ownership-expansion-none)))
 
 (define (loan-cross-cell [cell : model.Cell]) : i64
   (match cell

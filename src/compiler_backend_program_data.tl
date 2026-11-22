@@ -69,10 +69,6 @@
   [collections : (& collections be_state.CompilerBackendProgramCollections)]) : bool
   collections.uses-avx2-i64-lane-id)
 
-(define (compiler-backend-program-collections-uses-avx512-i64-lane-id?
-  [collections : (& collections be_state.CompilerBackendProgramCollections)]) : bool
-  collections.uses-avx512-i64-lane-id)
-
 (define (compiler-backend-program-collections-uses-f64-neg?
   [collections : (& collections be_state.CompilerBackendProgramCollections)]) : bool
   collections.uses-f64-neg)
@@ -2278,12 +2274,17 @@
 
 (define (compiler-backend-runtime-functions-for-target
   [target : be_state.CompilerBackendTarget]
-  [features : runtime_common.CompilerBackendRuntimeFeatures]) : String
+  [features : runtime_common.CompilerBackendRuntimeFeatures]
+  [closed : bool]) : String
   (match target
     [(be_state.CompilerBackendTarget.Linux)
-      (runtime_linux.compiler-backend-runtime-functions features)]
+      (runtime_linux.compiler-backend-runtime-functions-for-executable
+        features
+        closed)]
     [(be_state.CompilerBackendTarget.Windows)
-      (runtime_windows.compiler-backend-runtime-functions features)]))
+      (runtime_windows.compiler-backend-runtime-functions-for-executable
+        features
+        closed)]))
 
 (define (compiler-backend-runtime-externs-for-target
   [target : be_state.CompilerBackendTarget]
@@ -2309,20 +2310,6 @@
           ".text\n.globl _tl_start\n")]
       [(be_state.CompilerBackendTarget.Windows) ".text\n.globl main\n"])
     ".text\n"))
-
-(define (compiler-backend-debug-path-remap-load-environment!) : unit
-  ;; The mapping strings belong to this emission arena. Reset and reload on
-  ;; every batch entry so no later compile observes storage after a rewind.
-  (compiler_ir_types.compiler-debug-path-remap-clear!)
-  (when
-    (compiler_ir_types.compiler-debug-info-enabled?)
-    (let
-      [spec : String (env.var-value "TYPELISP_REMAP_PATH_PREFIX")]
-      (when
-        (> (string.string-length spec) 0)
-        (begin
-          (compiler_ir_types.compiler-debug-path-remap-set! (& spec))
-          unit)))))
 
 ;; `_tl_start` is the freestanding Linux entry and the only function this
 ;; module emits outside compiler-backend-emit-function, so it carries the same
@@ -2360,33 +2347,6 @@
 ;; `tl_shared_object_init`, and an abort-site descriptor is placed in
 ;; `.data.rel.ro` instead of inline in `.text`. The executable code model's
 ;; output is unchanged.
-(define (compiler-backend-shared-object-target-message
-  [target : be_state.CompilerBackendTarget]) : String
-  (str_cat.str-cat
-    "backend: the shared-object code model needs an ELF target; "
-    (be_state.compiler-backend-target-triple target)
-    " has none"))
-
-;; The shared object's one initializer: the program's global initializers,
-;; which an executable runs from `_tl_start`. A host calls it once, through an
-;; export shim, before any other entry; #8194's lifecycle child owns that
-;; contract. The initializers only call ABI-conforming functions and copy
-;; results into globals through %rax, %rdx, %r10 and %xmm0, so the wrapper only
-;; realigns the stack for those calls.
-(define (compiler-backend-shared-object-init [global-inits : String]) : String
-  (str_cat.str-cat
-    "    .text
-    .globl tl_shared_object_init
-    .type tl_shared_object_init,@function
-tl_shared_object_init:
-    subq $8, %rsp
-"
-    global-inits
-    "    addq $8, %rsp
-    ret
-    .size tl_shared_object_init, . - tl_shared_object_init
-"))
-
 ;; The register a TLS store borrows under the shared-object code model, by
 ;; enclosing function, or "" for none. An initial-exec store reaches the
 ;; variable through its GOT offset, which must be loaded into a register first.

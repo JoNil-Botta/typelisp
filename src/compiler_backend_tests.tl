@@ -15,6 +15,8 @@
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
 (import compiler_backend as backend)
+(import compiler_backend_calls as be_calls)
+(import compiler_backend_scalar as be_scalar)
 (import compiler_backend_peephole as be_peephole)
 (import compiler_backend_simd as be_simd)
 (import compiler_backend_object as be_object)
@@ -292,7 +294,7 @@
         (ci.intern-compat-state-capture-active))]
     [_
       (try
-        (backend.compiler-backend-emit-scalar-stack-call-arg-into
+        (be_calls.compiler-backend-emit-scalar-stack-call-arg-into
           (&mut body)
           type-segment-bases
           target
@@ -1503,7 +1505,7 @@
 (define (compiler-backend-string-contains-inline-alloc-size?
   [asm : (& asm str)]
   [size : i64]) : bool
-  (if (backend.compiler-backend-fast-alloc-supported-size? size)
+  (if (be_calls.compiler-backend-fast-alloc-supported-size? size)
     (and
       (let
         [needle
@@ -2125,6 +2127,8 @@
 
 (define (compiler-backend-object-tlci-macro-entry-gate-ok?) : bool
   (let
+    [expected-image : String
+      (object_linux.compiler-backend-object-tlci-entry-bytes)]
     [expected : String
       (object_linux.compiler-backend-object-tlci-macro-entry-bytes)]
     [enabled-parts : object_target.CompilerBackendObjectTargetParts
@@ -2132,6 +2136,7 @@
         (object_target.compiler-backend-object-parts-empty)
         (object_linux.compiler-backend-object-tlci-entry-bytes)
         (owned_view.compiler-owned-shared-view expected)
+        true
         true
         (LinuxX64)
         (LinuxObjectTlciImageContribution)
@@ -2144,6 +2149,7 @@
         (object_linux.compiler-backend-object-tlci-entry-bytes)
         (owned_view.compiler-owned-shared-view expected)
         false
+        false
         (LinuxX64)
         (LinuxObjectTlciImageContribution)
         (LinuxObjectTlciMacroContribution))]
@@ -2151,8 +2157,15 @@
       (cobj.compiler-object-instr-builder-finish disabled-parts.text)]
     (and
       (cobj.compiler-object-instr-list-contains-bytes? (& enabled) expected)
+      (cobj.compiler-object-instr-list-contains-bytes?
+        (& enabled)
+        expected-image)
       (not
-        (cobj.compiler-object-instr-list-contains-bytes? (& disabled) expected)))))
+        (cobj.compiler-object-instr-list-contains-bytes? (& disabled) expected))
+      (not
+        (cobj.compiler-object-instr-list-contains-bytes?
+          (& disabled)
+          expected-image)))))
 
 ;; Let-bound if-merges whose phi destination differs from both inputs: the
 ;; object emitter must copy each edge value into the phi destination slot
@@ -4257,7 +4270,7 @@
         (and
           ok
           (=
-            (backend.compiler-backend-instr-outgoing-stack-space
+            (be_calls.compiler-backend-instr-outgoing-stack-space
               bases
               target
               (owned_view.compiler-owned-array-element-shared-view
@@ -4393,7 +4406,7 @@
     [(Err _) false]))
 
 (define (compiler-backend-typelisp-call-result-store-bool-ok?) : bool
-  (match (backend.compiler-backend-emit-call-result-store
+  (match (be_calls.compiler-backend-emit-call-result-store
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-call-result-store-bool-assignments)
     0
@@ -4414,7 +4427,7 @@
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [asm : String
-      (backend.compiler-backend-emit-c-abi-call-result-store-reg
+      (be_calls.compiler-backend-emit-c-abi-call-result-store-reg
         assignments
         0
         "%rax"
@@ -4430,7 +4443,7 @@
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [asm : String
-      (backend.compiler-backend-emit-call-result-store-reg
+      (be_calls.compiler-backend-emit-call-result-store-reg
         assignments
         0
         "%rax"
@@ -4747,7 +4760,7 @@
         (set-state-emit-instr-post-base! backend-state 1)
         (set-state-emit-current-count! backend-state 1))]
     [asm : String
-      (backend.compiler-backend-emit-c-abi-return-stores
+      (be_calls.compiler-backend-emit-c-abi-return-stores
         (ast.ast-node-pool-reader-type-segment-bases)
         0
         slots
@@ -4909,7 +4922,7 @@
     [(Err _) false]))
 
 (define (compiler-backend-pack-immediate-word-shape-ok?) : bool
-  (match (backend.compiler-backend-emit-pack-words
+  (match (be_scalar.compiler-backend-emit-pack-words
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-assignment-table-empty)
     (& (I64 7))
@@ -4922,7 +4935,7 @@
     (be_state.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(Ok stack-asm)
-      (match (backend.compiler-backend-emit-pack-words
+      (match (be_scalar.compiler-backend-emit-pack-words
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-assignment-table-empty)
         (& (I64 9))
@@ -4952,7 +4965,7 @@
       (reg-homes "%0=%r12 %1=%r13")]
     [xmm-assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%xmm3 %1=%xmm4")]
-    (match (backend.compiler-backend-emit-pack-words
+    (match (be_scalar.compiler-backend-emit-pack-words
       (ast.ast-node-pool-reader-type-segment-bases)
       gp-assignments
       (& (Var 0))
@@ -4965,7 +4978,7 @@
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(Ok gp-asm)
-        (match (backend.compiler-backend-emit-pack-words
+        (match (be_scalar.compiler-backend-emit-pack-words
           (ast.ast-node-pool-reader-type-segment-bases)
           xmm-assignments
           (& (Var 0))
@@ -5875,7 +5888,7 @@
     [_win : unit (compiler-backend-set-current-fn-win64! backend-state)]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r9")]
     [ok : bool
-      (match (backend.compiler-backend-emit-compare-branch
+      (match (be_scalar.compiler-backend-emit-compare-branch
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         "cmp"
@@ -6097,7 +6110,7 @@
             0)]
         (match blocks
           [(ir.CompilerIrBlockList.Array seq)
-            (backend.compiler-backend-const-hoist-resolve-inject
+            (be_scalar.compiler-backend-const-hoist-resolve-inject
               seq.slots
               (& ids)
               1
@@ -6929,7 +6942,7 @@ high:
       (compiler-backend-callee-save-assignments5)]
     [shared-name : i64 (ci.intern "pop_shared")]
     [shared : String
-      (backend.compiler-backend-return-epilogue
+      (be_calls.compiler-backend-return-epilogue
         shared-state
         shared-name
         five
@@ -6938,34 +6951,40 @@ high:
     (and
       (be_state.backend-and8
         (string.eq
-          (backend.compiler-backend-emit-restore-callee-regs one 3 shared-state)
+          (be_scalar.compiler-backend-emit-restore-callee-regs
+            one
+            3
+            shared-state)
           "    movq -32(%rbp), %r12\n")
         (string.eq
-          (backend.compiler-backend-emit-restore-callee-regs two 3 shared-state)
+          (be_scalar.compiler-backend-emit-restore-callee-regs
+            two
+            3
+            shared-state)
           "    leaq -40(%rbp), %rsp\n    popq %r13\n    popq %r12\n")
         (string.eq
-          (backend.compiler-backend-emit-restore-callee-regs
+          (be_scalar.compiler-backend-emit-restore-callee-regs
             three
             2
             shared-state)
           "    leaq -40(%rbp), %rsp\n    popq %r14\n    popq %r13\n    popq %r12\n")
         (string.eq
-          (backend.compiler-backend-emit-restore-callee-regs
+          (be_scalar.compiler-backend-emit-restore-callee-regs
             four
             2
             shared-state)
           "    leaq -48(%rbp), %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n")
         (string.eq
-          (backend.compiler-backend-emit-restore-callee-regs
+          (be_scalar.compiler-backend-emit-restore-callee-regs
             five
             1
             shared-state)
           "    leaq -48(%rbp), %rsp\n    popq %rbx\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n")
         (string.eq
-          (backend.compiler-backend-inline-return-tail two 3 shared-state)
+          (be_scalar.compiler-backend-inline-return-tail two 3 shared-state)
           "    leaq -40(%rbp), %rsp\n    popq %r13\n    popq %r12\n    leave\n    ret\n")
         (string.eq
-          (backend.compiler-backend-tail-jump-tail
+          (be_scalar.compiler-backend-tail-jump-tail
             four
             2
             "_tl_next"
@@ -6991,7 +7010,7 @@ high:
         (&mut push-regs)
         backend-state)]
     [prologue : String
-      (backend.compiler-backend-emit-function-entry-fpo-push
+      (be_scalar.compiler-backend-emit-function-entry-fpo-push
         backend-state
         "_tl_gap1_push_unit"
         64
@@ -7237,7 +7256,7 @@ high:
         3
         backend-state)]
     [prologue : String
-      (backend.compiler-backend-emit-function-entry-fpo-push
+      (be_scalar.compiler-backend-emit-function-entry-fpo-push
         backend-state
         "_tl_rg1_trim_unit"
         64
@@ -7327,7 +7346,7 @@ high:
         (&mut push-regs)
         backend-state)]
     [dead-prologue : String
-      (backend.compiler-backend-emit-function-entry-fpo-push
+      (be_scalar.compiler-backend-emit-function-entry-fpo-push
         backend-state
         "_tl_qsc_dead_slots"
         0
@@ -7344,7 +7363,7 @@ high:
         backend-state)]
     [dead-rebased : String dead-result.text]
     [live-prologue : String
-      (backend.compiler-backend-emit-function-entry-fpo-push
+      (be_scalar.compiler-backend-emit-function-entry-fpo-push
         backend-state
         "_tl_qsc_live_slots"
         16
@@ -7412,17 +7431,17 @@ high:
     [full : regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-callee-save-full-assignments)]
     [save : String
-      (backend.compiler-backend-emit-save-callee-regs
+      (be_scalar.compiler-backend-emit-save-callee-regs
         assignments
         3
         backend-state)]
     [restore : String
-      (backend.compiler-backend-emit-restore-callee-regs
+      (be_scalar.compiler-backend-emit-restore-callee-regs
         assignments
         3
         backend-state)]
     [full-restore : String
-      (backend.compiler-backend-emit-restore-callee-regs full 1 backend-state)]
+      (be_scalar.compiler-backend-emit-restore-callee-regs full 1 backend-state)]
     [ok : bool
       (and
         (be_operand.compiler-backend-plan-uses-callee-regs?
@@ -7461,7 +7480,7 @@ high:
       (be_facts.compiler-backend-frame-size
         (be_operand.compiler-backend-frame-slots 1 assignments backend-state))]
     [prologue : String
-      (backend.compiler-backend-emit-function-entry-fpo-windows
+      (be_scalar.compiler-backend-emit-function-entry-fpo-windows
         (be_state.compiler-backend-target-policy-new
           be_state.CompilerBackendTarget.Windows)
         backend-state
@@ -7516,7 +7535,7 @@ high:
           7)
         (let
           [text
-            (backend.compiler-backend-emit-save-callee-regs
+            (be_scalar.compiler-backend-emit-save-callee-regs
               assignments
               1
               backend-state)]
@@ -7573,7 +7592,7 @@ high:
       (be_facts.compiler-backend-frame-size
         (be_operand.compiler-backend-frame-slots 3 planned backend-state))]
     [planned-save : String
-      (backend.compiler-backend-emit-save-win64-xmm-callee-regs
+      (be_scalar.compiler-backend-emit-save-win64-xmm-callee-regs
         (be_state.CompilerBackendTarget.Windows)
         planned
         3
@@ -7583,16 +7602,19 @@ high:
       (be_facts.compiler-backend-frame-size
         (be_operand.compiler-backend-frame-slots 3 sparse backend-state))]
     [save : String
-      (backend.compiler-backend-emit-save-win64-xmm-callee-regs
+      (be_scalar.compiler-backend-emit-save-win64-xmm-callee-regs
         (be_state.CompilerBackendTarget.Windows)
         sparse
         3
         frame
         backend-state)]
     [restore : String
-      (backend.compiler-backend-emit-restore-callee-regs sparse 3 backend-state)]
+      (be_scalar.compiler-backend-emit-restore-callee-regs
+        sparse
+        3
+        backend-state)]
     [entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         (be_state.compiler-backend-target-policy-new
           be_state.CompilerBackendTarget.Windows)
         "_tl_xmm_sparse"
@@ -7605,7 +7627,7 @@ high:
       (be_facts.compiler-backend-frame-size
         (be_operand.compiler-backend-frame-slots 600 xmm15 backend-state))]
     [large-entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         (be_state.compiler-backend-target-policy-new
           be_state.CompilerBackendTarget.Windows)
         "_tl_xmm_large"
@@ -7618,7 +7640,7 @@ high:
       (be_facts.compiler-backend-frame-size
         (be_operand.compiler-backend-frame-slots 1 full backend-state))]
     [full-save : String
-      (backend.compiler-backend-emit-save-win64-xmm-callee-regs
+      (be_scalar.compiler-backend-emit-save-win64-xmm-callee-regs
         (be_state.CompilerBackendTarget.Windows)
         full
         1
@@ -7627,7 +7649,7 @@ high:
     [full-restore : String
       (compiler-backend-emit-restore-win64-xmm-callee-regs full 1 backend-state)]
     [empty-entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         (be_state.compiler-backend-target-policy-new
           be_state.CompilerBackendTarget.Windows)
         "_tl_xmm_empty"
@@ -7637,15 +7659,15 @@ high:
         false
         backend-state)]
     [inline-tail : String
-      (backend.compiler-backend-inline-return-tail sparse 3 backend-state)]
+      (be_scalar.compiler-backend-inline-return-tail sparse 3 backend-state)]
     [jump-tail : String
-      (backend.compiler-backend-tail-jump-tail
+      (be_scalar.compiler-backend-tail-jump-tail
         sparse
         3
         "_tl_xmm_target"
         backend-state)]
     [shared-tail : String
-      (backend.compiler-backend-return-epilogue
+      (be_calls.compiler-backend-return-epilogue
         backend-state
         shared-name
         sparse
@@ -7664,23 +7686,23 @@ high:
         (= frame 224)
         (= (be_operand.compiler-backend-frame-slots 3 sparse backend-state) 28)
         (=
-          (backend.compiler-backend-frame-slots-with-groups
+          (be_scalar.compiler-backend-frame-slots-with-groups
             3
             sparse
             backend-state)
           29)
         (=
-          (backend.compiler-backend-frame-slots-emergency-max 3 backend-state)
+          (be_scalar.compiler-backend-frame-slots-emergency-max 3 backend-state)
           31)
         (=
-          (backend.compiler-backend-win64-xmm-callee-slot-offset
+          (be_scalar.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
             sparse
             3
             0)
           -80)
         (=
-          (backend.compiler-backend-win64-xmm-callee-slot-offset
+          (be_scalar.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
             sparse
             3
@@ -7694,7 +7716,7 @@ high:
             backend-state)
           -240)
         (=
-          (backend.compiler-backend-group-word1-slot 0 3 sparse backend-state)
+          (be_scalar.compiler-backend-group-word1-slot 0 3 sparse backend-state)
           -232)
         (string.eq
           save
@@ -7759,7 +7781,7 @@ high:
         -1)
       (= (be_operand.compiler-backend-frame-slots 3 sparse backend-state) 7)
       (string.eq
-        (backend.compiler-backend-emit-save-win64-xmm-callee-regs
+        (be_scalar.compiler-backend-emit-save-win64-xmm-callee-regs
           (be_state.CompilerBackendTarget.Linux)
           sparse
           3
@@ -7767,7 +7789,7 @@ high:
           backend-state)
         "")
       (string.eq
-        (backend.compiler-backend-emit-restore-callee-regs
+        (be_scalar.compiler-backend-emit-restore-callee-regs
           sparse
           3
           backend-state)
@@ -7781,7 +7803,7 @@ high:
   [vars : i64]
   [frame : i64]
   [backend-state : be_state.CompilerBackendState]) : String
-  (match (backend.compiler-backend-windows-framed-save-splice
+  (match (be_scalar.compiler-backend-windows-framed-save-splice
     body
     base
     mode-prologue
@@ -7823,7 +7845,7 @@ high:
       (be_facts.compiler-backend-frame-size
         (be_operand.compiler-backend-frame-slots 600 full backend-state))]
     [full-entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         windows
         "_tl_seh_full"
         full-frame
@@ -7832,7 +7854,7 @@ high:
         true
         backend-state)]
     [framed-entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         windows
         "_tl_seh_framed"
         full-frame
@@ -7843,7 +7865,10 @@ high:
     [full-described : String
       (compiler-backend-win64-seh-splice
         (str_cat.str-cat
-          (backend.compiler-backend-emit-save-callee-regs full 3 backend-state)
+          (be_scalar.compiler-backend-emit-save-callee-regs
+            full
+            3
+            backend-state)
           "    movq %rcx, %rax\n    call _tl_seh_probe\n")
         0
         ""
@@ -7890,7 +7915,7 @@ high:
         48
         backend-state)]
     [mixed-entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         windows
         "_tl_seh_mixed"
         mixed-frame
@@ -7908,7 +7933,7 @@ high:
         mixed-frame
         backend-state)]
     [large-entry : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         windows
         "_tl_seh_large"
         large-frame
@@ -7918,7 +7943,10 @@ high:
         backend-state)]
     [large-described : String
       (compiler-backend-win64-seh-splice
-        (backend.compiler-backend-emit-save-callee-regs full 600 backend-state)
+        (be_scalar.compiler-backend-emit-save-callee-regs
+          full
+          600
+          backend-state)
         0
         ""
         full
@@ -8033,37 +8061,37 @@ high:
             backend-state)
           "error")
         (<=
-          (backend.compiler-backend-windows-framed-prologue-bound 10 true 8)
-          backend.compiler-backend-windows-prologue-limit)
+          (be_scalar.compiler-backend-windows-framed-prologue-bound 10 true 8)
+          be_scalar.compiler-backend-windows-prologue-limit)
         ;; The description holds wherever %rsp is at its post-allocation value.
-        (backend.compiler-backend-windows-framed-rsp-exact?
+        (be_scalar.compiler-backend-windows-framed-rsp-exact?
           "    movq %rcx, %rax\n    call _tl_f\n    leave\n    ret\n")
-        (backend.compiler-backend-windows-framed-rsp-exact?
+        (be_scalar.compiler-backend-windows-framed-rsp-exact?
           "    pushq %r10\n    movq 720(%rsp), %r10\n    movq %r10, 416(%rsp)\n    popq %r10\n    call _tl_f\n")
-        (backend.compiler-backend-windows-framed-rsp-exact?
+        (be_scalar.compiler-backend-windows-framed-rsp-exact?
           "    leaq 416(%rsp), %rsp\n    popq %r13\n    popq %r12\n    leave\n    jmp _tl_f\n.L_next:\n    call _tl_f\n")
-        (backend.compiler-backend-windows-framed-rsp-exact?
+        (be_scalar.compiler-backend-windows-framed-rsp-exact?
           "    movq %rbp, %rsp\n    popq %rbp\n    ret\n")
         (not
-          (backend.compiler-backend-windows-framed-rsp-exact?
+          (be_scalar.compiler-backend-windows-framed-rsp-exact?
             "    pushq %r10\n    call _tl_f\n    popq %r10\n"))
         (not
-          (backend.compiler-backend-windows-framed-rsp-exact?
+          (be_scalar.compiler-backend-windows-framed-rsp-exact?
             "    pushq %r10\n    movq 8(%rax), %r10\n    popq %r10\n"))
         (not
-          (backend.compiler-backend-windows-framed-rsp-exact?
+          (be_scalar.compiler-backend-windows-framed-rsp-exact?
             "    subq $32, %rsp\n    call _tl_f\n    addq $32, %rsp\n"))
         (not
-          (backend.compiler-backend-windows-framed-rsp-exact?
+          (be_scalar.compiler-backend-windows-framed-rsp-exact?
             "    pushq %r10\n.L_x:\n    popq %r10\n"))
         (not
-          (backend.compiler-backend-windows-framed-rsp-exact?
+          (be_scalar.compiler-backend-windows-framed-rsp-exact?
             "    pushq %r10\n    jmp .L_x\n"))
         (not
-          (backend.compiler-backend-windows-framed-rsp-exact?
+          (be_scalar.compiler-backend-windows-framed-rsp-exact?
             "    andq $-16, %rsp\n"))
         (not
-          (backend.compiler-backend-windows-framed-rsp-exact?
+          (be_scalar.compiler-backend-windows-framed-rsp-exact?
             "    leave\n    call _tl_f\n")))]
     [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
     ok))
@@ -8097,7 +8125,7 @@ high:
           "%xmm0"
           backend-state)
         "    movsd %xmm0, %xmm2\n")
-      (match (backend.compiler-backend-emit-mov
+      (match (be_calls.compiler-backend-emit-mov
         (ast.ast-node-pool-reader-type-segment-bases)
         coalesced
         2
@@ -8112,7 +8140,7 @@ high:
           (ci.intern-compat-state-capture-active)))
         [(Ok asm) (string.eq asm "")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-cast
+      (match (be_scalar.compiler-backend-emit-cast
         (ast.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (ir.compiler-ir-label "entry")
@@ -8134,7 +8162,7 @@ high:
       ;; identical-type early return above cannot answer this one -- I64 and
       ;; U64 are different types -- so the elision has to come from the
       ;; same-width arm loading the source into its own home.
-      (match (backend.compiler-backend-emit-cast
+      (match (be_scalar.compiler-backend-emit-cast
         (ast.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (ir.compiler-ir-label "entry")
@@ -8151,7 +8179,7 @@ high:
           (ci.intern-compat-state-capture-active)))
         [(Ok asm) (string.eq asm "")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-cast
+      (match (be_scalar.compiler-backend-emit-cast
         (ast.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (ir.compiler-ir-label "entry")
@@ -8168,7 +8196,7 @@ high:
           (ci.intern-compat-state-capture-active)))
         [(Ok asm) (string.eq asm "")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-cast
+      (match (be_scalar.compiler-backend-emit-cast
         (ast.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (ir.compiler-ir-label "entry")
@@ -8185,7 +8213,7 @@ high:
           (ci.intern-compat-state-capture-active)))
         [(Ok asm) (string.eq asm "    movq %r12, %r13\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-cast
+      (match (be_scalar.compiler-backend-emit-cast
         (ast.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (ir.compiler-ir-label "entry")
@@ -8216,7 +8244,7 @@ high:
         (ir.compiler-ir-extern-seq-empty))]
     [backend-state : be_state.CompilerBackendState index.backend-state]
     (and
-      (match (backend.compiler-backend-emit-mov
+      (match (be_calls.compiler-backend-emit-mov
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         0
@@ -8227,7 +8255,7 @@ high:
         backend-state)
         [(Ok asm) (string.eq asm "    xorl %r12d, %r12d\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-mov
+      (match (be_calls.compiler-backend-emit-mov
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-assignment-table-empty)
         1
@@ -8257,7 +8285,7 @@ high:
       (reg-homes "%0=%xmm3")]
     (and
       (asm-ok?
-        (backend.compiler-backend-emit-mov
+        (be_calls.compiler-backend-emit-mov
           (ast.ast-node-pool-reader-type-segment-bases)
           int-assignments
           1
@@ -8269,7 +8297,7 @@ high:
         (has "    movq -24(%rbp), %r8\n" "    movq %r8, -16(%rbp)\n")
         (lacks "%rax"))
       (asm-ok?
-        (backend.compiler-backend-emit-mov
+        (be_calls.compiler-backend-emit-mov
           (ast.ast-node-pool-reader-type-segment-bases)
           float-assignments
           1
@@ -8308,7 +8336,7 @@ high:
         slot-assignments)]
     (and
       ;; unassigned destination -> its bare slot, one store
-      (match (backend.compiler-backend-emit-mov
+      (match (be_calls.compiler-backend-emit-mov
         (ast.ast-node-pool-reader-type-segment-bases)
         slot-assignments
         1
@@ -8320,7 +8348,7 @@ high:
         [(Ok asm) (string.eq asm "    movq %r12, -16(%rbp)\n")]
         [(Err _) false])
       ;; spilled destination -> its frame offset, one store
-      (match (backend.compiler-backend-emit-mov
+      (match (be_calls.compiler-backend-emit-mov
         (ast.ast-node-pool-reader-type-segment-bases)
         spill-assignments
         1
@@ -8332,7 +8360,7 @@ high:
         [(Ok asm) (string.eq asm "    movq %r12, -40(%rbp)\n")]
         [(Err _) false])
       ;; a narrow type changes nothing: no narrowing, no scratch
-      (match (backend.compiler-backend-emit-mov
+      (match (be_calls.compiler-backend-emit-mov
         (ast.ast-node-pool-reader-type-segment-bases)
         spill-assignments
         1
@@ -8697,7 +8725,7 @@ high:
           0
           (ast.ast-type-id-fallback)))]
     [dynamic-outgoing-space : i64
-      (backend.compiler-backend-instr-outgoing-stack-space
+      (be_calls.compiler-backend-instr-outgoing-stack-space
         bases
         be_state.CompilerBackendTarget.Linux
         dynamic-instr
@@ -8705,7 +8733,7 @@ high:
         (be_state.CompilerBackendGlobalTypeTable.Empty)
         index)]
     [stack-count : i64
-      (backend.compiler-backend-call-stack-arg-count
+      (be_calls.compiler-backend-call-stack-arg-count
         bases
         be_state.CompilerBackendTarget.Linux
         (Platform)
@@ -8719,7 +8747,7 @@ high:
         0
         index)]
     [asm : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         bases
         be_state.CompilerBackendTarget.Linux
         (Platform)
@@ -8741,7 +8769,7 @@ high:
         [(Ok text) text]
         [(Err _) ""])]
     [stack-count9 : i64
-      (backend.compiler-backend-call-stack-arg-count
+      (be_calls.compiler-backend-call-stack-arg-count
         bases
         be_state.CompilerBackendTarget.Linux
         (Platform)
@@ -8755,7 +8783,7 @@ high:
         0
         index)]
     [asm9 : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         bases
         be_state.CompilerBackendTarget.Linux
         (Platform)
@@ -8777,7 +8805,7 @@ high:
         [(Ok text) text]
         [(Err _) ""])]
     [stack-count11 : i64
-      (backend.compiler-backend-call-stack-arg-count
+      (be_calls.compiler-backend-call-stack-arg-count
         bases
         be_state.CompilerBackendTarget.Linux
         (Platform)
@@ -8791,7 +8819,7 @@ high:
         0
         index)]
     [asm11 : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         bases
         be_state.CompilerBackendTarget.Linux
         (Platform)
@@ -8922,40 +8950,43 @@ high:
       (not (be_facts.compiler-backend-type-signed? bases region-u64))
       (not (be_facts.compiler-backend-type-signed? bases invalidate-u8))
       (=
-        (backend.compiler-backend-normalized-signed-immediate
+        (be_scalar.compiler-backend-normalized-signed-immediate
           bases
           255
           region-i8)
         -1)
       (=
-        (backend.compiler-backend-normalized-signed-immediate
+        (be_scalar.compiler-backend-normalized-signed-immediate
           bases
           255
           invalidate-i8)
         -1)
       (=
-        (backend.compiler-backend-normalized-unsigned-immediate
+        (be_scalar.compiler-backend-normalized-unsigned-immediate
           bases
           -1
           invalidate-u16)
         (cast 65535 : u64))
       (=
-        (backend.compiler-backend-normalized-unsigned-immediate
+        (be_scalar.compiler-backend-normalized-unsigned-immediate
           bases
           -1
           invalidate-u8-copy)
         (cast 255 : u64))
       (string.eq
-        (backend.compiler-backend-compare-true-jcc bases lt-op-1 invalidate-u8)
+        (be_scalar.compiler-backend-compare-true-jcc
+          bases
+          lt-op-1
+          invalidate-u8)
         "jb")
       (string.eq
-        (backend.compiler-backend-compare-false-jcc bases gt-op-2 region-u64)
+        (be_scalar.compiler-backend-compare-false-jcc bases gt-op-2 region-u64)
         "jbe")
       (string.eq
-        (backend.compiler-backend-compare-true-jcc bases lt-op-3 region-i64)
+        (be_scalar.compiler-backend-compare-true-jcc bases lt-op-3 region-i64)
         "jl")
       (string.eq
-        (backend.compiler-backend-compare-setcc
+        (be_scalar.compiler-backend-compare-setcc
           bases
           ge-op-4
           (owned_view.compiler-owned-shared-view region-region-u32))
@@ -9328,7 +9359,7 @@ high:
     [ty : ast.AstType (compiler-backend-register-group-test-type)]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    (match (backend.compiler-backend-emit-mov
+    (match (be_calls.compiler-backend-emit-mov
       (ast.ast-node-pool-reader-type-segment-bases)
       assignments
       1
@@ -9355,7 +9386,7 @@ high:
       [args (ir.CompilerIrCallArgs.One (I64 7))]
       [types (ast.ast-type-cons (& ty) (& (ast.ast-type-list-new)))]
       [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         type-segment-bases
         target
         (Platform)
@@ -9524,7 +9555,7 @@ high:
           (compiler_liveness.compiler-live-set1 0)
           (compiler_liveness.compiler-live-set-empty)))]
     [packed : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-pack
+      (be_scalar.compiler-backend-emit-pack
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         0
@@ -9540,7 +9571,7 @@ high:
         (cdiag.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [data : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-word
+      (be_scalar.compiler-backend-emit-word
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         1
@@ -9551,7 +9582,7 @@ high:
         (cdiag.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [length : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-word
+      (be_scalar.compiler-backend-emit-word
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         2
@@ -9592,7 +9623,7 @@ high:
             3)
           (compiler_liveness.compiler-live-set-empty)))]
     [packed : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-pack
+      (be_scalar.compiler-backend-emit-pack
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         0
@@ -9608,7 +9639,7 @@ high:
         (cdiag.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [data : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-word
+      (be_scalar.compiler-backend-emit-word
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         1
@@ -9619,7 +9650,7 @@ high:
         (cdiag.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [length : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-word
+      (be_scalar.compiler-backend-emit-word
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         2
@@ -9630,7 +9661,7 @@ high:
         (cdiag.compiler-diagnostic-at-start "" "")
         index.backend-state)]
     [copied : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-mov
+      (be_calls.compiler-backend-emit-mov
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         3
@@ -10049,7 +10080,7 @@ high:
     [_slot : unit (set-scratch-emergency-slot-offset! function-state -64)]
     [_pending : unit
       (be_operand.compiler-backend-emergency-add! function-state "%r9")]
-    (match (backend.compiler-backend-emit-branch
+    (match (be_scalar.compiler-backend-emit-branch
       (regalloc.compiler-reg-assignment-table-empty)
       "global_branch_restore"
       (Global (ci.intern "global_branch_restore_condition"))
@@ -10582,7 +10613,7 @@ high:
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
-    (match (backend.compiler-backend-emit-binop
+    (match (be_scalar.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-var-types-empty)
       (Empty)
@@ -10595,7 +10626,7 @@ high:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(Ok add-asm)
-        (match (backend.compiler-backend-emit-binop
+        (match (be_scalar.compiler-backend-emit-binop
           (ast.ast-node-pool-reader-type-segment-bases)
           (regalloc.compiler-reg-var-types-empty)
           (Empty)
@@ -10608,7 +10639,7 @@ high:
           (be_state.compiler-backend-state-new
             (ci.intern-compat-state-capture-active)))
           [(Ok mul-asm)
-            (match (backend.compiler-backend-emit-binop
+            (match (be_scalar.compiler-backend-emit-binop
               (ast.ast-node-pool-reader-type-segment-bases)
               (regalloc.compiler-reg-var-types-empty)
               (Empty)
@@ -10621,7 +10652,7 @@ high:
               (be_state.compiler-backend-state-new
                 (ci.intern-compat-state-capture-active)))
               [(Ok shl-asm)
-                (match (backend.compiler-backend-emit-binop
+                (match (be_scalar.compiler-backend-emit-binop
                   (ast.ast-node-pool-reader-type-segment-bases)
                   (regalloc.compiler-reg-var-types-empty)
                   (Empty)
@@ -10634,7 +10665,7 @@ high:
                   (be_state.compiler-backend-state-new
                     (ci.intern-compat-state-capture-active)))
                   [(Ok cmp-asm)
-                    (match (backend.compiler-backend-emit-branch
+                    (match (be_scalar.compiler-backend-emit-branch
                       assignments
                       "peephole"
                       (Var 0)
@@ -12554,7 +12585,7 @@ high:
           (I64))
         0
         (I64))]
-    (match (backend.compiler-backend-emit-binop
+    (match (be_scalar.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-var-types-empty)
       (Empty)
@@ -12567,7 +12598,7 @@ high:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(Ok add-asm)
-        (match (backend.compiler-backend-emit-binop
+        (match (be_scalar.compiler-backend-emit-binop
           (ast.ast-node-pool-reader-type-segment-bases)
           cmp-types
           (Empty)
@@ -12588,12 +12619,12 @@ high:
               (string.eq
                 (let
                   [op (ir.CompilerIrBinOp.And)]
-                  (backend.compiler-backend-binop-direct-mnemonic op))
+                  (be_scalar.compiler-backend-binop-direct-mnemonic op))
                 "and")
               (string.eq
                 (let
                   [op (ir.CompilerIrBinOp.Or)]
-                  (backend.compiler-backend-binop-direct-mnemonic op))
+                  (be_scalar.compiler-backend-binop-direct-mnemonic op))
                 "or"))]
           [(Err _) false])]
       [(Err _) false])))
@@ -12745,7 +12776,7 @@ high:
     [_win : unit (compiler-backend-set-current-fn-win64! backend-state)]
     [rhs-rax : regalloc.CompilerRegAssignmentTable (reg-homes "%1=%rax")]
     [ok : bool
-      (match (backend.compiler-backend-emit-compare-branch
+      (match (be_scalar.compiler-backend-emit-compare-branch
         (ast.ast-node-pool-reader-type-segment-bases)
         rhs-rax
         "cmp"
@@ -14249,7 +14280,7 @@ f:
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-peephole-assignments)]
-    (match (backend.compiler-backend-emit-branch
+    (match (be_scalar.compiler-backend-emit-branch
       assignments
       "branch"
       (Var 0)
@@ -14259,7 +14290,7 @@ f:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(Ok false-fallthrough)
-        (match (backend.compiler-backend-emit-branch
+        (match (be_scalar.compiler-backend-emit-branch
           assignments
           "branch"
           (Var 0)
@@ -14290,7 +14321,7 @@ f:
 (define (compiler-backend-zero-compare-ok?) : bool
   (and
     (asm-ok?
-      (backend.compiler-backend-emit-binop
+      (be_scalar.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (Empty)
@@ -14305,7 +14336,7 @@ f:
       (has "    testq %r13, %r13\n    sete %r13b\n")
       (lacks "    cmpq $0"))
     (asm-ok?
-      (backend.compiler-backend-emit-binop
+      (be_scalar.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (Empty)
@@ -14320,7 +14351,7 @@ f:
       (has "    testq %r13, %r13\n    setg %r13b\n")
       (lacks "    cmpq $0"))
     (asm-ok?
-      (backend.compiler-backend-emit-binop
+      (be_scalar.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (Empty)
@@ -14406,28 +14437,30 @@ f:
     ;; the formatter: swapped at scale 1, spelled outright at every other
     ;; scale (BE-4), and a %rbp INDEX (BE-1) unchanged
     (string.eq
-      (backend.compiler-backend-gep-index-address "%rbp" 1 "%r13")
+      (be_scalar.compiler-backend-gep-index-address "%rbp" 1 "%r13")
       "(%r13,%rbp,1)")
     (string.eq
-      (backend.compiler-backend-gep-index-address "%rbp" 8 "%r13")
+      (be_scalar.compiler-backend-gep-index-address "%rbp" 8 "%r13")
       "(%rbp,%r13,8)")
-    (string.eq (backend.compiler-backend-gep-index-address "%rbp" 1 "%rbp") "")
     (string.eq
-      (backend.compiler-backend-gep-index-address "%r12" 1 "%rbp")
+      (be_scalar.compiler-backend-gep-index-address "%rbp" 1 "%rbp")
+      "")
+    (string.eq
+      (be_scalar.compiler-backend-gep-index-address "%r12" 1 "%rbp")
       "(%r12,%rbp,1)")
     (string.eq
-      (backend.compiler-backend-gep-index-address-disp 16 "%rbp" 1 "%r13")
+      (be_scalar.compiler-backend-gep-index-address-disp 16 "%rbp" 1 "%r13")
       "16(%r13,%rbp,1)")
     ;; the filter: %rbp admitted at every SIB scale (BE-4), declined at none
     (string.eq
-      (backend.compiler-backend-address-base-filter-sib "%rbp" 1)
+      (be_scalar.compiler-backend-address-base-filter-sib "%rbp" 1)
       "%rbp")
     (string.eq
-      (backend.compiler-backend-address-base-filter-sib "%rbp" 8)
+      (be_scalar.compiler-backend-address-base-filter-sib "%rbp" 8)
       "%rbp")
-    (string.eq (backend.compiler-backend-address-base-filter-sib "%rbp" 3) "")
+    (string.eq (be_scalar.compiler-backend-address-base-filter-sib "%rbp" 3) "")
     (string.eq
-      (backend.compiler-backend-address-base-filter-sib "%r12" 8)
+      (be_scalar.compiler-backend-address-base-filter-sib "%r12" 8)
       "%r12")
     ;; end to end: a byte load off a %rbp base reads its home in place
     (asm-ok?
@@ -14501,17 +14534,17 @@ f:
     ;; The displacement is the SIB form's own field at every spellable scale,
     ;; and only there: a non-SIB stride keeps the separate `addq $D`.
     (string.eq
-      (backend.compiler-backend-gep-index-base-asm-disp 16 "%r12" 8 "%r13")
+      (be_scalar.compiler-backend-gep-index-base-asm-disp 16 "%r12" 8 "%r13")
       "    leaq 16(%r12,%r13,8), %r12\n")
     (string.eq
-      (backend.compiler-backend-gep-index-base-asm-disp 24 "%r12" 1 "%r13")
+      (be_scalar.compiler-backend-gep-index-base-asm-disp 24 "%r12" 1 "%r13")
       "    leaq 24(%r12,%r13,1), %r12\n")
     (string.eq
-      (backend.compiler-backend-gep-index-base-asm-disp 0 "%r12" 1 "%r13")
+      (be_scalar.compiler-backend-gep-index-base-asm-disp 0 "%r12" 1 "%r13")
       "    addq %r13, %r12\n")
     (let
       [text
-        (backend.compiler-backend-gep-index-base-asm-disp 16 "%r12" 24 "%r13")]
+        (be_scalar.compiler-backend-gep-index-base-asm-disp 16 "%r12" 24 "%r13")]
       (asm-has? text "    addq $16, %r12\n"))))
 
 ;; SS-P5(b)/(c) fixtures. var 0 and var 1 are the comparison's operands (and,
@@ -14653,7 +14686,7 @@ f:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     (and
-      (match (backend.compiler-backend-emit-word
+      (match (be_scalar.compiler-backend-emit-word
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         1
@@ -14665,7 +14698,7 @@ f:
         backend-state)
         [(Ok asm) (string.eq asm "    movq %r12, %r13\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-unop
+      (match (be_scalar.compiler-backend-emit-unop
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         1
@@ -14686,13 +14719,13 @@ f:
         (ci.intern-compat-state-capture-active))]
     (and
       (string.eq
-        (backend.compiler-backend-bit-length-reg-asm true "%rax")
+        (be_scalar.compiler-backend-bit-length-reg-asm true "%rax")
         "    testq %rax, %rax\n    jle 1f\n    bsrq %rax, %rax\n    addq $1, %rax\n    jmp 2f\n1:\n    xorq %rax, %rax\n2:\n")
       (string.eq
-        (backend.compiler-backend-bit-length-reg-asm false "%r9")
+        (be_scalar.compiler-backend-bit-length-reg-asm false "%r9")
         "    testq %r9, %r9\n    je 1f\n    bsrq %r9, %r9\n    addq $1, %r9\n    jmp 2f\n1:\n    xorq %r9, %r9\n2:\n")
       (asm-ok?
-        (backend.compiler-backend-emit-unop
+        (be_scalar.compiler-backend-emit-unop
           (ast.ast-node-pool-reader-type-segment-bases)
           (regalloc.compiler-reg-assignment-table-empty)
           1
@@ -14702,7 +14735,7 @@ f:
           backend-state)
         (has "    jle 1f\n    bsrq " "\n2:\n"))
       (asm-ok?
-        (backend.compiler-backend-emit-unop
+        (be_scalar.compiler-backend-emit-unop
           (ast.ast-node-pool-reader-type-segment-bases)
           (regalloc.compiler-reg-assignment-table-empty)
           1
@@ -14926,7 +14959,7 @@ f:
     (set-scratch-cycle-temp-base-offset!
       (be_state.compiler-backend-state-function-state backend-state)
       -512)
-    (backend.compiler-backend-emit-phi-edge-copies
+    (be_calls.compiler-backend-emit-phi-edge-copies
       (ast.ast-node-pool-reader-type-segment-bases)
       assignments
       blocks
@@ -15037,7 +15070,7 @@ f:
       (be_state.compiler-backend-state-function-state backend-state)
       -128)
     (asm-ok?
-      (backend.compiler-backend-emit-mov-phi-copy-edge
+      (be_calls.compiler-backend-emit-mov-phi-copy-edge
         (ast.ast-node-pool-reader-type-segment-bases)
         (compiler-backend-phi-xmm-stage-fused-assignments)
         blocks
@@ -15150,7 +15183,7 @@ f:
         backend-state
         (be_facts.compiler-backend-phi-target-labels-for-blocks
           (compiler-backend-branch-phi-blocks)))]
-    (match (backend.compiler-backend-emit-compare-branch-with-phi-copies
+    (match (be_calls.compiler-backend-emit-compare-branch-with-phi-copies
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-branch-phi-assignments)
       "phi_edge"
@@ -15180,7 +15213,7 @@ f:
 
 (define (compiler-backend-phi-immediate-stack-copy-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-phi-edge-copies
+    (be_calls.compiler-backend-emit-phi-edge-copies
       (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-assignment-table-empty)
       (compiler-backend-branch-phi-blocks)
@@ -15195,7 +15228,7 @@ f:
     (lacks "    movl $1, %eax\n" "    movq %rax, -8(%rbp)\n")))
 
 (define (compiler-backend-phi-direct-scalar-copy-ok?) : bool
-  (match (backend.compiler-backend-emit-phi-edge-copies
+  (match (be_calls.compiler-backend-emit-phi-edge-copies
     (ast.ast-node-pool-reader-type-segment-bases)
     (reg-homes "%0=%r12 %1=%r13")
     (compiler-backend-branch-phi-blocks)
@@ -15207,7 +15240,7 @@ f:
       (ir.compiler-ir-extern-seq-empty))
     4)
     [(Ok reg-reg)
-      (match (backend.compiler-backend-emit-phi-edge-copies
+      (match (be_calls.compiler-backend-emit-phi-edge-copies
         (ast.ast-node-pool-reader-type-segment-bases)
         (reg-homes "%0=%r12 %1=spill:-16")
         (compiler-backend-branch-phi-blocks)
@@ -15219,7 +15252,7 @@ f:
           (ir.compiler-ir-extern-seq-empty))
         4)
         [(Ok spill-reg)
-          (match (backend.compiler-backend-emit-phi-edge-copies
+          (match (be_calls.compiler-backend-emit-phi-edge-copies
             (ast.ast-node-pool-reader-type-segment-bases)
             (reg-homes "%0=spill:-8 %1=%r13")
             (compiler-backend-branch-phi-blocks)
@@ -15471,7 +15504,7 @@ f:
           -512)
         (set-state-emit-instr-post-base! backend-state 8))]
     [ok : bool
-      (match (backend.compiler-backend-emit-phi-edge-copies
+      (match (be_calls.compiler-backend-emit-phi-edge-copies
         (ast.ast-node-pool-reader-type-segment-bases)
         (compiler-backend-phi-same-home-assignments)
         (compiler-backend-phi-same-home-blocks)
@@ -15480,7 +15513,7 @@ f:
         program-index
         0)
         [(Ok same-home)
-          (match (backend.compiler-backend-emit-phi-edge-copies
+          (match (be_calls.compiler-backend-emit-phi-edge-copies
             (ast.ast-node-pool-reader-type-segment-bases)
             (regalloc.compiler-reg-assignment-table-empty)
             (compiler-backend-phi-cycle-blocks)
@@ -15549,7 +15582,7 @@ f:
         (set-state-emit-instr-post-base! backend-state 0))]
     [ok : bool
       (asm-ok?
-        (backend.compiler-backend-emit-phi-edge-copies
+        (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
           (regalloc.compiler-reg-assignment-table-empty)
           (compiler-backend-phi-cycle-blocks)
@@ -15595,7 +15628,7 @@ f:
           -512))]
     [ok : bool
       (asm-ok?
-        (backend.compiler-backend-emit-phi-edge-copies
+        (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-group-cycle-assignments)
           (compiler-backend-phi-group-cycle-blocks)
@@ -15639,7 +15672,7 @@ f:
             1)
           (compiler_liveness.compiler-live-set-empty)))]
     [copied : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-phi-edge-copies
+      (be_calls.compiler-backend-emit-phi-edge-copies
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-assignment-table-empty)
         blocks
@@ -15665,7 +15698,7 @@ f:
         (ir.compiler-ir-extern-seq-empty))]
     (and
       (asm-ok?
-        (backend.compiler-backend-emit-phi-edge-copies
+        (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-f64-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
@@ -15675,7 +15708,7 @@ f:
           2)
         (has "    movsd %xmm2, -512(%rbp)\n" "    movsd -512(%rbp), %xmm3\n"))
       (asm-ok?
-        (backend.compiler-backend-emit-phi-edge-copies
+        (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-f32-three-cycle-assignments)
           (compiler-backend-phi-f32-three-cycle-blocks)
@@ -15686,7 +15719,7 @@ f:
         (has "    movss %xmm2, -512(%rbp)\n" "    movss -512(%rbp), %xmm5\n")
         (lacks "movsd"))
       (asm-ok?
-        (backend.compiler-backend-emit-phi-edge-copies
+        (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-f64-spill-cycle-assignments)
           (compiler-backend-phi-f64-cycle-blocks)
@@ -15697,7 +15730,7 @@ f:
         (has "-512(%rbp)")
         (lacks "    movsd -16(%rbp), %xmm4\n"))
       (asm-ok?
-        (backend.compiler-backend-emit-phi-edge-copies
+        (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-backend-phi-group-f64-cycle-assignments)
           (compiler-backend-phi-group-f64-cycle-blocks)
@@ -15718,7 +15751,7 @@ f:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [restore : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-arg-move
+      (be_calls.compiler-backend-emit-arg-move
         (regalloc.compiler-reg-assignment-table-empty)
         (BackendArgMove cabi.compiler-reg-id-rsi BackendArgMoveStackPop)
         backend-state)]
@@ -15727,7 +15760,7 @@ f:
         [(Ok restore-asm)
           (let
             [save-asm : String
-              (backend.compiler-backend-emit-arg-cycle-temp-save
+              (be_calls.compiler-backend-emit-arg-cycle-temp-save
                 cabi.compiler-reg-id-rdi
                 backend-state)]
             [asm : String (str_cat.str-cat save-asm restore-asm)]
@@ -15751,7 +15784,7 @@ f:
         [target (be_state.CompilerBackendTarget.Linux)]
         [types (compiler-backend-i64-type-list8)]
         [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
-        (backend.compiler-backend-emit-call-args
+        (be_calls.compiler-backend-emit-call-args
           type-segment-bases
           target
           (Platform)
@@ -15786,7 +15819,7 @@ f:
         [target (be_state.CompilerBackendTarget.Linux)]
         [types (compiler-backend-i64-type-list8)]
         [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
-        (backend.compiler-backend-emit-call-args
+        (be_calls.compiler-backend-emit-call-args
           type-segment-bases
           target
           (Platform)
@@ -15840,7 +15873,7 @@ f:
 ;; parallel marshalling breaks the XMM cycle through the cycle-temp slot.
 (define (compiler-backend-tail-parallel-two-class-cycle-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-direct-tail-call-args-parallel
+    (be_calls.compiler-backend-emit-direct-tail-call-args-parallel
       (ast.ast-node-pool-reader-type-segment-bases)
       (be_state.CompilerBackendTarget.Linux)
       (Platform)
@@ -15862,7 +15895,7 @@ f:
 ;; A Win64 tail call whose fifth argument (a stack slot) is read out of %xmm0,
 ;; which the first argument overwrites: the stack store comes first.
 (define (compiler-backend-tail-parallel-xmm-stack-store-first-ok?) : bool
-  (match (backend.compiler-backend-emit-direct-tail-call-args-parallel
+  (match (be_calls.compiler-backend-emit-direct-tail-call-args-parallel
     (ast.ast-node-pool-reader-type-segment-bases)
     (be_state.CompilerBackendTarget.Windows)
     (Platform)
@@ -15895,7 +15928,7 @@ f:
         [target (be_state.CompilerBackendTarget.Linux)]
         [types (compiler-backend-i64-type-list8)]
         [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
-        (backend.compiler-backend-emit-call-args
+        (be_calls.compiler-backend-emit-call-args
           type-segment-bases
           target
           (Platform)
@@ -16070,12 +16103,12 @@ f:
 (define (compiler-backend-target-windows-stack-probe-ok?) : bool
   (let
     [win : String
-      (backend.compiler-backend-emit-stack-sub
+      (be_scalar.compiler-backend-emit-stack-sub
         (be_state.compiler-backend-target-policy-new
           be_state.CompilerBackendTarget.Windows)
         4800)]
     [linux : String
-      (backend.compiler-backend-emit-stack-sub
+      (be_scalar.compiler-backend-emit-stack-sub
         (be_state.compiler-backend-target-policy-new
           be_state.CompilerBackendTarget.Linux)
         4800)]
@@ -16118,7 +16151,7 @@ f:
         [text : String
           (if (> size 32768)
             (be_operand.compiler-backend-emit-stack-probe size)
-            (backend.compiler-backend-emit-stack-sub policy size))]
+            (be_scalar.compiler-backend-emit-stack-sub policy size))]
         [object : String
           (be_object.compiler-backend-object-prologue-bytes
             (be_state.CompilerBackendTarget.Linux)
@@ -21896,7 +21929,7 @@ entry:
     [state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (backend.compiler-backend-simd-scratch-plan!
+    (be_scalar.compiler-backend-simd-scratch-plan!
       (be_state.compiler-backend-state-function-state state)
       bytes
       192)
@@ -21938,140 +21971,140 @@ entry:
   (and
     (be_state.backend-and8
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-binop (Shl (I8)) 64 (I8))
           false)
         448)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-binop (Shr (U8)) 32 (U8))
           true)
         224)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-binop (Shl (I16)) 16 (I16))
           true)
         128)
       ;; AVX-512 has vpsllvw.
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-binop (Shl (I16)) 32 (I16))
           false)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-binop (Add) 32 (I8))
           true)
         0)
       ;; A shape neither ISA accepts is diagnosed, not staged.
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-binop (Shl (I8)) 7 (I8))
           true)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-load 16 (I16))
           true)
         32)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-load 32 (Bool))
           true)
         32))
     (be_state.backend-and8
       ;; vpmaskmovq, and AVX-512 masked moves.
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-load 4 (I64))
           true)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-load 32 (I16))
           false)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-store 32 (U8))
           true)
         32)
       ;; An AVX2 bool store tests mask bits in GPRs; AVX-512 builds its bytes
       ;; in registers.
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-store 32 (Bool))
           true)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-store 64 (Bool))
           false)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-store 8 (F32))
           true)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-gather 8 (I32))
           true)
         128)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-gather 4 (I64))
           true)
         32))
     (be_state.backend-and8
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-gather 16 (F32))
           false)
         128)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-gather 8 (F64))
           false)
         0)
       ;; An AVX2 dword gather is eight lanes.
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-gather 4 (I32))
           true)
         0)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-shuffle 4 (I64))
           true)
         96)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-shuffle 8 (I32))
           true)
         128)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-shuffle 8 (I64))
           true)
         192)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-shuffle 16 (F32))
           false)
         256)
       (=
-        (backend.compiler-backend-simd-scratch-request
+        (be_scalar.compiler-backend-simd-scratch-request
           (compiler-backend-simd-scratch-tail-mask 8)
           true)
         32))
     (=
-      (backend.compiler-backend-simd-scratch-request
+      (be_scalar.compiler-backend-simd-scratch-request
         (compiler-backend-simd-scratch-tail-mask 4)
         true)
       0)
     (=
-      (backend.compiler-backend-simd-scratch-request
+      (be_scalar.compiler-backend-simd-scratch-request
         (compiler-backend-simd-scratch-tail-mask 16)
         false)
       0)))
@@ -22109,20 +22142,20 @@ entry:
             (compiler-backend-simd-scratch-tail-mask 4)
             (compiler-backend-simd-scratch-binop (Add) 32 (I8)))))]
     (and
-      (= (backend.compiler-backend-simd-scratch-census mixed (Avx2)) 128)
+      (= (be_scalar.compiler-backend-simd-scratch-census mixed (Avx2)) 128)
       (=
-        (backend.compiler-backend-simd-scratch-census
+        (be_scalar.compiler-backend-simd-scratch-census
           (owned_view.compiler-owned-shared-view widest)
           (Avx512))
         448)
-      (= (backend.compiler-backend-simd-scratch-census native (Avx2)) 0)
+      (= (be_scalar.compiler-backend-simd-scratch-census native (Avx2)) 0)
       (=
-        (backend.compiler-backend-simd-scratch-census
+        (be_scalar.compiler-backend-simd-scratch-census
           (ir.compiler-ir-block-list-empty)
           (Avx2))
         0)
       ;; A scalar-mode function is not walked.
-      (= (backend.compiler-backend-simd-scratch-census widest (Scalar)) 0))))
+      (= (be_scalar.compiler-backend-simd-scratch-census widest (Scalar)) 0))))
 
 ;; A claim beyond the plan fails at its instruction, naming both sizes. The
 ;; check after the body fails a plan no sequence claimed in full, passes once
@@ -22146,7 +22179,7 @@ entry:
     [state : be_state.CompilerBackendState
       (compiler-backend-simd-staging-state 32)]
     [unclaimed : bool
-      (backend.compiler-backend-simd-scratch-drift?
+      (be_scalar.compiler-backend-simd-scratch-drift?
         (be_state.compiler-backend-state-function-state state))]
     [partial : bool
       (match (be_operand.compiler-backend-simd-scratch-checked
@@ -22155,7 +22188,7 @@ entry:
         16
         (Ok ""))
         [(Ok _)
-          (backend.compiler-backend-simd-scratch-drift?
+          (be_scalar.compiler-backend-simd-scratch-drift?
             (be_state.compiler-backend-state-function-state state))]
         [(Err _) false])]
     [full : bool
@@ -22166,19 +22199,19 @@ entry:
         (Ok ""))
         [(Ok _)
           (not
-            (backend.compiler-backend-simd-scratch-drift?
+            (be_scalar.compiler-backend-simd-scratch-drift?
               (be_state.compiler-backend-state-function-state state)))]
         [(Err _) false])]
     [in-plan : bool
       (begin
         (be_operand.compiler-backend-simd-scratch-address state 31)
         (not
-          (backend.compiler-backend-simd-scratch-drift?
+          (be_scalar.compiler-backend-simd-scratch-drift?
             (be_state.compiler-backend-state-function-state state))))]
     [stray : bool
       (begin
         (be_operand.compiler-backend-simd-scratch-address state 32)
-        (backend.compiler-backend-simd-scratch-drift?
+        (be_scalar.compiler-backend-simd-scratch-drift?
           (be_state.compiler-backend-state-function-state state)))]
     (and
       (match over
@@ -22932,7 +22965,7 @@ entry:
     (match (backend.compiler-backend-spmd-mask-entry-plan-add-spill!
       (&mut plan)
       k2
-      (backend.compiler-backend-parallel-spill-resource -8)
+      (be_calls.compiler-backend-parallel-spill-resource -8)
       "-8(%rbp)")
       [(Ok _)
         (match (backend.compiler-backend-spmd-mask-entry-plan-add-register!
@@ -24495,7 +24528,10 @@ entry:
       (compiler-backend-runtime-helper-full-plan)]
     [features : runtime_common.CompilerBackendRuntimeFeatures
       (be_data.compiler-backend-runtime-features plan)]
-    (be_data.compiler-backend-runtime-functions-for-target target features)))
+    (be_data.compiler-backend-runtime-functions-for-target
+      target
+      features
+      false)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -25010,7 +25046,7 @@ entry:
         (clone blocks)
         (backend.compiler-backend-function-use-counts 6 (clone blocks)))]
     [copies
-      (match (backend.compiler-backend-leading-phi-copies-seq
+      (match (be_calls.compiler-backend-leading-phi-copies-seq
         state
         (clone assignments)
         (irt.instrs
@@ -25020,7 +25056,7 @@ entry:
         [(Ok copies) copies]
         [(Err _) (be_state.compiler-backend-phi-copy-seq-with-capacity 0)])]
     (test.assert-true
-      (match (backend.compiler-backend-phi-copy-list-decision
+      (match (be_calls.compiler-backend-phi-copy-list-decision
         state
         (clone assignments)
         (clone copies))
@@ -25028,7 +25064,7 @@ entry:
         [_ false])
       "materialization has no source register, so this is not a swap cycle")
     (test.assert-true
-      (match (backend.compiler-backend-phi-source-replace-home
+      (match (be_calls.compiler-backend-phi-source-replace-home
         state
         (clone assignments)
         (Value (Var 2))
@@ -25038,7 +25074,7 @@ entry:
         [_ false])
       "saving the nominal home must not replace an address with its contents")
     (test.assert-i64-eq
-      (backend.compiler-backend-phi-copy-list-drop-same-home
+      (be_calls.compiler-backend-phi-copy-list-drop-same-home
         state
         (reg-homes "%2=%rax %3=%rax %4=%rcx %5=%rbx")
         (clone copies)).len
@@ -25046,7 +25082,7 @@ entry:
       "same-home filtering retains the address materialization")
     (test.assert-true
       (asm-ok?
-        (backend.compiler-backend-emit-phi-edge-copies
+        (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
           (clone assignments)
           blocks
@@ -25059,7 +25095,7 @@ entry:
       "emit the real dependency before materializing the address")
     (backend.compiler-backend-addr-of-forwarding-disable! state)
     (test.assert-true
-      (match (backend.compiler-backend-phi-copy-list-decision
+      (match (be_calls.compiler-backend-phi-copy-list-decision
         state
         assignments
         copies)
@@ -25521,7 +25557,7 @@ entry:
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     (and
-      (match (backend.compiler-backend-emit-store-ptr
+      (match (be_scalar.compiler-backend-emit-store-ptr
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         (Var 0)
@@ -25532,7 +25568,7 @@ entry:
         [(Ok asm)
           (and (string.eq asm "    movq $7, (%r12)\n") (asm-lacks? asm "%r10"))]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-store-to-gep
+      (match (be_scalar.compiler-backend-emit-store-to-gep
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         (Var 0)
@@ -25546,7 +25582,7 @@ entry:
         [(Ok asm)
           (and (string.eq asm "    movq $9, 8(%r12)\n") (asm-lacks? asm "%r10"))]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-store-ptr
+      (match (be_scalar.compiler-backend-emit-store-ptr
         (ast.ast-node-pool-reader-type-segment-bases)
         r11-assignments
         (Var 0)
@@ -25932,7 +25968,7 @@ entry:
       (reg-homes "%5=%r12 %6=%rbx")]
     [stack-src : regalloc.CompilerRegAssignmentTable (reg-homes "%6=%rbx")]
     (and
-      (match (backend.compiler-backend-emit-cast
+      (match (be_scalar.compiler-backend-emit-cast
         (ast.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (ir.compiler-ir-label "entry")
@@ -25945,7 +25981,7 @@ entry:
         index.backend-state)
         [(Ok asm) (string.eq asm "    movsbq %r12b, %rbx\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-cast
+      (match (be_scalar.compiler-backend-emit-cast
         (ast.ast-node-pool-reader-type-segment-bases)
         "_tl_test"
         (ir.compiler-ir-label "entry")
@@ -26009,7 +26045,7 @@ entry:
       (reg-homes "%0=%r14 %1=%r15 %2=%r14/%r15")]
     [diag : cdiag.CompilerDiagnostic (cdiag.compiler-diagnostic-at-start "" "")]
     (and
-      (match (backend.compiler-backend-emit-pack
+      (match (be_scalar.compiler-backend-emit-pack
         (ast.ast-node-pool-reader-type-segment-bases)
         direct-assignments
         2
@@ -26021,7 +26057,7 @@ entry:
         index.backend-state)
         [(Ok asm) (string.eq asm "    movq %r12, %r14\n    movq %rbx, %r15\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-pack
+      (match (be_scalar.compiler-backend-emit-pack
         (ast.ast-node-pool-reader-type-segment-bases)
         noop-assignments
         2
@@ -26429,17 +26465,17 @@ entry:
 (define (compiler-backend-gep-fold-builders-ok?) : bool
   (and
     (string.eq
-      (backend.compiler-backend-gep-index-address-disp 8 "%rax" 8 "%rcx")
+      (be_scalar.compiler-backend-gep-index-address-disp 8 "%rax" 8 "%rcx")
       "8(%rax,%rcx,8)")
     (string.eq
-      (backend.compiler-backend-gep-index-address-disp 0 "%rax" 8 "%rcx")
+      (be_scalar.compiler-backend-gep-index-address-disp 0 "%rax" 8 "%rcx")
       "(%rax,%rcx,8)")
     (string.eq
-      (backend.compiler-backend-gep-index-address-disp 8 "%rax" 32 "%rcx")
+      (be_scalar.compiler-backend-gep-index-address-disp 8 "%rax" 32 "%rcx")
       "")
     (let
       [text
-        (backend.compiler-backend-gep-index-base-asm-disp 24 "%rax" 32 "%rcx")]
+        (be_scalar.compiler-backend-gep-index-base-asm-disp 24 "%rax" 32 "%rcx")]
       (asm-has? text "    addq $24, %rax\n"))))
 
 ;; Consuming an ordinal with the wrong shape poisons the function (the
@@ -27224,14 +27260,14 @@ entry:
       cabi.compiler-reg-id-r12
       "    leaq (%r12,%r12,4), %r12\n")
     (string.eq
-      (backend.compiler-backend-mul-immediate-direct-asm
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
         "%rbp"
         "%rcx"
         "$3"
         (I64 3))
       "    imulq $3, %rbp, %rcx\n")
     (string.eq
-      (backend.compiler-backend-mul-immediate-direct-asm
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
         "%rbp"
         "%rbp"
         "$9"
@@ -27442,7 +27478,7 @@ entry:
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (match (backend.compiler-backend-emit-cpuid
+    (match (be_calls.compiler-backend-emit-cpuid
       assignments
       2
       leaf
@@ -27600,7 +27636,7 @@ entry:
 (define (compiler-backend-direct-float-precision-cast-asm
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27638,7 +27674,7 @@ entry:
 (define (compiler-backend-spill-float-precision-cast-asm
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27676,7 +27712,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-direct-int-to-float-cast-asm [to-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27708,7 +27744,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-spill-int-to-float-cast-asm [to-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27744,7 +27780,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-spill-u64-to-float-cast-asm [to-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27784,7 +27820,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-direct-float-to-int-cast-asm [from-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27816,7 +27852,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-spill-float-to-int-cast-asm [from-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27854,7 +27890,7 @@ entry:
 (define (compiler-backend-float-to-u64-cast-with-homes
   [from-ty : ast.AstType]
   [assignments : regalloc.CompilerRegAssignmentTable]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-cast
+  (be_scalar.compiler-backend-emit-cast
     (ast.ast-node-pool-reader-type-segment-bases)
     "test_cast"
     (ir.compiler-ir-label "entry")
@@ -27979,7 +28015,7 @@ entry:
 
 (define (compiler-backend-spill-int-cast-home-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-cast
+    (be_scalar.compiler-backend-emit-cast
       (ast.ast-node-pool-reader-type-segment-bases)
       "test_cast"
       (ir.compiler-ir-label "entry")
@@ -28022,7 +28058,7 @@ entry:
   [to-ty : ast.AstType]
   [src-home : i64]
   [dst-home : i64]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-bitcast
+  (be_scalar.compiler-backend-emit-bitcast
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-assignments-prepend
       (& (regalloc.CompilerRegAssignment 0 (Register src-home)))
@@ -28086,7 +28122,7 @@ entry:
 
 (define (compiler-backend-spill-float-to-int-bitcast-asm
   [from-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-bitcast
+  (be_scalar.compiler-backend-emit-bitcast
     (ast.ast-node-pool-reader-type-segment-bases)
     (reg-homes "%0=%xmm3 %1=spill:-16")
     1
@@ -28120,7 +28156,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-spill-int-to-float-bitcast-asm [to-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-bitcast
+  (be_scalar.compiler-backend-emit-bitcast
     (ast.ast-node-pool-reader-type-segment-bases)
     (reg-homes "%0=%r12 %1=spill:-16")
     1
@@ -28154,7 +28190,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-spill-float-to-float-bitcast-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-bitcast
+  (be_scalar.compiler-backend-emit-bitcast
     (ast.ast-node-pool-reader-type-segment-bases)
     (reg-homes "%0=%xmm3 %1=spill:-16")
     1
@@ -28189,7 +28225,7 @@ entry:
 
 (define (compiler-backend-spill-int-to-int-bitcast-home-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-bitcast
+    (be_scalar.compiler-backend-emit-bitcast
       (ast.ast-node-pool-reader-type-segment-bases)
       (reg-homes "%0=%r12 %1=spill:-16")
       1
@@ -29070,7 +29106,7 @@ entry:
 
 (define (compiler-backend-direct-f64-neg-home-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-unop
+    (be_scalar.compiler-backend-emit-unop
       (ast.ast-node-pool-reader-type-segment-bases)
       (reg-homes "%0=%xmm2 %1=%xmm3")
       1
@@ -29086,7 +29122,7 @@ entry:
 
 (define (compiler-backend-spill-f64-neg-home-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-unop
+    (be_scalar.compiler-backend-emit-unop
       (ast.ast-node-pool-reader-type-segment-bases)
       (reg-homes "%0=%xmm3 %1=spill:-16")
       1
@@ -29108,7 +29144,7 @@ entry:
     [spill : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%xmm3 %1=spill:-16")]
     (and
-      (match (backend.compiler-backend-emit-unop
+      (match (be_scalar.compiler-backend-emit-unop
         (ast.ast-node-pool-reader-type-segment-bases)
         direct
         1
@@ -29120,7 +29156,7 @@ entry:
         [(Ok asm)
           (string.eq asm "    movsd %xmm2, %xmm3\n    sqrtsd %xmm3, %xmm3\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-unop
+      (match (be_scalar.compiler-backend-emit-unop
         (ast.ast-node-pool-reader-type-segment-bases)
         direct
         1
@@ -29132,7 +29168,7 @@ entry:
         [(Ok asm)
           (string.eq asm "    movss %xmm2, %xmm3\n    sqrtss %xmm3, %xmm3\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-unop
+      (match (be_scalar.compiler-backend-emit-unop
         (ast.ast-node-pool-reader-type-segment-bases)
         spill
         1
@@ -29146,7 +29182,7 @@ entry:
             asm
             "    movsd %xmm3, %xmm2\n    sqrtsd %xmm2, %xmm2\n    movsd %xmm2, -16(%rbp)\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-unop
+      (match (be_scalar.compiler-backend-emit-unop
         (ast.ast-node-pool-reader-type-segment-bases)
         spill
         1
@@ -29375,7 +29411,7 @@ entry:
 (define (compiler-backend-direct-float-binop-asm
   [op : ir.CompilerIrBinOp]
   [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -29414,7 +29450,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-spill-float-arith-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -29460,7 +29496,7 @@ entry:
   [tail : String]) : bool
   (and
     (string.eq
-      (backend.compiler-backend-float-compare-reg-asm
+      (be_scalar.compiler-backend-float-compare-reg-asm
         (owned_view.compiler-owned-shared-view op)
         (F64)
         "%xmm2"
@@ -29468,7 +29504,7 @@ entry:
         "%r12")
       (str_cat.str-cat "    ucomisd %xmm3, %xmm2\n" tail))
     (string.eq
-      (backend.compiler-backend-float-compare-reg-asm
+      (be_scalar.compiler-backend-float-compare-reg-asm
         op
         (F32)
         "%xmm2"
@@ -29498,7 +29534,7 @@ entry:
       "    setae %r12b\n    movzbq %r12b, %r12\n")))
 
 (define (compiler-backend-direct-float-compare-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -29545,7 +29581,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-spill-float-compare-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -29594,7 +29630,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-fallback-float-self-rhs-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -29614,7 +29650,7 @@ entry:
       (ci.intern-compat-state-capture-active))))
 
 (define (compiler-backend-fallback-float-compare-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -29666,7 +29702,7 @@ entry:
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (backend.compiler-backend-emit-binop-return
+    (be_scalar.compiler-backend-emit-binop-return
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -29719,7 +29755,7 @@ entry:
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (backend.compiler-backend-emit-binop-return
+    (be_scalar.compiler-backend-emit-binop-return
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -29745,7 +29781,7 @@ entry:
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    (backend.compiler-backend-emit-binop-return
+    (be_scalar.compiler-backend-emit-binop-return
       (ast.ast-node-pool-reader-type-segment-bases)
       backend-state
       name-id
@@ -29816,7 +29852,7 @@ entry:
         (set-state-emit-current-count! backend-state 1))]
     [name-id : i64 (ci.intern "ret_int")]
     [result : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         name-id
@@ -29846,7 +29882,7 @@ entry:
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%rax %1=%rsi")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare")
@@ -29870,7 +29906,7 @@ entry:
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%rax %1=spill:-16")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_memory")
@@ -29899,7 +29935,7 @@ entry:
           (& (regalloc.CompilerRegAssignment 1 (Remat (I64 0))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_remat")
@@ -29931,7 +29967,7 @@ entry:
               (Remat (Global (ci.intern "tls_current_arena")))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_global")
@@ -29954,7 +29990,7 @@ entry:
         (ci.intern-compat-state-capture-active))]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%rsi")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_reuse_lhs")
@@ -29978,7 +30014,7 @@ entry:
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=spill:-8 %1=%rax")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_rax_frame")
@@ -30010,7 +30046,7 @@ entry:
             (regalloc.CompilerRegAssignment 1 (Remat (I64 0x7ff0000000000000))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_swapped_memory")
@@ -30042,7 +30078,7 @@ entry:
             (regalloc.CompilerRegAssignment 1 (Remat (I64 0x7ff0000000000002))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
-      (backend.compiler-backend-emit-binop-return
+      (be_scalar.compiler-backend-emit-binop-return
         (ast.ast-node-pool-reader-type-segment-bases)
         backend-state
         (ci.intern "ret_int_compare_remat_frame")
@@ -30181,7 +30217,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-direct-condition-branch-ok?) : bool
-  (match (backend.compiler-backend-emit-branch
+  (match (be_scalar.compiler-backend-emit-branch
     (reg-homes "%0=%r12")
     "bool_branch"
     (Var 0)
@@ -30191,7 +30227,7 @@ entry:
     (be_state.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(Ok reg-asm)
-      (match (backend.compiler-backend-emit-branch
+      (match (be_scalar.compiler-backend-emit-branch
         (reg-homes "%0=spill:-24")
         "bool_branch"
         (Var 0)
@@ -30216,7 +30252,7 @@ entry:
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-direct-compare-branch-assignments)]
-    (match (backend.compiler-backend-emit-compare-branch
+    (match (be_scalar.compiler-backend-emit-compare-branch
       (ast.ast-node-pool-reader-type-segment-bases)
       assignments
       "cmp_branch"
@@ -30230,7 +30266,7 @@ entry:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
       [(Ok reg-asm)
-        (match (backend.compiler-backend-emit-compare-branch
+        (match (be_scalar.compiler-backend-emit-compare-branch
           (ast.ast-node-pool-reader-type-segment-bases)
           assignments
           "cmp_branch"
@@ -30333,7 +30369,7 @@ entry:
 (define (compiler-backend-bit-and-low-mask-immediate-ok?) : bool
   (and
     (be_state.backend-and4
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitAnd)
         "$255"
@@ -30343,7 +30379,7 @@ entry:
         false)
         [(Some asm) (string.eq asm "    movzbq %al, %rax\n")]
         [(No) false])
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitAnd)
         "$65535"
@@ -30353,7 +30389,7 @@ entry:
         false)
         [(Some asm) (string.eq asm "    movzwq %ax, %rax\n")]
         [(No) false])
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitAnd)
         "$255"
@@ -30363,7 +30399,7 @@ entry:
         false)
         [(Some asm) (string.eq asm "    movzbl %al, %eax\n")]
         [(No) false])
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitAnd)
         "$65535"
@@ -30374,7 +30410,7 @@ entry:
         [(Some asm) (string.eq asm "    movzwl %ax, %eax\n")]
         [(No) false]))
     (be_state.backend-and4
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitAnd)
         "$254"
@@ -30384,7 +30420,7 @@ entry:
         false)
         [(Some asm) (string.eq asm "    andq $254, %rax\n")]
         [(No) false])
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitAnd)
         "$256"
@@ -30394,7 +30430,7 @@ entry:
         false)
         [(Some asm) (string.eq asm "    andq $256, %rax\n")]
         [(No) false])
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitAnd)
         "$65280"
@@ -30404,7 +30440,7 @@ entry:
         false)
         [(Some asm) (string.eq asm "    andq $65280, %rax\n")]
         [(No) false])
-      (match (backend.compiler-backend-binop-immediate-asm
+      (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (BitOr)
         "$255"
@@ -30417,7 +30453,7 @@ entry:
 
 (define (compiler-backend-bit-and-low-mask-direct-asm
   [rhs : ir.CompilerIrValue]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-empty)
@@ -30452,7 +30488,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-direct-compare-asm [rhs : ir.CompilerIrValue]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -30499,7 +30535,7 @@ entry:
 (define (compiler-backend-direct-immediate-shift-asm
   [op : ir.CompilerIrBinOp]
   [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -30537,7 +30573,7 @@ entry:
     [(Err _) false]))
 
 (define (compiler-backend-direct-rcx-shift-asm [op : ir.CompilerIrBinOp]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -30587,7 +30623,7 @@ entry:
   [op : ir.CompilerIrBinOp]
   [rhs : i64]
   [result-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -30672,7 +30708,7 @@ entry:
           (I64))
         0
         (I64))]
-    (match (backend.compiler-backend-emit-binop
+    (match (be_scalar.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       vars
       (Empty)
@@ -30688,12 +30724,12 @@ entry:
           [result : be_peephole.CompilerBackendRspRebaseResult
             (be_peephole.compiler-backend-rsp-rebase-full-result
               (str_cat.str-cat
-                (backend.compiler-backend-emit-save-callee-regs
+                (be_scalar.compiler-backend-emit-save-callee-regs
                   assignments
                   slot-vars
                   backend-state)
                 binop-asm
-                (backend.compiler-backend-emit-restore-callee-regs
+                (be_scalar.compiler-backend-emit-restore-callee-regs
                   assignments
                   slot-vars
                   backend-state)
@@ -30739,7 +30775,7 @@ entry:
       (asm-has? spilled "    popq %rbp\n"))))
 
 (define (compiler-backend-direct-immediate-zero-asm [op : ir.CompilerIrBinOp]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -30784,7 +30820,7 @@ entry:
 (define (compiler-backend-spill-source-binop-asm
   [op : ir.CompilerIrBinOp]
   [result-ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-insert
       (regalloc.compiler-reg-var-types-insert
@@ -30826,7 +30862,7 @@ entry:
 
 (define (compiler-backend-spill-unop-home-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-unop
+    (be_scalar.compiler-backend-emit-unop
       (ast.ast-node-pool-reader-type-segment-bases)
       (reg-homes "%0=%r12 %1=spill:-16")
       1
@@ -30841,19 +30877,19 @@ entry:
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (be_state.backend-and8
     (string.eq
-      (backend.compiler-backend-emit-load-i64-immediate 0 "%rax")
+      (be_scalar.compiler-backend-emit-load-i64-immediate 0 "%rax")
       "    xorl %eax, %eax\n")
     (string.eq
-      (backend.compiler-backend-emit-load-i64-immediate 1 "%rax")
+      (be_scalar.compiler-backend-emit-load-i64-immediate 1 "%rax")
       "    movl $1, %eax\n")
     (string.eq
-      (backend.compiler-backend-emit-load-i64-immediate 2147483647 "%r11")
+      (be_scalar.compiler-backend-emit-load-i64-immediate 2147483647 "%r11")
       "    movl $2147483647, %r11d\n")
     (string.eq
-      (backend.compiler-backend-emit-load-i64-immediate -1 "%rax")
+      (be_scalar.compiler-backend-emit-load-i64-immediate -1 "%rax")
       "    movq $-1, %rax\n")
     (string.eq
-      (backend.compiler-backend-emit-load-i64-immediate 2147483648 "%rax")
+      (be_scalar.compiler-backend-emit-load-i64-immediate 2147483648 "%rax")
       "    movq $2147483648, %rax\n")
     true
     true
@@ -30934,7 +30970,7 @@ entry:
   (let
     [magic : i64 -8543223828751151131]
     [reg-asm : String
-      (backend.compiler-backend-signed-magic-divmod-src-asm
+      (be_scalar.compiler-backend-signed-magic-divmod-src-asm
         1000000007
         false
         true
@@ -30943,7 +30979,7 @@ entry:
         "%r10"
         (CompilerBackendConstHoistHomeReg cabi.compiler-reg-id-r8 magic false))]
     [frame-asm : String
-      (backend.compiler-backend-signed-magic-divmod-src-asm
+      (be_scalar.compiler-backend-signed-magic-divmod-src-asm
         1000000007
         false
         true
@@ -31263,7 +31299,7 @@ entry:
   [op : ir.CompilerIrBinOp]
   [rhs : ir.CompilerIrValue]
   [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-binop
+  (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-divrem-binop-types
       (owned_view.compiler-owned-shared-view ty))
@@ -31280,7 +31316,7 @@ entry:
 (define (compiler-backend-literal-div-compactions-ok?) : bool
   (let
     [power-quotient : String
-      (backend.compiler-backend-signed-power-divmod-asm
+      (be_scalar.compiler-backend-signed-power-divmod-asm
         8
         false
         false
@@ -31288,7 +31324,7 @@ entry:
         "%r9"
         "%r10")]
     [power-remainder : String
-      (backend.compiler-backend-signed-power-divmod-asm
+      (be_scalar.compiler-backend-signed-power-divmod-asm
         8
         false
         true
@@ -31346,7 +31382,7 @@ entry:
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12 %1=%rax")]
-    (match (backend.compiler-backend-emit-binop
+    (match (be_scalar.compiler-backend-emit-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-divrem-binop-types (I64))
       (Empty)
@@ -31641,7 +31677,7 @@ entry:
   [result-ty : ast.AstType]
   [needle : String]
   [bad : String]) : bool
-  (match (backend.compiler-backend-emit-binop
+  (match (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-narrow-binop-types lhs-ty rhs-ty)
     (Empty)
@@ -31778,7 +31814,7 @@ entry:
     (compiler-backend-test-two-i64-globals "g_next" 0 "g_cap" 0)))
 
 (define (compiler-backend-global-compare-binop-ok?) : bool
-  (match (backend.compiler-backend-emit-binop
+  (match (be_scalar.compiler-backend-emit-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-var-types-empty)
     (compiler-backend-global-compare-types)
@@ -31862,7 +31898,7 @@ entry:
   (let
     [rhs-spill : regalloc.CompilerRegAssignmentTable (reg-homes "%1=spill:-16")]
     (asm-ok?
-      (backend.compiler-backend-emit-binop
+      (be_scalar.compiler-backend-emit-binop
         (ast.ast-node-pool-reader-type-segment-bases)
         (regalloc.compiler-reg-var-types-empty)
         (Empty)
@@ -32209,7 +32245,7 @@ entry:
       [args (compiler-backend-i64-immediate-call-args8)]
       [types (compiler-backend-i64-type-list8)]
       [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         type-segment-bases
         target
         (Platform)
@@ -32256,7 +32292,7 @@ entry:
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-register-group-f64-test-index)]
     (asm-ok?
-      (backend.compiler-backend-emit-group-stack-arg
+      (be_scalar.compiler-backend-emit-group-stack-arg
         (be_state.CompilerBackendTarget.Linux)
         (Platform)
         assignments
@@ -32464,7 +32500,7 @@ entry:
     [pressure-call-assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12/%r13")]
     [pressure-call-result : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         bases
         target
         (Platform)
@@ -32540,7 +32576,7 @@ entry:
     [mixed-assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12/%xmm3")]
     [mixed-call-result : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         bases
         target
         (Platform)
@@ -32596,7 +32632,7 @@ entry:
     [exhausted-assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12/%xmm3 %1=%xmm4")]
     [exhausted-call-result : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-call-args
+      (be_calls.compiler-backend-emit-call-args
         bases
         target
         (Platform)
@@ -32638,7 +32674,7 @@ entry:
         [(Err _) ""])]
     (and
       (not
-        (backend.compiler-backend-linux-group-register-banks-fit?
+        (be_calls.compiler-backend-linux-group-register-banks-fit?
           bases
           target
           (Platform)
@@ -32647,7 +32683,7 @@ entry:
           5
           0
           5))
-      (backend.compiler-backend-linux-group-register-banks-fit?
+      (be_calls.compiler-backend-linux-group-register-banks-fit?
         bases
         target
         (Platform)
@@ -32657,7 +32693,7 @@ entry:
         0
         0)
       (not
-        (backend.compiler-backend-linux-group-register-banks-fit?
+        (be_calls.compiler-backend-linux-group-register-banks-fit?
           bases
           target
           (Platform)
@@ -32667,7 +32703,7 @@ entry:
           0
           6))
       (not
-        (backend.compiler-backend-linux-group-register-banks-fit?
+        (be_calls.compiler-backend-linux-group-register-banks-fit?
           bases
           target
           (Platform)
@@ -32677,7 +32713,7 @@ entry:
           8
           8))
       (=
-        (backend.compiler-backend-call-stack-arg-count
+        (be_calls.compiler-backend-call-stack-arg-count
           bases
           target
           (Platform)
@@ -32692,7 +32728,7 @@ entry:
           index)
         2)
       (=
-        (backend.compiler-backend-type-list-stack-arg-count
+        (be_calls.compiler-backend-type-list-stack-arg-count
           bases
           target
           (Platform)
@@ -32749,7 +32785,7 @@ entry:
         "    movq 24(%rbp), %r8\n"
         "    movq 24(%rbp), %r15\n")
       (=
-        (backend.compiler-backend-call-stack-arg-count
+        (be_calls.compiler-backend-call-stack-arg-count
           bases
           target
           (Platform)
@@ -32767,7 +32803,7 @@ entry:
       (asm-lacks? mixed-call "(%rsp)")
       (asm-has? mixed-param "    movq %rdi, %r12\n" "    movsd %xmm0, %xmm3\n")
       (=
-        (backend.compiler-backend-call-stack-arg-count
+        (be_calls.compiler-backend-call-stack-arg-count
           bases
           target
           (Platform)
@@ -32782,7 +32818,7 @@ entry:
           index)
         2)
       (=
-        (backend.compiler-backend-type-list-stack-arg-count
+        (be_calls.compiler-backend-type-list-stack-arg-count
           bases
           target
           (Platform)
@@ -32834,7 +32870,7 @@ entry:
           (owned_view.compiler-owned-shared-view groups)
           addressable)
         (for [index (iterator.range 0 16)]
-          (match (backend.compiler-backend-group-word-operand-with-backend-state
+          (match (be_scalar.compiler-backend-group-word-operand-with-backend-state
             (regalloc.compiler-reg-assignment-table-empty)
             (/ index 2)
             (% index 2)
@@ -33038,7 +33074,7 @@ entry:
 
 (define (compiler-backend-direct-tail-immediate-stack-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-emit-direct-tail-call-args
+  (match (be_calls.compiler-backend-emit-direct-tail-call-args
     (ast.ast-node-pool-reader-type-segment-bases)
     target
     (Platform)
@@ -33111,7 +33147,7 @@ entry:
       (ir.CompilerIrBlock.Block
         (ci.intern "entry")
         (ir.compiler-ir-instr-builder-to-seq body))]
-    (backend.compiler-backend-identity-tail-forwarder-block?
+    (be_calls.compiler-backend-identity-tail-forwarder-block?
       (ast.ast-node-pool-reader-type-segment-bases)
       (be_state.CompilerBackendTarget.Linux)
       (ci.intern "snapshot_forwarder")
@@ -33521,7 +33557,7 @@ entry:
       (ir.compiler-ir-function-seq-empty)
       (be_state.compiler-backend-global-shared-view externs))
       [(Ok plan)
-        (backend.compiler-backend-emit-tail-call
+        (be_calls.compiler-backend-emit-tail-call
           (ast.ast-node-pool-reader-type-segment-bases)
           target
           caller-id
@@ -33719,7 +33755,7 @@ entry:
 (define (compiler-backend-known-function-call-env-zero
   [target : be_state.CompilerBackendTarget]) : String
   (match (be_facts.compiler-backend-target-arg-reg target (Platform) 0)
-    [(Ok reg) (backend.compiler-backend-emit-load-i64-immediate 0 reg)]
+    [(Ok reg) (be_scalar.compiler-backend-emit-load-i64-immediate 0 reg)]
     [(Err _) ""]))
 
 (define (compiler-backend-known-function-indirect-call-emit
@@ -33855,7 +33891,7 @@ entry:
             (cdiag.compiler-diagnostic-at-start "" "")
             index.backend-state)]
         [slot : String
-          (backend.compiler-backend-cycle-temp-slot-with-backend-state
+          (be_scalar.compiler-backend-cycle-temp-slot-with-backend-state
             index.backend-state
             1)]
         (match result
@@ -33872,7 +33908,9 @@ entry:
               [arg-load : i64
                 (let
                   [needle
-                    (backend.compiler-backend-emit-load-i64-immediate 3 arg-reg)]
+                    (be_scalar.compiler-backend-emit-load-i64-immediate
+                      3
+                      arg-reg)]
                   (backend.compiler-backend-string-find-from asm needle 0))]
               [restore : i64
                 (let
@@ -33926,7 +33964,9 @@ entry:
               [arg-load : i64
                 (let
                   [needle
-                    (backend.compiler-backend-emit-load-i64-immediate 3 arg-reg)]
+                    (be_scalar.compiler-backend-emit-load-i64-immediate
+                      3
+                      arg-reg)]
                   (backend.compiler-backend-string-find-from asm needle 0))]
               [callee-load : i64
                 (backend.compiler-backend-string-find-from
@@ -34276,20 +34316,20 @@ entry:
 
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
-    (= (backend.compiler-backend-fast-alloc-size (One (I64 1))) 8)
-    (= (backend.compiler-backend-fast-alloc-size (One (I64 8))) 8)
-    (= (backend.compiler-backend-fast-alloc-size (One (I64 9))) 16)
-    (= (backend.compiler-backend-fast-alloc-size (One (I64 64))) 64)
-    (= (backend.compiler-backend-fast-alloc-size (One (I64 65))) 0)
-    (= (backend.compiler-backend-fast-alloc-size (One (I64 0))) 0)
-    (= (backend.compiler-backend-fast-alloc-size (One (Var 0))) 0)
-    (backend.compiler-backend-inline-fast-alloc? 8)
-    (backend.compiler-backend-inline-fast-alloc? 24)
-    (backend.compiler-backend-inline-fast-alloc? 40)
-    (backend.compiler-backend-inline-fast-alloc? 64)
-    (not (backend.compiler-backend-inline-fast-alloc? 0))
-    (not (backend.compiler-backend-inline-fast-alloc? 10))
-    (not (backend.compiler-backend-inline-fast-alloc? 72))))
+    (= (be_calls.compiler-backend-fast-alloc-size (One (I64 1))) 8)
+    (= (be_calls.compiler-backend-fast-alloc-size (One (I64 8))) 8)
+    (= (be_calls.compiler-backend-fast-alloc-size (One (I64 9))) 16)
+    (= (be_calls.compiler-backend-fast-alloc-size (One (I64 64))) 64)
+    (= (be_calls.compiler-backend-fast-alloc-size (One (I64 65))) 0)
+    (= (be_calls.compiler-backend-fast-alloc-size (One (I64 0))) 0)
+    (= (be_calls.compiler-backend-fast-alloc-size (One (Var 0))) 0)
+    (be_calls.compiler-backend-inline-fast-alloc? 8)
+    (be_calls.compiler-backend-inline-fast-alloc? 24)
+    (be_calls.compiler-backend-inline-fast-alloc? 40)
+    (be_calls.compiler-backend-inline-fast-alloc? 64)
+    (not (be_calls.compiler-backend-inline-fast-alloc? 0))
+    (not (be_calls.compiler-backend-inline-fast-alloc? 10))
+    (not (be_calls.compiler-backend-inline-fast-alloc? 72))))
 
 (define (compiler-backend-inline-fast-alloc-reused-vreg-instrs) : ir.CompilerIrInstrSeq
   (compiler-backend-test-instr-seq-prepend
@@ -35599,7 +35639,7 @@ entry:
           missing-id))
       (be_state.backend-and4
         (string.eq
-          (backend.compiler-backend-function-symbol-map-comment index fn-id)
+          (be_scalar.compiler-backend-function-symbol-map-comment index fn-id)
           "#t _tl_f0 _tl_really_long_backend_index_function\n")
         (string.eq
           (be_operand.compiler-backend-function-symbol-index index provided-id)
@@ -35802,7 +35842,7 @@ entry:
           (regalloc.compiler-reg-assignment-table-with-min-capacity r10-free 5)
           5
           5
-          (backend.compiler-backend-binop-scavenge-exclude-build)
+          (be_scalar.compiler-backend-binop-scavenge-exclude-build)
           5
           "%r8")
         "%r10")
@@ -35814,7 +35854,7 @@ entry:
           (regalloc.compiler-reg-assignment-table-with-min-capacity r11-free 5)
           5
           5
-          (backend.compiler-backend-binop-scavenge-exclude-build)
+          (be_scalar.compiler-backend-binop-scavenge-exclude-build)
           5
           "%r8")
         "%r11"))))
@@ -35849,7 +35889,7 @@ entry:
           (regalloc.compiler-reg-assignment-table-with-min-capacity r10-free 5)
           5
           5
-          (backend.compiler-backend-scavenge-exclude-with "%r13")
+          (be_scalar.compiler-backend-scavenge-exclude-with "%r13")
           6
           "%r8")
         "%r10")
@@ -35861,7 +35901,7 @@ entry:
           (regalloc.compiler-reg-assignment-table-with-min-capacity r11-free 5)
           5
           5
-          (backend.compiler-backend-scavenge-exclude-with "%r13")
+          (be_scalar.compiler-backend-scavenge-exclude-with "%r13")
           6
           "%r8")
         "%r11"))))
@@ -35900,7 +35940,7 @@ entry:
             7)
           7
           5
-          (backend.compiler-backend-scavenge-exclude-regs2 "%r13" "%r14")
+          (be_scalar.compiler-backend-scavenge-exclude-regs2 "%r13" "%r14")
           7
           "%r8")
         "%r10")
@@ -35941,7 +35981,7 @@ entry:
             1)
           0
           0
-          (backend.compiler-backend-divmod-dividend-exclude "%r8")
+          (be_scalar.compiler-backend-divmod-dividend-exclude "%r8")
           5
           "%r10")
         "%r10")
@@ -35955,7 +35995,7 @@ entry:
             1)
           0
           0
-          (backend.compiler-backend-divmod-mask-exclude "%r8" "%r10")
+          (be_scalar.compiler-backend-divmod-mask-exclude "%r8" "%r10")
           6
           "%r9")
         "%r9"))))
@@ -35984,7 +36024,7 @@ entry:
 (define (compiler-backend-any-arity-stack-arg-shape-ok?) : bool
   (and
     (=
-      (backend.compiler-backend-call-args-gp-register-prefix
+      (be_calls.compiler-backend-call-args-gp-register-prefix
         (be_state.CompilerBackendTarget.Linux)
         (Platform)
         9
@@ -35992,7 +36032,7 @@ entry:
         0)
       6)
     (=
-      (backend.compiler-backend-call-args-gp-register-prefix
+      (be_calls.compiler-backend-call-args-gp-register-prefix
         (be_state.CompilerBackendTarget.Linux)
         (Platform)
         9
@@ -36000,7 +36040,7 @@ entry:
         1)
       5)
     (=
-      (backend.compiler-backend-call-args-gp-register-prefix
+      (be_calls.compiler-backend-call-args-gp-register-prefix
         (be_state.CompilerBackendTarget.Linux)
         (Platform)
         4
@@ -36008,7 +36048,7 @@ entry:
         0)
       4)
     (=
-      (backend.compiler-backend-call-args-gp-register-prefix
+      (be_calls.compiler-backend-call-args-gp-register-prefix
         (be_state.CompilerBackendTarget.Windows)
         (Platform)
         9
@@ -36080,7 +36120,7 @@ entry:
           (be_state.compiler-backend-state-function-state backend-state)
           "%xmm2"))]
     [avx2 : String
-      (backend.compiler-backend-emergency-wrap "    nop\n" backend-state)]
+      (be_scalar.compiler-backend-emergency-wrap "    nop\n" backend-state)]
     [_avx512-init : unit
       (begin
         (be_state.compiler-backend-set-current-mode!
@@ -36090,12 +36130,12 @@ entry:
           (be_state.compiler-backend-state-function-state backend-state)
           "%xmm3"))]
     [avx512 : String
-      (backend.compiler-backend-emergency-wrap "    nop\n" backend-state)]
+      (be_scalar.compiler-backend-emergency-wrap "    nop\n" backend-state)]
     [ok : bool
       (and
-        (= (backend.compiler-backend-emergency-frame-extra 2) 128)
+        (= (be_scalar.compiler-backend-emergency-frame-extra 2) 128)
         (=
-          (backend.compiler-backend-emergency-reg-offset
+          (be_scalar.compiler-backend-emergency-reg-offset
             (be_state.compiler-backend-state-function-state backend-state)
             1)
           -576)
@@ -36311,7 +36351,7 @@ entry:
           ;; Forcing the slot form (what every inline-restore path does)
           ;; charges exactly one emergency slot.
           (begin
-            (backend.compiler-backend-emergency-commit-slot-form!
+            (be_scalar.compiler-backend-emergency-commit-slot-form!
               (be_state.compiler-backend-state-function-state backend-state))
             (and
               (scratch-emergency-used
@@ -36418,7 +36458,7 @@ entry:
         (set! (array-ref values 4) 999)
         (set! (array-ref wide 4) false))]
     [awards : i64
-      (backend.compiler-backend-const-hoist-award-order!
+      (be_scalar.compiler-backend-const-hoist-award-order!
         values
         wide
         6
@@ -36462,7 +36502,7 @@ entry:
         (set! (array-ref values 5) 6)
         (set! (array-ref wide 5) false))]
     [awards : i64
-      (backend.compiler-backend-const-hoist-award-order!
+      (be_scalar.compiler-backend-const-hoist-award-order!
         values
         wide
         6
@@ -36478,7 +36518,7 @@ entry:
       (= (array-ref tally 2) 2)
       ;; An empty region awards nothing and reads no scratch entry.
       (=
-        (backend.compiler-backend-const-hoist-award-order!
+        (be_scalar.compiler-backend-const-hoist-award-order!
           values
           wide
           0
@@ -36487,7 +36527,7 @@ entry:
         0)
       ;; A single site is one key of weight one.
       (=
-        (backend.compiler-backend-const-hoist-award-order!
+        (be_scalar.compiler-backend-const-hoist-award-order!
           values
           wide
           1
@@ -36502,52 +36542,52 @@ entry:
   (and
     (=
       (regalloc.compiler-reg-id-seq-count
-        (backend.compiler-backend-const-hoist-candidate-regs
+        (be_scalar.compiler-backend-const-hoist-candidate-regs
           (be_state.CompilerBackendTarget.Linux)))
       5)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Linux))
       cabi.compiler-reg-id-rsi)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Linux))
       cabi.compiler-reg-id-rdi)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Linux))
       cabi.compiler-reg-id-r8)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Linux))
       cabi.compiler-reg-id-r9)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Linux))
       cabi.compiler-reg-id-rbx)
     (=
       (regalloc.compiler-reg-id-seq-count
-        (backend.compiler-backend-const-hoist-candidate-regs
+        (be_scalar.compiler-backend-const-hoist-candidate-regs
           (be_state.CompilerBackendTarget.Windows)))
       5)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Windows))
       cabi.compiler-reg-id-r8)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Windows))
       cabi.compiler-reg-id-r9)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Windows))
       cabi.compiler-reg-id-rbx)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Windows))
       cabi.compiler-reg-id-rsi)
     (regalloc.compiler-reg-id-seq-contains?
-      (backend.compiler-backend-const-hoist-candidate-regs
+      (be_scalar.compiler-backend-const-hoist-candidate-regs
         (be_state.CompilerBackendTarget.Windows))
       cabi.compiler-reg-id-rdi)))
 
@@ -36581,10 +36621,10 @@ entry:
     (let
       [dirty-rejected? : bool
         (not
-          (backend.compiler-backend-shrinkwrap-admission-state-clean?
+          (be_scalar.compiler-backend-shrinkwrap-admission-state-clean?
             (be_state.compiler-backend-state-function-state backend-state)))]
       [prepared? : bool
-        (backend.compiler-backend-prepare-shrinkwrap-admission!
+        (be_scalar.compiler-backend-prepare-shrinkwrap-admission!
           (be_state.compiler-backend-state-function-state backend-state))]
       [rewritten : ir.CompilerIrFunction
         (regalloc.compiler-reg-early-exit-shrinkwrap-function
@@ -36592,7 +36632,7 @@ entry:
       (and
         dirty-rejected?
         prepared?
-        (backend.compiler-backend-shrinkwrap-admission-state-clean?
+        (be_scalar.compiler-backend-shrinkwrap-admission-state-clean?
           (be_state.compiler-backend-state-function-state backend-state))
         (not
           (be_operand.compiler-backend-callee-needs-save?
@@ -37569,7 +37609,7 @@ entry:
       (be_state.compiler-backend-state-function-state backend-state)]
     ;; %rax/%rdx/%rcx are the fixed-register exclude every arithmetic site uses.
     [exclude : (__tl_dyn-array String)
-      (backend.compiler-backend-binop-scavenge-exclude-build)]
+      (be_scalar.compiler-backend-binop-scavenge-exclude-build)]
     [hull : (__tl_dyn-array i64) (compiler-backend-scavenge-segment-masks 0)]
     [segmented : (__tl_dyn-array i64)
       (compiler-backend-scavenge-segment-masks 2)]
@@ -37801,16 +37841,16 @@ entry:
             3)
           3)])
     (set-state-emit-instr-post-base! backend-state 4)
-    (backend.compiler-backend-function-state-set-current-phi-target-point!
+    (be_calls.compiler-backend-function-state-set-current-phi-target-point!
       backend-state
       target-point)
-    (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+    (be_calls.compiler-backend-function-state-set-current-phi-dst-home-mask!
       backend-state
       0)
     (set-scratch-emergency-slot-offset!
       (be_state.compiler-backend-state-function-state backend-state)
       -128)
-    (match (backend.compiler-backend-emit-phi-source-load-store
+    (match (be_calls.compiler-backend-emit-phi-source-load-store
       (ast.ast-node-pool-reader-type-segment-bases)
       assignments
       0
@@ -37821,13 +37861,13 @@ entry:
       [(Ok back-edge)
         (let
           [back-edge-proven? : bool
-            (backend.compiler-backend-phi-staged-copy-proven?
+            (be_calls.compiler-backend-phi-staged-copy-proven?
               backend-state
               "%xmm2")]
-          (backend.compiler-backend-function-state-set-current-phi-target-point!
+          (be_calls.compiler-backend-function-state-set-current-phi-target-point!
             backend-state
             -1)
-          (match (backend.compiler-backend-emit-phi-source-load-store
+          (match (be_calls.compiler-backend-emit-phi-source-load-store
             (ast.ast-node-pool-reader-type-segment-bases)
             assignments
             0
@@ -37844,7 +37884,7 @@ entry:
                   edge-point)
                 (not back-edge-proven?)
                 (not
-                  (backend.compiler-backend-phi-staged-copy-proven?
+                  (be_calls.compiler-backend-phi-staged-copy-proven?
                     backend-state
                     "%xmm2"))
                 (compiler-backend-phi-xmm-stage-bracket-shape?
@@ -37898,10 +37938,10 @@ entry:
       assignments
       backend-state)
     (set-state-emit-instr-post-base! backend-state 4)
-    (backend.compiler-backend-function-state-set-current-phi-target-point!
+    (be_calls.compiler-backend-function-state-set-current-phi-target-point!
       backend-state
       target-point)
-    (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+    (be_calls.compiler-backend-function-state-set-current-phi-dst-home-mask!
       backend-state
       0)
     (let
@@ -37939,7 +37979,7 @@ entry:
           ;; obligation is asked on every edge and not just on the ones the
           ;; emitted order happens to run backwards.
           (not
-            (backend.compiler-backend-phi-staged-copy-proven?
+            (be_calls.compiler-backend-phi-staged-copy-proven?
               backend-state
               "%r8"))
           ;; A register free at both ends still un-brackets, so this is a
@@ -37951,7 +37991,7 @@ entry:
                 target-point)
               r10)
             0)
-          (backend.compiler-backend-phi-staged-copy-proven?
+          (be_calls.compiler-backend-phi-staged-copy-proven?
             backend-state
             "%r10"))]
       (backend.compiler-backend-set-scavenge-ctx-ready!
@@ -38044,25 +38084,27 @@ entry:
     [_carried-ctx : unit
       (compiler-backend-divmod-live-dividend-ctx! backend-state true)]
     [carried : bool
-      (backend.compiler-backend-divmod-home-carried-after?
+      (be_scalar.compiler-backend-divmod-home-carried-after?
         (be_state.compiler-backend-state-function-state backend-state)
         "%r13"
         10)]
     ;; the value fact alone still reports the dividend dead here
     [value-dead : bool
       (not
-        (backend.compiler-backend-value-live-after-here? backend-state (Var 0)))]
+        (be_scalar.compiler-backend-value-live-after-here?
+          backend-state
+          (Var 0)))]
     ;; a remainder must refuse the home the phi still carries ...
     [remainder-refused : bool
       (not
-        (backend.compiler-backend-divmod-src-home-safe?
+        (be_scalar.compiler-backend-divmod-src-home-safe?
           backend-state
           true
           "%r13"
           ""))]
     ;; ... a quotient never writes SRC, so it is unaffected ...
     [quotient-allowed : bool
-      (backend.compiler-backend-divmod-src-home-safe?
+      (be_scalar.compiler-backend-divmod-src-home-safe?
         backend-state
         false
         "%r13"
@@ -38070,7 +38112,7 @@ entry:
     ;; ... and a destination living in that same register is the result's own
     ;; home, so it stays eligible.
     [dst-home-allowed : bool
-      (backend.compiler-backend-divmod-src-home-safe?
+      (be_scalar.compiler-backend-divmod-src-home-safe?
         backend-state
         true
         "%r13"
@@ -38078,7 +38120,7 @@ entry:
     ;; a register nothing is homed in is never carried
     [free-reg : bool
       (not
-        (backend.compiler-backend-divmod-home-carried-after?
+        (be_scalar.compiler-backend-divmod-home-carried-after?
           (be_state.compiler-backend-state-function-state backend-state)
           "%r15"
           10))]
@@ -38089,11 +38131,11 @@ entry:
     [own-output-ok : bool
       (and
         (not
-          (backend.compiler-backend-divmod-home-carried-after?
+          (be_scalar.compiler-backend-divmod-home-carried-after?
             (be_state.compiler-backend-state-function-state backend-state)
             "%r13"
             10))
-        (backend.compiler-backend-divmod-src-home-safe?
+        (be_scalar.compiler-backend-divmod-src-home-safe?
           backend-state
           true
           "%r13"
@@ -39389,7 +39431,7 @@ b_keep:
     [a-mode-before : be_state.CompilerBackendMode (state-current-mode state-a)]
     [b-mode-before : be_state.CompilerBackendMode (state-current-mode state-b)]
     [a-entry-before : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         a-before
         "_tl_policy_a"
         4800
@@ -39398,7 +39440,7 @@ b_keep:
         false
         state-a)]
     [b-entry-before : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         b-before
         "_tl_policy_b"
         4800
@@ -39420,7 +39462,7 @@ b_keep:
     [b-after : be_state.CompilerBackendTargetPolicy
       (be_state.compiler-backend-state-emission-target-policy state-b)]
     [a-entry-after : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         a-after
         "_tl_policy_a"
         4800
@@ -39429,7 +39471,7 @@ b_keep:
         false
         state-a)]
     [b-entry-after : String
-      (backend.compiler-backend-emit-function-entry
+      (be_scalar.compiler-backend-emit-function-entry
         b-after
         "_tl_policy_b"
         4800
@@ -39791,15 +39833,15 @@ b_keep:
     ;; T1-6 (b) drops a save/restore pair whose bracketed text provably never
     ;; touches the borrowed register, so name the scavenged GP scratch in it.
     [scratch-wrap-a : String
-      (backend.compiler-backend-emergency-wrap
+      (be_scalar.compiler-backend-emergency-wrap
         (str_cat.str-cat "A_BODY " scratch-gp-a "\n")
         state-a)]
     [scratch-cycle-a0 : String
-      (backend.compiler-backend-cycle-temp-slot-with-backend-state state-a 0)]
+      (be_scalar.compiler-backend-cycle-temp-slot-with-backend-state state-a 0)]
     [scratch-cycle-a1 : String
-      (backend.compiler-backend-cycle-temp-slot-with-backend-state state-a 1)]
+      (be_scalar.compiler-backend-cycle-temp-slot-with-backend-state state-a 1)]
     [scratch-b-output-before : String
-      (backend.compiler-backend-const-hoist-injection-for function-b 73 false)]
+      (be_scalar.compiler-backend-const-hoist-injection-for function-b 73 false)]
     [scratch-before-reset : bool
       (and
         (not (string.eq scratch-gp-a "%rcx"))
@@ -39849,7 +39891,7 @@ b_keep:
       (not
         (be_state.compiler-backend-state-function-state-active? failure-state-a))]
     [scratch-b-output-after : String
-      (backend.compiler-backend-const-hoist-injection-for function-b 73 false)]
+      (be_scalar.compiler-backend-const-hoist-injection-for function-b 73 false)]
     [scratch-after-failure : bool
       (and
         (=
@@ -40492,7 +40534,7 @@ b_keep:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [asm : String
-      (backend.compiler-backend-div-overflow-guard-asm
+      (be_scalar.compiler-backend-div-overflow-guard-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         ty
         "%r8"
@@ -40519,7 +40561,7 @@ b_keep:
     (compiler-backend-signed-div-guard-shape-ok? (I32) "l" "%eax" "%r8d")
     (compiler-backend-signed-div-guard-shape-ok? (I64) "q" "%rax" "%r8")
     (string.eq
-      (backend.compiler-backend-div-overflow-guard-asm
+      (be_scalar.compiler-backend-div-overflow-guard-asm
         (ast.ast-node-pool-reader-type-segment-bases)
         (U64)
         "%r8"
@@ -40536,7 +40578,7 @@ b_keep:
 (define (compiler-backend-shift-count-bounds-ok?) : bool
   (let
     [bounds : (__tl_dyn-array i64)
-      (backend.compiler-backend-shift-count-bounds
+      (be_scalar.compiler-backend-shift-count-bounds
         9
         (irt.params "x=%0:i64")
         (irt.blocks
@@ -40741,7 +40783,7 @@ b_keep:
                 (clone link)))
             "static object address relocations use the current link symbol"))
         (test.assert-owned-string-eq
-          (backend.compiler-backend-value-global-memory-operand
+          (be_scalar.compiler-backend-value-global-memory-operand
             state
             bases
             (ir.CompilerIrValue.Global name)
@@ -40756,7 +40798,7 @@ b_keep:
           (clone expected)
           "function cache reset keeps program symbol authority")
         (test.assert-owned-string-eq
-          (backend.compiler-backend-float-value-memory-operand
+          (be_scalar.compiler-backend-float-value-memory-operand
             (regalloc.compiler-reg-assignment-table-empty)
             (ir.CompilerIrValue.Global name)
             (& (ast.AstType.F32))
@@ -41378,7 +41420,7 @@ b_keep:
   [vars : i64]
   [backend-state : be_state.CompilerBackendState]) : String
   (if (be_state.compiler-backend-current-fn-win64? backend-state)
-    (backend.compiler-backend-emit-win64-xmm-callee-regs-at
+    (be_scalar.compiler-backend-emit-win64-xmm-callee-regs-at
       assignments
       vars
       0
@@ -41394,7 +41436,7 @@ b_keep:
   [type-segment-bases : i64]
   [reg : String]
   [ty : ast.AstType]) : String
-  (backend.compiler-backend-emit-load-register-to-reg
+  (be_scalar.compiler-backend-emit-load-register-to-reg
     type-segment-bases
     reg
     ty
@@ -41526,7 +41568,7 @@ b_keep:
   [ty : ast.AstType]
   [vars : i64]
   [program-index : be_state.CompilerBackendProgramIndex]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-call-result-store-normalize
+  (be_calls.compiler-backend-emit-call-result-store-normalize
     type-segment-bases
     assignments
     dst
@@ -42828,18 +42870,22 @@ b_keep:
           function-b
           be_state.compiler-backend-function-i64-use-home-mask-value
           170)
-        (backend.compiler-backend-set-emit-plan-reg-mask! state-a assignments-a)
-        (backend.compiler-backend-set-emit-plan-reg-mask! state-b assignments-b)
-        (backend.compiler-backend-function-state-set-current-phi-target-point!
+        (be_scalar.compiler-backend-set-emit-plan-reg-mask!
+          state-a
+          assignments-a)
+        (be_scalar.compiler-backend-set-emit-plan-reg-mask!
+          state-b
+          assignments-b)
+        (be_calls.compiler-backend-function-state-set-current-phi-target-point!
           state-a
           11)
-        (backend.compiler-backend-function-state-set-current-phi-target-point!
+        (be_calls.compiler-backend-function-state-set-current-phi-target-point!
           state-b
           22)
-        (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+        (be_calls.compiler-backend-function-state-set-current-phi-dst-home-mask!
           state-a
           51)
-        (backend.compiler-backend-function-state-set-current-phi-dst-home-mask!
+        (be_calls.compiler-backend-function-state-set-current-phi-dst-home-mask!
           state-b
           102)
         (set! (array-ref disp-a 0) 16)
@@ -43018,19 +43064,19 @@ b_keep:
         assignments-b
         cabi.compiler-reg-id-r13)
       (=
-        (backend.compiler-backend-function-state-current-phi-target-point
+        (be_calls.compiler-backend-function-state-current-phi-target-point
           state-a)
         11)
       (=
-        (backend.compiler-backend-function-state-current-phi-target-point
+        (be_calls.compiler-backend-function-state-current-phi-target-point
           state-b)
         22)
       (=
-        (backend.compiler-backend-function-state-current-phi-dst-home-mask
+        (be_calls.compiler-backend-function-state-current-phi-dst-home-mask
           state-a)
         51)
       (=
-        (backend.compiler-backend-function-state-current-phi-dst-home-mask
+        (be_calls.compiler-backend-function-state-current-phi-dst-home-mask
           state-b)
         102)
       (= a-drift-result 0)
@@ -43142,19 +43188,19 @@ b_keep:
           be_state.compiler-backend-function-i64-emit-plan-reg-mask)
         0)
       (=
-        (backend.compiler-backend-function-state-current-phi-target-point
+        (be_calls.compiler-backend-function-state-current-phi-target-point
           state-a)
         -1)
       (=
-        (backend.compiler-backend-function-state-current-phi-target-point
+        (be_calls.compiler-backend-function-state-current-phi-target-point
           state-b)
         22)
       (=
-        (backend.compiler-backend-function-state-current-phi-dst-home-mask
+        (be_calls.compiler-backend-function-state-current-phi-dst-home-mask
           state-a)
         -1)
       (=
-        (backend.compiler-backend-function-state-current-phi-dst-home-mask
+        (be_calls.compiler-backend-function-state-current-phi-dst-home-mask
           state-b)
         102)
       (not
@@ -44613,7 +44659,8 @@ user_fn:
             false
             false
             backtrace
-            63)))]
+            63)
+          false))]
     (and
       (asm-has?
         rewritten

@@ -4951,7 +4951,7 @@
     (ctfe-eval-node expr (ctfe-env-shared-view env) (- fuel 1))))
 
 (define (ctfe-eval-node [expr : (& ast.AstExpr)] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
-  (match (clone (owned_view.compiler-owned-reference-shared-view expr))
+  (match (owned_view.compiler-owned-reference-shared-view expr)
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _)
          (Comptime inner-box) (Ann inner-box _))
       (let
@@ -12421,65 +12421,32 @@
   [env : (& env CtfeEnv)]
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteExprList
-  (ctfe-quote-expr-list-at (& exprs) 0 env fuel quasiquote))
-
-(define (ctfe-quote-expr-list-at
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
-  [env : (& env CtfeEnv)]
-  [fuel : i64]
-  [quasiquote : bool]) : ResultCtfeQuoteExprList
-  (if (>= index exprs.len)
-    (Ok (ast.ast-expr-list-new) fuel)
-    (let
-      [head : ast.AstExpr
-        (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
-      (match (ctfe-expr-unspan env (clone head))
-        [(UnquoteSplicing inner-box)
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
+    (for [index (iterator.range 0 exprs.len)]
+      (let
+        [head : ast.AstExpr
+          (ctfe-ast-get env (ast.ast-expr-list-get (& exprs) index 0))]
+        [splice-box : i64
+          (if quasiquote
+            (match (ctfe-expr-unspan env (clone head))
+              [(UnquoteSplicing inner) inner]
+              [_ -1])
+            -1)]
+        (if (>= splice-box 0)
           (let
-            [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
-            (if quasiquote
-              (match (ctfe-eval-unquote-splice (& inner) (& head) env fuel)
-                [(Ok splice splice-fuel)
-                  (match (ctfe-quote-expr-list-at
-                    exprs
-                    (+ index 1)
-                    env
-                    splice-fuel
-                    quasiquote)
-                    [(Ok quoted-rest rest-fuel)
-                      (Ok
-                        (ctfe-expr-list-append (& splice) (& quoted-rest))
-                        rest-fuel)]
-                    [(Err diag) (Err diag)])]
-                [(Err diag) (Err diag)])
-              (match (ctfe-quote-expr head env fuel quasiquote)
-                [(Ok quoted-head _ head-fuel)
-                  (match (ctfe-quote-expr-list-at
-                    exprs
-                    (+ index 1)
-                    env
-                    head-fuel
-                    quasiquote)
-                    [(Ok quoted-rest rest-fuel)
-                      (Ok
-                        (ast.ast-expr-cons quoted-head (& quoted-rest))
-                        rest-fuel)]
-                    [(Err diag) (Err diag)])]
-                [(Err diag) (Err diag)])))]
-        [_
+            [inner : ast.AstExpr (ctfe-ast-get env splice-box)]
+            (match (ctfe-eval-unquote-splice (& inner) (& head) env fuel)
+              [(Ok splice next-fuel)
+                (ast.ast-expr-list-append-from (&mut out) (& splice) 0)
+                (set! fuel next-fuel)]
+              [(Err diag) (return (Err diag))]))
           (match (ctfe-quote-expr head env fuel quasiquote)
-            [(Ok quoted-head _ head-fuel)
-              (match (ctfe-quote-expr-list-at
-                exprs
-                (+ index 1)
-                env
-                head-fuel
-                quasiquote)
-                [(Ok quoted-rest rest-fuel)
-                  (Ok (ast.ast-expr-cons quoted-head (& quoted-rest)) rest-fuel)]
-                [(Err diag) (Err diag)])]
-            [(Err diag) (Err diag)])]))))
+            [(Ok quoted _ next-fuel)
+              (ast.ast-expr-list-push (&mut out) quoted)
+              (set! fuel next-fuel)]
+            [(Err diag) (return (Err diag))]))))
+    (Ok out fuel)))
 
 (define (ctfe-quote-param-list
   [params : (& ast.AstParamList)]

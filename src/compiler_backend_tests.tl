@@ -15,6 +15,8 @@
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
 (import compiler_backend as backend)
+(import compiler_backend_peephole as be_peephole)
+(import compiler_backend_simd as be_simd)
 (import compiler_backend_object as be_object)
 (import compiler_backend_program_data as be_data)
 (import compiler_lower as lower)
@@ -6980,7 +6982,7 @@ high:
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments3)]
     [push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (backend.compiler-backend-fill-push-csr-regs!
         assignments
@@ -7005,8 +7007,8 @@ high:
     leave
     ret
 "]
-    [rebase-result : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [rebase-result : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         post-prologue
         64
         true
@@ -7051,7 +7053,7 @@ high:
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments3)]
     [push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (backend.compiler-backend-fill-push-csr-regs!
         assignments
@@ -7070,8 +7072,8 @@ high:
     ret
 "]
     [_pool-on : unit (regalloc.compiler-reg-set-rbp-pool-enabled! true)]
-    [planned : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [planned : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         (owned_view.compiler-owned-shared-view body)
         64
         true
@@ -7080,8 +7082,8 @@ high:
         3
         backend-state)]
     [_pool-off : unit (regalloc.compiler-reg-set-rbp-pool-enabled! false)]
-    [framed : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [framed : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         (owned_view.compiler-owned-shared-view body)
         64
         true
@@ -7169,14 +7171,14 @@ high:
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments3)]
     [push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (backend.compiler-backend-fill-push-csr-regs!
         assignments
         (&mut push-regs)
         backend-state)]
-    [result : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [result : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         body
         64
         true
@@ -7197,15 +7199,15 @@ high:
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments3)]
     [push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (backend.compiler-backend-fill-push-csr-regs!
         assignments
         (&mut push-regs)
         backend-state)]
     [body : String (compiler-backend-csr-unused-save-body)]
-    [untrimmed : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [untrimmed : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         (owned_view.compiler-owned-shared-view body)
         64
         true
@@ -7214,15 +7216,15 @@ high:
         3
         backend-state)]
     [trim-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-csr-trimmed-push-regs
+      (be_peephole.compiler-backend-csr-trimmed-push-regs
         (owned_view.compiler-owned-shared-view push-regs)
         untrimmed.csr-ref-mask
         backend-state)]
     [trim-count : i64
       (backend.compiler-backend-csr-push-reg-count
         (owned_view.compiler-owned-shared-view trim-regs))]
-    [trimmed : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result-with-saves
+    [trimmed : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result-with-saves
         body
         64
         true
@@ -7316,7 +7318,7 @@ high:
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-callee-save-assignments3)]
     [push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (backend.compiler-backend-fill-push-csr-regs!
         assignments
@@ -7329,8 +7331,8 @@ high:
         0
         (owned_view.compiler-owned-shared-view push-regs)
         push-count)]
-    [dead-result : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [dead-result : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         (compiler-backend-dead-slot-region-push-body)
         0
         true
@@ -7346,8 +7348,8 @@ high:
         16
         (owned_view.compiler-owned-shared-view push-regs)
         push-count)]
-    [live-result : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [live-result : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         (compiler-backend-dead-slot-region-push-body)
         16
         true
@@ -7447,7 +7449,7 @@ high:
     [assignments : regalloc.CompilerRegAssignmentTable
       (compiler-backend-win64-callee-save-rbp-assignments)]
     [push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (backend.compiler-backend-fill-push-csr-regs!
         assignments
@@ -7480,8 +7482,8 @@ high:
     leave
     ret
 "]
-    [safe-result : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [safe-result : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         safe-body
         frame
         true
@@ -7490,8 +7492,8 @@ high:
         1
         backend-state)]
     [safe-rebased : String safe-result.text]
-    [unsafe-result : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [unsafe-result : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         "    pushq %rax
     popq %rax
     leave
@@ -12767,21 +12769,21 @@ high:
     ok))
 
 (define (compiler-backend-peephole-single-dest-mnemonic? [name : String]) : bool
-  (backend.compiler-backend-peephole-mnemonic-single-dest?
+  (be_peephole.compiler-backend-peephole-mnemonic-single-dest?
     (unsafe
       (string-data name))
     0
     (string.string-length name)))
 
 (define (compiler-backend-test-peephole-reg-index [name : String]) : i64
-  (backend.compiler-backend-peephole-token-reg-index-range
+  (be_peephole.compiler-backend-peephole-token-reg-index-range
     (unsafe
       (string-data name))
     0
     (string.string-length name)))
 
 (define (compiler-backend-test-peephole-memory-base [operand : String]) : i64
-  (backend.compiler-backend-peephole-memory-base-range
+  (be_peephole.compiler-backend-peephole-memory-base-range
     (unsafe
       (string-data operand))
     0
@@ -12835,22 +12837,22 @@ high:
     (= (compiler-backend-test-peephole-reg-index "%r16") -1)
     (=
       (compiler-backend-test-peephole-memory-base "-8(%rbp)")
-      backend.compiler-backend-peephole-memory-base-rbp)
+      be_peephole.compiler-backend-peephole-memory-base-rbp)
     (=
       (compiler-backend-test-peephole-memory-base "(%rsp)")
-      backend.compiler-backend-peephole-memory-base-rsp)
+      be_peephole.compiler-backend-peephole-memory-base-rsp)
     (=
       (compiler-backend-test-peephole-memory-base "symbol(%rip)")
-      backend.compiler-backend-peephole-memory-base-rip)
+      be_peephole.compiler-backend-peephole-memory-base-rip)
     (=
       (compiler-backend-test-peephole-memory-base "24(%r10)")
-      backend.compiler-backend-peephole-memory-base-r10)
+      be_peephole.compiler-backend-peephole-memory-base-r10)
     (=
       (compiler-backend-test-peephole-memory-base "24(%r11)")
-      backend.compiler-backend-peephole-memory-base-none)
+      be_peephole.compiler-backend-peephole-memory-base-none)
     (=
       (compiler-backend-test-peephole-memory-base "%rax")
-      backend.compiler-backend-peephole-memory-base-none)))
+      be_peephole.compiler-backend-peephole-memory-base-none)))
 
 (define (compiler-backend-test-control-mnemonic-kind [name : String]) : i64
   (be_operand.compiler-backend-control-mnemonic-kind
@@ -12972,7 +12974,7 @@ high:
 (define (compiler-backend-layout-tail-duplication-ok?) : bool
   (and
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-dup
+      be_peephole.compiler-backend-layout-mode-dup
       ".globl f
     .type f,@function
 f:
@@ -13014,7 +13016,7 @@ f:
 ")
     ;; REFUSED above the run cap: one more instruction than the budget.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-dup
+      be_peephole.compiler-backend-layout-mode-dup
       ".globl f
     .type f,@function
 f:
@@ -13037,7 +13039,7 @@ f:
     ;; REFUSED for a run that carries a directive: an alignment or data blob
     ;; belongs to the block that defines it and may not be emitted twice.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-dup
+      be_peephole.compiler-backend-layout-mode-dup
       ".globl f
     .type f,@function
 f:
@@ -13060,7 +13062,7 @@ f:
     ;; REFUSED for a run that touches the stack: a second epilogue copy would
     ;; need its own unwind description.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-dup
+      be_peephole.compiler-backend-layout-mode-dup
       ".globl f
     .type f,@function
 f:
@@ -13081,7 +13083,7 @@ f:
 ")
     ;; REFUSED behind a noreturn abort call: that `jmp` is dead text.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-dup
+      be_peephole.compiler-backend-layout-mode-dup
       ".globl f
     .type f,@function
 f:
@@ -13105,7 +13107,7 @@ f:
     ;; REFUSED when the target is where execution arrives anyway: the assembled
     ;; peephole deletes that `jmp` for free.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-dup
+      be_peephole.compiler-backend-layout-mode-dup
       ".globl f
     .type f,@function
 f:
@@ -13126,7 +13128,7 @@ f:
     ;; PHI EDGE COPIES: the copies this edge owes its target are emitted before
     ;; the `jmp` today, and the duplicated run lands behind them unchanged.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-dup
+      be_peephole.compiler-backend-layout-mode-dup
       ".globl f
     .type f,@function
 f:
@@ -13176,7 +13178,7 @@ f:
     ;; the same arm inherits that prediction. The arm moves behind the body and
     ;; the hot arm falls into the join.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl g
     .type g,@function
 g:
@@ -13222,7 +13224,7 @@ g:
     ;; SENTINEL ARM: one lone `i >= n` says nothing on its own, but an arm that
     ;; is nothing except a literal is the failure arm of a checked read.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl f
     .type f,@function
 f:
@@ -13258,7 +13260,7 @@ f:
     ;; EQUALITY WITH A CONSTANT predicted false, twice over: the guard shape the
     ;; opcode heuristics are trusted in.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl h
     .type h,@function
 h:
@@ -13301,7 +13303,7 @@ h:
 ")
     ;; `x != c` is predicted TRUE, so the arm it names is the HOT one and stays.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl h
     .type h,@function
 h:
@@ -13325,7 +13327,7 @@ h:
     ;; ONE opcode-predicted clause is not the guard shape: a lone `x < 0` over a
     ;; real arm is a coin flip, and paying a jump on a coin flip is not a win.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl h
     .type h,@function
 h:
@@ -13346,7 +13348,7 @@ h:
     ;; NO PREDICTION AT ALL: two register operands the opcode set says nothing
     ;; about. IR order is kept.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl h
     .type h,@function
 h:
@@ -13367,7 +13369,7 @@ h:
     ;; An unconditional jump into the arm is an entry no heuristic predicted:
     ;; the arm keeps its place.
     (compiler-backend-layout-unchanged?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl g
     .type g,@function
 g:
@@ -13397,7 +13399,7 @@ g:
     ;; labels are entry points of their own and fell straight into the join.
     ;; Two lines long, the arm takes the island behind the first `ret`.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl g
     .type g,@function
 g:
@@ -13881,7 +13883,7 @@ g:
     ;; The sentinel arm lands behind the `jmp .Lf0_exit` that ends the next
     ;; block, in front of `.Lf0_other`.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl f
     .type f,@function
 f:
@@ -13929,7 +13931,7 @@ f:
     ;; A `jmp` into the label run right behind it is a fallthrough the
     ;; peephole deletes, not an island: the arm keeps the function end.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl f
     .type f,@function
 f:
@@ -13971,7 +13973,7 @@ f:
     ;; A three-line arm keeps the function end even with an island in reach,
     ;; so a longer cold region never lengthens the hot branches across it.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode-sink
+      be_peephole.compiler-backend-layout-mode-sink
       ".globl g
     .type g,@function
 g:
@@ -14028,7 +14030,7 @@ g:
     ;; run ends in `jmp .Lf0_exit`, the label right behind it. That is no island,
     ;; so the arm takes the next one, after `ret`.
     (compiler-backend-layout-case?
-      backend.compiler-backend-layout-mode
+      be_peephole.compiler-backend-layout-mode
       ".globl f
     .type f,@function
 f:
@@ -14075,7 +14077,7 @@ f:
 
 (define (compiler-backend-layout-debug-end-case? [closing : String]) : bool
   (compiler-backend-layout-case?
-    backend.compiler-backend-layout-mode-sink
+    be_peephole.compiler-backend-layout-mode-sink
     (str_cat.str-cat
       ".globl f
     .type f,@function
@@ -16155,7 +16157,7 @@ f:
         (ci.intern-compat-state-capture-active))]
     [stream (be_state.compiler-backend-state-stream-state state)]
     [records
-      (backend.compiler-backend-peephole-asm-once-records
+      (be_peephole.compiler-backend-peephole-asm-once-records
         state
         stream
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n    addq $8200, %rsp\n    subq $4096, %rsp\n"
@@ -16163,9 +16165,10 @@ f:
     (test.assert-true
       (= records.probe-cand-len 1)
       "only a surviving physical decrement above 4096 is recorded")
-    (backend.compiler-backend-expand-stack-probes! state (&mut records))
+    (be_peephole.compiler-backend-expand-stack-probes! state (&mut records))
     (let
-      [text : String (backend.compiler-backend-peephole-records-render records)]
+      [text : String
+        (be_peephole.compiler-backend-peephole-records-render records)]
       (test.assert-true
         (asm-has?
           text
@@ -18648,25 +18651,25 @@ f:
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     (and
-      (match (backend.compiler-backend-stack-memory-operand
+      (match (be_simd.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-dst-only-assignments)
         (Var 1)
         backend-state)
         [(Some operand) (string.eq operand "-16(%rbp)")]
         [(No) false])
-      (match (backend.compiler-backend-stack-memory-operand
+      (match (be_simd.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-spill-assignments -40)
         (Var 1)
         backend-state)
         [(Some operand) (string.eq operand "-40(%rbp)")]
         [(No) false])
-      (match (backend.compiler-backend-stack-memory-operand
+      (match (be_simd.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-register-assignments)
         (Var 1)
         backend-state)
         [(Some _) false]
         [(No) true])
-      (match (backend.compiler-backend-stack-memory-operand
+      (match (be_simd.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-dst-only-assignments)
         (I64 7)
         backend-state)
@@ -18674,7 +18677,7 @@ f:
         [(No) true]))))
 
 (define (compiler-backend-avx2-stack-splat-i64-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-splat
+  (match (be_simd.compiler-backend-emit-vector-splat
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
@@ -18692,7 +18695,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-avx2-stack-splat-f64-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-splat
+  (match (be_simd.compiler-backend-emit-vector-splat
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
@@ -18710,7 +18713,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-i64-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-splat
+  (match (be_simd.compiler-backend-emit-vector-splat
     (Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-dst-only-assignments)
@@ -18728,7 +18731,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-avx512-stack-splat-f64-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-splat
+  (match (be_simd.compiler-backend-emit-vector-splat
     (Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-stack-splat-spill-assignments -40)
@@ -18747,7 +18750,7 @@ f:
 
 (define (compiler-backend-register-splat-fallback-ok?) : bool
   (and
-    (match (backend.compiler-backend-emit-vector-splat
+    (match (be_simd.compiler-backend-emit-vector-splat
       (Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
@@ -18765,7 +18768,7 @@ f:
             "    movq %r12, %r8\n    vmovq %r8, %xmm2\n    vpbroadcastq %xmm2, %ymm6\n")
           (asm-lacks? asm "%rax" "%xmm0"))]
       [(Err _) false])
-    (match (backend.compiler-backend-emit-vector-splat
+    (match (be_simd.compiler-backend-emit-vector-splat
       (Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
@@ -18783,7 +18786,7 @@ f:
             "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %ymm6\n")
           (asm-lacks? asm "%xmm0"))]
       [(Err _) false])
-    (match (backend.compiler-backend-emit-vector-splat
+    (match (be_simd.compiler-backend-emit-vector-splat
       (Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-register-assignments)
@@ -18799,7 +18802,7 @@ f:
           (string.eq asm "    movq %r12, %r8\n    vpbroadcastq %r8, %zmm6\n")
           (asm-lacks? asm "%rax"))]
       [(Err _) false])
-    (match (backend.compiler-backend-emit-vector-splat
+    (match (be_simd.compiler-backend-emit-vector-splat
       (Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-stack-splat-float-register-assignments)
@@ -18874,7 +18877,7 @@ f:
           [elem-ty (ast.AstType.I16)]
           (be_operand.compiler-backend-avx2-masked-move-mnemonic elem-ty))
         "")
-      (match (backend.compiler-backend-emit-avx2-predicated-load
+      (match (be_simd.compiler-backend-emit-avx2-predicated-load
         (ast.ast-node-pool-reader-type-segment-bases)
         "native_mask"
         (ir.compiler-ir-label "entry")
@@ -18893,7 +18896,7 @@ f:
             asm
             "    vpmaskmovq (%rdi), %ymm7, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-avx2-predicated-store
+      (match (be_simd.compiler-backend-emit-avx2-predicated-store
         (ast.ast-node-pool-reader-type-segment-bases)
         "native_mask"
         (ir.compiler-ir-label "entry")
@@ -18909,7 +18912,7 @@ f:
           (ci.intern-compat-state-capture-active)))
         [(Ok asm) (string.eq asm "    vpmaskmovq %ymm6, %ymm7, (%rdi)\n")]
         [(Err _) false])
-      (match (backend.compiler-backend-emit-avx2-select
+      (match (be_simd.compiler-backend-emit-avx2-select
         (ast.ast-node-pool-reader-type-segment-bases)
         assignments
         3
@@ -18927,7 +18930,7 @@ f:
             "    vpblendvb %ymm7, %ymm6, %ymm8, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
         [(Err _) false])
       (asm-ok?
-        (backend.compiler-backend-emit-avx2-predicated-load
+        (be_simd.compiler-backend-emit-avx2-predicated-load
           (ast.ast-node-pool-reader-type-segment-bases)
           "narrow_mask"
           (ir.compiler-ir-label "entry")
@@ -18947,7 +18950,7 @@ f:
           "    vmovdqu -224(%rbp), %ymm14\n")
         (lacks "vpmaskmov" "%rsp"))
       (asm-ok?
-        (backend.compiler-backend-emit-avx2-predicated-store
+        (be_simd.compiler-backend-emit-avx2-predicated-store
           (ast.ast-node-pool-reader-type-segment-bases)
           "narrow_mask"
           (ir.compiler-ir-label "entry")
@@ -18968,7 +18971,7 @@ f:
         (lacks "vpmaskmov" "%rsp")))))
 
 (define (compiler-backend-avx2-vector-load-spill-dst-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-load
+  (match (be_simd.compiler-backend-emit-vector-load
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
@@ -18987,7 +18990,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-avx2-vector-binop-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-binop
+  (match (be_simd.compiler-backend-emit-vector-binop
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
@@ -19014,7 +19017,7 @@ f:
 
 (define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-avx2-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (Min)
@@ -19042,7 +19045,7 @@ f:
       (compiler-backend-vector-prefix-source-carry-spill-assignments)]
     (and
       (asm-ok?
-        (backend.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-avx2-vector-prefix
           assignments
           2
           (Sum)
@@ -19060,7 +19063,7 @@ f:
           "    vpbroadcastq -8(%rbp), %ymm0\n")
         (lacks "    vmovdqu %ymm7, -64(%rbp)\n"))
       (asm-ok?
-        (backend.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-avx2-vector-prefix
           assignments
           2
           (Any)
@@ -19081,7 +19084,7 @@ f:
 
 (define (compiler-backend-avx2-vector-prefix-bool-spill-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-avx2-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (All)
@@ -19109,7 +19112,7 @@ f:
       (compiler-backend-vector-prefix-spill-assignments)]
     (and
       (asm-ok?
-        (backend.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-avx512-vector-prefix
           assignments
           2
           (Min)
@@ -19130,7 +19133,7 @@ f:
           "    vpbroadcastq %r8, %zmm0\n"
           "    vmovdqu64 %zmm15, -64(%rbp)\n"))
       (asm-ok?
-        (backend.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-avx512-vector-prefix
           assignments
           2
           (Max)
@@ -19160,7 +19163,7 @@ f:
     [diag : cdiag.CompilerDiagnostic (cdiag.compiler-diagnostic-at-start "" "")]
     (and
       (asm-ok?
-        (backend.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-avx512-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-assignments)
           2
           (All)
@@ -19184,7 +19187,7 @@ f:
           "    kmovq %k7, -64(%rbp)\n")
         (lacks "    kmovq %k2, %rax\n" "%zmm"))
       (asm-ok?
-        (backend.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-avx512-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments)
           2
           (Any)
@@ -19206,7 +19209,7 @@ f:
         (lacks "%rax")))))
 
 (define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-predicated-load
+  (match (be_simd.compiler-backend-emit-avx512-predicated-load
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
@@ -19225,7 +19228,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-avx512-select-spill-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-select
+  (match (be_simd.compiler-backend-emit-avx512-select
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-spill-assignments)
     3
@@ -19379,7 +19382,7 @@ f:
   [elem-ty : ast.AstType]
   [want-asm : String]
   [want-addr : String]) : bool
-  (match (backend.compiler-backend-emit-simd-indexed-address
+  (match (be_simd.compiler-backend-emit-simd-indexed-address
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     base
@@ -19432,7 +19435,7 @@ f:
       "(%rdi,%r9,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-load
+  (match (be_simd.compiler-backend-emit-vector-load
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
@@ -19448,7 +19451,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
-  (match (backend.compiler-backend-emit-vector-store
+  (match (be_simd.compiler-backend-emit-vector-store
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
@@ -19464,7 +19467,7 @@ f:
     [(Err _) false]))
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-predicated-load
+  (match (be_simd.compiler-backend-emit-avx512-predicated-load
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-simd-address-assignments)
     3
@@ -19538,7 +19541,7 @@ f:
 
 (define (compiler-backend-avx512-select-true-alias-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx512-select
+    (be_simd.compiler-backend-emit-avx512-select
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-avx512-select-alias-assignments)
       0
@@ -19557,7 +19560,7 @@ f:
     (lacks "%zmm15")))
 
 (define (compiler-backend-avx512-select-false-alias-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-select
+  (match (be_simd.compiler-backend-emit-avx512-select
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-select-false-alias-assignments)
     0
@@ -19577,7 +19580,7 @@ f:
 
 (define (compiler-backend-avx512-mask-load-temp-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx512-mask-load
+    (be_simd.compiler-backend-emit-avx512-mask-load
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-avx512-mask-load-temp-assignments)
       0
@@ -19599,7 +19602,7 @@ f:
 
 (define (compiler-backend-avx512-mask-store-temp-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx512-mask-store
+    (be_simd.compiler-backend-emit-avx512-mask-store
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-avx512-mask-store-temp-assignments)
       (Var 2)
@@ -20086,7 +20089,7 @@ f:
 (define (compiler-backend-shuffle-vector-check-reduction-ok?) : bool
   (let
     [avx2 : String
-      (backend.compiler-backend-shuffle-vector-check-asm
+      (be_simd.compiler-backend-shuffle-vector-check-asm
         false
         2
         "-96(%rbp)"
@@ -20095,7 +20098,7 @@ f:
         "%r11"
         ".L_abort")]
     [avx512 : String
-      (backend.compiler-backend-shuffle-vector-check-asm
+      (be_simd.compiler-backend-shuffle-vector-check-asm
         true
         2
         "-192(%rbp)"
@@ -20991,7 +20994,7 @@ entry:
   [end-value : ir.CompilerIrValue]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-tail-mask
+  (match (be_simd.compiler-backend-emit-avx512-tail-mask
     (ast.ast-node-pool-reader-type-segment-bases)
     "_tl_tail"
     (ir.compiler-ir-label "entry")
@@ -21008,7 +21011,7 @@ entry:
 
 (define (compiler-backend-avx512-tail-mask-dynamic-zero-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx512-tail-mask
+    (be_simd.compiler-backend-emit-avx512-tail-mask
       (ast.ast-node-pool-reader-type-segment-bases)
       "_tl_tail"
       (ir.compiler-ir-label "entry")
@@ -21057,7 +21060,7 @@ entry:
   (reg-homes "%0=%vec6 %1=%r12 %2=%r13"))
 
 (define (compiler-backend-avx2-tail-mask-emits [lanes : i64]) : be_state.ResultCompilerBackend
-  (backend.compiler-backend-emit-avx2-tail-mask
+  (be_simd.compiler-backend-emit-avx2-tail-mask
     (ast.ast-node-pool-reader-type-segment-bases)
     "_tl_tail"
     (ir.compiler-ir-label "entry")
@@ -21124,7 +21127,7 @@ entry:
   (reg-homes "%0=%k1 %1=%k2"))
 
 (define (compiler-backend-avx512-mask-not-emits? [lanes : i64] [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-not
+  (match (be_simd.compiler-backend-emit-avx512-mask-not
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-not-assignments)
     1
@@ -21156,7 +21159,7 @@ entry:
   [dst : i64]
   [op : ir.CompilerIrMaskBinOp]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-binop
+  (match (be_simd.compiler-backend-emit-avx512-mask-binop
     (ast.ast-node-pool-reader-type-segment-bases)
     assignments
     dst
@@ -21200,7 +21203,7 @@ entry:
   [op : ir.CompilerIrMaskReduceOp]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-reduce
+  (match (be_simd.compiler-backend-emit-avx512-mask-reduce
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-reduce-assignments)
     1
@@ -21255,7 +21258,7 @@ entry:
         (Avx512))]
     [ok : bool
       (asm-ok?
-        (backend.compiler-backend-emit-vector-compare
+        (be_simd.compiler-backend-emit-vector-compare
           (ast.ast-node-pool-reader-type-segment-bases)
           (compiler-backend-avx512-mask-spill-compare-assignments)
           2
@@ -21275,7 +21278,7 @@ entry:
 
 (define (compiler-backend-avx512-mask-spill-binop-emits-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx512-mask-binop
+    (be_simd.compiler-backend-emit-avx512-mask-binop
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-avx512-mask-spill-assignments)
       2
@@ -21298,7 +21301,7 @@ entry:
 
 (define (compiler-backend-avx512-mask-spill-not-emits-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx512-mask-not
+    (be_simd.compiler-backend-emit-avx512-mask-not
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-avx512-mask-spill-assignments)
       2
@@ -21316,7 +21319,7 @@ entry:
 
 (define (compiler-backend-avx512-mask-spill-reduce-emits-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-avx512-mask-reduce
+    (be_simd.compiler-backend-emit-avx512-mask-reduce
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-avx512-mask-spill-assignments)
       3
@@ -21332,7 +21335,7 @@ entry:
       "    movq %rax, %r12\n")))
 
 (define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-load
+  (match (be_simd.compiler-backend-emit-avx512-mask-load
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-avx512-mask-spill-assignments)
     2
@@ -21344,7 +21347,7 @@ entry:
     (be_state.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
     [(Ok load-asm)
-      (match (backend.compiler-backend-emit-avx512-mask-store
+      (match (be_simd.compiler-backend-emit-avx512-mask-store
         (ast.ast-node-pool-reader-type-segment-bases)
         (compiler-backend-avx512-mask-spill-assignments)
         (Var 3)
@@ -21477,7 +21480,7 @@ entry:
   [src : i64]
   [width : String]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-vector-copy
+  (match (be_simd.compiler-backend-emit-vector-copy
     (compiler-backend-simd-copy-assignments)
     dst
     (Var src)
@@ -21545,7 +21548,7 @@ entry:
   [dst : i64]
   [src : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-avx512-mask-copy
+  (match (be_simd.compiler-backend-emit-avx512-mask-copy
     (compiler-backend-simd-copy-assignments)
     dst
     (Var src)
@@ -21573,7 +21576,7 @@ entry:
 
 ;; `kind` 0 is no shape, 1 a vector and 2 a mask of `lanes` lanes.
 (define (compiler-backend-simd-copy-shape-is?
-  [shape : backend.CompilerBackendSimdCopyShape]
+  [shape : be_simd.CompilerBackendSimdCopyShape]
   [kind : i64]
   [lanes : i64]) : bool
   (match shape
@@ -21591,14 +21594,14 @@ entry:
   [lanes : i64]) : bool
   (and
     (compiler-backend-simd-copy-shape-is?
-      (backend.compiler-backend-simd-copy-shape
+      (be_simd.compiler-backend-simd-copy-shape
         (irt.blocks (owned_view.compiler-owned-shared-view text))
         dst
         vars)
       kind
       lanes)
     (compiler-backend-simd-copy-shape-is?
-      (backend.compiler-backend-simd-copy-shape (irt.blocks text) dst vars)
+      (be_simd.compiler-backend-simd-copy-shape (irt.blocks text) dst vars)
       kind
       lanes)))
 
@@ -22126,7 +22129,7 @@ entry:
 (define (compiler-backend-simd-scratch-checks-ok?) : bool
   (let
     [over : be_state.ResultCompilerBackend
-      (backend.compiler-backend-emit-vector-binop
+      (be_simd.compiler-backend-emit-vector-binop
         (Avx2)
         (ast.ast-node-pool-reader-type-segment-bases)
         (compiler-backend-vector-binop-test-assignments)
@@ -22196,7 +22199,7 @@ entry:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-vector-binop
+  (match (be_simd.compiler-backend-emit-vector-binop
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
@@ -22217,7 +22220,7 @@ entry:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-vector-binop
+  (match (be_simd.compiler-backend-emit-vector-binop
     (Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
@@ -22238,7 +22241,7 @@ entry:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-vector-binop
+  (match (be_simd.compiler-backend-emit-vector-binop
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
@@ -22260,7 +22263,7 @@ entry:
   [elem-ty : ast.AstType]
   [lanes : i64]
   [want : String]) : bool
-  (match (backend.compiler-backend-emit-vector-binop
+  (match (be_simd.compiler-backend-emit-vector-binop
     (Avx512)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
@@ -22286,7 +22289,7 @@ entry:
   [shift : String]
   [stack-bytes : i64]) : bool
   (match (if avx512
-    (backend.compiler-backend-emit-vector-binop
+    (be_simd.compiler-backend-emit-vector-binop
       (Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-vector-binop-test-assignments)
@@ -22298,7 +22301,7 @@ entry:
       (owned_view.compiler-owned-shared-view elem-ty)
       (cdiag.compiler-diagnostic-at-start "" "")
       (compiler-backend-simd-staging-state stack-bytes))
-    (backend.compiler-backend-emit-vector-binop
+    (be_simd.compiler-backend-emit-vector-binop
       (Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-vector-binop-test-assignments)
@@ -22362,7 +22365,7 @@ entry:
 
 (define (compiler-backend-byte-vector-shift-spill-ok? [avx512 : bool]) : bool
   (match (if avx512
-    (backend.compiler-backend-emit-vector-binop
+    (be_simd.compiler-backend-emit-vector-binop
       (Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
@@ -22374,7 +22377,7 @@ entry:
       (I8)
       (cdiag.compiler-diagnostic-at-start "" "")
       (compiler-backend-simd-staging-state 448))
-    (backend.compiler-backend-emit-vector-binop
+    (be_simd.compiler-backend-emit-vector-binop
       (Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
@@ -22409,7 +22412,7 @@ entry:
   [elem-ty : ast.AstType]
   [widen : String]
   [shift : String]) : bool
-  (match (backend.compiler-backend-emit-vector-binop
+  (match (be_simd.compiler-backend-emit-vector-binop
     (Avx2)
     (ast.ast-node-pool-reader-type-segment-bases)
     (compiler-backend-vector-binop-test-assignments)
@@ -22442,7 +22445,7 @@ entry:
 
 (define (compiler-backend-word-vector-shift-spill-ok? [avx512 : bool]) : bool
   (match (if avx512
-    (backend.compiler-backend-emit-vector-binop
+    (be_simd.compiler-backend-emit-vector-binop
       (Avx512)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
@@ -22455,7 +22458,7 @@ entry:
       (cdiag.compiler-diagnostic-at-start "" "")
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active)))
-    (backend.compiler-backend-emit-vector-binop
+    (be_simd.compiler-backend-emit-vector-binop
       (Avx2)
       (ast.ast-node-pool-reader-type-segment-bases)
       (compiler-backend-byte-vector-shift-spill-assignments)
@@ -22697,7 +22700,7 @@ entry:
   ;; both to the same vector register.
   (and
     (string.eq
-      (backend.compiler-backend-avx2-emit-unsigned-int-compare-asm
+      (be_simd.compiler-backend-avx2-emit-unsigned-int-compare-asm
         (Ge)
         "%ymm14"
         "%ymm7"
@@ -22705,7 +22708,7 @@ entry:
         (U32))
       "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpslld $31, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm1\n    vpxor %ymm0, %ymm14, %ymm7\n    vpcmpgtd %ymm7, %ymm1, %ymm7\n    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm7\n")
     (string.eq
-      (backend.compiler-backend-avx2-emit-unsigned-int-compare-asm
+      (be_simd.compiler-backend-avx2-emit-unsigned-int-compare-asm
         (Ge)
         "%ymm14"
         "%ymm7"
@@ -30640,7 +30643,7 @@ entry:
 
 (define (compiler-backend-rbp-immediate-add-final-asm
   [spill-dst? : bool]
-  [backend-state : be_state.CompilerBackendState]) : backend.CompilerBackendRspRebaseResult
+  [backend-state : be_state.CompilerBackendState]) : be_peephole.CompilerBackendRspRebaseResult
   (let
     [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
     [assignments : regalloc.CompilerRegAssignmentTable
@@ -30653,7 +30656,7 @@ entry:
           assignments
           backend-state))]
     [push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
     [push-count : i64
       (backend.compiler-backend-fill-push-csr-regs!
         assignments
@@ -30680,8 +30683,8 @@ entry:
       backend-state)
       [(Ok binop-asm)
         (let
-          [result : backend.CompilerBackendRspRebaseResult
-            (backend.compiler-backend-rsp-rebase-full-result
+          [result : be_peephole.CompilerBackendRspRebaseResult
+            (be_peephole.compiler-backend-rsp-rebase-full-result
               (str_cat.str-cat
                 (backend.compiler-backend-emit-save-callee-regs
                   assignments
@@ -30699,11 +30702,11 @@ entry:
               push-count
               slot-vars
               backend-state)]
-          (backend.CompilerBackendRspRebaseResult
+          (be_peephole.CompilerBackendRspRebaseResult
             (compiler-backend-peephole-asm result.text)
             result.ok
             result.csr-ref-mask))]
-      [(Err _) (backend.CompilerBackendRspRebaseResult "" false 0)])))
+      [(Err _) (be_peephole.CompilerBackendRspRebaseResult "" false 0)])))
 
 (define (compiler-backend-rbp-immediate-add-final-ok?) : bool
   (let
@@ -30713,10 +30716,10 @@ entry:
     [spilled-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
-    [direct-result : backend.CompilerBackendRspRebaseResult
+    [direct-result : be_peephole.CompilerBackendRspRebaseResult
       (compiler-backend-rbp-immediate-add-final-asm false direct-state)]
     [direct : String direct-result.text]
-    [spilled-result : backend.CompilerBackendRspRebaseResult
+    [spilled-result : be_peephole.CompilerBackendRspRebaseResult
       (compiler-backend-rbp-immediate-add-final-asm true spilled-state)]
     [spilled : String spilled-result.text]
     (and
@@ -34900,19 +34903,19 @@ entry:
   (and
     (be_state.backend-and4
       (compiler-backend-test-mode-avx2?
-        (backend.compiler-backend-effective-mode-for-function-name
+        (be_simd.compiler-backend-effective-mode-for-function-name
           (Scalar)
           "__tl_dispatch_variant_avx2_dot__dot-avx2"))
       (compiler-backend-test-mode-avx512?
-        (backend.compiler-backend-effective-mode-for-function-name
+        (be_simd.compiler-backend-effective-mode-for-function-name
           (Scalar)
           "__tl_dispatch_variant_avx512_dot__dot-avx512"))
       (compiler-backend-test-mode-scalar?
-        (backend.compiler-backend-effective-mode-for-function-name
+        (be_simd.compiler-backend-effective-mode-for-function-name
           (Scalar)
           "__tl_dispatch_variant_scalar_dot__dot-scalar"))
       (compiler-backend-test-mode-avx2?
-        (backend.compiler-backend-effective-mode-for-function-name
+        (be_simd.compiler-backend-effective-mode-for-function-name
           (Avx2)
           "ordinary")))
     (compiler-backend-defdispatch-thunk-ok?)))
@@ -39267,7 +39270,7 @@ b_keep:
           state
           linux)
         (be_state.compiler-backend-set-current-fn-abi! state linux.abi)
-        (backend.compiler-backend-red-zone-decide!
+        (be_peephole.compiler-backend-red-zone-decide!
           state
           text
           true
@@ -39326,12 +39329,14 @@ b_keep:
           "    call tl_oob_abort\n"))]
     (and
       ;; The dips themselves.
-      (= (backend.compiler-backend-text-max-rsp-dip abort-only) 0)
-      (= (backend.compiler-backend-text-max-rsp-dip returning) 16)
-      (= (backend.compiler-backend-text-max-rsp-dip window) 16)
-      (= (backend.compiler-backend-text-max-rsp-dip window-then-abort) 8)
-      (= (backend.compiler-backend-text-max-rsp-dip open-window-then-abort) 8)
-      (= (backend.compiler-backend-text-max-rsp-dip bare-abort) 16)
+      (= (be_peephole.compiler-backend-text-max-rsp-dip abort-only) 0)
+      (= (be_peephole.compiler-backend-text-max-rsp-dip returning) 16)
+      (= (be_peephole.compiler-backend-text-max-rsp-dip window) 16)
+      (= (be_peephole.compiler-backend-text-max-rsp-dip window-then-abort) 8)
+      (=
+        (be_peephole.compiler-backend-text-max-rsp-dip open-window-then-abort)
+        8)
+      (= (be_peephole.compiler-backend-text-max-rsp-dip bare-abort) 16)
       ;; ...and the decision they feed, at a frame that fits the 128-byte red
       ;; zone on its own and cannot afford a 16-byte guard on top.
       (compiler-backend-abort-tail-dip-red-zone? abort-only 120)
@@ -39617,9 +39622,9 @@ b_keep:
           (set-state-phi-xmm-cycle-fallback-count! state-a 0))
         unit)]
     [rsp-push-regs : (__tl_dyn-array String)
-      (backend.compiler-backend-rsp-rebase-make-push-regs)]
-    [rsp-success-b : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
+    [rsp-success-b : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         "    leave\n    ret\n"
         0
         true
@@ -39627,8 +39632,8 @@ b_keep:
         0
         0
         state-b)]
-    [rsp-failure-a : backend.CompilerBackendRspRebaseResult
-      (backend.compiler-backend-rsp-rebase-full-result
+    [rsp-failure-a : be_peephole.CompilerBackendRspRebaseResult
+      (be_peephole.compiler-backend-rsp-rebase-full-result
         "    syscall\n    leave\n    ret\n"
         0
         true
@@ -41638,15 +41643,15 @@ b_keep:
   [start : i64]
   [end : i64]) : CompilerBackendPeepholeMove
   (let
-    [prefix-len : i64 (backend.compiler-backend-peephole-movq-prefix-len)]
+    [prefix-len : i64 (be_peephole.compiler-backend-peephole-movq-prefix-len)]
     [operand-start : i64 (+ start prefix-len)]
-    (if (backend.compiler-backend-peephole-movq-prefix-at-range?
+    (if (be_peephole.compiler-backend-peephole-movq-prefix-at-range?
       asm-data
       start
       end)
       (let
         [comma : i64
-          (backend.compiler-backend-peephole-find-comma-space-range
+          (be_peephole.compiler-backend-peephole-find-comma-space-range
             asm-data
             operand-start
             end)]
@@ -41664,27 +41669,30 @@ b_keep:
 (define (compiler-backend-owner-key-store-mark-ok?) : bool
   (let
     [plain : i64
-      (backend.compiler-backend-peephole-stack-owner-key-from-parts 1 0 true)]
+      (be_peephole.compiler-backend-peephole-stack-owner-key-from-parts
+        1
+        0
+        true)]
     [marked : i64
-      (backend.compiler-backend-peephole-owner-key-mark-store plain)]
+      (be_peephole.compiler-backend-peephole-owner-key-mark-store plain)]
     (and
-      (backend.compiler-backend-peephole-owner-key-stack? plain)
-      (backend.compiler-backend-peephole-owner-key-stack? marked)
-      (backend.compiler-backend-peephole-owner-key-known? marked)
-      (backend.compiler-backend-peephole-owner-key-eq? plain marked)
-      (backend.compiler-backend-peephole-owner-key-eq? marked plain)
-      (not (backend.compiler-backend-peephole-owner-key-from-store? plain))
-      (backend.compiler-backend-peephole-owner-key-from-store? marked)
+      (be_peephole.compiler-backend-peephole-owner-key-stack? plain)
+      (be_peephole.compiler-backend-peephole-owner-key-stack? marked)
+      (be_peephole.compiler-backend-peephole-owner-key-known? marked)
+      (be_peephole.compiler-backend-peephole-owner-key-eq? plain marked)
+      (be_peephole.compiler-backend-peephole-owner-key-eq? marked plain)
+      (not (be_peephole.compiler-backend-peephole-owner-key-from-store? plain))
+      (be_peephole.compiler-backend-peephole-owner-key-from-store? marked)
       (not
-        (backend.compiler-backend-peephole-owner-key-known?
-          (backend.compiler-backend-peephole-call-preserved-owner marked)))
-      (backend.compiler-backend-peephole-owner-key-eq?
-        (backend.compiler-backend-peephole-call-preserved-owner plain)
+        (be_peephole.compiler-backend-peephole-owner-key-known?
+          (be_peephole.compiler-backend-peephole-call-preserved-owner marked)))
+      (be_peephole.compiler-backend-peephole-owner-key-eq?
+        (be_peephole.compiler-backend-peephole-call-preserved-owner plain)
         plain)
       (=
-        (backend.compiler-backend-peephole-owner-key-mark-store
-          (backend.compiler-backend-peephole-owner-key-unknown))
-        (backend.compiler-backend-peephole-owner-key-unknown)))))
+        (be_peephole.compiler-backend-peephole-owner-key-mark-store
+          (be_peephole.compiler-backend-peephole-owner-key-unknown))
+        (be_peephole.compiler-backend-peephole-owner-key-unknown)))))
 
 ;; Local frame slots: every rsp-form slot (the rebased local frame; incoming
 ;; stack args stay on rbp in stage 1), plus the pre-rebase rbp spelling at
@@ -41734,7 +41742,7 @@ b_keep:
   [end : i64]) : bool
   (if (>= start end)
     false
-    (backend.compiler-backend-peephole-range-mentions-r10-data?
+    (be_peephole.compiler-backend-peephole-range-mentions-r10-data?
       (unsafe
         (string-data asm))
       start
@@ -41762,7 +41770,7 @@ b_keep:
     (while (and
       (< i n)
       (< result 0)
-      (< k backend.compiler-backend-peephole-r10-dead-scan-line-cap))
+      (< k be_peephole.compiler-backend-peephole-r10-dead-scan-line-cap))
       (let
         ;; The line ends at its newline, or at the chunk end.
         [end : i64
@@ -41775,7 +41783,7 @@ b_keep:
             end)
             (set! result 1)
             (set! result 0))
-          (if (backend.compiler-backend-peephole-movq-prefix-at-range?
+          (if (be_peephole.compiler-backend-peephole-movq-prefix-at-range?
             asm-data
             i
             end)
@@ -41812,9 +41820,9 @@ b_keep:
         (with-scratch
           (let
             [chunks : be_state.CompilerBackendPeepholeChunkArray
-              (backend.compiler-backend-peephole-chunk-array state.group)]
+              (be_peephole.compiler-backend-peephole-chunk-array state.group)]
             [records : be_state.CompilerBackendPeepholeLineVec
-              (backend.compiler-backend-peephole-asm-once-records-chunks
+              (be_peephole.compiler-backend-peephole-asm-once-records-chunks
                 backend-state
                 stream
                 chunks
@@ -41822,12 +41830,12 @@ b_keep:
             ;; RMW-2 folds the recognized triples on the FINAL record stream of
             ;; the group -- see the PLACEMENT note on the pass.
             [_folded : unit
-              (backend.compiler-backend-peephole-rmw-fold-candidates!
+              (be_peephole.compiler-backend-peephole-rmw-fold-candidates!
                 backend-state
                 stream
                 (be_state.compiler-backend-global-shared-view records))]
             [rendered : String
-              (backend.compiler-backend-peephole-records-render records)]
+              (be_peephole.compiler-backend-peephole-records-render records)]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState
@@ -41963,8 +41971,8 @@ b_keep:
 (define (compiler-backend-layout-run [asm : String] [mode : i64]) : String
   (let
     [n : i64 (string.string-length asm)]
-    [laid-out : backend.CompilerBackendLayoutPlan
-      (backend.compiler-backend-layout-analyze asm n mode true)]
+    [laid-out : be_peephole.CompilerBackendLayoutPlan
+      (be_peephole.compiler-backend-layout-analyze asm n mode true)]
     (if (= laid-out.len 0)
       asm
       (compiler-backend-layout-render
@@ -41984,19 +41992,19 @@ b_keep:
     [stream : be_state.CompilerBackendStreamState
       (be_state.compiler-backend-state-stream-state backend-state)]
     [records : be_state.CompilerBackendPeepholeLineVec
-      (backend.compiler-backend-peephole-asm-once-records
+      (be_peephole.compiler-backend-peephole-asm-once-records
         backend-state
         stream
         (be_state.compiler-backend-global-shared-view asm)
         false)]
     [_folded : unit
-      (backend.compiler-backend-peephole-rmw-fold-candidates!
+      (be_peephole.compiler-backend-peephole-rmw-fold-candidates!
         backend-state
         stream
         (be_state.compiler-backend-global-shared-view records))]
     [result : String
       (text_buf_borrowed.render
-        (backend.compiler-backend-peephole-records-buffer
+        (be_peephole.compiler-backend-peephole-records-buffer
           (text_buf_borrowed.empty-like (& asm))
           records
           asm))]
@@ -42956,11 +42964,11 @@ b_keep:
           2)
         cabi.compiler-reg-id-rbx)
       (=
-        (backend.compiler-backend-function-state-rax-forward-pending-var
+        (be_simd.compiler-backend-function-state-rax-forward-pending-var
           state-a)
         30)
       (=
-        (backend.compiler-backend-function-state-rax-forward-pending-var
+        (be_simd.compiler-backend-function-state-rax-forward-pending-var
           state-b)
         40)
       (be_state.compiler-backend-function-state-bool?
@@ -43076,11 +43084,11 @@ b_keep:
           be_state.compiler-backend-function-i64-rax-override-var)
         -1)
       (=
-        (backend.compiler-backend-function-state-rax-forward-pending-var
+        (be_simd.compiler-backend-function-state-rax-forward-pending-var
           state-a)
         -1)
       (=
-        (backend.compiler-backend-function-state-rax-forward-pending-var
+        (be_simd.compiler-backend-function-state-rax-forward-pending-var
           state-b)
         40)
       (=
@@ -43738,31 +43746,31 @@ b_keep:
           1))]
     [carry-growth-restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [_owner : unit
-      (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
+      (be_peephole.compiler-backend-peephole-owner-global-reset-with-backend-state!
         backend-state
         stream)]
     [owner-restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [owner-table-grew? : bool
-      (backend.compiler-backend-peephole-owner-global-table-grow!
+      (be_peephole.compiler-backend-peephole-owner-global-table-grow!
         backend-state
         stream)]
     [owner-bytes-grew? : bool
-      (backend.compiler-backend-peephole-owner-global-bytes-grow!
+      (be_peephole.compiler-backend-peephole-owner-global-bytes-grow!
         backend-state
         stream
         (+
-          backend.compiler-backend-peephole-owner-global-initial-bytes-capacity
+          be_peephole.compiler-backend-peephole-owner-global-initial-bytes-capacity
           1))]
     [owner-growth-restored-caller? : bool (arena.eq? (arena.current) scratch)]
     [_sweep : unit
-      (backend.compiler-backend-sweep-storage-ensure! backend-state stream)]
+      (be_peephole.compiler-backend-sweep-storage-ensure! backend-state stream)]
     [sweep-table-grew? : bool
       (backend.compiler-backend-sweep-table-grow! backend-state stream)]
     [sweep-bytes-grew? : bool
-      (backend.compiler-backend-sweep-bytes-grow!
+      (be_peephole.compiler-backend-sweep-bytes-grow!
         backend-state
         stream
-        (+ backend.compiler-backend-sweep-initial-bytes-capacity 1))]
+        (+ be_peephole.compiler-backend-sweep-initial-bytes-capacity 1))]
     [sweep-coverage-grew? : bool
       (backend.compiler-backend-sweep-coverage-ensure! backend-state stream 65)]
     [sweep-restored-caller? : bool (arena.eq? (arena.current) scratch)]
@@ -43804,29 +43812,33 @@ b_keep:
           (array-length
             (unsafe
               (deref (be_state.compiler-backend-stream-state-view stream)).owner-global-offsets))
-          (* 2 backend.compiler-backend-peephole-owner-global-initial-capacity))
+          (*
+            2
+            be_peephole.compiler-backend-peephole-owner-global-initial-capacity))
         (=
           (array-length
             (unsafe
               (deref (be_state.compiler-backend-stream-state-view stream)).owner-global-lengths))
-          (* 2 backend.compiler-backend-peephole-owner-global-initial-capacity))
+          (*
+            2
+            be_peephole.compiler-backend-peephole-owner-global-initial-capacity))
         (=
           (array-length
             (unsafe
               (deref (be_state.compiler-backend-stream-state-view stream)).owner-global-bytes))
           (*
             2
-            backend.compiler-backend-peephole-owner-global-initial-bytes-capacity))
+            be_peephole.compiler-backend-peephole-owner-global-initial-bytes-capacity))
         (=
           (array-length
             (unsafe
               (deref (be_state.compiler-backend-stream-state-view stream)).sweep-sym-off))
-          (* 4 backend.compiler-backend-sweep-initial-capacity))
+          (* 4 be_peephole.compiler-backend-sweep-initial-capacity))
         (=
           (array-length
             (unsafe
               (deref (be_state.compiler-backend-stream-state-view stream)).sweep-sym-bytes))
-          (* 4 backend.compiler-backend-sweep-initial-bytes-capacity))
+          (* 4 be_peephole.compiler-backend-sweep-initial-bytes-capacity))
         (=
           (array-length
             (unsafe
@@ -43943,7 +43955,7 @@ b_keep:
       (be_state.compiler-backend-peephole-carry-safe-reset-with-backend-state!
         backend-state
         stream)
-      (backend.compiler-backend-peephole-owner-global-reset-with-backend-state!
+      (be_peephole.compiler-backend-peephole-owner-global-reset-with-backend-state!
         backend-state
         stream)
       (and

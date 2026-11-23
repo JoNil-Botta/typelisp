@@ -56,6 +56,7 @@
 (unsafe (define (unsafe-id [x : i64]) : i64 x))
 (defdispatch dispatch (scalar startup))
 (extern (foreign [fixed : i64] [tail : ...i64]) : i64 (:symbol \"external_name\"))
+(extern errno-slot (:symbol \"errno_slot\") (:link-lib \"crt_fixture\") : i64)
 (defmacro (keep [value : Expr]) : Expr value)
 ")
 
@@ -259,32 +260,27 @@
     (test.assert-i64-eq (bit-and row.flags 1) 1 "module has global inits")
     (test.assert-i64-eq
       (array-length row.global-inits)
-      5
-      "five runtime global inits")
+      1
+      "one startup wrapper per module")
     (test.assert-string-eq
       (& (array-ref row.global-inits 0))
-      "__global_init_fixture/value"
-      "comptime initializer symbol")
-    (test.assert-string-eq
-      (& (array-ref row.global-inits 1))
-      "__global_init_fixture/converted"
-      "cast comptime initializer symbol")
-    (test.assert-string-eq
-      (& (array-ref row.global-inits 2))
-      "__global_init_fixture/first"
-      "first startup symbol")
-    (test.assert-string-eq
-      (& (array-ref row.global-inits 3))
-      "__global_init_fixture/second"
-      "second startup symbol")
-    (test.assert-string-eq
-      (& (array-ref row.global-inits 4))
-      "__global_init_fixture/generated"
-      "generated startup symbol")
+      "__tl_mod_init_fixture"
+      "module startup wrapper symbol")
     (let
       [value (extract-fixture-value (& row) "value")]
       [converted (extract-fixture-value (& row) "converted")]
       [generated (extract-fixture-value (& row) "generated")]
+      [foreign-value (extract-fixture-value (& row) "errno-slot")]
+      (test.assert-true foreign-value.is-extern "extern value is marked")
+      (test.assert-true (not value.is-extern) "local value is marked")
+      (test.assert-i64-eq
+        (array-length foreign-value.extern-link-inputs)
+        1
+        "extern value link input")
+      (test.assert-string-eq
+        (& (array-ref foreign-value.extern-link-inputs 0).name)
+        "crt_fixture"
+        "extern value links its declared library")
       (test.assert-i64-eq
         value.flags
         4
@@ -304,7 +300,16 @@
         [(None) unit]
         [_ (io.panic "cast comptime initializer has no static payload")]))
     (let
+      [emitter (& (array-ref row.macros 0))]
       [macro (& (array-ref row.macros 1))]
+      (test.assert-i64-eq
+        (cast emitter.result-kind : i64)
+        1
+        "declaration macro result")
+      (test.assert-i64-eq
+        (cast macro.result-kind : i64)
+        0
+        "expression macro result")
       (test.assert-string-eq
         (& macro.identity)
         "fixture/keep"

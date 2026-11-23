@@ -24516,6 +24516,7 @@ entry:
     (be_data.compiler-backend-runtime-functions-for-target
       target
       features
+      false
       false)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
@@ -44679,6 +44680,7 @@ user_fn:
             false
             backtrace
             63)
+          false
           false))]
     (and
       (asm-has?
@@ -44730,7 +44732,8 @@ user_fn:
   [object : bool]
   [as-result : bool]
   [c-abi : bool]
-  [evidence : i64]) : bool
+  [evidence : i64]
+  [referenced : bool]) : bool
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [name : i64 (compiler-backend-test-symbol "package_layout_fixture")]
@@ -44792,9 +44795,20 @@ user_fn:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)))]
+    [globals : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 1)]
+    [_address : unit
+      (when
+        referenced
+        (ir.compiler-ir-global-builder-push!
+          (&mut globals)
+          (Global
+            (compiler-backend-test-symbol "package_layout_address")
+            (U64)
+            (GlobalAddr name))))]
     [program : ir.CompilerIrProgram
       (Program
-        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-global-builder-snapshot-seq (& globals))
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
         (ir.CompilerIrReturnStorageAuthority.None))]
@@ -44870,6 +44884,7 @@ user_fn:
               (cdiag.compiler-diagnostic-message (__tl-box-place diag))]))]
       [reject : bool
         (and
+          referenced
           (not c-abi)
           (or (< evidence 0) (= evidence 4) (= evidence 5) (= evidence 7)))]
       (backend.compiler-backend-state-release-final-arenas! state)
@@ -44892,8 +44907,20 @@ user_fn:
             (not (= (bit-and route 2) 0))
             (not (= (bit-and route 4) 0))
             (= abi 1)
-            evidence)
-          "package aggregate admission lost a missing/conflicting rejection or a valid ABI")))))
+            evidence
+            true)
+          "referenced package extern must have a valid ABI layout")
+        (test.assert-true
+          (compiler-backend-package-layout-admission-ok?
+            (if (= (bit-and route 1) 0)
+              (Linux)
+              (Windows))
+            (not (= (bit-and route 2) 0))
+            (not (= (bit-and route 4) 0))
+            (= abi 1)
+            evidence
+            false)
+          "unused package extern does not require a layout")))))
 
 (test
   backend-call-conventions

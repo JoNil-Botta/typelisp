@@ -8911,6 +8911,8 @@
         (be_state.compiler-backend-global-shared-view args))]
     [call-symbol : String
       (be_operand.compiler-backend-call-symbol-index name plan program-index)]
+    [library-object? : bool
+      (be_state.compiler-backend-state-library-object? backend-state)]
     [inline-memory-name : String
       (if (and
         (be_state.compiler-backend-state-emission-target-policy backend-state).windows
@@ -8924,6 +8926,9 @@
     (cond
       [(and
           (> fast-alloc-size 0)
+          (or
+            (not library-object?)
+            (and (= fast-alloc-size 16) (string.eq call-symbol "tl_alloc")))
           ;; An extern alias with a pointer result uses the same register ABI.
           ;; Its resolved symbol and the runtime plan below must still prove
           ;; that this is our allocator, including its shared-arena slow path.
@@ -8942,25 +8947,28 @@
               (string.eq call-symbol "tl_alloc_global"))))
         (Ok
           (str_cat.str-cat
-            (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
-              (compiler-backend-emit-inline-fast-alloc
-                target
-                function
-                current-label
-                current-site
-                dst
-                fast-alloc-size
-                (be_operand.compiler-backend-plan-provides-id?
-                  plan
-                  cbi.compiler-builtin-id-tl-profile-alloc-total)
-                (= name cbi.compiler-builtin-id-tl-alloc-global)
-                backend-state)
-              (str_cat.str-cat
-                "    call "
-                (compiler-backend-fast-alloc-label fast-alloc-size)
-                "\n"
-                ""
-                ""))
+            (cond
+              [library-object? "    call tl_alloc16\n"]
+              [(compiler-backend-inline-fast-alloc? fast-alloc-size)
+                (compiler-backend-emit-inline-fast-alloc
+                  target
+                  function
+                  current-label
+                  current-site
+                  dst
+                  fast-alloc-size
+                  (be_operand.compiler-backend-plan-provides-id?
+                    plan
+                    cbi.compiler-builtin-id-tl-profile-alloc-total)
+                  (= name cbi.compiler-builtin-id-tl-alloc-global)
+                  backend-state)]
+              [else
+                (str_cat.str-cat
+                  "    call "
+                  (compiler-backend-fast-alloc-label fast-alloc-size)
+                  "\n"
+                  ""
+                  "")])
             (be_operand.compiler-backend-emit-store-typed-var
               assignments
               dst

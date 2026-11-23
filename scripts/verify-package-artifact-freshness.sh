@@ -419,7 +419,10 @@ if [ "$HOST_OS" = linux ]; then
     [ ! -s "$err" ] || fail "tool-wrapper seed build wrote stderr: $(cat "$err")"
     assert_contains "$TOOL_LOG" as
     assert_contains "$TOOL_LOG" ar
-    assert_contains "$TOOL_LOG" cc
+    assert_contains "$TOOL_LOG" ld
+    if grep -Fxq cc "$TOOL_LOG"; then
+        fail "archive-only package build used the C linker driver"
+    fi
     wrapper_calls=$(wc -l < "$TOOL_LOG" | tr -d ' ')
     [ "$wrapper_calls" -gt 0 ] || fail "tool-wrapper seed recorded no native tools"
     sleep 1
@@ -507,16 +510,14 @@ snapshot "$WORK/failure.before" \
 sed 's/dep.add-one 42/dep.add-one 43/' "$WORK/pkg/src/main.tl" > "$WORK/main.next"
 mv "$WORK/main.next" "$WORK/pkg/src/main.tl"
 if [ "$HOST_OS" = linux ]; then
-    FAIL_LINK="$WORK/fail-link"
-    cat > "$FAIL_LINK" <<'EOF'
+    FAIL_LINK_DIR="$WORK/fail-link"
+    mkdir -p "$FAIL_LINK_DIR"
+    cat > "$FAIL_LINK_DIR/ld" <<'EOF'
 #!/usr/bin/env sh
 exit 97
 EOF
-    chmod +x "$FAIL_LINK"
-    TYPELISP_LINUX_CC=$FAIL_LINK
-    export TYPELISP_LINUX_CC
-    run_graph failed-link
-    unset TYPELISP_LINUX_CC
+    chmod +x "$FAIL_LINK_DIR/ld"
+    PATH="$FAIL_LINK_DIR:$PATH" run_graph failed-link
 else
     TYPELISP_WINDOWS_LINK=where.exe
     export TYPELISP_WINDOWS_LINK

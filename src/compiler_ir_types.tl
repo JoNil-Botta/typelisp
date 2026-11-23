@@ -4058,7 +4058,8 @@
 (defenum CompilerIrExtern
   ;; `name-id` is the resolved language-level identity and `source-name-id` is
   ;; its parser identity. `symbol-id` is the exact ABI/linker spelling interned
-  ;; by the parser or generated-symbol owner.
+  ;; by the parser or generated-symbol owner. A non-function type declares
+  ;; undefined data at that symbol. Defined cells belong to CompilerIrGlobal.
   (Extern
     i64
     i64

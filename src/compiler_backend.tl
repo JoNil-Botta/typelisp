@@ -22771,6 +22771,11 @@
                                   (be_scalar.compiler-backend-function-symbol-map-comment
                                     program-index
                                     name)
+                                  (if emit-entry
+                                    ""
+                                    (be_data.compiler-backend-function-section
+                                      target
+                                      (& symbol)))
                                   ".globl "
                                   symbol
                                   "\n"
@@ -23492,13 +23497,19 @@
           program-index
           vars
           program-index.backend-state))]
+    [entry : String
+      (be_facts.compiler-backend-closure-entry-label
+        (be_state.compiler-backend-symbol-text-index program-index name))]
     (Ok
       (str_cat.str-cat
+        (if (be_state.compiler-backend-state-library-object?
+          program-index.backend-state)
+          (be_data.compiler-backend-function-section target (& entry))
+          "")
         (be_scalar.compiler-backend-emit-function-entry
           (be_state.compiler-backend-state-emission-target-policy
             program-index.backend-state)
-          (be_facts.compiler-backend-closure-entry-label
-            (be_state.compiler-backend-symbol-text-index program-index name))
+          entry
           frame
           (compiler_regalloc.compiler-reg-assignment-table-empty)
           vars
@@ -24052,6 +24063,8 @@ tl_shared_object_init:
                                     target
                                     runtime-features
                                     (be_state.compiler-backend-state-closed-executable?
+                                      program-index.backend-state)
+                                    (be_state.compiler-backend-state-archive-runtime?
                                       program-index.backend-state))
                                   "")))
                             (cond
@@ -24134,6 +24147,9 @@ tl_shared_object_init:
             (compiler_diagnostic.compiler-diagnostic-at-start
               ""
               (compiler-backend-shared-object-target-message target))))))
+    (be_state.compiler-backend-state-set-library-object!
+      backend-state
+      (not emit-entry))
     (compiler-backend-debug-path-remap-load-environment!)
     (be_state.compiler-backend-state-set-emission-target-policy!
       backend-state
@@ -24259,6 +24275,8 @@ tl_shared_object_init:
                                     externs)
                                   plan
                                   program-index
+                                  (& runtime-index)
+                                  (& collections.references.items)
                                   emit-entry))]
                             (be_data.compiler-backend-shared-object-unstreamed
                               backend-state

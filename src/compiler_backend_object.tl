@@ -3358,11 +3358,19 @@
                       8))))
               (compiler-backend-object-global-value
                 (object_target.compiler-backend-object-add-data
-                  (object_target.compiler-backend-object-symbol-export-section
-                    parts
-                    (be_state.compiler-backend-global-shared-view symbol)
-                    (Data)
-                    (Data))
+                  (if (be_state.compiler-backend-state-private-global?
+                    program-index.backend-state
+                    name)
+                    (object_target.compiler-backend-object-symbol-local-section
+                      parts
+                      (string.copy (& symbol))
+                      (Data)
+                      (Data))
+                    (object_target.compiler-backend-object-symbol-export-section
+                      parts
+                      (be_state.compiler-backend-global-shared-view symbol)
+                      (Data)
+                      (Data)))
                   (Label (be_state.compiler-backend-global-shared-view symbol)))
                 symbol
                 ty
@@ -3617,7 +3625,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     parts
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _)
+      [(Extern name-id source-name-id _ ty abi link-symbol-id _ provided _)
         (let
           [link-symbol : String
             (be_operand.compiler-backend-link-symbol-id
@@ -3675,7 +3683,9 @@
               (object_target.compiler-backend-object-symbol-extern
                 parts
                 link-symbol
-                (Function))
+                (match ty
+                  [(Func _ _) (Function)]
+                  [_ (Data)]))
               parts)
             externs
             plan
@@ -3794,6 +3804,7 @@
   [plan : be_state.CompilerBackendRuntimePlan]
   [names : be_state.BackendStringSeq]
   [closed : bool]
+  [emit-entry : bool]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index names.len)
     parts
@@ -3802,23 +3813,35 @@
         (be_state.compiler-backend-global-array-element-shared-view
           names.slots
           index)]
+      [defined? : bool
+        (or
+          emit-entry
+          (string.eq (& name) "tl_tlci_call_image_entry")
+          (string.eq (& name) "tl_tlci_call_macro_entry"))]
+      [referenced? : bool
+        (cobj.compiler-object-relocation-builder-targets?
+          (& parts.relocations)
+          (& name))]
       (compiler-backend-object-runtime-symbols
-        (if (and
-          (compiler-backend-object-runtime-symbol-provided? plan name)
-          (or
-            (not closed)
-            (cobj.compiler-object-relocation-builder-targets?
-              (& parts.relocations)
-              (& name))))
-          (object_target.compiler-backend-object-symbol-local-section
-            parts
-            name
-            (Text)
-            (Runtime))
-          parts)
+        (cond
+          [(not (compiler-backend-object-runtime-symbol-provided? plan name))
+            parts]
+          [(and defined? (or (not closed) referenced?))
+            (object_target.compiler-backend-object-symbol-local-section
+              parts
+              name
+              (Text)
+              (Runtime))]
+          [(and (not defined?) referenced?)
+            (object_target.compiler-backend-object-symbol-extern-once
+              parts
+              name
+              (Function))]
+          [else parts])
         plan
         names
         closed
+        emit-entry
         (+ index 1)))))
 
 (define (compiler-backend-object-image-for-target
@@ -3853,9 +3876,10 @@
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : be_state.CompilerBackendRuntimePlan]
+  [runtime-index : be_state.CompilerBackendRuntimeIndex]
   [program-index : be_state.CompilerBackendProgramIndex]
   [emit-entry : bool]
-  [crt-entry : bool]) : cobj.CompilerObjectImage
+  [crt-entry : bool]) : be_state.ResultCompilerBackendObject
   (let
     [target : be_state.CompilerBackendTarget target-policy.target]
     ;; IAG-1: the object image mirrors the text emitter's inline aggregate
@@ -3879,6 +3903,17 @@
         program-index.backend-state
         census
         program-index)]
+    [_
+      (try
+        (be_facts.compiler-backend-validate-program
+          (be_state.compiler-backend-global-shared-view globals)
+          (be_state.compiler-backend-global-shared-view functions)
+          (be_state.compiler-backend-global-shared-view externs)
+          plan
+          program-index
+          (& runtime-index)
+          (& collections.references.items)
+          emit-entry))]
     [closure-names : be_state.BackendSymbolSeq
       (be_data.compiler-backend-program-collections-functions
         (be_state.compiler-backend-global-shared-view collections))]
@@ -3895,11 +3930,6 @@
       (be_data.compiler-backend-program-collections-uses-f64-neg? collections)]
     [uses-f32-neg : bool
       (be_data.compiler-backend-program-collections-uses-f32-neg? collections)]
-    [runtime-index : be_state.CompilerBackendRuntimeIndex
-      (be_data.compiler-backend-runtime-index
-        program-index.backend-state
-        (be_state.compiler-backend-global-shared-view functions)
-        (be_state.compiler-backend-global-shared-view externs))]
     [seed : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-runtime-symbols
         (compiler-backend-object-externs
@@ -3947,16 +3977,18 @@
         (compiler-backend-object-runtime-symbols-list)
         (be_state.compiler-backend-state-closed-executable?
           program-index.backend-state)
+        emit-entry
         0)]
-    (compiler-backend-object-image-for-target
-      seed
-      target
-      (be_state.compiler-backend-runtime-tail-tlci-macro-entry?
-        (be_state.compiler-backend-runtime-plan-tail plan))
-      emit-entry
-      crt-entry
-      (be_state.compiler-backend-state-closed-executable?
-        program-index.backend-state))))
+    (Ok
+      (compiler-backend-object-image-for-target
+        seed
+        target
+        (be_state.compiler-backend-runtime-tail-tlci-macro-entry?
+          (be_state.compiler-backend-runtime-plan-tail plan))
+        emit-entry
+        crt-entry
+        (be_state.compiler-backend-state-closed-executable?
+          program-index.backend-state)))))
 
 (define (compiler-backend-object-semantic-binop-supported?
   [op : compiler_ir_types.CompilerIrBinOp]
@@ -4699,10 +4731,10 @@
   (be_state.compiler-backend-state-user-symbol-cache-reset! backend-state)
   (be_facts.compiler-backend-state-slot-cache-reset! backend-state)
   (be_state.compiler-backend-state-set-abort-site-counter! backend-state 0)
-  (match (be_data.compiler-backend-runtime-plan-with-backend-state
+  (match (be_data.compiler-backend-runtime-plan-with-index-with-backend-state
     backend-state
     (be_state.compiler-backend-global-shared-view program))
-    [(Ok plan)
+    [(Ok planned)
       (match (be_state.compiler-backend-global-shared-view program)
         [(Program globals functions externs _authority)
           (let
@@ -4713,32 +4745,23 @@
                 (be_state.compiler-backend-global-shared-view functions)
                 (be_state.compiler-backend-global-shared-view externs)
                 profile-state)]
-            [_
-              (try
-                (be_facts.compiler-backend-validate-program
-                  (be_state.compiler-backend-global-shared-view globals)
-                  (be_state.compiler-backend-global-shared-view functions)
-                  (be_state.compiler-backend-global-shared-view externs)
-                  plan
-                  program-index
-                  emit-entry))]
             (match (be_facts.compiler-backend-switch-validate-functions
               (be_state.compiler-backend-global-shared-view functions))
               [(Ok)
-                (Ok
-                  (compiler-backend-object-image-after-index
-                    type-segment-bases
-                    program
-                    (be_state.compiler-backend-state-emission-target-policy
-                      backend-state)
-                    mode
-                    functions
-                    globals
-                    externs
-                    plan
-                    program-index
-                    emit-entry
-                    crt-entry))]
+                (compiler-backend-object-image-after-index
+                  type-segment-bases
+                  program
+                  (be_state.compiler-backend-state-emission-target-policy
+                    backend-state)
+                  mode
+                  functions
+                  globals
+                  externs
+                  planned.plan
+                  planned.index
+                  program-index
+                  emit-entry
+                  crt-entry)]
               [(Err message)
                 (Err
                   (box

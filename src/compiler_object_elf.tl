@@ -2,6 +2,10 @@
 (import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
+(import stdlib.sort)
+(import stdlib.clone)
+(import stdlib.vector)
+(import compiler_str_cat as str_cat)
 (import compiler_object as cobj)
 (import compiler_object_layout as layout)
 (cfg test (import stdlib.test))
@@ -881,6 +885,392 @@
     [else
       (Err
         "elf: object image contains unsupported text instructions or relocation records")]))
+
+;; The base encoder has already assigned offsets and emitted every fixup.
+;; Repartition its payload by the defined function and data symbols. Preserve
+;; symbol ordering, so relocation symbol indices and the string table carry over.
+(define (compiler-object-elf-append-range!
+  [out : (&mut byte_buf_core.ByteBufBuilder)]
+  [text : (& str)]
+  [offset : i64]
+  [size : i64]) : unit
+  (layout.compiler-object-layout-push-string-bytes!
+    out
+    (string.substring-view text offset size)))
+
+(defstruct CompilerObjectElfRange
+  (section i64)
+  (start i64)
+  (name String))
+
+(clone.gen-clone CompilerObjectElfRange)
+
+(import (stdlib.vector.vector CompilerObjectElfRange) as range_vec)
+(import (stdlib.sort.vec CompilerObjectElfRange) as range_sort)
+
+(define (compiler-object-elf-range-less?
+  [left : CompilerObjectElfRange]
+  [right : CompilerObjectElfRange]) : bool
+  (or
+    (< left.section right.section)
+    (and (= left.section right.section) (< left.start right.start))))
+
+(define (compiler-object-elf-range-index
+  [ranges : (& (__tl_dyn-array CompilerObjectElfRange))]
+  [count : i64]
+  [section : i64]
+  [offset : i64]) : i64
+  (let
+    [low : i64 0]
+    [high : i64 count]
+    (while (< low high)
+      (let
+        [mid : i64 (/ (+ low high) 2)]
+        [range-section : i64 (array-ref ranges mid).section]
+        [range-start : i64 (array-ref ranges mid).start]
+        (if (or
+          (< range-section section)
+          (and (= range-section section) (<= range-start offset)))
+          (set! low (+ mid 1))
+          (set! high mid))))
+    (- low 1)))
+
+(define (compiler-object-elf-archive-ranges
+  [image : (& cobj.CompilerObjectImage)]
+  [flat : (& str)]) : range_vec.Vec
+  (let
+    [candidates : range_vec.Vec (range_vec.new)]
+    [ranges : range_vec.Vec (range_vec.new)]
+    [strtab : i64 (compiler-object-elf-strtab-offset image)]
+    (for [i (iterator.range 1 (+ compiler-object-elf-loadable-count 1))]
+      (range_vec.push-ref! (&mut candidates) (CompilerObjectElfRange i 0 "")))
+    (let
+      [pos : i64 (compiler-object-elf-symtab-offset image)]
+      (while (< pos strtab)
+        (let
+          [section : i64 (layout.compiler-object-layout-u16-at flat (+ pos 6))]
+          [info : i64 (layout.compiler-object-layout-u8-at flat (+ pos 4))]
+          [kind : i64 (bit-and info 15)]
+          ;; Local text labels include basic-block entries. Fallthrough into
+          ;; those blocks must stay inside the enclosing function's section.
+          ;; Rodata can share overlapping string suffixes.
+          (when
+            (or
+              (and
+                (= section compiler-object-elf-section-text-index)
+                (= info 18))
+              (and
+                (= kind 1)
+                (or
+                  (= section compiler-object-elf-section-data-index)
+                  (= section compiler-object-elf-section-bss-index))))
+            (let
+              [start : i64
+                (+ strtab (layout.compiler-object-layout-u32-at flat pos))]
+              [end : i64 (string.index-of-byte flat start 0)]
+              (range_vec.push-ref!
+                (&mut candidates)
+                (CompilerObjectElfRange
+                  section
+                  (layout.compiler-object-layout-u32-at flat (+ pos 8))
+                  (string.substring flat start (- end start)))))))
+        (+= pos compiler-object-elf-symbol-size)))
+    (range_sort.sort! (&mut candidates) compiler-object-elf-range-less?)
+    (for [i (iterator.range 0 (range_vec.len (& candidates)))]
+      (let
+        [entry : CompilerObjectElfRange
+          (range_vec.get (& candidates) i (CompilerObjectElfRange 0 0 ""))]
+        [count : i64 (range_vec.len (& ranges))]
+        [prior : CompilerObjectElfRange
+          (range_vec.get (& ranges) (- count 1) (CompilerObjectElfRange 0 0 ""))]
+        (cond
+          [(or (!= entry.section prior.section) (!= entry.start prior.start))
+            (range_vec.push-ref! (&mut ranges) entry)]
+          [(string.eq (& prior.name) "")
+            (range_vec.set-ref! (&mut ranges) (- count 1) entry)]
+          [else unit])))
+    ranges))
+
+(define (compiler-object-elf-archive-base [start : i64]) : i64
+  (bit-and start (bit-not 7)))
+
+(define (compiler-object-elf-archive-render-symbols!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [image : (& cobj.CompilerObjectImage)]
+  [flat : (& str)]
+  [ranges : (& (__tl_dyn-array CompilerObjectElfRange))]
+  [count : i64]) : unit
+  (let
+    [pos : i64 (compiler-object-elf-symtab-offset image)]
+    [end : i64 (compiler-object-elf-strtab-offset image)]
+    (while (< pos end)
+      (let
+        [section : i64 (layout.compiler-object-layout-u16-at flat (+ pos 6))]
+        [value : i64 (layout.compiler-object-layout-u32-at flat (+ pos 8))]
+        (if (= section 0)
+          (compiler-object-elf-append-range!
+            out
+            flat
+            pos
+            compiler-object-elf-symbol-size)
+          (let
+            [index : i64
+              (compiler-object-elf-range-index ranges count section value)]
+            [start : i64 (array-ref ranges index).start]
+            (compiler-object-elf-append-range! out flat pos 6)
+            (layout.compiler-object-layout-push-u16! out (+ index 1))
+            (layout.compiler-object-layout-push-u64!
+              out
+              (- value (compiler-object-elf-archive-base start)))
+            (compiler-object-elf-append-range! out flat (+ pos 16) 8))))
+      (+= pos compiler-object-elf-symbol-size))))
+
+(define (compiler-object-elf-archive-section-name
+  [kind : cobj.CompilerObjectSectionKind]
+  [name : (& str)]) : String
+  (let
+    [prefix : String
+      (match kind
+        [(Text) ".text"]
+        [(Data) ".data"]
+        [(Rodata) ".rodata"]
+        [_ ".bss"])]
+    (if (string.eq name "")
+      prefix
+      (str_cat.str-cat prefix "." name))))
+
+(define (compiler-object-elf-render-archive
+  [image : (& cobj.CompilerObjectImage)]) : ResultCompilerObjectElf
+  (let
+    [flat (try (compiler-object-elf-render image))]
+    [ranges : range_vec.Vec (compiler-object-elf-archive-ranges image (& flat))]
+    [count : i64 (range_vec.len (& ranges))]
+    ;; Up to one relocation section per payload section.
+    [_ : unit
+      (when
+        (>= (+ (* 2 count) 5) 0xff00)
+        (return (Err "elf: too many archive sections")))]
+    [entries (range_vec.slots (& ranges))]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [headers : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-new)]
+    [names : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [rels : (__tl_dyn-array byte_buf_core.ByteBufBuilder)
+      (__tl_make-array byte_buf_core.ByteBufBuilder count)]
+    [rela-count : i64 0]
+    (layout.compiler-object-layout-push-u8! (&mut names) 0)
+    (compiler-object-elf-append-range!
+      (&mut out)
+      (& flat)
+      0
+      compiler-object-elf-header-size)
+    (layout.compiler-object-layout-push-zeroes!
+      (&mut headers)
+      compiler-object-elf-section-header-size)
+    (for [i (iterator.range 0 count)]
+      (let
+        [range : CompilerObjectElfRange
+          (range_vec.get (& ranges) i (CompilerObjectElfRange 0 0 ""))]
+        [kind : cobj.CompilerObjectSectionKind
+          (layout.compiler-object-layout-section-at (- range.section 1))]
+        [base : i64 (compiler-object-elf-archive-base range.start)]
+        [offset : i64 (layout.compiler-object-layout-align-offset out.len 8)]
+        [end : i64
+          (if (and
+            (< (+ i 1) count)
+            (= range.section (array-ref entries (+ i 1)).section))
+            (array-ref entries (+ i 1)).start
+            (layout.compiler-object-layout-section-virtual-size image kind))]
+        (compiler-object-elf-push-section-header!
+          (&mut headers)
+          names.len
+          (match kind
+            [(Bss) compiler-object-elf-sht-nobits]
+            [_ compiler-object-elf-sht-progbits])
+          (compiler-object-elf-section-flags kind)
+          0
+          offset
+          (- end base)
+          0
+          0
+          8
+          0)
+        (compiler-object-elf-push-shstrtab-name!
+          (&mut names)
+          (& (compiler-object-elf-archive-section-name kind (& range.name))))
+        (unless
+          (cobj.compiler-object-section-kind-eq? kind (Bss))
+          (layout.compiler-object-layout-render-padding-to! (&mut out) offset)
+          (layout.compiler-object-layout-push-zeroes!
+            (&mut out)
+            (- range.start base))
+          (compiler-object-elf-append-range!
+            (&mut out)
+            (& flat)
+            (+
+              (compiler-object-elf-load-offset image (- range.section 1))
+              range.start)
+            (- end range.start)))
+        (set! (array-ref rels i) (byte_buf_core.byte-buf-builder-new))))
+    (for [i (iterator.range 0 compiler-object-elf-loadable-count)]
+      (let
+        [pos : i64 (compiler-object-elf-rela-offset image i)]
+        [end : i64 (compiler-object-elf-rela-offset image (+ i 1))]
+        (while (< pos end)
+          (let
+            [offset : i64 (layout.compiler-object-layout-u32-at (& flat) pos)]
+            [index : i64
+              (compiler-object-elf-range-index entries count (+ i 1) offset)]
+            [base : i64
+              (compiler-object-elf-archive-base (array-ref entries index).start)]
+            (when (= (array-ref rels index).len 0) (+= rela-count 1))
+            (layout.compiler-object-layout-push-u64!
+              (&mut (array-ref rels index))
+              (- offset base))
+            (compiler-object-elf-append-range!
+              (&mut (array-ref rels index))
+              (& flat)
+              (+ pos 8)
+              16))
+          (+= pos compiler-object-elf-relocation-size))))
+    (let
+      [symtab-index : i64 (+ 1 (+ count rela-count))]
+      [strtab-index : i64 (+ symtab-index 1)]
+      [shstrtab-index : i64 (+ strtab-index 1)]
+      (layout.compiler-object-layout-render-padding-to!
+        (&mut out)
+        (layout.compiler-object-layout-align-offset out.len 8))
+      (for [i (iterator.range 0 count)]
+        (let
+          [rel-length : i64 (array-ref rels i).len]
+          [range : CompilerObjectElfRange
+            (range_vec.get (& ranges) i (CompilerObjectElfRange 0 0 ""))]
+          (when
+            (> rel-length 0)
+            (compiler-object-elf-push-section-header!
+              (&mut headers)
+              names.len
+              compiler-object-elf-sht-rela
+              0
+              0
+              out.len
+              rel-length
+              symtab-index
+              (+ i 1)
+              8
+              compiler-object-elf-relocation-size)
+            (compiler-object-elf-push-shstrtab-name!
+              (&mut names)
+              (&
+                (str_cat.str-cat
+                  ".rela"
+                  (compiler-object-elf-archive-section-name
+                    (layout.compiler-object-layout-section-at
+                      (- range.section 1))
+                    (& range.name)))))
+            (byte_buf_core.byte-buf-builder-append-array-range
+              (&mut out)
+              (& (array-ref rels i).slots)
+              0
+              rel-length))))
+      (compiler-object-elf-push-section-header!
+        (&mut headers)
+        names.len
+        compiler-object-elf-sht-symtab
+        0
+        0
+        out.len
+        (compiler-object-elf-symbol-table-size image)
+        strtab-index
+        (+ 1 (compiler-object-elf-local-symbol-count image.symbols))
+        8
+        compiler-object-elf-symbol-size)
+      (compiler-object-elf-push-shstrtab-name! (&mut names) ".symtab")
+      (compiler-object-elf-archive-render-symbols!
+        (&mut out)
+        image
+        (& flat)
+        entries
+        count)
+      (let
+        [strtab : i64 (compiler-object-elf-strtab-offset image)]
+        [strtab-size : i64
+          (compiler-object-elf-string-table-size image.symbols)]
+        (compiler-object-elf-push-section-header!
+          (&mut headers)
+          names.len
+          compiler-object-elf-sht-strtab
+          0
+          0
+          out.len
+          strtab-size
+          0
+          0
+          1
+          0)
+        (compiler-object-elf-push-shstrtab-name! (&mut names) ".strtab")
+        (compiler-object-elf-append-range!
+          (&mut out)
+          (& flat)
+          strtab
+          strtab-size))
+      (let
+        [shstr-name : i64 names.len]
+        [_ : unit
+          (compiler-object-elf-push-shstrtab-name! (&mut names) ".shstrtab")]
+        [stack-name : i64 names.len]
+        [_ : unit
+          (compiler-object-elf-push-shstrtab-name!
+            (&mut names)
+            ".note.GNU-stack")]
+        (compiler-object-elf-push-section-header!
+          (&mut headers)
+          shstr-name
+          compiler-object-elf-sht-strtab
+          0
+          0
+          out.len
+          names.len
+          0
+          0
+          1
+          0)
+        (compiler-object-elf-push-section-header!
+          (&mut headers)
+          stack-name
+          compiler-object-elf-sht-progbits
+          0
+          0
+          out.len
+          0
+          0
+          0
+          1
+          0)
+        (byte_buf_core.byte-buf-builder-append-array-range
+          (&mut out)
+          (& names.slots)
+          0
+          names.len)
+        (let
+          [shoff : i64 (layout.compiler-object-layout-align-offset out.len 8)]
+          (layout.compiler-object-layout-render-padding-to! (&mut out) shoff)
+          (byte_buf_core.byte-buf-builder-append-array-range
+            (&mut out)
+            (& headers.slots)
+            0
+            headers.len)
+          (for [i (iterator.range 0 8)]
+            (set!
+              (array-ref out.slots (+ 40 i))
+              (cast (shr shoff (* i 8)) : u8)))
+          (let
+            [shnum : i64 (+ shstrtab-index 2)]
+            (set! (array-ref out.slots 60) (cast shnum : u8))
+            (set! (array-ref out.slots 61) (cast (shr shnum 8) : u8))
+            (set! (array-ref out.slots 62) (cast shstrtab-index : u8))
+            (set! (array-ref out.slots 63) (cast (shr shstrtab-index 8) : u8)))
+          (Ok (layout.compiler-object-layout-bytes-string (& out))))))))
 
 (define (compiler-object-elf-section-header-start
   [image : (& image cobj.CompilerObjectImage)]

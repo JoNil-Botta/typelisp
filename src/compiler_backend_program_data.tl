@@ -1478,6 +1478,25 @@
         [_ true])]
     [_ false]))
 
+(define (compiler-backend-elf-symbol-section
+  [section : (& str)]
+  [symbol : (& str)]
+  [attributes : (& str)]) : String
+  (let
+    [suffix : String
+      (if (string.is-string-prefix-at symbol "\"" 0)
+        (string.substring symbol 1 (- (string.string-length symbol) 2))
+        (string.copy symbol))]
+    (str_cat.str-cat ".section \"" section "." suffix "\"," attributes "\n")))
+
+(define (compiler-backend-function-section
+  [target : be_state.CompilerBackendTarget]
+  [symbol : (& str)]) : String
+  (match target
+    [(Linux)
+      (compiler-backend-elf-symbol-section ".text" symbol "\"ax\",@progbits")]
+    [(Windows) (str_cat.str-cat ".section .text,\"xr\",one_only," symbol "\n")]))
+
 (define (compiler-backend-emit-runtime-global
   [target : be_state.CompilerBackendTarget]
   [symbol : String]
@@ -1504,31 +1523,89 @@
           (be_state.compiler-backend-state-user-symbol-id
             program-index.backend-state
             name)]
-        (if (compiler-backend-runtime-global? ty value)
+        [private? : bool
+          (be_state.compiler-backend-state-private-global?
+            program-index.backend-state
+            name)]
+        [library? : bool
+          (be_state.compiler-backend-state-library-object?
+            program-index.backend-state)]
+        [zeroed? : bool (compiler-backend-runtime-global? ty value)]
+        [visibility : String
+          (if private?
+            ""
+            (str_cat.str-cat ".globl " symbol "\n"))]
+        [size : i64
+          (if zeroed?
+            (compiler-backend-runtime-global-cell-size
+              type-segment-bases
+              program-index
+              name
+              (clone ty))
+            0)]
+        (if (and zeroed? (not library?))
           (Ok
             (str_cat.str-cat
-              ".globl "
-              symbol
-              "\n"
-              (compiler-backend-emit-runtime-global
-                target
-                symbol
-                (compiler-backend-runtime-global-cell-size
-                  type-segment-bases
-                  program-index
-                  name
-                  ty))
-              ""))
+              visibility
+              (compiler-backend-emit-runtime-global target symbol size)))
           (let
+            [section : String
+              (if library?
+                (match target
+                  [(Linux)
+                    (cond
+                      [zeroed?
+                        (compiler-backend-elf-symbol-section
+                          ".bss"
+                          (& symbol)
+                          "\"aw\",@nobits")]
+                      [private?
+                        (compiler-backend-elf-symbol-section
+                          ".rodata"
+                          (& symbol)
+                          "\"a\",@progbits")]
+                      [else
+                        (compiler-backend-elf-symbol-section
+                          ".data"
+                          (& symbol)
+                          "\"aw\",@progbits")])]
+                  [(Windows)
+                    (str_cat.str-cat
+                      (cond
+                        [zeroed? ".section .bss,\"bw\",one_only,"]
+                        [private? ".section .rdata,\"dr\",one_only,"]
+                        [else ".section .data,\"dw\",one_only,"])
+                      symbol
+                      "\n")])
+                "")]
             [value-asm
               (try
-                (compiler-backend-global-value-asm
-                  type-segment-bases
-                  ty
-                  value
-                  program-index))]
+                (if zeroed?
+                  (be_state.ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      "    .zero "
+                      (string.int->string size)
+                      "\n"))
+                  (compiler-backend-global-value-asm
+                    type-segment-bases
+                    ty
+                    value
+                    program-index)))]
             (Ok
-              (str_cat.str-cat ".globl " symbol "\n" symbol ":\n" value-asm "")))))]))
+              (str_cat.str-cat
+                section
+                (if library?
+                  "    .balign 8\n"
+                  "")
+                visibility
+                (if (and
+                  private?
+                  (be_state.compiler-backend-target-elf? target))
+                  (str_cat.str-cat ".type " symbol ",@object\n")
+                  "")
+                symbol
+                ":\n"
+                value-asm)))))]))
 
 (define (compiler-backend-emit-globals-buffer-from
   [type-segment-bases : i64]
@@ -2228,27 +2305,6 @@
         functions
         externs)]))
 
-(define (compiler-backend-extern-symbol-referenced?
-  [runtime-index : (& runtime-index be_state.CompilerBackendRuntimeIndex)]
-  [referenced-functions : (& referenced-functions be_state.BackendSymbolSeq)]
-  [extern-name-id : i64]
-  [source-name-id : i64]
-  [link-symbol-id : i64]) : bool
-  (or
-    (be_state.backend-or4
-      (compiler-backend-runtime-index-calls? runtime-index extern-name-id)
-      (compiler-backend-runtime-index-calls? runtime-index source-name-id)
-      (compiler-backend-runtime-index-calls? runtime-index link-symbol-id)
-      (be_state.compiler-backend-symbol-list-contains-id?
-        referenced-functions
-        extern-name-id))
-    (be_state.compiler-backend-symbol-list-contains-id?
-      referenced-functions
-      source-name-id)
-    (be_state.compiler-backend-symbol-list-contains-id?
-      referenced-functions
-      link-symbol-id)))
-
 (define (compiler-backend-emit-externs-into
   [backend-state : be_state.CompilerBackendState]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -2290,7 +2346,7 @@
               link-symbol-id
               provided
               plan)
-            (compiler-backend-extern-symbol-referenced?
+            (be_facts.compiler-backend-extern-symbol-referenced?
               runtime-index
               referenced-functions
               name-id
@@ -2392,7 +2448,7 @@
               (and
                 (!= bit 0)
                 (= (bit-and mask bit) 0)
-                (compiler-backend-extern-symbol-referenced?
+                (be_facts.compiler-backend-extern-symbol-referenced?
                   runtime-index
                   referenced
                   name
@@ -2412,21 +2468,29 @@
   (let
     [features : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-features plan)]
-    (when
-      emit-entry
-      (let
-        [used : i64
-          (compiler-backend-runtime-used-leaf-mask
-            backend-state
-            runtime-index
-            referenced
-            externs)]
-        (set!
-          features.leaf-mask
-          (match target
-            [(be_state.CompilerBackendTarget.Linux) used]
-            [(be_state.CompilerBackendTarget.Windows)
-              (bit-or features.leaf-mask (bit-and used 96))]))))
+    (cond
+      [(and
+        emit-entry
+        (be_state.compiler-backend-state-archive-runtime? backend-state))
+        (set! features.alloc true)
+        (set! features.region-mark true)
+        (set! features.region-reset true)
+        (set! features.leaf-mask 127)]
+      [emit-entry
+        (let
+          [used : i64
+            (compiler-backend-runtime-used-leaf-mask
+              backend-state
+              runtime-index
+              referenced
+              externs)]
+          (set!
+            features.leaf-mask
+            (match target
+              [(be_state.CompilerBackendTarget.Linux) used]
+              [(be_state.CompilerBackendTarget.Windows)
+                (bit-or features.leaf-mask (bit-and used 96))])))]
+      [else unit])
     features))
 
 (define (compiler-backend-runtime-data-for-target
@@ -2438,19 +2502,86 @@
     [(be_state.CompilerBackendTarget.Windows)
       (runtime_windows.compiler-backend-runtime-data features)]))
 
+(define (compiler-backend-runtime-fast-alloc-entry? [line : (& str)]) : bool
+  (let
+    [length : i64 (string.string-length line)]
+    (and
+      (or (= length 14) (= length 15))
+      (string.is-string-prefix-at line ".L_tl_alloc" 0)
+      (>= (string.string-ref line (- length 3)) '0')
+      (<= (string.string-ref line (- length 3)) '9')
+      (= (string.string-ref line (- length 2)) ':'))))
+
+(define (compiler-backend-runtime-sectioned-functions
+  [target : be_state.CompilerBackendTarget]
+  [body : (& str)]) : String
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [limit : i64 (string.string-length body)]
+    [start : i64 0]
+    [in-text? : bool true]
+    (while (< start limit)
+      (let
+        [end : i64 (string.index-of-byte body start 10)]
+        [next : i64
+          (if (< end 0)
+            limit
+            (+ end 1))]
+        [line : String (string.substring body start (- next start))]
+        (cond
+          [(string.eq (& line) ".L_tl_alloc16:\n")
+            (set!
+              buf
+              (text_buf.append
+                buf
+                (compiler-backend-function-section target "tl_alloc16")))
+            (set! buf (text_buf.append buf ".globl tl_alloc16\ntl_alloc16:\n"))]
+          [(compiler-backend-runtime-fast-alloc-entry? (& line))
+            (set!
+              buf
+              (text_buf.append
+                buf
+                (compiler-backend-function-section
+                  target
+                  (& (string.substring (& line) 0 (- (- next start) 2))))))]
+          [(string.is-string-prefix-at (& line) "    .text" 0)
+            (set! in-text? true)]
+          [(or
+              (string.is-string-prefix-at (& line) "    .data" 0)
+              (string.is-string-prefix-at (& line) "    .section ." 0))
+            (set! in-text? false)]
+          [(and in-text? (string.is-string-prefix-at (& line) "    .globl " 0))
+            (set!
+              buf
+              (text_buf.append
+                buf
+                (compiler-backend-function-section
+                  target
+                  (& (string.substring (& line) 11 (- end (+ start 11)))))))]
+          [else unit])
+        (set! buf (text_buf.append buf line))
+        (set! start next)))
+    (text_buf.render (text_buf.append buf ".text\n"))))
+
 (define (compiler-backend-runtime-functions-for-target
   [target : be_state.CompilerBackendTarget]
   [features : runtime_common.CompilerBackendRuntimeFeatures]
-  [closed : bool]) : String
-  (match target
-    [(be_state.CompilerBackendTarget.Linux)
-      (runtime_linux.compiler-backend-runtime-functions-for-executable
-        features
-        closed)]
-    [(be_state.CompilerBackendTarget.Windows)
-      (runtime_windows.compiler-backend-runtime-functions-for-executable
-        features
-        closed)]))
+  [closed : bool]
+  [archives : bool]) : String
+  (let
+    [body : String
+      (match target
+        [(be_state.CompilerBackendTarget.Linux)
+          (runtime_linux.compiler-backend-runtime-functions-for-executable
+            features
+            closed)]
+        [(be_state.CompilerBackendTarget.Windows)
+          (runtime_windows.compiler-backend-runtime-functions-for-executable
+            features
+            closed)])]
+    (if archives
+      (compiler-backend-runtime-sectioned-functions target (& body))
+      body)))
 
 (define (compiler-backend-runtime-externs-for-target
   [target : be_state.CompilerBackendTarget]

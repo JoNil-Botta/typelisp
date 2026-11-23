@@ -1785,20 +1785,51 @@
 ;; program only through here. An executable (`emit-entry`) must define `main`:
 ;; nothing synthesizes one, so a program without it is rejected before any
 ;; code is emitted rather than linked against a missing symbol.
+(define (compiler-backend-extern-symbol-referenced?
+  [runtime-index : (& runtime-index be_state.CompilerBackendRuntimeIndex)]
+  [referenced-functions : (& referenced-functions be_state.BackendSymbolSeq)]
+  [extern-name-id : i64]
+  [source-name-id : i64]
+  [link-symbol-id : i64]) : bool
+  (or
+    (be_state.backend-or4
+      (backend_i64_i64_map.contains? (& runtime-index.calls) extern-name-id)
+      (backend_i64_i64_map.contains? (& runtime-index.calls) source-name-id)
+      (backend_i64_i64_map.contains? (& runtime-index.calls) link-symbol-id)
+      (be_state.compiler-backend-symbol-list-contains-id?
+        referenced-functions
+        extern-name-id))
+    (be_state.compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      source-name-id)
+    (be_state.compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      link-symbol-id)))
+
 (define (compiler-backend-validate-program
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : be_state.CompilerBackendRuntimePlan]
   [index : be_state.CompilerBackendProgramIndex]
+  [runtime-index : (& be_state.CompilerBackendRuntimeIndex)]
+  [referenced : (& be_state.BackendSymbolSeq)]
   [emit-entry : bool]) : be_state.ResultCompilerBackendSymbolValidation
   (for [position (iterator.range 0 externs.len)]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs position)
-      [(Extern _ _ name ty abi _ _ _ _)
+      [(Extern id source name ty abi link _ _ _)
         (match abi
           [(TypeLisp)
-            (unless
-              (compiler-backend-typelisp-extern-layout-known? index (& ty))
+            (when
+              (and
+                (compiler-backend-extern-symbol-referenced?
+                  runtime-index
+                  referenced
+                  id
+                  source
+                  link)
+                (not
+                  (compiler-backend-typelisp-extern-layout-known? index (& ty))))
               (return
                 (compiler-backend-symbol-validation-error
                   (str_cat.str-cat

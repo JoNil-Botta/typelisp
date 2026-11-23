@@ -706,6 +706,7 @@ file package/vendor/math/typelisp.pkg
 end-file
 file package/vendor/math/src/lib.tl
 (define (add [left : i64] [right : i64]) : i64 (+ left right))
+(define (unused-archive-fn [x : i64]) : i64 (+ x 100))
 end-file
 file fallback/typelisp.pkg
 (package
@@ -722,6 +723,10 @@ stdout contains Built {{dir}}/package/vendor/math/target/release/libdirect_objec
 stdout contains Built {{dir}}/package/target/release/direct_object_pkg
 test -s "{{dir}}/package/vendor/math/target/release/libdirect_object_math.a"
 test -x "{{dir}}/package/target/release/direct_object_pkg"
+exec nm "{{dir}}/package/vendor/math/target/release/libdirect_object_math.a"
+stdout contains unused_archive_fn
+exec nm "{{dir}}/package/target/release/direct_object_pkg"
+stdout not-contains unused_archive_fn
 exec "{{dir}}/package/target/release/direct_object_pkg"
 exit 42
 step semantic-probe

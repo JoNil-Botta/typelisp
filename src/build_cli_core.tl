@@ -5139,7 +5139,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-prepare-owned-runtime
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
-    [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
+    [request : BuildPackageDirectObjectRequest]
+    [archive-runtime : bool]) : ResultBuildPackagePreparedRuntime
     (let
       [preflight : BuildPackageDirectObjectPreflight
         (build-package-direct-object-preflight
@@ -5161,6 +5162,11 @@
           request.paths
           request.cfgs
           request.opt-level)]
+      [_archive-runtime : unit
+        (when
+          archive-runtime
+          (compiler_driver_core.compiler-driver-lowered-result-enable-archive-runtime!
+            (& lowered)))]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-emit-preflighted-runtime
           request.entry-path
@@ -5170,7 +5176,12 @@
           request.mode
           request.emit-entry
           request.crt-entry
-          preflight
+          ;; The assembly entry owns runtime helpers needed by archive
+          ;; members. Keep the explicit Linux direct-object route for packages
+          ;; whose objects can link with the minimal native entry.
+          (if (and archive-runtime (not request.linux-budget-override))
+            (Fallback ForcedAssembly)
+            preflight)
           lowered)]
       (if request.require-direct-object
         (build-package-require-direct-object prepared)
@@ -5257,7 +5268,11 @@
             decls
             owned-paths
             cfgs
-            (owned_view.compiler-owned-shared-view entry-path)))]
+            (owned_view.compiler-owned-shared-view entry-path))
+          (and
+            emit-entry
+            (build_run_core.source-tool-link-inputs-have-archives?
+              (& link-inputs))))]
       [_abort : unit
         (match (owned_view.compiler-owned-shared-view prepared)
           [(Err message)

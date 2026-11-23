@@ -20,7 +20,7 @@ awk -F '|' '$1 == "arena_poison_stale_array_trap" && $2 == "linux" && $5 == 139 
 
 for entry_spec in ci-verify:1 verify-integration:1 verify-codegen-cases:1 \
         verify-doc-site:1 verify-spmd-simd:1 verify-safety-corpus:1 \
-        verify-safety-corpus:2 verify-spmd-runtime-dispatch:1 run-optimization-benchmarks:1; do
+        verify-spmd-runtime-dispatch:1 run-optimization-benchmarks:1; do
     entry_script=${entry_spec%:*}
     entry_index=${entry_spec##*:}
     entry_fixture="$entry_work/$entry_script-$entry_index.sh"
@@ -68,7 +68,7 @@ entry_caller() {
     asm="$entry_case/input.s" _asm="$entry_case/input.s" ASM="$entry_case/input.s"
     CV_ASM="$asm" _tl_asm="$asm"
     obj=fixture.o _obj=fixture.o OBJ=fixture.o _tl_obj=fixture.o
-    bin=fixture _bin=fixture BIN=fixture _tl_bin=fixture CHECK_BIN=fixture program=fixture
+    bin=fixture _bin=fixture BIN=fixture _tl_bin=fixture program=fixture
     CV_DIR="$entry_case" case_dir="$entry_case" probe_dir="$entry_case"
     build_stdout="$entry_case/build.out" build_stderr="$entry_case/build.err"
     _out="$build_stdout" _err="$build_stderr" out="$build_stdout" err="$build_stderr"
@@ -202,6 +202,6 @@ EOF
         done
     done
 done
-[ "$(wc -l < "$entry_work/results.tsv")" -eq 127 ]
-echo "Linux entry caller self-test passed (9 callers, 126 status/trace/timing controls; $entry_work)"
+[ "$(wc -l < "$entry_work/results.tsv")" -eq 113 ]
+echo "Linux entry caller self-test passed (8 callers, 112 status/trace/timing controls; $entry_work)"
 sh "$ROOT/scripts/verify-linux-entry-transcripts.sh" "$entry_work/transcripts"

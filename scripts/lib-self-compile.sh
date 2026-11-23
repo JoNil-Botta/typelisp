@@ -335,15 +335,22 @@ sc_bn() {
         }'
 }
 
-# sc_window DELTA BASE DECLARED_PPM TOLERANCE_PPM
-#   Prints `in` when |DELTA*1e6 - DECLARED*BASE| <= TOLERANCE*BASE, using exact
-#   integers, else `out`. DECLARED is a finite signed decimal.
+# sc_window DELTA BASE DECLARED_PPM TOLERANCE_PPM [DECLARED_BASE]
+#   Prints `in` when |DELTA*1e6 - DECLARED*DECLARED_BASE| <= TOLERANCE*BASE,
+#   using exact integers, else `out`. DECLARED is a finite signed decimal;
+#   DECLARED_BASE defaults to BASE and is only needed for a nonzero declaration.
 sc_window() {
-    awk -v delta="$1" -v base="$2" -v declared="$3" -v tol="$4" "$SC_BN_AWK"'
+    awk -v delta="$1" -v base="$2" -v declared="$3" -v tol="$4" \
+        -v declared_base="${5-$2}" "$SC_BN_AWK"'
         BEGIN {
             if (!dec_parse(declared)) { print "malformed"; exit 2 }
+            center = "0"
+            if (dec_num != "0") {
+                if (declared_base !~ /^[1-9][0-9]*$/) { print "malformed"; exit 2 }
+                center = bn_mul(dec_num, declared_base)
+            }
             scale = bn_pow10(dec_scale)
-            lhs = bn_abs(bn_sub(bn_mul(bn_mul(delta, "1000000"), scale), bn_mul(dec_num, base)))
+            lhs = bn_abs(bn_sub(bn_mul(bn_mul(delta, "1000000"), scale), center))
             rhs = bn_mul(bn_mul(tol, scale), base)
             print (bn_cmp(lhs, rhs) <= 0) ? "in" : "out"
         }'
@@ -684,16 +691,17 @@ sc_ledger_entry() {
     fi
     sc_record_line pair_identity "$(sc_record_get "$_sle_dir/landed.tsv" info.kernel 2>/dev/null || echo unknown)|$(sc_record_get "$_sle_dir/landed.tsv" key.valgrind)|$(sc_record_get "$_sle_dir/landed.tsv" key.as)|$(sc_record_get "$_sle_dir/landed.tsv" procedure)"
 
-    # Landed gate window, for every merge with a step: the merge as it landed
-    # against its parent, with the PR's honoured declaration or 0. This is the
-    # full SC_TOLERANCE_PPM; the PR gate is narrower (SC_PR_GATE_PPM).
+    # The PR's declaration uses its originally measured base B. The landed
+    # window applies the full SC_TOLERANCE_PPM to the landed parent p.
     _sle_declared=none
+    _sle_mb=
     if [ -f "$_sle_dir/pr.tsv" ]; then
         _sle_declared=$(sc_record_get "$_sle_dir/pr.tsv" declared_ppm 2>/dev/null || echo none)
+        _sle_mb=$(sc_record_get "$_sle_dir/pr-base.tsv" ir_count 2>/dev/null || true)
     fi
     _sle_d=$_sle_declared
     [ "$_sle_d" = none ] && _sle_d=0
-    if [ "$(sc_window "$_sle_step" "$_sle_mp" "$_sle_d" "$SC_TOLERANCE_PPM")" != in ]; then
+    if [ "$(sc_window "$_sle_step" "$_sle_mp" "$_sle_d" "$SC_TOLERANCE_PPM" "$_sle_mb")" != in ]; then
         _sle_failures="$_sle_failures landed-gate-window"
     fi
     if [ "$(sc_ppm_exceeds "$_sle_step" "$_sle_mp" 5000)" = yes ]; then

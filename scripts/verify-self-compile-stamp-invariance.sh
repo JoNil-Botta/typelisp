@@ -155,7 +155,7 @@ sc_record_validate "$GATE" gate
 COMPILER_A=$(cat target/ci-verify-stage2.path)
 [ "$(sha256sum "$COMPILER_A" | cut -c1-64)" = "$(sc_record_get "$GATE" compiler_sha256)" ]
 cmp target/bootstrap-fixpoint/stage2.s target/bootstrap-fixpoint/stage3.s
-cmp "$COMPILER_A" target/bootstrap-fixpoint/stage2
+cmp "$COMPILER_A" target/bootstrap-fixpoint/stage3
 [ "$("$COMPILER_A" --producer-identity)" = "$TREE" ]
 cp "$GATE" "$OUT/a.tsv"
 cp "$COMPILER_A" "$OUT/a-stage2"
@@ -186,7 +186,7 @@ stamp_run_logged "$OUT/bootstrap-b.log" \
     scripts/ci-verify.sh --gates bootstrap-fixpoint
 COMPILER_B=$(cat target/ci-verify-stage2.path)
 cmp "$OUT/bootstrap-b/stage2.s" "$OUT/bootstrap-b/stage3.s"
-cmp "$COMPILER_B" "$OUT/bootstrap-b/stage2"
+cmp "$COMPILER_B" "$OUT/bootstrap-b/stage3"
 [ "$("$COMPILER_B" --producer-identity)" = "$TREE" ]
 cp "$COMPILER_B" "$OUT/b-stage2"
 cp "$OUT/bootstrap-b/stage2.s" "$OUT/b-stage2.s"

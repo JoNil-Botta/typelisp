@@ -143,6 +143,8 @@ st_arithmetic() {
     st_eq "declared decimal out" "$(sc_window 642001 1000000 637000.5 5000)" out
     st_eq "declared negative in" "$(sc_window -12000 1000000 -7000 5000)" in
     st_eq "declared malformed" "$(sc_window 1 1000000 1e3 5000 2>/dev/null || true)" malformed
+    st_eq "zero declaration without a base" "$(sc_window 5000 1000000 +0.00 5000 '')" in
+    st_eq "nonzero declaration without a base" "$(sc_window 5000 1000000 1 5000 '' || true)" malformed
     st_eq "ppm exceeds" "$(sc_ppm_exceeds 1001 1000000 1000)" yes
     st_eq "ppm at bound" "$(sc_ppm_exceeds -1000 1000000 1000)" no
     st_eq "abs exceeds" "$(sc_abs_exceeds -10001 10000)" yes
@@ -686,6 +688,19 @@ st_ledger() {
     st_eq "landed gate window rejects +5001 ppm" "$(st_entry_says "$_d/window-over")" "S numerical-failure landed-gate-window"
     st_entry "$_d/window-declared" "$_P" 100700000000 mt=100700000000 mb="$_P" declared=7000
     st_eq "declared landed cost within its window" "$(st_entry_says "$_d/window-declared")" "S ok -"
+    # #9843: +637000 ppm on B = 1e11 Ir declares a cost of 63.7e9 Ir.
+    st_entry "$_d/window-main-grew" 101000000000 164700000000 \
+        tt="$ST_TREE_3" tb="$ST_TREE_4" mb="$_P" own=63700000000 declared=637000
+    st_eq "large declaration lands after main grows 1%" "$(st_entry_says "$_d/window-main-grew")" "M ok -"
+    # With main down 1%, the parent-based tolerance is 495000000 Ir. The
+    # reported own cost passes the PR gate, and the interaction is under 1000 ppm.
+    st_entry "$_d/window-moved-edge" 99000000000 162205000000 \
+        tt="$ST_TREE_3" tb="$ST_TREE_4" mb="$_P" own=63301000000 declared=637000
+    st_eq "moved main accepts the exact landed tolerance" "$(st_entry_says "$_d/window-moved-edge")" "M warning -"
+    st_entry "$_d/window-moved-over" 99000000000 162204999999 \
+        tt="$ST_TREE_3" tb="$ST_TREE_4" mb="$_P" own=63301000000 declared=637000
+    st_eq "moved main rejects one Ir outside the landed tolerance" "$(st_entry_says "$_d/window-moved-over")" \
+        "M numerical-failure landed-gate-window"
     st_entry "$_d/binary" "$_P" 100000050000
     echo "commit X built with the same as/ld measured two different compilers" > "$_d/binary/binary-problem"
     st_eq "a same-commit binary mismatch fails the entry" "$(st_entry_says "$_d/binary")" \

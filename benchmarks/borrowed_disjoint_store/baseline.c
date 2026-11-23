@@ -1,49 +1,41 @@
 /* Checked-reference load-GVN benchmark (#5201).
- *
- * Equivalent to bench.tl: repeatedly read one Pair through a shared pointer
- * while writing a distinct Pair through an exclusive pointer. Both functions
- * stay `noinline`: this side keeps the call-crossing case the benchmark was
- * written for, while the TypeLisp side inlines (see bench.tl's header).
+ * Both implementations may inline. The runtime shared field stays invariant
+ * across writes through a disjoint exclusive pointer. Each iteration updates
+ * the exclusive pair from its previous state, and main consumes both fields.
  */
-#include <stdint.h>
+#include <inttypes.h>
+#include <stdio.h>
 
 typedef struct BorrowedPair {
     uint64_t x;
     uint64_t y;
 } BorrowedPair;
 
-__attribute__((noinline)) static void borrowed_disjoint_store_touch(
-    BorrowedPair *write,
-    uint64_t value) {
-    write->y = value;
+static void borrowed_disjoint_store_touch(BorrowedPair *write, uint64_t value) {
+    write->y ^= write->x + value;
 }
 
-__attribute__((noinline)) static uint64_t borrowed_disjoint_store_loop(
+static void borrowed_disjoint_store_loop(
     const BorrowedPair *read,
     BorrowedPair *write,
     uint64_t iterations) {
-    uint64_t acc = 0;
     for (uint64_t i = 0; i < iterations; i++) {
         uint64_t current = read->x;
-        borrowed_disjoint_store_touch(write, i);
-        write->y = read->x;
-        write->x = current + i;
-        acc += read->x;
+        borrowed_disjoint_store_touch(write, i + current);
+        write->x = read->x + write->y;
     }
-    return acc;
 }
 
 int main(int argc, char **argv) {
     (void)argv;
-    /* The read field is a runtime input, as in bench.tl: 17 for a bare run. */
     BorrowedPair left = {16ULL + (uint64_t)argc, 0};
     BorrowedPair right = {23, 0};
     uint64_t iterations = 100000000ULL + (uint64_t)argc;
     uint64_t first_iterations = iterations / 2;
     uint64_t second_iterations = iterations - first_iterations;
-    uint64_t first = borrowed_disjoint_store_loop(
-        &left, &right, first_iterations);
-    uint64_t second = borrowed_disjoint_store_loop(
-        &left, &right, second_iterations);
-    return (int)((first + second) & 0xFFULL);
+    borrowed_disjoint_store_loop(&left, &right, first_iterations);
+    borrowed_disjoint_store_loop(&left, &right, second_iterations);
+    uint64_t checksum = right.x ^ right.y;
+    printf("%" PRIu64 "\n", checksum);
+    return (int)(checksum & 0xFFULL);
 }

@@ -9875,15 +9875,17 @@ and not a general manual memory management feature.
   (section 7.2); ownership transfer is governed by the source-level move rules,
   and no returned value may rely on hidden heap placement to outlive its
   lexical owner.
-- Deep copying is an explicit owner-generated operation. In a nominal type's
-  canonical module, `(gen-clone Point)` emits the ordinary public function
-  `clone-point : (& Point) -> Point`; acronym-bearing names use deterministic
-  lowercase/kebab spelling. The function preserves its source and reconstructs
-  structs or enums in declaration order. Copy values are read normally;
+- Deep copying is an explicit owner-generated operation. `(gen-clone Point)`
+  can only expand in the nominal type's canonical owner module. This can be a
+  named module, a generated module, or the root file for a root-owned type.
+  An import alias does not change the owner. The macro emits the ordinary
+  public function `clone-point : (& Point) -> Point`. Acronym-bearing names use
+  deterministic lowercase/kebab spelling. The function preserves its source
+  and reconstructs structs or enums in declaration order. Copy values are read normally;
   strings, boxes, tuples, fixed arrays, and dynamic arrays are recursively
   copied with fresh owned storage where the shape requires it. Allocation uses
   the current checked arena through ordinary allocation operations.
-- Each owned nominal dependency must expose its own generated clone function
+- Each move-only nominal dependency must expose its own generated clone function
   from its canonical owner before a dependent generator is expanded. Generated
   calls and signatures use ordinary module-value reflection and normal
   typechecking; there is no clone-specific borrow, move, lifetime, unsafe, or
@@ -9892,7 +9894,9 @@ and not a general manual memory management feature.
   expansion diagnostic.
 - After `(import stdlib.clone)`, `(clone.deep value)` uses the operand's
   produced type to deep-copy it in the current arena, evaluating the operand
-  once and calling the owner's generated clone function for each nominal type.
+  once. It uses a nominal type's canonical owner hook when present, including
+  from another module. Supported Copy nominals without a hook use an ordinary
+  read.
   Pass a place or an rvalue such as a call result; for a conditional or block
   (`if`, `let`, or `match`), call `clone.deep` in each result position.
 - During the #7073 repository migration, `(clone value)` and `with-escape`

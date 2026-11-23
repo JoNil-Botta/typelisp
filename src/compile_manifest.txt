@@ -279,3 +279,12 @@ end
 
 case|selfhost_linker_coff_import_reader|src/linker_coff_import_reader.tl|assembly|none|direct
 end
+
+case|selfhost_compiler_tli_types|src/compiler_tli_types.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_tli_codec|src/compiler_tli_codec.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_tli_extract|src/compiler_tli_extract.tl|assembly|none|direct
+end

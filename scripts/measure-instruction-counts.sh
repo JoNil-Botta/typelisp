@@ -45,6 +45,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 RUNS=${TYPELISP_IR_RUNS:-3}
+CYCLES=0
+CYCLE_RUNS=5
 FILTER=${TYPELISP_IR_FILTER:-}
 CASES=${TYPELISP_IR_CASES:-}
 WORKDIR=${TYPELISP_IR_OUT:-target/instruction-counts}
@@ -68,6 +70,8 @@ usage: scripts/measure-instruction-counts.sh [options] [typelisp-seed]
 
 Options:
   --runs N              Repeated cachegrind runs per case (default: 3)
+  --cycles              Also measure whole-process perf stat user cycles
+  --cycle-runs N        Native samples per binary with --cycles (default: 5)
   --filter TEXT         Run benchmark names containing TEXT
   --cases LIST          Run exact comma-separated benchmark names
   --output DIR          Output root (default: target/instruction-counts)
@@ -108,6 +112,15 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             }
             RUNS=$2
+            shift 2
+            ;;
+        --cycles)
+            CYCLES=1
+            shift
+            ;;
+        --cycle-runs)
+            [ "$#" -ge 2 ] || { echo "missing value for --cycle-runs" >&2; exit 2; }
+            CYCLE_RUNS=$2
             shift 2
             ;;
         --filter)
@@ -473,6 +486,11 @@ build_measured() {
     case "$impl" in c | c-scalar) c_provenance_build "$@" ;; esac
     # shellcheck disable=SC2086
     measure_repeated "benchmark/$impl" "$name" 0 "$instr_at_start" "$bin" $bench_args
+    if [ "$CYCLES" -eq 1 ]; then
+        # shellcheck disable=SC2086
+        bench_cycles_measure "$name" default "$impl" "$LAST_SUMMARY_STATUS" \
+            "$LAST_SUMMARY_STDOUT" "$LAST_SUMMARY_STDERR" "$bin" $bench_args
+    fi
     case "$impl" in
         c | c-scalar)
             # Match the existing argument splitting used for measurement.
@@ -645,6 +663,30 @@ generate_benchmark_ratios() {
     ' OFS="$(printf '\t')" "$summary" > "$output"
 }
 
+report_realistic_kernel_ir() {
+    awk -F '\t' -v OFS="$(printf '\t')" -v cases="$REALISTIC_KERNEL_CASES" '
+        BEGIN {
+            n = split(cases, names, ",")
+            for (i = 1; i <= n; i++) selected[names[i]] = 1
+            print "reference", "pairs", "geomean_ir_ratio_x"
+        }
+        NR > 1 && $1 in selected {
+            auto_log += log($2 / $3)
+            auto_pairs++
+            if ($4 != "-") {
+                scalar_log += log($2 / $4)
+                scalar_pairs++
+            }
+        }
+        END {
+            if (auto_pairs) printf "c\t%d\t%.6f\n", auto_pairs, exp(auto_log / auto_pairs)
+            if (scalar_pairs) printf "c-scalar\t%d\t%.6f\n", scalar_pairs, exp(scalar_log / scalar_pairs)
+        }
+    ' "$RATIOS_TSV" > "$WORKDIR/realistic-kernel-ir-geomeans.tsv"
+    echo "[ir-count] realistic-kernel Ir geomeans"
+    cat "$WORKDIR/realistic-kernel-ir-geomeans.tsv"
+}
+
 run_ratio_self_test() {
     ratio_summary="$WORKDIR/ratio-self-test-summary.tsv"
     ratio_output="$WORKDIR/ratio-self-test.tsv"
@@ -772,6 +814,11 @@ if [ -n "$CASES" ]; then
 fi
 
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
+    REALISTIC_KERNEL_CASES=$(benchmark_ci_case_csv "$ROOT" realistic-kernel) || exit 1
+    if [ "$CYCLES" -eq 1 ]; then
+        . "$ROOT/scripts/lib-benchmark-cycles.sh"
+        bench_cycles_init
+    fi
     c_provenance_init
     measure_benchmarks
     generate_benchmark_ratios "$SUMMARY_TSV" "$RATIOS_TSV" "$C_SCALAR" ||
@@ -790,4 +837,9 @@ cat "$SUMMARY_TSV"
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
     echo "[ir-count] ratios: $RATIOS_TSV"
     cat "$RATIOS_TSV"
+    report_realistic_kernel_ir
+    if [ "$CYCLES" -eq 1 ]; then
+        echo "[ir-count] cycle ratios and realistic-kernel cycle geomeans"
+        bench_cycles_report "$REALISTIC_KERNEL_CASES"
+    fi
 fi

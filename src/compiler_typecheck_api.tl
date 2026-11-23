@@ -44,7 +44,8 @@
   (cache-scope String)
   (pools ast.AstNodePoolContext)
   (intern-state ci.InternCompatState)
-  (semantic-observer tc_core.TcSemanticObserver))
+  (semantic-observer tc_core.TcSemanticObserver)
+  (retain-global-call-effects bool))
 
 ;; A serial/test run: the serial loader, prefix-cache and job state, and the
 ;; active pools and intern state, captured in that order.
@@ -69,7 +70,8 @@
       cache-scope
       pools
       (ci.intern-compat-state-capture-active)
-      (tc_core.TcSemanticObserver 0))))
+      (tc_core.TcSemanticObserver 0)
+      false)))
 
 (define (typecheck-compiler-request [request : TypecheckRequest]) : tc_core.ResultCompilerTypecheck
   (tc_core.tc-typecheck-checked-result-summary
@@ -178,7 +180,8 @@
             cache-scope
             pools
             request-intern-state
-            _semantic-observer)
+            _semantic-observer
+            retain-global-call-effects)
           (let
             [_pipeline-probe : unit
               (cfg test (+= compiler-typecheck-pipeline-runs 1) unit)]
@@ -284,7 +287,8 @@
                                                   (ci.intern-source-name-session-handle
                                                     (ci.intern-source-name-session-from-state
                                                       intern-state))
-                                                  intern-state)]
+                                                  intern-state
+                                                  retain-global-call-effects)]
                                               [(Err diag)
                                                 (Err
                                                   (cdiag.compiler-diagnostic-list-box-single
@@ -305,7 +309,8 @@
                                       (ci.intern-source-name-session-handle
                                         (ci.intern-source-name-session-from-state
                                           intern-state))
-                                      intern-state))]
+                                      intern-state
+                                      retain-global-call-effects))]
                                 [(Err diag)
                                   (Err
                                     (cdiag.compiler-diagnostic-list-box-single
@@ -322,7 +327,8 @@
                               (ci.intern-source-name-session-handle
                                 (ci.intern-source-name-session-from-state
                                   intern-state))
-                              intern-state))]
+                              intern-state
+                              retain-global-call-effects))]
                         [(Err diag)
                           (Err (cdiag.compiler-diagnostic-list-box-single diag))]))]
                   [(Err diag)

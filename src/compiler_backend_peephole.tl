@@ -499,7 +499,7 @@
 ;;
 ;; So a push (or an `%rsp`-lowering `subq`) does not commit its depth at once:
 ;; it enters a two-slot pending window, and the third one displaces the oldest
-;; into `deepest`. The `leaq .L_tl_abort_site_...` that only a located abort
+;; into `deepest`. The `# tl_abort_operand_stage` that only a located abort
 ;; tail emits HOLDS the window's entries -- its own two pushes, and never more,
 ;; since nothing else is enqueued between them and it -- and the noreturn abort
 ;; call that follows DISCARDS them, which is the continuation that proves the
@@ -598,18 +598,18 @@
                     (be_state.compiler-backend-peephole-byte-at data (- end 2))
                     115))]
               (cond
-                ;; The located abort tail's descriptor load: hold the two
+                ;; The located abort tail's staging marker: hold the two
                 ;; pushes in front of it until the continuation says whether
                 ;; the path returns. Only reachable while something is
                 ;; pending, so an ordinary line pays one integer compare.
                 [(and
                   (> pend-count 0)
-                  (<= (+ m 22) end)
+                  (<= (+ m 24) end)
                   (be_operand.compiler-backend-peephole-range-eq?
                     data
                     m
-                    (+ m 22)
-                    "leaq .L_tl_abort_site_"))
+                    (+ m 24)
+                    "# tl_abort_operand_stage"))
                   (if (>= held-count 1)
                     (if (> held0 deepest)
                       (set! deepest held0)
@@ -1264,7 +1264,7 @@
 ;;
 ;; #rbp-base invariant: in fpo mode every "(%rbp" occurrence is a frame
 ;; reference. Emitters structurally distinguish %rbp pool VALUES with a
-;; no-base SIB spelling `(,%rbp,1)` where possible and otherwise stage through
+;; spaced spelling `( %rbp)` where possible and otherwise stage through
 ;; a scratch (see address-base-filter); bare `%rbp` register operands also
 ;; contain no "(%rbp".
 ;; GAP1: 3-arg spelling for the stage-1 / adapter / fallback call sites (no
@@ -2266,16 +2266,15 @@
       (set! (deref data).sweep-addr-flushed (deref data).sweep-addr-count)
       (set! (deref data).sweep-addr-overflow false))))
 
-;; First record at/after `start` whose trimmed content begins ".globl" (the next
-;; function/helper boundary); returns that record's index, or `count`. The probe
-;; is a packed bit decided once, when the record was built.
+;; First function or helper boundary at/after `start`, or `count`. The
+;; probe is a packed bit decided once, when the record was built.
 (define (compiler-backend-sweep-region-end-records
   [recs : (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord)]
   [start : i64]
   [count : i64]) : i64
   (for [i (iterator.range start count)]
     (when
-      (compiler-backend-peephole-record-globl?
+      (compiler-backend-peephole-record-sweep-boundary?
         (be_state.compiler-backend-global-array-element-shared-view recs i))
       (return i)))
   count)
@@ -3450,56 +3449,123 @@
       slot
       owners.r15)))
 
-;; Owner map with every register that mirrored `slot` reset to unknown. Used
-;; when `slot` is written (its memory value changed) so stale mirrors are dropped.
-(define (compiler-backend-peephole-owners-clear-slot
+;; A complete movq mirror covers eight bytes. A narrow or unaligned write
+;; can overlap it at a different offset. Keys have four values per byte,
+;; so clear on the intersecting range and drop any mirror using another
+;; stack base, whose relationship to this one is unknown here.
+(define (compiler-backend-peephole-clear-overlapping-owner
+  [owner : i64]
+  [base : i64]
+  [first : i64]
+  [last : i64]) : i64
+  (if (<= owner 0)
+    owner
+    (let
+      [key : i64 (- (compiler-backend-peephole-owner-key-base owner) 1)]
+      (if (or (!= (bit-and key 2) base) (and (>= key first) (< key last)))
+        (compiler-backend-peephole-owner-key-unknown)
+        owner))))
+
+(define (compiler-backend-peephole-owners-clear-extent
   [owners : be_state.CompilerBackendPeepholeOwners]
-  [slot : i64]) : be_state.CompilerBackendPeepholeOwners
+  [slot : i64]
+  [bytes : i64]) : be_state.CompilerBackendPeepholeOwners
+  (when
+    (=
+      (bit-or
+        owners.rax
+        owners.rcx
+        owners.rdx
+        owners.rbx
+        owners.rsi
+        owners.rdi
+        owners.r8
+        owners.r9
+        owners.r10
+        owners.r11
+        owners.r12
+        owners.r13
+        owners.r14
+        owners.r15)
+      0)
+    (return owners))
   (let
-    [base : i64 (compiler-backend-peephole-owner-key-base slot)]
+    [key : i64 (- slot 1)]
+    [base : i64 (bit-and key 2)]
+    [aligned : i64 (bit-and key (- 0 4))]
+    [first : i64 (- aligned 28)]
+    [last : i64 (+ aligned (* bytes 4))]
     (be_state.CompilerBackendPeepholeOwners
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rax base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rax)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rcx base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rcx)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rdx base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rdx)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rbx base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rbx)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rsi base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rsi)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.rdi base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.rdi)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r8 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r8)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r9 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r9)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r10 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r10)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r11 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r11)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r12 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r12)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r13 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r13)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r14 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r14)
-      (if (compiler-backend-peephole-owner-key-base-eq? owners.r15 base)
-        (compiler-backend-peephole-owner-key-unknown)
-        owners.r15))))
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rax
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rcx
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rdx
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rbx
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rsi
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.rdi
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r8
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r9
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r10
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r11
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r12
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r13
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r14
+        base
+        first
+        last)
+      (compiler-backend-peephole-clear-overlapping-owner
+        owners.r15
+        base
+        first
+        last))))
 
 ;; Owner key that can survive a normal call. Calls may mutate globals, so a
 ;; callee-saved register keeps only stack-slot ownership across the boundary --
@@ -3551,7 +3617,7 @@
 ;; Owner-map transfer for a recognized `movq SRC, DST` line.
 ;;  * DST is a clean stack slot (a store): SRC's value is written to
 ;;    the slot. Every OTHER register that mirrored the slot becomes stale and is
-;;    dropped (`owners-clear-slot`, which also drops SRC's entry when it happened
+;;    dropped (`owners-clear-extent`, which also drops SRC's entry when it happened
 ;;    to mirror this slot). SRC's value itself is unchanged, so any slot SRC
 ;;    already mirrors is preserved; only when SRC is a tracked register with no
 ;;    known location do we record that it now mirrors DST (a sound store-to-reload
@@ -3573,7 +3639,7 @@
     [(compiler-backend-peephole-owner-key-stack? dst-key)
       (let
         [cleared : be_state.CompilerBackendPeepholeOwners
-          (compiler-backend-peephole-owners-clear-slot owners dst-key)]
+          (compiler-backend-peephole-owners-clear-extent owners dst-key 8)]
         (if (and
           (>= src-reg 0)
           (not
@@ -3585,12 +3651,9 @@
             (compiler-backend-peephole-owner-key-mark-store dst-key))
           cleared))]
     [(>= dst-reg 0)
-      ;; DST is a load/reg-reg dest: it mirrors a clean stack slot OR a SYM(%rip)
-      ;; global load (SCAV2); otherwise its contents become unknown.
       (compiler-backend-peephole-owners-set-reg-index owners dst-reg src-key)]
     [else (compiler-backend-peephole-owners-empty)]))
 
-;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
 (define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool
   (or (= b 113) (= b 108) (= b 119) (= b 98)))
 
@@ -3652,6 +3715,7 @@
         (= (be_state.compiler-backend-peephole-byte-at data (- e 1)) 32))
         (-= e 1))
       (or
+        (compiler-backend-cold-prefix? data i e "call .L_tl_abort_tl_")
         (be_operand.compiler-backend-peephole-range-eq?
           data
           i
@@ -4916,7 +4980,7 @@
   4294967295)
 
 ;; `meta` low half: sweep line kind, the 13 sweep line flags in their own bit
-;; values, the two render bits, the `.globl` region-boundary bit and the access
+;; values, the two render bits, the sweep boundary bit and the access
 ;; width. High half: the count of `(%rsp)` memory references, which is bounded
 ;; by the line length and so always fits.
 (define compiler-backend-peephole-record-kind-mask : i64
@@ -4929,7 +4993,7 @@
   32768)
 (define compiler-backend-peephole-record-owned-bit : i64
   65536)
-(define compiler-backend-peephole-record-globl-bit : i64
+(define compiler-backend-peephole-record-sweep-boundary-bit : i64
   131072)
 (define compiler-backend-peephole-record-width-shift : i64
   18)
@@ -4979,9 +5043,10 @@
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : bool
   (not (= (bit-and rec.meta compiler-backend-peephole-record-owned-bit) 0)))
 
-(define (compiler-backend-peephole-record-globl?
+(define (compiler-backend-peephole-record-sweep-boundary?
   [rec : be_state.CompilerBackendPeepholeLineRecord]) : bool
-  (not (= (bit-and rec.meta compiler-backend-peephole-record-globl-bit) 0)))
+  (not
+    (= (bit-and rec.meta compiler-backend-peephole-record-sweep-boundary-bit) 0)))
 
 (define (compiler-backend-peephole-record-width
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : i64
@@ -4992,6 +5057,17 @@
 (define (compiler-backend-peephole-record-mem-count
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : i64
   (shr rec.meta compiler-backend-peephole-record-mem-count-shift))
+
+(define (compiler-backend-peephole-simple-stack-lea? [meta : i64]) : bool
+  (and
+    (=
+      (bit-and
+        (shr meta compiler-backend-peephole-record-flags-shift)
+        (bit-or
+          compiler-backend-sweep-line-flag-leaq
+          compiler-backend-sweep-line-flag-fatal-mem))
+      compiler-backend-sweep-line-flag-leaq)
+    (= (shr meta compiler-backend-peephole-record-mem-count-shift) 1)))
 
 ;; First non-space index of the record's line. Only the never-in-practice
 ;; multi-reference fallback needs it, so it is recomputed instead of stored.
@@ -5032,7 +5108,7 @@
       (bit-or
         (compiler-backend-peephole-desc-start line)
         (shl end compiler-backend-peephole-record-span-shift))]
-    ;; newline / owned / `.globl` bits plus the width every non-instruction
+    ;; Newline, ownership and sweep boundary bits plus the width every non-instruction
     ;; record carries. Shared by all four record shapes below.
     [base-meta : i64
       (bit-or
@@ -5046,12 +5122,23 @@
         (if (and
           (<= (+ ms 6) end)
           (= (be_state.compiler-backend-peephole-byte-at data ms) 46)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 1)) 103)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 2)) 108)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 3)) 111)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 4)) 98)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 5)) 108))
-          compiler-backend-peephole-record-globl-bit
+          (or
+            (and
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 1)) 103)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 2)) 108)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 3)) 111)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 4)) 98)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 5)) 108))
+            ;; The conditional lookup helper is object-local. Its frame is
+            ;; independent of the preceding user's function, like a .globl.
+            (and
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 1)) 105)
+              (be_operand.compiler-backend-peephole-range-eq?
+                data
+                ms
+                end
+                ".ifdef .L_tl_abort_table"))))
+          compiler-backend-peephole-record-sweep-boundary-bit
           0))]
     [plain-meta : i64
       (bit-or base-meta (shl 8 compiler-backend-peephole-record-width-shift))]
@@ -5603,7 +5690,9 @@
   ;; the one-operand inc/dec/neg), or -1 after any other line.
   (flags-reg i64)
   (probe-cands (__tl_dyn-array i64))
-  (probe-cand-len i64))
+  (probe-cand-len i64)
+  (stack-lea-cands (__tl_dyn-array i64))
+  (stack-lea-cand-len i64))
 
 (define (compiler-backend-peephole-records-publish!
   [walk : CompilerBackendPeepholeWalkState]) : unit
@@ -5640,7 +5729,9 @@
     walk.close-cands
     walk.close-cand-len
     walk.probe-cands
-    walk.probe-cand-len))
+    walk.probe-cand-len
+    walk.stack-lea-cands
+    walk.stack-lea-cand-len))
 
 (define (compiler-backend-peephole-records-state-grow!
   [stream : be_state.CompilerBackendStreamState]) : unit
@@ -6049,6 +6140,23 @@
           (+ ms ml)
           (- (string.string-length text) (+ ms ml)))))))
 
+(define (compiler-backend-peephole-note-stack-lea!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
+  [index : i64]) : unit
+  (let
+    [len : i64 walk.stack-lea-cand-len]
+    (when
+      (>= len (array-length walk.stack-lea-cands))
+      (let
+        [old : (__tl_dyn-array i64) walk.stack-lea-cands]
+        [grown : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ 16 (* 2 (array-length old))))]
+        (for [i (iterator.range 0 len)]
+          (set! (array-ref grown i) (array-ref old i)))
+        (set! walk.stack-lea-cands grown)))
+    (set! (array-ref walk.stack-lea-cands len) index)
+    (set! walk.stack-lea-cand-len (+ len 1))))
+
 (define (compiler-backend-peephole-records-push!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : be_state.CompilerBackendPeepholeLine]) : unit
@@ -6088,6 +6196,10 @@
     (set!
       (array-ref walk.lines index)
       (compiler-backend-peephole-line-record line))
+    (when
+      (compiler-backend-peephole-simple-stack-lea?
+        (array-ref walk.lines index).meta)
+      (compiler-backend-peephole-note-stack-lea! walk index))
     (set! (array-ref walk.live index) 1)
     (set! walk.flags-reg flags-next)
     (set! walk.len (+ index 1))))
@@ -6138,6 +6250,64 @@
 ;;    clear only that register's owner (everything else's reg<->slot mirror
 ;;    survives).
 ;;  * Otherwise fall back to the conservative whole-map clear.
+;; A spelled stack operand starts with a signed decimal or a bare base.
+;; Reject symbol addends, indexed forms, and segment overrides.
+(define (compiler-backend-peephole-stack-destination-key
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [base : i64 (compiler-backend-peephole-memory-base-range data start end)]
+    (if (or (= base 1) (= base 2))
+      (let
+        [paren : i64 (- end 6)]
+        [first : i64 (compiler-backend-rsp-rebase-int-start data start paren)]
+        [operand : i64
+          (if (>= first 0)
+            first
+            paren)]
+        (if (and
+          (> operand start)
+          (= (be_state.compiler-backend-peephole-byte-at data (- operand 1)) 32)
+          (<= (- paren operand) 10))
+          (compiler-backend-peephole-stack-owner-key-from-parts
+            (- base 1)
+            (if (>= first 0)
+              (compiler-backend-rsp-rebase-parse-int data first paren)
+              0)
+            (>= first 0))
+          0))
+      0)))
+
+(define (compiler-backend-peephole-single-memory-write-owners
+  [owners : be_state.CompilerBackendPeepholeOwners]
+  [line : (& line be_state.CompilerBackendPeepholeLine)]) : be_state.CompilerBackendPeepholeOwners
+  (let
+    [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
+    [ml : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
+    [slot : i64
+      (compiler-backend-peephole-stack-destination-key
+        line.data
+        (+ ms ml)
+        (compiler-backend-peephole-desc-end line))]
+    (when (<= slot 0) (return (compiler-backend-peephole-owners-empty)))
+    (let
+      [suffix : i64
+        (be_state.compiler-backend-peephole-byte-at line.data (- (+ ms ml) 1))]
+      [width : i64
+        (cond
+          [(and
+              (= (be_state.compiler-backend-peephole-byte-at line.data ms) 115)
+              (=
+                (be_state.compiler-backend-peephole-byte-at line.data (+ ms 1))
+                101))
+            1]
+          [(= suffix 98) 1]
+          [(= suffix 119) 2]
+          [(= suffix 108) 4]
+          [else 8])]
+      (compiler-backend-peephole-owners-clear-extent owners slot width))))
+
 (define (compiler-backend-peephole-line-clobber-owners-desc
   [carry-safe : (& carry-safe be_state.CompilerBackendPeepholeCarrySafeView)]
   [owners : be_state.CompilerBackendPeepholeOwners]
@@ -6165,9 +6335,11 @@
       (compiler-backend-peephole-owners-clear-call-clobbers owners)]
     [(compiler-backend-peephole-desc-single-dest? line)
       (let
-        [dreg : i64 (compiler-backend-peephole-desc-last-reg line)]
+        [dreg : i64
+          (compiler-backend-peephole-desc-last-reg
+            (be_state.compiler-backend-global-shared-view line))]
         (if (< dreg 0)
-          (compiler-backend-peephole-owners-empty)
+          (compiler-backend-peephole-single-memory-write-owners owners (& line))
           (compiler-backend-peephole-owners-set-reg-index
             owners
             dreg
@@ -6683,7 +6855,7 @@
     ;; so the store is a no-op. The invariant is exactly the one the reload
     ;; elision above relies on: an owner entry survives only while neither the
     ;; register nor the location has been written since the mirror was
-    ;; established (a location write runs `owners-clear-slot`, a register write
+    ;; established (a location write runs `owners-clear-extent`, a register write
     ;; clears that register, a call keeps only stack owners in callee-saved
     ;; registers), so `owners[%rX] == SLOT` means memory at SLOT equals %rX.
     ;; Restricted to packed stack keys, matching the store arm of the owner
@@ -6961,6 +7133,226 @@
 ;; The single render of the group: one allocation in the active arena, then the
 ;; surviving records' bytes blitted straight in. Records carry their own source
 ;; string, so the group never has to be flattened first.
+;; These edits run after the last alias analysis. A stack pointer already
+;; materialized by LEA can encode a later reference more cheaply. Keep it
+;; only inside a straight-line run and stop at unknown instructions or any
+;; mention of its register, including subregister writes.
+(define (compiler-backend-peephole-stack-address-cost
+  [offset : i64]
+  [sib? : bool]
+  [zero-disp? : bool]) : i64
+  (+
+    (if sib?
+      1
+      0)
+    (cond
+      [(and (= offset 0) (not zero-disp?)) 0]
+      [(and (>= offset -128) (<= offset 127)) 1]
+      [else 4])))
+
+(define (compiler-backend-peephole-stack-address-barrier?
+  [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]
+  [flags : i64]) : bool
+  (or
+    (!=
+      (compiler-backend-peephole-record-kind rec)
+      compiler-backend-sweep-line-kind-instruction)
+    (!=
+      (bit-and
+        flags
+        (bit-or
+          compiler-backend-sweep-line-flag-bare-rsp
+          compiler-backend-sweep-line-flag-bare-rsp-tail))
+      0)))
+
+(define (compiler-backend-peephole-compact-stack-address-window!
+  [records : (&mut records be_state.CompilerBackendPeepholeLineVec)]
+  [index : i64]) : unit
+  (let
+    [anchor : (& records be_state.CompilerBackendPeepholeLineRecord)
+      (& (array-ref records.lines index))]
+    (when
+      (compiler-backend-peephole-stack-address-barrier?
+        anchor
+        (compiler-backend-peephole-record-flags anchor))
+      (return unit))
+    (let
+      [data : (Ptr u8) (compiler-backend-peephole-record-data anchor)]
+      [ms : i64 (compiler-backend-peephole-record-mnemonic-start anchor)]
+      [end-of-anchor : i64 (compiler-backend-peephole-record-end anchor)]
+      [comma : i64
+        (compiler-backend-peephole-find-comma-space-range data ms end-of-anchor)]
+      (when
+        (or
+          (< comma 0)
+          (<=
+            (compiler-backend-peephole-stack-destination-key
+              data
+              (+ ms 4)
+              comma)
+            0))
+        (return unit))
+      (let
+        [reg-start : i64 (+ comma 2)]
+        [base : i64
+          (compiler-backend-peephole-token-reg-index-range
+            data
+            reg-start
+            end-of-anchor)]
+        [bias : i64 anchor.value]
+        (when (< base 0) (return unit))
+        (for [i (iterator.range (+ index 1) records.len)]
+          (when
+            (= (array-ref records.live i) 1)
+            (let
+              [rec : (& records be_state.CompilerBackendPeepholeLineRecord)
+                (& (array-ref records.lines i))]
+              [flags : i64 (compiler-backend-peephole-record-flags rec)]
+              ;; A simple LEA always ends this window, even if its operand
+              ;; spelling or destination prevents it from opening a new one.
+              (when
+                (or
+                  (compiler-backend-peephole-stack-address-barrier? rec flags)
+                  (compiler-backend-peephole-simple-stack-lea? rec.meta))
+                (return unit))
+              (let
+                [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+                [end : i64 (compiler-backend-peephole-record-end rec)]
+                [ms : i64 (compiler-backend-peephole-record-mnemonic-start rec)]
+                [mention? : bool
+                  (compiler-backend-peephole-range-mentions-reg-index?
+                    data
+                    ms
+                    end
+                    base)]
+                (if (and
+                  (<= (+ ms 5) end)
+                  (be_operand.compiler-backend-peephole-range-eq?
+                    data
+                    ms
+                    (+ ms 5)
+                    "movq "))
+                  (begin
+                    (when
+                      (and
+                        (= (compiler-backend-peephole-record-mem-count rec) 1)
+                        (=
+                          (bit-and
+                            flags
+                            compiler-backend-sweep-line-flag-fatal-mem)
+                          0))
+                      (let
+                        [disp : i64 (- rec.value bias)]
+                        (when
+                          (and
+                            (be_operand.compiler-backend-imm32? disp)
+                            (<
+                              (compiler-backend-peephole-stack-address-cost
+                                disp
+                                (= base 10)
+                                (= base 11))
+                              (compiler-backend-peephole-stack-address-cost
+                                rec.value
+                                true
+                                false)))
+                          (let
+                            [base-text : String
+                              (string.substring
+                                (array-ref records.lines index).src
+                                reg-start
+                                (- end-of-anchor reg-start))]
+                            [text : String
+                              (compiler-backend-peephole-rewrite-stack-address
+                                rec
+                                (compiler-backend-peephole-record-start rec)
+                                end
+                                ms
+                                disp
+                                base-text)]
+                            (unless
+                              (string.eq text "")
+                              (let
+                                [span : i64
+                                  (shl (string.string-length text) 32)]
+                                (set!
+                                  (array-ref records.lines i)
+                                  (be_state.CompilerBackendPeepholeLineRecord
+                                    text
+                                    span
+                                    (bit-or
+                                      rec.meta
+                                      compiler-backend-peephole-record-owned-bit)
+                                    rec.cand
+                                    rec.epilogue
+                                    rec.value))))))))
+                    (when mention? (return unit)))
+                  (let
+                    [space : i64
+                      (be_operand.compiler-backend-peephole-scan-byte-range
+                        data
+                        ms
+                        end
+                        32)]
+                    (unless
+                      (and
+                        (not mention?)
+                        (>=
+                          (compiler-backend-peephole-last-operand-reg-index
+                            data
+                            space
+                            end)
+                          0)
+                        (compiler-backend-peephole-mnemonic-single-dest?
+                          data
+                          ms
+                          (- space ms)))
+                      (return unit))))))))))))
+
+(define (compiler-backend-peephole-compact-stack-addresses!
+  [records : (&mut records be_state.CompilerBackendPeepholeLineVec)]) : unit
+  (for [i (iterator.range 0 records.stack-lea-cand-len)]
+    (let
+      [index : i64 (array-ref records.stack-lea-cands i)]
+      (when
+        (= (array-ref records.live index) 1)
+        (compiler-backend-peephole-compact-stack-address-window! records index)))))
+
+(define (compiler-backend-peephole-rewrite-stack-address
+  [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]
+  [start : i64]
+  [end : i64]
+  [ms : i64]
+  [disp : i64]
+  [base : String]) : String
+  (let
+    [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+    [paren : i64
+      (be_operand.compiler-backend-peephole-scan-byte-range data ms end 40)]
+    (when
+      (and
+        (<= (+ paren 6) end)
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          paren
+          (+ paren 6)
+          "(%rsp)"))
+      (let
+        [first : i64 (compiler-backend-rsp-rebase-int-start data ms paren)]
+        [from : i64
+          (if (>= first 0)
+            first
+            paren)]
+        (when
+          (and
+            (> from ms)
+            (= (be_state.compiler-backend-peephole-byte-at data (- from 1)) 32))
+          (return
+            (str_cat.str-cat
+              (string.substring rec.src start (- from start))
+              (be_operand.compiler-backend-mem-base-address disp base)
+              (string.substring rec.src (+ paren 6) (- end (+ paren 6))))))))
+    ""))
+
 (define (compiler-backend-peephole-records-render-plain
   [v : be_state.CompilerBackendPeepholeLineVec]) : String
   (let
@@ -6987,16 +7379,15 @@
 ;;       jb .Lf27_bounds_ok.3                 jae .Lf27_bounds_ok.3.cold
 ;;       pushq %r9                          .Lf27_bounds_ok.3:
 ;;       ...                                  ...
-;;       call tl_oob_abort_at                 (last line of the function body)
-;;       jmp .L_tl_abort_site_1_bounds_end  .Lf27_bounds_ok.3.cold:
-;;       .balign 8                            pushq %r9
-;;     .L_tl_abort_site_1_bounds:             ...
-;;       .quad ...                            call tl_oob_abort_at
-;;     .L_tl_abort_site_1_bounds_end:         ... site descriptor ...
-;;     .Lf27_bounds_ok.3:                     jmp .Lf27_bounds_ok.3
+;;       call .L_tl_abort_tl_oob_abort_at      (last line of the function body)
+;;     .L_tl_abort_site_1_bounds:             .Lf27_bounds_ok.3.cold:
+;;       .tl_abort_row ...                    ...
+;;     .Lf27_bounds_ok.3:                     call .L_tl_abort_tl_oob_abort_at
+;;                                          .L_tl_abort_site_1_bounds:
+;;                                            .tl_abort_row ...
 ;;
 ;; Inline, every passed check costs a TAKEN branch and leaves 40-80 bytes of
-;; never-executed code and descriptor data between two hot instructions, which
+;; never-executed code between two hot instructions, which
 ;; spreads a loop over more fetch blocks, i-cache lines and uop-cache ways. This
 ;; is the placement LLVM gives a noreturn path (cold-block placement): out of
 ;; line, so the passing check falls through, not-taken, into the next hot
@@ -7006,17 +7397,15 @@
 ;; The rewrite runs at render time, after every peephole, sweep and fold has
 ;; finished with the record stream, so no textual analysis ever sees the new
 ;; order. It preserves semantics by construction: the inverted jump reaches the
-;; stub under exactly the condition that falls into it inline, the stub runs
-;; with the same registers and stack, and the `jmp` appended to it keeps the
-;; original (never taken) fall-through edge back to the continuation.
+;; stub under exactly the condition that falls into it inline. The stub runs
+;; with the same registers and stack and the abort call has no return edge.
 ;;
 ;; A stub moves only when the records between the jump and its target label are
 ;; all stub-shaped: at least one noreturn abort call
 ;; (`compiler-backend-peephole-line-noreturn-abort?`), no other call, no `ret`,
-;; no conditional jump, `jmp` only to the stub's own `.L_tl_abort_site_` labels,
-;; no directive but `.balign`/`.p2align`/`.quad`, and no label but the stub's own
-;; `.L_tl_abort_site_` data labels. Nothing position-dependent (`.loc`, CFI, SEH,
-;; a section switch, a numeric local label) can therefore move. The moved stub
+;; no jump, and no label except the stub's own `.L_tl_abort_site_` return
+;; address labels. The row directive and operand staging comment travel with
+;; the stub. Position-dependent directives (`.loc`, CFI, SEH) stay in place. The moved stub
 ;; is named after its unique continuation label (`T.cold`); a stub that closes
 ;; at a numeric `1:` is named after its unique abort-site label instead, keeps
 ;; `1:` in place for any other `1f` that targets it, and returns through a
@@ -7040,7 +7429,7 @@
 ;; jumps to the first one's label (`compiler-backend-cold-shared-body`). The
 ;; body runs the same instruction from any check, and the shared stub stays
 ;; inside the function, so only the never-used return address differs. A stub
-;; with staged arguments, a site descriptor or a `.loc` line keeps its own.
+;; with staged arguments, a site row or a `.loc` line keeps its own.
 (define compiler-backend-cold-stub-scan-limit : i64
   48)
 
@@ -7356,38 +7745,15 @@
                                     "call")
                                   (set! result (- 0 1))]
                                 [else unit]))]
-                          [(= lead 106)
-                            (let
-                              [last : i64
-                                (compiler-backend-cold-line-last data first end)]
-                              [op-end : i64
-                                (compiler-backend-cold-token-end
-                                  data
-                                  first
-                                  last)]
-                              (if (and
-                                (be_operand.compiler-backend-peephole-range-eq?
-                                  data
-                                  first
-                                  op-end
-                                  "jmp")
+                          [(or
+                              (= lead 106)
+                              (and
+                                (= lead 114)
                                 (compiler-backend-cold-prefix?
                                   data
-                                  (compiler-backend-cold-line-first
-                                    data
-                                    op-end
-                                    last)
-                                  last
-                                  ".L_tl_abort_site_"))
-                                unit
-                                (set! result (- 0 1))))]
-                          [(and
-                              (= lead 114)
-                              (compiler-backend-cold-prefix?
-                                data
-                                first
-                                end
-                                "ret"))
+                                  first
+                                  end
+                                  "ret")))
                             (set! result (- 0 1))]
                           ;; A stub stages at most a handful of abort arguments
                           ;; before its call; a longer run is ordinary code.
@@ -7407,17 +7773,14 @@
                             data
                             first
                             last
-                            ".balign ")
-                          (compiler-backend-cold-prefix?
-                            data
-                            first
-                            last
-                            ".p2align ")
-                          (compiler-backend-cold-prefix?
-                            data
-                            first
-                            last
-                            ".quad "))
+                            "# tl_abort_operand_stage")
+                          (and
+                            saw-abort
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              ".tl_abort_row ")))
                           unit
                           (set! result (- 0 1))))])))
               (+= j 1))))
@@ -7636,6 +7999,12 @@
                 (be_state.compiler-backend-peephole-byte-at data first)
                 0)]
             (cond
+              [(compiler-backend-cold-prefix?
+                  data
+                  first
+                  end
+                  "# tl_abort_operand_stage")
+                (-= j 1)]
               [(not
                   (=
                     (compiler-backend-peephole-record-kind rec)
@@ -8075,85 +8444,7 @@
       (ptr-write! (ptr-offset dst (+ pos n)) (cast 10 : u8)))
     (+ pos (+ n 1))))
 
-;; Emit planned stubs [from, to) out of line.
-;; A stub's records, copied out of line. Its abort call never returns, so
-;; nothing after the call is reached: the `jmp` that stepped over the site
-;; descriptor, and the continuation label that jump was the only reader of, are
-;; left behind, and no jump back to the hot path is written. The descriptor
-;; itself stays -- the call's argument addresses it. A stub has no other exit
-;; (the planner admits only the abort sequence), so this drops no live path.
-(define (compiler-backend-cold-stub-body!
-  [v : be_state.CompilerBackendPeepholeLineVec]
-  [from : i64]
-  [to : i64]
-  [dst : (MutPtr u8)]
-  [start-pos : i64]) : i64
-  (let
-    [pos : i64 start-pos]
-    [cursor : i64 from]
-    [after-call? : bool false]
-    [skip-label : String ""]
-    (for [j (iterator.range from to)]
-      (when
-        (= (array-ref v.live j) 1)
-        (let
-          [rec : be_state.CompilerBackendPeepholeLineRecord
-            (be_state.compiler-backend-global-array-element-shared-view
-              v.lines
-              j)]
-          [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
-          [start : i64 (compiler-backend-peephole-record-start rec)]
-          [end : i64 (compiler-backend-peephole-record-end rec)]
-          [first : i64 (compiler-backend-cold-line-first data start end)]
-          [last : i64 (compiler-backend-cold-line-last data first end)]
-          [kind : i64 (compiler-backend-peephole-record-kind rec)]
-          (cond
-            [(and
-                (= kind compiler-backend-sweep-line-kind-instruction)
-                (compiler-backend-peephole-line-noreturn-abort? data start end))
-              (set! after-call? true)]
-            [(and
-              after-call?
-              (= kind compiler-backend-sweep-line-kind-instruction)
-              (compiler-backend-cold-prefix? data first last "jmp "))
-              (set!
-                pos
-                (compiler-backend-peephole-records-blit-range!
-                  v
-                  cursor
-                  j
-                  dst
-                  pos))
-              (set! cursor (+ j 1))
-              (set!
-                skip-label
-                (str_cat.str-cat
-                  (string.substring rec.src (+ first 4) (- last (+ first 4)))
-                  ":"))
-              (set! after-call? false)]
-            [(and
-              (= kind compiler-backend-sweep-line-kind-label)
-              (> (string.string-length skip-label) 1)
-              (be_operand.compiler-backend-peephole-range-eq?
-                data
-                first
-                last
-                skip-label))
-              (set!
-                pos
-                (compiler-backend-peephole-records-blit-range!
-                  v
-                  cursor
-                  j
-                  dst
-                  pos))
-              (set! cursor (+ j 1))
-              (set! skip-label "")]
-            [(= kind compiler-backend-sweep-line-kind-instruction)
-              (set! after-call? false)]
-            [else unit]))))
-    (compiler-backend-peephole-records-blit-range! v cursor to dst pos)))
-
+;; Emit planned stubs [from, to) out of line. Each call and its row move together.
 (define (compiler-backend-cold-emit-stubs!
   [v : be_state.CompilerBackendPeepholeLineVec]
   [plan : CompilerBackendColdPlan]
@@ -8188,8 +8479,8 @@
                 pos)))
           (set!
             pos
-            (compiler-backend-cold-stub-body!
-              (be_state.compiler-backend-global-shared-view v)
+            (compiler-backend-peephole-records-blit-range!
+              v
               (+ (array-ref plan.jcc k) 1)
               (array-ref plan.target k)
               dst
@@ -11944,6 +12235,8 @@
         (__tl_make-array i64 0)
         0
         (- 0 1)
+        (__tl_make-array i64 0)
+        0
         (__tl_make-array i64 0)
         0)]
     [_walk-open : unit

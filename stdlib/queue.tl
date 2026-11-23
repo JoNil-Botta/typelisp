@@ -33,6 +33,9 @@
 ;# ```
 (import stdlib.comptime)
 
+;; lint-allow: unused-import
+(import stdlib.clone)
+
 ;: Emit a generated growable deque module for element type `T`.
 (defmacro (deque [T : type]) : Module
   (let
@@ -112,7 +115,7 @@
           (< index (len q))
           false)
           ;; The deque keeps its element; the caller gets a clone.
-          (clone (array-ref (slots q) (physical-index q index)))
+          (stdlib.clone.deep (array-ref q.slots (physical-index q index)))
           fallback))
       (define (peek-front [q : (& q ,deque-name)] [fallback : ,T]) : ,T
         (get q 0 fallback))
@@ -132,7 +135,8 @@
             ;; live element is cloned into the new storage.
             (set!
               (array-ref dst index)
-              (clone (array-ref src (physical-index-from head capacity index))))
+              (stdlib.clone.deep
+                (array-ref src (physical-index-from head capacity index))))
             (copy-live! dst src head capacity count (+ index 1)))))
       (define (grow [q : (&mut q ,deque-name)]) : unit
         (let
@@ -169,7 +173,7 @@
         (if (<= q.len 0)
           (,pop-empty-name)
           (let
-            [value : ,T (clone (array-ref q.slots q.head))]
+            [value : ,T (stdlib.clone.deep (array-ref q.slots q.head))]
             [new-len : i64 (- q.len 1)]
             [new-head : i64
               (if (= new-len 0)
@@ -184,7 +188,7 @@
           (let
             [last-index : i64
               (physical-index-from q.head (array-length q.slots) (- q.len 1))]
-            [value : ,T (clone (array-ref q.slots last-index))]
+            [value : ,T (stdlib.clone.deep (array-ref q.slots last-index))]
             [new-len : i64 (- q.len 1)]
             [new-head : i64
               (if (= new-len 0)

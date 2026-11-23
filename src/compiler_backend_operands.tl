@@ -2118,13 +2118,8 @@
                 (compiler-backend-float-type-name ty)
                 " value"))))])))
 
-;; Prefer compact 32-bit encodings for small non-negative immediates.
-;; Writing a 32-bit register zero-extends into the full 64-bit register, so for
-;; 0 <= n < 2^31 the 64-bit value is exactly n: `xorl r32,r32` (2 bytes) clears
-;; the register, and `movl $n,r32` (5-6 bytes) beats `movq $n,r64` (7 bytes, or
-;; a 10-byte movabs once n no longer fits a signed-32 immediate). Negative or
-;; >= 2^31 values keep the full-width `movq $n` (sign extension / 64-bit
-;; immediate), which the assembler widens to movabs as needed.
+;; A 32-bit destination zero-extends the full unsigned imm32 range. Negative
+;; signed imm32 values use the sign-extending 64-bit form.
 (define (compiler-backend-emit-load-i64-immediate-into
   [out : (&mut out be_state.CompilerBackendAsmBuf)]
   [n : i64]
@@ -2139,7 +2134,7 @@
         ", "
         reg32
         "\n"))
-    (if (compiler-backend-imm32? n)
+    (if (and (>= n (- 0 2147483648)) (<= n 4294967295))
       ;; `movl` zero-extends a positive imm32, `movq` sign-extends a negative.
       (compiler-backend-asm-append-machine!
         out
@@ -3608,28 +3603,23 @@
           [_ ""]))]
     [_ ""]))
 
-;; Base-register-parameterized address: scavenged-register-aware address
-;; formatting so addressing-base scratch is not fixed to one register.
-;; GAP7: spell a %rbp memory-operand BASE as the SIB scale-1 index form
-;; `disp(,%rbp,1)` -- base absent, %rbp as a scale-1 index, semantically
-;; identical to `disp(%rbp)` but textually DISTINCT from a frame reference. The
-;; FPO rsp-rebase pass and the peephole slot recognizers key frame slots on the
-;; `(%rbp)` / `(%rsp)` base spelling; `(,%rbp,1)` matches NEITHER, so a pool
-;; value homed in %rbp can serve as a memory base directly (no staged
-;; `movq %rbp,%rSCRATCH` copy) while the rebase pass still rewrites every real
-;; frame slot and never rewrites the pool base -- STRUCTURAL disambiguation by
-;; addressing MODE. Every OTHER base (a scavenged scratch or a non-%rbp register
-;; home) spells normally; base-address / copy-address / base-deref never format
-;; a frame slot (those go through compiler-backend-slot / the slot machinery),
-;; so a %rbp base reaching these formatters is ALWAYS a pool value. On Win64
-;; and any keep-rbp function %rbp is not a pool register, so it never arrives
-;; here as a base (unconditionally sound across targets).
-(define (compiler-backend-mem-base-address [disp : i64] [base : String]) : String
+;; Keep the space before a pool %rbp. The rebase and slot scanners match
+;; "(%rbp" for frame operands, and the CSR census counts %rbp after a space
+;; as a value read. GAS and the COFF assembler encode both spellings as the
+;; same base operand. Indexed addressing keeps its own base/index syntax.
+(define (compiler-backend-value-base-prefix [base : (& base str)]) : String
   (if (string.eq base "%rbp")
-    (str_cat.str-cat (string.int->string disp) "(,%rbp,1)")
+    "( "
+    "("))
+
+(define (compiler-backend-mem-base-address [disp : i64] [base : String]) : String
+  (str_cat.str-cat
     (if (= disp 0)
-      (str_cat.str-cat "(" base ")")
-      (str_cat.str-cat (string.int->string disp) "(" base ")"))))
+      ""
+      (string.int->string disp))
+    (compiler-backend-value-base-prefix base)
+    base
+    ")"))
 
 ;; Exclude an already-chosen register R (so a second scavenge at the same point
 ;; cannot collide with it).
@@ -3887,12 +3877,19 @@
 ;; Character-dispatch register-name -> scavenge bit. The scavenger queries
 ;; this per emitted operand; the eq-mnemonic ladder paid up to eighteen string
 ;; compares per call. Length plus three character reads decide every case.
+(define (compiler-backend-scavenge-vector-family-bit [family : i64]) : i64
+  (cond
+    [(and (>= family 2) (<= family 5)) (shl 1 (+ family 9))]
+    [(and (>= family 0) (< family 2)) (shl 1 (+ family 18))]
+    [(and (>= family 6) (< family 16)) (shl 1 (+ family 14))]
+    [else 0]))
+
 ;; Unknown names map to 0.
 (define (compiler-backend-scavenge-reg-bit [reg : (& reg str)]) : i64
   (let
     [n : i64 (string.string-length reg)]
     (cond
-      [(or (< n 3) (> n 5)) 0]
+      [(or (< n 3) (> n 6)) 0]
       [(not (= (string.string-ref reg 0) '%')) 0]
       [(= n 3)
         (if (= (string.string-ref reg 1) 'r')
@@ -3943,12 +3940,11 @@
           (if (or
             (and (or (= c1 'x') (= c1 'y') (= c1 'z')) (= c2 'm') (= c3 'm'))
             (and (= c1 'v') (= c2 'e') (= c3 'c')))
-            (cond
-              [(= (string.string-ref reg 4) '2') 2048]
-              [(= (string.string-ref reg 4) '3') 4096]
-              [(= (string.string-ref reg 4) '4') 8192]
-              [(= (string.string-ref reg 4) '5') 16384]
-              [else 0])
+            (compiler-backend-scavenge-vector-family-bit
+              (compiler_abi.compiler-abi-register-decimal-suffix
+                (string.copy reg)
+                4
+                15))
             0))])))
 
 (define (compiler-backend-scavenge-emergency-reg-supported? [reg : (& reg str)]) : bool
@@ -3973,18 +3969,11 @@
     [(= reg compiler_abi.compiler-reg-id-rsi) 65536]
     [(= reg compiler_abi.compiler-reg-id-rdi) 131072]
     [else
-      (let
-        [family : i64
-          (compiler_abi.compiler-abi-register-vector-family-index reg)]
-        (cond
-          [(= family 2) 2048]
-          [(= family 3) 4096]
-          [(= family 4) 8192]
-          [(= family 5) 16384]
-          [else 0]))]))
+      (compiler-backend-scavenge-vector-family-bit
+        (compiler_abi.compiler-abi-register-vector-family-index reg))]))
 
 (define (compiler-backend-scavenge-exclude-mask
-  [exclude : (__tl_dyn-array String)]
+  [exclude : (& exclude (__tl_dyn-array String))]
   [n : i64]) : i64
   (let
     [mask : i64 0]
@@ -4407,9 +4396,7 @@
   [fallback : String]) : String
   (let
     [exclude-mask : i64
-      (compiler-backend-scavenge-exclude-mask
-        (be_state.compiler-backend-global-shared-view exclude)
-        exclude-n)]
+      (compiler-backend-scavenge-exclude-mask (& exclude) exclude-n)]
     [cands : (__tl_dyn-array i64)
       (be_state.compiler-backend-i64-array-shared-view
         (& compiler-backend-scavenge-candidate-pool))]
@@ -4441,9 +4428,7 @@
   [cands : (& cands (__tl_dyn-array i64))]) : String
   (let
     [exclude-mask : i64
-      (compiler-backend-scavenge-exclude-mask
-        (be_state.compiler-backend-global-shared-view exclude)
-        exclude-n)]
+      (compiler-backend-scavenge-exclude-mask (& exclude) exclude-n)]
     (if (and
       (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
@@ -4463,11 +4448,75 @@
         cands
         (array-length cands)))))
 
+(define (compiler-backend-scavenge-extra-xmm
+  [function-state : be_state.CompilerBackendFunctionState]
+  [occupied-mask : i64]
+  [exclude-mask : i64]
+  [fallback : (& fallback str)]
+  [limit : i64]
+  [cands : (& cands (__tl_dyn-array i64))]) : String
+  (let
+    [fallback-bit : i64 (compiler-backend-scavenge-reg-bit fallback)]
+    [plan-mask : i64
+      (be_state.compiler-backend-function-scratch-i64
+        function-state
+        be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)]
+    (when
+      (or
+        (and
+          (= (bit-and (bit-or occupied-mask exclude-mask) fallback-bit) 0)
+          (compiler-backend-scavenge-reg-free-in-mask?
+            (be_state.compiler-backend-function-scratch-i64
+              function-state
+              be_state.compiler-backend-scratch-i64-current-instr-reserved-mask)
+            fallback))
+        (>=
+          (compiler-backend-scavenge-first-ok-index
+            function-state
+            occupied-mask
+            exclude-mask
+            plan-mask
+            cands
+            (array-length cands))
+          0))
+      (return ""))
+    ;; These volatile homes are usable when free. Emergency saves keep using
+    ;; the ordinary XMM2–XMM5 pool.
+    (for [i (iterator.range 0 limit)]
+      (when
+        (or (< i 2) (>= i 6))
+        (let
+          [reg : i64 (compiler_abi.compiler-abi-xmm-register-id i)]
+          (when
+            (compiler-backend-scavenge-candidate-ok?
+              function-state
+              occupied-mask
+              exclude-mask
+              plan-mask
+              reg)
+            (return (compiler_abi.compiler-abi-register-spelling reg))))))
+    ""))
+
 (define (compiler-backend-scavenge-xmm-reg
   [dst-var : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
+  [backend-state : be_state.CompilerBackendState]) : String
+  (compiler-backend-scavenge-xmm-reg-for-staging
+    dst-var
+    exclude
+    exclude-n
+    fallback
+    false
+    backend-state))
+
+(define (compiler-backend-scavenge-xmm-reg-for-staging
+  [dst-var : i64]
+  [exclude : (__tl_dyn-array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [scalar-compute? : bool]
   [backend-state : be_state.CompilerBackendState]) : String
   (let
     [function-state : be_state.CompilerBackendFunctionState
@@ -4503,18 +4552,32 @@
     [cands : (__tl_dyn-array i64)
       (be_state.compiler-backend-i64-array-shared-view
         (& compiler-backend-scavenge-xmm-candidate-pool))]
-    [reg : String
+    [occupied : i64
+      (compiler-backend-scavenge-occupied-mask-over-range
+        function-state
+        point
+        hi-point)]
+    [extra : String
+      (if scalar-compute?
+        (compiler-backend-scavenge-extra-xmm
+          function-state
+          occupied
+          (compiler-backend-scavenge-exclude-mask (& ex) ex-n)
+          (& fallback)
+          (if (be_state.compiler-backend-current-fn-win64? backend-state)
+            6
+            16)
+          cands)
+        "")]
+    (if (string.eq extra "")
       (compiler-backend-scavenge-pick-from-mask
         function-state
-        (compiler-backend-scavenge-occupied-mask-over-range
-          function-state
-          point
-          hi-point)
+        occupied
         ex
         ex-n
         fallback
-        cands)]
-    reg))
+        cands)
+      extra)))
 
 ;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the
 ;; exact register the ordinary scavenger will return, including its emergency

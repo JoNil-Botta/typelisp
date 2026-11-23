@@ -4885,7 +4885,7 @@
           (asm-has?
             asm
             "    jae .Lf0_str_bounds_ok.0.cold\n.Lf0_str_bounds_ok.0:\n")
-          (asm-has? asm "    call tl_oob_abort")
+          (asm-has? asm "    call .L_tl_abort_tl_oob_abort_at\n")
           (asm-lacks? asm "tl_oob_abort:\n"))
         (be_state.backend-and4
           (asm-has? asm "    movq 8(%r10), %r8\n")
@@ -11092,18 +11092,12 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
-    jmp .L_tl_abort_site_1_bounds_end
-    .balign 8
+    call .L_tl_abort_tl_oob_abort_at
 .L_tl_abort_site_1_bounds:
-    .quad .L_tl_str_data
-    .quad 18
-    .quad 4
-    .quad 9
-.L_tl_abort_site_1_bounds_end:
+    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at
 .Lf0_bounds_ok.1:
     movq -8(%rbp), %r10
     movq (%r10), %rax
@@ -11114,18 +11108,12 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
-    jmp .L_tl_abort_site_1_bounds_end
-    .balign 8
+    call .L_tl_abort_tl_oob_abort_at
 .L_tl_abort_site_1_bounds:
-    .quad .L_tl_str_data
-    .quad 18
-    .quad 4
-    .quad 9
-.L_tl_abort_site_1_bounds_end:
+    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at
 .Lf0_bounds_ok.1:
     movq (%r10), %rax
 "]
@@ -11192,10 +11180,10 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
+    call .L_tl_abort_tl_oob_abort_at
     jmp .Lf0_bounds_ok.1
 .Lf0_bounds_ok.1:
     movq -8(%rbp), %r10
@@ -11207,10 +11195,10 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
+    call .L_tl_abort_tl_oob_abort_at
 .Lf0_bounds_ok.1:
     movq (%r10), %rax
 "]
@@ -12083,11 +12071,11 @@ high:
     ".text\n.globl f\n    .type f,@function\nf:\n"
     "    cmpq %r9, %rdi\n    jb .Lf0_bounds_ok.1\n"
     "    pushq %r9\n    pushq %rdi\n"
-    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
-    "    popq %rsi\n    popq %rdx\n    call tl_oob_abort_at\n"
-    "    jmp .L_tl_abort_site_1_bounds_end\n    .balign 8\n"
-    ".L_tl_abort_site_1_bounds:\n    .quad 7\n"
-    ".L_tl_abort_site_1_bounds_end:\n.Lf0_bounds_ok.1:\n"
+    "    # tl_abort_operand_stage\n"
+    "    popq %rsi\n    popq %rdx\n    call .L_tl_abort_tl_oob_abort_at\n"
+    ".L_tl_abort_site_1_bounds:\n"
+    "    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"
+    ".Lf0_bounds_ok.1:\n"
     "    testq %r8, %r8\n    jne 1f\n    call tl_div_abort\n1:\n"
     "    cmpq $0, %rax\n    jb .Lf0_mixed\n    testq %rcx, %rcx\n"
     "    jne .Lf0_mixed\n    call tl_oob_abort\n.Lf0_mixed:\n"
@@ -12138,14 +12126,11 @@ high:
         out
         "    jb .Lf0_calls\n    call helper\n    call tl_oob_abort\n.Lf0_calls:\n")
       (asm-has? out "    jne .Lf0_keep\n    movq $1, %rax\n")
-      ;; The stubs, descriptor data included, sit after the last hot
-      ;; instruction and inside the function's `.size` range. The abort call
-      ;; never returns, so nothing follows it but the descriptor: no jump over
-      ;; the descriptor, no jump back to the continuation, and no `.back`
-      ;; label for one.
+      ;; The return label and its row stay with the cold call inside the
+      ;; function range. The noreturn call needs no jump to the continuation.
       (asm-has?
         out
-        "    call tl_oob_abort_at\n    .balign 8\n.L_tl_abort_site_1_bounds:\n    .quad 7\n.Lf0_bounds_ok.1.stub1.cold:\n")
+        "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_1_bounds:\n    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n.Lf0_bounds_ok.1.stub1.cold:\n")
       (asm-lacks? out "_bounds_end")
       (asm-lacks? out ".back")
       (> ret-at 0)
@@ -13123,7 +13108,7 @@ f:
 .Lf0_entry:
     cmpq %rdx, %r9
     jb .Lf0_ok
-    call tl_oob_abort_at
+    call .L_tl_abort_tl_oob_abort_at
     jmp .Lf0_join
 .Lf0_ok:
     addq $1, %r9
@@ -14363,8 +14348,8 @@ f:
         (I64)
         (be_state.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
-      (has "    testq $1, %r13\n    setne %r13b\n")
-      (lacks "    andq $1"))))
+      (has "    testb $1, %r13b\n    setne %r13b\n")
+      (lacks "    andq $1" "    andl $1"))))
 
 (define (compiler-backend-scalar-select-ok?) : bool
   (and
@@ -28242,7 +28227,7 @@ entry:
     (lacks "%rax")))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
-;; trap reaches the backend as a location-aware `call tl_oob_abort_at`.
+;; trap reaches the backend as a location-aware `call .L_tl_abort_tl_oob_abort_at`.
 (define (compiler-backend-array-access-source) : String
   "(define (get [a : (__tl_dyn-array i64)] [i : i64]) : i64 (array-ref a i))
 (define (main) : i64 0)")
@@ -28251,7 +28236,7 @@ entry:
   (asm-ok?
     (backend.compiler-backend-emit-source
       (compiler-backend-array-access-source))
-    (has "call tl_oob_abort_at")))
+    (has "call .L_tl_abort_tl_oob_abort_at")))
 
 ;; Fixed-size array set/ref emit-shape coverage. The source takes the
 ;; fixed array as a parameter; a separate literal source below covers the
@@ -28274,7 +28259,7 @@ entry:
           ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
           (asm-has? asm "    cmpq $3, %r10\n")
           (asm-lacks? asm "    movl $3, %r11d\n")
-          (asm-has? asm "    call tl_oob_abort_at\n")
+          (asm-has? asm "    call .L_tl_abort_tl_oob_abort_at\n")
           ;; The index is checked before the value; the scalar element's
           ;; address is formed at the store, inside its operand.
           (asm-has? asm "    movq %r9, (%r10,%r8,8)\n")
@@ -28304,7 +28289,7 @@ entry:
       (and
         (asm-has? asm "main:\n")
         (= (backend.compiler-backend-string-count asm "    call tl_alloc\n") 0)
-        (asm-has? asm "    call tl_oob_abort_at\n")
+        (asm-has? asm "    call .L_tl_abort_tl_oob_abort_at\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
@@ -29399,9 +29384,9 @@ entry:
         ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 from its
         ;; old positive 176(%rsp) identity slot to -64; literal temporaries
         ;; independently reuse -8.
-        (asm-has? asm "    ucomiss -64(%rsp), %xmm2\n")
+        (asm-has? asm "    ucomiss -64(%rsp), %xmm2\n    jbe .L")
         (asm-has? asm "    addss -64(%rsp), %xmm2\n")
-        (asm-has? asm "    setb %r8b\n")
+        (asm-lacks? asm "    setb ")
         (asm-lacks? asm "    ucomiss %xmm1, %xmm0\n")
         (asm-lacks? asm "    addss %xmm1, %xmm0\n")
         (asm-lacks? asm "    cvtsd2ss ")
@@ -29440,48 +29425,58 @@ entry:
         [(Ok f32-asm)
           (and
             (be_state.backend-and4
-              (asm-has? f64-asm "    movsd %xmm2, %xmm4\n")
+              (asm-has? f64-asm "    movapd %xmm2, %xmm4\n")
               (asm-has? f64-asm "    addsd %xmm3, %xmm4\n")
-              (asm-has? f32-asm "    movss %xmm2, %xmm4\n")
+              (asm-has? f32-asm "    movaps %xmm2, %xmm4\n")
               (asm-has? f32-asm "    addss %xmm3, %xmm4\n"))
             (asm-lacks? f64-asm "%xmm0" "%xmm1")
             (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(Err _) false])]
     [(Err _) false]))
 
-(define (compiler-backend-spill-float-arith-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (be_scalar.compiler-backend-emit-binop
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (regalloc.compiler-reg-var-types-insert
+(define (compiler-backend-spill-float-arith-asm
+  [ty : ast.AstType]
+  [occupied : i64]) : be_state.ResultCompilerBackend
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (set-scratch-scavenge-ctx-occupied-masks!
+      (be_state.compiler-backend-state-function-state state)
+      (__tl_make-array 0 occupied))
+    (set-state-emit-instr-post-base! state 1)
+    (set-state-emit-current-count! state 0)
+    (be_scalar.compiler-backend-emit-binop
+      (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-var-types-insert
         (regalloc.compiler-reg-var-types-insert
-          (regalloc.compiler-reg-var-types-empty)
-          2
+          (regalloc.compiler-reg-var-types-insert
+            (regalloc.compiler-reg-var-types-empty)
+            2
+            (owned_view.compiler-owned-shared-view ty))
+          1
           (owned_view.compiler-owned-shared-view ty))
-        1
+        0
         (owned_view.compiler-owned-shared-view ty))
-      0
-      (owned_view.compiler-owned-shared-view ty))
-    (Empty)
-    (reg-homes "%0=%xmm3 %1=%xmm4 %2=spill:-16")
-    2
-    (Add)
-    (Var 0)
-    (Var 1)
-    ty
-    (be_state.compiler-backend-state-new
-      (ci.intern-compat-state-capture-active))))
+      (Empty)
+      (reg-homes "%0=%xmm3 %1=%xmm4 %2=spill:-16")
+      2
+      (Add)
+      (Var 0)
+      (Var 1)
+      ty
+      state)))
 
 (define (compiler-backend-spill-float-arith-home-ok?) : bool
-  (match (compiler-backend-spill-float-arith-asm (F64))
+  (match (compiler-backend-spill-float-arith-asm (F64) 0)
     [(Ok f64-asm)
-      (match (compiler-backend-spill-float-arith-asm (F32))
+      (match (compiler-backend-spill-float-arith-asm (F32) 0)
         [(Ok f32-asm)
           (and
             (be_state.backend-and4
-              (asm-has? f64-asm "    movsd %xmm3, %xmm2\n")
+              (asm-has? f64-asm "    movapd %xmm3, %xmm2\n")
               (asm-has? f64-asm "    addsd %xmm4, %xmm2\n")
-              (asm-has? f32-asm "    movss %xmm3, %xmm2\n")
+              (asm-has? f32-asm "    movaps %xmm3, %xmm2\n")
               (asm-has? f32-asm "    addss %xmm4, %xmm2\n"))
             (asm-has? f64-asm "    movsd %xmm2, -16(%rbp)\n")
             (asm-has? f32-asm "    movss %xmm2, -16(%rbp)\n")
@@ -29489,6 +29484,29 @@ entry:
             (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(Err _) false])]
     [(Err _) false]))
+
+(define (compiler-backend-pressured-float-arith-home-ok?) : bool
+  (let
+    [homes
+      (__tl_make-array
+        "%xmm0"
+        "%xmm1"
+        "%xmm2"
+        "%xmm3"
+        "%xmm4"
+        "%xmm5"
+        "%xmm6"
+        "%xmm7"
+        "%xmm8"
+        "%xmm9"
+        "%xmm10")]
+    [occupied : i64
+      (be_operand.compiler-backend-scavenge-exclude-mask (& homes) 11)]
+    (asm-ok?
+      (compiler-backend-spill-float-arith-asm (F64) occupied)
+      (has
+        "    movapd %xmm3, %xmm11\n    addsd %xmm4, %xmm11\n"
+        "    movsd %xmm11, -16(%rbp)\n"))))
 
 ;; Exact whole sequences prove PF handling and absence of unplanned clobbers.
 (define (compiler-backend-float-unordered-sequence-ok?
@@ -29680,7 +29698,7 @@ entry:
           (and
             (be_state.backend-and8
               (asm-has? arith-asm "    addsd %xmm4, %xmm2\n")
-              (asm-has? arith-asm "    movsd %xmm2, %xmm4\n")
+              (asm-has? arith-asm "    movapd %xmm2, %xmm4\n")
               (asm-has? cmp-asm "    movsd -24(%rbp), %xmm2\n")
               (asm-has? cmp-asm "    ucomisd %xmm3, %xmm2\n")
               (asm-has? cmp-asm "    setb %r12b\n")
@@ -30418,7 +30436,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $254, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $254, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30428,7 +30446,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $256, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $256, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30438,7 +30456,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $65280, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $65280, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30479,10 +30497,16 @@ entry:
               (and
                 (be_state.backend-and4
                   (asm-has? byte-asm "    movzbq %r12b, %r12\n")
-                  (asm-lacks? byte-asm "    andq $255, %r12\n")
+                  (asm-lacks?
+                    byte-asm
+                    "    andq $255, %r12\n"
+                    "    andl $255, %r12d\n")
                   (asm-has? word-asm "    movzwq %r12w, %r12\n")
-                  (asm-lacks? word-asm "    andq $65535, %r12\n"))
-                (asm-has? negative-asm "    andq $254, %r12\n"))]
+                  (asm-lacks?
+                    word-asm
+                    "    andq $65535, %r12\n"
+                    "    andl $65535, %r12d\n"))
+                (asm-has? negative-asm "    andl $254, %r12d\n"))]
             [(Err _) false])]
         [(Err _) false])]
     [(Err _) false]))
@@ -30763,8 +30787,8 @@ entry:
     (and
       direct-result.ok
       spilled-result.ok
-      (asm-has? direct "    leaq 31(,%rbp,1), %r12\n")
-      (asm-has? spilled "    leaq 31(,%rbp,1), %r8\n")
+      (asm-has? direct "    leaq 31( %rbp), %r12\n")
+      (asm-has? spilled "    leaq 31( %rbp), %r8\n")
       (asm-lacks? direct "31(%rsp)")
       (asm-lacks? spilled "31(%rsp)")
       (asm-lacks? direct "    addq $31")
@@ -30890,7 +30914,7 @@ entry:
       "    movq $-1, %rax\n")
     (string.eq
       (be_scalar.compiler-backend-emit-load-i64-immediate 2147483648 "%rax")
-      "    movq $2147483648, %rax\n")
+      "    movl $2147483648, %eax\n")
     true
     true
     true))
@@ -30912,7 +30936,7 @@ entry:
           (asm-has?
             asm
             "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n1:\n")
-          (asm-has? asm "    call tl_div_abort_at\n")
+          (asm-has? asm "    call .L_tl_abort_tl_div_abort_at\n")
           (asm-has? asm "    cmpq $1, %rax\n    jno 1f\n")
           (asm-has?
             asm
@@ -30920,7 +30944,7 @@ entry:
           (asm-has? asm "    cqto\n")
           (asm-has? asm "    idivq %r8\n")
           (asm-has? asm "    movq %rdx, %rax\n")
-          (asm-has? asm "    .quad 46\n"))
+          (asm-has? asm ", 1, 46, tl_div_abort_at\n"))
         (asm-lacks? asm "    call tl_div_abort\n" ".globl tl_div_abort\n")
         (not
           (let
@@ -30949,9 +30973,9 @@ entry:
         (asm-has? asm "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
         (asm-has? asm "    movabsq $-8543223828751151131, %r8\n    imulq %r8\n")
         (asm-has? asm "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
-        ;; M-F folds the power-of-2 modulo mask into an immediate `andq`
+        ;; M-F folds the power-of-2 modulo mask into an immediate `andl`
         ;; (was `movabsq $7, %r8; andq %r8, %rax`).
-        (asm-has? asm "    andq $7, %rax\n")
+        (asm-has? asm "    andl $7, %eax\n")
         (asm-lacks? asm "    idivq %r8\n")
         (asm-lacks? asm "    divq %r8\n")
         (asm-lacks? asm "    call tl_div_abort\n")
@@ -31164,7 +31188,7 @@ entry:
       (match (compiler-backend-divmod-polish-asm false false true false)
         [(Ok r12-asm)
           (and
-            (asm-has? rbp-asm "    leaq 62(,%rbp,1), %r9\n")
+            (asm-has? rbp-asm "    leaq 62( %rbp), %r9\n")
             (asm-lacks? rbp-asm "(%rbp)")
             (asm-has? r12-asm "    leaq 62(%r12), %r9\n"))]
         [(Err _) false])]
@@ -31647,7 +31671,7 @@ entry:
         (asm-has?
           asm
           "    cmpq $64, %r8\n    jae .L_tl_abort_site_2_shift_large.cold\n")
-        (asm-has? asm "    call tl_shift_abort_at\n")
+        (asm-has? asm "    call .L_tl_abort_tl_shift_abort_at\n")
         (asm-lacks? asm ".globl tl_shift_abort\n")
         (asm-lacks? asm ".L_tl_shift_msg:")
         (asm-lacks? asm "    shlq $-1, %rax\n")
@@ -36099,9 +36123,9 @@ entry:
       (=
         (be_operand.compiler-backend-scavenge-reg-bit "%xmm4")
         (be_operand.compiler-backend-scavenge-reg-bit "%zmm4"))
-      (= (backend.compiler-backend-scavenge-reg-bit-by-index 15) rax)
-      (= (backend.compiler-backend-scavenge-reg-bit-by-index 16) rsi)
-      (= (backend.compiler-backend-scavenge-reg-bit-by-index 17) rdi))))
+      (= (shl (cast 1 : i64) 15) rax)
+      (= (shl (cast 1 : i64) 16) rsi)
+      (= (shl (cast 1 : i64) 17) rdi))))
 
 (define (compiler-backend-emergency-vector-width-ok?) : bool
   (let
@@ -39270,7 +39294,7 @@ b_keep:
 ;; they reach are dead there and compiler-backend-red-zone-decide! must not
 ;; charge the guard for them. Every OTHER dip -- a c-ABI window, a phi
 ;; cycle-break push, a real `subq` -- still counts in full, and so does a
-;; descriptor load whose continuation turns out to return.
+;; staging marker whose continuation turns out to return.
 (define (compiler-backend-abort-tail-dip-body [tail : String]) : String
   (str_cat.str-cat
     "    cmpq %rsi, %rax\n"
@@ -39284,18 +39308,12 @@ b_keep:
   (str_cat.str-cat
     "    pushq %rsi\n"
     "    pushq %rax\n"
-    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
+    "    # tl_abort_operand_stage\n"
     "    popq %rsi\n"
     "    popq %rdx\n"
     call-line
-    "    jmp .L_tl_abort_site_1_bounds_end\n"
-    "    .balign 8\n"
     ".L_tl_abort_site_1_bounds:\n"
-    "    .quad .L_tl_str_data_probe\n"
-    "    .quad 22\n"
-    "    .quad 34\n"
-    "    .quad 56\n"
-    ".L_tl_abort_site_1_bounds_end:\n"))
+    "    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat_probe, 34, 56, tl_oob_abort_at\n"))
 
 (define (compiler-backend-abort-tail-dip-red-zone?
   [text : (& text str)]
@@ -39329,7 +39347,7 @@ b_keep:
     [abort-only : String
       (compiler-backend-abort-tail-dip-body
         (compiler-backend-abort-tail-dip-located-tail
-          "    call tl_oob_abort_at\n"))]
+          "    call .L_tl_abort_tl_oob_abort_at\n"))]
     ;; The same shape whose continuation RETURNS: not a never-returning path,
     ;; so its dip is owed in full.
     [returning : String
@@ -39354,7 +39372,7 @@ b_keep:
           "    call _tl_probe_helper\n"
           "    popq %rcx\n"
           (compiler-backend-abort-tail-dip-located-tail
-            "    call tl_oob_abort_at\n")))]
+            "    call .L_tl_abort_tl_oob_abort_at\n")))]
     ;; ...and one that is still OPEN when the tail opens: the third push
     ;; displaces it out of the pending window before the marker can hold it.
     [open-window-then-abort : String
@@ -39362,9 +39380,9 @@ b_keep:
         (str_cat.str-cat
           "    pushq %rcx\n"
           (compiler-backend-abort-tail-dip-located-tail
-            "    call tl_oob_abort_at\n")))]
+            "    call .L_tl_abort_tl_oob_abort_at\n")))]
     ;; A bare (unlocated) abort pushes nothing, so an unrelated open window in
-    ;; front of it must still be counted: no descriptor load, nothing held.
+    ;; front of it must still be counted: no staging marker, nothing held.
     [bare-abort : String
       (compiler-backend-abort-tail-dip-body
         (str_cat.str-cat
@@ -41021,6 +41039,7 @@ b_keep:
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)
+        (compiler-backend-pressured-float-arith-home-ok?)
         (if (compiler-backend-float-unordered-sequences-ok?)
           true
           (io.panic "backend: unordered float comparison sequences"))
@@ -45618,7 +45637,8 @@ user_fn:
 
 (define (compiler-backend-literal-pool-case
   [values : (__tl_dyn-array String)]
-  [maximum-bytes : i64]) : bool
+  [maximum-bytes : i64]
+  [terminated? : bool]) : bool
   (let
     [owner : arena.Arena
       (unsafe
@@ -45692,7 +45712,9 @@ user_fn:
               (array-ref out.slots (+ offset j))
               (cast (string.string-ref value j) : u8))
             (return false)))
-        (unless (= (array-ref out.slots (+ offset length)) 0) (return false))
+        (when
+          (and terminated? (!= (array-ref out.slots (+ offset length)) 0))
+          (return false))
         (for [j (iterator.range 0 8)]
           (unless
             (=
@@ -45748,23 +45770,39 @@ user_fn:
         (set! (array-ref many i) value)))
     (set! (array-ref many 64) "end")
     (and
-      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0)
-      (compiler-backend-literal-pool-case (__tl_make-array "only") 24)
-      (compiler-backend-literal-pool-case (__tl_make-array "ab" "cd" "ef") 64)
+      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0 true)
+      (compiler-backend-literal-pool-case (__tl_make-array "only") 24 true)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "ab" "cd" "ef")
+        64
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefix/abc" "abc" "bc" "c" "")
-        96)
+        96
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "" "c" "abc" "prefix/abc" "bc")
-        96)
+        96
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "cab" "dab" "ab" "b" "")
-        88)
-      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56)
+        88
+        true)
+      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56 true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefixλ" "λ" "")
-        64)
-      (compiler-backend-literal-pool-case many budget))))
+        64
+        true)
+      (compiler-backend-literal-pool-case many budget true))))
+
+(test
+  backend-interior-literal-records
+  (test.assert-true
+    (compiler-backend-literal-pool-case
+      (__tl_make-array "prefix-middle-suffix" "middle")
+      56
+      false)
+    "interior literal relocation and byte length agree with its descriptor"))
 
 (test
   backend-packed-literal-records

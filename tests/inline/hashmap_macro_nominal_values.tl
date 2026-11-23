@@ -1,4 +1,5 @@
 ;; Arbitrary caller-owned nominal value families (#6842).
+(import stdlib.clone)
 (import stdlib.test)
 (import stdlib.hashmap)
 (import tests.hashmap_macro_clone_collision_first as collision_first)
@@ -9,20 +10,28 @@
   (LocalValueText String)
   (LocalValueOtherText String))
 
+(stdlib.clone.gen-clone LocalValueTag)
+
 (defstruct LocalNestedValue
   (pair (Tuple i32 bool))
   (codes (Array u8 3))
   (tag LocalValueTag))
+
+(stdlib.clone.gen-clone LocalNestedValue)
 
 (defstruct LocalStructValue
   (score i64)
   (label String)
   (nested LocalNestedValue))
 
+(stdlib.clone.gen-clone LocalStructValue)
+
 (defenum LocalEnumValue
   (LocalEnumNone)
   (LocalEnumSome LocalStructValue)
   (LocalEnumPair String i64))
+
+(stdlib.clone.gen-clone LocalEnumValue)
 
 (import (hashmap.hashmap String LocalStructValue) as map_local_struct_value)
 (import (hashmap.hashmap i64 LocalEnumValue) as map_local_enum_value)

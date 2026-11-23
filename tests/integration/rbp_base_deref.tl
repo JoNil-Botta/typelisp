@@ -13,7 +13,7 @@
 ;;     movq %rbp, %r10
 ;;     movq 8(%r10), ...        ; len / data descriptor load
 ;; After GAP7 the %rbp base is spelled directly as the SIB scale-1 index form
-;;     movq 8(,%rbp,1), ...
+;;     movq 8( %rbp), ...
 ;; which is textually distinct from a frame reference `8(%rbp)` (so the rebase
 ;; pass and the peephole slot recognizers leave it alone) and semantically
 ;; identical -- no staging copy.

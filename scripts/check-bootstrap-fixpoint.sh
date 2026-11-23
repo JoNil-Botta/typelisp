@@ -553,7 +553,7 @@ check_stage2_embedded_stdlib() {
         "$STAGE2_BIN" inspect embedded:stdlib.tlci
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
-        "embedded-loader-macro-count: 170"
+        "embedded-loader-macro-count: 172"
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
         "package-name: stdlib"

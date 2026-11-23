@@ -12064,6 +12064,154 @@ high:
       (text_buf.render (compiler-backend-peephole-text-buf-once chunks))]
     (string.eq legacy chunked)))
 
+;; Exercise both final-record consumers. The fixtures omit layout and
+;; fallthrough-jump deletion so the final pass sees the exact incoming edges.
+(define (compiler-backend-tail-test-stream [asm : (& str)]) : String
+  (text_buf.render
+    (compiler-backend-peephole-text-buf-once
+      (text_buf.append (text_buf.empty) (string.copy asm)))))
+
+(define (compiler-backend-tail-test-buffer [asm : (& str)]) : String
+  (compiler-backend-peephole-asm-once (string.copy asm)))
+
+(define (compiler-backend-tail-test-whole-source
+  [entry : (& str)]
+  [data : (& str)]) : String
+  (str_cat.str-cat
+    "tail_test:\n"
+    entry
+    "    testl %eax, %eax\n    jne .L_tail_test_first\n    jmp .L_tail_test_second\n"
+    ".L_tail_test_first:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n"
+    ".L_tail_test_second:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n"
+    data
+    ".L_tail_test_join:\n    ret\n"))
+
+(test
+  peephole-tail-merges-identical-blocks
+  (let
+    [input : String (compiler-backend-tail-test-whole-source "" "")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    (test.assert-true
+      (and
+        (string.eq (& out) (compiler-backend-tail-test-buffer (& input)))
+        (asm-has?
+          out
+          "    jne .L_tail_test_first\n    jmp .L_tail_test_first\n"
+          ".L_tail_test_first:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n")
+        (asm-lacks? out ".L_tail_test_second"))
+      "both renderers redirect the duplicate's incoming branch and remove its body")))
+
+(test
+  peephole-tail-merges-identical-suffixes
+  (let
+    [input : String
+      (str_cat.str-cat
+        "tail_suffix:\n    testl %eax, %eax\n    jne .L_suffix_second\n"
+        "    movl $301, %r10d\n    movq $401, %r8\n    movq %r8, (%rbx)\n"
+        "    jmp .L_suffix_join\n"
+        ".L_suffix_second:\n    movl $302, %r10d\n    movq $401, %r8\n"
+        "    movq %r8, (%rbx)\n    jmp .L_suffix_join\n"
+        ".L_suffix_join:\n    ret\n")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    (test.assert-true
+      (and
+        (string.eq (& out) (compiler-backend-tail-test-buffer (& input)))
+        (asm-has?
+          out
+          "    movl $301, %r10d\n    jmp .L_tail_tail_suffix."
+          "    movl $302, %r10d\n.L_tail_tail_suffix."
+          "    movq %r8, (%rbx)\n.L_suffix_join:\n")
+        (asm-lacks? out "    jmp .L_suffix_join\n"))
+      "branching to the longest shared fallthrough suffix takes one jump")))
+
+(test
+  peephole-tail-preserves-located-abort-sites
+  (let
+    [input : String
+      (str_cat.str-cat
+        "tail_abort:\n    testl %eax, %eax\n    jne .L_abort_second\n"
+        "    movq $401, %r8\n    call .L_tl_abort_tl_oob_abort_at\n"
+        ".L_tl_abort_site_1_bounds:\n"
+        "    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"
+        ".L_abort_second:\n    movq $401, %r8\n"
+        "    call .L_tl_abort_tl_oob_abort_at\n"
+        ".L_tl_abort_site_2_bounds:\n"
+        "    .tl_abort_row .L_tl_abort_site_2_bounds, .L_tl_str_fat, 5, 9, tl_oob_abort_at\n"
+        "    ret\n    .size tail_abort, . - tail_abort\n")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    [buf : String (compiler-backend-tail-test-buffer (& input))]
+    [site-one : String
+      "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_1_bounds:\n    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"]
+    [site-two : String
+      "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_2_bounds:\n    .tl_abort_row .L_tl_abort_site_2_bounds, .L_tl_str_fat, 5, 9, tl_oob_abort_at\n"]
+    (test.assert-true
+      (and (asm-has? out site-one site-two) (asm-has? buf site-one site-two))
+      "every located abort retains its own adjacent return-PC label and span row")))
+
+(test
+  peephole-tail-preserves-address-taken-and-jump-table-labels
+  (let
+    [address : String
+      (compiler-backend-tail-test-whole-source
+        "    leaq .L_tail_test_second(%rip), %rsi\n"
+        "")]
+    [table : String
+      (compiler-backend-tail-test-whole-source
+        ""
+        ".L_tail_test_switch:\n    .long .L_tail_test_second - .L_tail_test_switch\n")]
+    [split-table : String
+      (str_cat.str-cat
+        ".section .rodata\n.L_tail_external_table:\n    .long .L_tail_test_second\n"
+        ".text\n.globl tail_test\n"
+        (compiler-backend-tail-test-whole-source "" "    jmp *%r11\n"))]
+    [split-out : String (compiler-backend-tail-test-stream (& split-table))]
+    [address-out : String (compiler-backend-tail-test-stream (& address))]
+    [table-out : String (compiler-backend-tail-test-stream (& table))]
+    (test.assert-true
+      (and
+        (string.eq
+          (& address-out)
+          (compiler-backend-tail-test-buffer (& address)))
+        (string.eq (& table-out) (compiler-backend-tail-test-buffer (& table)))
+        (asm-has?
+          address-out
+          "leaq .L_tail_test_second(%rip), %rsi"
+          ".L_tail_test_second:")
+        (asm-has?
+          table-out
+          ".long .L_tail_test_second -"
+          ".L_tail_test_second:")
+        (asm-has?
+          split-out
+          "    .long .L_tail_test_second\n"
+          ".L_tail_test_second:")
+        (string.eq
+          (& split-out)
+          (compiler-backend-tail-test-buffer (& split-table))))
+      "address and table operands pin the second definition in both renderers")))
+
+(test
+  peephole-tail-preserves-seh-and-ret
+  (let
+    [body : String
+      (compiler-backend-tail-test-whole-source "    .seh_endprologue\n" "")]
+    [seh : String
+      (str_cat.str-cat ".seh_proc tail_test\n" body "    .seh_endproc\n")]
+    [returns : String
+      (str_cat.str-cat
+        "tail_return:\n    testl %eax, %eax\n    jne .L_ret_second\n"
+        "    movq $401, %r8\n    ret\n"
+        ".L_ret_second:\n    movq $401, %r8\n    ret\n")]
+    [seh-out : String (compiler-backend-tail-test-stream (& seh))]
+    [ret-out : String (compiler-backend-tail-test-stream (& returns))]
+    (test.assert-true
+      (and
+        (string.eq (& seh) (& seh-out))
+        (string.eq (& seh-out) (compiler-backend-tail-test-buffer (& seh)))
+        (string.eq (& returns) (& ret-out))
+        (string.eq (& ret-out) (compiler-backend-tail-test-buffer (& returns))))
+      "SEH functions and ret-ending blocks remain intact")))
+
 ;; COLD-1: the render moves each abort stub behind its function and inverts
 ;; the check's branch; a guard that is not a pure abort stub stays inline.
 (define (compiler-backend-cold-split-source) : String
@@ -16189,7 +16337,7 @@ f:
     (be_peephole.compiler-backend-expand-stack-probes! state (&mut records))
     (let
       [text : String
-        (be_peephole.compiler-backend-peephole-records-render records)]
+        (be_peephole.compiler-backend-peephole-records-render records true)]
       (test.assert-true
         (asm-has?
           text
@@ -16206,11 +16354,13 @@ f:
     [linux : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     [windows : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Windows))]
+        (be_state.CompilerBackendTarget.Windows)
+        true)]
     (test.assert-true
       (asm-has? linux "    pushq %r11\n" "    movq 8192(%rsp), %r11\n")
       "the PIC whole-text boundary expands Linux probes")
@@ -16224,7 +16374,8 @@ f:
     [text : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "# tl-stack-entry\n    subq $32768, %rsp\n    subq $4096, %rsp\n    movq %r11, (%rsp)\n    addq $4096, %rsp\n# tl-stack-entry\n    subq $32776, %rsp\n    movq %r11, (%rsp)\n    addq $32776, %rsp\n    subq $4104, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     (test.assert-true
       (asm-has? text "    subq $32768, %rsp\n    subq $4096, %rsp\n")
       "entry 32768 plus balanced transient 4096 remains unprobed")
@@ -21232,15 +21383,15 @@ entry:
     (compiler-backend-avx512-mask-reduce-emits?
       (Any)
       8
-      "    kortestw %k1, %k1\n    setne %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setne %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       16
-      "    kortestw %k1, %k1\n    setc %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setc %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       8
-      "    kmovw %k1, %eax\n    cmpl $255, %eax\n    sete %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")))
+      "    kmovw %k1, %r12d\n    cmpl $255, %r12d\n    sete %r12b\n    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-8 %1=spill:-16 %2=spill:-24 %3=%r12"))
@@ -21343,7 +21494,8 @@ entry:
     (has
       "    kmovw -8(%rbp), %k7\n"
       "    kortestw %k7, %k7\n"
-      "    movq %rax, %r12\n")))
+      "    setne %r12b\n"
+      "    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
   (match (be_simd.compiler-backend-emit-avx512-mask-load
@@ -41988,7 +42140,9 @@ b_keep:
                 stream
                 (be_state.compiler-backend-global-shared-view records))]
             [rendered : String
-              (be_peephole.compiler-backend-peephole-records-render records)]
+              (be_peephole.compiler-backend-peephole-records-render
+                records
+                true)]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState
@@ -42160,7 +42314,8 @@ b_keep:
         (be_peephole.compiler-backend-peephole-records-buffer
           (text_buf_borrowed.empty-like (& asm))
           records
-          asm))]
+          asm
+          true))]
     (backend.compiler-backend-peephole-records-retire! stream)
     result))
 
@@ -46318,6 +46473,176 @@ user_fn:
       (compiler-backend-byte-directives-match-reference?
         (compiler-backend-test-byte-run 11 13 33)))
     (io.panic "the .byte directives differ from the per-byte reference")))
+
+;; #8964: physical float/packed-f32 transfers between GP and XMM registers must
+;; emit `movq` (64-bit, preserving packed `(f32, f32)` lanes and `-0.0`) or
+;; `movd` (32-bit scalar `f32`), never illegal `movsd`/`movss` with GP operands.
+(test
+  backend-cross-bank-float-moves-reject-gp-movsd
+  (let
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-insert
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-insert
+            (regalloc.compiler-reg-assignment-table-make 3)
+            0
+            (Register cabi.compiler-reg-id-rax))
+          1
+          (Register cabi.compiler-reg-id-r13))
+        2
+        (Register (cabi.compiler-abi-xmm-register-id 5)))]
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [load-packed : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        0
+        (F64)
+        "%xmm4"
+        state)]
+    [store-packed : String
+      (be_operand.compiler-backend-emit-store-float-var
+        assignments
+        1
+        "%xmm2"
+        (& (F64))
+        state)]
+    [load-r13 : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        1
+        (F64)
+        "%xmm3"
+        state)]
+    [load-f32-gp : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        0
+        (F32)
+        "%xmm4"
+        state)]
+    [store-f32-gp : String
+      (be_operand.compiler-backend-emit-store-float-var
+        assignments
+        1
+        "%xmm2"
+        (& (F32))
+        state)]
+    [load-xmm : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        2
+        (F64)
+        "%xmm3"
+        state)]
+    [group-cross-a : String
+      (be_scalar.compiler-backend-emit-group-word-move "%rax" "%xmm4" true)]
+    [group-cross-b : String
+      (be_scalar.compiler-backend-emit-group-word-move "%xmm2" "%r13" true)]
+    [group-xmm : String
+      (be_scalar.compiler-backend-emit-group-word-move "%xmm2" "%xmm3" true)]
+    [all : String
+      (str_cat.str-cat
+        (string.copy (& load-packed))
+        (string.copy (& store-packed))
+        (string.copy (& load-r13))
+        (string.copy (& load-f32-gp))
+        (string.copy (& store-f32-gp))
+        (string.copy (& group-cross-a))
+        (string.copy (& group-cross-b)))]
+    (unless
+      (and
+        (string.eq load-packed "    movq %rax, %xmm4\n")
+        (string.eq store-packed "    movq %xmm2, %r13\n")
+        (string.eq load-r13 "    movq %r13, %xmm3\n")
+        (string.eq load-f32-gp "    movd %eax, %xmm4\n")
+        (string.eq store-f32-gp "    movd %xmm2, %r13d\n")
+        (string.eq load-xmm "    movsd %xmm5, %xmm3\n")
+        (string.eq group-cross-a "    movq %rax, %xmm4\n")
+        (string.eq group-cross-b "    movq %xmm2, %r13\n")
+        (string.eq group-xmm "    movsd %xmm2, %xmm3\n")
+        (not (be_operand.compiler-backend-string-contains? (& all) "movsd"))
+        (not (be_operand.compiler-backend-string-contains? (& all) "movss")))
+      (io.panic
+        "cross-bank float moves emitted illegal movsd/movss or wrong width"))))
+
+;; Verify that SIMD GPR scavenges respect live caller-saved GPRs in the
+;; occupancy mask (never blindly clobbering %rax/%r8/%r9/%r10/%r11).
+(test
+  backend-simd-gpr-scavenge-avoids-live-gprs
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [fn-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state state)]
+    [occupied : i64
+      (bit-or
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%rax")
+          (be_operand.compiler-backend-scavenge-reg-bit "%r8"))
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%r9")
+          (bit-or
+            (be_operand.compiler-backend-scavenge-reg-bit "%r10")
+            (be_operand.compiler-backend-scavenge-reg-bit "%r11"))))]
+    [masks : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    (for [i (iterator.range 0 4)]
+      (set! (array-ref masks i) occupied))
+    (be_state.compiler-backend-function-scratch-set-i64-array!
+      fn-state
+      be_state.compiler-backend-scratch-i64-array-scavenge-occupied-masks
+      masks)
+    (be_state.compiler-backend-function-scratch-set-i64!
+      fn-state
+      be_state.compiler-backend-scratch-i64-simd-scratch-bytes
+      256)
+    (let
+      [assignments : regalloc.CompilerRegAssignmentTable
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-make 4)
+          0
+          (Register (cabi.compiler-abi-vector-register-id 6)))]
+      [diag : cdiag.CompilerDiagnostic
+        (cdiag.compiler-diagnostic-at-start "" "")]
+      (match (be_simd.compiler-backend-emit-avx2-mask-reduce
+        (ast.ast-node-pool-reader-type-segment-bases)
+        assignments
+        1
+        (Any)
+        (Var 0)
+        4
+        (cdiag.compiler-diagnostic-at-start "" "")
+        state)
+        [(Ok asm)
+          (unless
+            (and
+              (not
+                (be_operand.compiler-backend-string-contains? (& asm) "%eax"))
+              (not
+                (be_operand.compiler-backend-string-contains? (& asm) "%rax"))
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%al")))
+            (io.panic "avx2 mask-reduce clobbered occupied %rax"))]
+        [(Err _) (io.panic "avx2 mask-reduce failed")])
+      (match (be_simd.compiler-backend-emit-avx2-tail-mask
+        (ast.ast-node-pool-reader-type-segment-bases)
+        "tail_scav"
+        (ir.compiler-ir-label "entry")
+        assignments
+        2
+        (I64 0)
+        (I64 3)
+        4
+        diag
+        state)
+        [(Ok asm)
+          (unless
+            (and
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%r8"))
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%r9")))
+            (io.panic "avx2 tail-mask clobbered occupied %r8/%r9"))]
+        [(Err _) (io.panic "avx2 tail-mask failed")]))))
 
 (define (compiler-backend-global-pair-store-live-case?
   [mask : i64]

@@ -418,7 +418,8 @@
     [(Max)
       (match elem-ty
         [(I32) "vpmaxsd"]
-        [_ ""])]))
+        [_ ""])]
+    [(LastLane) ""]))
 
 (define (compiler-backend-avx512-shape-ok?
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]

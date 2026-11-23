@@ -254,6 +254,19 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (when
+    (match (& op)
+      [(LastLane) true]
+      [_ false])
+    (return
+      (be_simd.compiler-backend-emit-vector-last-lane
+        assignments
+        dst
+        src
+        lanes
+        elem-ty
+        instr-diag
+        backend-state)))
   (if (be_operand.compiler-backend-avx512-shape-ok? elem-ty lanes)
     (be_operand.compiler-backend-emit-avx512-vector-reduce
       type-segment-bases

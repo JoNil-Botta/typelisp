@@ -1,81 +1,42 @@
 ;# Checked-reference load-GVN benchmark (#5201).
-;#
-;# `borrowed-disjoint-store-loop` repeatedly reads through an immutable checked
-;# reference while a direct helper writes through a distinct exclusive mutable
-;# reference. The benchmark was written for the call-crossing case, where
-;# root-aware direct-call summaries keep the invariant load available across
-;# the call.
-;#
-;# The TypeLisp side is now EXPECTED TO INLINE. `BorrowedPair` is a two-word
-;# register group, and since #8137 its multi-def variables are split into word
-;# variables before SSA, so both helpers inline into `main` and each iteration
-;# is a handful of register adds and a compare. `baseline.c` keeps its
-;# `noinline` pair on purpose: it still states the call-crossing cost the
-;# benchmark was written for, and its checked C rows stay as measured (#8234).
-;# The TypeLisp/C ratio of this row therefore compares an inlined loop against
-;# a call-crossing one.
-;#
-;# The read field is a runtime input on both sides (#8914), so no pass can fold
-;# the reads to a constant. Inlined, the reads are forwarded from the store
-;# that initializes the pair, across the writes to the disjoint pair, into one
-;# register; if that disjointness proof were lost, the loop would reload the
-;# field after every write.
+;# Both implementations may inline. The runtime shared field stays invariant
+;# across writes through a disjoint exclusive reference. Each iteration updates
+;# the exclusive pair from its previous state, and main consumes both fields.
 (import stdlib.io)
 
 (defstruct BorrowedPair
-  (x i64)
-  (y i64))
-
-(define borrowed-disjoint-store-base-iterations : i64
-  100000000)
+  (x u64)
+  (y u64))
 
 (define (borrowed-disjoint-store-touch
   [write : (&mut write BorrowedPair)]
-  [value : i64]) : unit
-  ;; The identity chain makes the pre-optimization body larger than a trivial
-  ;; store; the optimizer removes it, and the helper inlines (see the header).
-  (let
-    [a : i64 (+ value 0)]
-    [b : i64 (+ a 0)]
-    [c : i64 (+ b 0)]
-    [d : i64 (+ c 0)]
-    [e : i64 (+ d 0)]
-    [f : i64 (+ e 0)]
-    [g : i64 (+ f 0)]
-    [h : i64 (+ g 0)]
-    [i : i64 (+ h 0)]
-    [j : i64 (+ i 0)]
-    (set! write.y j)))
+  [value : u64]) : unit
+  (set! write.y (bit-xor write.y (+ write.x value))))
 
 (define (borrowed-disjoint-store-loop
   [read : (& read BorrowedPair)]
   [write : (&mut write BorrowedPair)]
-  [iterations : i64]) : i64
+  [iterations : u64]) : unit
   (let
-    [acc : i64 0]
-    [i : i64 0]
+    [i : u64 0]
     (while (< i iterations)
       (let
-        [current : i64 read.x]
-        (borrowed-disjoint-store-touch write i)
-        (set! write.y read.x)
-        (set! write.x (+ current i))
-        (set! acc (+ acc read.x))
-        (set! i (+ i 1))))
-    acc))
+        [current : u64 read.x]
+        (borrowed-disjoint-store-touch write (+ i current))
+        (set! write.x (+ read.x write.y))
+        (set! i (+ i 1))))))
 
 (define (main) : i64
   (let
-    ;; The read field is a runtime input: 16 plus the argument count, 17 for
-    ;; the benchmark's bare run, so no pass can fold the reads to a constant.
-    [left : BorrowedPair (BorrowedPair (+ 16 (io.arg-count)) 0)]
+    [argc : u64 (cast (io.arg-count) : u64)]
+    [left : BorrowedPair (BorrowedPair (+ 16 argc) 0)]
     [right : BorrowedPair (BorrowedPair 23 0)]
-    [iterations : i64
-      (+ borrowed-disjoint-store-base-iterations (io.arg-count))]
-    [first-iterations : i64 (/ iterations 2)]
-    [second-iterations : i64 (- iterations first-iterations)]
-    [first : i64
-      (borrowed-disjoint-store-loop (& left) (&mut right) first-iterations)]
-    [second : i64
-      (borrowed-disjoint-store-loop (& left) (&mut right) second-iterations)]
-    (bit-and (+ first second) 255)))
+    [iterations : u64 (+ 100000000 argc)]
+    [first-iterations : u64 (/ iterations 2)]
+    [second-iterations : u64 (- iterations first-iterations)]
+    (borrowed-disjoint-store-loop (& left) (&mut right) first-iterations)
+    (borrowed-disjoint-store-loop (& left) (&mut right) second-iterations)
+    (let
+      [checksum : u64 (bit-xor right.x right.y)]
+      (io.println "{}" checksum)
+      (cast (bit-and checksum 255) : i64))))

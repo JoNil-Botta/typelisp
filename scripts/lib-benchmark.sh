@@ -123,7 +123,8 @@ bench_cachegrind() {
 
 # benchmark_ci_case_csv ROOT SUITE
 #   Print SUITE's cases from perf/benchmark-ci-cases.tsv, the positive case
-#   membership of the Linux benchmark-related CI suites, as a CSV.
+#   membership of the Linux benchmark-related CI suites and realistic-kernel
+#   report, as a CSV.
 #
 #   An instruction-main case may also belong to benchmark or optimization-opt2:
 #   each suite checks something the others do not. The benchmark suite builds
@@ -159,7 +160,8 @@ benchmark_ci_case_csv() {
         $1 != "benchmark" &&
         $1 != "optimization-opt2" &&
         $1 != "instruction-main" &&
-        $1 != "instruction-heavy" {
+        $1 != "instruction-heavy" &&
+        $1 != "realistic-kernel" {
             problem("row " NR " has unknown suite: " $1)
             next
         }
@@ -176,6 +178,9 @@ benchmark_ci_case_csv() {
             if ($1 == "instruction-heavy") {
                 heavy_instruction[$2] = 1
             }
+            if ($1 == "realistic-kernel") {
+                realistic_kernel[$2] = 1
+            }
         }
         $1 == wanted {
             selected[++count] = $2
@@ -187,12 +192,18 @@ benchmark_ci_case_csv() {
             if (wanted != "benchmark" &&
                 wanted != "optimization-opt2" &&
                 wanted != "instruction-main" &&
-                wanted != "instruction-heavy") {
+                wanted != "instruction-heavy" &&
+                wanted != "realistic-kernel") {
                 problem("unknown requested suite: " wanted)
             }
             for (case_name in heavy_instruction) {
                 if (membership["benchmark" SUBSEP case_name]) {
                     problem("instruction-heavy case also belongs to benchmark: " case_name)
+                }
+            }
+            for (case_name in realistic_kernel) {
+                if (!membership["instruction-main" SUBSEP case_name]) {
+                    problem("realistic kernel missing from instruction-main: " case_name)
                 }
             }
             if (!failed && count == 0) {

@@ -15,6 +15,8 @@ DEFAULT_BASELINE="$ROOT/perf/spmd-mode-insn-baseline.tsv"
 STABLE_EXEC_DIR="$ROOT/target/spmd-mode-instruction-count-exec"
 
 RUNS=${TYPELISP_SPMD_IR_RUNS:-3}
+CYCLES=0
+CYCLE_RUNS=5
 CASES=${TYPELISP_SPMD_IR_CASES:-$DEFAULT_CASES}
 MODES=${TYPELISP_SPMD_IR_MODES:-$DEFAULT_MODES}
 WORKDIR=${TYPELISP_SPMD_IR_OUT:-target/spmd-mode-instruction-counts}
@@ -33,6 +35,8 @@ usage: scripts/measure-spmd-mode-instruction-counts.sh [options] [typelisp-bin]
 
 Options:
   --runs N              Repeated cachegrind runs per measured binary (default: 3)
+  --cycles              Also measure whole-process perf stat user cycles
+  --cycle-runs N        Native samples per binary with --cycles (default: 5)
   --cases LIST          Comma-separated SPMD benchmark names
   --modes LIST          Comma-separated modes: scalar,avx2
   --output DIR          Output root
@@ -61,6 +65,15 @@ while [ "$#" -gt 0 ]; do
         --runs)
             [ "$#" -ge 2 ] || { echo "missing value for --runs" >&2; exit 2; }
             RUNS=$2
+            shift 2
+            ;;
+        --cycles)
+            CYCLES=1
+            shift
+            ;;
+        --cycle-runs)
+            [ "$#" -ge 2 ] || { echo "missing value for --cycle-runs" >&2; exit 2; }
+            CYCLE_RUNS=$2
             shift 2
             ;;
         --cases)
@@ -297,6 +310,10 @@ measure_binary() {
         run_cachegrind "$_benchmark" "$_mode" "$_implementation" "$_run" "$_binary"
         _run=$((_run + 1))
     done
+    if [ "$CYCLES" -eq 1 ]; then
+        run_with_stable_argv0 "$_binary" bench_cycles_measure "$_benchmark" "$_mode" \
+            "$_implementation" "$BENCH_STATUS" "$_safe.stdout" "$_safe.stderr"
+    fi
 }
 
 build_typelisp_supported() {
@@ -602,6 +619,8 @@ run_self_test() {
     _dir="$ROOT/target/spmd-mode-instruction-count-self-test"
     rm -rf "$_dir"
     mkdir -p "$_dir"
+    . "$ROOT/scripts/lib-benchmark-cycles.sh"
+    bench_cycles_self_test "$_dir"
 
     for _probe_root in short a-substantially-longer-output-root; do
         _probe_dir="$_dir/$_probe_root/bin"
@@ -713,6 +732,10 @@ esac
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/bin" "$WORKDIR/logs"
+if [ "$CYCLES" -eq 1 ]; then
+    . "$ROOT/scripts/lib-benchmark-cycles.sh"
+    bench_cycles_init
+fi
 RUNS_TSV="$WORKDIR/runs.tsv"
 SUMMARY_TSV="$WORKDIR/summary.tsv"
 RATIOS_TSV="$WORKDIR/ratios.tsv"
@@ -778,3 +801,7 @@ echo "[spmd-mode-ir] ratios: $RATIOS_TSV"
 cat "$RATIOS_TSV"
 echo "[spmd-mode-ir] geomeans: $GEOMEANS_TSV"
 cat "$GEOMEANS_TSV"
+if [ "$CYCLES" -eq 1 ]; then
+    echo "[spmd-mode-ir] cycle ratios and geomeans"
+    bench_cycles_report ""
+fi

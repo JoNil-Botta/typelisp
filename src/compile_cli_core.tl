@@ -172,15 +172,24 @@
   [args : (&mut args cli_option.CliArgs)]) : bool
   (if (cli_option.cli-compile-option! options args)
     true
-    (if (string.eq args.name "--profile-allocations")
-      (begin
+    (cond
+      [(string.eq args.name "--profile-allocations")
         (if compile-cli-allocation-profile-requested
           (cli_option.cli-args-fail!
             args
             "compile: --profile-allocations was provided more than once")
           (set! compile-cli-allocation-profile-requested true))
-        true)
-      false)))
+        true]
+      [(string.eq args.name "--verify-ir")
+        (if compile-cli-verify-ir-requested
+          (cli_option.cli-args-fail!
+            args
+            "compile: --verify-ir was provided more than once")
+          (begin
+            (set! compile-cli-verify-ir-requested true)
+            (ir.compiler-debug-type-graph-verify-set! true)))
+        true]
+      [else false])))
 
 (define (compile-cli-unknown-argument! [args : (&mut args cli_option.CliArgs)]) : unit
   (if (cli_option.cli-flag? args.arg)
@@ -262,14 +271,6 @@
                         (- (string.string-length value) 6)))
                     (+= args.next 1)))
                 (set! emit-ir true)]
-              [(string.eq args.name "--verify-ir")
-                (if compile-cli-verify-ir-requested
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    "compile: --verify-ir was provided more than once")
-                  (begin
-                    (set! compile-cli-verify-ir-requested true)
-                    (ir.compiler-debug-type-graph-verify-set! true)))]
               [(string.eq args.name "--trace-passes")
                 (if compile-cli-trace-passes-requested
                   (cli_option.cli-args-fail!
@@ -316,7 +317,7 @@
           "compile"
           "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
            --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
-           -o --emit-ir --pic --no-entry --prefix-cache-stats --windows-coff-plan"
+           -o --emit-ir --pic --no-entry --verify-ir --prefix-cache-stats --windows-coff-plan"
           (+ batch-path-idx 1)
           count)]
       [options : cli_option.CliCompileOptions

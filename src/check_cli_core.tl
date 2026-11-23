@@ -37,7 +37,7 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "selfhost-check"
-        "--stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2> --debug|-g|--backtrace --manifest-path <file>"
+        "--stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2|s> -Os --debug|-g|--backtrace --manifest-path <file>"
         start
         count)]
     [input-path : String ""]

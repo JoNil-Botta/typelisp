@@ -854,7 +854,7 @@ step selfhost-build-package-opt-invalid
 run build --direct --manifest-path "{{dir}}/typelisp.pkg" --opt-level 3
 exit nonzero
 stdout empty
-stderr contains invalid --opt-level '3'; expected 0, 1, or 2
+stderr contains invalid --opt-level '3'; expected 0, 1, 2, or s
 sh rm -rf "{{dir}}/target"
 step selfhost-build-package-mode-staged
 run build --direct --manifest-path "{{dir}}/typelisp.pkg" --backend-mode avx2
@@ -1033,6 +1033,11 @@ in file {{dir}}/optpkg/target/release/selfhost_opt_pkg.s
 contains-any {{o2a}} || {{o2b}}
 not-contains {{o0}}
 sh rm -rf "{{dir}}/optpkg/target"
+step selfhost-run-package-opt-size
+run run --manifest-path "{{dir}}/optpkg/typelisp.pkg" -Os
+exit 45
+stderr empty
+sh rm -rf "{{dir}}/optpkg/target"
 step selfhost-build-package-profile-release-opt-zero
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --profile release --opt-level 0
 stderr empty
@@ -1074,6 +1079,17 @@ exit nonzero
 stdout empty
 stderr contains --opt-level requires a value
 
+case optimize-for-size
+run compile "{{work}}/main42.tl" --opt-level s --verify-ir -o "{{dir}}/size.s"
+stderr empty
+test -f "{{dir}}/size.s"
+run compile "{{work}}/main42.tl" -Os --verify-ir -o "{{dir}}/size-alias.s"
+stderr empty
+sh cmp "{{dir}}/size.s" "{{dir}}/size-alias.s"
+run run "{{work}}/main42.tl" --opt-level s
+exit 42
+stderr empty
+
 # Shared parsing is identical before any command-specific work starts.
 case common-compile-option-errors
 each compile build run test check lint expand
@@ -1090,13 +1106,17 @@ stderr count = 1 .
 run {{each}} "{{work}}/main42.tl" --opt-level 3
 exit nonzero
 stdout empty
-stderr match ^invalid --opt-level '3'; expected 0, 1, or 2$
+stderr match ^invalid --opt-level '3'; expected 0, 1, 2, or s$
 stderr count = 1 .
 run {{each}} "{{work}}/main42.tl" --target linux-x86_64 --target windows-x86_64
 exit nonzero
 stderr match ^--target was provided more than once$
 stderr count = 1 .
 run {{each}} "{{work}}/main42.tl" --opt-level 0 --opt-level 2
+exit nonzero
+stderr match ^--opt-level was provided more than once$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" -Os --opt-level s
 exit nonzero
 stderr match ^--opt-level was provided more than once$
 stderr count = 1 .
@@ -1133,7 +1153,7 @@ stderr match ^invalid --backend-mode 'bad'; expected scalar, avx2, or avx512$
 stderr count = 1 .
 run {{each}} --opt-level bad
 exit nonzero
-stderr match ^invalid --opt-level 'bad'; expected 0, 1, or 2$
+stderr match ^invalid --opt-level 'bad'; expected 0, 1, 2, or s$
 stderr count = 1 .
 run {{each}} --target linux-x86_64 --target linux-x86_64
 exit nonzero
@@ -1183,7 +1203,7 @@ stderr match ^invalid --backend-mode 'bad'; expected scalar, avx2, or avx512$
 stderr count = 1 .
 run {{each}} --batch unused-list --opt-level 4
 exit nonzero
-stderr match ^invalid --opt-level '4'; expected 0, 1, or 2$
+stderr match ^invalid --opt-level '4'; expected 0, 1, 2, or s$
 stderr count = 1 .
 run {{each}} --batch unused-list --target linux-x86_64 --target linux-x86_64
 exit nonzero

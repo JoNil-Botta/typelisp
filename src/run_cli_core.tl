@@ -111,7 +111,7 @@
       [args : cli_option.CliArgs
         (cli_option.cli-args
           "run"
-          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
            --debug|-g|--backtrace --backend-mode <mode> --link-lib <name>
            --link-search <dir> --link-arg <arg>"
           (+ idx 1)

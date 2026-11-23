@@ -1,6 +1,8 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_opt_level as opt_level)
+(import cli_option_core as cli_option)
 (import compiler_regalloc as reg)
 (import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
@@ -874,6 +876,7 @@
       (&mut input)
       type-segment-bases
       functions
+      (& (ir.compiler-ir-extern-seq-empty))
       level
       spans)))
 
@@ -3609,6 +3612,7 @@
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-input-arena-functions)
+        (& (ir.compiler-ir-extern-seq-empty))
         2
         (ir.compiler-source-spans-empty))]
     [out : ir.CompilerIrFunctionSeq
@@ -3790,6 +3794,7 @@
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-input-arena-functions)
+        (& (ir.compiler-ir-extern-seq-empty))
         1
         (ir.compiler-source-spans-empty))]
     [out : ir.CompilerIrFunctionSeq
@@ -4040,10 +4045,10 @@
       [(Program result _)
         (test.assert-i64-eq
           (array-ref state.calls 0)
-          (if (and authority? (= level 2))
+          (if (and authority? (opt_level.opt-level-full? level))
             1
             0)
-          "only level 2 consumes explicit retirement authority")
+          "full optimization consumes explicit retirement authority")
         (test.assert-true
           (opt-test-program-eq
             (ast.ast-node-pool-context-type-segment-bases pools)
@@ -4070,7 +4075,7 @@
 
 (test
   optimizer-input-retirement-authority-and-levels
-  (for [level (iterator.range 0 3)]
+  (for [level (iterator.range 0 4)]
     (for [authority (iterator.range 0 2)]
       (opt-test-input-retirement
         (ast.ast-node-pool-reader-context-current)
@@ -13579,32 +13584,25 @@
           (return true))]))
   false)
 
-(define (opt-level-parse-ok? [value : String] [expected : i64]) : bool
-  (match (compiler-optimize-parse-level value)
-    [(Ok level) (= level expected)]
-    [(Err) false]))
-
-(define (opt-level-parse-err? [value : String]) : bool
-  (match (compiler-optimize-parse-level value)
-    [(Ok _) false]
-    [(Err) true]))
-
 (define (compiler-optimize-level-policy-ok?) : bool
   (and
     (= (opt.compiler-optimize-default-level) 1)
-    (compiler-optimize-level-valid? 0)
-    (compiler-optimize-level-valid? 1)
-    (compiler-optimize-level-valid? 2)
-    (not (compiler-optimize-level-valid? 3))
-    (not (compiler-optimize-level-valid? (- 0 1)))
-    (not (compiler-optimize-level-valid? 4))
-    (opt-level-parse-ok? "0" 0)
-    (opt-level-parse-ok? "1" 1)
-    (opt-level-parse-ok? "2" 2)
-    (opt-level-parse-err? "3")
-    (opt-level-parse-err? "")
-    (opt-level-parse-err? "4")
-    (opt-level-parse-err? "10")))
+    (not (opt_level.opt-level-full? 0))
+    (not (opt_level.opt-level-full? 1))
+    (opt_level.opt-level-full? 2)
+    (opt_level.opt-level-full? 3)
+    (opt_level.opt-level-speed? 2)
+    (not (opt_level.opt-level-speed? 3))
+    (not (opt_level.opt-level-size? 2))
+    (opt_level.opt-level-size? 3)
+    (= (cli_option.cli-option-opt-level "0") 0)
+    (= (cli_option.cli-option-opt-level "1") 1)
+    (= (cli_option.cli-option-opt-level "2") 2)
+    (= (cli_option.cli-option-opt-level "s") 3)
+    (< (cli_option.cli-option-opt-level "3") 0)
+    (< (cli_option.cli-option-opt-level "") 0)
+    (< (cli_option.cli-option-opt-level "4") 0)
+    (< (cli_option.cli-option-opt-level "10") 0)))
 
 ;; Whole-program structural equality: globals, functions and externs pairwise.
 (define (opt-test-program-eq
@@ -33359,7 +33357,8 @@
         [(No) true]
         [(Some _) false])]))
 
-(define (opt-loop-rotation-top-test-blocks [constant-edge? : bool]) : ir.CompilerIrBlockList
+(define (opt-loop-rotation-top-test-blocks
+  [entry-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
     (irt.blocks
       "loop:
@@ -33370,13 +33369,46 @@
          jump loop
        exit:
          return %1")
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instrs
-        (ir.CompilerIrInstr.Mov 1 (I64 0) (I64))
-        (if constant-edge?
-          (irt.instr "branch true, loop, exit")
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))))))
+    (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") entry-instrs)))
+
+(define (opt-loop-rotation-unrelated-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %0 = mov true : bool
+       branch %0, left, right
+     left:
+       jump merge
+     right:
+       jump merge
+     merge:
+       %1 = phi [1, left], [2, right] : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       jump loop
+     loop:
+       %3 = lt %2, %1 : bool
+       branch %3, body, exit
+     body:
+       %2 = add %2, 1 : i64
+       jump loop
+     exit:
+       return %2"))
+
+(define (opt-loop-rotation-exit-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %1 = mov 0 : i64
+       jump loop
+     loop:
+       %2 = lt %1, 10 : bool
+       branch %2, body, exit
+     body:
+       %1 = add %1, 1 : i64
+       jump loop
+     exit:
+       %3 = phi [%1, loop] : i64
+       return %3"))
 
 (define (opt-loop-rotation-false-body-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -39016,6 +39048,75 @@
     11
     (opt-unroll-mutable-map-test-blocks mode)
     Ordinary))
+
+(define (opt-test-simd-unroll-keeps-blocks? [func : ir.CompilerIrFunction]) : bool
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    [type-bases (ast.ast-node-pool-reader-type-segment-bases)]
+    (match (opt.opt-unroll-simd-function-with-context-result
+      type-bases
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+      func
+      true)
+      [(Result result _)
+        (let
+          [result-blocks (opt.opt-function-blocks result)]
+          (opt.opt-block-list-eq type-bases blocks result-blocks))])))
+
+(test
+  simd-unroll-rejects-recurrent-shuffle
+  (test.assert-true
+    (opt-test-simd-unroll-keeps-blocks?
+      (irt.func
+        "function @recurrent_shuffle(n=%0:i64, src=%1:i64, dst=%2:i64) -> unit vars 11 {
+entry:
+  %3 = mov 0 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  %7 = lane_id 4 : i64
+  %8 = splat 3 lanes 4 : i64
+  %6 = vector_sub %8, %7 lanes 4 : i64
+  branch %5, body, exit
+body:
+  %8 = vector_load %1, %3 lanes 4 : i64
+  %7 = vector_shuffle %7, %6, active 4 lanes 4 : i64
+  %10 = vector_add %8, %7 lanes 4 : i64
+  vector_store %2, %3, %10 lanes 4 : i64
+  %3 = mov %4 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+exit:
+  return
+}"))
+    "each shuffle reads the previous gang's vector"))
+
+(test
+  simd-unroll-rejects-recurrent-mask-not
+  (test.assert-true
+    (opt-test-simd-unroll-keeps-blocks?
+      (irt.func
+        "function @recurrent_mask(n=%0:i64, src=%1:i64, dst=%2:i64) -> unit vars 10 {
+entry:
+  %3 = mov 0 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  %6 = lane_id 4 : i64
+  %7 = vector_compare_eq %6, %6 lanes 4 : i64
+  branch %5, body, exit
+body:
+  %8 = vector_load %1, %3 lanes 4 : i64
+  %7 = mask_not %7 lanes 4
+  %9 = select %7, %8, %6 lanes 4 : i64
+  vector_store %2, %3, %9 lanes 4 : i64
+  %3 = mov %4 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+exit:
+  return
+}"))
+    "each mask negation reads the previous gang's mask"))
 
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -52471,9 +52572,71 @@
         61]
       [else 42])))
 
+(define (opt-test-normalized-rotation-keeps-loop?
+  [func : ir.CompilerIrFunction]) : bool
+  (match (opt.opt-loop-rotation-normalized-function-result
+    (ast.ast-node-pool-reader-context-current)
+    func)
+    [(Result blocks _ _)
+      (opt-block-list-has-label?
+        (ir.compiler-ir-block-list-view blocks)
+        (ir.compiler-ir-label "loop"))]))
+
+(test
+  rotation-entry-backedge-keeps-parameter
+  (test.assert-true
+    (opt-test-normalized-rotation-keeps-loop?
+      (irt.func
+        "function @entry_backedge(flag=%0:bool, src=%1:i64, dst=%2:i64) -> unit vars 6 {
+entry:
+  %3 = mov 0 : i64
+  branch %0, loop, done
+loop:
+  %4 = lt %3, 16 : bool
+  branch %4, body, repeat
+body:
+  %5 = vector_load %1, %3 lanes 4 : i64
+  vector_store %2, %3, %5 lanes 4 : i64
+  %3 = add %3, 4 : i64
+  jump loop
+repeat:
+  %0 = mov true : bool
+  jump entry
+done:
+  return
+}"))
+    "the caller supplies the flag on the first entry"))
+
+(test
+  rotation-entry-fallthrough-sees-last-definition
+  (test.assert-true
+    (opt-test-normalized-rotation-keeps-loop?
+      (irt.func
+        "function @fallthrough(src=%0:i64, dst=%1:i64) -> unit vars 6 {
+entry:
+  %2 = mov 0 : i64
+  %3 = mov true : bool
+  %3 = mov false : bool
+pre:
+  branch %3, loop, done
+loop:
+  %4 = lt %2, 16 : bool
+  branch %4, body, done
+body:
+  %5 = vector_load %0, %2 lanes 4 : i64
+  vector_store %1, %2, %5 lanes 4 : i64
+  %2 = add %2, 4 : i64
+  jump loop
+done:
+  return
+}"))
+    "the final fallthrough instruction sets the flag to false"))
+
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
-    [raw : ir.CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
+    [raw : ir.CompilerIrBlockList
+      (opt-loop-rotation-top-test-blocks
+        (irt.instrs "%1 = mov 0 : i64\n jump loop"))]
     [_addr-taken : unit (opt.opt-function-addr-taken-install! 0 (& raw))]
     [rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
@@ -52482,8 +52645,26 @@
     [constant-edge-rotated : ir.CompilerIrBlockList
       (match (opt.opt-loop-rotation-normalized-function-result
         (ast.ast-node-pool-reader-context-current)
-        (opt-cfg-test-function (opt-loop-rotation-top-test-blocks true)))
+        (opt-cfg-test-function
+          (opt-loop-rotation-top-test-blocks
+            (irt.instrs "%1 = mov 0 : i64\n branch true, loop, exit"))))
         [(Result blocks _ _) blocks])]
+    [mov-edge-rotated : ir.CompilerIrBlockList
+      (match (opt.opt-loop-rotation-normalized-function-result
+        (ast.ast-node-pool-reader-context-current)
+        (opt-cfg-test-function
+          (opt-loop-rotation-top-test-blocks
+            (irt.instrs
+              "%1 = mov 0 : i64
+               %3 = mov true : bool
+               %3 = mov false : bool
+               branch %3, exit, loop"))))
+        [(Result blocks _ _) blocks])]
+    [unrelated-phi-rotated : ir.CompilerIrBlockList
+      (opt.opt-loop-rotation-blocks
+        (ast.ast-node-pool-reader-context-current)
+        (& (opt-loop-rotation-unrelated-phi-blocks)))]
+    [exit-phi : ir.CompilerIrBlockList (opt-loop-rotation-exit-phi-blocks)]
     [false-body-rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
         (ast.ast-node-pool-reader-context-current)
@@ -52599,6 +52780,33 @@
             (ir.compiler-ir-label "body")
             (ir.compiler-ir-label "exit")))
         18]
+      [(not
+          (opt-loop-rotation-successors?
+            mov-edge-rotated
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-label "exit")))
+        19]
+      [(or
+          (opt-block-list-has-label?
+            (ir.compiler-ir-block-list-view unrelated-phi-rotated)
+            (ir.compiler-ir-label "loop"))
+          (!=
+            (opt-count-phi-blocks
+              (ir.compiler-ir-block-list-view unrelated-phi-rotated))
+            1))
+        20]
+      [(not
+          (let
+            [unchanged
+              (opt.opt-loop-rotation-blocks
+                (ast.ast-node-pool-reader-context-current)
+                (& exit-phi))]
+            (opt.opt-block-list-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              unchanged
+              exit-phi)))
+        21]
       [else 42])))
 
 ;; Nested-loop SSA fixture: the inner-loop counter/accumulator phis at the
@@ -81082,6 +81290,7 @@ done:
       unit)
     (opt.OptProgramSummaries
       false
+      false
       (profile_state.compiler-profile-state-new)
       (opt_i64_i64_map.with-capacity 8)
       call-memory
@@ -84404,18 +84613,6 @@ done:
             (opt.opt-verify-function
               (& (opt.opt-ssa-construct-function 0 (& out))))))
         "loop-carried prefix definitions remain valid after SSA"))))
-
-(define (compiler-optimize-level-valid? [level : i64]) : bool
-  (and (>= level 0) (<= level 2)))
-
-(define (compiler-optimize-parse-level [value : String]) : opt.ResultCompilerOptimizeLevel
-  (if (= (string.string-length value) 1)
-    (let
-      [c : char (string.string-ref value 0)]
-      (if (or (= c '0') (= c '1') (= c '2'))
-        (Ok (string.>int value))
-        (Err)))
-    (Err)))
 
 (define (opt-cfg-index-rpo-label
   [index : (& index opt.OptCfgIndex)]

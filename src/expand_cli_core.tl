@@ -75,7 +75,7 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "expand"
-        "--at <line:column> --max-bytes <n> --stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2> --debug|-g|--backtrace"
+        "--at <line:column> --max-bytes <n> --stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2|s> -Os --debug|-g|--backtrace"
         start
         count)]
     [input-path : String ""]

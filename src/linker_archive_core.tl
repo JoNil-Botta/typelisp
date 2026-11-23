@@ -1,5 +1,6 @@
 ;; Checked, target-neutral ar containers for #7033, #7038 and #7244.
 ;; Payloads borrow the immutable input; names and indexes remain dialect policy.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import stdlib.byte_reader)
 (import stdlib.string)
@@ -11,10 +12,14 @@
   (input u64)
   (content u64))
 
+(clone.gen-clone ArchiveIdentity)
+
 (defstruct ArchiveMemberId
   (archive ArchiveIdentity)
   (ordinal i64)
   (header-offset i64))
+
+(clone.gen-clone ArchiveMemberId)
 
 (defstruct ArchiveNumberRule
   (radix i64)
@@ -397,13 +402,15 @@
 (define (new-session [directory : (& d (ArchiveDirectory input))]) : ArchiveSessionResult
   (let
     [count : i64 (array-length directory.members)]
+    [identity (clone-archive-identity (& directory.identity))]
     (if (> count directory.work-left)
-      (SessionFailed (ArchiveError (WorkLimit) (clone directory.identity) -1 0))
+      (SessionFailed (ArchiveError (WorkLimit) identity -1 0))
       (SessionReady
         (ArchiveSession
-          (clone directory.identity)
+          identity
           directory.profile-tag
-          (clone directory.limits)
+          (match directory.limits
+            [value value])
           (__tl_make-array bool count)
           0
           (- directory.work-left count))))))
@@ -451,7 +458,7 @@
       (ClaimFailed
         (ArchiveError
           (WorkLimit)
-          (clone session.identity)
+          (clone-archive-identity (& session.identity))
           id.ordinal
           id.header-offset))))
   (-= session.work-left 1)
@@ -461,7 +468,7 @@
         (ClaimFailed
           (ArchiveError
             kind
-            (clone session.identity)
+            (clone-archive-identity (& session.identity))
             id.ordinal
             id.header-offset)))]
     [(ValidId) unit])
@@ -471,7 +478,7 @@
         (ClaimFailed
           (ArchiveError
             kind
-            (clone session.identity)
+            (clone-archive-identity (& session.identity))
             id.ordinal
             id.header-offset)))]
     [(ValidId) unit])
@@ -500,7 +507,7 @@
   [header-offset : i64]
   [ordinary-only : bool]) : ArchiveIndexResult
   (let
-    [identity : ArchiveIdentity (clone session.identity)]
+    [identity (clone-archive-identity (& session.identity))]
     [left : i64 0]
     [right : i64 (array-length directory.members)]
     (when
@@ -534,5 +541,8 @@
               (return
                 (IndexFailed
                   (ArchiveError (SpecialTarget) identity middle header-offset)))
-              (return (IndexMapped (clone member.id))))])))
+              (return
+                (IndexMapped
+                  (match member.id
+                    [value value]))))])))
     (IndexFailed (ArchiveError (InvalidIndexTarget) identity -1 header-offset))))

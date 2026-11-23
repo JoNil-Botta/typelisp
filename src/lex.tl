@@ -17,7 +17,6 @@
 (import stdlib.arena)
 (import stdlib.io)
 (import token)
-(import stdlib.text_buf)
 (import stdlib.string)
 (import stdlib.string_utf8 as utf8)
 (import stdlib.result)
@@ -86,7 +85,6 @@
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
-;; `scan-symbol-end` open-codes this same classifier; keep the two in step.
 (define (is-symbol-char [c : char]) : bool
   (let
     [code : i64 (bit-and (cast c : i64) 255)]
@@ -96,6 +94,19 @@
       [(and (>= code 48) (<= code 57)) true]
       [(and (>= code 42) (<= code 63)) (and (!= code 44) (!= code 59))]
       [else (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])))
+
+;; Use the same byte membership in the lexer entry and the symbol-run scan.
+(define (make-symbol-byte-table) : (Array u8 256)
+  (let
+    [classes : (Array u8 256) (make-array u8 256)]
+    (for [byte (iterator.range 0 256)]
+      (when
+        (is-symbol-char (cast byte : char))
+        (set! (array-ref classes byte) (cast 1 : u8))))
+    classes))
+
+(define symbol-byte-table : (Array u8 256)
+  (make-symbol-byte-table))
 
 (define (lexer-intern-source-slice-id
   [owner : (LexerInternOwner intern-state)]
@@ -383,44 +394,32 @@
       (string.eq (string.substring src start len) value)
       false)))
 
-;; Return the end index (exclusive) of the symbol run that starts at `start` in
-;; `src`. Same bounds-check discipline as `scan-int-end`.
-;;
-;; This is the lexer's hottest per-byte loop. The byte comes from the
-;; `__tl_string_ref` intrinsic, which lowers to the same bounds-checked String
-;; index that `string.string-ref` wraps. Keep its common letter path free of a
-;; dynamic shift: safe scalar shifts retain their language-level count guards,
-;; while ASCII case-folding and range tests need no second safety check.
-;;
-;; `:` is itself a symbol char, so testing membership first and the `:` rule
-;; second is equivalent to testing `:` first: a non-`:` byte is decided by
-;; `is-symbol-char` either way, and a `:` byte reaches the `pkg` rule either way.
+;; The checked source range bounds every read, and each byte indexes the table
+;; directly. Interior ':' still ends a symbol unless its prefix is "pkg".
 (define (scan-symbol-end [src : (& src str)] [start : i64] [n : i64]) : i64
-  (let
-    [j : i64 start]
-    [keep : bool true]
-    (while keep
-      (if (< j n)
+  (when (>= start n) (return start))
+  (string.substring-bounds-check src start (- n start))
+  (unsafe
+    (let
+      [bytes : (Ptr u8) (string-data src)]
+      [classes : (Ptr u8)
+        (ptr-cast (__tl_array-data symbol-byte-table) : (Ptr u8))]
+      [end : i64 start]
+      (while (< end n)
         (let
-          [code : i64 (bit-and (cast (__tl_string_ref src j) : i64) 255)]
-          [folded : i64 (bit-or code 32)]
-          [member : bool
-            (cond
-              [(and (>= folded 97) (<= folded 122)) true]
-              [(and (>= code 48) (<= code 57)) true]
-              [(and (>= code 42) (<= code 63)) (and (!= code 44) (!= code 59))]
-              [else
-                (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])]
-          (if member
-            (if (and
-              (= code 58)
-              (> j start)
-              (not (symbol-slice-eq? src start j "pkg")))
-              (set! keep false)
-              (+= j 1))
-            (set! keep false)))
-        (set! keep false)))
-    j))
+          [code : u8 (ptr-read (ptr-offset bytes end))]
+          (when
+            (or
+              (=
+                (ptr-read (ptr-offset classes (cast code : i64)))
+                (cast 0 : u8))
+              (and
+                (= code (cast ':' : u8))
+                (> end start)
+                (not (symbol-slice-eq? src start end "pkg"))))
+            (return end)))
+        (+= end 1))
+      end)))
 
 ;; A `:` starts a colon-prefixed metadata/keyword symbol only when it is the
 ;; first non-space token in a list, such as `(:symbol ...)` or `(:link ...)`.
@@ -484,36 +483,40 @@
       (Ok j)
       (Err message))))
 
-(define (string-escape-piece [src : (& src str)] [idx : i64]) : String
-  (let
-    [c : char (__tl_string_ref src idx)]
-    (cond
-      [(= c 'n') "\n"]
-      [(= c 't') "\t"]
-      [(= c 'r') "\r"]
-      [(= c '\\') "\\"]
-      [(= c '"') "\""]
-      [else (string.substring src idx 1)])))
-
 (define (unescape-string-literal [src : (& src str)] [start : i64] [end : i64]) : String
   (let
-    [i : i64 start]
-    [buf : text_buf.TextBuf (text_buf.empty)]
-    (while (< i end)
+    [length : i64 (- end start)]
+    (string.substring-bounds-check src start length)
+    (unsafe
       (let
-        [c : char (__tl_string_ref src i)]
-        (if (= c '\\')
-          (if (< (+ i 1) end)
-            (begin
-              (set! buf (text_buf.append buf (string-escape-piece src (+ i 1))))
-              (+= i 2))
-            (begin
-              (set! buf (text_buf.append buf "\\"))
-              (+= i 1)))
-          (begin
-            (set! buf (text_buf.append buf (string.substring src i 1)))
-            (+= i 1)))))
-    (text_buf.render buf)))
+        [data : (Ptr u8) (ptr-offset (string-data src) start)]
+        [escape : i64
+          (string.string-runtime-index-of-byte data length (cast '\\' : u8))]
+        (if (< escape 0)
+          (string.substring-copy-checked src start length)
+          (let
+            [out : (MutPtr u8) (string.string-runtime-alloc length)]
+            [read-at : i64 escape]
+            [write-at : i64 escape]
+            (string.str-copy-bytes-into data out 0 escape)
+            (while (< read-at length)
+              (let
+                [byte : u8 (ptr-read (ptr-offset data read-at))]
+                (when
+                  (and (= byte (cast '\\' : u8)) (< (+ read-at 1) length))
+                  (+= read-at 1)
+                  (set! byte (ptr-read (ptr-offset data read-at)))
+                  (set!
+                    byte
+                    (cond
+                      [(= byte (cast 'n' : u8)) (cast '\n' : u8)]
+                      [(= byte (cast 't' : u8)) (cast '\t' : u8)]
+                      [(= byte (cast 'r' : u8)) (cast '\r' : u8)]
+                      [else byte])))
+                (ptr-write! (ptr-offset out write-at) byte)
+                (+= read-at 1)
+                (+= write-at 1)))
+            (string-from-bytes (ptr-cast out : (Ptr u8)) write-at)))))))
 
 ;; Every current escape contributes exactly one byte. Translate a decoded
 ;; byte offset back through those escapes only on the diagnostic path.
@@ -565,16 +568,21 @@
 ;; left for the main loop's whitespace skip to consume). Same bounds-check
 ;; discipline as the other scanners.
 (define (scan-comment-end [src : (& src str)] [start : i64] [n : i64]) : i64
-  (let
-    [j : i64 start]
-    [keep : bool true]
-    (while keep
-      (if (< j n)
-        (if (= (__tl_string_ref src j) '\n')
-          (set! keep false)
-          (+= j 1))
-        (set! keep false)))
-    j))
+  (if (>= start n)
+    start
+    (let
+      [length : i64 (- n start)]
+      (string.substring-bounds-check src start length)
+      (let
+        [offset : i64
+          (unsafe
+            (string.string-runtime-index-of-byte
+              (ptr-offset (string-data src) start)
+              length
+              (cast '\n' : u8)))]
+        (if (< offset 0)
+          n
+          (+ start offset))))))
 
 ;; Return an empty string when a character literal has a closing `'` at `idx`,
 ;; otherwise return the recoverable lexer diagnostic.

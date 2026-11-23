@@ -51872,6 +51872,9 @@
           (opt.opt-natural-loop-header left)
           (opt.opt-natural-loop-header right))
         (= (opt.opt-natural-loop-latch left) (opt.opt-natural-loop-latch right))
+        (=
+          (opt.opt-natural-loop-latch-count left)
+          (opt.opt-natural-loop-latch-count right))
         (= (opt.opt-label-count left-labels) (opt.opt-label-count right-labels))
         (= (array-length left-seq) (array-length right-seq))
         (match (opt.opt-natural-loop-preheader left)
@@ -52139,16 +52142,11 @@
       (let
         [blocks (opt-natural-loop-multi-backedge-blocks)]
         (opt.opt-cfg-natural-loops blocks))]
-    [multi-left : opt.OptMaybeNaturalLoop
+    [multi-loop : opt.OptMaybeNaturalLoop
       (opt.opt-natural-loop-find
         (opt_natural_loop_vec.view multi-loops)
         (ir.compiler-ir-label "loop")
         (ir.compiler-ir-label "left"))]
-    [multi-right : opt.OptMaybeNaturalLoop
-      (opt.opt-natural-loop-find
-        (opt_natural_loop_vec.view multi-loops)
-        (ir.compiler-ir-label "loop")
-        (ir.compiler-ir-label "right"))]
     [preheadered-single-blocks : ir.CompilerIrBlockList
       (opt.opt-loop-preheaders-blocks (& (opt-ssa-loop-blocks)))]
     [preheadered-nested-blocks : ir.CompilerIrBlockList
@@ -52278,29 +52276,33 @@
           (=
             (opt.opt-natural-loop-list-count
               (opt_natural_loop_vec.view multi-loops))
-            2))
+            1))
         22]
-      [(not (= (opt-natural-loop-maybe-body-count multi-left) 2)) 23]
+      [(not (= (opt-natural-loop-maybe-body-count multi-loop) 3)) 23]
       [(not
           (opt-natural-loop-maybe-body-contains?
-            multi-left
+            multi-loop
             (ir.compiler-ir-label "left")))
         24]
       [(not
           (opt-natural-loop-maybe-body-contains?
-            multi-left
+            multi-loop
             (ir.compiler-ir-label "loop")))
         25]
-      [(not (= (opt-natural-loop-maybe-body-count multi-right) 2)) 26]
+      [(not
+          (match (& multi-loop)
+            [(No) false]
+            [(Some loop) (= (opt.opt-natural-loop-latch-count loop) 2)]))
+        26]
       [(not
           (opt-natural-loop-maybe-body-contains?
-            multi-right
+            multi-loop
             (ir.compiler-ir-label "right")))
         27]
       [(not
-          (opt-natural-loop-maybe-body-contains?
-            multi-right
-            (ir.compiler-ir-label "loop")))
+          (opt-natural-loop-maybe-preheader-label?
+            multi-loop
+            (ir.compiler-ir-label "entry")))
         28]
       [(not (= (opt-natural-loop-maybe-body-block-count single) 2)) 29]
       [(not
@@ -52363,36 +52365,29 @@
             outer
             (ir.compiler-ir-label "outer-latch")))
         40]
-      [(not (= (opt-natural-loop-maybe-body-block-count multi-left) 2)) 41]
+      [(not (= (opt-natural-loop-maybe-body-block-count multi-loop) 3)) 41]
       [(not
           (opt-natural-loop-maybe-body-block-label-at?
-            multi-left
+            multi-loop
             0
             (ir.compiler-ir-label "loop")))
         43]
       [(not
           (opt-natural-loop-maybe-body-block-label-at?
-            multi-left
+            multi-loop
             1
             (ir.compiler-ir-label "left")))
         44]
-      [(not (= (opt-natural-loop-maybe-body-block-count multi-right) 2)) 45]
       [(not
           (opt-natural-loop-maybe-body-block-label-at?
-            multi-right
-            0
-            (ir.compiler-ir-label "loop")))
-        46]
-      [(not
-          (opt-natural-loop-maybe-body-block-label-at?
-            multi-right
-            1
+            multi-loop
+            2
             (ir.compiler-ir-label "right")))
         47]
       [(not
           (opt-natural-loop-maybe-body-contains-id?
             multi-index
-            multi-right
+            multi-loop
             (ir.compiler-ir-label "right")))
         48]
       [(not
@@ -52479,6 +52474,7 @@
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
     [raw : ir.CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 0 (& raw))]
     [rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
         (ast.ast-node-pool-reader-context-current)
@@ -52706,6 +52702,7 @@
 (define (opt-rotate-ssa-test-run [side-exit : bool]) : ir.CompilerIrFunction
   (let
     [blocks : ir.CompilerIrBlockList (opt-rotate-ssa-test-blocks side-exit)]
+    (opt.opt-function-addr-taken-install! 4 (& blocks))
     (match (opt.opt-rotate-ssa-function-with-context-result
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
       false
@@ -52814,6 +52811,7 @@
 (define (opt-rotate-ssa-test-siblings-run) : ir.CompilerIrFunction
   (let
     [blocks : ir.CompilerIrBlockList (opt-rotate-ssa-test-siblings)]
+    (opt.opt-function-addr-taken-install! 7 (& blocks))
     (match (opt.opt-rotate-ssa-function-with-context-result
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
       false
@@ -52878,6 +52876,7 @@
   (let
     [blocks : ir.CompilerIrBlockList
       (opt-rotate-ssa-test-second-exit-blocks live-out)]
+    (opt.opt-function-addr-taken-install! 6 (& blocks))
     (match (opt.opt-rotate-ssa-function-with-context-result
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
       false
@@ -52973,6 +52972,7 @@
 (define (opt-rotate-ssa-test-flag-loop-run) : ir.CompilerIrFunction
   (let
     [blocks : ir.CompilerIrBlockList (opt-rotate-ssa-test-flag-loop-blocks)]
+    (opt.opt-function-addr-taken-install! 10 (& blocks))
     (match (opt.opt-rotate-ssa-function-with-context-result
       (opt.opt-cfg-context-build blocks)
       false
@@ -53123,6 +53123,7 @@
   (let
     [blocks : ir.CompilerIrBlockList
       (opt-rotate-ssa-test-shared-exit-blocks merge-phi)]
+    (opt.opt-function-addr-taken-install! 11 (& blocks))
     (match (opt.opt-rotate-ssa-function-with-context-result
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
       false
@@ -53187,6 +53188,7 @@
   (let
     [blocks : ir.CompilerIrBlockList
       (opt-rotate-ssa-test-scan-past-refusal-blocks)]
+    (opt.opt-function-addr-taken-install! 9 (& blocks))
     (match (opt.opt-rotate-ssa-function-with-context-result
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
       false
@@ -53203,6 +53205,9 @@
 ;; jump, so `opt-loop-rotation-edge-compatible?` refuses it and a second run
 ;; changes nothing.
 (define (opt-rotate-ssa-test-rerun [once : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt.opt-function-addr-taken-install!
+    (opt.opt-function-frame once)
+    (& (opt.opt-function-blocks once)))
   (match (opt.opt-rotate-ssa-function-with-context-result
     (opt.opt-cfg-context-build (opt.opt-function-blocks once))
     false
@@ -53291,6 +53296,9 @@
     [func : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-function loops)]
     [context : opt.OptCfgContext
       (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+    (opt.opt-function-addr-taken-install!
+      (opt.opt-function-frame func)
+      (& (opt.opt-function-blocks func)))
     (match (opt.opt-rotate-ssa-rounds func context fuel)
       [(Result next _) next])))
 
@@ -53441,6 +53449,9 @@
               (opt.opt-verify-ok?
                 (& (opt.opt-verify-function-with-context func context)))
               (return 1))
+            (opt.opt-function-addr-taken-install!
+              (opt.opt-function-frame func)
+              (& original-blocks))
             (match (opt.opt-rotate-ssa-rounds func context fuel)
               [(Result result kept-context)
                 (opt-round-regions-test-clobber!)
@@ -53489,6 +53500,10 @@
         (opt-rotate-ssa-many-siblings-function loops)]
       [context : opt.OptCfgContext
         (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+      [_addr-taken : unit
+        (opt.opt-function-addr-taken-install!
+          (opt.opt-function-frame func)
+          (& (opt.opt-function-blocks func)))]
       [start : i64
         (allocation_profile.compiler-allocation-profile-arena-bump-bytes
           scratch.handle)]
@@ -53502,6 +53517,9 @@
           start)]
       (unsafe
         (arena.tl_arena_set home))
+      (opt.opt-function-addr-taken-install!
+        0
+        (& (ir.compiler-ir-block-list-empty)))
       (arena.destroy-safe! scratch)
       (if returned?
         bytes
@@ -53635,6 +53653,7 @@
   opt-rotate-ssa-later-round-scans-past-refusal
   (let
     [blocks : ir.CompilerIrBlockList (opt-rotate-ssa-later-refusal-blocks)]
+    [_addr-taken : unit (opt.opt-function-addr-taken-install! 12 (& blocks))]
     [rotated : ir.CompilerIrFunction
       (match (opt.opt-rotate-ssa-function-with-context-result
         (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
@@ -53702,6 +53721,9 @@
       (opt.opt-cfg-natural-loops-with-context
         (opt.opt-function-blocks func)
         context)]
+    (opt.opt-function-addr-taken-install!
+      frame
+      (& (opt.opt-function-blocks func)))
     (opt.opt-rotate-ssa-loops
       regions
       true
@@ -53748,6 +53770,9 @@
       [banked-in-work? : bool
         (= (arena.tl_arena_current) (array-ref regions.arenas 0))]
       (opt.opt-round-regions-leave! (& regions))
+      (opt.opt-function-addr-taken-install!
+        0
+        (& (ir.compiler-ir-block-list-empty)))
       (test.assert-true
         (match failed
           [(No) true]
@@ -59896,27 +59921,49 @@
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [m0 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 0))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 0)))]
     [m0-again : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (ir.compiler-ir-global-shared-view m0))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (ir.compiler-ir-global-shared-view m0)))]
     [m1 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 1))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 1)))]
     [m2 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 2))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 2)))]
     [m3 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 3))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 3)))]
     [m4 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 4))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 4)))]
     [m5 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 5))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 5)))]
     [m6 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 6))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 6)))]
     [m7 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 7))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 7)))]
     [m8 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 8))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 8)))]
     [m9 : ir.CompilerIrBlockList
-      (opt.opt-load-combine-blocks 400 (opt-lc-compose-test-blocks 9))]
+      (opt.opt-load-combine-blocks
+        400
+        (opt-test-addr-taken-blocks 400 (opt-lc-compose-test-blocks 9)))]
     [word-func : ir.CompilerIrFunction
       (opt.opt-unroll-function
         bases
@@ -59924,7 +59971,9 @@
     [word-combined : ir.CompilerIrBlockList
       (opt.opt-load-combine-blocks
         (opt.opt-function-frame word-func)
-        (opt.opt-function-blocks word-func))]
+        (opt-test-addr-taken-blocks
+          (opt.opt-function-frame word-func)
+          (opt.opt-function-blocks word-func)))]
     (cond
       ;; The exact compose folds: one i64 load, the chain elements deleted by
       ;; the pass itself (shifts are trapping per `ir.compiler-ir-binop-may-fault?`, so DCE
@@ -60333,6 +60382,244 @@
     (compiler-optimize-load-combine-self-test)
     42
     "8-byte little-endian compose folds to one wide load with all bounds checks retained"))
+
+;; Addr-taken GEP base/offset and Mov-chain rejection: when a pointer `p` is
+;; address-taken, `g0 = gep p, 0; store_ptr (addr_of p), buf2; g1..g7 = gep p,
+;; 1..7; b0..b7 = load g0..g7; w = (bit-or ...)` has NO write after `b0`, yet
+;; `g0` points into `buf1` while `g1..g7` point into `buf2`. `load_combine`
+;; must reject any leaf whose base, offset, Add operand, or resolved Mov chain
+;; touches an address-taken var.
+(test
+  load-combine-rejects-addr-taken-gep-operands
+  (let
+    [plain : ir.CompilerIrBlockList
+      (opt.opt-load-combine-blocks
+        64
+        (opt-test-addr-taken-blocks
+          64
+          (irt.blocks
+            "lc_main:
+               %2 = mov %0 : i64
+               %10 = gep %2, 0 : u8
+               %11 = gep %2, 1 : u8
+               %12 = gep %2, 2 : u8
+               %13 = gep %2, 3 : u8
+               %14 = gep %2, 4 : u8
+               %15 = gep %2, 5 : u8
+               %16 = gep %2, 6 : u8
+               %17 = gep %2, 7 : u8
+               %20 = load %10 : u8
+               %21 = load %11 : u8
+               %22 = load %12 : u8
+               %23 = load %13 : u8
+               %24 = load %14 : u8
+               %25 = load %15 : u8
+               %26 = load %16 : u8
+               %27 = load %17 : u8
+               %30 = cast %20 : u8 to i64
+               %31 = cast %21 : u8 to i64
+               %32 = cast %22 : u8 to i64
+               %33 = cast %23 : u8 to i64
+               %34 = cast %24 : u8 to i64
+               %35 = cast %25 : u8 to i64
+               %36 = cast %26 : u8 to i64
+               %37 = cast %27 : u8 to i64
+               %41 = shl %31, 8 : i64
+               %42 = shl %32, 16 : i64
+               %43 = shl %33, 24 : i64
+               %44 = shl %34, 32 : i64
+               %45 = shl %35, 40 : i64
+               %46 = shl %36, 48 : i64
+               %47 = shl %37, 56 : i64
+               %50 = bit_or %30, %41 : i64
+               %51 = bit_or %50, %42 : i64
+               %52 = bit_or %51, %43 : i64
+               %53 = bit_or %52, %44 : i64
+               %54 = bit_or %53, %45 : i64
+               %55 = bit_or %54, %46 : i64
+               %56 = bit_or %55, %47 : i64
+               return %56")))]
+    [mutated-base : ir.CompilerIrBlockList
+      (opt.opt-load-combine-blocks
+        64
+        (opt-test-addr-taken-blocks
+          64
+          (irt.blocks
+            "lc_main:
+               %2 = mov %0 : i64
+               %3 = addr_of %2
+               %10 = gep %2, 0 : u8
+               store_ptr %3, %1 : i64
+               %11 = gep %2, 1 : u8
+               %12 = gep %2, 2 : u8
+               %13 = gep %2, 3 : u8
+               %14 = gep %2, 4 : u8
+               %15 = gep %2, 5 : u8
+               %16 = gep %2, 6 : u8
+               %17 = gep %2, 7 : u8
+               %20 = load %10 : u8
+               %21 = load %11 : u8
+               %22 = load %12 : u8
+               %23 = load %13 : u8
+               %24 = load %14 : u8
+               %25 = load %15 : u8
+               %26 = load %16 : u8
+               %27 = load %17 : u8
+               %30 = cast %20 : u8 to i64
+               %31 = cast %21 : u8 to i64
+               %32 = cast %22 : u8 to i64
+               %33 = cast %23 : u8 to i64
+               %34 = cast %24 : u8 to i64
+               %35 = cast %25 : u8 to i64
+               %36 = cast %26 : u8 to i64
+               %37 = cast %27 : u8 to i64
+               %41 = shl %31, 8 : i64
+               %42 = shl %32, 16 : i64
+               %43 = shl %33, 24 : i64
+               %44 = shl %34, 32 : i64
+               %45 = shl %35, 40 : i64
+               %46 = shl %36, 48 : i64
+               %47 = shl %37, 56 : i64
+               %50 = bit_or %30, %41 : i64
+               %51 = bit_or %50, %42 : i64
+               %52 = bit_or %51, %43 : i64
+               %53 = bit_or %52, %44 : i64
+               %54 = bit_or %53, %45 : i64
+               %55 = bit_or %54, %46 : i64
+               %56 = bit_or %55, %47 : i64
+               return %56")))]
+    [mutated-mov-chain : ir.CompilerIrBlockList
+      (opt.opt-load-combine-blocks
+        64
+        (opt-test-addr-taken-blocks
+          64
+          (irt.blocks
+            "lc_main:
+               %2 = mov %0 : i64
+               %3 = addr_of %2
+               %4 = mov %2 : i64
+               %10 = gep %4, 0 : u8
+               store_ptr %3, %1 : i64
+               %5 = mov %2 : i64
+               %11 = gep %5, 1 : u8
+               %12 = gep %5, 2 : u8
+               %13 = gep %5, 3 : u8
+               %14 = gep %5, 4 : u8
+               %15 = gep %5, 5 : u8
+               %16 = gep %5, 6 : u8
+               %17 = gep %5, 7 : u8
+               %20 = load %10 : u8
+               %21 = load %11 : u8
+               %22 = load %12 : u8
+               %23 = load %13 : u8
+               %24 = load %14 : u8
+               %25 = load %15 : u8
+               %26 = load %16 : u8
+               %27 = load %17 : u8
+               %30 = cast %20 : u8 to i64
+               %31 = cast %21 : u8 to i64
+               %32 = cast %22 : u8 to i64
+               %33 = cast %23 : u8 to i64
+               %34 = cast %24 : u8 to i64
+               %35 = cast %25 : u8 to i64
+               %36 = cast %26 : u8 to i64
+               %37 = cast %27 : u8 to i64
+               %41 = shl %31, 8 : i64
+               %42 = shl %32, 16 : i64
+               %43 = shl %33, 24 : i64
+               %44 = shl %34, 32 : i64
+               %45 = shl %35, 40 : i64
+               %46 = shl %36, 48 : i64
+               %47 = shl %37, 56 : i64
+               %50 = bit_or %30, %41 : i64
+               %51 = bit_or %50, %42 : i64
+               %52 = bit_or %51, %43 : i64
+               %53 = bit_or %52, %44 : i64
+               %54 = bit_or %53, %45 : i64
+               %55 = bit_or %54, %46 : i64
+               %56 = bit_or %55, %47 : i64
+               return %56")))]
+    [mutated-offset : ir.CompilerIrBlockList
+      (opt.opt-load-combine-blocks
+        80
+        (opt-test-addr-taken-blocks
+          80
+          (irt.blocks
+            "lc_main:
+               %2 = mov 0 : i64
+               %3 = addr_of %2
+               %60 = add %2, 0 : i64
+               %10 = gep %0, %60 : u8
+               store_ptr %3, 8 : i64
+               %61 = add %2, 1 : i64
+               %62 = add %2, 2 : i64
+               %63 = add %2, 3 : i64
+               %64 = add %2, 4 : i64
+               %65 = add %2, 5 : i64
+               %66 = add %2, 6 : i64
+               %67 = add %2, 7 : i64
+               %11 = gep %0, %61 : u8
+               %12 = gep %0, %62 : u8
+               %13 = gep %0, %63 : u8
+               %14 = gep %0, %64 : u8
+               %15 = gep %0, %65 : u8
+               %16 = gep %0, %66 : u8
+               %17 = gep %0, %67 : u8
+               %20 = load %10 : u8
+               %21 = load %11 : u8
+               %22 = load %12 : u8
+               %23 = load %13 : u8
+               %24 = load %14 : u8
+               %25 = load %15 : u8
+               %26 = load %16 : u8
+               %27 = load %17 : u8
+               %30 = cast %20 : u8 to i64
+               %31 = cast %21 : u8 to i64
+               %32 = cast %22 : u8 to i64
+               %33 = cast %23 : u8 to i64
+               %34 = cast %24 : u8 to i64
+               %35 = cast %25 : u8 to i64
+               %36 = cast %26 : u8 to i64
+               %37 = cast %27 : u8 to i64
+               %41 = shl %31, 8 : i64
+               %42 = shl %32, 16 : i64
+               %43 = shl %33, 24 : i64
+               %44 = shl %34, 32 : i64
+               %45 = shl %35, 40 : i64
+               %46 = shl %36, 48 : i64
+               %47 = shl %37, 56 : i64
+               %50 = bit_or %30, %41 : i64
+               %51 = bit_or %50, %42 : i64
+               %52 = bit_or %51, %43 : i64
+               %53 = bit_or %52, %44 : i64
+               %54 = bit_or %53, %45 : i64
+               %55 = bit_or %54, %46 : i64
+               %56 = bit_or %55, %47 : i64
+               return %56")))]
+    (test.assert-i64-eq
+      (opt-lc-test-count-blocks (ir.compiler-ir-block-list-view plain) 1)
+      1
+      "non-addr-taken GEP base compose folds to one wide load")
+    (test.assert-i64-eq
+      (opt-lc-test-count-blocks (ir.compiler-ir-block-list-view mutated-base) 1)
+      0
+      "addr-taken GEP base mutated before byte loads must not combine")
+    (test.assert-i64-eq
+      (opt-lc-test-count-blocks (ir.compiler-ir-block-list-view mutated-base) 0)
+      8
+      "all eight byte loads remain when GEP base is addr-taken")
+    (test.assert-i64-eq
+      (opt-lc-test-count-blocks
+        (ir.compiler-ir-block-list-view mutated-mov-chain)
+        1)
+      0
+      "addr-taken GEP base reached via Mov chain must not combine")
+    (test.assert-i64-eq
+      (opt-lc-test-count-blocks
+        (ir.compiler-ir-block-list-view mutated-offset)
+        1)
+      0
+      "addr-taken Add offset operand mutated before byte loads must not combine")))
 
 (test
   unroll-const-trip-pipeline
@@ -63721,6 +64008,7 @@
 (define (opt-cs-test-apply [func : ir.CompilerIrFunction]) : OptCsTestResult
   (match func
     [(Function name params ret-ty frame blocks function-abi)
+      (opt.opt-function-addr-taken-install! frame (& blocks))
       (match (opt.opt-counter-sink-blocks (& params) frame (& blocks))
         [(Result next changed)
           (Result (Function name params ret-ty frame next function-abi) changed)])]))
@@ -77678,11 +77966,15 @@ done:
 ;; One rotation pass over the sentinel fixture, with nothing below it.
 (define (opt-flag-exit-sent-rotate [variant : i64]) : ir.CompilerIrBlockList
   (let
-    [blocks : ir.CompilerIrBlockList (opt-flag-exit-sent-blocks variant)]
+    [func : ir.CompilerIrFunction (opt-flag-exit-sent-function variant)]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks func)]
+    (opt.opt-function-addr-taken-install!
+      (opt.opt-function-frame func)
+      (& blocks))
     (match (opt.opt-rotate-ssa-function-with-context-result
       (opt.opt-cfg-context-build blocks)
       false
-      (opt-flag-exit-sent-function variant))
+      func)
       [(Result next _) (opt.opt-function-blocks next)])))
 
 (define (opt-flag-exit-sent-rotated? [variant : i64]) : bool

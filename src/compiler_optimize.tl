@@ -16978,7 +16978,7 @@
   (blocks ir.CompilerIrBlockList))
 
 (defenum OptNaturalLoop
-  (Loop i64 i64 OptLoopBody OptLoopPreheader))
+  (Loop i64 i64 OptLoopBody OptLoopPreheader i64))
 
 (defenum OptMaybeNaturalLoop
   (No)
@@ -17097,19 +17097,23 @@
 
 (define (opt-natural-loop-header [loop : (& loop OptNaturalLoop)]) : i64
   (match loop
-    [(OptNaturalLoop.Loop header _ _ _) header]))
+    [(OptNaturalLoop.Loop header _ _ _ _) header]))
 
 (define (opt-natural-loop-latch [loop : (& loop OptNaturalLoop)]) : i64
   (match loop
-    [(OptNaturalLoop.Loop _ latch _ _) latch]))
+    [(OptNaturalLoop.Loop _ latch _ _ _) latch]))
+
+(define (opt-natural-loop-latch-count [loop : (& loop OptNaturalLoop)]) : i64
+  (match loop
+    [(OptNaturalLoop.Loop _ _ _ _ latch-count) latch-count]))
 
 (define (opt-natural-loop-body-info [loop : (& loop OptNaturalLoop)]) : OptLoopBody
   (match (owned_view.compiler-owned-reference-shared-view loop)
-    [(Loop _ _ body _) body]))
+    [(Loop _ _ body _ _) body]))
 
 (define (opt-natural-loop-body [loop : (& loop OptNaturalLoop)]) : OptLabelSet
   (match (owned_view.compiler-owned-reference-shared-view loop)
-    [(Loop _ _ body _) (opt-loop-body-labels body)]))
+    [(Loop _ _ body _ _) (opt-loop-body-labels body)]))
 
 (define (opt-natural-loop-body-blocks [loop : (& loop OptNaturalLoop)]) : ir.CompilerIrBlockList
   (opt-loop-body-blocks (opt-natural-loop-body-info loop)))
@@ -17136,7 +17140,7 @@
 
 (define (opt-natural-loop-preheader [loop : (& loop OptNaturalLoop)]) : OptLoopPreheader
   (match loop
-    [(OptNaturalLoop.Loop _ _ _ preheader) preheader]))
+    [(OptNaturalLoop.Loop _ _ _ preheader _) preheader]))
 
 (define (opt-natural-loop-list-count [loops : (& loops (Slice OptNaturalLoop))]) : i64
   (array-length loops))
@@ -17427,7 +17431,8 @@
             header
             latch
             (OptLoopBody body-labels marks body-blocks)
-            preheader))))
+            preheader
+            1))))
     (opt-natural-loop-build-by-label blocks pred-map reachable header latch)))
 
 ;; `opt-natural-loop-find-preheader` for the id walk. The candidate scan keeps a
@@ -17558,51 +17563,189 @@
         pred-map
         reachable
         header
-        body-labels))))
+        body-labels)
+      1)))
 
-;; Back-edge scan for one block, reading its successors from the context's CSR
-;; index instead of recomputing the block's successor set from its instruction
-;; stream. The CSR row holds exactly the deduplicated
-;; opt-cfg-block-successors-with-next set in insertion order
-;; (opt-cfg-index-build-csr writes each label's id the first time the block
-;; names it and drops labels the index cannot resolve -- precisely the old
-;; missing-label arm), so visiting blocks first to last and each CSR row
-;; backward while pushing emits loops in precisely the order the label-set walk
-;; produced. Reachability and ids come from the same
-;; index that walk consulted (the reachable set is built from this reachable
-;; array).
-(define (opt-cfg-natural-loop-edges-csr
-  [work : (&mut work OptNaturalLoopWork)]
-  [all-blocks : (& all-blocks ir.CompilerIrBlockList)]
-  [index : (& index OptCfgIndex)]
-  [pred-map : (& OptPredMap)]
+;; Multi-latch fallback for non-unique labels: unions the bodies of every
+;; backedge targeting `header`, then computes the preheader against the union.
+(define (opt-natural-loop-build-by-label-multi
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [pred-map : (& pred-map OptPredMap)]
   [reachable : OptLabelSet]
+  [header : i64]
+  [latch-ids : (& (__tl_dyn-array i64))]
+  [latch-count : i64]) : OptNaturalLoop
+  (let
+    [index : (& pred-map OptCfgIndex) (& pred-map.index)]
+    [marks : (__tl_dyn-array bool)
+      (__tl_make-array bool (opt-cfg-index-block-count index))]
+    [first-latch : i64 (array-ref index.labels (array-ref latch-ids 0))]
+    [seed-body : OptLabelSet (opt-label-add (Nil) header)]
+    [seed-work : OptLabelSet (Nil)]
+    (opt-natural-loop-mark-label! index (&mut marks) header)
+    (for [k (iterator.range 0 latch-count)]
+      (let
+        [latch : i64 (array-ref index.labels (array-ref latch-ids k))]
+        (opt-natural-loop-mark-label! index (&mut marks) latch)
+        (set! seed-body (opt-label-add seed-body latch))
+        (when
+          (!= header latch)
+          (set! seed-work (opt-label-add seed-work latch)))))
+    (let
+      [body-labels : OptLabelSet
+        (opt-natural-loop-collect-body
+          pred-map
+          index
+          (&mut marks)
+          seed-body
+          seed-work)]
+      [body : OptLoopBody (opt-loop-body-build blocks index body-labels)]
+      (Loop
+        header
+        first-latch
+        body
+        (opt-natural-loop-find-preheader
+          blocks
+          pred-map
+          reachable
+          header
+          body-labels)
+        latch-count))))
+
+;; Multi-latch counterpart of `opt-natural-loop-build`: unions all `latch-count`
+;; backedge bodies targeting `header-id`, computes `preheader` against the full
+;; union body, and records `latch-count` on the resulting `OptNaturalLoop`.
+(define (opt-natural-loop-build-multi
+  [work : (&mut work OptNaturalLoopWork)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [pred-map : (& pred-map OptPredMap)]
+  [reachable : OptLabelSet]
+  [header-id : i64]
+  [latch-ids : (& (__tl_dyn-array i64))]
+  [latch-count : i64]) : OptNaturalLoop
+  (let
+    [index : (& pred-map OptCfgIndex) (& pred-map.index)]
+    [header : i64 (array-ref index.labels header-id)]
+    (if pred-map.index.labels-unique
+      (let
+        [count : i64 (opt-cfg-index-block-count index)]
+        [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
+        [_reserve : unit
+          (when
+            (< (array-length work.found) (+ count 1))
+            (set! work.found (__tl_make-array i64 (+ count 1)))
+            (set! work.stack (__tl_make-array i64 (+ count 1))))]
+        [found : (&mut work (__tl_dyn-array i64)) (&mut work.found)]
+        [stack : (&mut work (__tl_dyn-array i64)) (&mut work.stack)]
+        [found-count : i64 0]
+        [top : i64 0]
+        [first-latch-id : i64 (array-ref latch-ids 0)]
+        [first-latch : i64 (array-ref index.labels first-latch-id)]
+        (set! (array-ref marks header-id) true)
+        (when
+          (and (>= first-latch-id 0) (not (array-ref marks first-latch-id)))
+          (set! (array-ref marks first-latch-id) true)
+          (set! (array-ref stack top) first-latch-id)
+          (+= top 1))
+        (for [k (iterator.range 1 latch-count)]
+          (let
+            [lid : i64 (array-ref latch-ids k)]
+            (when
+              (and (>= lid 0) (not (array-ref marks lid)))
+              (set! (array-ref marks lid) true)
+              (set! (array-ref found found-count) lid)
+              (+= found-count 1)
+              (set! (array-ref stack top) lid)
+              (+= top 1))))
+        (while (> top 0)
+          (let
+            [w : i64 (array-ref stack (- top 1))]
+            [start : i64 (array-ref index.preds.offsets w)]
+            [edge : i64 (array-ref index.preds.offsets (+ w 1))]
+            (-= top 1)
+            (while (> edge start)
+              (let
+                [p : i64 (array-ref index.preds.edges (- edge 1))]
+                (when
+                  (and (array-ref index.reachable p) (not (array-ref marks p)))
+                  (set! (array-ref marks p) true)
+                  (set! (array-ref found found-count) p)
+                  (+= found-count 1)
+                  (set! (array-ref stack top) p)
+                  (+= top 1))
+                (-= edge 1)))))
+        (let
+          [seeds : i64
+            (if (= header first-latch)
+              1
+              2)]
+          [n : i64 (+ seeds found-count)]
+          [items : (__tl_dyn-array i64)
+            (__tl_make-array
+              i64
+              (+
+                (if (< n 4)
+                  4
+                  n)
+                1))]
+          (set! (array-ref items 0) n)
+          (set! (array-ref items 1) header)
+          (when (= seeds 2) (set! (array-ref items 2) first-latch))
+          (for [k (iterator.range 0 found-count)]
+            (set!
+              (array-ref items (+ seeds (+ k 1)))
+              (opt-cfg-index-label index (array-ref found k))))
+          (let
+            [body-labels : OptLabelSet (Dense (opt-label-handle items) n)]
+            [body-blocks : ir.CompilerIrBlockList
+              (opt-loop-body-blocks-by-id
+                marks
+                blocks
+                header-id
+                first-latch-id
+                (& found)
+                found-count
+                n)]
+            [preheader : OptLoopPreheader
+              (opt-natural-loop-find-preheader-by-id index (& marks) header-id)]
+            (Loop
+              header
+              first-latch
+              (OptLoopBody body-labels marks body-blocks)
+              preheader
+              latch-count))))
+      (opt-natural-loop-build-by-label-multi
+        blocks
+        pred-map
+        reachable
+        header
+        latch-ids
+        latch-count))))
+
+;; Back-edge scan for one block, recording `(header-id, source-id)` pairs in CSR
+;; reverse order so headers are discovered in the established order while all
+;; backedges sharing a header are merged into one natural loop below.
+(define (opt-cfg-natural-loop-edges-csr
+  [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [source-id : i64]
-  [source : i64]
   [start : i64]
   [end : i64]
-  [out : (&mut out opt_natural_loop_vec.Vec)]) : unit
+  [edge-headers : (&mut opt_dense_i64_vec.Vec)]
+  [edge-latches : (&mut opt_dense_i64_vec.Vec)]) : unit
   (let
     [edge : i64 (- end 1)]
     (while (>= edge start)
       (let
         [header-id : i64 (array-ref index.succs.edges edge)]
-        (if (and
-          (>= header-id 0)
-          (< header-id (array-length index.reachable))
-          (array-ref index.reachable header-id)
-          (opt-dom-info-dominates-id? doms header-id source-id))
-          (opt_natural_loop_vec.push-ref!
-            out
-            (opt-natural-loop-build
-              work
-              all-blocks
-              pred-map
-              reachable
-              (array-ref index.labels header-id)
-              source))
-          unit)
+        (when
+          (and
+            (>= header-id 0)
+            (< header-id (array-length index.reachable))
+            (array-ref index.reachable header-id)
+            (opt-dom-info-dominates-id? doms header-id source-id))
+          (opt_dense_i64_vec.push-ref! edge-headers header-id)
+          (opt_dense_i64_vec.push-ref! edge-latches source-id))
         (-= edge 1)))))
 
 (define (opt-cfg-natural-loops-with-context
@@ -17616,29 +17759,105 @@
       (ir.compiler-ir-block-list-view blocks)]
     [count : i64 (array-length seq)]
     [out : opt_natural_loop_vec.Vec (opt-natural-loops-empty)]
-    [work : OptNaturalLoopWork
-      (OptNaturalLoopWork
-        (compiler-opt-global-shared-view opt-natural-loop-work-empty-slots)
-        (compiler-opt-global-shared-view opt-natural-loop-work-empty-slots))]
+    [edge-headers : opt_dense_i64_vec.Vec (opt_dense_i64_vec.with-capacity 0)]
+    [edge-latches : opt_dense_i64_vec.Vec (opt_dense_i64_vec.with-capacity 0)]
     ;; `blocks` is this seq, and the index numbers its blocks in seq order,
     ;; so the seq position is the block id.
     (for [pos (iterator.range 0 count)]
-      (if (< pos (array-length index.reachable))
-        (match (& (array-ref seq pos))
-          [(Block label _)
-            (opt-cfg-natural-loop-edges-csr
-              (&mut work)
-              (& blocks)
-              (& index)
-              (& context.pred-map)
-              context.reachable
-              (& context.doms)
-              pos
-              label
-              (array-ref index.succs.offsets pos)
-              (array-ref index.succs.offsets (+ pos 1))
-              (&mut out))])
-        unit))
+      (when
+        (< pos (array-length index.reachable))
+        (opt-cfg-natural-loop-edges-csr
+          (& index)
+          (& context.doms)
+          pos
+          (array-ref index.succs.offsets pos)
+          (array-ref index.succs.offsets (+ pos 1))
+          (&mut edge-headers)
+          (&mut edge-latches))))
+    (let
+      [edge-count : i64 (opt_dense_i64_vec.len (& edge-headers))]
+      (when
+        (> edge-count 0)
+        (let
+          [work : OptNaturalLoopWork
+            (OptNaturalLoopWork
+              (compiler-opt-global-shared-view
+                opt-natural-loop-work-empty-slots)
+              (compiler-opt-global-shared-view
+                opt-natural-loop-work-empty-slots))]
+          (if (= edge-count 1)
+            (let
+              [header-id : i64 (opt_dense_i64_vec.get (& edge-headers) 0 -1)]
+              [source-id : i64 (opt_dense_i64_vec.get (& edge-latches) 0 -1)]
+              (opt_natural_loop_vec.push-ref!
+                (&mut out)
+                (opt-natural-loop-build
+                  (&mut work)
+                  (& blocks)
+                  (& context.pred-map)
+                  context.reachable
+                  (array-ref index.labels header-id)
+                  (array-ref index.labels source-id))))
+            (let
+              [header-slot : opt_i64_i64_map.Map
+                (opt_i64_i64_map.with-capacity (+ edge-count 1))]
+              [group-header : (__tl_dyn-array i64)
+                (__tl_make-array i64 edge-count)]
+              [group-head : (__tl_dyn-array i64)
+                (__tl_make-array i64 edge-count)]
+              [group-tail : (__tl_dyn-array i64)
+                (__tl_make-array i64 edge-count)]
+              [edge-next : (__tl_dyn-array i64)
+                (__tl_make-array i64 edge-count)]
+              [group-latches : (__tl_dyn-array i64)
+                (__tl_make-array i64 edge-count)]
+              [group-count : i64 0]
+              (for [e (iterator.range 0 edge-count)]
+                (let
+                  [hid : i64 (opt_dense_i64_vec.get (& edge-headers) e -1)]
+                  (set! (array-ref edge-next e) -1)
+                  (match (opt_i64_i64_map.get (& header-slot) hid)
+                    [(LookupFound g)
+                      (set! (array-ref edge-next (array-ref group-tail g)) e)
+                      (set! (array-ref group-tail g) e)]
+                    [(LookupMissing)
+                      (opt_i64_i64_map.insert-ref!
+                        (&mut header-slot)
+                        hid
+                        group-count)
+                      (set! (array-ref group-header group-count) hid)
+                      (set! (array-ref group-head group-count) e)
+                      (set! (array-ref group-tail group-count) e)
+                      (+= group-count 1)])))
+              (for [g (iterator.range 0 group-count)]
+                (let
+                  [hid : i64 (array-ref group-header g)]
+                  [cur : i64 (array-ref group-head g)]
+                  [k : i64 0]
+                  (while (>= cur 0)
+                    (set!
+                      (array-ref group-latches k)
+                      (opt_dense_i64_vec.get (& edge-latches) cur -1))
+                    (+= k 1)
+                    (set! cur (array-ref edge-next cur)))
+                  (opt_natural_loop_vec.push-ref!
+                    (&mut out)
+                    (if (= k 1)
+                      (opt-natural-loop-build
+                        (&mut work)
+                        (& blocks)
+                        (& context.pred-map)
+                        context.reachable
+                        (array-ref index.labels hid)
+                        (array-ref index.labels (array-ref group-latches 0)))
+                      (opt-natural-loop-build-multi
+                        (&mut work)
+                        (& blocks)
+                        (& context.pred-map)
+                        context.reachable
+                        hid
+                        (& group-latches)
+                        k))))))))))
     out))
 
 (define (opt-cfg-natural-loops [blocks : (& blocks ir.CompilerIrBlockList)]) : opt_natural_loop_vec.Vec
@@ -18550,23 +18769,13 @@
   (No)
   (Header ir.CompilerIrInstrSeq))
 
-(define (opt-loop-rotation-header-count
-  [loops : (& loops (Slice OptNaturalLoop))]
-  [header : i64]) : i64
-  (match loops
-    [(slice) 0]
-    [(slice loop & rest)
-      (+
-        (if (= (opt-natural-loop-header loop) header)
-          1
-          0)
-        (opt-loop-rotation-header-count rest header))]))
-
 (define (opt-loop-rotation-guard-instr? [instr : (& ir.CompilerIrInstr)]) : bool
-  (match instr
-    [(or (Mov _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _) (UnOp _ _ _ _)) true]
-    [(BinOp _ op _ _ _) (not (ir.compiler-ir-binop-may-fault? (& op)))]
-    [_ false]))
+  (if (opt-addr-taken-write? instr)
+    false
+    (match instr
+      [(or (Mov _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _) (UnOp _ _ _ _)) true]
+      [(BinOp _ op _ _ _) (not (ir.compiler-ir-binop-may-fault? (& op)))]
+      [_ false])))
 
 (define (opt-loop-rotation-header-prefix-ok?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -18738,7 +18947,7 @@
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [loops : (& loops opt_natural_loop_vec.Vec)]
+  [_loops : (& _loops opt_natural_loop_vec.Vec)]
   [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
   (let
     [header : i64 (opt-natural-loop-header loop)]
@@ -18749,11 +18958,7 @@
       [(No) (Result blocks false)]
       [(Some preheader)
         (if (and
-          (=
-            (opt-loop-rotation-header-count
-              (opt_natural_loop_vec.view loops)
-              header)
-            1)
+          (= (opt-natural-loop-latch-count loop) 1)
           (= (opt-label-count preds) 2)
           (opt-label-contains preds preheader)
           (opt-label-contains preds latch)
@@ -18853,7 +19058,8 @@
   [pools : ast.AstNodePoolContext]
   [func : ir.CompilerIrFunction]) : OptBlockCtxResult
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
+      (opt-addr-taken-refresh! frame (& blocks))
       (if (opt-ssa-blocks-have-phi? blocks)
         (Result blocks (opt-cfg-context-empty) false)
         (let
@@ -18878,7 +19084,9 @@
   [pools : ast.AstNodePoolContext]
   [func : (& ir.CompilerIrFunction)]) : OptBlockCtxResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _) (opt-loop-rotation-blocks-result pools blocks)]))
+    [(Function _ _ _ frame blocks _)
+      (opt-addr-taken-refresh! frame (& blocks))
+      (opt-loop-rotation-blocks-result pools blocks)]))
 
 ;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
 ;;
@@ -20483,6 +20691,7 @@
         [pred-map : OptPredMap (__tl-project-field context pred-map)]
         [header-preds : OptLabelSet (opt-pred-map-lookup pred-map header)]
         (if (and
+          (= (opt-natural-loop-latch-count loop) 1)
           (not (= header latch))
           (opt-rotate-ssa-only-label?
             (opt-pred-map-successors pred-map preheader)
@@ -20680,7 +20889,8 @@
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
+      (opt-addr-taken-refresh! frame (& blocks))
       (match (opt-verify-at
         "entry.rotate_ssa"
         (opt-verify-post
@@ -21439,9 +21649,8 @@
       [(string.eq pass "ctor_fwd") (Effect)]
       [(string.eq pass "slot_fwd") (Effect)]
       [(string.eq pass "aggregate_split") (Effect)]
-      [(string.eq pass "counter_sink")
-        (NotObservable "reorders latch counters only")]
-      [(string.eq pass "rotation") (NotObservable "reorders register moves")]
+      [(string.eq pass "counter_sink") (Shared)]
+      [(string.eq pass "rotation") (Shared)]
       [(string.eq pass "group_split")
         (NotObservable
           "splits group defs; an addr_of source is not a group def")]
@@ -21461,7 +21670,7 @@
       [(string.eq pass "switch") (Shared)]
       [(string.eq pass "preheaders")
         (NotObservable "splits edges, moves instructions")]
-      [(string.eq pass "rotate_ssa") (NotObservable "rotates SSA form")]
+      [(string.eq pass "rotate_ssa") (Shared)]
       [(string.eq pass "scratch_reset") (NotObservable "resets scratch slots")]
       [(string.eq pass "dead_phi") (NotObservable "drops dead phis")]
       [(string.eq pass "induction") (Taint)]
@@ -21469,7 +21678,7 @@
       [(string.eq pass "fill_call") (Taint)]
       [(string.eq pass "copy_call") (Taint)]
       [(string.eq pass "unroll") (Taint)]
-      [(string.eq pass "load_combine") (NotObservable "merges loads")]
+      [(string.eq pass "load_combine") (Shared)]
       [(string.eq pass "lftr") (Taint)]
       [(string.eq pass "post_lftr_licm") (Shared)]
       [(string.eq pass "gep_offset") (Taint)]
@@ -29147,11 +29356,13 @@
         [hot-uses : (__tl_dyn-array i64)
           (opt-licm-hot-use-vars
             context
-            (match (opt-cfg-index-id
-              context.index
-              (opt-natural-loop-latch loop))
-              [(Some latch-id) latch-id]
-              [(None) -1])
+            (if (= (opt-natural-loop-latch-count loop) 1)
+              (match (opt-cfg-index-id
+                context.index
+                (opt-natural-loop-latch loop))
+                [(Some latch-id) latch-id]
+                [(None) -1])
+              -1)
             all-loops
             (opt-natural-loop-header loop)
             (opt-natural-loop-body loop)
@@ -29162,7 +29373,9 @@
           (opt-licm-loop-side-exit-kind
             blocks
             (opt-natural-loop-header loop)
-            (opt-natural-loop-latch loop)
+            (if (= (opt-natural-loop-latch-count loop) 1)
+              (opt-natural-loop-latch loop)
+              -1)
             (opt-natural-loop-body loop)
             (ir.compiler-ir-block-list-view body-blocks))]
         ;; Hoisting invariant loads out of PROBE-SHAPED loops -- every side
@@ -29457,6 +29670,7 @@
             (& body-blocks)
             (opt-licm-body-map-capacity (& body-blocks)))]
         (and
+          (= (opt-natural-loop-latch-count loop) 1)
           (opt-licm-guard-shape?
             (& loop-defs)
             (ir.compiler-ir-block-list-view body-blocks))
@@ -30628,6 +30842,7 @@
               (opt-label-count body-labels)
               (opt-licm-unswitch-clone-max-blocks)))]
         (if (or
+          (not (= (opt-natural-loop-latch-count loop) 1))
           (< (opt-label-count body-labels) 3)
           ;; LU-1: the bounds admit more than an entry guard's outer body --
           ;; `rg-merge-run!`'s merge loop, with `rg-weight-before?` inlined,
@@ -31781,7 +31996,9 @@
   [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionFact
   (match instr
     [(Phi phi-var inputs ty)
-      (if (opt-induction-i64-type? ty)
+      (if (and
+        (= (opt-natural-loop-latch-count loop) 1)
+        (opt-induction-i64-type? ty))
         (match (opt-induction-phi-inputs
           (& inputs)
           preheader
@@ -33502,6 +33719,9 @@
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [loop : (& OptNaturalLoop)]) : OptInductionApplyResult
+  (unless
+    (= (opt-natural-loop-latch-count loop) 1)
+    (return (Result blocks frame false)))
   (when
     (opt-loop-tainted?
       (& blocks)
@@ -38122,68 +38342,70 @@
   [seed : (& ir.CompilerIrValue)]
   [flag-ty : (& ast.AstType)]
   [latch-var : i64]) : OptFlagExitMaybePlan
-  (let
-    [index : OptCfgIndex
-      (compiler-opt-global-shared-view (__tl-project-field context index))]
-    [body : OptLoopBody (opt-natural-loop-body-info loop)]
-    [closure : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [web : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-    [bad : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [clears : OptFlagExitEdgeList
-      (opt-flag-exit-walk
-        blocks
-        body
-        index
-        def-label
-        flag
-        seed
-        latch-var
-        (&mut closure)
-        (&mut web)
-        (&mut bad)
-        (Nil))]
-    (if (or
-      (= (array-ref bad 0) 1)
-      (opt-flag-exit-edges-empty? clears)
-      ;; a copied gate has to be an instruction, so a flag of a type `ne`
-      ;; cannot be built for converts only when every edge is decided here
-      (and
-        (opt-flag-exit-clears-need-gate? seed clears)
-        (not (opt-flag-exit-comparable-type? flag-ty))))
-      (No)
-      (begin
-        (set! (array-ref closure flag) 1)
-        (match (let
-          [walked-blocks : ir.CompilerIrBlockList
-            (opt-loop-body-blocks (compiler-opt-global-shared-view body))]
-          (opt-flag-exit-find-gate
-            blocks
-            def-label
-            (ir.compiler-ir-block-list-view walked-blocks)
-            body
-            index
-            closure
-            seed
-            uses))
-          [(No) (No)]
-          [(Some gate continue-label exit-label gate-extra)
-            (opt-flag-exit-plan-arm
+  (if (not (= (opt-natural-loop-latch-count loop) 1))
+    (No)
+    (let
+      [index : OptCfgIndex
+        (compiler-opt-global-shared-view (__tl-project-field context index))]
+      [body : OptLoopBody (opt-natural-loop-body-info loop)]
+      [closure : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [web : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [bad : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [clears : OptFlagExitEdgeList
+        (opt-flag-exit-walk
+          blocks
+          body
+          index
+          def-label
+          flag
+          seed
+          latch-var
+          (&mut closure)
+          (&mut web)
+          (&mut bad)
+          (Nil))]
+      (if (or
+        (= (array-ref bad 0) 1)
+        (opt-flag-exit-edges-empty? clears)
+        ;; a copied gate has to be an instruction, so a flag of a type `ne`
+        ;; cannot be built for converts only when every edge is decided here
+        (and
+          (opt-flag-exit-clears-need-gate? seed clears)
+          (not (opt-flag-exit-comparable-type? flag-ty))))
+        (No)
+        (begin
+          (set! (array-ref closure flag) 1)
+          (match (let
+            [walked-blocks : ir.CompilerIrBlockList
+              (opt-loop-body-blocks (compiler-opt-global-shared-view body))]
+            (opt-flag-exit-find-gate
               blocks
-              (& context)
-              frame
-              uses
-              raw-uses
               def-label
-              (& body)
-              (opt-natural-loop-latch loop)
+              (ir.compiler-ir-block-list-view walked-blocks)
+              body
+              index
+              closure
               seed
-              flag-ty
-              (& closure)
-              (& clears)
-              gate
-              gate-extra
-              continue-label
-              exit-label)])))))
+              uses))
+            [(No) (No)]
+            [(Some gate continue-label exit-label gate-extra)
+              (opt-flag-exit-plan-arm
+                blocks
+                (& context)
+                frame
+                uses
+                raw-uses
+                def-label
+                (& body)
+                (opt-natural-loop-latch loop)
+                seed
+                flag-ty
+                (& closure)
+                (& clears)
+                gate
+                gate-extra
+                continue-label
+                exit-label)]))))))
 
 ;; Adopting the gate's own arm is what keeps the exit block's predecessor count
 ;; unchanged, so that is tried first; only when it is refused does the arm get
@@ -39557,72 +39779,74 @@
   [frame : i64]
   [loop : (& OptNaturalLoop)]
   [preheader : i64]) : OptLftrMaybePlan
-  (let
-    [header : i64 (opt-natural-loop-header loop)]
-    [latch : i64 (opt-natural-loop-latch loop)]
-    (match (opt-cfg-find-block body-blocks header)
-      [(No) (No)]
-      [(Some header-block)
-        (match (opt-cfg-find-block body-blocks latch)
-          [(No) (No)]
-          [(Some latch-block)
-            (match header-block
-              [(Block _ header-instrs)
-                (match latch-block
-                  [(Block _ latch-instrs)
-                    (match (opt-lftr-find-counter-seq-from
-                      body-blocks
-                      preheader
-                      latch
-                      header-instrs)
-                      [(No) (No)]
-                      [(Some counter)
-                        (match (& counter)
-                          [(Counter phi-var next-var back-var _)
-                            (match (opt-lftr-find-pointer-seq-from
-                              type-segment-bases
-                              (& latch-instrs)
-                              preheader
-                              latch
-                              phi-var
-                              (& header-instrs))
-                              [(No) (No)]
-                              [(Some pointer)
-                                (match (if (opt-lftr-sum-checked?
-                                  pointer
-                                  body-blocks)
-                                  (OptLftrMaybeTestSite.No)
-                                  (let
-                                    [loop-defs
-                                      (opt-licm-collect-defs-blocks
+  (if (not (= (opt-natural-loop-latch-count loop) 1))
+    (No)
+    (let
+      [header : i64 (opt-natural-loop-header loop)]
+      [latch : i64 (opt-natural-loop-latch loop)]
+      (match (opt-cfg-find-block body-blocks header)
+        [(No) (No)]
+        [(Some header-block)
+          (match (opt-cfg-find-block body-blocks latch)
+            [(No) (No)]
+            [(Some latch-block)
+              (match header-block
+                [(Block _ header-instrs)
+                  (match latch-block
+                    [(Block _ latch-instrs)
+                      (match (opt-lftr-find-counter-seq-from
+                        body-blocks
+                        preheader
+                        latch
+                        header-instrs)
+                        [(No) (No)]
+                        [(Some counter)
+                          (match (& counter)
+                            [(Counter phi-var next-var back-var _)
+                              (match (opt-lftr-find-pointer-seq-from
+                                type-segment-bases
+                                (& latch-instrs)
+                                preheader
+                                latch
+                                phi-var
+                                (& header-instrs))
+                                [(No) (No)]
+                                [(Some pointer)
+                                  (match (if (opt-lftr-sum-checked?
+                                    pointer
+                                    body-blocks)
+                                    (OptLftrMaybeTestSite.No)
+                                    (let
+                                      [loop-defs
+                                        (opt-licm-collect-defs-blocks
+                                          (ir.compiler-ir-block-list-view
+                                            body-blocks)
+                                          (opt_i64_i64_map.with-capacity
+                                            (opt-licm-body-map-capacity
+                                              body-blocks)))]
+                                      (opt-lftr-find-test-blocks
+                                        loop-defs
+                                        phi-var
+                                        next-var
+                                        back-var
                                         (ir.compiler-ir-block-list-view
-                                          body-blocks)
-                                        (opt_i64_i64_map.with-capacity
-                                          (opt-licm-body-map-capacity
-                                            body-blocks)))]
-                                    (opt-lftr-find-test-blocks
-                                      loop-defs
-                                      phi-var
-                                      next-var
-                                      back-var
-                                      (ir.compiler-ir-block-list-view
-                                        body-blocks))))
-                                  [(No) (No)]
-                                  [(Some test site-label site-index)
-                                    (if (opt-lftr-test-site-ok?
-                                      pointer
-                                      test
-                                      latch
-                                      site-label
-                                      site-index)
-                                      (opt-lftr-build-plan
-                                        blocks
-                                        frame
-                                        preheader
-                                        (& counter)
-                                        (& pointer)
-                                        test)
-                                      (No))])])])])])])])])))
+                                          body-blocks))))
+                                    [(No) (No)]
+                                    [(Some test site-label site-index)
+                                      (if (opt-lftr-test-site-ok?
+                                        pointer
+                                        test
+                                        latch
+                                        site-label
+                                        site-index)
+                                        (opt-lftr-build-plan
+                                          blocks
+                                          frame
+                                          preheader
+                                          (& counter)
+                                          (& pointer)
+                                          test)
+                                        (No))])])])])])])])]))))
 
 (define (opt-lftr-rewrite-instr
   [plan : (& plan OptLftrPlan)]
@@ -70950,18 +71174,13 @@
     [(or (I64) (U64)) true]
     [_ false]))
 
-;; Instructions that may write memory the byte loads could read. Calls and
-;; syscalls are included conservatively; pure arithmetic, loads, checks, and
-;; address formation are not barriers.
+;; Instructions that may write memory the byte loads could read, including defs
+;; of address-taken locals whose storage lives in memory. Routed through
+;; `opt-alias-instr-clears-all?` / `opt-instr-effect` so every write barrier
+;; shares one classifier.
 (define (opt-load-combine-may-write? [instr : (& ir.CompilerIrInstr)]) : bool
-  (match instr
-    [(or (StorePtr _ _ _) (StoreOwned _ _ _) (Store _ _ _) (CopyBytes _ _ _)
-         (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
-         (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
-         (TailCall _ _ _) (TailCallIndirect _ _ _) (Syscall _ _) (VectorStore _)
-         (PredicatedStore _))
-      true]
-    [_ false]))
+  (cfg test (opt-addr-taken-require-current! "opt-load-combine-may-write?"))
+  (opt-alias-instr-clears-all? (& opt-function-addr-taken.marks) instr))
 
 (define (opt-load-combine-scan-candidate?
   [slots : (& slots (__tl_dyn-array ir.CompilerIrInstr))]
@@ -71041,12 +71260,28 @@
     (set! (array-ref state index) (- 0 1))
     (opt-load-combine-state-reset state (+ index 1))))
 
+;; Address-taken locals do not satisfy single-value SSA identity: a store
+;; through `addr_of` or a later direct def can change their value between
+;; address derivations even when no write sits between the earliest byte load
+;; and the compose root.
+(define (opt-load-combine-addr-taken-var? [var : i64]) : bool
+  (cfg
+    test
+    (opt-addr-taken-require-current! "opt-load-combine-addr-taken-var?"))
+  (and
+    (> opt-function-addr-taken-count 0)
+    (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)))
+
 ;; A chain element must be used exactly once function-wide (by the next chain
-;; link); anything else rejects the fold.
+;; link) and must not be address-taken; anything else rejects the fold.
 (define (opt-load-combine-single-use?
   [uses : (& uses (__tl_dyn-array i64))]
   [var : i64]) : bool
-  (and (>= var 0) (< var (array-length uses)) (= (array-ref uses var) 1)))
+  (and
+    (>= var 0)
+    (< var (array-length uses))
+    (= (array-ref uses var) 1)
+    (not (opt-load-combine-addr-taken-var? var))))
 
 ;; Record one chain element instruction for deletion; the count cap only
 ;; bounds the scratch (a deep but ultimately rejected chain never overflows
@@ -71064,25 +71299,28 @@
         true))))
 
 ;; Resolve a var through same-block Mov copies (fuel-bounded), used for both
-;; the compose accumulator chain and the gep base/offset temps.
+;; the compose accumulator chain and the gep base/offset temps. Returns -1 when
+;; `var` or any var traversed along the Mov chain is address-taken.
 (define (opt-load-combine-resolve
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [var : i64]
   [fuel : i64]) : i64
-  (if (<= fuel 0)
-    var
-    (let
-      [index : i64 (opt_i64_i64_map.get-value-or (& defs) var (- 0 1))]
-      (if (< index 0)
-        var
-        (match (ir.compiler-ir-instr-seq-borrow instrs index)
-          [(Mov _ src _)
-            (match src
-              [(Var src-id)
-                (opt-load-combine-resolve instrs defs src-id (- fuel 1))]
-              [_ var])]
-          [_ var])))))
+  (if (opt-load-combine-addr-taken-var? var)
+    (- 0 1)
+    (if (<= fuel 0)
+      var
+      (let
+        [index : i64 (opt_i64_i64_map.get-value-or (& defs) var (- 0 1))]
+        (if (< index 0)
+          var
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
+            [(Mov _ src _)
+              (match src
+                [(Var src-id)
+                  (opt-load-combine-resolve instrs defs src-id (- fuel 1))]
+                [_ var])]
+            [_ var]))))))
 
 ;; Record one byte leaf: `cast (load (gep base, off : u8) : u8) : i64/u64` at
 ;; shift index `shift`. Fills the state's offset/gep slots and the shared base
@@ -71099,6 +71337,7 @@
   (if (or
     (< shift 0)
     (> shift 7)
+    (opt-load-combine-addr-taken-var? gep-var)
     (not (opt-load-combine-single-use? uses load-var))
     ;; one byte per shift index
     (!= (bit-and (array-ref state 4) (shl 1 shift)) 0)
@@ -71117,70 +71356,85 @@
                     (let
                       [resolved-base : i64
                         (opt-load-combine-resolve instrs defs base-id 16)]
-                      (match offset
-                        [(I64 k)
-                          (opt-load-combine-leaf-slot
-                            state
-                            resolved-base
-                            (- 0 1)
-                            k
-                            gep-var
-                            load-pos
-                            shift)]
-                        [(Var off-id)
-                          (let
-                            [resolved-off : i64
-                              (opt-load-combine-resolve instrs defs off-id 16)]
-                            [off-index : i64
-                              (opt_i64_i64_map.get-value-or
-                                (& defs)
-                                resolved-off
-                                (- 0 1))]
-                            (if (< off-index 0)
-                              false
-                              (match (ir.compiler-ir-instr-seq-borrow
-                                instrs
-                                off-index)
-                                [(BinOp _ add-op add-lhs add-rhs _)
-                                  (match add-op
-                                    [(Add)
-                                      (match add-lhs
-                                        [(Var x)
-                                          (match add-rhs
-                                            [(I64 k)
-                                              (opt-load-combine-leaf-slot
-                                                state
-                                                resolved-base
-                                                (opt-load-combine-resolve
-                                                  instrs
-                                                  defs
-                                                  x
-                                                  16)
-                                                k
-                                                gep-var
-                                                load-pos
-                                                shift)]
-                                            [_ false])]
-                                        [(I64 k)
-                                          (match add-rhs
-                                            [(Var x)
-                                              (opt-load-combine-leaf-slot
-                                                state
-                                                resolved-base
-                                                (opt-load-combine-resolve
-                                                  instrs
-                                                  defs
-                                                  x
-                                                  16)
-                                                k
-                                                gep-var
-                                                load-pos
-                                                shift)]
-                                            [_ false])]
-                                        [_ false])]
-                                    [_ false])]
-                                [_ false])))]
-                        [_ false]))]
+                      (if (< resolved-base 0)
+                        false
+                        (match offset
+                          [(I64 k)
+                            (opt-load-combine-leaf-slot
+                              state
+                              resolved-base
+                              (- 0 1)
+                              k
+                              gep-var
+                              load-pos
+                              shift)]
+                          [(Var off-id)
+                            (let
+                              [resolved-off : i64
+                                (opt-load-combine-resolve instrs defs off-id 16)]
+                              (if (< resolved-off 0)
+                                false
+                                (let
+                                  [off-index : i64
+                                    (opt_i64_i64_map.get-value-or
+                                      (& defs)
+                                      resolved-off
+                                      (- 0 1))]
+                                  (if (< off-index 0)
+                                    false
+                                    (match (ir.compiler-ir-instr-seq-borrow
+                                      instrs
+                                      off-index)
+                                      [(BinOp _ add-op add-lhs add-rhs _)
+                                        (match add-op
+                                          [(Add)
+                                            (match add-lhs
+                                              [(Var x)
+                                                (match add-rhs
+                                                  [(I64 k)
+                                                    (let
+                                                      [resolved-x : i64
+                                                        (opt-load-combine-resolve
+                                                          instrs
+                                                          defs
+                                                          x
+                                                          16)]
+                                                      (if (< resolved-x 0)
+                                                        false
+                                                        (opt-load-combine-leaf-slot
+                                                          state
+                                                          resolved-base
+                                                          resolved-x
+                                                          k
+                                                          gep-var
+                                                          load-pos
+                                                          shift)))]
+                                                  [_ false])]
+                                              [(I64 k)
+                                                (match add-rhs
+                                                  [(Var x)
+                                                    (let
+                                                      [resolved-x : i64
+                                                        (opt-load-combine-resolve
+                                                          instrs
+                                                          defs
+                                                          x
+                                                          16)]
+                                                      (if (< resolved-x 0)
+                                                        false
+                                                        (opt-load-combine-leaf-slot
+                                                          state
+                                                          resolved-base
+                                                          resolved-x
+                                                          k
+                                                          gep-var
+                                                          load-pos
+                                                          shift)))]
+                                                  [_ false])]
+                                              [_ false])]
+                                          [_ false])]
+                                      [_ false])))))]
+                          [_ false])))]
                   [_ false])]
               [_ false])]
           [_ false])))))
@@ -71650,10 +71904,12 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (if (opt-load-combine-blocks-have-candidate? blocks)
-    (opt-load-combine-blocks-walk
-      (opt-collect-blocks-uses-array frame blocks)
-      (__tl_make-array i64 88)
-      (& blocks))
+    (begin
+      (opt-addr-taken-refresh! frame (& blocks))
+      (opt-load-combine-blocks-walk
+        (opt-collect-blocks-uses-array frame blocks)
+        (__tl_make-array i64 88)
+        (& blocks)))
     blocks))
 
 ;; --- bounds-check loop versioning (codegen phase 7) ---------------------------
@@ -72103,7 +72359,7 @@
     compiler-opt-debug-trace-passes
     (not compiler-opt-debug-suppressed?))
     (match (owned_view.compiler-owned-reference-shared-view loop)
-      [(Loop header _ body _)
+      [(Loop header _ body _ _)
         (io.print-error
           (opt-bce-trace-line
             header
@@ -79126,7 +79382,7 @@
     [(slice) false]
     [(slice loop & rest)
       (match loop
-        [(Loop other-header _ _ _)
+        [(Loop other-header _ _ _ _)
           (if (and
             (not (= other-header header))
             (opt-label-contains body-labels other-header))
@@ -79143,7 +79399,7 @@
     [(slice) acc]
     [(slice loop & rest)
       (match (owned_view.compiler-owned-reference-shared-view loop)
-        [(Loop other-header _ other-body _)
+        [(Loop other-header _ other-body _ _)
           (opt-bce-mb-inner-labels
             rest
             header
@@ -79164,7 +79420,7 @@
     [(slice) true]
     [(slice loop & rest)
       (match (owned_view.compiler-owned-reference-shared-view loop)
-        [(Loop _ _ other-body _)
+        [(Loop _ _ other-body _ _)
           (if (opt-label-contains other-body.labels pred)
             false
             (opt-bce-mb-preheader-outside-loops? rest pred))])]))
@@ -79422,7 +79678,7 @@
   [free? : bool]
   [loop : (& OptNaturalLoop)]) : OptBceMbMaybeShape
   (match (owned_view.compiler-owned-reference-shared-view loop)
-    [(Loop header latch body preheader)
+    [(Loop header latch body preheader latch-count)
       (let
         [_trace : unit (opt-bce-trace-begin! free?)]
         [nest? : bool
@@ -79453,6 +79709,7 @@
             ;; step examined nothing". An entry header is a real refusal and
             ;; keeps its own code.
             [(and
+                (= latch-count 1)
                 (= header latch)
                 (<
                   (opt-bce-mb-body-calls
@@ -79496,6 +79753,7 @@
             [(opt-bce-mb-preheader-missing? preheader)
               (opt-bce-reason-no-preheader)]
             [(= header entry-label) (opt-bce-reason-entry-block)]
+            [(!= latch-count 1) (opt-bce-reason-latch-form)]
             [else (opt-bce-reason-ok)])]
         (if (= reason (opt-bce-reason-ok))
           (match preheader
@@ -86598,8 +86856,11 @@
         [body-labels : OptLabelSet (opt-natural-loop-body loop)]
         [body-blocks : ir.CompilerIrBlockList
           (opt-natural-loop-current-body-blocks loop blocks)]
-        (if (not
-          (opt-bce-hoist-body-ok? (ir.compiler-ir-block-list-view body-blocks)))
+        (if (or
+          (not (= (opt-natural-loop-latch-count loop) 1))
+          (not
+            (opt-bce-hoist-body-ok?
+              (ir.compiler-ir-block-list-view body-blocks))))
           (No)
           (match (opt-cfg-find-block blocks preheader)
             [(No) (No)]
@@ -87335,6 +87596,7 @@
         ;; it: header and latch would be one block and this rewrite edits them
         ;; separately.
         (if (or
+          (not (= (opt-natural-loop-latch-count loop) 1))
           (= header latch)
           (not
             (opt-bce-mb-has-nested-loop?
@@ -88437,7 +88699,7 @@
   [entry-label : i64]
   [loop : (& OptNaturalLoop)]) : OptUnrollMbMaybeShape
   (match (owned_view.compiler-owned-reference-shared-view loop)
-    [(Loop header latch body preheader)
+    [(Loop header latch body preheader latch-count)
       (match preheader
         [(No) (No)]
         [(Some pred)
@@ -88445,6 +88707,7 @@
             [body-labels : OptLabelSet body.labels]
             [body-blocks : ir.CompilerIrBlockList body.blocks]
             (if (or
+              (not (= latch-count 1))
               (= header entry-label)
               (not (= (opt-label-count body-labels) 4)))
               (No)
@@ -102044,19 +102307,27 @@
 (define (opt-counter-sink-step
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [j : i64]) : i64
-  (match (ir.compiler-ir-instr-seq-borrow instrs (+ j 1))
-    [(Mov dst (Var src) _)
-      (match (ir.compiler-ir-instr-seq-borrow instrs j)
-        [(BinOp t (Add) (Var lhs) (I64 _) _)
-          (if (and (= t src) (= lhs dst) (not (= t dst)))
-            dst
-            -1)]
-        [(BinOp t (Add) (I64 _) (Var rhs) _)
-          (if (and (= t src) (= rhs dst) (not (= t dst)))
-            dst
-            -1)]
-        [_ -1])]
-    [_ -1]))
+  (let
+    [step-mov (ir.compiler-ir-instr-seq-borrow instrs (+ j 1))]
+    (match step-mov
+      [(Mov dst (Var src) _)
+        (if (opt-addr-taken-write? step-mov)
+          -1
+          (let
+            [step-add (ir.compiler-ir-instr-seq-borrow instrs j)]
+            (if (opt-addr-taken-write? step-add)
+              -1
+              (match step-add
+                [(BinOp t (Add) (Var lhs) (I64 _) _)
+                  (if (and (= t src) (= lhs dst) (not (= t dst)))
+                    dst
+                    -1)]
+                [(BinOp t (Add) (I64 _) (Var rhs) _)
+                  (if (and (= t src) (= rhs dst) (not (= t dst)))
+                    dst
+                    -1)]
+                [_ -1]))))]
+      [_ -1])))
 
 ;; The phi `%i` of the block `prev` when `instrs[j]` is `%t = add %i, <literal>`
 ;; (either operand order): the SSA shape of the step. Else -1.
@@ -102065,11 +102336,14 @@
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [j : i64]) : i64
   (let
+    [step-add (ir.compiler-ir-instr-seq-borrow instrs j)]
     [i : i64
-      (match (ir.compiler-ir-instr-seq-borrow instrs j)
-        [(BinOp _ (Add) (Var lhs) (I64 _) _) lhs]
-        [(BinOp _ (Add) (I64 _) (Var rhs) _) rhs]
-        [_ -1])]
+      (if (opt-addr-taken-write? step-add)
+        -1
+        (match step-add
+          [(BinOp _ (Add) (Var lhs) (I64 _) _) lhs]
+          [(BinOp _ (Add) (I64 _) (Var rhs) _) rhs]
+          [_ -1]))]
     [count : i64 (ir.compiler-ir-instr-seq-count prev)]
     [k : i64 0]
     [found : i64 -1]
@@ -102197,7 +102471,8 @@
 (define (opt-counter-sink-function-candidates?
   [func : (& func ir.CompilerIrFunction)]) : bool
   (match func
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
+      (opt-addr-taken-refresh! frame blocks)
       (match blocks
         [(Array seq) (opt-counter-sink-candidates? seq)])]))
 
@@ -102710,6 +102985,7 @@
   [params : (& ir.CompilerIrParamSeq)]
   [frame : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : OptBlockListPassResult
+  (opt-addr-taken-refresh! frame blocks)
   (let
     [seq : ir.CompilerIrBlockSeq
       (ir.compiler-ir-block-list-seq
@@ -131151,25 +131427,27 @@
 (define (opt-scratch-reset-loop-mark-block
   [context : OptCfgContext]
   [loop : OptNaturalLoop]) : OptScratchResetMarkBlock
-  (match (opt-natural-loop-preheader loop)
-    [(Some preheader) (Some preheader)]
-    [(No)
-      (let
-        [header : i64 (opt-natural-loop-header loop)]
-        [preds : OptLabelSet (opt-pred-map-lookup context.pred-map header)]
-        [reachable : OptLabelSet context.reachable]
-        (opt-scratch-reset-mark-block-from-candidate
-          (if (= header (opt-natural-loop-latch loop))
-            (opt-scratch-reset-mark-candidate-scan-not-label
-              reachable
-              header
-              preds
-              (None))
-            (opt-scratch-reset-mark-candidate-scan
-              reachable
-              (opt-natural-loop-body loop)
-              preds
-              (None)))))]))
+  (if (not (= (opt-natural-loop-latch-count loop) 1))
+    (No)
+    (match (opt-natural-loop-preheader loop)
+      [(Some preheader) (Some preheader)]
+      [(No)
+        (let
+          [header : i64 (opt-natural-loop-header loop)]
+          [preds : OptLabelSet (opt-pred-map-lookup context.pred-map header)]
+          [reachable : OptLabelSet context.reachable]
+          (opt-scratch-reset-mark-block-from-candidate
+            (if (= header (opt-natural-loop-latch loop))
+              (opt-scratch-reset-mark-candidate-scan-not-label
+                reachable
+                header
+                preds
+                (None))
+              (opt-scratch-reset-mark-candidate-scan
+                reachable
+                (opt-natural-loop-body loop)
+                preds
+                (None)))))])))
 
 (define (opt-scratch-phi-input-derived?
   [roots : (& roots OptScratchRootList)]
@@ -140043,13 +140321,19 @@
 
 (define (opt-load-pre-latch?
   [loops : (& loops (Slice OptNaturalLoop))]
-  [label : i64]) : bool
+  [id : i64]
+  [succ-a : i64]
+  [succ-b : i64]) : bool
   (match loops
     [(slice) false]
     [(slice loop & rest)
-      (or
-        (= (opt-natural-loop-latch loop) label)
-        (opt-load-pre-latch? rest label))]))
+      (let
+        [header : i64 (opt-natural-loop-header loop)]
+        (or
+          (and
+            (opt-natural-loop-body-contains-id? loop id)
+            (or (= succ-a header) (= succ-b header)))
+          (opt-load-pre-latch? rest id succ-a succ-b)))]))
 
 ;; The placement gate: never a loop latch, and never a hoist whose destination
 ;; or whose arm sits in (or enters) a loop already at the live-in budget.
@@ -140330,53 +140614,56 @@
               (-
                 (array-ref succs.offsets (+ id 1))
                 (array-ref succs.offsets id))
-              2)
-            (not
-              (opt-load-pre-latch?
-                (opt_natural_loop_vec.view loops)
-                (opt-cfg-index-label index id))))
+              2))
             (let
               [a : i64 (array-ref succs.edges (array-ref succs.offsets id))]
               [b : i64
                 (array-ref succs.edges (+ (array-ref succs.offsets id) 1))]
-              [took : i64
-                (opt-load-pre-try-arm
-                  type-segment-bases
-                  index
-                  context.doms
-                  sources
-                  hs
-                  sites
-                  def-blocks
-                  loops
-                  (&mut cache)
-                  (compiler-opt-global-shared-view out)
-                  loop-free-dest?
-                  id
-                  a
-                  b)]
-              (if (= took 0)
-                (set!
-                  took
-                  (opt-load-pre-try-arm
-                    type-segment-bases
-                    index
-                    context.doms
-                    sources
-                    hs
-                    sites
-                    def-blocks
-                    loops
-                    (&mut cache)
-                    (compiler-opt-global-shared-view out)
-                    loop-free-dest?
-                    id
-                    b
-                    a))
-                unit)
-              (if (> took 0)
-                (+= moved 1)
-                unit))
+              (if (opt-load-pre-latch?
+                (opt_natural_loop_vec.view loops)
+                id
+                (opt-cfg-index-label index a)
+                (opt-cfg-index-label index b))
+                unit
+                (let
+                  [took : i64
+                    (opt-load-pre-try-arm
+                      type-segment-bases
+                      index
+                      context.doms
+                      sources
+                      hs
+                      sites
+                      def-blocks
+                      loops
+                      (&mut cache)
+                      (compiler-opt-global-shared-view out)
+                      loop-free-dest?
+                      id
+                      a
+                      b)]
+                  (if (= took 0)
+                    (set!
+                      took
+                      (opt-load-pre-try-arm
+                        type-segment-bases
+                        index
+                        context.doms
+                        sources
+                        hs
+                        sites
+                        def-blocks
+                        loops
+                        (&mut cache)
+                        (compiler-opt-global-shared-view out)
+                        loop-free-dest?
+                        id
+                        b
+                        a))
+                    unit)
+                  (if (> took 0)
+                    (+= moved 1)
+                    unit))))
             unit))
         (if (= moved 0)
           (owned_view.compiler-owned-reference-shared-view blocks)

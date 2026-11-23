@@ -1,5 +1,6 @@
 ;; Pure ELF64 x86-64 ET_REL syntax. All spans borrow one immutable input;
 ;; identity tokens are caller-assigned provenance, not capabilities.
+(import stdlib.clone)
 (import stdlib.byte_le as le)
 (import stdlib.byte_reader as bytes)
 (import stdlib.vector)
@@ -9,6 +10,8 @@
 (defstruct ElfIdentity
   (input u64)
   (content u64))
+
+(clone.gen-clone ElfIdentity)
 
 (defstruct ElfSpan
   (offset i64)
@@ -88,12 +91,16 @@
   (BadCompression))
 
 ;; One fixed-size diagnostic: malformed input never supplies owned text.
+(clone.gen-clone ElfErrorKind)
+
 (defstruct ElfError
   (kind ElfErrorKind)
   (input ElfIdentity)
   (section i64)
   (entry i64)
   (offset i64))
+
+(clone.gen-clone ElfError)
 
 (defstruct ElfHeader
   (osabi i64)
@@ -323,7 +330,12 @@
     (set! check.ok false)
     (set!
       check.error
-      (ElfError kind (clone check.identity) check.section check.entry offset)))
+      (ElfError
+        kind
+        (clone-elf-identity (& check.identity))
+        check.section
+        check.entry
+        offset)))
   unit)
 
 (define (charge! [check : (&mut c ElfCheck)] [amount : i64] [at : i64]) : unit
@@ -346,10 +358,11 @@
 
 (define (new-check [request : (& r ElfReadRequest)]) : ElfCheck
   (ElfCheck
-    (clone request.identity)
-    (clone request.limits)
+    (clone-elf-identity (& request.identity))
+    (match request.limits
+      [value value])
     true
-    (ElfError (BadHeader) (clone request.identity) -1 -1 0)
+    (ElfError (BadHeader) (clone-elf-identity (& request.identity)) -1 -1 0)
     -1
     -1
     request.limits.max-work))
@@ -402,7 +415,7 @@
   [data : (& b (__tl_dyn-array u8))]
   [check : (&mut c ElfCheck)]) : ElfHeaderResult
   (check-ident! data check 1)
-  (unless check.ok (return (HeaderFailed (clone check.error))))
+  (unless check.ok (return (HeaderFailed (clone-elf-error (& check.error)))))
   (let
     [length : i64 (array-length data)]
     (require!
@@ -413,7 +426,7 @@
     (require! check (= (le.read-u16 data 56) 0) (UnexpectedProgramHeaders) 56)
     (require! check (= (le.read-u16 data 52) 64) (BadHeader) 52)
     (require! check (= (le.read-u16 data 58) 64) (BadHeader) 58)
-    (unless check.ok (return (HeaderFailed (clone check.error))))
+    (unless check.ok (return (HeaderFailed (clone-elf-error (& check.error)))))
     (let
       [table : u64 (word data 40)]
       [count : i64 (le.read-u16 data 60)]
@@ -430,11 +443,15 @@
               (file-range? length table (cast 64 : u64)))
             (BadRange)
             40)
-          (unless check.ok (return (HeaderFailed (clone check.error))))
+          (unless
+            check.ok
+            (return (HeaderFailed (clone-elf-error (& check.error)))))
           (let
             [at : i64 (cast table : i64)]
             (charge! check 64 at)
-            (unless check.ok (return (HeaderFailed (clone check.error))))
+            (unless
+              check.ok
+              (return (HeaderFailed (clone-elf-error (& check.error)))))
             (if (= count 0)
               (let
                 [extended : u64 (word data (+ at 32))]
@@ -443,7 +460,9 @@
                   (<= extended (cast check.limits.max-sections : u64))
                   (SectionLimit)
                   (+ at 32))
-                (unless check.ok (return (HeaderFailed (clone check.error))))
+                (unless
+                  check.ok
+                  (return (HeaderFailed (clone-elf-error (& check.error)))))
                 (set! count (cast extended : i64)))
               (begin
                 (require! check (< count 65280) (BadNumbering) 60)
@@ -477,7 +496,7 @@
             (cast table : i64)
             count
             names))
-        (HeaderFailed (clone check.error))))))
+        (HeaderFailed (clone-elf-error (& check.error)))))))
 
 (defstruct ElfCounts
   (symbols i64)
@@ -1213,7 +1232,7 @@
     (while (and check.ok (< index header.section-count))
       (set! check.section index)
       (let
-        [section : ElfSection (clone (array-ref sections index))]
+        [section : ElfSection (array-ref sections index)]
         (unless
           (= section.section-type 0)
           (if (= header.name-table 0)
@@ -1239,7 +1258,7 @@
         (when
           (= section.section-type 18)
           (let
-            [table : ElfSection (clone (array-ref sections section.link))]
+            [table : ElfSection (array-ref sections section.link)]
             (require!
               check
               (= table.extended-index -1)
@@ -1385,7 +1404,7 @@
           (BadExtendedIndex)
           field)
         (if check.ok
-          (DefinedSection (clone (array-ref sections extended).id))
+          (DefinedSection (array-ref sections extended).id)
           (Undefined))]
       [(= raw 0) (Undefined)]
       [(= raw 65521) (Absolute)]
@@ -1394,7 +1413,7 @@
       [else
         (require! check (< raw (array-length sections)) (BadSymbol) (+ at 6))
         (if check.ok
-          (DefinedSection (clone (array-ref sections raw).id))
+          (DefinedSection (array-ref sections raw).id)
           (Undefined))])))
 
 (define (read-symbols
@@ -1472,7 +1491,11 @@
                 (set!
                   (array-ref symbols (+ table.symbol-start index))
                   (ElfSymbol
-                    (ElfEntryId (clone table.id) index at)
+                    (ElfEntryId
+                      (match table.id
+                        [value value])
+                      index
+                      at)
                     name
                     name-span
                     (symbol-binding binding)
@@ -1620,10 +1643,16 @@
                 (set!
                   (array-ref relocations (+ section.relocation-start index))
                   (ElfRelocation
-                    (ElfEntryId (clone section.id) index at)
-                    (clone target.id)
                     (ElfEntryId
-                      (clone table.id)
+                      (match section.id
+                        [value value])
+                      index
+                      at)
+                    (match target.id
+                      [value value])
+                    (ElfEntryId
+                      (match table.id
+                        [value value])
                       symbol
                       (+ (cast table.file-offset : i64) (* symbol 24)))
                     offset
@@ -1689,10 +1718,12 @@
             (set!
               (array-ref groups section.group-index)
               (ElfGroup
-                (clone section.id)
+                (match section.id
+                  [value value])
                 (le.read-u32 data start)
                 (ElfEntryId
-                  (clone table.id)
+                  (match table.id
+                    [value value])
                   section.info
                   (+ (cast table.file-offset : i64) (* section.info 24)))
                 cursor
@@ -1718,9 +1749,7 @@
                   (BadGroup)
                   at)
                 (set! (array-ref owners member) section.group-index)
-                (set!
-                  (array-ref members cursor)
-                  (clone (array-ref sections member).id))
+                (set! (array-ref members cursor) (array-ref sections member).id)
                 (set! cursor (+ cursor 1)))
               (set! index (+ index 1))))))
       (set! section-index (+ section-index 1)))
@@ -1779,7 +1808,11 @@
                 (set!
                   (array-ref notes (+ section.note-start index))
                   (ElfNote
-                    (ElfEntryId (clone section.id) index at)
+                    (ElfEntryId
+                      (match section.id
+                        [value value])
+                      index
+                      at)
                     (le.read-u32 data (+ at 8))
                     (ElfSpan owner owner-size)
                     (ElfSpan descriptor desc-size)
@@ -1799,24 +1832,24 @@
       [(HeaderReady header)
         (let
           [counts : ElfCounts (preflight data (& header) (&mut check))]
-          (unless check.ok (return (ReadFailed (clone check.error))))
+          (unless check.ok (return (ReadFailed check.error)))
           (let
             [sections : (__tl_dyn-array ElfSection)
               (read-sections data (& header) (&mut check))]
             (check-overlaps! (& header) (& sections) (&mut check))
-            (unless check.ok (return (ReadFailed (clone check.error))))
+            (unless check.ok (return (ReadFailed check.error)))
             (let
               [symbols : (__tl_dyn-array ElfSymbol)
                 (read-symbols data (& sections) (& counts) (&mut check))]
-              (unless check.ok (return (ReadFailed (clone check.error))))
+              (unless check.ok (return (ReadFailed check.error)))
               (let
                 [relocations : (__tl_dyn-array ElfRelocation)
                   (read-relocations data (& sections) (& counts) (&mut check))]
-                (unless check.ok (return (ReadFailed (clone check.error))))
+                (unless check.ok (return (ReadFailed check.error)))
                 (let
                   [group-data : ElfGroupData
                     (read-groups data (& sections) (& counts) (&mut check))]
-                  (unless check.ok (return (ReadFailed (clone check.error))))
+                  (unless check.ok (return (ReadFailed check.error)))
                   (let
                     [notes : (__tl_dyn-array ElfNote)
                       (read-notes data (& sections) (& counts) (&mut check))]
@@ -1824,7 +1857,7 @@
                       (ReadObject
                         (ElfObject
                           data
-                          (clone request.identity)
+                          (clone-elf-identity (& request.identity))
                           header
                           sections
                           symbols
@@ -1833,4 +1866,4 @@
                           group-data.members
                           notes
                           (- request.limits.max-work check.left)))
-                      (ReadFailed (clone check.error)))))))))])))
+                      (ReadFailed check.error))))))))])))

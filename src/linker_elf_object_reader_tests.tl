@@ -1300,7 +1300,9 @@
     (for [i (iterator.range 0 5)]
       (let
         [data : (__tl_dyn-array u8)
-          (array-with-name (array-ref types i) (clone (array-ref names i)))]
+          (array-with-name
+            (array-ref types i)
+            (string.copy (& (array-ref names i))))]
         (match (elf.read-object (& data) (& req))
           [(ReadFailed _) (test.assert-true false "valid pointer array suffix")]
           [(ReadObject object)

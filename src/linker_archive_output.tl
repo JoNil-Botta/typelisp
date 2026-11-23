@@ -211,7 +211,7 @@
   [directory : (& d (archive.ArchiveDirectory input))]
   [session : (&mut s archive.ArchiveSession)]) : ArchiveOutputResult
   (let
-    [identity : archive.ArchiveIdentity (clone directory.identity)]
+    [identity (archive.clone-archive-identity (& directory.identity))]
     [count : i64 (array-length directory.members)]
     (match (archive.check-session directory (& session))
       [(InvalidId kind)

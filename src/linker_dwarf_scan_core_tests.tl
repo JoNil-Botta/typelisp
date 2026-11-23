@@ -1660,7 +1660,9 @@
     [index : i64 (- (array-length views) 1)]
     ;; The views stay with the caller: each one is cloned.
     (while (>= index 0)
-      (__tl_array-push! out (clone (array-ref views index)))
+      (__tl_array-push!
+        out
+        (dwarf.clone-linker-dwarf-view (& (array-ref views index))))
       (-= index 1))
     out))
 

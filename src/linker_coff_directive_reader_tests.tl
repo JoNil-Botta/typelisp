@@ -1,4 +1,5 @@
 ;; Executable `.drectve` reader conformance, discovered by inline-test CI.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import linker_coff_directive_reader as drectve)
 (import stdlib.byte_buf_core as bytes)
@@ -109,7 +110,7 @@
     [actual : String (render (& result))]
     (assert
       (string.eq actual expected)
-      (cat.str-cat (clone name) ": unexpected records:\n" actual))))
+      (cat.str-cat (string.copy (& name)) ": unexpected records:\n" actual))))
 
 (define (kind-name [kind : (& k drectve.CoffDirectiveErrorKind)]) : String
   (match kind
@@ -176,7 +177,7 @@
             ", got "
             (kind-name (& error.kind))
             ": "
-            (clone error.message))))]))
+            (string.copy (& error.message)))))]))
 
 (define (reject
   [text : String]
@@ -518,7 +519,8 @@
   (let
     [text : String
       "   /DEFAULTLIB:\"LIBCMT\" /FAILIFMISMATCH:\"_MSC_VER=1900\"\t/EXPORT:\"?v@@3HA\",DATA /DELAY:UNLOAD"]
-    [full : drectve.ResultCoffDirectives (read-data (bytes-of (clone text)))]
+    [full : drectve.ResultCoffDirectives
+      (read-data (bytes-of (string.copy (& text))))]
     [length : i64 (string.string-length (& text))]
     (for [cut (iterator.range 0 (+ length 1))]
       (let
@@ -552,10 +554,14 @@
   drectve-reads-only-the-section-range
   (let
     [text : String "/DEFAULTLIB:\"LIBCMT\" /INCLUDE:x"]
-    [standalone : String (render-owned (read-data (bytes-of (clone text))))]
+    [standalone : String
+      (render-owned (read-data (bytes-of (string.copy (& text)))))]
     [object : (__tl_dyn-array u8)
       (patched
-        (patched (bytes-of (cat.str-cat "#####" (clone text) "##")) 0 0)
+        (patched
+          (bytes-of (cat.str-cat "#####" (string.copy (& text)) "##"))
+          0
+          0)
         36
         0xff)]
     [embedded : drectve.ResultCoffDirectives
@@ -621,7 +627,7 @@
       (let
         [data : (__tl_dyn-array u8) (fuzz-section)]
         [size : i64 (array-length data)]
-        [result : drectve.ResultCoffDirectives (read-data (clone data))]
+        [result : drectve.ResultCoffDirectives (read-data (clone.deep data))]
         (match (& result)
           [(Err error)
             (assert

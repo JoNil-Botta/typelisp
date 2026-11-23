@@ -748,7 +748,7 @@
     (Ok "")
     (let
       ;; GAP7: both homes serve as CONST-offset memory-operand bases in the chunk
-      ;; copies -- a %rbp home is spelled via the SIB scale-1 form.
+      ;; copies -- a %rbp value has a spaced base operand.
       [dst-home : String
         (be_facts.compiler-backend-address-base-filter-direct
           (be_facts.compiler-backend-value-register-home
@@ -4849,7 +4849,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [gep-disp : i64]) : String
   ;; %rbp is excluded from the BASE slot on BOTH arms, not just the dynamic arm
-  ;; address-base-filter already guards: the `disp(,%rbp,1)` spelling the const
+  ;; address-base-filter already guards: the `disp( %rbp)` spelling the const
   ;; arm would otherwise use is re-read by the bounds-abort tail after a `pushq`
   ;; has moved %rsp, and it is the exact shape the FPO rsp-rebase pass rewrites.
   (let
@@ -4960,7 +4960,7 @@
 ;; staging `movq` that was never being paid. That is address-base-filter on the
 ;; dynamic arm (%rbp included: its home cannot serve as a SIB base) and a
 ;; genuinely register-less home on the const arm, where
-;; address-base-filter-direct lets even %rbp address `disp(,%rbp,1)` in place.
+;; address-base-filter-direct lets even %rbp address `disp( %rbp)` in place.
 (define (compiler-backend-gep-load-cmp-staged-base
   [ctx : be_state.CompilerBackendEmissionContext]
   [load-dst : i64]) : String
@@ -8845,17 +8845,15 @@
       [(Some imm)
         (match op
           ;; `K(%rbp)` would read as a frame address to the final rsp rebase;
-          ;; the no-base SIB form computes the same sum.
+          ;; a spaced base distinguishes a register value from a slot.
           [(Add)
             (Ok
               (str_cat.str-cat
                 (str_cat.str-cat
                   "    leaq "
                   (string.substring imm 1 (- (string.string-length imm) 1))
-                  "("
-                  (if (string.eq lhs-reg "%rbp")
-                    ",%rbp,1"
-                    lhs-reg))
+                  (be_operand.compiler-backend-value-base-prefix lhs-reg)
+                  lhs-reg)
                 (str_cat.str-cat "), " src "\n")))]
           [(Mul)
             (Ok
@@ -11994,7 +11992,7 @@
     ;; A product's SIB text ("" for any other first instruction).
     [first-sib : String
       (if scaled?
-        (be_scalar.compiler-backend-mul-sib-operand source factor)
+        (be_scalar.compiler-backend-mul-sib-operand source factor false)
         "")]
     [term-ok? : bool
       (if scaled?
@@ -24491,6 +24489,9 @@ tl_shared_object_init:
           backend-state
           stream
           (be_state.compiler-backend-global-shared-view records))]
+      [_compact : unit
+        (be_peephole.compiler-backend-peephole-compact-stack-addresses!
+          (&mut records))]
       [finished : be_state.CompilerBackendPeepholeSweepChunkState
         (unsafe
           ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
@@ -24770,6 +24771,11 @@ tl_shared_object_init:
         probe-final?
         (be_peephole.compiler-backend-expand-stack-probes!
           backend-state
+          (&mut records)))]
+    [_compact : unit
+      (when
+        probe-final?
+        (be_peephole.compiler-backend-peephole-compact-stack-addresses!
           (&mut records)))]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned

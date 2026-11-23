@@ -14515,12 +14515,10 @@
         (= (ast.ast-node-pool-context-expr-len expanded) past-end))]
     [_install : unit (ast.ast-node-pool-compat-context-use! expanded)]
     [query : bool
-      (match (tc_core.tc-expr-if-with-expected-or-actual
+      (match (tc_core.tc-expr-with-expected-or-actual
         ctx
         (tc_core.tc-empty-env)
-        condition
-        value
-        value
+        (ast.AstExpr.If condition value value)
         ast.AstType.I64)
         [(tc_core.ResultTcType.Ok ty) (tc_core.tc-type-eq ty ast.AstType.I64)]
         [_ false])]
@@ -14581,12 +14579,10 @@
         [_ false])]
     [_live : unit (ast.ast-node-pool-context-install! expanded)]
     [mirrored-query : bool
-      (match (tc_core.tc-expr-if-with-expected-or-actual
+      (match (tc_core.tc-expr-with-expected-or-actual
         ctx
         (tc_core.tc-empty-env)
-        condition
-        value
-        value
+        (ast.AstExpr.If condition value value)
         ast.AstType.I64)
         [(tc_core.ResultTcType.Ok ty) (tc_core.tc-type-eq ty ast.AstType.I64)]
         [_ false])]
@@ -17882,6 +17878,18 @@
           (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "p.0")))]
         [borrow : i64
           (ast.ast-node-pool-context-expr-push pools (Borrow true -1 place))]
+        [span : ast.AstSourceSpan (ast.ast-source-span 9 10 9 21)]
+        [spanned : i64 (ast.ast-expr-source-view-with-pools pools borrow span)]
+        [compact : i64
+          (ast.ast-expr-source-view-with-pools
+            pools
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (MacroExpansion
+                borrow
+                (tc_core.macro-expansion-provenance-id -1 -1)
+                (ctfe_support.ctfe-compact-caller-origin-name)))
+            span)]
         [ctx : tc_core.TcContext (tc-selected-test-context pools)]
         [env : tc_core.TcTypeEnv
           (tc_core.tc-bind-id (tc_core.tc-empty-env) (ci.intern "p") (I64))]
@@ -17896,30 +17904,34 @@
           (tc_core.tc-context-job-state ctx)
           observer)
         (tc_core.tc-context-set-semantic-observer! ctx observer)
-        (for [view-mode (iterator.range 0 2)]
+        (for [view-mode (iterator.range 0 3)]
           (for [expected-mode (iterator.range 0 2)]
             (set! (array-ref state.events 0) 0)
             (set! (array-ref state.events 1) 0)
-            (match (tc_core.tc-check-operand-view
-              ctx
-              env
-              borrow
-              (ast.ast-source-span 9 10 9 21)
-              (= view-mode 1)
-              (Unit)
-              (= expected-mode 1)
-              false)
-              [(tc_core.ResultTcType.Err message)
-                (let
-                  [diag : cdiag.CompilerDiagnostic
-                    (tc_core.tc-diag-at-start message)]
+            (let
+              [id : i64
+                (match view-mode
+                  [0 borrow]
+                  [1 spanned]
+                  [_ compact])]
+              [result : tc_core.ResultTcType
+                (if (= expected-mode 1)
+                  (tc_core.tc-expr-with-expected-or-actual-id ctx env id (Unit))
+                  (tc_core.tc-expr-id ctx env id))]
+              (match result
+                [(tc_core.ResultTcType.Err message)
+                  (let
+                    [diag : cdiag.CompilerDiagnostic
+                      (tc_core.tc-diag-at-start message)]
+                    (test.assert-true
+                      (string.eq
+                        (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                        "E0215")
+                      "a malformed dotted borrow retains its place diagnostic"))]
+                [_
                   (test.assert-true
-                    (string.eq
-                      (cdiag.compiler-diagnostic-code-or-empty (& diag))
-                      "E0215")
-                    "a malformed dotted borrow retains its place diagnostic"))]
-              [_
-                (test.assert-true false "a malformed dotted borrow is rejected")])
+                    false
+                    "a malformed dotted borrow is rejected")]))
             (test.assert-i64-eq
               (array-ref state.events 0)
               1

@@ -3234,7 +3234,84 @@
   (let
     [scratch : arena.Arena (arena.make)]
     (with-escape scratch inc)))")
-      "with-escape clone-out of (-> i64 i64): gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep")))
+      "with-escape clone-out of (-> i64 i64): gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep")
+    ;; Aggregates containing functions or raw pointers are not plain Copy data
+    ;; for clone-out and must be rejected through `__tl-clone-out`.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct FnBox (f (-> i64 i64)))
+(define (main) : i64
+  (let
+    [cb : FnBox
+      (with-scratch
+        (let
+          [x : i64 42]
+          (FnBox (lambda ([y : i64]) : i64 (+ x y)))))]
+    ((. cb f) 1)))")
+      "with-scratch clone-out of FnBox: gen-clone: unsupported type fn_i64_nil_to_i64 at FnBox.f")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (main) : i64
+  (let
+    [pair : (Tuple (-> i64 i64) i64)
+      (with-scratch
+        (let
+          [x : i64 42]
+          (tuple (lambda ([y : i64]) : i64 (+ x y)) x)))]
+    ((tuple-ref pair 0) (tuple-ref pair 1))))")
+      "with-scratch clone-out of (Tuple (-> i64 i64) i64): gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep[0]")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct PtrBox (p (Ptr i64)))
+(define (main) : i64
+  (let
+    [x : i64 42]
+    [pb : PtrBox (with-scratch (PtrBox (unsafe (ptr-cast (ptr-addr-of x) : (Ptr i64)))))]
+    (unsafe (ptr-read (. pb p)))))")
+      "with-scratch clone-out of PtrBox: gen-clone: unsupported type ptr_i64 at PtrBox.p")
+    ;; Expected type threads from let annotations, ann, and call parameters into
+    ;; scratch-form clone-out expansion without leaking the function return type.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(import stdlib.clone as clone_gen)
+(defenum ResA (Ok String) (Err i64))
+(defenum ResB (Ok String) (Err i64))
+(clone_gen.gen-clone ResA)
+(clone_gen.gen-clone ResB)
+(define (take-b [x : ResB]) : i64
+  (match x [(ResB.Ok s) (string.string-length s)] [(ResB.Err n) n]))
+(define (f-let-i64) : i64
+  (let [x : ResB (with-scratch (Ok (string.int->string 42)))] 0))
+(define (f-let-other-ret) : ResA
+  (let [x : ResB (with-scratch (Ok (string.int->string 42)))] (ResA.Err 0)))
+(define (f-ann) : i64
+  (take-b (ann (with-scratch (Ok (string.int->string 42))) : ResB)))
+(define (f-call) : i64
+  (take-b (with-scratch (Ok (string.int->string 42)))))
+(define (main) : i64
+  (+ (+ (f-let-i64) (f-ann)) (f-call)))"))
+    ;; Non-tail unannotated binding must not inherit the function's return type.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(import stdlib.clone as clone_gen)
+(defenum ResA (Ok String) (Err i64))
+(defenum ResB (Ok String) (Err i64))
+(clone_gen.gen-clone ResA)
+(clone_gen.gen-clone ResB)
+(define (f) : ResA
+  (let [x (with-scratch (Ok (string.int->string 42)))] (ResA.Err 0)))
+(define (main) : i64 0)")
+      "typecheck: ambiguous variant `Ok`; qualify as ResA.Ok or ResB.Ok")
+    ;; with-escape inside spmd reports with-escape, not with-scratch.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (main) : unit
+  (let [scratch : arena.Arena (arena.make)]
+    (foreach ([i : i64 0 4])
+      (begin
+        (with-escape scratch 0)
+        unit))))")
+      "typecheck: with-escape inside spmd is not supported")))
 
 ;; #8776: with-escape and with-scratch check their body under a region scoped
 ;; to the form, so a body allocation cannot outlive it through a store, a

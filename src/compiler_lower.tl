@@ -11971,20 +11971,10 @@
           pools
           all-functions
           (lower-global-shared-view names)
-          (lower-reach-expr
-            pools
-            all-functions
-            (lower-global-shared-view names)
-            (lower-reach-add-string-snapshot-runtime all-functions names state)
-            scratch)
+          (lower-reach-expr pools all-functions names state scratch)
           exprs))]
     [(WithScratch exprs)
-      (lower-reach-expr-list
-        pools
-        all-functions
-        (lower-global-shared-view names)
-        (lower-reach-add-string-snapshot-runtime all-functions names state)
-        exprs)]
+      (lower-reach-expr-list pools all-functions names state exprs)]
     [(InArena arena-box exprs)
       (let
         [arena : ast.AstExpr

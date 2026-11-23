@@ -76994,8 +76994,11 @@
       (Err "typecheck: with-escape inside spmd is not supported")]
     [(WithScratch _)
       (Err "typecheck: with-scratch inside spmd is not supported")]
-    [(CloneOut _ _)
-      (Err "typecheck: with-scratch inside spmd is not supported")]
+    [(CloneOut form-box _)
+      (match (tc-clone-out-form ctx form-box)
+        [(WithEscape _ _)
+          (Err "typecheck: with-escape inside spmd is not supported")]
+        [_ (Err "typecheck: with-scratch inside spmd is not supported")])]
     [(InArena _ _) (Err "typecheck: in-arena inside spmd is not supported")]
     [(WithResource _) (Err "typecheck: resource with is not implemented yet")]
     [(or (Quote _) (Quasiquote _)) (tc-spmd-finish expr-ty Uniform spmd-env)]
@@ -90813,6 +90816,18 @@
       " result still refers to the scratch arena after clone-out: "
       (tc-type-render (tc-resolve-type ctx ty)))))
 
+(define (tc-clone-out-uncloned-message
+  [ctx : TcContext]
+  [form : String]
+  [ty : ast.AstType]) : String
+  (tc-kind-message
+    (RegionEscape)
+    (str_cat.str-cat
+      "typecheck: "
+      form
+      " result requires clone-out and is not a plain Copy value: "
+      (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty))))))
+
 (define (tc-with-region-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -90969,13 +90984,172 @@
     [body-ty : ast.AstType (try (tc-scratch-body-type ctx env body expected))]
     (tc-clone-out-type ctx env "with-scratch" region name body-ty step)))
 
-;; Copy non-function types leave a scratch form by value without a clone call.
+(define (tc-clone-out-copy-value-type-list?
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    true
+    (and
+      (tc-clone-out-copy-value-with-stack?
+        ctx
+        (tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        stack)
+      (tc-clone-out-copy-value-type-list? ctx types stack (+ index 1)))))
+
+(define (tc-clone-out-copy-value-nominal-types?
+  [ctx : TcContext]
+  [nominal-id : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [types : ast.AstTypeList]
+  [stack : TcNameIdList]) : bool
+  (match (tc-lifetime-subst-from-nominal-args-id ctx nominal-id lifetimes)
+    [(Ok subst)
+      (let
+        [substituted : ast.AstTypeList
+          (tc-lifetime-subst-type-list subst types)]
+        (tc-clone-out-copy-value-type-list? ctx (& substituted) stack 0))]
+    [(Err _) false]))
+
+(define (tc-clone-out-copy-value-enum-variants?
+  [ctx : TcContext]
+  [nominal-id : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [variants : (& variants ast.AstVariantDefList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index variants.len)
+    true
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(Def _ payloads _)
+        (and
+          (tc-clone-out-copy-value-nominal-types?
+            ctx
+            nominal-id
+            lifetimes
+            (tc-resolve-type-list ctx payloads)
+            stack)
+          (tc-clone-out-copy-value-enum-variants?
+            ctx
+            nominal-id
+            lifetimes
+            variants
+            stack
+            (+ index 1)))])))
+
+(define (tc-clone-out-copy-value-nominal?
+  [ctx : TcContext]
+  [name-id : i64]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [stack : TcNameIdList]) : bool
+  (let
+    [nominal-state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
+    [handle : i64
+      (tc-type-handle-lookup-id
+        nominal-state
+        (tc-context-symbols-ref (& ctx))
+        name-id
+        tc-type-handle-lookup-caller-move-kind)]
+    (if (not (csym.compiler-symbols-handle-found? handle))
+      false
+      (let
+        [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+        [nominal-id : i64 (tc-nominal-owner-id-or ctx handle name-id)]
+        (cond
+          [(or
+              (< nominal-id 0)
+              (not
+                (or
+                  (= kind (csym.compiler-symbol-kind-defstruct))
+                  (= kind (csym.compiler-symbol-kind-defenum))))
+              (tc-name-id-list-contains stack nominal-id))
+            false]
+          [else
+            (let
+              [owner-ctx : TcContext
+                (tc-context-with-nominal-owner-index-module
+                  ctx
+                  (csym.compiler-symbol-handle-index handle))]
+              [next-stack : TcNameIdList (tc-name-id-list-add stack nominal-id)]
+              (match (csym.compiler-symbols-decl-at-index
+                (tc-context-symbols-ref (& owner-ctx))
+                (csym.compiler-symbol-handle-index handle))
+                [(Ok decl)
+                  (match decl
+                    [(or (DefStruct _ _ _ cleanup fields)
+                         (DefStructLifetimes _ _ _ _ cleanup fields))
+                      (and
+                        (not (ast.ast-struct-cleanup? cleanup))
+                        (tc-clone-out-copy-value-nominal-types?
+                          owner-ctx
+                          nominal-id
+                          lifetimes
+                          (tc-field-type-list owner-ctx fields)
+                          next-stack))]
+                    [(or (DefEnum _ _ cleanup variants)
+                         (DefEnumLifetimes _ _ _ cleanup variants))
+                      (and
+                        (not (ast.ast-enum-cleanup? cleanup))
+                        (tc-clone-out-copy-value-enum-variants?
+                          owner-ctx
+                          nominal-id
+                          lifetimes
+                          (& variants)
+                          next-stack
+                          0))]
+                    [_ false])]
+                [(Err _) false]))])))))
+
+(define (tc-clone-out-copy-value-with-stack?
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [stack : TcNameIdList]) : bool
+  (let
+    [resolved : ast.AstType (tc-resolve-type ctx ty)]
+    (match resolved
+      [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool)
+           (Char) (Unit) (Never))
+        true]
+      [(or (Region _ inner) (Array inner _))
+        (tc-clone-out-copy-value-with-stack?
+          ctx
+          (tc-context-type-get ctx inner)
+          stack)]
+      [(Tuple elems)
+        (tc-clone-out-copy-value-type-list? ctx (& (deref elems)) stack 0)]
+      [(or (Enum name) (Struct name))
+        (let
+          [empty : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+          (tc-clone-out-copy-value-nominal? ctx name (& empty) stack))]
+      [(EnumArgs name lifetimes)
+        (tc-clone-out-copy-value-nominal? ctx name (& (deref lifetimes)) stack)]
+      [(StructArgs name lifetimes)
+        (if (and
+          (tc-arena-nominal-name-id? name)
+          (> (ast.ast-lifetime-list-len (& (deref lifetimes))) 0))
+          false
+          (tc-clone-out-copy-value-nominal?
+            ctx
+            name
+            (& (deref lifetimes))
+            stack))]
+      [(or (Func _ _) (CFunc _ _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _)
+           (Invalidate _ _) (Expr) (ExprList) (String) (Str) (Bytes)
+           (DynArray _) (Slice _) (Box _) (Var _) (VarArgs _ _))
+        false])))
+
+;; Pure scalar/aggregate data containing no functions, pointers, references,
+;; owning values, or cleanup-owning nominals leaves a scratch form by value
+;; without a clone call; everything else routes through `__tl-clone-out`.
 (define (tc-clone-out-copy-value? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (and
-    (tc-type-copyable? ctx (clone ty))
-    (match (tc-type-without-regions (tc-resolve-type ctx ty))
-      [(or (Func _ _) (CFunc _ _)) false]
-      [_ true])))
+  (tc-clone-out-copy-value-with-stack? ctx ty Nil))
 
 (define (tc-clone-out-strip-copy-region-list
   [ctx : TcContext]
@@ -91022,9 +91196,19 @@
           count)]
       [_ ty])))
 
+(define (tc-clone-out-identity-step?
+  [ctx : TcContext]
+  [step : i64]
+  [name : i64]) : bool
+  (match (tc-context-expr-get ctx step)
+    [(Spanned inner _) (tc-clone-out-identity-step? ctx inner name)]
+    [(MacroExpansion inner _ _) (tc-clone-out-identity-step? ctx inner name)]
+    [(Var var-name) (= var-name name)]
+    [_ false]))
+
 ;; The form's type: its clone-out step's type, which must not carry the body
 ;; REGION. The step reads the body result through the hidden binding NAME. A
-;; form without a step (-1) yields the body result itself.
+;; form without a clone step (-1 or identity) may only yield plain Copy data.
 (define (tc-clone-out-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -91034,21 +91218,30 @@
   [body-ty : ast.AstType]
   [step : i64]) : ResultTcType
   (let
-    ;; The scratch arena is still live while the step runs: its region stays
-    ;; visible, so the step may borrow the result, without being the active
-    ;; allocation region. A binding named by the region makes it visible.
-    [step-ty : ast.AstType
-      (if (< step 0)
-        body-ty
-        (try
-          (tc-expr-id
-            ctx
-            (tc-bind-id (tc-bind-id env region ast.AstType.Unit) name body-ty)
-            step)))]
-    [out-ty : ast.AstType (tc-clone-out-strip-copy-region ctx step-ty region)]
-    (if (tc-type-contains-region (tc-global-shared-view out-ty) region)
-      (Err (tc-clone-out-escape-message ctx form out-ty))
-      (Ok out-ty))))
+    [identity? : bool
+      (or (< step 0) (tc-clone-out-identity-step? ctx step name))]
+    (if (and identity? (not (tc-clone-out-copy-value? ctx (clone body-ty))))
+      (Err (tc-clone-out-uncloned-message ctx form body-ty))
+      (let
+        ;; The scratch arena is still live while the step runs: its region stays
+        ;; visible, so the step may borrow the result, without being the active
+        ;; allocation region. A binding named by the region makes it visible.
+        [step-ty : ast.AstType
+          (if (< step 0)
+            body-ty
+            (try
+              (tc-expr-id
+                ctx
+                (tc-bind-id
+                  (tc-bind-id env region ast.AstType.Unit)
+                  name
+                  body-ty)
+                step)))]
+        [out-ty : ast.AstType
+          (tc-clone-out-strip-copy-region ctx step-ty region)]
+        (if (tc-type-contains-region (tc-global-shared-view out-ty) region)
+          (Err (tc-clone-out-escape-message ctx form out-ty))
+          (Ok out-ty))))))
 
 ;; `(CloneOut form step)`: the scratch form `form` with its clone-out step.
 (define (tc-clone-out-expr
@@ -113495,12 +113688,20 @@
   [expanded : i64]
   [hygiene : MacroHygieneContext]
   [depth : i64]
-  [path-id : i64]) : ResultMacroExpr
+  [path-id : i64]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (if (=
     expanded
     (ctfe_support.ctfe-result-hygiene-free-node-id-for-state
       (tc-context-ctfe-macro-state ctx)))
-    (macro-expand-produced-node-in ctx type-env decls depth expanded path-id)
+    (macro-expand-produced-node-in
+      ctx
+      type-env
+      decls
+      depth
+      expanded
+      path-id
+      expected)
     (let
       [state : TcMacroState (tc-context-macro-state ctx)]
       [_root : unit (macro-hygiene-env-root-begin! state)]
@@ -113525,7 +113726,8 @@
             own-decls
             depth
             renamed
-            path-id)]
+            path-id
+            expected)]
         [(No) (io.panic "typecheck: macro hygiene callee resolver was lost")]))))
 
 ;; Classify a parameter as macro-bind-params does, resolving its type in the
@@ -121444,7 +121646,8 @@
   [env : TcTypeEnv]
   [decls : ast.AstDeclList]
   [depth : i64]
-  [expr-id : i64]) : ResultMacroExpr
+  [expr-id : i64]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]
     ;; A transformer result may live in its scratch pool rather than `ctx`.
@@ -121481,7 +121684,7 @@
                     (MacroDepth)
                     (& expr)
                     "macro expansion exceeded depth limit"))))
-            (macro-expand-expr-fire ctx env decls depth expr)))))))
+            (macro-expand-expr-fire-expected ctx env decls depth expr expected)))))))
 
 (define (macro-expand-produced-node-in
   [ctx : TcContext]
@@ -121489,7 +121692,8 @@
   [decls : ast.AstDeclList]
   [depth : i64]
   [expr-id : i64]
-  [path-id : i64]) : ResultMacroExpr
+  [path-id : i64]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (let
     [state : TcMacroCallSiteState
       (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
@@ -121499,7 +121703,7 @@
       (tc-macro-call-site-state-set-expansion-path-id! state path-id))
     (let
       [result : ResultMacroExpr
-        (macro-expand-produced-node ctx env decls depth expr-id)]
+        (macro-expand-produced-node ctx env decls depth expr-id expected)]
       (tc-macro-call-site-state-set-expansion-path-id! state saved)
       result)))
 
@@ -121517,7 +121721,8 @@
   [body : ast.AstExpr]
   [args : ast.AstExprList]
   [depth : i64]
-  [call-expr : ast.AstExpr]) : ResultMacroExpr
+  [call-expr : ast.AstExpr]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (if (tc-macro-result-module? ret)
     (Err
       (box
@@ -121578,7 +121783,8 @@
                         declaration-id
                         ctx.shared)
                       (+ depth 1)
-                      definition-path-id)]
+                      definition-path-id
+                      expected)]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                     rewalk-result)))
@@ -121614,7 +121820,8 @@
                         declaration-id
                         ctx.shared)
                       (+ depth 1)
-                      definition-path-id)]
+                      definition-path-id
+                      expected)]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                     rewalk-result)))
@@ -121646,7 +121853,8 @@
   [body : ast.AstExpr]
   [args : ast.AstExprList]
   [depth : i64]
-  [call-expr : ast.AstExpr]) : ResultMacroExpr
+  [call-expr : ast.AstExpr]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (match (macro-expand-call-unframed
     ctx
     type-env
@@ -121661,7 +121869,8 @@
     body
     args
     depth
-    (tc-global-shared-view call-expr))
+    (tc-global-shared-view call-expr)
+    expected)
     [(Ok expanded)
       (Ok
         (if (macro-private-place-bridge-name? macro-name)
@@ -121691,17 +121900,68 @@
               type-env
               (cdiag.compiler-diagnostic-box-shared-view diag)))))]))
 
+(define (macro-expand-exprs-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [exprs : ast.AstExprList]
+  [expected : ast.AstMaybeType]) : ResultMacroExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
+    [_
+      (try
+        (macro-expand-exprs-into-expected
+          ctx
+          env
+          decls
+          depth
+          (& exprs)
+          0
+          expected
+          (&mut out)))]
+    (Ok out)))
+
 (define (macro-expand-exprs
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : (& ast.AstDeclList)]
   [depth : i64]
   [exprs : ast.AstExprList]) : ResultMacroExprList
-  (let
-    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
-    [_
-      (try (macro-expand-exprs-into ctx env decls depth (& exprs) 0 (&mut out)))]
-    (Ok out)))
+  (macro-expand-exprs-expected ctx env decls depth exprs (ast.AstMaybeType.No)))
+
+(define (macro-expand-exprs-into-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]
+  [expected : ast.AstMaybeType]
+  [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
+  (if (>= index exprs.len)
+    (Ok)
+    (let
+      [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
+      (if (= (+ index 1) exprs.len)
+        (let
+          [nhead
+            (try
+              (macro-expand-node-expected ctx env decls depth head-id expected))]
+          (ast.ast-expr-list-push out nhead)
+          (Ok))
+        (let
+          [nhead (try (macro-expand-node ctx env decls depth head-id))]
+          (ast.ast-expr-list-push out nhead)
+          (macro-expand-exprs-into-expected
+            ctx
+            env
+            decls
+            depth
+            exprs
+            (+ index 1)
+            expected
+            out))))))
 
 (define (macro-expand-exprs-into
   [ctx : TcContext]
@@ -121711,25 +121971,289 @@
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
+  (macro-expand-exprs-into-expected
+    ctx
+    env
+    decls
+    depth
+    exprs
+    index
+    (ast.AstMaybeType.No)
+    out))
+
+(define (macro-expand-exprs-each-expected-into
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]
+  [expected : ast.AstMaybeType]
+  [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
   (if (>= index exprs.len)
     (Ok)
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
-      [nhead (try (macro-expand-node ctx env decls depth head-id))]
+      [nhead
+        (try
+          (macro-expand-node-expected
+            ctx
+            env
+            decls
+            depth
+            head-id
+            (clone expected)))]
       (ast.ast-expr-list-push out nhead)
-      (macro-expand-exprs-into ctx env decls depth exprs (+ index 1) out))))
+      (macro-expand-exprs-each-expected-into
+        ctx
+        env
+        decls
+        depth
+        exprs
+        (+ index 1)
+        expected
+        out))))
+
+(define (macro-expand-exprs-each-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [exprs : ast.AstExprList]
+  [expected : ast.AstMaybeType]) : ResultMacroExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
+    [_
+      (try
+        (macro-expand-exprs-each-expected-into
+          ctx
+          env
+          decls
+          depth
+          (& exprs)
+          0
+          expected
+          (&mut out)))]
+    (Ok out)))
+
+(define (macro-expr-list-first-fire-index
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]) : i64
+  (if (>= index exprs.len)
+    -1
+    (if (macro-expr-might-fire?
+      state
+      expr-bases
+      (ast.ast-expr-segment-bases-get
+        expr-bases
+        (ast.ast-expr-list-get exprs index 0)))
+      index
+      (macro-expr-list-first-fire-index state expr-bases exprs (+ index 1)))))
+
+(define (macro-call-arg-expected-type
+  [ctx : TcContext]
+  [params : (& params ast.AstTypeList)]
+  [index : i64]) : ast.AstMaybeType
+  (if (>= index (ast.ast-type-list-len params))
+    (ast.AstMaybeType.No)
+    (let
+      [resolved : ast.AstType
+        (tc-type-strip-region
+          (tc-resolve-type
+            ctx
+            (tc-context-type-get
+              ctx
+              (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))))]
+      (match (& resolved)
+        [(or (Ref _ _) (MutRef _ _) (Var _) (VarArgs _ _))
+          (ast.AstMaybeType.No)]
+        [_ (ast.AstMaybeType.Some resolved)]))))
+
+(define (macro-expand-exprs-with-type-list-into
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [params : (& params ast.AstTypeList)]
+  [filter-call-param? : bool]
+  [first-fire-index : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]
+  [out : (&mut out ast.AstExprList)]) : ResultMacroCheck
+  (if (>= index exprs.len)
+    (Ok)
+    (let
+      [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
+      [nhead
+        (if (< index first-fire-index)
+          head-id
+          (let
+            [arg-expected : ast.AstMaybeType
+              (if filter-call-param?
+                (macro-call-arg-expected-type ctx params index)
+                (if (< index (ast.ast-type-list-len params))
+                  (ast.AstMaybeType.Some
+                    (tc-resolve-type
+                      ctx
+                      (tc-context-type-get
+                        ctx
+                        (ast.ast-type-list-get
+                          params
+                          index
+                          (ast.ast-type-id-fallback)))))
+                  (ast.AstMaybeType.No)))]
+            (try
+              (macro-expand-node-expected
+                ctx
+                env
+                decls
+                depth
+                head-id
+                arg-expected))))]
+      (ast.ast-expr-list-push out nhead)
+      (macro-expand-exprs-with-type-list-into
+        ctx
+        env
+        decls
+        depth
+        params
+        filter-call-param?
+        first-fire-index
+        exprs
+        (+ index 1)
+        out))))
+
+(define (macro-expand-exprs-with-type-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [params : (& params ast.AstTypeList)]
+  [exprs : ast.AstExprList]) : ResultMacroExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
+    [_
+      (try
+        (macro-expand-exprs-with-type-list-into
+          ctx
+          env
+          decls
+          depth
+          params
+          false
+          0
+          (& exprs)
+          0
+          (&mut out)))]
+    (Ok out)))
+
+(define (macro-expand-call-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [nfunc : i64]
+  [args : ast.AstExprList]
+  [call-expected : ast.AstMaybeType]) : ResultMacroExprList
+  (let
+    [first-fire-index : i64
+      (macro-expr-list-first-fire-index
+        (tc-context-macro-state ctx)
+        (tc-context-expr-bases ctx)
+        (& args)
+        0)]
+    (if (< first-fire-index 0)
+      (Ok args)
+      (let
+        [macro-state : TcMacroState (tc-context-macro-state ctx)]
+        [journal-mark : i64 (tc-dotted-macro-journal-start! macro-state)]
+        [observer : TcSemanticObserver (tc-discarding-errors-enter! ctx env)]
+        [_retarget : ResultTcUnit
+          (match call-expected
+            [(Some expected)
+              (tc-expected-call-variant-retarget! ctx env nfunc expected)]
+            [(No) Ok])]
+        [fn-ty-result : ResultTcType
+          (tc-call-target-expr ctx env (tc-context-expr-get ctx nfunc))]
+        [_exit : unit (tc-discarding-errors-exit! ctx env observer)]
+        [_restore : unit
+          (tc-dotted-macro-journal-restore-to! macro-state journal-mark)]
+        [_publish : unit (tc-context-publish-newer-pools! ctx)]
+        [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
+        [_
+          (try
+            (match fn-ty-result
+              [(Ok fn-ty)
+                (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                  [(Func params _)
+                    (macro-expand-exprs-with-type-list-into
+                      ctx
+                      env
+                      decls
+                      depth
+                      (& (deref params))
+                      true
+                      first-fire-index
+                      (& args)
+                      0
+                      (&mut out))]
+                  [(CFunc sig-id _)
+                    (match (tc-context-type-get ctx sig-id)
+                      [(Func params _)
+                        (macro-expand-exprs-with-type-list-into
+                          ctx
+                          env
+                          decls
+                          depth
+                          (& (deref params))
+                          true
+                          first-fire-index
+                          (& args)
+                          0
+                          (&mut out))]
+                      [_
+                        (macro-expand-exprs-into
+                          ctx
+                          env
+                          decls
+                          depth
+                          (& args)
+                          0
+                          (&mut out))])]
+                  [_
+                    (macro-expand-exprs-into
+                      ctx
+                      env
+                      decls
+                      depth
+                      (& args)
+                      0
+                      (&mut out))])]
+              [(Err _)
+                (macro-expand-exprs-into
+                  ctx
+                  env
+                  decls
+                  depth
+                  (& args)
+                  0
+                  (&mut out))]))]
+        (Ok out)))))
 
 ;; Expand a node after its might-fire result is already known. Match arms use
 ;; this entry so deciding whether an arm needs a type environment does not make
 ;; the firing arm pay for the same recursive predicate walk a second time.
-(define (macro-expand-node-with-fire-decision
+(define (macro-expand-node-with-fire-decision-expected
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : ast.AstDeclList]
   [depth : i64]
   [expr-id : i64]
   [expr : ast.AstExpr]
-  [fires : bool]) : ResultMacroExpr
+  [fires : bool]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (if (or (not fires) (< (macro-expand-depth-limit) depth))
     (if (not fires)
       (Ok expr-id)
@@ -121739,7 +122263,25 @@
             (MacroDepth)
             (& expr)
             "macro expansion exceeded depth limit"))))
-    (macro-expand-expr-fire ctx env decls depth expr)))
+    (macro-expand-expr-fire-expected ctx env decls depth expr expected)))
+
+(define (macro-expand-node-with-fire-decision
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [expr-id : i64]
+  [expr : ast.AstExpr]
+  [fires : bool]) : ResultMacroExpr
+  (macro-expand-node-with-fire-decision-expected
+    ctx
+    env
+    decls
+    depth
+    expr-id
+    expr
+    fires
+    (ast.AstMaybeType.No)))
 
 (define (macro-expand-arms
   [ctx : TcContext]
@@ -121748,7 +122290,8 @@
   [depth : i64]
   [scrut-ty : ast.AstType]
   [first-fire-index : i64]
-  [arms : ast.AstMatchArmList]) : ResultMacroArms
+  [arms : ast.AstMatchArmList]
+  [expected : ast.AstMaybeType]) : ResultMacroArms
   (let
     [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
     [_
@@ -121762,6 +122305,7 @@
           first-fire-index
           (& arms)
           0
+          expected
           (&mut out)))]
     (Ok out)))
 
@@ -121774,6 +122318,7 @@
   [first-fire-index : i64]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]
+  [expected : ast.AstMaybeType]
   [out : (&mut out ast.AstMatchArmList)]) : ResultMacroCheck
   (if (>= index arms.len)
     (Ok)
@@ -121812,6 +122357,7 @@
                 first-fire-index
                 arms
                 (+ index 1)
+                expected
                 out))
             (let
               [arm-env-result : ResultTcEnv
@@ -121825,14 +122371,15 @@
                   (let
                     [nbody
                       (try
-                        (macro-expand-node-with-fire-decision
+                        (macro-expand-node-with-fire-decision-expected
                           ctx
                           arm-env
                           (tc-global-shared-view decls)
                           depth
                           body-box
                           body
-                          true))]
+                          true
+                          (clone expected)))]
                     (ast.ast-match-arm-list-push
                       out
                       (ast.ast-match-arm pattern nbody))
@@ -121845,6 +122392,7 @@
                       first-fire-index
                       arms
                       (+ index 1)
+                      expected
                       out))]
                 [(Err message)
                   (Err
@@ -121859,69 +122407,86 @@
   [decls : ast.AstDeclList]
   [depth : i64]
   [form : ast.AstExpr]
-  [span : TcMaybeAstSourceSpan]) : ResultMacroExpr
+  [span : TcMaybeAstSourceSpan]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (match form
     [(WithEscape scratch-box body)
       (let
         [nscratch (try (macro-expand-node ctx env decls depth scratch-box))]
-        [nbody (try (macro-expand-exprs ctx env decls depth body))]
+        [nbody
+          (try
+            (macro-expand-exprs-expected
+              ctx
+              env
+              decls
+              depth
+              body
+              (clone expected)))]
         (macro-expand-clone-out
           ctx
           env
           decls
           depth
           (ast.ast-expr-with-escape nscratch nbody)
-          span))]
+          span
+          expected))]
     [(WithScratch body)
       (let
-        [nbody (try (macro-expand-exprs ctx env decls depth body))]
+        [nbody
+          (try
+            (macro-expand-exprs-expected
+              ctx
+              env
+              decls
+              depth
+              body
+              (clone expected)))]
         (macro-expand-clone-out
           ctx
           env
           decls
           depth
           (ast.ast-expr-with-scratch nbody)
-          span))]
+          span
+          expected))]
     [_ (Ok (ast.ast-node-push form))]))
 
 ;; The scratch BODY's type for choosing its clone-out step, errors dropped.
-;; Expansion does not track the form's expected type; a body that only checks
-;; against one, such as a bare variant constructor, is retried against the
-;; enclosing function's result type, which a form in tail position has.
+;; Checked once against the form's actual enclosing EXPECTED type (if any).
 (define (tc-clone-out-body-type
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [body : ast.AstExprList]) : ResultTcType
+  [body : ast.AstExprList]
+  [expected : ast.AstMaybeType]) : ResultTcType
   (let
+    [macro-state : TcMacroState (tc-context-macro-state ctx)]
+    [journal-mark : i64 (tc-dotted-macro-journal-start! macro-state)]
     [region-env : TcTypeEnv
       (tc-push-region env (tc-scratch-body-region (& body)))]
     [observer : TcSemanticObserver (tc-discarding-errors-enter! ctx env)]
     [result : ResultTcType
-      (match (tc-begin-list-maybe-expected ctx region-env (& body) No)
-        [(Ok ty) (Ok ty)]
-        [(Err message)
-          (match (tc-current-return-type env)
-            [(Ok ret)
-              (tc-begin-list-maybe-expected ctx region-env (& body) (Some ret))]
-            [(Err _) (Err message)])])]
+      (tc-begin-list-maybe-expected ctx region-env (& body) expected)]
     (tc-discarding-errors-exit! ctx env observer)
+    (tc-dotted-macro-journal-restore-to! macro-state journal-mark)
     result))
 
 ;; Wrap the expanded scratch FORM in its clone-out step (SPEC 5.16, #8223).
-;; The body's type decides the step: a Copy result other than a function is
-;; read back as is, and any other result goes through the prelude
-;; `__tl-clone-out`, the public `stdlib.clone.deep`, over the hidden result
-;; binding. The binding is region-free here so the clone's own annotations
-;; carry no body region; the checker binds the body's real type. A body that
-;; does not check yet keeps the identity step, and the checker reports the
-;; body, or the body region if the result still carries it.
+;; The body's type decides the step: pure Copy data is read back as is, and
+;; any other result goes through the prelude `__tl-clone-out`, the public
+;; `stdlib.clone.deep`, over the hidden result binding. The binding is
+;; region-free here so the clone's own annotations carry no body region; the
+;; checker binds the body's real type. A body that does not check yet keeps
+;; the identity step so the checker reports the real body error first, and
+;; `tc-clone-out-type` still rejects any non-Copy type that did not get a
+;; clone step.
 (define (macro-expand-clone-out
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : ast.AstDeclList]
   [depth : i64]
   [form : i64]
-  [span : TcMaybeAstSourceSpan]) : ResultMacroExpr
+  [span : TcMaybeAstSourceSpan]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (let
     [form-name : String
       (match (tc-context-expr-get ctx form)
@@ -121943,7 +122508,7 @@
             (TcMaybeAstSourceSpan.No))])]
     [name : i64 (tc-clone-out-result-name)]
     [result : i64 (ast.ast-node-push (Var name))]
-    [body-ty : ResultTcType (tc-clone-out-body-type ctx env body)]
+    [body-ty : ResultTcType (tc-clone-out-body-type ctx env body expected)]
     [_publish : unit (tc-context-publish-newer-pools! ctx)]
     [step : i64
       (match body-ty
@@ -122028,7 +122593,19 @@
       (ast.ast-let-binding-fallback))
       [(Binding name maybe-ty init-box)
         (let
-          [ninit (try (macro-expand-node ctx env decls depth init-box))]
+          [init-expected : ast.AstMaybeType
+            (match (clone maybe-ty)
+              [(Some ty) (ast.AstMaybeType.Some (tc-resolve-type ctx ty))]
+              [(No) (ast.AstMaybeType.No)])]
+          [ninit
+            (try
+              (macro-expand-node-expected
+                ctx
+                env
+                decls
+                depth
+                init-box
+                init-expected))]
           (match (let
             [let-bind-result : ResultTcEnv
               (tc-let-bindings
@@ -122281,12 +122858,13 @@
 ;; existing no-fire push was already shallow (children stayed shared), so
 ;; identity-sharing the top node keeps the same output structure without
 ;; the copy.
-(define (macro-expand-node
+(define (macro-expand-node-expected
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : (& decls ast.AstDeclList)]
   [depth : i64]
-  [expr-id : i64]) : ResultMacroExpr
+  [expr-id : i64]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (let
     [decls : ast.AstDeclList
       (owned_view.compiler-owned-reference-shared-view decls)]
@@ -122296,14 +122874,23 @@
         (tc-context-macro-state ctx)
         (tc-context-expr-bases ctx)
         (tc-global-shared-view expr))]
-    (macro-expand-node-with-fire-decision
+    (macro-expand-node-with-fire-decision-expected
       ctx
       env
       decls
       depth
       expr-id
       expr
-      fires)))
+      fires
+      expected)))
+
+(define (macro-expand-node
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& decls ast.AstDeclList)]
+  [depth : i64]
+  [expr-id : i64]) : ResultMacroExpr
+  (macro-expand-node-expected ctx env decls depth expr-id (ast.AstMaybeType.No)))
 
 ;; One subtree scan per visit: the caller's single `fires` answer both picks
 ;; the no-fire arm and gates this call.
@@ -122313,6 +122900,21 @@
   [decls : ast.AstDeclList]
   [depth : i64]
   [expr : ast.AstExpr]) : ResultMacroExpr
+  (macro-expand-expr-fire-expected
+    ctx
+    env
+    decls
+    depth
+    expr
+    (ast.AstMaybeType.No)))
+
+(define (macro-expand-expr-fire-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : ast.AstDeclList]
+  [depth : i64]
+  [expr : ast.AstExpr]
+  [expected : ast.AstMaybeType]) : ResultMacroExpr
   (match (tc-global-shared-view expr)
     [(Spanned inner-box span)
       (let
@@ -122327,8 +122929,16 @@
                   decls
                   depth
                   (tc-context-expr-get ctx inner-box)
-                  (Some span))]
-              [_ (macro-expand-node ctx env decls depth inner-box)]))]
+                  (Some span)
+                  expected)]
+              [_
+                (macro-expand-node-expected
+                  ctx
+                  env
+                  decls
+                  depth
+                  inner-box
+                  expected)]))]
         (Ok (ast.ast-expr-spanned ninner span)))]
     ;; The code under an expansion node, or under a caller-origin marker, was
     ;; written in the node's origin file; a macro call there is invoked from it.
@@ -122343,7 +122953,7 @@
           (tc-macro-call-site-state-set-expansion-path-id! state origin))
         (let
           [result : ResultMacroExpr
-            (macro-expand-node ctx env decls depth inner-box)]
+            (macro-expand-node-expected ctx env decls depth inner-box expected)]
           (tc-macro-call-site-state-set-expansion-path-id! state saved)
           (match result
             [(Ok ninner)
@@ -122398,7 +123008,8 @@
                   body
                   args
                   depth
-                  expr)]
+                  expr
+                  expected)]
               [(No)
                 (match (macro-expand-compat-call
                   ctx
@@ -122414,12 +123025,29 @@
                       [nfunc
                         (try (macro-expand-node ctx env decls depth func-box))]
                       [nargs
-                        (try (macro-expand-exprs ctx env decls depth args))]
+                        (try
+                          (macro-expand-call-args
+                            ctx
+                            env
+                            (& decls)
+                            depth
+                            nfunc
+                            args
+                            expected))]
                       (Ok (ast.ast-expr-call nfunc nargs)))]
                   [(Err diag) (Err diag)])]))
           (let
             [nfunc (try (macro-expand-node ctx env decls depth func-box))]
-            [nargs (try (macro-expand-exprs ctx env decls depth args))]
+            [nargs
+              (try
+                (macro-expand-call-args
+                  ctx
+                  env
+                  (& decls)
+                  depth
+                  nfunc
+                  args
+                  expected))]
             (Ok (ast.ast-expr-call nfunc nargs)))))]
     [(BracketClause items)
       (let
@@ -122437,8 +123065,24 @@
     [(If cond-box then-branch-box else-branch-box)
       (let
         [ncond (try (macro-expand-node ctx env decls depth cond-box))]
-        [nthen (try (macro-expand-node ctx env decls depth then-branch-box))]
-        [nelse (try (macro-expand-node ctx env decls depth else-branch-box))]
+        [nthen
+          (try
+            (macro-expand-node-expected
+              ctx
+              env
+              decls
+              depth
+              then-branch-box
+              (clone expected)))]
+        [nelse
+          (try
+            (macro-expand-node-expected
+              ctx
+              env
+              decls
+              depth
+              else-branch-box
+              expected))]
         (Ok (ast.ast-expr-if ncond nthen nelse)))]
     [(Let let-box)
       (match (ast.ast-let-box-shared-view let-box)
@@ -122452,12 +123096,20 @@
             [(Ok nbindings body-env)
               (let
                 [nbody
-                  (try (macro-expand-node ctx body-env decls depth body-box))]
+                  (try
+                    (macro-expand-node-expected
+                      ctx
+                      body-env
+                      decls
+                      depth
+                      body-box
+                      expected))]
                 (Ok (ast.ast-expr-let nbindings nbody)))]
             [(Err diag) (Err diag)])])]
     [(Begin exprs)
       (let
-        [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
+        [nexprs
+          (try (macro-expand-exprs-expected ctx env decls depth exprs expected))]
         (Ok (ast.ast-node-push (Begin nexprs))))]
     [(Unsafe exprs)
       ;; Expansion typechecks some sub-expressions (e.g. `match` scrutinees) via
@@ -122467,11 +123119,32 @@
       ;; is wrongly rejected once the program defines a macro.
       (let
         [nexprs
-          (try (macro-expand-exprs ctx (tc-enter-unsafe env) decls depth exprs))]
+          (try
+            (macro-expand-exprs-expected
+              ctx
+              (tc-enter-unsafe env)
+              decls
+              depth
+              exprs
+              expected))]
         (Ok (ast.ast-node-push (Unsafe nexprs))))]
     [(Tuple exprs)
       (let
-        [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
+        [nexprs
+          (try
+            (match expected
+              [(Some expected-ty)
+                (match (tc-type-strip-region (tc-resolve-type ctx expected-ty))
+                  [(Tuple elems)
+                    (macro-expand-exprs-with-type-list
+                      ctx
+                      env
+                      (& decls)
+                      depth
+                      (& (deref elems))
+                      exprs)]
+                  [_ (macro-expand-exprs ctx env decls depth exprs)])]
+              [(No) (macro-expand-exprs ctx env decls depth exprs)]))]
         (Ok (ast.ast-node-push (Tuple nexprs))))]
     ;; The index is a literal integer, not an expression.
     [(TupleRef tuple-box index)
@@ -122480,11 +123153,43 @@
         (Ok (ast.ast-expr-tuple-ref ntuple index)))]
     [(Array exprs)
       (let
-        [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
+        [elem-expected : ast.AstMaybeType
+          (match expected
+            [(Some expected-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx expected-ty))
+                [(Array elem-id _)
+                  (ast.AstMaybeType.Some (tc-context-type-get ctx elem-id))]
+                [_ (ast.AstMaybeType.No)])]
+            [(No) (ast.AstMaybeType.No)])]
+        [nexprs
+          (try
+            (macro-expand-exprs-each-expected
+              ctx
+              env
+              decls
+              depth
+              exprs
+              elem-expected))]
         (Ok (ast.ast-node-push (Array nexprs))))]
     [(DynArray exprs)
       (let
-        [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
+        [elem-expected : ast.AstMaybeType
+          (match expected
+            [(Some expected-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx expected-ty))
+                [(DynArray elem-id)
+                  (ast.AstMaybeType.Some (tc-context-type-get ctx elem-id))]
+                [_ (ast.AstMaybeType.No)])]
+            [(No) (ast.AstMaybeType.No)])]
+        [nexprs
+          (try
+            (macro-expand-exprs-each-expected
+              ctx
+              env
+              decls
+              depth
+              exprs
+              elem-expected))]
         (Ok (ast.ast-node-push (DynArray nexprs))))]
     [(FixedMakeArray ty-id len-box)
       (let
@@ -122522,7 +123227,8 @@
                             depth
                             scrut-ty
                             first-fire-index
-                            arms))]
+                            arms
+                            expected))]
                       (Ok (ast.ast-expr-match nscrut narms)))]
                   [(Err message)
                     (Err
@@ -122693,27 +123399,53 @@
       (match (ast.ast-lambda-box-shared-view lambda-box)
         [(Lambda params maybe-ret body-box)
           (let
+            [body-expected : ast.AstMaybeType
+              (match (tc-global-shared-view maybe-ret)
+                [(Some ret) (ast.AstMaybeType.Some (tc-resolve-type ctx ret))]
+                [(No)
+                  (match expected
+                    [(Some expected-ty)
+                      (match (tc-type-strip-region
+                        (tc-resolve-type ctx expected-ty))
+                        [(Func _ ret-id)
+                          (ast.AstMaybeType.Some
+                            (tc-context-type-get ctx ret-id))]
+                        [_ (ast.AstMaybeType.No)])]
+                    [(No) (ast.AstMaybeType.No)])])]
+            [body-env : TcTypeEnv
+              (match (clone body-expected)
+                [(Some ret)
+                  (tc-bind-return-type
+                    (tc-bind-params ctx (tc-clear-loop-target env) params)
+                    ret)]
+                [(No)
+                  (tc-bind-return-type
+                    (tc-bind-params ctx (tc-clear-loop-target env) params)
+                    (Never))])]
             [nbody
               (try
-                (macro-expand-node
+                (macro-expand-node-expected
                   ctx
-                  ;; A lambda body is not inside the enclosing loop.
-                  (match (tc-global-shared-view maybe-ret)
-                    [(Some ret)
-                      (tc-bind-return-type
-                        (tc-bind-params ctx (tc-clear-loop-target env) params)
-                        (tc-resolve-type ctx ret))]
-                    [(No)
-                      (tc-bind-return-type
-                        (tc-bind-params ctx (tc-clear-loop-target env) params)
-                        (Never))])
+                  body-env
                   decls
                   depth
-                  body-box))]
+                  body-box
+                  body-expected))]
             (Ok (ast.ast-expr-lambda params maybe-ret nbody)))])]
     [(Ann inner-box ty-id)
       (let
-        [ninner (try (macro-expand-node ctx env decls depth inner-box))]
+        [ann-expected : ast.AstMaybeType
+          (ast.AstMaybeType.Some
+            (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))]
+        [ninner
+          (try
+            (macro-expand-node-expected
+              ctx
+              env
+              decls
+              depth
+              inner-box
+              ann-expected))]
         (Ok (ast.ast-expr-ann-id ninner ty-id)))]
     [(Cast inner-box ty-id)
       (let
@@ -122736,16 +123468,18 @@
       (let
         [nbody
           (try
-            (macro-expand-exprs
+            (macro-expand-exprs-expected
               ctx
               (tc-push-region env region)
               decls
               depth
-              body))]
+              body
+              expected))]
         (Ok (ast.ast-node-push (WithRegion region nbody))))]
     [(or (WithEscape _ _) (WithScratch _))
-      (macro-expand-scratch-form ctx env decls depth expr No)]
-    [(CloneOut form-box _) (macro-expand-node ctx env decls depth form-box)]
+      (macro-expand-scratch-form ctx env decls depth expr No expected)]
+    [(CloneOut form-box _)
+      (macro-expand-node-expected ctx env decls depth form-box expected)]
     [(InArena arena-box body)
       (let
         [narena (try (macro-expand-node ctx env decls depth arena-box))]
@@ -122763,7 +123497,15 @@
               ;; Macro operands (for example when's return) are checked in
               ;; the same allocation target as the eventual selected body.
               [_publish : unit (tc-context-publish-newer-pools! ctx)]
-              [nbody (try (macro-expand-exprs ctx body-env decls depth body))]
+              [nbody
+                (try
+                  (macro-expand-exprs-expected
+                    ctx
+                    body-env
+                    decls
+                    depth
+                    body
+                    expected))]
               (Ok (ast.ast-expr-in-arena narena nbody)))]
           [(Err message)
             (Err
@@ -122816,7 +123558,15 @@
             bindings)
             [(Ok nbindings body-env)
               (let
-                [nbody (try (macro-expand-exprs ctx body-env decls depth body))]
+                [nbody
+                  (try
+                    (macro-expand-exprs-expected
+                      ctx
+                      body-env
+                      decls
+                      depth
+                      body
+                      expected))]
                 (Ok
                   (ast.ast-node-push
                     (WithResource
@@ -122824,7 +123574,23 @@
             [(Err diag) (Err diag)])])]
     [(Box inner-box)
       (let
-        [ninner (try (macro-expand-node ctx env decls depth inner-box))]
+        [inner-expected : ast.AstMaybeType
+          (match expected
+            [(Some expected-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx expected-ty))
+                [(Box elem-id)
+                  (ast.AstMaybeType.Some (tc-context-type-get ctx elem-id))]
+                [_ (ast.AstMaybeType.No)])]
+            [(No) (ast.AstMaybeType.No)])]
+        [ninner
+          (try
+            (macro-expand-node-expected
+              ctx
+              env
+              decls
+              depth
+              inner-box
+              inner-expected))]
         (Ok (ast.ast-expr-box ninner)))]
     [(BoxGet inner-box)
       (let
@@ -122845,7 +123611,19 @@
         (Ok (ast.ast-expr-comptime ninner)))]
     [(Return inner-box)
       (let
-        [ninner (try (macro-expand-node ctx env decls depth inner-box))]
+        [ret-expected : ast.AstMaybeType
+          (match (tc-current-return-type env)
+            [(Ok ret) (ast.AstMaybeType.Some ret)]
+            [(Err _) (ast.AstMaybeType.No)])]
+        [ninner
+          (try
+            (macro-expand-node-expected
+              ctx
+              env
+              decls
+              depth
+              inner-box
+              ret-expected))]
         (Ok (ast.ast-expr-return ninner)))]
     [(Try inner-box)
       (let
@@ -122853,7 +123631,19 @@
         (Ok (ast.ast-node-push (Try ninner))))]
     [(Set name rhs-box)
       (let
-        [nrhs (try (macro-expand-node ctx env decls depth rhs-box))]
+        [rhs-expected : ast.AstMaybeType
+          (match (tc-lookup-visible-id ctx env name)
+            [(Ok ty) (ast.AstMaybeType.Some (tc-type-strip-region ty))]
+            [(Err _) (ast.AstMaybeType.No)])]
+        [nrhs
+          (try
+            (macro-expand-node-expected
+              ctx
+              env
+              decls
+              depth
+              rhs-box
+              rhs-expected))]
         (Ok (ast.ast-expr-set-id name nrhs)))]
     [(StringData inner-box)
       (let
@@ -123186,16 +123976,36 @@
     (match (tc-global-shared-view decl)
       [(Def decl-meta name maybe-ty expr-box)
         (let
+          [init-expected : ast.AstMaybeType
+            (match (clone maybe-ty)
+              [(Some ty) (ast.AstMaybeType.Some (tc-resolve-type ctx ty))]
+              [(No) (ast.AstMaybeType.No)])]
           [nexpr : i64
-            (try (macro-expand-node ctx global-env decls 0 expr-box))]
+            (try
+              (macro-expand-node-expected
+                ctx
+                global-env
+                decls
+                0
+                expr-box
+                init-expected))]
           (Ok (ast.ast-decl-def-id name maybe-ty nexpr)))]
       [(DefFn decl-meta name params ret body-box metadata)
         (let
           [params-env : TcTypeEnv (tc-bind-params ctx global-env params)]
           [resolved-ret : ast.AstType
             (tc-resolve-type ctx (tc-global-shared-view ret))]
-          [body-env : TcTypeEnv (tc-bind-return-type params-env resolved-ret)]
-          [nbody : i64 (try (macro-expand-node ctx body-env decls 0 body-box))]
+          [body-env : TcTypeEnv
+            (tc-bind-return-type params-env (clone resolved-ret))]
+          [nbody : i64
+            (try
+              (macro-expand-node-expected
+                ctx
+                body-env
+                decls
+                0
+                body-box
+                (ast.AstMaybeType.Some resolved-ret)))]
           (Ok
             (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
       [(Test _ _ _ _) (Ok decl)]

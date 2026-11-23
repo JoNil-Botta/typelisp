@@ -808,6 +808,8 @@ with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_rejec
 with_scratch_closure_struct_reject|check-fail|tests/safety/with_scratch_closure_struct_reject.tl|-|with-scratch clone-out of FnBox
 with_scratch_closure_tuple_reject|check-fail|tests/safety/with_scratch_closure_tuple_reject.tl|-|with-scratch clone-out of (Tuple (-> i64 i64) i64)
 with_scratch_raw_ptr_struct_reject|check-fail|tests/safety/with_scratch_raw_ptr_struct_reject.tl|-|with-scratch clone-out of PtrBox
+with_scratch_clone_hook_ref_escape_reject|check-fail|tests/safety/with_scratch_clone_hook_ref_escape_reject.tl|-|with-scratch result still refers to the scratch result binding after clone-out
+with_scratch_clone_hook_type_change_reject|check-fail|tests/safety/with_scratch_clone_hook_type_change_reject.tl|-|with-scratch clone-out must preserve result type: expected Boxed, got i64
 while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
 while_continue_outside_reject|check-fail|tests/safety/while_continue_outside_reject.tl|-|typecheck: continue requires enclosing scalar while
 while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_boundary_reject.tl|-|typecheck: break requires enclosing scalar while

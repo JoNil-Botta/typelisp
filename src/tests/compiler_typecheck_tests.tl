@@ -3349,6 +3349,39 @@
   (let [x (with-scratch (Ok (string.int->string 42)))] (ResA.Err 0)))
 (define (main) : i64 0)")
       "typecheck: ambiguous variant `Ok`; qualify as ResA.Ok or ResB.Ok")
+    ;; A custom clone-* hook cannot escape a borrow of the hidden scratch result
+    ;; binding, nor change the result type of with-scratch/with-escape.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct Boxed (n i64) (s String))
+(define (clone-boxed [x : (& r Boxed)]) : (& r Boxed) x)
+(define (leak [p : (& __tl-scratch-result Boxed)]) : (& __tl-scratch-result Boxed)
+  (let [local : Boxed (Boxed 42 \"hello\")]
+    (let [r (with-scratch local)] r)))
+(define (main) : i64 0)")
+      "typecheck: with-scratch result still refers to the scratch result binding after clone-out")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct Boxed (n i64) (s String))
+(define (clone-boxed [x : (& r Boxed)]) : i64 x.n)
+(define (main) : i64 (with-scratch (Boxed 42 \"hello\")))")
+      "typecheck: with-scratch clone-out must preserve result type: expected Boxed, got i64")
+    ;; Deeply nested annotated lets/anns wrapping a non-tail unannotated scratch
+    ;; form must expand in linear time without cascading retries.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (main) : i64
+  (let [x01 : i64 (let [x02 : i64 (let [x03 : i64 (let [x04 : i64
+    (let [x05 : i64 (let [x06 : i64 (let [x07 : i64 (let [x08 : i64
+      (let [x09 : i64 (let [x10 : i64 (let [x11 : i64 (let [x12 : i64
+        (let [x13 : i64 (let [x14 : i64 (let [x15 : i64 (let [x16 : i64
+          (let [x17 : i64 (let [x18 : i64 (let [x19 : i64 (let [x20 : i64
+            (begin (let [tmp (with-scratch 1)] tmp) 0)]
+            x20)] x19)] x18)] x17)]
+          x16)] x15)] x14)] x13)]
+        x12)] x11)] x10)] x09)]
+      x08)] x07)] x06)] x05)]
+    x04)] x03)] x02)] x01))"))
     ;; with-escape inside spmd reports with-escape, not with-scratch.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source

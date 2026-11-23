@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+4453.785	Add the standalone TLI v1 codec and inspect support. CI own cost +476,677,054 Ir (M(T) 107,504,081,681 vs M(B) 107,027,404,627 from reference run 45078437303 attempt 1).

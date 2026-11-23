@@ -7,6 +7,10 @@
 (import stdlib.str_cat_runtime as str_cat)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci))
 (import tlci_core)
+(import compiler_tli_codec as tli_codec)
+(import compiler_tli_types as tli)
+(import stdlib.byte_le)
+(import stdlib.crypto_sha256 as sha256)
 
 (define (tlci-inspect-help-text) : String
   "Usage:
@@ -318,6 +322,47 @@ Summary:
           "embedded:stdlib.tlci"
           (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy))])))
 
+(define (tli-inspect-render-bytes
+  [path : (& path str)]
+  [bytes : (& bytes (__tl_dyn-array u8))]) : i64
+  (match (tli_codec.tli-decode-directory bytes)
+    [(tli_codec.TliDirectoryResult.Err error)
+      (io.print-error
+        (str_cat.str-cat
+          "inspect: "
+          (string.copy path)
+          ": "
+          error.message
+          " at byte "
+          (string.int->string error.offset)
+          "\n"))
+      1]
+    [(tli_codec.TliDirectoryResult.Ok directory)
+      (io.print-format
+        "format: tli\nschema-version: {}\nflags: {}\n"
+        directory.schema-version
+        directory.flags)
+      (io.print-format
+        "compiler-build: {}\ntarget-triple: {}\n"
+        directory.compiler-build
+        directory.target-triple)
+      (io.print-format
+        "byte-length: {}\ncontent-sha256: {}\nmodules: {}\n"
+        (array-length bytes)
+        (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
+        (array-length directory.entries))
+      (for [index (iterator.range 0 (array-length directory.entries))]
+        (let
+          [entry (& (array-ref directory.entries index))]
+          (io.print-format
+            "  {}: flags={} offset={} bytes={} sha256={}\n"
+            entry.name
+            entry.flags
+            entry.record-offset
+            entry.record-len
+            (sha256.to-hex (& (sha256.Sha256Digest entry.module-sha256))))))
+      0]))
+
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))
     (begin
@@ -332,4 +377,10 @@ Summary:
             (io.print-error (tlci-inspect-error path (io.error-message error)))
             1]
           [(OkIoBytes contents)
-            (tlci-inspect-render-bytes path (byte_buf.to-array contents))])))))
+            (let
+              [bytes : (__tl_dyn-array u8) (byte_buf.to-array contents)]
+              (if (and
+                (>= (array-length bytes) 4)
+                (= (byte_le.read-u32 (& bytes) 0) tli.tli-magic))
+                (tli-inspect-render-bytes (& path) (& bytes))
+                (tlci-inspect-render-bytes path bytes)))])))))

@@ -727,8 +727,8 @@ contains backend: private AVX-512 SPMD call supports at most 8 varying value arg
 
 # --------------------------------------------------------------- reductions
 
-# A sum keeps one vector accumulator in the gang and reduces horizontally only
-# after the loop; i64 min/max and bool all/any reduce in SIMD.
+# AVX2 sums accumulate four full gangs independently. The remainder updates
+# one vector, and horizontal reduction stays outside both loops.
 case reduce-accumulator
 source tests/integration/spmd_reduce_scalar.tl
 mode avx2 avx512
@@ -738,6 +738,12 @@ match vextract|vpsrldq
 narrow ranges:spmd_reduce_avx2_body~spmd_reduce_tail
 count-fixed = 1 vpaddq
 not-match vextract|vpsrldq
+if-mode avx2
+in fn _tl_spmd_reduce_scalar_reduce_sum
+narrow ranges:spmd_reduce_group_body~spmd_reduce_group_merge
+count-fixed = 4 vpaddq
+not-match vextract|vpsrldq
+end-if
 in fn _tl_spmd_reduce_scalar_reduce_min
 contains spmd_reduce_avx2_body
 if-mode avx2
@@ -785,6 +791,12 @@ match vextract|vpsrldq
 narrow ranges:spmd_reduce_value_body~spmd_reduce_value_tail_init
 count-fixed = 34 vpaddq
 not-match vextract|vpsrldq
+if-mode avx2
+in fn _tl_map_fused_reduce_i64_reduce_map_fused
+narrow ranges:spmd_reduce_group_body~spmd_reduce_group_merge
+count-fixed = 8 vpaddq
+not-match vextract|vpsrldq
+end-if
 in fn _tl_map_fused_reduce_i64_reduce_map_surface
 contains vpsubq
 contains vpor
@@ -813,10 +825,12 @@ contains vpcmpgtq
 contains vpbroadcastb
 not-match %zmm[0-9]+|%k[0-7]
 in fn _tl_spmd_scan_scalar_scan_sum_i64
-narrow ranges:spmd_scan_avx2_body~spmd_scan_tail_header
+narrow ranges:spmd_scan_avx2_body~spmd_scan_tail_init
 contains vpslldq
 contains vperm2i128
+contains vpermq $255
 contains vpaddq
+not-match vextract|vpsrldq
 else
 contains spmd_scan_avx512_body
 contains valignd
@@ -831,9 +845,26 @@ contains kmovq
 contains shlq $32
 not-contains spmd_scan_avx2_body
 in fn _tl_spmd_scan_scalar_scan_sum_i64
-narrow ranges:spmd_scan_avx512_body~spmd_scan_tail_header
+narrow ranges:spmd_scan_avx512_body~spmd_scan_tail_init
 contains valignq
 contains vpaddq
+not-match vextract|vpsrldq
+end-if
+
+# Prefix work registers 14 and 15 are backend scratch, but their low halves
+# are nonvolatile on Win64.
+case scan-prefix-win64-scratch
+source tests/integration/spmd_scan_scalar.tl
+target windows-x86_64
+mode avx2 avx512
+opt 2
+in fn _tl_spmd_scan_scalar_scan_min_i64
+if-mode avx2
+match vmovdqu %ymm14, [0-9]+\(%rsp\)
+match vmovdqu [0-9]+\(%rsp\), %ymm14
+else
+match vmovdqu64 %zmm14, [0-9]+\(%rsp\)
+match vmovdqu64 [0-9]+\(%rsp\), %zmm14
 end-if
 
 # Scan range and destination checks stay scalar-observable with vector

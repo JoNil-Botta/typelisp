@@ -3,6 +3,7 @@
 ;; The caller chooses exports and passes the public symbol plus the intended
 ;; DLL import name (or an ordinal). Named modes encode the public symbol in the
 ;; short record; the import name is checked against the selected transformation.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.string)
@@ -21,6 +22,8 @@
   (hint i64)
   (kind i64)
   (name-mode i64))
+
+(clone.gen-clone CoffImportPlan)
 
 ;; The payload and symbol summary are owned snapshots. Physical archive member
 ;; names may repeat; array order is the wire order for a later archive writer.
@@ -156,7 +159,7 @@
   [relocs : i64]
   [reloc-count : i64]
   [alignment : i64]) : unit
-  (coff-import-text! b (clone name))
+  (coff-import-text! b (string.copy (& name)))
   (coff-import-zero! b (- 8 (coff-import-len name)))
   (coff-import-push32! b 0)
   (coff-import-push32! b 0)
@@ -176,7 +179,7 @@
   [storage : i64]) : unit
   (if (= long-offset 0)
     (begin
-      (coff-import-text! b (clone short-name))
+      (coff-import-text! b (string.copy (& short-name)))
       (coff-import-zero! b (- 8 (coff-import-len short-name))))
     (begin
       (coff-import-push32! b 0)
@@ -284,7 +287,7 @@
         plan.ordinal
         plan.hint))
     (coff-import-push16! (&mut b) (bit-or plan.kind (shl plan.name-mode 2)))
-    (coff-import-cstr! (&mut b) (clone plan.public-name))
+    (coff-import-cstr! (&mut b) (string.copy (& plan.public-name)))
     (coff-import-cstr! (&mut b) dll)
     (bytes.byte-buf-builder-to-string (& b))))
 
@@ -310,7 +313,7 @@
             start))
         (string.substring public-name start (- n start))))))
 
-(define (coff-import-plan-error [plan : CoffImportPlan]) : String
+(define (coff-import-plan-error [plan : (& CoffImportPlan)]) : String
   (cond
     [(not (coff-import-valid-name? (& plan.public-name) true))
       "invalid public symbol"]
@@ -332,14 +335,16 @@
     [(not
         (string.eq
           plan.import-name
-          (coff-import-effective-name (clone plan.public-name) plan.name-mode)))
+          (coff-import-effective-name
+            (string.copy (& plan.public-name))
+            plan.name-mode)))
       "import name does not match name mode"]
     [else ""]))
 
 (define (coff-import-symbol [plan : CoffImportPlan] [which : i64]) : String
   (if (= which 0)
-    (clone plan.public-name)
-    (cat.str-cat "__imp_" (clone plan.public-name))))
+    (string.copy (& plan.public-name))
+    (cat.str-cat "__imp_" (string.copy (& plan.public-name)))))
 
 (define (coff-import-member
   [dll : String]
@@ -381,8 +386,9 @@
   [limits : CoffImportLimits]) : ResultCoffImportMembers
   (let
     [count : i64 (array-length plans)]
-    [descriptor : String (cat.str-cat "__IMPORT_DESCRIPTOR_" (clone stem))]
-    [null-thunk : String (coff-import-null-thunk-name (clone stem))]
+    [descriptor : String
+      (cat.str-cat "__IMPORT_DESCRIPTOR_" (string.copy (& stem)))]
+    [null-thunk : String (coff-import-null-thunk-name (string.copy (& stem)))]
     [error : String ""]
     [work : i64 0]
     [total : i64 0]
@@ -399,9 +405,9 @@
       unit)
     (while (and (string.eq error "") (< i count))
       (let
-        [p : CoffImportPlan (clone (array-ref plans i))]
+        [p : CoffImportPlan (clone-coff-import-plan (& (array-ref plans i)))]
         [j : i64 0]
-        (set! error (coff-import-plan-error (clone p)))
+        (set! error (coff-import-plan-error (& p)))
         (if (and
           (= p.kind 0)
           (or
@@ -419,18 +425,19 @@
           unit)
         (while (and (string.eq error "") (< j i))
           (let
-            [prior : CoffImportPlan (clone (array-ref plans j))]
+            [prior : CoffImportPlan
+              (clone-coff-import-plan (& (array-ref plans j)))]
             (if (or
               (string.eq p.public-name prior.public-name)
               (and
                 (= p.kind 0)
                 (string.eq
                   p.public-name
-                  (cat.str-cat "__imp_" (clone prior.public-name))))
+                  (cat.str-cat "__imp_" (string.copy (& prior.public-name)))))
               (and
                 (= prior.kind 0)
                 (string.eq
-                  (cat.str-cat "__imp_" (clone p.public-name))
+                  (cat.str-cat "__imp_" (string.copy (& p.public-name)))
                   prior.public-name)))
               (set! error "duplicate archive-index symbol")
               unit)
@@ -444,40 +451,43 @@
         (set!
           (array-ref members 0)
           (coff-import-member
-            (clone dll)
+            (string.copy (& dll))
             (coff-import-descriptor
-              (clone dll)
-              (clone descriptor)
-              (clone null-thunk))
-            (clone descriptor)
+              (string.copy (& dll))
+              (string.copy (& descriptor))
+              (string.copy (& null-thunk)))
+            (string.copy (& descriptor))
             ""))
         (set!
           (array-ref members 1)
           (coff-import-member
-            (clone dll)
+            (string.copy (& dll))
             (coff-import-null-descriptor)
             "__NULL_IMPORT_DESCRIPTOR"
             ""))
         (set!
           (array-ref members 2)
           (coff-import-member
-            (clone dll)
-            (coff-import-null-thunk (clone null-thunk))
-            (clone null-thunk)
+            (string.copy (& dll))
+            (coff-import-null-thunk (string.copy (& null-thunk)))
+            (string.copy (& null-thunk))
             ""))
         (for [index (iterator.range 0 count)]
           (let
-            [p : CoffImportPlan (clone (array-ref plans index))]
+            [p : CoffImportPlan
+              (clone-coff-import-plan (& (array-ref plans index)))]
             (set!
               (array-ref members (+ index 3))
               (coff-import-member
-                (clone dll)
-                (coff-import-short (clone dll) (clone p))
+                (string.copy (& dll))
+                (coff-import-short
+                  (string.copy (& dll))
+                  (clone-coff-import-plan (& p)))
                 (if (= p.kind 0)
-                  (clone p.public-name)
-                  (coff-import-symbol (clone p) 1))
+                  (string.copy (& p.public-name))
+                  (coff-import-symbol (clone-coff-import-plan (& p)) 1))
                 (if (= p.kind 0)
-                  (coff-import-symbol (clone p) 1)
+                  (coff-import-symbol (clone-coff-import-plan (& p)) 1)
                   "")))))
         (Ok members)))))
 
@@ -501,7 +511,8 @@
       (Err "import member count limit")]
     [(not (coff-import-valid-dll-part? (& dll))) (Err "invalid DLL basename")]
     [(not (coff-import-valid-dll-part? (& stem))) (Err "invalid DLL stem")]
-    [(not (coff-import-stem-matches? (clone dll) (clone stem)))
+    [(not
+        (coff-import-stem-matches? (string.copy (& dll)) (string.copy (& stem))))
       (Err "DLL basename/stem mismatch")]
     [(or
         (> (coff-import-len dll) limits.max-string)
@@ -611,13 +622,15 @@
             "three support members first")
           (for [i (iterator.range 0 7)]
             (test.assert-true
-              (coff-import-fixture-eq? (clone (array-ref members i).payload) i)
+              (coff-import-fixture-eq?
+                (string.copy (& (array-ref members i).payload))
+                i)
               (cat.str-cat
                 (cat.str-cat
                   "LLVM member payload bytes at "
                   (string.int->string i))
                 (coff-import-fixture-difference
-                  (clone (array-ref members i).payload)
+                  (string.copy (& (array-ref members i).payload))
                   i)))
             (test.assert-true
               (string.eq (array-ref members i).archive-name "example.dll")
@@ -645,22 +658,30 @@
             "const imp index symbol")
           (test.assert-true
             (=
-              (coff-import-read-u32 (clone (array-ref members 0).payload) 8)
+              (coff-import-read-u32
+                (string.copy (& (array-ref members 0).payload))
+                8)
               162)
             "descriptor COFF symbol pointer")
           (test.assert-true
             (=
-              (coff-import-read-u32 (clone (array-ref members 0).payload) 120)
+              (coff-import-read-u32
+                (string.copy (& (array-ref members 0).payload))
+                120)
               12)
             "descriptor name relocation offset")
           (test.assert-true
             (=
-              (coff-import-read-u32 (clone (array-ref members 0).payload) 130)
+              (coff-import-read-u32
+                (string.copy (& (array-ref members 0).payload))
+                130)
               0)
             "descriptor lookup relocation offset")
           (test.assert-true
             (=
-              (coff-import-read-u32 (clone (array-ref members 0).payload) 140)
+              (coff-import-read-u32
+                (string.copy (& (array-ref members 0).payload))
+                140)
               16)
             "descriptor address relocation offset")]))))
 
@@ -679,13 +700,19 @@
             (= (array-length members) 3)
             "empty DLL retains support members")
           (test.assert-true
-            (coff-import-fixture-eq? (clone (array-ref members 0).payload) 0)
+            (coff-import-fixture-eq?
+              (string.copy (& (array-ref members 0).payload))
+              0)
             "empty DLL descriptor oracle")
           (test.assert-true
-            (coff-import-fixture-eq? (clone (array-ref members 1).payload) 1)
+            (coff-import-fixture-eq?
+              (string.copy (& (array-ref members 1).payload))
+              1)
             "empty DLL null descriptor oracle")
           (test.assert-true
-            (coff-import-fixture-eq? (clone (array-ref members 2).payload) 2)
+            (coff-import-fixture-eq?
+              (string.copy (& (array-ref members 2).payload))
+              2)
             "empty DLL null thunk oracle")])
       (test.assert-true
         (coff-import-rejects?
@@ -733,7 +760,9 @@
         [(Ok members)
           (test.assert-true
             (=
-              (coff-import-read-u32 (clone (array-ref members 3).payload) 12)
+              (coff-import-read-u32
+                (string.copy (& (array-ref members 3).payload))
+                12)
               20)
             "short data size includes two terminators")
           (test.assert-true
@@ -895,7 +924,7 @@
           [nul-name : String (bytes.byte-buf-builder-to-string (& b))]
           (set!
             (array-ref one 0)
-            (CoffImportPlan (clone nul-name) nul-name 0 0 0 1))
+            (CoffImportPlan (string.copy (& nul-name)) nul-name 0 0 0 1))
           (test.assert-true
             (coff-import-rejects?
               "example.dll"
@@ -965,6 +994,6 @@
           (for [i (iterator.range 0 3)]
             (test.assert-true
               (coff-import-alias-fixture-eq?
-                (clone (array-ref members (+ i 3)).payload)
+                (string.copy (& (array-ref members (+ i 3)).payload))
                 (+ i 3))
               "LLVM alias/forwarder member payload"))]))))

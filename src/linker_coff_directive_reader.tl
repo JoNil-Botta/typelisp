@@ -125,12 +125,12 @@
   [detail : String]) : CoffDirectiveError
   (CoffDirectiveError
     kind
-    (clone section.object)
+    (string.copy (& section.object))
     section.index
     start
     end
     (cat.str-cat
-      (clone section.object)
+      (string.copy (& section.object))
       ": section "
       (string.int->string section.index)
       " .drectve bytes "
@@ -424,26 +424,26 @@
           (& written)
           (& payload)
           present
-          (DefaultLib (clone payload)))]
+          (DefaultLib (string.copy (& payload))))]
       [(string.eq upper "INCLUDE")
         (require-payload
           (& written)
           (& payload)
           present
-          (Include (clone payload)))]
+          (Include (string.copy (& payload))))]
       [(string.eq upper "EXPORT")
         (require-payload
           (& written)
           (& payload)
           present
-          (Export (clone payload)))]
+          (Export (string.copy (& payload))))]
       [(string.eq upper "NODEFAULTLIB")
         (if present
           (require-payload
             (& written)
             (& payload)
             present
-            (NoDefaultLib (clone payload)))
+            (NoDefaultLib (string.copy (& payload))))
           (Parsed (NoDefaultLibAll)))]
       [(string.eq upper "ALTERNATENAME")
         (pair-field (& written) (& payload) present true)]
@@ -455,13 +455,13 @@
             (PathBearingDll)
             (cat.str-cat
               "/"
-              (clone written)
+              (string.copy (& written))
               " names a path; only a DLL file name is admitted"))
           (require-payload
             (& written)
             (& payload)
             present
-            (DelayLoad (clone payload))))]
+            (DelayLoad (string.copy (& payload)))))]
       [(string.eq upper "DELAY")
         (delay-qualifier (& written) (& payload) present)]
       [else
@@ -469,7 +469,7 @@
           (UnsupportedOption)
           (cat.str-cat
             "linker directive /"
-            (clone written)
+            (string.copy (& written))
             (unsupported-category (& upper))
             " is not admitted; "
             (admitted-directives)))])))
@@ -547,7 +547,7 @@
                       (record_vec.push-ref!
                         (&mut records)
                         (CoffDirectiveRecord
-                          (clone section.object)
+                          (string.copy (& section.object))
                           section.index
                           pos
                           end
@@ -578,7 +578,10 @@
           (NotDirectiveSection)
           0
           0
-          (cat.str-cat "section `" (clone section.name) "` is not .drectve")))]
+          (cat.str-cat
+            "section `"
+            (string.copy (& section.name))
+            "` is not .drectve")))]
     [(= (bit-and section.characteristics 0x200) 0)
       (Err
         (directive-error

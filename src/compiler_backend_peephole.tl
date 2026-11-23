@@ -873,9 +873,11 @@
   [fpo : bool]
   [frame : i64]
   [push-count : i64]) : i64
-  (if (and
-    fpo
-    (or (be_operand.compiler-backend-red-zone? backend-state) (> push-count 0)))
+  ;; Under FPO there is no `pushq %rbp`, so total prologue %rsp motion is
+  ;; `push-sub + 8*push-count` across all shapes (pushed CSRs, red zone,
+  ;; zero-frame bare/no-call leaves where push-sub == 0 -> bias -8, and
+  ;; ordinary no-push frames where push-sub == frame + 8 -> bias frame).
+  (if fpo
     (-
       (+
         (be_operand.compiler-backend-rsp-rebase-push-sub

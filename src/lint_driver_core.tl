@@ -93,7 +93,7 @@
           "--check --deprecated-string-concat --redundant-function-name
            --redundant-begin
            --prefer-dotted-field --name-case --format <rich|flat> --cfg <name>
-           --target <target> --debug|-g|--backtrace --backend-mode <mode> --opt-level <0|1|2> --stdlib-root <dir> --manifest-path <file>"
+           --target <target> --debug|-g|--backtrace --backend-mode <mode> --opt-level <0|1|2|s> -Os --stdlib-root <dir> --manifest-path <file>"
           start
           count))]
     [input-paths : lint_svec.Vec (lint_svec.new)]

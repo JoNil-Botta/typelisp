@@ -62218,6 +62218,7 @@
 
 (define (tc-call-effective-var-arg-type
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [name : i64]
   [got : ast.AstType]) : ResultTcType
   ;; An existing shared reference already has the effective call shape. An
@@ -62226,7 +62227,7 @@
   (if (tc-call-actual-immutable-reference? ctx (tc-global-shared-view got))
     (Ok got)
     (let
-      [place : TcBorrowPlace (try (tc-borrow-place-var name got))]
+      [place : TcBorrowPlace (try (tc-borrow-place-var env name got))]
       (match place
         [(TcBorrowPlace lifetime referent-ty _ _)
           (Ok (ast.ast-ty-ref lifetime (& referent-ty)))]))))
@@ -62355,7 +62356,7 @@
                 (Ok got)
                 (tc-call-auto-borrow-type ctx env arg)))
             (match (tc-lookup-visible-id ctx env name)
-              [(Ok got) (tc-call-effective-var-arg-type ctx name got)]
+              [(Ok got) (tc-call-effective-var-arg-type ctx env name got)]
               [(Err message)
                 ;; Qualified module values are ordinary variable expressions,
                 ;; but are not stored under their surface dotted id in the
@@ -62404,6 +62405,7 @@
 
 (define (tc-call-effective-var-arg-expr
   [ctx : TcContext]
+  [env : TcTypeEnv]
   [name : i64]
   [got : ast.AstType]
   [arg-id : i64]
@@ -62411,7 +62413,7 @@
   (if (tc-call-actual-immutable-reference? ctx (tc-global-shared-view got))
     (Ok arg)
     (let
-      [_ (try (tc-borrow-place-var name got))]
+      [_ (try (tc-borrow-place-var env name got))]
       (Ok (tc-call-auto-borrow-expr arg-id)))))
 
 ;; The call argument ARG as the callee's formal WANT receives it. ARG is the
@@ -62445,7 +62447,7 @@
                     (Ok (tc-call-auto-borrow-expr arg-id)))))
               (match (tc-lookup-visible-id ctx env name)
                 [(Ok got)
-                  (tc-call-effective-var-arg-expr ctx name got arg-id arg)]
+                  (tc-call-effective-var-arg-expr ctx env name got arg-id arg)]
                 [(Err message)
                   (match (tc-call-arg-expr-type
                     ctx
@@ -67753,7 +67755,7 @@
         (match (ast.ast-decl-unwrapped
           (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
-          [(DefEnum _ decl-name _ variants)
+          [(DefEnum _ decl-name cleanup variants)
             (let
               [decl-key : i64
                 (clone_support.clone-name-key-id-in-module
@@ -67764,26 +67766,36 @@
                   (= decl-key resolved-key)
                   (and root-fallback (= decl-key root-key)))
                 (set! found true)
-                (if (clone_support.clone-name-set-contains-id? seen decl-key)
-                  unit
-                  (let
-                    [next-seen : clone_support.CloneNameSet
-                      (clone_support.clone-name-set-insert-id
-                        (owned_view.compiler-owned-reference-shared-view seen)
-                        decl-key)]
+                (cond
+                  [(ast.ast-enum-cleanup? cleanup)
                     (set!
                       out
-                      (tc-clone-unsupported-path-variants-at
-                        pools
-                        decls
-                        able
-                        names
-                        (& next-seen)
-                        (& variants)
-                        current-module-id
-                        (tc-global-shared-view path)
-                        0))))))]
-          [(DefStruct _ decl-name _ _ fields)
+                      (str_cat.str-cat
+                        (string.copy (& path))
+                        ": cleanup-owning type "
+                        (ci.intern-str decl-name)
+                        " cannot be cloned"))]
+                  [(clone_support.clone-name-set-contains-id? seen decl-key)
+                    unit]
+                  [else
+                    (let
+                      [next-seen : clone_support.CloneNameSet
+                        (clone_support.clone-name-set-insert-id
+                          (owned_view.compiler-owned-reference-shared-view seen)
+                          decl-key)]
+                      (set!
+                        out
+                        (tc-clone-unsupported-path-variants-at
+                          pools
+                          decls
+                          able
+                          names
+                          (& next-seen)
+                          (& variants)
+                          current-module-id
+                          (tc-global-shared-view path)
+                          0)))])))]
+          [(DefStruct _ decl-name _ cleanup fields)
             (let
               [decl-key : i64
                 (clone_support.clone-name-key-id-in-module
@@ -67794,25 +67806,35 @@
                   (= decl-key resolved-key)
                   (and root-fallback (= decl-key root-key)))
                 (set! found true)
-                (if (clone_support.clone-name-set-contains-id? seen decl-key)
-                  unit
-                  (let
-                    [next-seen : clone_support.CloneNameSet
-                      (clone_support.clone-name-set-insert-id
-                        (owned_view.compiler-owned-reference-shared-view seen)
-                        decl-key)]
+                (cond
+                  [(ast.ast-struct-cleanup? cleanup)
                     (set!
                       out
-                      (tc-clone-unsupported-path-fields-at
-                        pools
-                        decls
-                        able
-                        names
-                        (& next-seen)
-                        (& fields)
-                        current-module-id
-                        (tc-global-shared-view path)
-                        0))))))]
+                      (str_cat.str-cat
+                        (string.copy (& path))
+                        ": cleanup-owning type "
+                        (ci.intern-str decl-name)
+                        " cannot be cloned"))]
+                  [(clone_support.clone-name-set-contains-id? seen decl-key)
+                    unit]
+                  [else
+                    (let
+                      [next-seen : clone_support.CloneNameSet
+                        (clone_support.clone-name-set-insert-id
+                          (owned_view.compiler-owned-reference-shared-view seen)
+                          decl-key)]
+                      (set!
+                        out
+                        (tc-clone-unsupported-path-fields-at
+                          pools
+                          decls
+                          able
+                          names
+                          (& next-seen)
+                          (& fields)
+                          current-module-id
+                          (tc-global-shared-view path)
+                          0)))])))]
           [_ unit])
         unit)
       (set! index (+ index 1)))
@@ -82359,10 +82381,30 @@
           (tc-struct-get-selected-id ctx env receiver-ty field-id))]
       [(Err message) (Err message)])))
 
-(define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
+(define (tc-borrow-place-var-by-value
+  [env : TcTypeEnv]
+  [name : i64]
+  [ty : ast.AstType]) : ResultTcBorrowPlace
   (match (tc-type-outer-region (tc-global-shared-view ty))
     [(Some region)
-      (Ok (TcBorrowPlace region (tc-borrow-referent-type ty) false false))]
+      (let
+        [referent : ast.AstType (tc-borrow-referent-type ty)]
+        ;; Borrowing an arena-tagged `Box` binder itself borrows its frame
+        ;; slot (not the arena-allocated contents reached through `deref`).
+        [local-box-slot? : bool
+          (and
+            (tc-selected-arena-region? env region)
+            (match (& referent)
+              [(ast.AstType.Box _) true]
+              [_ false]))]
+        (Ok
+          (TcBorrowPlace
+            (if local-box-slot?
+              name
+              region)
+            referent
+            false
+            false)))]
     [(No) (Ok (TcBorrowPlace name (tc-borrow-referent-type ty) false false))]))
 
 (define (tc-reference-containing-place-borrow-ok? [ty : ast.AstType]) : bool
@@ -82396,7 +82438,7 @@
       (> (tc-lifetime-list-count (deref lifetimes)) 0)]
     [_ false]))
 
-(define (tc-borrow-place-var [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
+(define (tc-borrow-place-var [env : TcTypeEnv] [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
   (match (tc-type-strip-region (tc-global-shared-view ty))
     [(Ref lifetime referent-ty)
       (Ok
@@ -82419,7 +82461,7 @@
           (tc-reference-containing-place-borrow-ok? (tc-global-shared-view ty))))
         (Err
           "typecheck: borrowing places that contain references is not implemented")
-        (tc-borrow-place-var-by-value name ty))]))
+        (tc-borrow-place-var-by-value env name ty))]))
 
 (define (tc-borrow-referent-type [ty : ast.AstType]) : ast.AstType
   (match (tc-type-without-regions (tc-global-shared-view ty))
@@ -82656,7 +82698,13 @@
                   env
                   mutable
                   receiver))]
-            (tc-borrow-place-box-get ctx place))]
+            [boxed : TcBorrowPlace (try (tc-borrow-place-box-get ctx place))]
+            (match (tc-type-outer-region receiver-ty)
+              [(Some region)
+                (match boxed
+                  [(TcBorrowPlace _ inner-ty shared through-ref)
+                    (Ok (TcBorrowPlace region inner-ty shared through-ref))])]
+              [(No) (Ok boxed)]))]
         [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _))
           (if (tc-borrow-place-form? expr-bases (& receiver))
             (let
@@ -82687,7 +82735,7 @@
                           shared
                           through-ref))])]
                 [_ (ResultTcBorrowPlace.Ok place)]))
-            (tc-borrow-place-var -1 (tc-resolve-type ctx receiver-ty)))]
+            (tc-borrow-place-var env -1 (tc-resolve-type ctx receiver-ty)))]
         [_
           (ResultTcBorrowPlace.Err
             (tc-kind-message
@@ -82730,7 +82778,7 @@
               name)
             false)
           (tc-lookup-visible-id ctx env name))
-          [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
+          [(ResultTcType.Ok ty) (tc-borrow-place-var env name ty)]
           [(ResultTcType.Err message)
             (match (tc-var-expr-after-local-field-check
               ctx
@@ -82739,7 +82787,7 @@
               (tc-hygiene-name-text-id-for-session
                 (tc-context-structural-session ctx)
                 name))
-              [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
+              [(ResultTcType.Ok ty) (tc-borrow-place-var env name ty)]
               [(ResultTcType.Err _) (ResultTcBorrowPlace.Err message)])]))]
     [(ast.AstExpr.StructGet receiver-box field)
       (let

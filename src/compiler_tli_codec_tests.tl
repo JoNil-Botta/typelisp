@@ -195,10 +195,17 @@
     (for [i (iterator.range 0 5)]
       (set!
         (array-ref imports (tli-test-slot reversed? 6 i))
-        (tli.TliImport "dependency" i (tli-test-hash i))))
+        (tli.TliImport
+          "dependency"
+          i
+          "dep"
+          (if (= i 2)
+            "item"
+            "")
+          (tli-test-hash i))))
     (set!
       (array-ref imports (tli-test-slot reversed? 6 5))
-      (tli.TliImport "dependency" 0 (tli-test-hash 99)))
+      (tli.TliImport "dependency" 0 "" "" (tli-test-hash 99)))
     (set! (array-ref order 0) "__global_init_z")
     (set! (array-ref order 1) "__global_init_a")
     (for [i (iterator.range 0 4)]
@@ -216,6 +223,8 @@
           (if (= i 0)
             0
             8)
+          false
+          (__tl_make-array tli.TliExternLinkInput 0)
           (tli-test-const i))))
     (set! (array-ref kinds 1) (cast 29 : u8))
     (set!
@@ -232,6 +241,7 @@
         "fixture"
         "fixture.z"
         13
+        (cast 1 : u8)
         macro-params
         17
         (tli-test-hash 43)))
@@ -242,6 +252,7 @@
         "fixture"
         "fixture.a"
         2
+        (cast 0 : u8)
         (__tl_make-array tli.TliMacroParam 0)
         -1
         (tli-test-hash 0)))
@@ -271,7 +282,15 @@
       (__tl_make-array tli.TliValueDecl 1)]
     (set!
       (array-ref values 0)
-      (tli.TliValueDecl "value" "" "value.sym" ty 0 (tli.TliConst.None)))
+      (tli.TliValueDecl
+        "value"
+        ""
+        "value.sym"
+        ty
+        0
+        false
+        (__tl_make-array tli.TliExternLinkInput 0)
+        (tli.TliConst.None)))
     (tli.TliModuleRecord
       name
       "src/plain.tl"
@@ -355,6 +374,14 @@
       [fn (& (array-ref module.functions 0))]
       [macro (& (array-ref module.macros 1))]
       [dispatch (& (array-ref module.dispatches 0))]
+      (test.assert-string-eq
+        (& (array-ref module.imports 3).alias)
+        "dep"
+        "module item alias")
+      (test.assert-string-eq
+        (& (array-ref module.imports 3).item)
+        "item"
+        "module item")
       (test.assert-string-eq
         (& module.name)
         "fixture"
@@ -457,9 +484,9 @@
     (le.set-u32! (&mut bytes) 0 0)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.Magic))
     (le.set-u32! (&mut bytes) 0 tli.tli-magic)
-    (le.set-u32! (&mut bytes) 4 2)
-    (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.SchemaVersion))
     (le.set-u32! (&mut bytes) 4 1)
+    (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.SchemaVersion))
+    (le.set-u32! (&mut bytes) 4 tli.tli-schema-version)
     (le.set-u32! (&mut bytes) 8 8)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.Flags))
     (le.set-u32! (&mut bytes) 8 tli.tli-has-compact-ir)
@@ -590,7 +617,7 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))))
 
 (test
-  tli-v1-wire-tags-and-digests
+  tli-v2-wire-tags-and-digests
   (let
     [wire : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
     [bundle : tli.TliBundle (tli-test-bundle false)]
@@ -600,11 +627,11 @@
         false
         (codec.tli-collect-pool (& bundle))
         (buf.byte-buf-builder-new))]
-    (test.assert-i64-eq (array-length wire) 370 "v1 exemplar length")
+    (test.assert-i64-eq (array-length wire) 375 "v2 exemplar length")
     (test.assert-i64-eq
       (tli-test-record (& wire))
       248
-      "v1 exemplar record offset")
+      "v2 exemplar record offset")
     (match (codec.tli-decode-directory (& wire))
       [(codec.TliDirectoryResult.Err error)
         (test.assert-true false error.message)]
@@ -613,11 +640,11 @@
           [entry (& (array-ref directory.entries 0))]
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
-            "1223204e7c164e5fba3d607566d61546d1c8cb3668bd4696d2f8c3dca74e31a3"
+            "db63cf4db3d3896f37d74628b812b5b08d2afd5562e54f65042ff2dbe40e02c2"
             "independently computed content digest")
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest entry.module-sha256)))
-            "354f38cdf127ba160ae911bfba95a83ccbc56e5653a84934fa88793539644c10"
+            "96fc0aeed04dcf061acd20301f5d5ead15aa9657002d1e1a2112aaa1a787ab01"
             "independently computed module digest"))])
     (for [tag (iterator.range 0 (array-length types))]
       (let
@@ -635,9 +662,9 @@
       (codec.tli-encode-bundle (& (tli-test-bundle false)))]
     [start : i64 (tli-test-record (& bytes))]
     [dir : i64 (le.read-u64 (& bytes) 40)]
-    ;; Six imports of 37 bytes, two startup symbols, and their list counts.
+    ;; Six imports of 45 bytes, two startup symbols, and their list counts.
     [first-import : i64 (+ start 80)]
-    [first-type : i64 (+ first-import (* 6 37) 12 4)]
+    [first-type : i64 (+ first-import (* 6 45) 12 4)]
     [repr : i64 (+ first-type 29)]
     [cleanup : i64 (+ first-type 38)]
     ;; Enum (63 bytes), struct (112 bytes), then the function count.
@@ -708,6 +735,8 @@
         "value.sym"
         (tli.TliType.String)
         8
+        false
+        (__tl_make-array tli.TliExternLinkInput 0)
         (tli.TliConst.String (string.copy (& text)))))
     (let
       [modules : (__tl_dyn-array tli.TliModuleRecord)

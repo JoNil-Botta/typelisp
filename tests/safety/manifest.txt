@@ -3091,3 +3091,24 @@ entry_value_scope_u4_nested_declaration_binder_ok|run-exit|tests/safety/entry_va
 entry_value_scope_u5_passthrough_reflected_captured_ok|run-exit|tests/safety/entry_value_scope_u5_passthrough_reflected_captured_ok.tl|42|-
 entry_value_scope_u6_passthrough_declaration_not_captured_ok|run-exit|tests/safety/entry_value_scope_u6_passthrough_declaration_not_captured_ok.tl|7|-
 comptime_current_module_args_reject|check-fail|tests/safety/comptime_current_module_args_reject.tl|-|current-module expects no arguments
+storage_dead_in_arena_struct_borrow_reject|check-fail|tests/safety/storage_dead_in_arena_struct_borrow_reject.tl|-|error[E0205]: typecheck: `p` does not live long enough
+storage_dead_in_arena_enum_borrow_reject|check-fail|tests/safety/storage_dead_in_arena_enum_borrow_reject.tl|-|error[E0205]: typecheck: `e` does not live long enough
+storage_dead_in_arena_box_slot_borrow_reject|check-fail|tests/safety/storage_dead_in_arena_box_slot_borrow_reject.tl|-|error[E0205]: typecheck: reference value would escape lexical scope
+storage_dead_call_view_struct_borrow_reject|check-fail|tests/safety/storage_dead_call_view_struct_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `v`
+storage_dead_call_view_field_borrow_reject|check-fail|tests/safety/storage_dead_call_view_field_borrow_reject.tl|-|error[E0205]: typecheck: `v` does not live long enough
+storage_dead_call_view_match_borrow_reject|check-fail|tests/safety/storage_dead_call_view_match_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `x`
+storage_dead_call_view_let_match_borrow_reject|check-fail|tests/safety/storage_dead_call_view_let_match_borrow_reject.tl|-|error[E0205]: typecheck: `e` does not live long enough
+storage_dead_call_view_tuple_borrow_reject|check-fail|tests/safety/storage_dead_call_view_tuple_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `t`
+storage_dead_call_view_array_borrow_reject|check-fail|tests/safety/storage_dead_call_view_array_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `xs`
+storage_dead_view_alias_reassign_borrow_reject|check-fail|tests/safety/storage_dead_view_alias_reassign_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `v`
+storage_dead_view_alias_reassign_field_borrow_reject|check-fail|tests/safety/storage_dead_view_alias_reassign_field_borrow_reject.tl|-|error[E0205]: typecheck: `v` does not live long enough
+storage_dead_arena_box_slot_outside_in_arena_reject|check-fail|tests/safety/storage_dead_arena_box_slot_outside_in_arena_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `b`
+storage_dead_arena_box_call_slot_borrow_reject|check-fail|tests/safety/storage_dead_arena_box_call_slot_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `cell`
+storage_dead_region_param_field_borrow_reject|check-fail|tests/safety/storage_dead_region_param_field_borrow_reject.tl|-|error[E0205]: typecheck: `v` does not live long enough
+arena_handle_borrow_ok|run-exit|tests/safety/arena_handle_borrow_ok.tl|42|-
+clone_cleanup_owned_reject|check-fail|tests/safety/clone_cleanup_owned_reject.tl|-|error[E0206]: typecheck: clone unsupported type Res at Res: cleanup-owning type Res cannot be cloned
+clone_cleanup_deref_reject|check-fail|tests/safety/clone_cleanup_deref_reject.tl|-|error[E0206]: typecheck: clone unsupported type Res at Res: cleanup-owning type Res cannot be cloned
+clone_cleanup_enum_reject|check-fail|tests/safety/clone_cleanup_enum_reject.tl|-|error[E0206]: typecheck: clone unsupported type Handle at Handle: cleanup-owning type Handle cannot be cloned
+clone_cleanup_containing_aggregate_reject|check-fail|tests/safety/clone_cleanup_containing_aggregate_reject.tl|-|error[E0206]: typecheck: clone unsupported type Wrapper at Wrapper: cleanup-owning type Wrapper cannot be cloned
+clone_cleanup_tuple_reject|check-fail|tests/safety/clone_cleanup_tuple_reject.tl|-|error[E0206]: typecheck: clone unsupported type (Tuple Res i64)
+clone_non_cleanup_control_ok|run-exit|tests/safety/clone_non_cleanup_control_ok.tl|42|-

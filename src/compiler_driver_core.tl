@@ -2499,9 +2499,7 @@
           (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (return (Exhausted)))
-        (be_state.compiler-backend-state-set-scalar-registers-enabled!
-          backend-state
-          (opt_level.opt-level-full? opt-level))
+        (be_state.compiler-backend-state-set-opt-level! backend-state opt-level)
         (be_state.compiler-backend-state-set-optimize-for-size!
           backend-state
           (opt_level.opt-level-size? opt-level))
@@ -2597,9 +2595,9 @@
                   side-backend-state
                   (compiler_typecheck_core.tc-job-state-advisory-sink
                     typecheck-state))
-                (be_state.compiler-backend-state-set-scalar-registers-enabled!
+                (be_state.compiler-backend-state-set-opt-level!
                   side-backend-state
-                  (opt_level.opt-level-full? opt-level))
+                  opt-level)
                 (be_state.compiler-backend-state-set-optimize-for-size!
                   side-backend-state
                   (opt_level.opt-level-size? opt-level))

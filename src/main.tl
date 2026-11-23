@@ -144,6 +144,8 @@ Options:
     --link-arg <arg>               Pass a raw native linker argument
     --cfg <name>                   Enable a repeatable compile-time cfg predicate name
     --stdlib-root <dir>            Search root for stdlib/... imports
+    --sysroot <dir>                Select a prebuilt stdlib sysroot
+    --no-prebuilt-stdlib           Skip prebuilt stdlib discovery
 ")
 
 (define (cli-clean-help-text) : String

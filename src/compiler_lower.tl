@@ -1824,9 +1824,9 @@
   (masked-load-cache LowerMaybeMaskedLoadCache)
   ;; Attached only while lowering one masked vector loop and its vector tail.
   (masked-preheader-cache LowerMaybeMaskedPreheaderCache)
-  ;; Deferred Copy bindings (`lower-bind-payload-name`): var -> the var holding
-  ;; the address its value is read from at each use.
-  (deferred-copies lower_i64_i64_map.Map)
+  ;; Variables that hold the address of a pattern binding: 1 for deferred
+  ;; Copy reads, 2 for a view whose reads, writes and loans use the address.
+  (pattern-places lower_i64_i64_map.Map)
   ;; The body of the borrowed enum match arm whose payloads are being bound,
   ;; or -1; set only while `lower-bind-match-variant-payloads` runs.
   (deferred-arm-body i64)
@@ -16063,24 +16063,27 @@
                   unit))
               (set! remaining rest)]))))))
 
-(define (lower-state-deferred-copy? [state : LowerState] [var-id : i64]) : bool
+(define (lower-state-pattern-place [state : LowerState] [var-id : i64]) : i64
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (and
-      (not
-        (lower_i64_i64_map.is-empty?
-          (& (__tl-project-field (__tl-box-place data) deferred-copies))))
-      (lower_i64_i64_map.contains?
-        (& (__tl-project-field (__tl-box-place data) deferred-copies))
-        var-id))))
+    (lower_i64_i64_map.get-value-or
+      (& (__tl-project-field (__tl-box-place data) pattern-places))
+      var-id
+      0)))
 
-(define (lower-state-deferred-copy-mark [state : LowerState] [var-id : i64]) : LowerState
+(define (lower-state-view-place? [state : LowerState] [var-id : i64]) : bool
+  (= (lower-state-pattern-place state var-id) 2))
+
+(define (lower-state-pattern-place-mark
+  [state : LowerState]
+  [var-id : i64]
+  [kind : i64]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower_i64_i64_map.insert-ref!
-      (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
+      (&mut (__tl-project-field (__tl-box-place data) pattern-places))
       var-id
-      1)
+      kind)
     state))
 
 (define (lower-state-deferred-arm-body [state : LowerState]) : i64
@@ -17279,6 +17282,14 @@
   [offset : i64]) : LowerExpr
   (match (lower-emit-gep state base (I64 offset) (U8))
     [(Expr gep-state ptr _) (Expr gep-state ptr (U64))]))
+
+(define (lower-gep-byte-typed
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [ty : ast.AstType]) : LowerExpr
+  (match (lower-gep-byte state base offset)
+    [(Expr addressed ptr _) (Expr addressed ptr ty)]))
 
 (define (lower-store-at-offset
   [state : LowerState]
@@ -19819,15 +19830,15 @@
   [load-value-reference : bool]) : LowerExpr
   (if (and
     load-value-reference
-    (lower-borrow-place-value-reference?
-      ctx
-      (tc_core.tc-borrow-referent-type (lower-global-shared-view stored-ty))))
-    (match (lower-state-alloc-var state)
-      [(Alloc allocated var-id)
-        (Expr
-          (lower-state-emit allocated (Load var-id slot stored-ty))
-          (Var var-id)
-          result-ty)])
+    (match (tc_core.tc-type-strip-region
+      (tc_core.tc-resolve-type ctx (clone stored-ty)))
+      [(or (Ref _ _) (MutRef _ _)) true]
+      [_
+        (lower-borrow-place-value-reference?
+          ctx
+          (tc_core.tc-borrow-referent-type (clone stored-ty)))]))
+    (match (lower-load-inline-value-at-offset ctx state slot 0 stored-ty)
+      [(Expr loaded value _) (Expr loaded value result-ty)])
     (Expr state slot result-ty)))
 
 (define (lower-borrow-reference-var-address
@@ -19875,9 +19886,11 @@
         name-id
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? id)
-      (if (lower-borrow-place-value-reference?
-        ctx
-        (lower-global-shared-view referent-ty))
+      (if (or
+        (lower-state-view-place? state id)
+        (lower-borrow-place-value-reference?
+          ctx
+          (lower-global-shared-view referent-ty)))
         (Ok (Expr state (Var id) result-ty))
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx (lower-global-shared-view result-ty)))
@@ -19889,7 +19902,7 @@
                   origin
                   "lower: mutable borrow of by-value place requires writeback support")))]
           [_
-            (if (not (lower-state-deferred-copy? state id))
+            (if (not (> (lower-state-pattern-place state id) 0))
               (ResultLowerExpr.Ok
                 (lower-borrow-copy-to-inline-storage
                   ctx
@@ -20055,7 +20068,12 @@
   (if (match (ast.ast-expr-unspan (& receiver))
     [(or (StructGet _ _) (TupleRef _ _) (ArrayRef _ _) (BoxGet _) (BoxTake _))
       true]
-    [(Var name) (not (sym_i64_env.sym-i64-contains-id env name))]
+    [(Var name)
+      (or
+        (not (sym_i64_env.sym-i64-contains-id env name))
+        (lower-state-view-place?
+          state
+          (sym_i64_env.sym-i64-lookup-id-or env name -1)))]
     [_ false])
     (match (lower-expr-result-type-or-check
       ctx
@@ -20189,7 +20207,7 @@
                       ptr
                       (lower-global-shared-view field-ty)
                       result-ty
-                      (lower-owned-handle-type? ctx field-ty)))])]))])))
+                      (not (lower-type-inline-storage? ctx field-ty))))])]))])))
 
 (define (lower-borrow-array-element-address
   [ctx : tc_core.TcContext]
@@ -20200,8 +20218,8 @@
   [index : ast.AstExpr]
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]
-  ;; A borrow of an owned handle (a dynamic array or string) is the handle
-  ;; itself; a mutable place (`replace!`, a store) is the element slot.
+  ;; A borrow of an owned handle is the handle itself. A stored reference
+  ;; is borrowed as a reference to the slot, just like `replace!` addresses it.
   [load-handle? : bool]) : ResultLowerExpr
   (match (lower-expr-result-type-or-check
     ctx
@@ -20532,9 +20550,7 @@
               (lower-global-shared-view result-ty)
               true))]
         [handle? : bool
-          (lower-reference-handle-referent?
-            ctx
-            (lower-global-shared-view payload-ty))]
+          (lower-reference-handle-referent? ctx (clone payload-ty))]
         (match lowered
           [(Expr storage-state storage _)
             (Ok
@@ -21122,12 +21138,14 @@
             (tc_core.tc-resolve-type
               ctx
               (tc_core.tc-context-type-get ctx inner-node))]
-          (match (lower-load-inline-value-at-offset
+          (match (lower-bind-element-access
             ctx
             state
+            (Owned)
             box-value
             0
-            (lower-global-shared-view inner-ty))
+            (& inner)
+            (clone inner-ty))
             [(Expr load-state inner-value _)
               (lower-bind-irrefutable-box-value
                 ctx
@@ -21305,6 +21323,9 @@
   [scrut-reg-group? : bool]) : LowerExpr
   (match bind-mode
     [(LowerBindMode.Owned)
+      (when
+        (lower-register-view-binder? ctx state (& resolved))
+        (return (lower-gep-byte-typed state base offset resolved)))
       (match (lower-bind-payload-value
         ctx
         state
@@ -21353,7 +21374,7 @@
       (match (lower-state-alloc-var state)
         [(LowerAlloc.Alloc ptr-state ptr-id)
           (LowerExpr.Expr
-            (lower-state-deferred-copy-mark
+            (lower-state-pattern-place-mark
               (lower-state-emit
                 ptr-state
                 (ir.CompilerIrInstr.Gep
@@ -21361,7 +21382,8 @@
                   base
                   (ir.CompilerIrValue.I64 offset)
                   (ast.AstType.U8)))
-              ptr-id)
+              ptr-id
+              1)
             (ir.CompilerIrValue.Var ptr-id)
             resolved)])
       (lower-bind-payload-name-value
@@ -21619,6 +21641,9 @@
   [scrut-reg-group? : bool]) : LowerExpr
   (match bind-mode
     [(Owned)
+      (when
+        (lower-register-view-pattern? ctx state (& resolved))
+        (return (lower-gep-byte state base offset)))
       (lower-bind-payload-value
         ctx
         state
@@ -22877,9 +22902,8 @@
       (Ok (Expr state (Var id) ty))
       (Ok (Expr state (Global (lower-resolve-name-symbol-id state name-id)) ty)))))
 
-;; A deferred Copy binding's value, loaded at the read from the address the
-;; binding holds (`lower-bind-payload-name`).
-(define (lower-deferred-copy-read
+;; Read an address-backed pattern binding at its current value.
+(define (lower-pattern-place-read
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [local-id : i64]
@@ -22926,8 +22950,8 @@
       [(not (csym.compiler-symbols-handle-found? id))
         (Ok
           (Expr state (Global (lower-resolve-name-symbol-id state name-id)) ty))]
-      [(lower-state-deferred-copy? state id)
-        (ResultLowerExpr.Ok (lower-deferred-copy-read ctx state id ty))]
+      [(> (lower-state-pattern-place state id) 0)
+        (ResultLowerExpr.Ok (lower-pattern-place-read ctx state id ty))]
       [else (lower-register-address-taken-local-read ctx state id ty)])))
 
 (define (lower-disarm-move-aware-resource-name
@@ -24756,6 +24780,18 @@
     (cis.intern-lower-private-identity-raw (lower-region-reset-marker-id state))
     (lower-arena-restore-metadata-type hidden-name-id)))
 
+(define (lower-type-env-push-scratch-exit
+  [state : LowerState]
+  [type-env : tc_core.TcTypeEnv]
+  [saved-name : i64]) : tc_core.TcTypeEnv
+  (tc_core.tc-bind-id
+    type-env
+    (cis.intern-lower-private-identity-raw (lower-region-reset-marker-id state))
+    (ast.ast-ty-tuple
+      (ast.ast-type-cons
+        (& (Var saved-name))
+        (& (ast.ast-type-cons (& (Unit)) (& (ast.ast-type-list-new))))))))
+
 (define (lower-cleanup-name-id-from-expr [cleanup : (& ast.AstExpr)]) : tc_core.ResultTcExprId
   (match (ast.ast-expr-unspan cleanup)
     [(Var name) (Ok name)]
@@ -24994,21 +25030,49 @@
         [_ (Ok state)]))
     (Ok state)))
 
+(define (lower-emit-scratch-exit
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [saved-name : i64]) : ResultLowerState
+  (let
+    [current : LowerExpr
+      (try
+        (lower-runtime-call-values
+          state
+          (lower-tl-arena-current-symbol)
+          (ir.compiler-ir-value-seq-empty)
+          (I64)))]
+    (match current
+      [(Expr current-state scratch _)
+        (let
+          [restored : LowerState
+            (try (lower-emit-arena-restore current-state env saved-name))]
+          [destroyed : LowerExpr
+            (try
+              (lower-runtime-call-values
+                restored
+                (lower-tl-arena-destroy-symbol)
+                (ir.compiler-ir-value-seq1 scratch)
+                (Unit)))]
+          (match destroyed
+            [(Expr done _ _) (Ok done)]))])))
+
+;; A one-element tuple restores a saved arena. The scratch marker also
+;; destroys the active scratch arena after restoring the saved one.
 (define (lower-emit-arena-restore-marker-tuple
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [types : ast.AstTypeList]) : ResultLowerState
-  (if (= (ast.ast-type-list-len (& types)) 1)
-    (let
-      [hidden-ty : ast.AstType
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get (& types) 0 (ast.ast-type-id-fallback)))]
-      (match hidden-ty
-        [(Var hidden-name) (lower-emit-arena-restore state env hidden-name)]
-        [_ (Ok state)]))
-    (Ok state)))
+  (match (tc_core.tc-context-type-get
+    ctx
+    (ast.ast-type-list-get (& types) 0 (ast.ast-type-id-fallback)))
+    [(Var hidden-name)
+      (match (ast.ast-type-list-len (& types))
+        [1 (lower-emit-arena-restore state env hidden-name)]
+        [2 (lower-emit-scratch-exit state env hidden-name)]
+        [_ (Ok state)])]
+    [_ (Ok state)]))
 
 ;; Emit the cleanup/region-reset calls a binding env keeps active. This
 ;; walks the whole TcTypeEnv chain once per scope exit. It iterates rather than
@@ -25037,8 +25101,8 @@
         [(Bind key ty rest-env)
           ;; A return stops at the hygiene global boundary, which closes
           ;; the function-local scope: cleanup/region-reset markers are
-          ;; only ever bound above it by body forms (with-resource/
-          ;; with-arena), never in the module or top env below. Stopping
+          ;; only ever bound above it by resource and arena body forms, never
+          ;; in the module or top env below. Stopping
           ;; there avoids walking the whole program spine on every
           ;; return. A break or continue stops at the
           ;; innermost loop target.
@@ -27950,7 +28014,9 @@
       (match (lower-call-arg-field-place ctx env type-env place)
         [(Some field)
           (cond
-            [(lower-type-register-resident? ctx (& field.root-ty))
+            [(and
+                (lower-type-register-resident? ctx (& field.root-ty))
+                (not (lower-state-view-place? state field.local-id)))
               (match (lower-borrow-copy-to-inline-storage
                 ctx
                 state
@@ -28021,6 +28087,9 @@
           (and
             (tc_core.tc-type-contains-reference? (& place-ty))
             (not (lower-supported-reference-type? ctx place-ty)))
+          (lower-state-view-place?
+            state
+            (sym_i64_env.sym-i64-lookup-id-or env name-id -1))
           (lower-borrow-place-value-reference? ctx referent-ty))
           (lower-call-arg-normal-as
             ctx
@@ -43756,6 +43825,9 @@
         env
         name
         (csym.compiler-symbols-missing-handle))]
+    (when
+      (lower-state-view-place? state local-id)
+      (return (Ok (Expr state (Var local-id) place-ty))))
     (if (csym.compiler-symbols-handle-found? local-id)
       (match (lower-state-alloc-var state)
         [(Alloc allocated var-id)
@@ -48455,18 +48527,38 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [enclosing-value : ir.CompilerIrValue]
-  [mark-value : ir.CompilerIrValue]
+  [enclosing-var : i64]
+  [mark-var : i64]
   [body : ast.AstExprList]) : ResultLowerExpr
   (let
+    [saved-name : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-arena-restore-hidden-name-id state enclosing-var))]
+    [mark-name : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-region-hidden-name-id state mark-var))]
+    [body-env : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        (sym_i64_env.sym-i64-bind-id env saved-name enclosing-var)
+        mark-name
+        mark-var)]
     [region-type-env : tc_core.TcTypeEnv
-      (tc_core.tc-push-region
-        type-env
-        (tc_core.tc-scratch-body-region (& body)))]
+      (lower-type-env-push-region-reset
+        state
+        (lower-type-env-push-arena-restore
+          state
+          (tc_core.tc-push-region
+            type-env
+            (tc_core.tc-scratch-body-region (& body)))
+          saved-name)
+        mark-name)]
     [body-lowered : LowerExpr
-      (try (lower-begin ctx state env region-type-env body))]
+      (try (lower-begin ctx state body-env region-type-env body))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
+        (when
+          (tc_core.tc-never-type? (clone body-ty))
+          (return (Ok (Expr body-state body-value body-ty))))
         (let
           [scratch-head-lowered : LowerExpr
             (try
@@ -48483,7 +48575,7 @@
                     (lower-runtime-call-values
                       scratch-head-state
                       (lower-tl-arena-set-symbol)
-                      (ir.compiler-ir-value-seq1 enclosing-value)
+                      (ir.compiler-ir-value-seq1 (Var enclosing-var))
                       (Unit)))]
                 (match restore-enclosing-lowered
                   [(Expr restore-state _ _)
@@ -48493,7 +48585,7 @@
                       env
                       type-env
                       scratch-head-value
-                      mark-value
+                      (Var mark-var)
                       body-value
                       body-ty)]))]))])))
 
@@ -48513,7 +48605,7 @@
           (ir.compiler-ir-value-seq-empty)
           (I64)))]
     (match enclosing-lowered
-      [(Expr enclosing-state enclosing-value _)
+      [(Expr enclosing-state (Var enclosing-var) _)
         (let
           [scratch-lowered : LowerExpr
             (try
@@ -48546,15 +48638,21 @@
                             (ir.compiler-ir-value-seq-empty)
                             (U64)))]
                       (match mark-lowered
-                        [(Expr mark-state mark-value _)
+                        [(Expr mark-state (Var mark-var) _)
                           (lower-with-escape-body
                             ctx
                             mark-state
                             env
                             type-env
-                            enclosing-value
-                            mark-value
-                            body)]))]))]))])))
+                            enclosing-var
+                            mark-var
+                            body)]
+                        [_
+                          (Err
+                            (box
+                              (lower-diagnostic
+                                "lower: missing escape arena mark")))]))]))]))]
+      [_ (Err (box (lower-diagnostic "lower: missing enclosing arena")))])))
 
 (define (lower-with-scratch-final-restore
   [state : LowerState]
@@ -48626,17 +48724,28 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [enclosing-value : ir.CompilerIrValue]
+  [enclosing-var : i64]
   [body : ast.AstExprList]) : ResultLowerExpr
   (let
+    [saved-name : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-arena-restore-hidden-name-id state enclosing-var))]
+    [body-env : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id env saved-name enclosing-var)]
     [region-type-env : tc_core.TcTypeEnv
-      (tc_core.tc-push-region
-        type-env
-        (tc_core.tc-scratch-body-region (& body)))]
+      (lower-type-env-push-scratch-exit
+        state
+        (tc_core.tc-push-region
+          type-env
+          (tc_core.tc-scratch-body-region (& body)))
+        saved-name)]
     [body-lowered : LowerExpr
-      (try (lower-begin ctx state env region-type-env body))]
+      (try (lower-begin ctx state body-env region-type-env body))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
+        (when
+          (tc_core.tc-never-type? (clone body-ty))
+          (return (Ok (Expr body-state body-value body-ty))))
         (let
           [scratch-head-lowered : LowerExpr
             (try
@@ -48653,7 +48762,7 @@
                     (lower-runtime-call-values
                       scratch-head-state
                       (lower-tl-arena-set-symbol)
-                      (ir.compiler-ir-value-seq1 enclosing-value)
+                      (ir.compiler-ir-value-seq1 (Var enclosing-var))
                       (Unit)))]
                 (match restore-enclosing-lowered
                   [(Expr restore-state _ _)
@@ -48681,7 +48790,7 @@
           (ir.compiler-ir-value-seq-empty)
           (I64)))]
     (match enclosing-lowered
-      [(Expr enclosing-state enclosing-value _)
+      [(Expr enclosing-state (Var enclosing-var) _)
         (let
           [scratch-lowered : LowerExpr
             (try
@@ -48707,8 +48816,9 @@
                       set-scratch-state
                       env
                       type-env
-                      enclosing-value
-                      body)]))]))])))
+                      enclosing-var
+                      body)]))]))]
+      [_ (Err (box (lower-diagnostic "lower: missing enclosing arena")))])))
 
 (define (lower-if-merge
   [ctx : tc_core.TcContext]
@@ -68015,6 +68125,41 @@
                     body
                     false)]))]))]))
 
+;; A register-sized view must enter pattern lowering as the address of its
+;; referent. Ordinary register values still enter as packed words.
+(define (lower-match-scrutinee
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrutinee : ast.AstExpr]
+  [view : i64]) : ResultLowerExpr
+  (when
+    (= view 1)
+    (match (lower-expr-result-type-or-check
+      ctx
+      env
+      type-env
+      (lower-state-type-cache state)
+      (lower-state-function-state state)
+      (& scrutinee))
+      [(Ok ty)
+        (when
+          (and
+            (lower-type-inline-storage? ctx ty)
+            (lower-type-register-resident? ctx ty))
+          (return
+            (lower-borrow-place-address
+              ctx
+              state
+              env
+              type-env
+              (clone scrutinee)
+              scrutinee
+              ty)))]
+      [(Err _) unit]))
+  (lower-expr ctx state env type-env scrutinee))
+
 ;; Scalar `match` lowering. The scrutinee is lowered once into a fresh
 ;; local, then literal arms become a chain of `CompilerIrBinOp.Eq` tests + `CompilerIrInstr.Branch`
 ;; (mirroring `lower-if`). The typechecker guarantees exhaustiveness and arm-type
@@ -68033,7 +68178,7 @@
   [expr-ty : ast.AstType]
   [mode : LowerResultMode]
   [view : i64]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env scrutinee)
+  (match (lower-match-scrutinee ctx state env type-env scrutinee view)
     [(ResultLowerExpr.Ok scrut-lowered)
       (match scrut-lowered
         [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
@@ -68285,6 +68430,23 @@
 ;; a fresh root it owns. Reference and register bindings are values. A
 ;; move-only binding of a view's match is the viewed storage itself
 ;; (`lower-state-view-match`): writes through a mutable view's land there.
+(define (lower-register-view-pattern?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [ty : (& ty ast.AstType)]) : bool
+  (and
+    (= (lower-state-view-match state) 1)
+    (lower-type-inline-storage? ctx ty)
+    (lower-type-register-resident? ctx ty)))
+
+(define (lower-register-view-binder?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [ty : (& ty ast.AstType)]) : bool
+  (and
+    (lower-register-view-pattern? ctx state ty)
+    (not (tc_core.tc-type-copyable? ctx (clone (deref ty))))))
+
 (define (lower-bind-owned-pattern-name
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -68293,6 +68455,13 @@
   [name : i64]
   [var-id : i64]
   [ty : ast.AstType]) : ResultLowerEnv
+  (when
+    (lower-register-view-binder? ctx state (& ty))
+    (return
+      (Ok
+        (lower-state-pattern-place-mark state var-id 2)
+        (sym_i64_env.sym-i64-bind-id env name var-id)
+        (tc_core.tc-bind-id type-env name ty))))
   (if (not (lower-inline-aggregate-abi-copy-needed? ctx ty))
     (ResultLowerEnv.Ok
       state
@@ -68347,6 +68516,50 @@
   [field-name : String]
   [pattern : ast.AstPattern]
   [field-ty : ast.AstType]) : ResultLowerEnv
+  (when
+    (and
+      (= (lower-state-view-match state) 1)
+      (or
+        (tc_core.tc-name-register-resident-id? ctx struct-id)
+        (lower-register-view-pattern? ctx state (& field-ty)))
+      (match (& pattern)
+        [(Wildcard) false]
+        [_ true]))
+    (let
+      [info : LowerFieldInfo
+        (try (lower-struct-field-info ctx struct-id struct-name field-name))]
+      (match info
+        [(Info offset _)
+          (match (if (lower-register-view-pattern? ctx state (& field-ty))
+            (ResultLowerExpr.Ok
+              (lower-bind-element-access
+                ctx
+                state
+                (Owned)
+                base
+                offset
+                (& pattern)
+                (clone field-ty)))
+            (lower-struct-field-load-at-offset
+              ctx
+              state
+              base
+              struct-id
+              offset
+              (clone field-ty)
+              (clone field-ty)))
+            [(Ok (Expr field-state field-value _))
+              (return
+                (lower-bind-element-pattern
+                  ctx
+                  field-state
+                  env
+                  type-env
+                  (Owned)
+                  field-value
+                  pattern
+                  field-ty))]
+            [(Err error) (return (Err error))])])))
   (match pattern
     [(Wildcard) (Ok state env type-env)]
     [(or (Var name _) (Binding name))
@@ -68812,7 +69025,14 @@
     (return (Expr state Unit elem-ty)))
   (match bind-mode
     [(LowerBindMode.Owned)
-      (lower-load-inline-value-at-offset ctx state base offset elem-ty)]
+      (if (and
+        (lower-register-view-pattern? ctx state (& elem-ty))
+        (match pattern
+          [(or (ast.AstPattern.Binding _) (ast.AstPattern.Var _ _))
+            (not (tc_core.tc-type-copyable? ctx (clone elem-ty)))]
+          [_ true]))
+        (lower-gep-byte-typed state base offset elem-ty)
+        (lower-load-inline-value-at-offset ctx state base offset elem-ty))]
     [(LowerBindMode.Borrowed _)
       (if (match pattern
         [(or (ast.AstPattern.Binding _) (ast.AstPattern.Var _ _)) true]
@@ -69958,7 +70178,7 @@
         arms
         cont
         (No)
-        false)]
+        (= (lower-state-view-match state) 1))]
     [(Ref borrow-lifetime referent-box)
       (let
         [referent-ty : ast.AstType
@@ -70154,21 +70374,17 @@
   [body : ast.AstExpr]
   [rest : ast.AstMatchArmList]
   [cont : LowerMatchCont]) : ResultLowerExpr
-  (match (lower-state-alloc-var state)
-    [(Alloc eq-alloc eq-var)
-      (let
-        [eq-state : LowerState
-          (lower-state-emit
-            eq-alloc
-            (BinOp
-              eq-var
-              Eq
-              (Var scrut-var)
-              (lower-literal-value-with-type
-                (tc_core.tc-context-source-names ctx)
-                lit
-                (lower-global-shared-view scrut-ty))
-              (lower-global-shared-view scrut-ty)))]
+  (let
+    [test : LowerExpr
+      (try
+        (lower-literal-payload-eq
+          ctx
+          state
+          (Var scrut-var)
+          lit
+          (clone scrut-ty)))]
+    (match test
+      [(Expr eq-state eq-value _)
         (match (lower-state-fresh-label eq-state "match_arm")
           [(Label body-label-state body-label)
             (match (lower-state-fresh-label body-label-state "match_next")
@@ -70178,7 +70394,7 @@
                     (lower-state-finish-block
                       (lower-state-emit
                         next-label-state
-                        (Branch (Var eq-var) body-label next-label))
+                        (Branch eq-value body-label next-label))
                       body-label)]
                   (match (lower-match-arm-body
                     ctx
@@ -70197,7 +70413,7 @@
                         scrut-ty
                         rest
                         next-cont)]
-                    [(Err message) (Err message)]))])]))]))
+                    [(Err message) (Err message)]))])])])))
 
 ;; A slice arm before the last: its length and element tests fall through to
 ;; the next arm.
@@ -70599,25 +70815,14 @@
   [scrut-ty : ast.AstType]
   [lit : ast.AstLiteral]
   [target-label : i64]
-  [fail-label : i64]) : LowerState
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc eq-alloc eq-var)
-      (lower-state-emit
-        (lower-state-emit
-          eq-alloc
-          (ir.CompilerIrInstr.BinOp
-            eq-var
-            ir.CompilerIrBinOp.Eq
-            (ir.CompilerIrValue.Var scrut-var)
-            (lower-literal-value-with-type
-              (tc_core.tc-context-source-names ctx)
-              lit
-              (lower-global-shared-view scrut-ty))
-            (lower-global-shared-view scrut-ty)))
-        (ir.CompilerIrInstr.Branch
-          (ir.CompilerIrValue.Var eq-var)
-          target-label
-          fail-label))]))
+  [fail-label : i64]) : ResultLowerState
+  (let
+    [test : LowerExpr
+      (try (lower-literal-payload-eq ctx state (Var scrut-var) lit scrut-ty))]
+    (match test
+      [(Expr eq-state eq-value _)
+        (Ok
+          (lower-state-emit eq-state (Branch eq-value target-label fail-label)))])))
 
 ;; Emits the test of an or-pattern alternative bound in its group's block
 ;; (`lower-or-arm-alternative-groups`): its tag or literal test branching to
@@ -70668,15 +70873,14 @@
       [(LowerOrScrutinee.Scalar)
         (match pattern
           [(ast.AstPattern.Literal lit)
-            (ResultLowerState.Ok
-              (lower-or-emit-literal-test
-                ctx
-                state
-                scrut-var
-                scrut-ty
-                lit
-                target-label
-                fail-label))]
+            (lower-or-emit-literal-test
+              ctx
+              state
+              scrut-var
+              scrut-ty
+              lit
+              target-label
+              fail-label)]
           [_
             (ResultLowerState.Err
               (box
@@ -70747,14 +70951,15 @@
               [(LowerLabel.Label ok-state ok-label)
                 (ResultLowerEnv.Ok
                   (lower-state-finish-block
-                    (lower-or-emit-literal-test
-                      ctx
-                      ok-state
-                      scrut-var
-                      scrut-ty
-                      lit
-                      ok-label
-                      fail-label)
+                    (try
+                      (lower-or-emit-literal-test
+                        ctx
+                        ok-state
+                        scrut-var
+                        scrut-ty
+                        lit
+                        ok-label
+                        fail-label))
                     ok-label)
                   env
                   type-env)])
@@ -73614,7 +73819,7 @@
     [(None)
       (let
         [scrut-lowered : LowerExpr
-          (try (lower-expr ctx state env type-env scrutinee))]
+          (try (lower-match-scrutinee ctx state env type-env scrutinee view))]
         (match scrut-lowered
           [(Expr scrut-state scrut-value scrut-ty)
             (match (lower-tail-match-scrutinee-home

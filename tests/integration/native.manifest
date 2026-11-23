@@ -952,7 +952,7 @@ arena_tied_early_exits|all|0,1,2|tests/integration/arena_tied_early_exits.tl|42|
 with_arena_builtin_alloc|all|-|tests/integration/with_arena_builtin_alloc.tl|2|-|-|stdlib/string.tl|-
 with_arena_loop|all|-|tests/integration/with_arena_loop.tl|42|-|-|stdlib/string.tl|-
 with_arena_mark_stress|all|-|tests/integration/with_arena_mark_stress.tl|42|-|-|stdlib/string.tl|-
-with_escape_clone_out|all|-|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+with_escape_clone_out|all|-,0,1,2|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_closure_reference_capture|all|-|tests/integration/arena_closure_reference_capture.tl|42|-|-|-|-
 arena_closure_reference_move|all|-|tests/integration/arena_closure_reference_move.tl|42|-|-|-|-
 compiler_abort_intern|all|0,1,2|src/tests/compiler_abort_sites.tl|134|-|intern|compiler_abort.tl compiler_intern.tl compiler_intern_state.tl compiler_optimize.tl compiler_ast_types.tl token.tl stdlib/io.tl stdlib/string.tl compiler_ir_return_storage.tl|stage-stdlib+expected-stderr:tl: compiler_intern.intern-id-from-renderable: invalid renderable name ID\n
@@ -1318,3 +1318,7 @@ box_loop_continue|all|0,1,2|tests/integration/box_loop_continue.tl|13|-|-|-|-
 dynarray_loop_continue|all|0,1,2|tests/integration/dynarray_loop_continue.tl|13|-|-|-|-
 continue_array_len|all|0,1,2|tests/integration/continue_array_len.tl|8|-|-|-|-
 range_pair_bounds|all|0,2|tests/integration/range_pair_bounds.tl|42|47 0 0 1 1 0 1 0 0\n48 1 1 0 0 0 1 0 0\n57 1 1 0 0 0 1 0 0\n58 0 0 1 1 0 1 0 0\n-9223372036854775808 0 0 1 1 0 1 0 1\n9223372036854775807 0 0 1 1 0 1 1 0\n-6 0 0 1 1 0 1 0 0\n-5 0 0 1 1 1 1 0 0\n5 0 0 1 1 1 1 0 0\n6 0 0 1 1 0 1 0 0\n0 0 0 1 1 1 1 0 0\n|47 48 57 58 -9223372036854775808 9223372036854775807 -6 -5 5 6 0|stdlib/io.tl stdlib/string.tl|-
+reborrow_reference_projection|all|0,1,2|tests/integration/reborrow_reference_projection.tl|42|-|-|-|-
+register_view_match_write|all|0,1,2|tests/integration/register_view_match_write.tl|42|-|-|-|-
+string_scrutinee_literal_match|all|0,1,2|tests/integration/string_scrutinee_literal_match.tl|42|-|-|-|-
+arena_clone_scope_exits|all|0,1,2|tests/integration/arena_clone_scope_exits.tl|42|-|-|-|-

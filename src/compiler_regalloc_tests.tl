@@ -17275,3 +17275,53 @@
                   (& (reg.compiler-reg-assignment-lookup assignments 3))
                   cabi.compiler-reg-id-rcx))
               "TailMask shift clobber keeps live GP values out of %rcx"))]))))
+
+(cfg
+  test
+  (test
+    regalloc-win64-coalesced-float-param-disjoint-from-vector
+    (let
+      [func : ir.CompilerIrFunction
+        (irt.func
+          "function @win64_f32_reduce(ptr=%0:i64, n=%1:i64, seed=%2:f32) -> f32 vars 11 {
+           entry:
+             %3 = mov 0 : i64
+             jump header
+           header:
+             %4 = phi [%3, entry], [%8, body] : i64
+             %5 = phi [%2, entry], [%9, body] : f32
+             %6 = lt %4, %1 : bool
+             branch %6, body, exit
+           body:
+             %7 = vector_load %0, %4 lanes 8 : f32
+             vector_store %0, %4, %7 lanes 8 : f32
+             %9 = add %5, %5 : f32
+             %8 = add %4, 8 : i64
+             jump header
+           exit:
+             return %5
+           }")]
+      (match (compiler-reg-plan-function-avx2-for-abi Windows func)
+        [(Plan assignments _ _ _ _)
+          (match (reg.compiler-reg-assignment-lookup assignments 5)
+            [(Some acc-loc)
+              (match (reg.compiler-reg-assignment-lookup assignments 7)
+                [(Some vec-loc)
+                  (match acc-loc
+                    [(Register acc-reg)
+                      (match vec-loc
+                        [(Register vec-reg)
+                          (test.assert-true
+                            (not
+                              (reg.compiler-reg-registers-overlap?
+                                acc-reg
+                                vec-reg))
+                            "coalesced Win64 float param accumulator must not alias vector register family")]
+                        [_
+                          (test.assert-true
+                            false
+                            "expected vector register for %7")])]
+                    [_
+                      (test.assert-true false "expected scalar register for %5")])]
+                [(No) (test.assert-true false "expected assignment for %7")])]
+            [(No) (test.assert-true false "expected assignment for %5")])]))))

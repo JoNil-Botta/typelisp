@@ -21256,15 +21256,15 @@ entry:
     (compiler-backend-avx512-mask-reduce-emits?
       (Any)
       8
-      "    kortestw %k1, %k1\n    setne %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setne %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       16
-      "    kortestw %k1, %k1\n    setc %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setc %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       8
-      "    kmovw %k1, %eax\n    cmpl $255, %eax\n    sete %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")))
+      "    kmovw %k1, %r12d\n    cmpl $255, %r12d\n    sete %r12b\n    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-8 %1=spill:-16 %2=spill:-24 %3=%r12"))
@@ -21367,7 +21367,8 @@ entry:
     (has
       "    kmovw -8(%rbp), %k7\n"
       "    kortestw %k7, %k7\n"
-      "    movq %rax, %r12\n")))
+      "    setne %r12b\n"
+      "    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
   (match (be_simd.compiler-backend-emit-avx512-mask-load

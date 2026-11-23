@@ -26154,7 +26154,11 @@
             (& vector-candidates)
             (& (compiler-reg-vector-registers-for-abi target-abi))
             scalar-assignments
-            interval-index
+            ;; `scalar-assignments` is keyed by coalesce root before class
+            ;; expansion, so vector allocation must check occupancy against
+            ;; `eff-index` to see coalesced scalar XMM ranges (e.g. a Win64
+            ;; `%xmm2` float parameter coalesced with a loop accumulator phi).
+            (& eff-index)
             group-vars
             param-roots
             (& (__tl_make-array CompilerRegIdSeq 0))

@@ -8,6 +8,7 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import stdlib.byte_buf)
+(import stdlib.clone)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -294,7 +295,7 @@
       (& (tlci_core.tlci-make-metadata "v1" "stdlib" "0.1.0")))
     (string.copy (& build-hash))
     windows-target
-    (clone rodata)
+    (clone.deep rodata)
     (ast.ast-place-shared-view names)
     captures)
     [(Err message)

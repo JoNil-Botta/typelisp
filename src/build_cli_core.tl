@@ -5531,13 +5531,14 @@
                   (build_run_core.source-tool-link-inputs-empty))]
               ;; The dependency section keeps each package's raw arguments.
               [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                (clone
-                  (build_run_core.source-tool-link-inputs-merge-with
-                    (build_run_core.source-tool-link-inputs-merge
-                      manifest-link-inputs
-                      metadata-link-inputs)
-                    dep-link-inputs
-                    false))]
+                (build_run_core.clone-source-tool-link-inputs
+                  (&
+                    (build_run_core.source-tool-link-inputs-merge-with
+                      (build_run_core.source-tool-link-inputs-merge
+                        manifest-link-inputs
+                        metadata-link-inputs)
+                      dep-link-inputs
+                      false)))]
               [crt-entry : bool
                 (and
                   emit-entry

@@ -2516,8 +2516,10 @@
   21)
 (define compiler-backend-scratch-i64-edge-flags-width : i64
   22)
-(define compiler-backend-scratch-i64-count : i64
+(define compiler-backend-scratch-i64-loop-block-count : i64
   23)
+(define compiler-backend-scratch-i64-count : i64
+  24)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -2568,8 +2570,10 @@
 ;; save); `< 0` = `-(slot-index + 1)`, the classic 64-byte frame slot.
 (define compiler-backend-scratch-i64-array-emergency-save-locs : i64
   8)
-(define compiler-backend-scratch-i64-array-count : i64
+(define compiler-backend-scratch-i64-array-loop-block-labels : i64
   9)
+(define compiler-backend-scratch-i64-array-count : i64
+  10)
 (define compiler-backend-scratch-bool-array-const-hoist-site-wide : i64
   0)
 (define compiler-backend-scratch-bool-array-const-hoist-site-frame : i64
@@ -3063,6 +3067,25 @@
   (set!
     (array-ref (compiler-backend-function-scratch-i64-arrays state) index)
     value))
+
+(define (compiler-backend-function-loop-block?
+  [state : CompilerBackendFunctionState]
+  [label : i64]) : bool
+  (let
+    [count : i64
+      (compiler-backend-function-scratch-i64
+        state
+        compiler-backend-scratch-i64-loop-block-count)]
+    (if (= count 0)
+      false
+      (let
+        [labels : (__tl_dyn-array i64)
+          (compiler-backend-function-scratch-i64-array
+            state
+            compiler-backend-scratch-i64-array-loop-block-labels)]
+        (for [i (iterator.range 0 count)]
+          (when (= (array-ref labels i) label) (return true)))
+        false))))
 
 (define (compiler-backend-function-scratch-bool-array
   [state : CompilerBackendFunctionState]

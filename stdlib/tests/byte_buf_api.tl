@@ -75,7 +75,7 @@
         1
         2)]
     (let
-      [actual : String (byte_buf.to-string (clone buf))]
+      [actual : String (byte_buf.to-string (byte_buf.clone-byte-buf (& buf)))]
       [expected : String "xyBC"]
       (test.assert-string-eq
         (& actual)
@@ -96,7 +96,7 @@
 (define (assert-string-copy-boundaries) : unit
   (let
     [buf : byte_buf.ByteBuf (byte_buf.from-string "owner")]
-    [copy : String (byte_buf.to-string (clone buf))]
+    [copy : String (byte_buf.to-string (byte_buf.clone-byte-buf (& buf)))]
     [expected : String "owner"]
     (set! buf (byte_buf.set! buf 0 (make-u8 88)))
     (test.assert-string-eq
@@ -208,7 +208,8 @@
     (assert-u8-eq (byte_buf.ref buf 5) 107 "string k")
     (let
       [text-buf : byte_buf.ByteBuf (byte_buf.from-string "text")]
-      [text : String (byte_buf.to-string (clone text-buf))]
+      [text : String
+        (byte_buf.to-string (byte_buf.clone-byte-buf (& text-buf)))]
       [expected : String "text"]
       (test.assert-string-eq (& text) (& expected) "string round trip")
       (set! text-buf (byte_buf.clear! text-buf))
@@ -220,7 +221,8 @@
       (byte_buf.from-array-prefix
         (__tl_make-array (make-u8 65) (make-u8 0) (make-u8 255))
         2)]
-    [copied : (__tl_dyn-array u8) (byte_buf.to-array (clone prefix))]
+    [copied : (__tl_dyn-array u8)
+      (byte_buf.to-array (byte_buf.clone-byte-buf (& prefix)))]
     [full : byte_buf.ByteBuf
       (byte_buf.from-array
         (__tl_make-array (make-u8 7) (make-u8 8) (make-u8 9)))]

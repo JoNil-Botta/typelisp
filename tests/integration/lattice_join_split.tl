@@ -35,10 +35,10 @@
       (set! (array-ref env.slots i) (Lat.Unknown))
       (lat-fill! env n (+ i 1)))))
 
-;; The clone the split has to see through: a whole-enum copy out of the array.
+;; Read the whole enum from the array element before the split.
 (define (lat-lookup-in [env : (& e LatEnv)] [var : i64]) : Lat
   (if (and (>= var 0) (< var env.cap))
-    (clone (array-ref env.slots var))
+    (array-ref env.slots var)
     (Lat.Unknown)))
 
 ;; DELIBERATELY UNGUARDED: this is the abort twin's bounds check. `merged`

@@ -9,6 +9,7 @@
 ;# checked by the codec before any attacker-controlled buffer growth.
 ;#
 ;# Usage: `(import stdlib.net.http_types)`.
+(import stdlib.clone)
 (import stdlib.byte_buf)
 
 ;: Checked HTTP method bytes.
@@ -66,6 +67,23 @@
 (defstruct HttpHeaderNameSet
   (slots (__tl_dyn-array byte_buf.ByteBuf))
   (len i64))
+
+(clone.gen-clone HttpHeaderName)
+
+(clone.gen-clone HttpHeaderValue)
+
+(clone.gen-clone HttpHeaderField)
+
+(clone.gen-clone HttpHeaderNameSet)
+
+(clone.gen-clone HttpHeaders)
+
+(clone.gen-clone HttpReason)
+
+;: Read the sensitivity of a borrowed header field.
+(define (header-field-sensitivity [field : (& HttpHeaderField)]) : HttpHeaderSensitivity
+  (match field
+    [(fields sensitivity) sensitivity]))
 
 ;: Explicit evidence that peer/config state permits HTTP/1.1 chunked request
 ;: transfer coding. Construction is intentionally an explicit caller action.
@@ -295,7 +313,9 @@
           (__tl_make-array HttpHeaderField next-capacity)]
         [index : i64 0]
         (while (< index old-len)
-          (set! (array-ref slots index) (clone (array-ref headers.slots index)))
+          (set!
+            (array-ref slots index)
+            (clone-http-header-field (& (array-ref headers.slots index))))
           (set! index (+ index 1)))
         (set! headers.slots slots))
       unit)
@@ -676,7 +696,7 @@
       (field-offset-add line-offset (field-offset-add name-len 2))
       line-size-1
       limits
-      (clone field.sensitivity)
+      (header-field-sensitivity field)
       true
       false)))
 

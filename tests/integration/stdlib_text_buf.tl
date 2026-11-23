@@ -24,8 +24,10 @@
       (text_buf.append
         (text_buf.append (text_buf.append (text_buf.empty) "a") "b")
         "c")]
-    [left : text_buf.TextBuf (text_buf.append (clone base) "-left")]
-    [right : text_buf.TextBuf (text_buf.append (clone base) "-right")]
+    [left : text_buf.TextBuf
+      (text_buf.append (text_buf.clone-text-buf (& base)) "-left")]
+    [right : text_buf.TextBuf
+      (text_buf.append (text_buf.clone-text-buf (& base)) "-right")]
     (and
       (= (text_buf.length base) 3)
       (= (text_buf.length left) 8)
@@ -37,20 +39,56 @@
       (string.eq (text_buf.render left) "abc-left")
       (string.eq (text_buf.render right) "abc-right"))))
 
+(define (build-clone-source) : text_buf.TextBuf
+  (let
+    [base : text_buf.TextBuf (text_buf.append (text_buf.empty) "clone:")]
+    [with-int : text_buf.TextBuf (text_buf.append-int base 2718)]
+    [complete : text_buf.TextBuf (text_buf.append with-int "!")]
+    [extended : text_buf.TextBuf (text_buf.append complete "?")]
+    ;; Model a snapshot whose shared store has one newer committed chunk.
+    (match extended.chunks
+      [(TextBufChunkDense store count)
+        (text_buf.TextBuf
+          (text_buf.TextBufChunkDense store (- count 1))
+          (- extended.len 1))]
+      [_ (io.panic "expected dense clone source")])))
+
 (define (text-buf-owned-clone-out-integration-ok?) : bool
   (let
-    [escaped : text_buf.TextBuf
-      (with-scratch
-        (let
-          [base : text_buf.TextBuf (text_buf.append (text_buf.empty) "clone:")]
-          [with-int : text_buf.TextBuf (text_buf.append-int base 2718)]
-          (text_buf.append with-int "!")))]
+    [scratch : arena.Arena (arena.make)]
+    [source : text_buf.TextBuf (in-arena scratch (build-clone-source))]
+    [escaped : text_buf.TextBuf (text_buf.clone-text-buf (& source))]
+    [same-store-layout : bool
+      (match (& source.chunks)
+        [(TextBufChunkDense original original-count)
+          (match (& escaped.chunks)
+            [(TextBufChunkDense copied copied-count)
+              (and
+                (=
+                  (text_buf.text-buf-store-capacity original)
+                  (text_buf.text-buf-store-capacity copied))
+                (= original.len copied.len)
+                (= original-count copied-count)
+                (= original.owner-root copied.owner-root)
+                (= original.owner-head copied.owner-head))]
+            [_ false])]
+        [_ false])]
     [noise : String
-      (with-scratch (string.append "clobber:" (string.int->string 99)))]
-    [child : text_buf.TextBuf (text_buf.append (clone escaped) "child")]
+      (begin
+        (arena.destroy-safe! scratch)
+        (with-scratch (string.append "clobber:" (string.int->string 99))))]
+    [child : text_buf.TextBuf
+      (text_buf.append (text_buf.clone-text-buf (& escaped)) "child")]
     [noise-again : String
       (with-scratch (string.append "clobber-again:" (string.int->string 100)))]
     (and
+      same-store-layout
+      (match (& escaped.chunks)
+        [(TextBufChunkDense store count)
+          (and
+            (= store.len (+ count 1))
+            (string.eq (& (array-ref store.slots count)) "?"))]
+        [_ false])
       (string.eq (& noise) "clobber:99")
       (string.eq (& noise-again) "clobber-again:100")
       (= (text_buf.length escaped) 11)
@@ -73,7 +111,8 @@
         (with-escape
           outer-arena
           (let
-            [child : text_buf.TextBuf (text_buf.append (clone base) "-inner")]
+            [child : text_buf.TextBuf
+              (text_buf.append (text_buf.clone-text-buf (& base)) "-inner")]
             (string.eq
               (text_buf.render child)
               "oooooooooooooooooooooooooooooooo-inner")))]
@@ -82,7 +121,7 @@
           outer-arena
           (let
             [sibling : text_buf.TextBuf
-              (text_buf.append (clone base) "-sibling")]
+              (text_buf.append (text_buf.clone-text-buf (& base)) "-sibling")]
             (string.eq
               (text_buf.render sibling)
               "oooooooooooooooooooooooooooooooo-sibling")))]

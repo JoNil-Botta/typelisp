@@ -153,9 +153,9 @@
       " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } "]
     (match (json.parse (& text))
       [(OkJson doc)
-        (unless (json-test-name (clone doc)) (return 1))
-        (unless (json-test-items (clone doc)) (return 2))
-        (unless (json-test-escaped (clone doc)) (return 3))
+        (unless (json-test-name (json.clone-json (& doc))) (return 1))
+        (unless (json-test-items (json.clone-json (& doc))) (return 2))
+        (unless (json-test-escaped (json.clone-json (& doc))) (return 3))
         (unless (json-test-stringify doc) (return 4))
         42]
       [(ErrJson _) 7])))

@@ -82,9 +82,9 @@
 
 (define (text-of [shape : (& shape Shape)]) : String
   (match shape
-    [(Shape.Filled x) (clone (deref x.b))]
-    [(Shape.Pair x _) (clone (deref x.b))]
-    [(Shape.Spare x) (clone (deref x.b))]
+    [(Shape.Filled x) (string.copy (& (deref x.b)))]
+    [(Shape.Pair x _) (string.copy (& (deref x.b)))]
+    [(Shape.Spare x) (string.copy (& (deref x.b)))]
     [(Shape.Empty _) ""]))
 
 (define (main) : i64

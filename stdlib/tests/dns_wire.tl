@@ -1,3 +1,4 @@
+(import stdlib.string)
 (import stdlib.byte_buf)
 (import stdlib.net.dns.wire)
 (import stdlib.str_cat)
@@ -451,8 +452,8 @@
             (text-label
               (text-label
                 (text-label
-                  (text-label (byte_buf.new) (clone label))
-                  (clone label))
+                  (text-label (byte_buf.new) (string.copy (& label)))
+                  (string.copy (& label)))
                 label)
               (repeated-text tail 98))
             0)]

@@ -7,6 +7,7 @@
 ;# nothing.
 ;#
 ;# Usage: `(import stdlib.net.http_trailer_policy)`.
+(import stdlib.clone)
 (import stdlib.byte_buf)
 (import stdlib.net.http_types)
 
@@ -27,6 +28,8 @@
   (name http_types.HttpHeaderName)
   (sensitivity http_types.HttpHeaderSensitivity)
   (multiplicity HttpTrailerMultiplicity))
+
+(clone.gen-clone HttpTrailerPolicyEntry)
 
 ;: Immutable-by-API ordered policy. Only `[0, len)` is live.
 (defstruct HttpTrailerPolicy
@@ -377,7 +380,8 @@
           (while (< index policy.len)
             (set!
               (array-ref slots index)
-              (clone (array-ref policy.slots index)))
+              (clone-http-trailer-policy-entry
+                (& (array-ref policy.slots index))))
             (set! index (+ index 1)))
           (set! index 0)
           (while (< index name-len)
@@ -477,6 +481,9 @@
             (let
               [entry : (& policy HttpTrailerPolicyEntry)
                 (& (array-ref policy.slots policy-index))]
+              [sensitivity : http_types.HttpHeaderSensitivity
+                (match entry
+                  [(fields sensitivity) sensitivity])]
               (match entry.multiplicity
                 [(HttpTrailerAtMostOnce)
                   (if (trailer-name-seen-before? fields field-index name)
@@ -485,11 +492,11 @@
                         (HttpTrailerDuplicateField)
                         field-index
                         offset))
-                    (HttpTrailerFieldDispositionOk (clone entry.sensitivity)))]
+                    (HttpTrailerFieldDispositionOk sensitivity))]
                 [(HttpTrailerRepeatableList)
-                  (HttpTrailerFieldDispositionOk (clone entry.sensitivity))]
+                  (HttpTrailerFieldDispositionOk sensitivity)]
                 [(HttpTrailerRepeatableSeparate)
-                  (HttpTrailerFieldDispositionOk (clone entry.sensitivity))]))]))]))
+                  (HttpTrailerFieldDispositionOk sensitivity)]))]))]))
 
 ;: Validate typed trailers in original order. When `require-declared` is true,
 ;: every approved field must independently occur in `declared`; declaration
@@ -545,7 +552,7 @@
                 (set!
                   failure
                   (HttpTrailerError
-                    (HttpTrailerInvalidField (clone error.kind))
+                    (HttpTrailerInvalidField error.kind)
                     index
                     error.offset))
                 (set! failed true)]
@@ -575,7 +582,7 @@
                         (not
                           (trailer-sensitivity-eq?
                             sensitivity
-                            (clone field.sensitivity)))
+                            (http_types.header-field-sensitivity field)))
                         (set!
                           failure
                           (HttpTrailerError

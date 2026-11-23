@@ -33,6 +33,7 @@
   (Call)
   (TailCall)
   (Abs64)
+  (Abs32)
   (Addr32Nb)
   (RipValue)
   (RipAddress)
@@ -92,6 +93,7 @@
   (Branch String String)
   (LoadRip String)
   (LoadRipAddress String)
+  (LoadAbsAddress String)
   (LoadRipAddressR11 String)
   (StoreRip String)
   (SubRspImm8 i64)
@@ -559,6 +561,10 @@
     [(Abs64)
       (match b
         [(Abs64) true]
+        [_ false])]
+    [(Abs32)
+      (match b
+        [(Abs32) true]
         [_ false])]
     [(Addr32Nb)
       (match b

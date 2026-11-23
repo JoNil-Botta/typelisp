@@ -173,7 +173,8 @@ lane_check() {
 }
 
 # Both jobs use the tested merge and its first parent from a depth-2 checkout.
-# Keep the validated full assignment when the PR diff cannot be read.
+# Keep the validated full assignment when the PR diff cannot be read or
+# includes a path without required coverage in the affected map.
 lane_scope() {
     [ "${GITHUB_EVENT_NAME:-}" = pull_request ] || return 0
     _scope_base=$(git rev-parse --verify HEAD^1 2>/dev/null) || return 0
@@ -203,12 +204,13 @@ lane_scope() {
         }
         FILENAME == ARGV[3] {
             if ($1 == "path" || $1 == "@always" || /^#/) next
+            pattern = "^" $1 "$"
+            gsub(/\./, "\\.", pattern)
+            gsub(/\*/, ".*", pattern)
+            if ($2 != "-") covered[pattern] = 1
             n = split($2 "," $3, ids, ",")
             for (i = 1; i <= n; i++) {
                 if (ids[i] == "*" || ids[i] in meta) {
-                    pattern = "^" $1 "$"
-                    gsub(/\./, "\\.", pattern)
-                    gsub(/\*/, ".*", pattern)
                     patterns[pattern] = 1
                     break
                 }
@@ -216,7 +218,13 @@ lane_scope() {
             next
         }
         /^"|^(scripts|\.github|perf)\// { full = 1; exit }
-        { for (pattern in patterns) if ($0 ~ pattern) { full = 1; exit } }
+        {
+            if ($0 == "") next
+            for (pattern in patterns) if ($0 ~ pattern) { full = 1; exit }
+            for (pattern in covered) if ($0 ~ pattern) next
+            full = 1
+            exit
+        }
         END { if (!full) for (id in meta) if (!(id in needed)) print id }
     ' "$ROOT/scripts/ci-affected-inputs.tsv" "$ROOT/scripts/ci-gates.tsv" \
         "$ROOT/scripts/ci-affected-paths.tsv" "$LANE_WORK/changed" > "$LANE_WORK/skip"; then

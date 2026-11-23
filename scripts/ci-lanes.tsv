@@ -48,7 +48,7 @@ linux-resident-memory-limit-helper-self-tests	linux-1	-
 stage2-spmd-runtime-dispatch	linux-2	windows-1
 stage2-app-workflow-corpus	linux-1	windows-1
 tlci-mutation-bootstrap-fixpoint	linux-2	windows-2
-embedded-stdlib-tlci-resource-verifier-self-tests	linux-2	-
+embedded-stdlib-tlci-resource-verifier-self-tests	linux-2	windows-2
 windows-job-object-memory-limit-helper-self-tests	-	windows-2
 cross-mode-differential-oracle-self-tests	linux-2	windows-2
 integration-batch-observability	linux-2	windows-1

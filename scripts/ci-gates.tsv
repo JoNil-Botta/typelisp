@@ -41,7 +41,7 @@ linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit 
 stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-compiler	stage2	256	-	scripts/verify-spmd-runtime-dispatch.sh
 stage2-app-workflow-corpus	all	stage2 application workflow corpus	bootstrap-compiler	stage2	512	-	scripts/verify-app-corpus.sh
 tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	-	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
-embedded-stdlib-tlci-resource-verifier-self-tests	linux	embedded stdlib TLCI resource verifier self-tests	-	-	256	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
+embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-	-	256	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
 windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-memory-limit.ps1
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	256	-	scripts/verify-cross-mode-differential.sh --self-test
 integration-batch-observability	all	integration batch observability	-	-	256	-	scripts/verify-integration.sh --self-test-batch-observability

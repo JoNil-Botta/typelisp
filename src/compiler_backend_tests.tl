@@ -34263,29 +34263,78 @@ entry:
   (asm-ok?
     (backend.compiler-backend-emit-source (compiler-backend-box-source))
     (has
-      "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n"
-      "    leaq 8(%rax), %rcx\n")
+      "    call .L_tl_alloc8\n"
+      "    movq 16(%r9), %rax\n    leaq 8(%rax), %rcx\n")
     (lacks
       ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n"
       "    movq %rax, %rcx\n    addq $8, %rcx\n")))
 
-;; Tuple literals are inline frame values (#7070), so the fixed-size allocation
-;; these fast-path fixtures pin comes from an explicit `box`.
-(define (compiler-backend-inline-fast-alloc-source) : String
-  "(define (main) : i64
-  (let
-    [b : (Box (Tuple bool i64)) (box (tuple true 42))]
-    (tuple-ref (deref b) 1)))")
+(define (compiler-backend-loop-alloc-program) : ir.CompilerIrProgram
+  (Program
+    (ir.compiler-ir-global-seq-empty)
+    (ir.compiler-ir-function-seq1
+      (&
+        (Function
+          cbi.compiler-builtin-id-fix-main
+          (ir.compiler-ir-param-seq-empty)
+          (I64)
+          4
+          (ir.compiler-ir-blocks
+            ;; IR text assigns user symbol IDs. Bind these two allocator calls
+            ;; to the actual runtime builtin.
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
+              (ir.compiler-ir-instr-seq2
+                (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64))
+                (irt.instr "jump header")))
+            (irt.block
+              "header:
+               %1 = phi [0, entry], [%3, body] : i64
+               branch %1, exit, body")
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "body")
+              (compiler-backend-test-instr-seq-prepend
+                (Call 2 cbi.compiler-builtin-id-tl-alloc (One (I64 24)) (U64))
+                (irt.instrs
+                  "%3 = add %1, 1 : i64
+                         jump header")))
+            (irt.block "exit:
+               return %1"))
+          Ordinary)))
+    (ir.compiler-ir-extern-seq1
+      (ir.compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-alloc
+        "tl_alloc"
+        (U64)))
+    (ir.CompilerIrReturnStorageAuthority.None)))
+
+(define (compiler-backend-loop-alloc-target-ok?
+  [target : be_state.CompilerBackendTarget]) : bool
+  (match (backend.compiler-backend-emit-program-for-target
+    (compiler-backend-loop-alloc-program)
+    target)
+    [(Ok asm)
+      (and
+        (compiler-backend-string-contains-inline-alloc-size? asm 24)
+        (asm-has? asm "    call .L_tl_alloc16\n")
+        (asm-lacks? asm "_slow:\n    call .L_tl_alloc16\n")
+        (=
+          (backend.compiler-backend-string-count asm "    call .L_tl_alloc24\n")
+          1))]
+    [(Err _) false]))
 
 (define (compiler-backend-inline-fast-alloc-result-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-source-for-target
-      (compiler-backend-inline-fast-alloc-source)
-      (be_state.CompilerBackendTarget.Windows))
+    (compiler-backend-emit-alloc-instrs-for-target
+      (ir.compiler-ir-instr-seq1
+        (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64)))
+      (be_state.CompilerBackendTarget.Windows)
+      true
+      false)
     (has
-      "    testb $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n"
+      "    testb $1, 48(%r8)\n    jnz .L_tl_test_allocentry_i0_v0_slow\n    movq 56(%r8), %r9\n"
       "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n"
-      "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
+      "    cmpq 64(%r9), %r8\n    ja .L_tl_test_allocentry_i0_v0_slow\n    movq %r8, 16(%r9)\n")
     (lacks
       "    movq 16(%r8), %r10\n    addq $16, %r10\n"
       "    movq %rax, %r10\n    addq $16, %r10\n"
@@ -34309,7 +34358,9 @@ entry:
         (compiler-backend-test-instr-seq-prepend
           (Call 0 (ci.intern "tl_alloc_global") (One (I64 16)) (U64))
           (ir.compiler-ir-instr-seq-empty))
-        target)
+        target
+        false
+        false)
       (has
         "    movq .L_tl_global_aggregate_arena+56(%rip), %r9\n    movq 16(%r9), %rax\n"
         "_retry:\n    leaq 16(%rax), %r8\n"
@@ -34318,17 +34369,40 @@ entry:
         slow)
       (lacks "_slow:\n    call .L_tl_alloc16\n"))))
 
-(test
-  backend-inline-global-alloc
-  (cbi.compiler-builtin-initialize-for-parse!)
+(define (compiler-backend-size-optimized-alloc-target-ok?
+  [target : be_state.CompilerBackendTarget]) : bool
+  (asm-ok?
+    (compiler-backend-emit-alloc-instrs-for-target
+      (ir.compiler-ir-instr-seq2
+        (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64))
+        (Call 0 cbi.compiler-builtin-id-tl-alloc-global (One (I64 24)) (U64)))
+      target
+      true
+      true)
+    (has "    call .L_tl_alloc16\n" "    call tl_alloc_global\n")
+    (lacks "    call .L_tl_alloc24\n" "_slow:\n" "    lock cmpxchgq")))
+
+(define (compiler-backend-test-fixed-size-alloc
+  [target : be_state.CompilerBackendTarget]) : unit
   (unless
-    (and
-      (compiler-backend-inline-global-alloc-target-ok?
-        (be_state.CompilerBackendTarget.Linux))
-      (compiler-backend-inline-global-alloc-target-ok?
-        (be_state.CompilerBackendTarget.Windows)))
+    (compiler-backend-loop-alloc-target-ok? target)
+    (io.panic "fixed-size allocations inline only in loop blocks"))
+  (unless
+    (compiler-backend-inline-global-alloc-target-ok? target)
     (io.panic
-      "global container allocation must reserve atomically and grow through its private root")))
+      "global container allocation must reserve atomically and grow through its private root"))
+  (unless
+    (compiler-backend-size-optimized-alloc-target-ok? target)
+    (io.panic
+      "size optimization must outline loop allocations and call the global allocator directly")))
+
+(test
+  backend-fixed-size-alloc
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (compiler-backend-test-fixed-size-alloc
+    (be_state.CompilerBackendTarget.Linux))
+  (compiler-backend-test-fixed-size-alloc
+    (be_state.CompilerBackendTarget.Windows)))
 
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
@@ -34339,13 +34413,13 @@ entry:
     (= (be_calls.compiler-backend-fast-alloc-size (One (I64 65))) 0)
     (= (be_calls.compiler-backend-fast-alloc-size (One (I64 0))) 0)
     (= (be_calls.compiler-backend-fast-alloc-size (One (Var 0))) 0)
-    (be_calls.compiler-backend-inline-fast-alloc? 8)
-    (be_calls.compiler-backend-inline-fast-alloc? 24)
-    (be_calls.compiler-backend-inline-fast-alloc? 40)
-    (be_calls.compiler-backend-inline-fast-alloc? 64)
-    (not (be_calls.compiler-backend-inline-fast-alloc? 0))
-    (not (be_calls.compiler-backend-inline-fast-alloc? 10))
-    (not (be_calls.compiler-backend-inline-fast-alloc? 72))))
+    (be_calls.compiler-backend-fast-alloc-supported-size? 8)
+    (be_calls.compiler-backend-fast-alloc-supported-size? 24)
+    (be_calls.compiler-backend-fast-alloc-supported-size? 40)
+    (be_calls.compiler-backend-fast-alloc-supported-size? 64)
+    (not (be_calls.compiler-backend-fast-alloc-supported-size? 0))
+    (not (be_calls.compiler-backend-fast-alloc-supported-size? 10))
+    (not (be_calls.compiler-backend-fast-alloc-supported-size? 72))))
 
 (define (compiler-backend-inline-fast-alloc-reused-vreg-instrs) : ir.CompilerIrInstrSeq
   (compiler-backend-test-instr-seq-prepend
@@ -34360,7 +34434,9 @@ entry:
 (define (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?) : bool
   (match (compiler-backend-emit-alloc-instrs-for-target
     (compiler-backend-inline-fast-alloc-reused-vreg-instrs)
-    (be_state.CompilerBackendTarget.Linux))
+    (be_state.CompilerBackendTarget.Linux)
+    true
+    false)
     [(Ok asm)
       (be_state.backend-and4
         (asm-has? asm ".L_tl_test_allocentry_i0_v0_slow:\n")
@@ -34369,10 +34445,28 @@ entry:
         (asm-has? asm ".L_tl_test_allocentry_i1_v0_done:\n"))]
     [(Err _) false]))
 
+;; Single-instruction emission fixtures bypass placement. Seed the same
+;; membership that placement would record for their loop block.
+(define (compiler-backend-test-mark-entry-loop!
+  [state : be_state.CompilerBackendFunctionState]) : unit
+  (let
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (set! (array-ref labels 0) (ir.compiler-ir-label "entry"))
+    (be_state.compiler-backend-function-scratch-set-i64-array!
+      state
+      be_state.compiler-backend-scratch-i64-array-loop-block-labels
+      labels)
+    (be_state.compiler-backend-function-scratch-set-i64!
+      state
+      be_state.compiler-backend-scratch-i64-loop-block-count
+      1)))
+
 ;; Emits `instrs` as the one block of a test function returning u64.
 (define (compiler-backend-emit-alloc-instrs-for-target
   [instrs : ir.CompilerIrInstrSeq]
-  [target : be_state.CompilerBackendTarget]) : be_state.ResultCompilerBackend
+  [target : be_state.CompilerBackendTarget]
+  [loop-block? : bool]
+  [optimize-for-size? : bool]) : be_state.ResultCompilerBackend
   (let
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
@@ -34387,6 +34481,13 @@ entry:
           (owned_view.compiler-owned-shared-view instrs)))]
     [_position : unit
       (begin
+        (be_state.compiler-backend-state-set-optimize-for-size!
+          backend-state
+          optimize-for-size?)
+        (when
+          loop-block?
+          (compiler-backend-test-mark-entry-loop!
+            (be_state.compiler-backend-state-function-state backend-state)))
         (compiler-backend-test-scavenge-install-ctx!
           "_tl_test"
           (ir.compiler-ir-param-seq-empty)
@@ -34409,7 +34510,7 @@ entry:
     (set-state-emit-current-site! backend-state prev-current-site)
     result))
 
-(define (compiler-backend-inline-fast-alloc-multi-size-source) : String
+(define (compiler-backend-outlined-fast-alloc-multi-size-source) : String
   "(define (make3 [x : i64]) : (Box (Tuple i64 i64 i64))
   (box (tuple x (+ x 1) (+ x 2))))
 
@@ -34422,31 +34523,25 @@ entry:
     [b : (Box (Tuple i64 i64 i64 i64 i64)) (make5 20)]
     (+ (tuple-ref (deref a) 2) (tuple-ref (deref b) 4))))")
 
-(define (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+(define (compiler-backend-outlined-fast-alloc-multi-size-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
   (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-inline-fast-alloc-multi-size-source)
+    (compiler-backend-outlined-fast-alloc-multi-size-source)
     target)
     [(Ok asm)
       (and
-        (compiler-backend-string-contains-inline-alloc-size? asm 24)
-        (compiler-backend-string-contains-inline-alloc-size? asm 40)
-        (asm-has?
-          asm
-          "_slow:\n    call .L_tl_alloc24\n"
-          "_slow:\n    call .L_tl_alloc40\n")
-        (asm-lacks? asm "    call tl_alloc\n")
-        (asm-has? asm "    jb " "    ja "))]
+        (asm-has? asm "    call .L_tl_alloc24\n" "    call .L_tl_alloc40\n")
+        (asm-lacks? asm "_slow:\n    call .L_tl_alloc" "    call tl_alloc\n"))]
     [(Err _) false]))
 
-(define (compiler-backend-inline-fast-alloc-multi-size-ok?) : bool
+(define (compiler-backend-outlined-fast-alloc-multi-size-ok?) : bool
   (and
-    (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+    (compiler-backend-outlined-fast-alloc-multi-size-target-ok?
       (be_state.CompilerBackendTarget.Linux))
-    (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+    (compiler-backend-outlined-fast-alloc-multi-size-target-ok?
       (be_state.CompilerBackendTarget.Windows))))
 
-(define (compiler-backend-inline-alloc-alias-case-ok?
+(define (compiler-backend-outlined-alloc-alias-case-ok?
   [target : be_state.CompilerBackendTarget]
   [result-type : String]
   [symbol : String]
@@ -34466,63 +34561,65 @@ entry:
     target)
     [(Ok asm)
       (if (> expected 0)
-        (compiler-backend-string-contains-inline-alloc-size? asm expected)
-        (asm-lacks? asm "_slow:\n    call .L_tl_alloc"))]
+        (asm-has? asm (compiler-backend-alloc-fixed-call-text expected))
+        (=
+          (compiler-backend-alloc-call-count asm)
+          (backend.compiler-backend-string-count asm "    call tl_alloc\n")))]
     [(Err _) false]))
 
-(define (compiler-backend-inline-alloc-alias-target-ok?
+(define (compiler-backend-outlined-alloc-alias-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
   (and
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       ""
       1
       8)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr i64)"
       "tl_alloc"
       ""
       24
       24)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       " (:abi c)"
       63
       64)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       ""
       0
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       ""
       65
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "unrelated_allocator"
       ""
       24
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "u64"
       "tl_alloc"
       ""
       24
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "f64"
       "tl_alloc"
@@ -34530,11 +34627,11 @@ entry:
       24
       0)))
 
-(define (compiler-backend-inline-alloc-alias-ok?) : bool
+(define (compiler-backend-outlined-alloc-alias-ok?) : bool
   (and
-    (compiler-backend-inline-alloc-alias-target-ok?
+    (compiler-backend-outlined-alloc-alias-target-ok?
       (be_state.CompilerBackendTarget.Linux))
-    (compiler-backend-inline-alloc-alias-target-ok?
+    (compiler-backend-outlined-alloc-alias-target-ok?
       (be_state.CompilerBackendTarget.Windows))))
 
 (define compiler-backend-inline-fast-alloc-emergency-live-count : i64
@@ -34633,6 +34730,8 @@ entry:
           (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
+        (compiler-backend-test-mark-entry-loop!
+          (be_state.compiler-backend-state-function-state backend-state))
         (compiler-backend-test-scavenge-install-ctx!
           "inline_fast_alloc_emergency"
           (ir.compiler-ir-param-seq-empty)
@@ -39588,6 +39687,7 @@ b_keep:
       (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [_configure : unit
       (begin
+        (compiler-backend-test-mark-entry-loop! function-b)
         (set! (array-ref forward-a 4) 17)
         (set! (array-ref forward-b 4) 29)
         (set! (array-ref uses-a 4) 31)
@@ -40151,13 +40251,12 @@ b_keep:
     (compiler-backend-placement-test-expected 0 1 2 3 4)))
 
 ;; A block with no terminator falls through to whatever the list puts next, so
-;; the function declines whole: no order at all.
+;; membership is available, but the layout stays in source order.
 (define (compiler-backend-placement-open-block-declines-ok?) : bool
-  (=
-    (array-length
-      (compiler-backend-placement-order-for-blocks
-        (compiler-backend-placement-test-while-blocks true false)))
-    0))
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-test-while-blocks true false))
+    (compiler-backend-placement-test-expected 0 1 2 3 4)))
 
 ;; entry / header(=body) / latch / exit, with the counting test at the BOTTOM:
 ;; the header already has a fall-through predecessor and the bottom already
@@ -41155,8 +41254,8 @@ b_keep:
         (compiler-backend-fast-alloc-gate-ok?)
         (compiler-backend-inline-fast-alloc-result-ok?)
         (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?)
-        (compiler-backend-inline-fast-alloc-multi-size-ok?)
-        (compiler-backend-inline-alloc-alias-ok?)
+        (compiler-backend-outlined-fast-alloc-multi-size-ok?)
+        (compiler-backend-outlined-alloc-alias-ok?)
         (compiler-backend-inline-fast-alloc-emergency-preserved-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)

@@ -59,25 +59,57 @@ if [ "${1:-}" = "--_worker" ]; then
         --crate-name "oracle_case_$SEED" -o "$WORK/case_$SEED.rmeta" "$RS_SRC" \
         >"$WORK/rs.out" 2>"$WORK/rs.err" || rs_rc=$?
 
-    tl_v="reject"
-    [ "$tl_rc" -eq 0 ] && tl_v="accept"
-    rs_v="reject"
-    [ "$rs_rc" -eq 0 ] && rs_v="accept"
+    if [ "$tl_rc" -eq 0 ]; then
+        tl_v="accept"
+    elif [ "$tl_rc" -eq 124 ]; then
+        tl_v="timeout"
+    elif [ "$tl_rc" -ge 128 ]; then
+        tl_v="crash"
+    else
+        tl_v="reject"
+    fi
+
+    if [ "$rs_rc" -eq 0 ]; then
+        rs_v="accept"
+    elif [ "$rs_rc" -eq 124 ]; then
+        rs_v="timeout"
+    elif [ "$rs_rc" -ge 128 ]; then
+        rs_v="crash"
+    else
+        rs_v="reject"
+    fi
+
+    expected_v="reject"
+    [ "$EXPECTED" = "1" ] && expected_v="accept"
 
     agree=0
-    if [ "$tl_v" = "$rs_v" ]; then
+    status="disagree"
+    if [ "$tl_v" = "crash" ] || [ "$tl_v" = "timeout" ] || \
+       [ "$rs_v" = "crash" ] || [ "$rs_v" = "timeout" ]; then
+        status="crash"
+    elif [ "$tl_v" = "$rs_v" ]; then
         agree=1
-    else
+        if [ "$tl_v" = "$expected_v" ]; then
+            status="ok"
+        else
+            status="expected-mismatch"
+        fi
+    fi
+
+    if [ "$status" != "ok" ]; then
         DIS_DIR="$OUT_DIR/disagreements/case_$SEED"
         mkdir -p "$DIS_DIR"
         cp "$TL_SRC" "$DIS_DIR/"
         cp "$RS_SRC" "$DIS_DIR/"
         cp "$WORK/tl.err" "$DIS_DIR/"
         cp "$WORK/rs.err" "$DIS_DIR/"
+        printf 'seed=%s category=%s expected=%s tl=%s(rc=%s) rs=%s(rc=%s) status=%s\n' \
+            "$SEED" "$CATEGORY" "$expected_v" "$tl_v" "$tl_rc" "$rs_v" "$rs_rc" "$status" \
+            > "$DIS_DIR/verdict.txt"
     fi
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$SEED" "$CATEGORY" "$EXPECTED" "$tl_v" "$rs_v" "$agree" > "$RES"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$SEED" "$CATEGORY" "$EXPECTED" "$tl_v" "$rs_v" "$agree" "$status" "$tl_rc" "$rs_rc" > "$RES"
     rm -rf "$WORK"
     exit 0
 fi
@@ -169,41 +201,75 @@ awk -F '\t' -v elapsed="$ELAPSED" -v rustc_ver="$RUSTC_VER" \
     -v compiler="$COMPILER" -v out_dir="$OUT_DIR" '
 BEGIN {
     total = 0; agreed = 0;
+    expected_match = 0; expected_mismatch = 0; crashes = 0;
     both_accept = 0; both_reject = 0;
     tl_only = 0; rs_only = 0;
 }
 {
     total++
     cat = $2
+    exp_v = ($3 == "1") ? "accept" : "reject"
     tl = $4
     rs = $5
     ag = $6
+    st = $7
+    tl_rc = $8
+    rs_rc = $9
     cat_total[cat]++
+    if (st == "crash") {
+        crashes++
+        if (crashes <= 20) {
+            crash_samples[crashes] = "seed=" $1 " cat=" cat " expected=" exp_v " tl=" tl "(rc=" tl_rc ") rs=" rs "(rc=" rs_rc ")"
+        }
+        next
+    }
     if (ag == "1") {
         agreed++
         cat_agree[cat]++
+        if (tl == exp_v) {
+            expected_match++
+        } else {
+            expected_mismatch++
+            if (expected_mismatch <= 20) {
+                exp_samples[expected_mismatch] = "seed=" $1 " cat=" cat " expected=" exp_v " agreed=" tl
+            }
+        }
     }
     if (tl == "accept" && rs == "accept") both_accept++
     else if (tl == "reject" && rs == "reject") both_reject++
     else if (tl == "accept" && rs == "reject") {
         tl_only++
         if (tl_only + rs_only <= 20) {
-            samples[tl_only + rs_only] = "seed=" $1 " cat=" cat " tl=" tl " rs=" rs
+            samples[tl_only + rs_only] = "seed=" $1 " cat=" cat " expected=" exp_v " tl=" tl " rs=" rs
         }
     } else {
         rs_only++
         if (tl_only + rs_only <= 20) {
-            samples[tl_only + rs_only] = "seed=" $1 " cat=" cat " tl=" tl " rs=" rs
+            samples[tl_only + rs_only] = "seed=" $1 " cat=" cat " expected=" exp_v " tl=" tl " rs=" rs
         }
     }
 }
 END {
     rate = (total > 0) ? (100.0 * agreed / total) : 0.0
     printf "rustc-oracle: compiler=%s rustc=\"%s\" elapsed=%ds\n", compiler, rustc_ver, elapsed
-    printf "rustc-oracle: total=%d agreed=%d (%.2f%%) both-accept=%d both-reject=%d tl-accept-rs-reject=%d tl-reject-rs-accept=%d\n",
-        total, agreed, rate, both_accept, both_reject, tl_only, rs_only
+    printf "rustc-oracle: total=%d agreed=%d (%.2f%%) expected-match=%d expected-mismatch=%d crashes=%d both-accept=%d both-reject=%d tl-accept-rs-reject=%d tl-reject-rs-accept=%d\n",
+        total, agreed, rate, expected_match, expected_mismatch, crashes, both_accept, both_reject, tl_only, rs_only
     for (c in cat_total) {
         printf "  - %-20s %d/%d agreed\n", c, cat_agree[c] + 0, cat_total[c]
+    }
+    if (crashes > 0) {
+        printf "rustc-oracle: FAIL compiler crashes/timeouts saved in %s/disagreements/:\n", out_dir
+        limit = (crashes < 20) ? crashes : 20
+        for (i = 1; i <= limit; i++) {
+            printf "  * %s\n", crash_samples[i]
+        }
+    }
+    if (expected_mismatch > 0) {
+        printf "rustc-oracle: FAIL agreed verdicts contradicting EXPECTED saved in %s/disagreements/:\n", out_dir
+        limit = (expected_mismatch < 20) ? expected_mismatch : 20
+        for (i = 1; i <= limit; i++) {
+            printf "  * %s\n", exp_samples[i]
+        }
     }
     dis = tl_only + rs_only
     if (dis > 0) {
@@ -212,6 +278,9 @@ END {
         for (i = 1; i <= limit; i++) {
             printf "  * %s\n", samples[i]
         }
+    }
+    if (crashes > 0 || expected_mismatch > 0) {
+        exit 1
     }
 }
 ' "$SUMMARY"

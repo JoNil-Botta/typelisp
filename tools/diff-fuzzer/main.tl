@@ -53,18 +53,12 @@
       lo
       (+ lo (% (gen-next! g) span)))))
 
-(define (gen-bool! [g : (&mut g GenState)]) : bool
-  (= (% (gen-next! g) 2) 0))
-
 (define (emit! [g : (&mut g GenState)] [text : String]) : unit
   (svec.push-ref! (&mut g.chunks) text))
 
 (define (emit-ln! [g : (&mut g GenState)] [text : String]) : unit
   (svec.push-ref! (&mut g.chunks) text)
   (svec.push-ref! (&mut g.chunks) "\n"))
-
-(define (emit-int! [g : (&mut g GenState)] [n : i64]) : unit
-  (svec.push-ref! (&mut g.chunks) (string.int->string n)))
 
 (define (gen-render [g : (& g GenState)]) : String
   (let
@@ -239,7 +233,7 @@
   (emit-ln! g ""))
 
 ;; Profile 0: Deep arithmetic, casts, if/cond, enums/match, recursive Box Tree, borrows.
-(define (emit-profile-arith [g : (&mut g GenState)] [_seed : i64]) : unit
+(define (emit-profile-arith [g : (&mut g GenState)]) : unit
   (emit-common-types g)
   (let
     [e1 : String (gen-arith-expr g 3 "x" "y" "z")]
@@ -308,10 +302,10 @@
     (emit-ln! g "      (+= i 1))")
     (emit-ln! g "    (let [detail : i64 (read-state (& st))]")
     (emit-ln! g "      (report-out acc detail)")
-    (emit-ln! g "      (bit-and (+ acc detail) 127))))")))
+    (emit-ln! g "      (bit-and (+ acc detail) 63))))")))
 
 ;; Profile 1: Nested while/for with multi-latch continue and break, dyn-array, Box, structs.
-(define (emit-profile-loops [g : (&mut g GenState)] [_seed : i64]) : unit
+(define (emit-profile-loops [g : (&mut g GenState)]) : unit
   (emit-ln! g "(import stdlib.iterator)")
   (emit-ln! g "")
   (emit-common-types g)
@@ -514,10 +508,10 @@
       g
       "      [aux : i64 (bit-and (+ (read-state (& st)) (array-length xs)) 1048575)]")
     (emit-ln! g "      (report-out out aux)")
-    (emit-ln! g "      (bit-and (+ out aux) 127))))")))
+    (emit-ln! g "      (bit-and (+ out aux) 63))))")))
 
 ;; Profile 2: Structs, Box, __tl_dyn-array growth, slice-view/slice-mut-view, &/&mut borrows.
-(define (emit-profile-borrow [g : (&mut g GenState)] [_seed : i64]) : unit
+(define (emit-profile-borrow [g : (&mut g GenState)]) : unit
   (emit-ln! g "(import stdlib.iterator)")
   (emit-ln! g "")
   (emit-common-types g)
@@ -606,10 +600,10 @@
       g
       "      [aux : i64 (bit-and (+ (reborrow-probe (&mut st) 7) (array-length b.items)) 1048575)]")
     (emit-ln! g "      (report-out (bit-and (+ acc chk) 1048575) aux)")
-    (emit-ln! g "      (bit-and (+ (+ acc chk) aux) 127))))")))
+    (emit-ln! g "      (bit-and (+ (+ acc chk) aux) 63))))")))
 
 ;; Profile 3: Scoped with-arena / with-scratch with tl_arena_poison_enable at main entry.
-(define (emit-profile-arena [g : (&mut g GenState)] [_seed : i64]) : unit
+(define (emit-profile-arena [g : (&mut g GenState)]) : unit
   (emit-ln! g "(import stdlib.iterator)")
   (emit-ln! g "(import stdlib.string)")
   (emit-common-types g)
@@ -705,10 +699,10 @@
       g
       "            (bit-and (+ (+ (string.string-length (& rec.label)) (deref kept-box)) (+ (deref rec.boxed) (sum-slice (slice-view outer-arr 0 olen)))) 1048575)))))")
     (emit-ln! g "    (report-out grand surviving)")
-    (emit-ln! g "    (bit-and (+ grand surviving) 127)))")))
+    (emit-ln! g "    (bit-and (+ grand surviving) 63)))")))
 
 ;; Profile 4: SPMD kernels comparing --backend-mode scalar vs --backend-mode avx2.
-(define (emit-profile-spmd [g : (&mut g GenState)] [_seed : i64]) : unit
+(define (emit-profile-spmd [g : (&mut g GenState)]) : unit
   (emit-ln! g "(import stdlib.iterator)")
   (emit-ln! g "")
   (emit-report-helper g)
@@ -846,13 +840,10 @@
       g
       "        (set! aux (bit-and (+ aux (+ (cast (array-ref d32 i) : i64) (if (array-ref flags i) 7 1))) 1048575)))")
     (emit-ln! g "      (report-out acc aux)")
-    (emit-ln! g "      (bit-and (+ acc aux) 127))))")))
+    (emit-ln! g "      (bit-and (+ acc aux) 63))))")))
 
 ;; Profile 5: Kitchen-sink combining arena poison, multi-latch loops, Box, dyn-array, borrows, match, and SPMD.
-(define (emit-profile-mixed
-  [g : (&mut g GenState)]
-  [_seed : i64]
-  [with-spmd : bool]) : unit
+(define (emit-profile-mixed [g : (&mut g GenState)] [with-spmd : bool]) : unit
   (emit-ln! g "(import stdlib.iterator)")
   (emit-ln! g "(import stdlib.string)")
   (emit-common-types g)
@@ -942,7 +933,7 @@
       g
       "          (set! aux (bit-and (+ aux (+ st.pair.a (+ st.pair.b (deref st.cell)))) 1048575)))))")
     (emit-ln! g "    (report-out acc aux)")
-    (emit-ln! g "    (bit-and (+ acc aux) 127)))")))
+    (emit-ln! g "    (bit-and (+ acc aux) 63)))")))
 
 (define (profile-for-seed [seed : i64] [mode : (& mode str)]) : i64
   (cond
@@ -972,12 +963,12 @@
   (let
     [g : GenState (gen-init seed)]
     (cond
-      [(= profile 0) (emit-profile-arith (&mut g) seed)]
-      [(= profile 1) (emit-profile-loops (&mut g) seed)]
-      [(= profile 2) (emit-profile-borrow (&mut g) seed)]
-      [(= profile 3) (emit-profile-arena (&mut g) seed)]
-      [(= profile 4) (emit-profile-spmd (&mut g) seed)]
-      [else (emit-profile-mixed (&mut g) seed (= (% (/ seed 6) 2) 0))])
+      [(= profile 0) (emit-profile-arith (&mut g))]
+      [(= profile 1) (emit-profile-loops (&mut g))]
+      [(= profile 2) (emit-profile-borrow (&mut g))]
+      [(= profile 3) (emit-profile-arena (&mut g))]
+      [(= profile 4) (emit-profile-spmd (&mut g))]
+      [else (emit-profile-mixed (&mut g) (= (% (/ seed 6) 2) 0))])
     (gen-render (& g))))
 
 (define (is-decimal-int? [text : (& text str)]) : bool

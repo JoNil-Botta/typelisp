@@ -94,6 +94,10 @@ if [ "${1:-}" = "--_worker" ]; then
         --stdlib-root "$STDLIB_ROOT" -o "$WORK/bin0" \
         >"$WORK/build0.out" 2>"$WORK/build0.err" || build0_rc=$?
 
+    if [ "$check_rc" -ge 128 ] || [ "$build0_rc" -ge 128 ] || \
+       [ "$check_rc" -eq 124 ] || [ "$build0_rc" -eq 124 ]; then
+        save_failure "compiler-crash" "check=$check_rc,build0=$build0_rc"
+    fi
     if [ "$check_rc" -ne 0 ] && [ "$build0_rc" -eq 0 ]; then
         save_failure "check-build-mismatch" "check=$check_rc,build0=0"
     fi
@@ -152,11 +156,21 @@ if [ "${1:-}" = "--_worker" ]; then
     rc2=0
     run_with_timeout "$WORK/bin2" >"$WORK/run2.out" 2>"$WORK/run2.err" || rc2=$?
 
+    if [ "$rc0" -eq 124 ] || [ "$rc1" -eq 124 ] || [ "$rc2" -eq 124 ]; then
+        save_failure "runtime-timeout" "rc0=$rc0,rc1=$rc1,rc2=$rc2"
+    fi
+
     if [ "$rc0" -ge 128 ] || [ "$rc1" -ge 128 ] || [ "$rc2" -ge 128 ]; then
         if [ "$HAS_ARENA" -eq 1 ]; then
             save_failure "arena-poison-crash" "rc0=$rc0,rc1=$rc1,rc2=$rc2"
         fi
         save_failure "runtime-crash" "rc0=$rc0,rc1=$rc1,rc2=$rc2"
+    fi
+
+    if ! grep -q '^out=' "$WORK/run0.out" || \
+       ! grep -q '^out=' "$WORK/run1.out" || \
+       ! grep -q '^out=' "$WORK/run2.out"; then
+        save_failure "missing-output" "rc0=$rc0,rc1=$rc1,rc2=$rc2"
     fi
 
     if [ "$rc0" -ne "$rc1" ] || [ "$rc0" -ne "$rc2" ] || \
@@ -192,8 +206,14 @@ if [ "${1:-}" = "--_worker" ]; then
         fi
         rc_avx=0
         run_with_timeout "$WORK/bin_avx2" >"$WORK/run_avx2.out" 2>"$WORK/run_avx2.err" || rc_avx=$?
+        if [ "$rc_avx" -eq 124 ]; then
+            save_failure "spmd-avx2-timeout" "rc_avx2=$rc_avx"
+        fi
         if [ "$rc_avx" -ge 128 ]; then
             save_failure "spmd-avx2-crash" "rc_avx2=$rc_avx"
+        fi
+        if ! grep -q '^out=' "$WORK/run_avx2.out"; then
+            save_failure "spmd-avx2-missing-output" "rc_avx2=$rc_avx"
         fi
         if [ "$rc_avx" -ne "$rc2" ] || ! cmp -s "$WORK/run2.out" "$WORK/run_avx2.out"; then
             save_failure "spmd-scalar-avx2-mismatch" "scalar=$rc2,avx2=$rc_avx"

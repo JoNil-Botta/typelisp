@@ -6437,8 +6437,8 @@
             env
             id
             (match (tc-context-expr-get ctx id)
-              ;; Unsafe inherits read-through from the wrapper.
-              [(Unsafe _) syntax]
+              ;; Unsafe and compact expansion chains inherit read-through.
+              [(or (Unsafe _) (MacroExpansion _ _ _)) syntax]
               [_ (typed.TypedSyntax.Source id)])
             expected
             source
@@ -12710,122 +12710,123 @@
       (tc-tag-regions
         (tc-type-outer-regions (tc-global-shared-view operand-ty))
         (tc-result-info-ok-type (tc-global-shared-view operand-info)))]
-    [result? : bool
-      (match (tc-result-info-kind (tc-global-shared-view operand-info))
-        [(TcTryResult) true]
-        [(TcTryOption) false])]
-    [err-ty : ast.AstType
-      (tc-result-info-err-type (tc-global-shared-view operand-info))]
-    [return-err-ty : ast.AstType
-      (tc-result-info-err-type (tc-global-shared-view return-info))]
-    [enum-name : i64
-      (match (tc-global-shared-view operand-info)
-        [(TcResultInfo _ name _ _ _ _) name])]
-    [ok-variant : TcSelectedVariant
-      (tc-selected-variant
-        ctx
-        enum-name
-        (tc-result-info-ok-id (tc-global-shared-view operand-info)))]
-    [err-variant : TcSelectedVariant
-      (tc-selected-variant
-        ctx
-        enum-name
-        (tc-result-info-err-id (tc-global-shared-view operand-info)))]
-    ;; A payload-free `Ok*` yields `unit` (#8563): its arm binds nothing.
-    [ok-payload? : bool
-      (match (csym.compiler-registries-variant-fields-indexed
-        (tc-context-symbols ctx)
-        (tc-source-variant-handle-for-enum-id-or
-          ctx
-          enum-name
-          (tc-result-info-ok-id (tc-global-shared-view operand-info))
-          (csym.compiler-symbols-missing-handle)))
-        [(parser.ResultAstTypeList.Ok fields)
-          (> (ast.ast-type-list-len (& fields)) 0)]
-        [(parser.ResultAstTypeList.Err _) true])]
     (match operand
       [(TcSelectedOccurrence.Unrepresented)
         (TcSelectedResult.Ok ok-ty TcSelectedOccurrence.Unrepresented sink)]
       [(TcSelectedOccurrence.Selected value)
-        (if (or
-          (< ok-variant.ordinal 0)
-          (< err-variant.ordinal 0)
-          ;; An arena's region tags (a value allocated in a `with-arena` body)
-          ;; are legacy escape facts the graph does not model, as a match
-          ;; scrutinee's are.
-          (not
-            (tc-selected-call-type-ok?
+        (let
+          [result? : bool
+            (match (tc-result-info-kind (tc-global-shared-view operand-info))
+              [(TcTryResult) true]
+              [(TcTryOption) false])]
+          [err-ty : ast.AstType
+            (tc-result-info-err-type (tc-global-shared-view operand-info))]
+          [return-err-ty : ast.AstType
+            (tc-result-info-err-type (tc-global-shared-view return-info))]
+          [enum-name : i64
+            (match (tc-global-shared-view operand-info)
+              [(TcResultInfo _ name _ _ _ _) name])]
+          [ok-variant : TcSelectedVariant
+            (tc-selected-variant
               ctx
-              (tc-selected-strip-arena-tags
-                ctx
-                env
-                (tc-global-shared-view operand-ty))))
-          ;; A payload may be a reference (a view the result carries).
-          (not
-            (tc-selected-call-param-type-ok?
+              enum-name
+              (tc-result-info-ok-id (tc-global-shared-view operand-info)))]
+          [err-variant : TcSelectedVariant
+            (tc-selected-variant
               ctx
-              (tc-selected-strip-arena-tags
+              enum-name
+              (tc-result-info-err-id (tc-global-shared-view operand-info)))]
+          ;; A payload-free `Ok*` yields `unit` (#8563): its arm binds nothing.
+          [ok-payload? : bool
+            (match (csym.compiler-registries-variant-fields-indexed
+              (tc-context-symbols ctx)
+              (tc-source-variant-handle-for-enum-id-or
                 ctx
-                env
-                (tc-global-shared-view ok-ty))))
-          (not
-            (tc-selected-call-type-ok? ctx (tc-global-shared-view return-ty)))
-          (and
-            result?
-            (or
-              (not
-                (tc-selected-call-param-type-ok?
+                enum-name
+                (tc-result-info-ok-id (tc-global-shared-view operand-info))
+                (csym.compiler-symbols-missing-handle)))
+              [(parser.ResultAstTypeList.Ok fields)
+                (> (ast.ast-type-list-len (& fields)) 0)]
+              [(parser.ResultAstTypeList.Err _) true])]
+          (if (or
+            (< ok-variant.ordinal 0)
+            (< err-variant.ordinal 0)
+            ;; An arena's region tags (a value allocated in a `with-arena` body)
+            ;; are legacy escape facts the graph does not model, as a match
+            ;; scrutinee's are.
+            (not
+              (tc-selected-call-type-ok?
+                ctx
+                (tc-selected-strip-arena-tags
                   ctx
-                  (tc-global-shared-view err-ty)))
-              (not
-                (tc-selected-call-param-type-ok?
+                  env
+                  (tc-global-shared-view operand-ty))))
+            ;; A payload may be a reference (a view the result carries).
+            (not
+              (tc-selected-call-param-type-ok?
+                ctx
+                (tc-selected-strip-arena-tags
                   ctx
-                  (tc-global-shared-view return-err-ty))))))
-          (TcSelectedResult.Ok ok-ty TcSelectedOccurrence.Unrepresented sink)
-          (match sink
-            [(TcSelectedSink.Query)
-              (TcSelectedResult.Ok
-                ok-ty
-                TcSelectedOccurrence.Unrepresented
-                TcSelectedSink.Query)]
-            [(TcSelectedSink.Capture store lease bindings)
-              (match (tc-selected-scrutinee-binder!
-                (tc-global-shared-view operand-ty)
-                value
-                (ownership.ownership-source-copy (& source))
-                store
-                lease
-                bindings)
-                [(TcSelectedScrutinee.Err message next)
-                  (TcSelectedResult.Err message next)]
-                [(TcSelectedScrutinee.Legacy next)
-                  (TcSelectedResult.Ok
-                    ok-ty
-                    TcSelectedOccurrence.Unrepresented
-                    next)]
-                [(TcSelectedScrutinee.Ok _ _ initialize position next)
-                  (match position
-                    [(TcSelectedMaybePlace.No)
-                      (TcSelectedResult.Ok
-                        ok-ty
-                        TcSelectedOccurrence.Unrepresented
-                        next)]
-                    [(TcSelectedMaybePlace.Some place)
-                      (tc-selected-try-arms!
-                        operand-ty
-                        ok-ty
-                        err-ty
-                        return-ty
-                        return-err-ty
-                        result?
-                        ok-payload?
-                        ok-variant
-                        err-variant
-                        initialize
-                        place
-                        syntax
-                        source
-                        next)])])]))])))
+                  env
+                  (tc-global-shared-view ok-ty))))
+            (not
+              (tc-selected-call-type-ok? ctx (tc-global-shared-view return-ty)))
+            (and
+              result?
+              (or
+                (not
+                  (tc-selected-call-param-type-ok?
+                    ctx
+                    (tc-global-shared-view err-ty)))
+                (not
+                  (tc-selected-call-param-type-ok?
+                    ctx
+                    (tc-global-shared-view return-err-ty))))))
+            (TcSelectedResult.Ok ok-ty TcSelectedOccurrence.Unrepresented sink)
+            (match sink
+              [(TcSelectedSink.Query)
+                (TcSelectedResult.Ok
+                  ok-ty
+                  TcSelectedOccurrence.Unrepresented
+                  TcSelectedSink.Query)]
+              [(TcSelectedSink.Capture store lease bindings)
+                (match (tc-selected-scrutinee-binder!
+                  (tc-global-shared-view operand-ty)
+                  value
+                  (ownership.ownership-source-copy (& source))
+                  store
+                  lease
+                  bindings)
+                  [(TcSelectedScrutinee.Err message next)
+                    (TcSelectedResult.Err message next)]
+                  [(TcSelectedScrutinee.Legacy next)
+                    (TcSelectedResult.Ok
+                      ok-ty
+                      TcSelectedOccurrence.Unrepresented
+                      next)]
+                  [(TcSelectedScrutinee.Ok _ _ initialize position next)
+                    (match position
+                      [(TcSelectedMaybePlace.No)
+                        (TcSelectedResult.Ok
+                          ok-ty
+                          TcSelectedOccurrence.Unrepresented
+                          next)]
+                      [(TcSelectedMaybePlace.Some place)
+                        (tc-selected-try-arms!
+                          operand-ty
+                          ok-ty
+                          err-ty
+                          return-ty
+                          return-err-ty
+                          result?
+                          ok-payload?
+                          ok-variant
+                          err-variant
+                          initialize
+                          place
+                          syntax
+                          source
+                          next)])])])))])))
 
 ;; The two arms and the match over the operand's binder at `place`.
 (define (tc-selected-try-arms!
@@ -24920,19 +24921,14 @@
   (Ok)
   (Err String))
 
-;; Convert selected coordinates only at direct borrow-policy/type rejections.
-;; Legacy views already carry their complete span.
+;; Borrow errors use the complete source-view span when one is available.
+;; Unlocated operands defer location to their enclosing expression.
 (defenum TcBorrowSource
   (No)
-  (Selected i64 i64)
   (Spanned ast.AstSourceSpan))
 
 (define (tc-borrow-source-error [source : TcBorrowSource] [message : String]) : String
   (match source
-    [(TcBorrowSource.Selected line column)
-      (if (and (> line 0) (> column 0))
-        (tc-located-error (ast.ast-source-span line column line column) message)
-        message)]
     [(TcBorrowSource.Spanned span) (tc-located-error span message)]
     [(TcBorrowSource.No) message]))
 
@@ -58166,14 +58162,19 @@
                   [(ResultTcType.Err _)
                     ;; Preserve the canonical rejected contextual attempt and
                     ;; noncontextual retry; its failed child is never selected.
-                    (tc-infer-selected-unary
-                      ctx
-                      env
-                      syntax
-                      op
-                      inner-id
-                      ast.AstMaybeType.No
-                      source
+                    (tc-selected-unrepresented
+                      (tc-selected-speculative-query
+                        ctx
+                        (tc-selected-project
+                          (tc-infer-selected-unary
+                            ctx
+                            env
+                            syntax
+                            op
+                            inner-id
+                            ast.AstMaybeType.No
+                            source
+                            TcSelectedSink.Query)))
                       next)])])]))]))
 
 (define (tc-expr-list-with-expected-elements
@@ -58780,8 +58781,16 @@
       [_ false]))
     (tc-infer-selected-operand-id ctx env id expected source sink)
     (tc-selected-unrepresented
-      (tc-selected-project
-        (tc-infer-selected-id ctx env id expected source TcSelectedSink.Query))
+      (tc-semantic-unobserved
+        ctx
+        (tc-selected-project
+          (tc-infer-selected-operand-id
+            ctx
+            env
+            id
+            expected
+            source
+            TcSelectedSink.Query)))
       sink)))
 
 (define (tc-infer-selected-begin-at

@@ -364,128 +364,134 @@
                         (type-key ty)
                         (comptime.string-append " at " ty-path))))
                   unit)
-                (match (match kind
-                  ["struct" "product"]
-                  ["tuple" "product"]
-                  [_ kind])
-                  ["unit" unit]
-                  ["never" unit]
-                  ["bool" unit]
-                  ["char" unit]
-                  ["i64" unit]
-                  ["i32" unit]
-                  ["i16" unit]
-                  ["i8" unit]
-                  ["u64" unit]
-                  ["u32" unit]
-                  ["u16" unit]
-                  ["u8" unit]
-                  ["f64" unit]
-                  ["f32" unit]
-                  ["string" (set! copyable? false)]
-                  ["box" (set! copyable? false)]
-                  ["dyn-array" (set! copyable? false)]
-                  ["array"
-                    (let
-                      [element : comptime.Expr (array-element-type ty)]
-                      (set!
-                        types
-                        (comptime.expr-list-cons
-                          (comptime.type-expr element)
-                          types))
-                      (set!
-                        paths
-                        (comptime.expr-list-cons
-                          (comptime.expr-string
-                            (comptime.string-append ty-path "[]"))
-                          paths))
-                      (set! type-count (+ type-count 1)))]
-                  ["product"
-                    (let
-                      [struct? : bool (string-eq kind "struct")]
-                      [count : i64
-                        (if struct?
-                          (struct-field-count ty)
-                          (tuple-element-count ty))]
-                      [field : i64 0]
-                      (while (< field count)
-                        (let
-                          [member : comptime.Expr
-                            (if struct?
-                              (struct-field-type ty field)
-                              (tuple-element-type ty field))]
-                          [suffix : String
-                            (if struct?
-                              (comptime.string-append
-                                "."
-                                (struct-field-name ty field))
-                              (comptime.string-append
-                                "["
+                (if (if (string-eq kind "struct")
+                  (if (string-eq (type-nominal-module ty) "stdlib.arena")
+                    (string-eq (type-nominal-name ty) "Arena")
+                    false)
+                  false)
+                  (set! copyable? false)
+                  (match (match kind
+                    ["struct" "product"]
+                    ["tuple" "product"]
+                    [_ kind])
+                    ["unit" unit]
+                    ["never" unit]
+                    ["bool" unit]
+                    ["char" unit]
+                    ["i64" unit]
+                    ["i32" unit]
+                    ["i16" unit]
+                    ["i8" unit]
+                    ["u64" unit]
+                    ["u32" unit]
+                    ["u16" unit]
+                    ["u8" unit]
+                    ["f64" unit]
+                    ["f32" unit]
+                    ["string" (set! copyable? false)]
+                    ["box" (set! copyable? false)]
+                    ["dyn-array" (set! copyable? false)]
+                    ["array"
+                      (let
+                        [element : comptime.Expr (array-element-type ty)]
+                        (set!
+                          types
+                          (comptime.expr-list-cons
+                            (comptime.type-expr element)
+                            types))
+                        (set!
+                          paths
+                          (comptime.expr-list-cons
+                            (comptime.expr-string
+                              (comptime.string-append ty-path "[]"))
+                            paths))
+                        (set! type-count (+ type-count 1)))]
+                    ["product"
+                      (let
+                        [struct? : bool (string-eq kind "struct")]
+                        [count : i64
+                          (if struct?
+                            (struct-field-count ty)
+                            (tuple-element-count ty))]
+                        [field : i64 0]
+                        (while (< field count)
+                          (let
+                            [member : comptime.Expr
+                              (if struct?
+                                (struct-field-type ty field)
+                                (tuple-element-type ty field))]
+                            [suffix : String
+                              (if struct?
                                 (comptime.string-append
-                                  (comptime.int->string field)
-                                  "]")))]
-                          (set!
-                            types
-                            (comptime.expr-list-cons
-                              (comptime.type-expr member)
-                              types))
-                          (set!
-                            paths
-                            (comptime.expr-list-cons
-                              (comptime.expr-string
-                                (comptime.string-append ty-path suffix))
-                              paths))
-                          (set! type-count (+ type-count 1))
-                          (set! field (+ field 1))))
-                      unit)]
-                  ["enum"
-                    (let
-                      [count : i64 (enum-variant-count ty)]
-                      [variant : i64 0]
-                      (while (< variant count)
-                        (let
-                          [payload-count : i64
-                            (enum-variant-payload-count ty variant)]
-                          [payload : i64 0]
-                          (while (< payload payload-count)
-                            (let
-                              [member : comptime.Expr
-                                (enum-variant-payload-type ty variant payload)]
-                              [variant-path : String
+                                  "."
+                                  (struct-field-name ty field))
                                 (comptime.string-append
-                                  ty-path
+                                  "["
                                   (comptime.string-append
-                                    "."
-                                    (enum-variant-name ty variant)))]
-                              [member-path : String
-                                (comptime.string-append
-                                  variant-path
+                                    (comptime.int->string field)
+                                    "]")))]
+                            (set!
+                              types
+                              (comptime.expr-list-cons
+                                (comptime.type-expr member)
+                                types))
+                            (set!
+                              paths
+                              (comptime.expr-list-cons
+                                (comptime.expr-string
+                                  (comptime.string-append ty-path suffix))
+                                paths))
+                            (set! type-count (+ type-count 1))
+                            (set! field (+ field 1))))
+                        unit)]
+                    ["enum"
+                      (let
+                        [count : i64 (enum-variant-count ty)]
+                        [variant : i64 0]
+                        (while (< variant count)
+                          (let
+                            [payload-count : i64
+                              (enum-variant-payload-count ty variant)]
+                            [payload : i64 0]
+                            (while (< payload payload-count)
+                              (let
+                                [member : comptime.Expr
+                                  (enum-variant-payload-type ty variant payload)]
+                                [variant-path : String
                                   (comptime.string-append
-                                    "["
+                                    ty-path
                                     (comptime.string-append
-                                      (comptime.int->string payload)
-                                      "]")))]
-                              (set!
-                                types
-                                (comptime.expr-list-cons
-                                  (comptime.type-expr member)
-                                  types))
-                              (set!
-                                paths
-                                (comptime.expr-list-cons
-                                  (comptime.expr-string member-path)
-                                  paths))
-                              (set! type-count (+ type-count 1))
-                              (set! payload (+ payload 1))))
-                          (set! variant (+ variant 1))))
-                      unit)]
-                  [_
-                    (comptime.comptime-error
-                      (comptime.string-append
-                        "gen-clone: unsupported type "
+                                      "."
+                                      (enum-variant-name ty variant)))]
+                                [member-path : String
+                                  (comptime.string-append
+                                    variant-path
+                                    (comptime.string-append
+                                      "["
+                                      (comptime.string-append
+                                        (comptime.int->string payload)
+                                        "]")))]
+                                (set!
+                                  types
+                                  (comptime.expr-list-cons
+                                    (comptime.type-expr member)
+                                    types))
+                                (set!
+                                  paths
+                                  (comptime.expr-list-cons
+                                    (comptime.expr-string member-path)
+                                    paths))
+                                (set! type-count (+ type-count 1))
+                                (set! payload (+ payload 1))))
+                            (set! variant (+ variant 1))))
+                        unit)]
+                    [_
+                      (comptime.comptime-error
                         (comptime.string-append
-                          (type-key ty)
-                          (comptime.string-append " at " ty-path))))]))
+                          "gen-clone: unsupported type "
+                          (comptime.string-append
+                            (type-key ty)
+                            (comptime.string-append " at " ty-path))))])))
               unit)
             (if copyable?
               (set! visited (+ visited 1))

@@ -27083,30 +27083,63 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-walk-direct-marshal-start-expr-pool : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-walk-reresolve-start-alloc : i64
     0))
 
 (cfg
   compile-profile
-  (define (compiler-tc-walk-direct-marshal-start!) : unit
+  (define (compiler-tc-walk-direct-marshal-start! [expr-pool-arena : i64]) : unit
     (set! compiler-tc-walk-direct-marshal-start-ns (compiler-tc-walk-now-ns))
     (set! compiler-tc-walk-direct-marshal-start-alloc (profile.alloc-total))
-    (set! compiler-tc-walk-direct-marshal-start-live (profile.alloc-live))))
+    (set! compiler-tc-walk-direct-marshal-start-live (profile.alloc-live))
+    (set!
+      compiler-tc-walk-direct-marshal-start-expr-pool
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        expr-pool-arena))))
 
 (cfg
   compile-profile
-  (define (compiler-tc-walk-direct-marshal-finish!) : unit
-    (counters.add!
-      tc-profile-direct-marshal-ns
-      (- (compiler-tc-walk-now-ns) compiler-tc-walk-direct-marshal-start-ns))
-    (counters.add!
-      tc-profile-direct-marshal-alloc
-      (- (profile.alloc-total) compiler-tc-walk-direct-marshal-start-alloc))
-    (counters.add!
-      tc-profile-direct-marshal-live
-      (- (profile.alloc-live) compiler-tc-walk-direct-marshal-start-live))
-    (counters.bump! tc-profile-direct-marshal-calls)
-    (counters.bump! compiler-tc-walk-operand-captures)))
+  (define (compiler-tc-walk-direct-marshal-finish! [expr-pool-arena : i64]) : unit
+    ;; Exclude shared fixed-size `AstExpr` pool segment rollovers (`#9060`),
+    ;; which allocate 576 KiB whenever the program's total expr count happens
+    ;; to cross a 16,384-node boundary inside direct operand capture.
+    (let
+      [expr-pool-delta : i64
+        (-
+          (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+            expr-pool-arena)
+          compiler-tc-walk-direct-marshal-start-expr-pool)]
+      [pool-overhead : i64
+        (if (> expr-pool-delta 0)
+          expr-pool-delta
+          0)]
+      [alloc-delta : i64
+        (-
+          (- (profile.alloc-total) compiler-tc-walk-direct-marshal-start-alloc)
+          pool-overhead)]
+      [live-delta : i64
+        (-
+          (- (profile.alloc-live) compiler-tc-walk-direct-marshal-start-live)
+          pool-overhead)]
+      (counters.add!
+        tc-profile-direct-marshal-ns
+        (- (compiler-tc-walk-now-ns) compiler-tc-walk-direct-marshal-start-ns))
+      (counters.add!
+        tc-profile-direct-marshal-alloc
+        (if (> alloc-delta 0)
+          alloc-delta
+          0))
+      (counters.add!
+        tc-profile-direct-marshal-live
+        (if (> live-delta 0)
+          live-delta
+          0))
+      (counters.bump! tc-profile-direct-marshal-calls)
+      (counters.bump! compiler-tc-walk-operand-captures))))
 
 (cfg
   compile-profile
@@ -90784,6 +90817,8 @@
         (cond
           [(or
               (< nominal-id 0)
+              (tc-arena-nominal-name-id? name-id)
+              (tc-arena-nominal-name-id? nominal-id)
               (not
                 (or
                   (= kind (csym.compiler-symbol-kind-defstruct))
@@ -90843,16 +90878,20 @@
           stack)]
       [(Tuple elems)
         (tc-clone-out-copy-value-type-list? ctx (& (deref elems)) stack 0)]
-      [(or (Enum name) (Struct name))
+      [(Enum name)
         (let
           [empty : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
           (tc-clone-out-copy-value-nominal? ctx name (& empty) stack))]
+      [(Struct name)
+        (if (tc-arena-nominal-name-id? name)
+          false
+          (let
+            [empty : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+            (tc-clone-out-copy-value-nominal? ctx name (& empty) stack)))]
       [(EnumArgs name lifetimes)
         (tc-clone-out-copy-value-nominal? ctx name (& (deref lifetimes)) stack)]
       [(StructArgs name lifetimes)
-        (if (and
-          (tc-arena-nominal-name-id? name)
-          (> (ast.ast-lifetime-list-len (& (deref lifetimes))) 0))
+        (if (tc-arena-nominal-name-id? name)
           false
           (tc-clone-out-copy-value-nominal?
             ctx
@@ -120063,7 +120102,11 @@
           declaration-id)
           [(None) No]
           [(Resolved catalog)
-            (cfg compile-profile (compiler-tc-walk-direct-marshal-start!))
+            (cfg
+              compile-profile
+              (compiler-tc-walk-direct-marshal-start!
+                (ast.ast-node-pool-context-expr-storage-arena
+                  (tc-context-pools-live ctx))))
             (match (let
               [capture-result : ResultMacroCapturedOperands
                 (macro-capture-params-direct
@@ -120081,7 +120124,11 @@
                     fallback-module-id
                     macro-name-id)
                   (tc-global-shared-view call-expr))]
-              (cfg compile-profile (compiler-tc-walk-direct-marshal-finish!))
+              (cfg
+                compile-profile
+                (compiler-tc-walk-direct-marshal-finish!
+                  (ast.ast-node-pool-context-expr-storage-arena
+                    (tc-context-pools-live ctx))))
               capture-result)
               [(Err diag) (Err diag)]
               [(Ok operands count base-env syntax-pools)
@@ -122119,8 +122166,6 @@
     (macro-expected-from-type-result ctx place-ty-result)))
 
 (defenum TcMacroLazyExpected
-  (Direct bool)
-  (TypeId i64)
   (StructSet i64 i64)
   (ArraySet i64)
   (ArrayPush i64)
@@ -122131,20 +122176,8 @@
 (define (macro-resolve-lazy-expected
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [direct : (& direct ast.AstMaybeType)]
   [lazy : TcMacroLazyExpected]) : ast.AstMaybeType
   (match lazy
-    [(Direct resolved?)
-      (match direct
-        [(Some ty)
-          (ast.AstMaybeType.Some
-            (if resolved?
-              (clone (deref ty))
-              (tc-resolve-type ctx (clone (deref ty)))))]
-        [(No) (ast.AstMaybeType.No)])]
-    [(TypeId ty-id)
-      (ast.AstMaybeType.Some
-        (tc-resolve-type ctx (tc-context-type-get ctx ty-id)))]
     [(StructSet receiver-id field)
       (macro-struct-set-expected-type ctx env receiver-id field)]
     [(ArraySet array-id) (macro-array-set-expected-type ctx env array-id)]
@@ -122152,6 +122185,39 @@
     [(Replace place-id) (macro-replace-expected-type ctx env place-id)]
     [(BoxSet box-id) (macro-box-set-expected-type ctx env box-id)]
     [(Set name) (macro-set-expected-type ctx env name)]))
+
+;; Expand EXPR-ID with an explicit syntactic type annotation that is already
+;; present on the form (`def`, annotated `let`), resolving it only when the
+;; subtree can fire and isolating `scratch-without-expected-count` so enclosing
+;; lazy sites never retry.
+(define (macro-expand-node-annotated-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& decls ast.AstDeclList)]
+  [depth : i64]
+  [expr-id : i64]
+  [ty : (& ty ast.AstType)]) : ResultMacroExpr
+  (let
+    [macro-state : TcMacroState (tc-context-macro-state ctx)]
+    (if (not
+      (macro-expr-might-fire?
+        macro-state
+        (tc-context-expr-bases ctx)
+        (tc-context-expr-get ctx expr-id)))
+      (Ok expr-id)
+      (let
+        [scratch-mark : i64
+          (tc-macro-scratch-without-expected-count macro-state)]
+        [result : ResultMacroExpr
+          (macro-expand-node-fire-expected
+            ctx
+            env
+            decls
+            depth
+            expr-id
+            (ast.AstMaybeType.Some (tc-resolve-type ctx (clone (deref ty)))))]
+        (tc-macro-scratch-without-expected-restore! macro-state scratch-mark)
+        result))))
 
 ;; Expand EXPR-ID with a lazily computed expected type: try without computing
 ;; the expected type unless a direct or tail scratch form observes `(No)`,
@@ -122163,7 +122229,6 @@
   [decls : (& decls ast.AstDeclList)]
   [depth : i64]
   [expr-id : i64]
-  [direct : (& direct ast.AstMaybeType)]
   [lazy : TcMacroLazyExpected]) : ResultMacroExpr
   (let
     [macro-state : TcMacroState (tc-context-macro-state ctx)]
@@ -122185,7 +122250,7 @@
               decls
               depth
               expr-id
-              (macro-resolve-lazy-expected ctx env direct lazy))
+              (macro-resolve-lazy-expected ctx env lazy))
             (let
               [fast-result : ResultMacroExpr
                 (macro-expand-node-fire-expected
@@ -122209,7 +122274,7 @@
                     decls
                     depth
                     expr-id
-                    (macro-resolve-lazy-expected ctx env direct lazy))))))]
+                    (macro-resolve-lazy-expected ctx env lazy))))))]
         (tc-macro-scratch-without-expected-restore! macro-state scratch-mark)
         result))))
 
@@ -122219,6 +122284,151 @@
     (& (tc-context-expr-get ctx func-id)))
     [(Var name-id) (tc-bare-variant-declared-name? ctx name-id)]
     [_ false]))
+
+(define (macro-expand-call-args-with-params
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [params : (& params ast.AstTypeList)]
+  [first-fire-index : i64]
+  [args : (& args ast.AstExprList)]) : ResultMacroExprList
+  (let
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
+    (match (macro-expand-exprs-with-type-list-into
+      ctx
+      env
+      decls
+      depth
+      params
+      true
+      first-fire-index
+      args
+      0
+      (&mut out))
+      [(Ok) (Ok out)]
+      [(Err diag) (Err diag)])))
+
+(define (macro-expand-call-args-fallback
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [first-fire-index : i64]
+  [args : (& args ast.AstExprList)]
+  [fast-ran? : bool]
+  [fast-result : ResultMacroExprList]) : ResultMacroExprList
+  (if fast-ran?
+    fast-result
+    (let
+      [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
+      (match (macro-expand-exprs-from-into
+        ctx
+        env
+        decls
+        depth
+        first-fire-index
+        args
+        0
+        (&mut out))
+        [(Ok) (Ok out)]
+        [(Err diag) (Err diag)]))))
+
+(define (macro-expand-call-args-with-target
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [nfunc : i64]
+  [args : (& args ast.AstExprList)]
+  [call-expected : ast.AstMaybeType]
+  [first-fire-index : i64]
+  [scratch-mark : i64]
+  [fast-ran? : bool]
+  [fast-result : ResultMacroExprList]) : ResultMacroExprList
+  (let
+    [macro-state : TcMacroState (tc-context-macro-state ctx)]
+    [call-expected-absent? : bool
+      (match (& call-expected)
+        [(No) true]
+        [(Some _) false])]
+    [journal-mark : i64 (tc-dotted-macro-journal-start! macro-state)]
+    [observer : TcSemanticObserver (tc-discarding-errors-enter! ctx env)]
+    [_retarget : ResultTcUnit
+      (match call-expected
+        [(Some expected)
+          (tc-expected-call-variant-retarget! ctx env nfunc expected)]
+        [(No) Ok])]
+    [fn-ty-result : ResultTcType
+      (tc-call-target-expr ctx env (tc-context-expr-get ctx nfunc))]
+    [_exit : unit (tc-discarding-errors-exit! ctx env observer)]
+    [_restore : unit
+      (tc-dotted-macro-journal-restore-to! macro-state journal-mark)]
+    [_publish : unit (tc-context-publish-newer-pools! ctx)]
+    [retry-needs-outer-expected? : bool
+      (and
+        call-expected-absent?
+        (match (& fn-ty-result)
+          [(Err _) (macro-call-callee-bare-variant? ctx nfunc)]
+          [(Ok _) false]))]
+    [retry-result : ResultMacroExprList
+      (match fn-ty-result
+        [(Ok fn-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+            [(Func params _)
+              (macro-expand-call-args-with-params
+                ctx
+                env
+                decls
+                depth
+                (& (deref params))
+                first-fire-index
+                args)]
+            [(CFunc sig-id _)
+              (match (tc-context-type-get ctx sig-id)
+                [(Func params _)
+                  (macro-expand-call-args-with-params
+                    ctx
+                    env
+                    decls
+                    depth
+                    (& (deref params))
+                    first-fire-index
+                    args)]
+                [_
+                  (macro-expand-call-args-fallback
+                    ctx
+                    env
+                    decls
+                    depth
+                    first-fire-index
+                    args
+                    fast-ran?
+                    fast-result)])]
+            [_
+              (macro-expand-call-args-fallback
+                ctx
+                env
+                decls
+                depth
+                first-fire-index
+                args
+                fast-ran?
+                fast-result)])]
+        [(Err _)
+          (macro-expand-call-args-fallback
+            ctx
+            env
+            decls
+            depth
+            first-fire-index
+            args
+            fast-ran?
+            fast-result)])]
+    (if retry-needs-outer-expected?
+      (when fast-ran? (tc-macro-scratch-without-expected-bump! macro-state))
+      (tc-macro-scratch-without-expected-restore! macro-state scratch-mark))
+    retry-result))
 
 (define (macro-expand-call-args
   [ctx : TcContext]
@@ -122238,16 +122448,15 @@
       (let
         [scratch-mark : i64
           (tc-macro-scratch-without-expected-count macro-state)]
-        (when
-          (not
-            (macro-expr-list-tail-contains-scratch-at?
-              expr-bases
-              (& args)
-              first-fire-index))
+        (if (not
+          (macro-expr-list-tail-contains-scratch-at?
+            expr-bases
+            (& args)
+            first-fire-index))
           (let
             [fast-out : ast.AstExprList
               (ast.ast-expr-list-with-capacity args.len)]
-            [fast-result : ResultMacroCheck
+            [fast-check : ResultMacroCheck
               (macro-expand-exprs-from-into
                 ctx
                 env
@@ -122257,109 +122466,42 @@
                 (& args)
                 0
                 (&mut fast-out))]
+            [fast-value : ResultMacroExprList
+              (match fast-check
+                [(Ok) (Ok fast-out)]
+                [(Err diag) (Err diag)])]
             (if (=
               (tc-macro-scratch-without-expected-count macro-state)
               scratch-mark)
-              (return
-                (match fast-result
-                  [(Ok) (Ok fast-out)]
-                  [(Err diag) (Err diag)]))
-              (tc-macro-scratch-without-expected-restore!
-                macro-state
-                scratch-mark))))
-        (let
-          [call-expected-absent? : bool
-            (match (& call-expected)
-              [(No) true]
-              [(Some _) false])]
-          [journal-mark : i64 (tc-dotted-macro-journal-start! macro-state)]
-          [observer : TcSemanticObserver (tc-discarding-errors-enter! ctx env)]
-          [_retarget : ResultTcUnit
-            (match call-expected
-              [(Some expected)
-                (tc-expected-call-variant-retarget! ctx env nfunc expected)]
-              [(No) Ok])]
-          [fn-ty-result : ResultTcType
-            (tc-call-target-expr ctx env (tc-context-expr-get ctx nfunc))]
-          [_exit : unit (tc-discarding-errors-exit! ctx env observer)]
-          [_restore : unit
-            (tc-dotted-macro-journal-restore-to! macro-state journal-mark)]
-          [_publish : unit (tc-context-publish-newer-pools! ctx)]
-          [out : ast.AstExprList (ast.ast-expr-list-with-capacity args.len)]
-          [retry-needs-outer-expected? : bool
-            (and
-              call-expected-absent?
-              (match (& fn-ty-result)
-                [(Err _) (macro-call-callee-bare-variant? ctx nfunc)]
-                [(Ok _) false]))]
-          [retry-result : ResultMacroCheck
-            (match fn-ty-result
-              [(Ok fn-ty)
-                (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
-                  [(Func params _)
-                    (macro-expand-exprs-with-type-list-into
-                      ctx
-                      env
-                      decls
-                      depth
-                      (& (deref params))
-                      true
-                      first-fire-index
-                      (& args)
-                      0
-                      (&mut out))]
-                  [(CFunc sig-id _)
-                    (match (tc-context-type-get ctx sig-id)
-                      [(Func params _)
-                        (macro-expand-exprs-with-type-list-into
-                          ctx
-                          env
-                          decls
-                          depth
-                          (& (deref params))
-                          true
-                          first-fire-index
-                          (& args)
-                          0
-                          (&mut out))]
-                      [_
-                        (macro-expand-exprs-from-into
-                          ctx
-                          env
-                          decls
-                          depth
-                          first-fire-index
-                          (& args)
-                          0
-                          (&mut out))])]
-                  [_
-                    (macro-expand-exprs-from-into
-                      ctx
-                      env
-                      decls
-                      depth
-                      first-fire-index
-                      (& args)
-                      0
-                      (&mut out))])]
-              [(Err _)
-                (macro-expand-exprs-from-into
+              fast-value
+              (begin
+                (tc-macro-scratch-without-expected-restore!
+                  macro-state
+                  scratch-mark)
+                (macro-expand-call-args-with-target
                   ctx
                   env
                   decls
                   depth
-                  first-fire-index
+                  nfunc
                   (& args)
-                  0
-                  (&mut out))])]
-          (when
-            (not retry-needs-outer-expected?)
-            (tc-macro-scratch-without-expected-restore!
-              macro-state
-              scratch-mark))
-          (match retry-result
-            [(Ok) (Ok out)]
-            [(Err diag) (Err diag)]))))))
+                  call-expected
+                  first-fire-index
+                  scratch-mark
+                  true
+                  fast-value))))
+          (macro-expand-call-args-with-target
+            ctx
+            env
+            decls
+            depth
+            nfunc
+            (& args)
+            call-expected
+            first-fire-index
+            scratch-mark
+            false
+            (Ok (ast.ast-expr-list-new))))))))
 
 ;; Expand a node after its might-fire result is already known. Match arms use
 ;; this entry so deciding whether an arm needs a type environment does not make
@@ -122720,15 +122862,14 @@
             (try
               (match (& maybe-ty)
                 [(No) (macro-expand-node ctx env decls depth init-box)]
-                [(Some _)
-                  (macro-expand-node-lazy-expected
+                [(Some ty)
+                  (macro-expand-node-annotated-type
                     ctx
                     env
                     (& decls)
                     depth
                     init-box
-                    (& maybe-ty)
-                    (TcMacroLazyExpected.Direct false))]))]
+                    ty)]))]
           (match (let
             [let-bind-result : ResultTcEnv
               (tc-let-bindings
@@ -123612,17 +123753,31 @@
             (Ok (ast.ast-expr-lambda params maybe-ret nbody)))])]
     [(Ann inner-box ty-id)
       (let
-        [no-direct : ast.AstMaybeType (ast.AstMaybeType.No)]
+        [macro-state : TcMacroState (tc-context-macro-state ctx)]
         [ninner
           (try
-            (macro-expand-node-lazy-expected
-              ctx
-              env
-              (& decls)
-              depth
-              inner-box
-              (& no-direct)
-              (TcMacroLazyExpected.TypeId ty-id)))]
+            (if (not
+              (macro-expr-might-fire?
+                macro-state
+                (tc-context-expr-bases ctx)
+                (tc-context-expr-get ctx inner-box)))
+              (ResultMacroExpr.Ok inner-box)
+              (let
+                [scratch-mark : i64
+                  (tc-macro-scratch-without-expected-count macro-state)]
+                [result : ResultMacroExpr
+                  (macro-expand-node-fire-expected
+                    ctx
+                    env
+                    (& decls)
+                    depth
+                    inner-box
+                    (ast.AstMaybeType.Some
+                      (tc-resolve-type ctx (tc-context-type-get ctx ty-id))))]
+                (tc-macro-scratch-without-expected-restore!
+                  macro-state
+                  scratch-mark)
+                result)))]
         (Ok (ast.ast-expr-ann-id ninner ty-id)))]
     [(Cast inner-box ty-id)
       (let
@@ -123639,7 +123794,6 @@
     [(StructSet inner-box field value-box)
       (let
         [ninner (try (macro-expand-node ctx env decls depth inner-box))]
-        [no-direct : ast.AstMaybeType (ast.AstMaybeType.No)]
         [nvalue
           (try
             (macro-expand-node-lazy-expected
@@ -123648,7 +123802,6 @@
               (& decls)
               depth
               value-box
-              (& no-direct)
               (TcMacroLazyExpected.StructSet ninner field)))]
         (Ok (ast.ast-expr-struct-set-id ninner field nvalue)))]
     [(WithRegion region body)
@@ -123710,7 +123863,6 @@
       (let
         [narray (try (macro-expand-node ctx env decls depth array-box))]
         [nindex (try (macro-expand-node ctx env decls depth index-box))]
-        [no-direct : ast.AstMaybeType (ast.AstMaybeType.No)]
         [nvalue
           (try
             (macro-expand-node-lazy-expected
@@ -123719,7 +123871,6 @@
               (& decls)
               depth
               value-box
-              (& no-direct)
               (TcMacroLazyExpected.ArraySet narray)))]
         (Ok (ast.ast-expr-array-set narray nindex nvalue)))]
     [(ArrayTake array-box live-box index-box)
@@ -123731,7 +123882,6 @@
     [(ArrayPush array-box value-box)
       (let
         [narray (try (macro-expand-node ctx env decls depth array-box))]
-        [no-direct : ast.AstMaybeType (ast.AstMaybeType.No)]
         [nvalue
           (try
             (macro-expand-node-lazy-expected
@@ -123740,7 +123890,6 @@
               (& decls)
               depth
               value-box
-              (& no-direct)
               (TcMacroLazyExpected.ArrayPush narray)))]
         (Ok (ast.ast-node-push (ArrayPush narray nvalue))))]
     [(StringRef string-box index-box)
@@ -123751,7 +123900,6 @@
     [(Replace place-box replacement-box)
       (let
         [nplace (try (macro-expand-node ctx env decls depth place-box))]
-        [no-direct : ast.AstMaybeType (ast.AstMaybeType.No)]
         [nreplacement
           (try
             (macro-expand-node-lazy-expected
@@ -123760,7 +123908,6 @@
               (& decls)
               depth
               replacement-box
-              (& no-direct)
               (TcMacroLazyExpected.Replace nplace)))]
         (Ok (ast.ast-expr-replace nplace nreplacement)))]
     [(WithResource wr-box)
@@ -123819,7 +123966,6 @@
     [(BoxSet inner-box value-box)
       (let
         [ninner (try (macro-expand-node ctx env decls depth inner-box))]
-        [no-direct : ast.AstMaybeType (ast.AstMaybeType.No)]
         [nvalue
           (try
             (macro-expand-node-lazy-expected
@@ -123828,7 +123974,6 @@
               (& decls)
               depth
               value-box
-              (& no-direct)
               (TcMacroLazyExpected.BoxSet ninner)))]
         (Ok (ast.ast-expr-box-set ninner nvalue)))]
     [(Comptime inner-box)
@@ -123862,7 +124007,6 @@
         (Ok (ast.ast-node-push (Try ninner))))]
     [(Set name rhs-box)
       (let
-        [no-direct : ast.AstMaybeType (ast.AstMaybeType.No)]
         [nrhs
           (try
             (macro-expand-node-lazy-expected
@@ -123871,7 +124015,6 @@
               (& decls)
               depth
               rhs-box
-              (& no-direct)
               (TcMacroLazyExpected.Set name)))]
         (Ok (ast.ast-expr-set-id name nrhs)))]
     [(StringData inner-box)
@@ -124209,35 +124352,38 @@
             (try
               (match (& maybe-ty)
                 [(No) (macro-expand-node ctx global-env (& decls) 0 expr-box)]
-                [(Some _)
-                  (macro-expand-node-lazy-expected
+                [(Some ty)
+                  (macro-expand-node-annotated-type
                     ctx
                     global-env
                     (& decls)
                     0
                     expr-box
-                    (& maybe-ty)
-                    (TcMacroLazyExpected.Direct false))]))]
+                    ty)]))]
           (Ok (ast.ast-decl-def-id name maybe-ty nexpr)))]
       [(DefFn decl-meta name params ret body-box metadata)
         (let
+          [macro-state : TcMacroState (tc-context-macro-state ctx)]
+          [scratch-mark : i64
+            (tc-macro-scratch-without-expected-count macro-state)]
           [params-env : TcTypeEnv (tc-bind-params ctx global-env params)]
           [resolved-ret : ast.AstType
             (tc-resolve-type ctx (tc-global-shared-view ret))]
           [body-env : TcTypeEnv
             (tc-bind-return-type params-env (clone resolved-ret))]
-          [direct-expected : ast.AstMaybeType
-            (ast.AstMaybeType.Some resolved-ret)]
-          [nbody : i64
-            (try
-              (macro-expand-node-lazy-expected
-                ctx
-                body-env
-                (& decls)
-                0
-                body-box
-                (& direct-expected)
-                (TcMacroLazyExpected.Direct true)))]
+          [nbody-result : ResultMacroExpr
+            (macro-expand-node-expected
+              ctx
+              body-env
+              (& decls)
+              0
+              body-box
+              (ast.AstMaybeType.Some resolved-ret))]
+          [_restore : unit
+            (tc-macro-scratch-without-expected-restore!
+              macro-state
+              scratch-mark)]
+          [nbody : i64 (try nbody-result)]
           (Ok
             (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
       [(Test _ _ _ _) (Ok decl)]

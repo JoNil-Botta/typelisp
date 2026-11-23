@@ -813,6 +813,9 @@ with_scratch_closure_tuple_reject|check-fail|tests/safety/with_scratch_closure_t
 with_scratch_raw_ptr_struct_reject|check-fail|tests/safety/with_scratch_raw_ptr_struct_reject.tl|-|with-scratch clone-out of PtrBox
 with_scratch_clone_hook_ref_escape_reject|check-fail|tests/safety/with_scratch_clone_hook_ref_escape_reject.tl|-|with-scratch result still refers to the scratch result binding after clone-out
 with_scratch_clone_hook_type_change_reject|check-fail|tests/safety/with_scratch_clone_hook_type_change_reject.tl|-|with-scratch clone-out must preserve result type: expected Boxed, got i64
+with_scratch_bare_arena_reject|check-fail|tests/safety/with_scratch_bare_arena_reject.tl|-|with-scratch clone-out of stdlib.arena/Arena
+with_scratch_arena_struct_reject|check-fail|tests/safety/with_scratch_arena_struct_reject.tl|-|with-scratch clone-out of ArenaHolder
+with_scratch_tuple_arena_reject|check-fail|tests/safety/with_scratch_tuple_arena_reject.tl|-|with-scratch clone-out of (Tuple stdlib.arena/Arena String)
 while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
 while_continue_outside_reject|check-fail|tests/safety/while_continue_outside_reject.tl|-|typecheck: continue requires enclosing scalar while
 while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_boundary_reject.tl|-|typecheck: break requires enclosing scalar while

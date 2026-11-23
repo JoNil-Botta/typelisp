@@ -3366,6 +3366,62 @@
 (define (clone-boxed [x : (& r Boxed)]) : i64 x.n)
 (define (main) : i64 (with-scratch (Boxed 42 \"hello\")))")
       "typecheck: with-scratch clone-out must preserve result type: expected Boxed, got i64")
+    ;; Bare arena.Arena and aggregates containing arena.Arena cannot bypass
+    ;; clone-out as plain Copy values.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (main) : i64
+  (let [dead : arena.Arena (with-scratch (arena.current))]
+    (in-arena dead (string.string-length (string.int->string 42)))))")
+      "with-scratch clone-out of stdlib.arena/Arena: gen-clone: missing explicit dependency clone-arena for struct_stdlib.arena/Arena at clone.deep from owner stdlib.arena; invoke gen-clone in its owner module first")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct ArenaHolder (a arena.Arena))
+(define (main) : i64
+  (let [h : ArenaHolder (with-scratch (ArenaHolder (arena.current)))]
+    (in-arena h.a (string.string-length (string.int->string 42)))))")
+      "with-scratch clone-out of ArenaHolder: gen-clone: missing explicit dependency clone-arena-holder for struct_ArenaHolder at clone.deep from owner <root>; invoke gen-clone in its owner module first")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (main) : i64
+  (let [p : (Tuple arena.Arena String)
+          (with-scratch (tuple (let [a : arena.Arena (arena.current)] a) (string.int->string 42)))]
+    (match p
+      [(tuple dead _)
+        (in-arena dead (string.string-length (string.int->string 99)))])))")
+      "with-scratch clone-out of (Tuple stdlib.arena/Arena String): gen-clone: missing explicit dependency clone-arena for struct_stdlib.arena/Arena at clone.deep[0] from owner stdlib.arena; invoke gen-clone in its owner module first")
+    ;; Deeply nested annotated lets/anns with sibling scratch branches must not
+    ;; trigger speculative (No) passes or exponential retries.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (f [c : bool]) : i64
+  (let [x01 : i64 (if c (let [x02 : i64 (if c (let [x03 : i64 (if c (let [x04 : i64 (if c
+    (let [x05 : i64 (if c (let [x06 : i64 (if c (let [x07 : i64 (if c (let [x08 : i64 (if c
+      (let [x09 : i64 (if c (let [x10 : i64 (if c (let [x11 : i64 (if c (let [x12 : i64 (if c
+        (let [x13 : i64 (if c (let [x14 : i64 (if c (let [x15 : i64 (if c (let [x16 : i64 (if c
+          (let [x17 : i64 (if c (let [x18 : i64 (if c (let [x19 : i64 (if c (let [x20 : i64 (if c
+            (with-scratch 21) (with-scratch 20))] x20) (with-scratch 19))] x19)
+            (with-scratch 18))] x18) (with-scratch 17))] x17) (with-scratch 16))] x16)
+          (with-scratch 15))] x15) (with-scratch 14))] x14) (with-scratch 13))] x13)
+        (with-scratch 12))] x12) (with-scratch 11))] x11) (with-scratch 10))] x10)
+      (with-scratch 9))] x09) (with-scratch 8))] x08) (with-scratch 7))] x07)
+    (with-scratch 6))] x06) (with-scratch 5))] x05) (with-scratch 4))] x04)
+  (with-scratch 3))] x03) (with-scratch 2))] x02) (with-scratch 1))] x01))
+(define (main) : i64 (f true))"))
+    ;; Deeply nested ambiguous bare enum variants wrapping a scratch form must
+    ;; reuse the fast-pass expansion instead of re-walking exponentially.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defenum E1 (W (Box E1)) (L i64))
+(defenum E2 (W (Box E2)) (L i64))
+(define (f) : E1
+  (W (box (W (box (W (box (W (box (W (box (W (box (W (box (W (box (W (box (W (box
+    (W (box (W (box (W (box (W (box (W (box (W (box (W (box (W (box (W (box (W (box
+      (L (with-scratch 1)))))))))))))))))))))))))))))))))))))))))))
+(define (main) : i64
+  (match (f)
+    [(E1.W _) 1]
+    [(E1.L n) n]))"))
     ;; Deeply nested annotated lets/anns wrapping a non-tail unannotated scratch
     ;; form must expand in linear time without cascading retries.
     (compiler-typecheck-ok?

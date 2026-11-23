@@ -6,7 +6,6 @@
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_diagnostic)
-(import stdlib.clone as clone_gen)
 (import compiler_abi)
 (import compiler_regalloc)
 (import compiler_liveness)
@@ -597,7 +596,13 @@
   (Ok String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
-(clone_gen.gen-clone ResultCompilerBackend)
+(define (clone-result-compiler-backend
+  [value : (& value ResultCompilerBackend)]) : ResultCompilerBackend
+  (match value
+    [(Ok text) (Ok (string.copy text))]
+    [(Err diag)
+      (Err
+        (box (compiler_diagnostic.clone-compiler-diagnostic (& (deref diag)))))]))
 
 ;; Append-only function-body assembly text buffer.
 ;;

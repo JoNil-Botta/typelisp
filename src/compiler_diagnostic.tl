@@ -7,7 +7,6 @@
 (import stdlib.string)
 (import stdlib.text_buf)
 (import compiler_owned_view as owned_view)
-(import stdlib.clone as clone_gen)
 
 (defmacro (compiler-diagnostic-place-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -76,45 +75,6 @@
   (secondary CompilerDiagnosticLabelList)
   (notes CompilerDiagnosticNoteList)
   (fixes CompilerDiagnosticFixSeq))
-
-(clone_gen.gen-clone CompilerDiagnosticLevel)
-
-(clone_gen.gen-clone CompilerDiagnosticMaybeString)
-
-(clone_gen.gen-clone CompilerDiagnosticSpan)
-
-(clone_gen.gen-clone CompilerDiagnosticLabel)
-
-(define (clone-compiler-diagnostic-label-list
-  [value : (& value CompilerDiagnosticLabelList)]) : CompilerDiagnosticLabelList
-  (compiler-diagnostic-copy-label-list-ref value))
-
-(define (clone-compiler-diagnostic-note-list
-  [value : (& value CompilerDiagnosticNoteList)]) : CompilerDiagnosticNoteList
-  (compiler-diagnostic-copy-note-list-ref value))
-
-(clone_gen.gen-clone CompilerDiagnosticApplicability)
-
-(clone_gen.gen-clone CompilerDiagnosticTextEdit)
-
-(define (clone-compiler-diagnostic-text-edit-seq
-  [edits : (& edits CompilerDiagnosticTextEditSeq)]) : CompilerDiagnosticTextEditSeq
-  (let
-    [count : i64 edits.len]
-    [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
-      (__tl_make-array CompilerDiagnosticTextEdit count)]
-    (for [index (iterator.range 0 count)]
-      (set!
-        (array-ref dst index)
-        (compiler-diagnostic-copy-text-edit-ref
-          (& (array-ref edits.slots index)))))
-    (CompilerDiagnosticTextEditSeq dst count)))
-
-(clone_gen.gen-clone CompilerDiagnosticFix)
-
-(define (clone-compiler-diagnostic-fix-seq
-  [value : (& value CompilerDiagnosticFixSeq)]) : CompilerDiagnosticFixSeq
-  (compiler-diagnostic-copy-fix-list-ref value))
 
 (define (clone-compiler-diagnostic [value : (& value CompilerDiagnostic)]) : CompilerDiagnostic
   (compiler-diagnostic-copy-ref value))

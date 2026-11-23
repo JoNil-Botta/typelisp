@@ -8,7 +8,6 @@
 ;; deprecated string.concat rule and staged migration rules are opt-in.
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
-(import stdlib.clone as clone_gen)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -1555,9 +1554,31 @@
   (slots (__tl_dyn-array SelfhostLintDeadDecl))
   (len i64))
 
-(clone_gen.gen-clone SelfhostLintDeadDecl)
+(define (clone-selfhost-lint-dead-decl [value : (& value SelfhostLintDeadDecl)]) : SelfhostLintDeadDecl
+  (SelfhostLintDeadDecl
+    (string.copy (& value.path))
+    (string.copy (& value.name))
+    (string.copy (& value.key))
+    (ast.AstSourceSpan
+      value.span.start-line
+      value.span.start-col
+      value.span.end-line
+      value.span.end-col)
+    (lint_svec.clone-vec (& value.refs))
+    value.root
+    value.reportable))
 
-(clone_gen.gen-clone SelfhostLintDeadDecls)
+(define (clone-selfhost-lint-dead-decls
+  [value : (& value SelfhostLintDeadDecls)]) : SelfhostLintDeadDecls
+  (let
+    [count : i64 value.len]
+    [dst : (__tl_dyn-array SelfhostLintDeadDecl)
+      (__tl_make-array SelfhostLintDeadDecl count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref dst index)
+        (clone-selfhost-lint-dead-decl (& (array-ref value.slots index)))))
+    (SelfhostLintDeadDecls dst count)))
 
 (defstruct SelfhostLintDeadSourceSet
   (sources lint_svec.Vec)
@@ -1573,7 +1594,11 @@
   (Ok lint_svec.Vec)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(clone_gen.gen-clone ResultSelfhostLintDeadImportList)
+(define (clone-result-selfhost-lint-dead-import-list
+  [value : (& value ResultSelfhostLintDeadImportList)]) : ResultSelfhostLintDeadImportList
+  (match value
+    [(Ok items) (Ok (lint_svec.clone-vec items))]
+    [(Err diag) (Err (box (cdiag.clone-compiler-diagnostic (& (deref diag)))))]))
 
 (defenum ResultSelfhostLintDeadSources
   (Ok SelfhostLintDeadSourceSet)
@@ -1583,7 +1608,10 @@
   (decls SelfhostLintDeadDecls)
   (roots lint_svec.Vec))
 
-(clone_gen.gen-clone SelfhostLintDeadScan)
+(define (clone-selfhost-lint-dead-scan [value : (& value SelfhostLintDeadScan)]) : SelfhostLintDeadScan
+  (SelfhostLintDeadScan
+    (clone-selfhost-lint-dead-decls (& value.decls))
+    (lint_svec.clone-vec (& value.roots))))
 
 (define selfhost-lint-dead-import-aliases : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
@@ -1643,13 +1671,15 @@
 (define (selfhost-lint-dead-decls-grow [items : SelfhostLintDeadDecls]) : SelfhostLintDeadDecls
   (let
     [n : i64 (selfhost-lint-dead-decls-count items)]
+    [cap : i64
+      (selfhost-lint-dead-decls-capacity
+        (owned_view.compiler-owned-shared-view items))]
+    [new-cap : i64
+      (if (< cap 1)
+        1
+        (* cap 2))]
     [bigger : (__tl_dyn-array SelfhostLintDeadDecl)
-      (__tl_make-array
-        SelfhostLintDeadDecl
-        (*
-          (selfhost-lint-dead-decls-capacity
-            (owned_view.compiler-owned-shared-view items))
-          2))]
+      (__tl_make-array SelfhostLintDeadDecl new-cap)]
     (selfhost-lint-dead-decls-copy-range
       (&mut bigger)
       (selfhost-lint-dead-decls-slots items)

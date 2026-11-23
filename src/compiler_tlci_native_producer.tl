@@ -14,7 +14,6 @@
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
-(import stdlib.clone as clone_gen)
 (import compiler_ast_types)
 (import compiler_diagnostic)
 (import compiler_object as cobj)
@@ -613,7 +612,16 @@
   (Ok (__tl_dyn-array u8))
   (Err String))
 
-(clone_gen.gen-clone ResultProducerBytes)
+(define (clone-result-producer-bytes [value : (& value ResultProducerBytes)]) : ResultProducerBytes
+  (match value
+    [(Ok bytes)
+      (let
+        [count : i64 (array-length bytes)]
+        [dst : (__tl_dyn-array u8) (__tl_make-array u8 count)]
+        (for [index (iterator.range 0 count)]
+          (set! (array-ref dst index) (array-ref bytes index)))
+        (Ok dst))]
+    [(Err message) (Err (string.copy message))]))
 
 ;; Per-body op budget. A template node costs its construction op plus the
 ;; span op that rebuilds the parser's wrapper, so a body needs about two ops

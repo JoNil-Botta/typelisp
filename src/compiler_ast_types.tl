@@ -8,7 +8,6 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.dense_list)
 (import compiler_owned_view as owned_view)
-(import stdlib.clone as clone_gen)
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
@@ -287,8 +286,6 @@
   (start-col i32)
   (end-line i32)
   (end-col i32))
-
-(clone_gen.gen-clone AstSourceSpan)
 
 (define (ast-source-span-box-shared-view [value : (Box AstSourceSpan)]) : AstSourceSpan
   (let
@@ -5986,7 +5983,26 @@
   (len i64)
   (prependable bool))
 
-(clone_gen.gen-clone AstDeclPathList)
+(define (clone-ast-decl-path-list [value : (& value AstDeclPathList)]) : AstDeclPathList
+  (let
+    [count : i64 value.len]
+    [src-offset : i64 value.offset]
+    [src-cap : i64 (array-length value.slots)]
+    [dst-slots : (__tl_dyn-array String) (__tl_make-array String count)]
+    [dst-owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* count 2))]
+    (for [index (iterator.range 0 count)]
+      (let
+        [src-index : i64 (+ src-offset index)]
+        (set!
+          (array-ref dst-slots index)
+          (string.copy (& (array-ref value.slots src-index))))
+        (set!
+          (array-ref dst-owner-ids index)
+          (array-ref value.owner-ids src-index))
+        (set!
+          (array-ref dst-owner-ids (+ count index))
+          (array-ref value.owner-ids (+ src-cap src-index)))))
+    (AstDeclPathList dst-slots dst-owner-ids 0 count true)))
 
 (defenum AstDeclPathListStep
   (Nil)

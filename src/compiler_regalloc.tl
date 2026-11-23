@@ -26,7 +26,6 @@
 (import compiler_ir_types as ir)
 (import compiler_ir_return_storage as return_storage)
 (import compiler_owned_view as owned_view)
-(import stdlib.clone as clone_gen)
 (import compiler_profile_state as profile_state)
 (import compiler_diagnostic as cdiag)
 (cfg test (import stdlib.test))
@@ -277,13 +276,51 @@
 (defenum CompilerRegIntervalSelection
   (Selection CompilerRegIntervalSeq CompilerRegIntervalIndex))
 
-(clone_gen.gen-clone CompilerRegInterval)
+(define (clone-compiler-reg-interval-seq
+  [value : (& value CompilerRegIntervalSeq)]) : CompilerRegIntervalSeq
+  (let
+    [count : i64 value.len]
+    [cap : i64
+      (if (< count 1)
+        1
+        count)]
+    [dst : (__tl_dyn-array CompilerRegInterval)
+      (__tl_make-array CompilerRegInterval cap)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [item : (& value CompilerRegInterval) (& (array-ref value.slots index))]
+        (set!
+          (array-ref dst index)
+          (CompilerRegInterval item.var item.start item.end))))
+    (CompilerRegIntervalSeq dst count)))
 
-(clone_gen.gen-clone CompilerRegIntervalSeq)
+(define (clone-compiler-reg-interval-index
+  [value : (& value CompilerRegIntervalIndex)]) : CompilerRegIntervalIndex
+  (let
+    [starts-len : i64 (array-length value.starts)]
+    [dst-starts : (__tl_dyn-array i64) (__tl_make-array i64 starts-len)]
+    [ends-len : i64 (array-length value.ends)]
+    [dst-ends : (__tl_dyn-array i64) (__tl_make-array i64 ends-len)]
+    [segs-len : i64 (array-length value.segments)]
+    [dst-segs : (__tl_dyn-array CompilerRegIntervalSeq)
+      (__tl_make-array CompilerRegIntervalSeq segs-len)]
+    (for [index (iterator.range 0 starts-len)]
+      (set! (array-ref dst-starts index) (array-ref value.starts index)))
+    (for [index (iterator.range 0 ends-len)]
+      (set! (array-ref dst-ends index) (array-ref value.ends index)))
+    (for [index (iterator.range 0 segs-len)]
+      (set!
+        (array-ref dst-segs index)
+        (clone-compiler-reg-interval-seq (& (array-ref value.segments index)))))
+    (CompilerRegIntervalIndex dst-starts dst-ends dst-segs)))
 
-(clone_gen.gen-clone CompilerRegIntervalIndex)
-
-(clone_gen.gen-clone CompilerRegIntervalSelection)
+(define (clone-compiler-reg-interval-selection
+  [value : (& value CompilerRegIntervalSelection)]) : CompilerRegIntervalSelection
+  (match value
+    [(Selection seq idx)
+      (Selection
+        (clone-compiler-reg-interval-seq seq)
+        (clone-compiler-reg-interval-index idx))]))
 
 ;; Scalar literal SafeDiv/SafeMod scratch participates in the ordinary greedy
 ;; allocation before the final homes are published.  The model is empty for
@@ -27184,7 +27221,16 @@
   (None)
   (Remap (__tl_dyn-array i64) i64))
 
-(clone_gen.gen-clone CompilerRegColoring)
+(define (clone-compiler-reg-coloring [value : (& value CompilerRegColoring)]) : CompilerRegColoring
+  (match value
+    [(None) (None)]
+    [(Remap slots count)
+      (let
+        [len : i64 (array-length slots)]
+        [dst : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+        (for [index (iterator.range 0 len)]
+          (set! (array-ref dst index) (array-ref slots index)))
+        (Remap dst count))]))
 
 ;; Per-var slot-colorability flags: only values the register allocator could
 ;; legally home in one 64-bit register (scalars and 8-byte handles) are known

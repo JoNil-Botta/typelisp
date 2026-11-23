@@ -8,7 +8,6 @@
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
-(import stdlib.clone as clone_gen)
 (import stdlib.fs)
 
 ;; lint-allow: unused-import -- used only by cfg-gated code.
@@ -3514,7 +3513,17 @@
   (Ok String (__tl_dyn-array String) String)
   (Err String))
 
-(clone_gen.gen-clone ResultBuildPackageTlciExports)
+(define (clone-result-build-package-tlci-exports
+  [value : (& value ResultBuildPackageTlciExports)]) : ResultBuildPackageTlciExports
+  (match value
+    [(Ok metadata names native-source)
+      (let
+        [count : i64 (array-length names)]
+        [dst : (__tl_dyn-array String) (__tl_make-array String count)]
+        (for [index (iterator.range 0 count)]
+          (set! (array-ref dst index) (string.copy (& (array-ref names index)))))
+        (Ok (string.copy metadata) dst (string.copy native-source)))]
+    [(Err message) (Err (string.copy message))]))
 
 (define (build-package-tlci-capture-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]

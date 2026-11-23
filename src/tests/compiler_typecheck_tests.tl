@@ -3269,16 +3269,20 @@
     [pb : PtrBox (with-scratch (PtrBox (unsafe (ptr-cast (ptr-addr-of x) : (Ptr i64)))))]
     (unsafe (ptr-read (. pb p)))))")
       "with-scratch clone-out of PtrBox: gen-clone: unsupported type ptr_i64 at PtrBox.p")
-    ;; Expected type threads from let annotations, ann, and call parameters into
-    ;; scratch-form clone-out expansion without leaking the function return type.
+    ;; Expected type threads from let annotations, ann, call parameters, and
+    ;; mutation/place targets into scratch-form clone-out expansion without
+    ;; leaking the function return type.
     (compiler-typecheck-ok?
       (compiler-typecheck-with-escape-stdlib-source
         "(import stdlib.clone as clone_gen)
 (defenum ResA (Ok String) (Err i64))
 (defenum ResB (Ok String) (Err i64))
+(defstruct BoxedB (val ResB))
 (clone_gen.gen-clone ResA)
 (clone_gen.gen-clone ResB)
 (define (take-b [x : ResB]) : i64
+  (match x [(ResB.Ok s) (string.string-length s)] [(ResB.Err n) n]))
+(define (take-b-ref [x : (& x ResB)]) : i64
   (match x [(ResB.Ok s) (string.string-length s)] [(ResB.Err n) n]))
 (define (f-let-i64) : i64
   (let [x : ResB (with-scratch (Ok (string.int->string 42)))] 0))
@@ -3288,8 +3292,51 @@
   (take-b (ann (with-scratch (Ok (string.int->string 42))) : ResB)))
 (define (f-call) : i64
   (take-b (with-scratch (Ok (string.int->string 42)))))
+(define (f-set-dotted) : i64
+  (let [b : BoxedB (BoxedB (ResB.Err 0))]
+    (set! b.val (with-scratch (Ok (string.int->string 42))))
+    (take-b b.val)))
+(define (f-set-struct) : i64
+  (let [b : BoxedB (BoxedB (ResB.Err 0))]
+    (set! (__tl_struct-get b val) (with-scratch (Ok (string.int->string 42))))
+    (take-b b.val)))
+(define (f-set-tuple) : i64
+  (let [t : (Tuple ResB i64) (tuple (ResB.Err 0) 1)]
+    (set! (tuple-ref t 0) (with-scratch (Ok (string.int->string 42))))
+    (take-b (tuple-ref t 0))))
+(define (f-set-array) : i64
+  (let [arr : (__tl_dyn-array ResB) (__tl_make-array ResB 1)]
+    (set! (array-ref arr 0) (with-scratch (Ok (string.int->string 42))))
+    (take-b-ref (& (array-ref arr 0)))))
+(define (f-set-deref) : i64
+  (let [b : (Box ResB) (box (ResB.Err 0))]
+    (set! (deref b) (with-scratch (Ok (string.int->string 42))))
+    (take-b (deref b))))
+(define (f-replace) : i64
+  (let [x : ResB (ResB.Err 0)]
+    [old : ResB (replace! x (with-scratch (Ok (string.int->string 42))))]
+    (+ (take-b old) (take-b x))))
+(define (f-array-push) : i64
+  (let [arr : (__tl_dyn-array ResB) (__tl_make-array ResB 0)]
+    (__tl_array-push! arr (with-scratch (Ok (string.int->string 42))))
+    (take-b-ref (& (array-ref arr 0)))))
+(defmacro (my-scratch [e : Expr]) : Expr `(with-scratch ,e))
+(define (f-macro-call) : i64
+  (take-b (my-scratch (Ok (string.int->string 42)))))
+(define (f-macro-set-dotted) : i64
+  (let [b : BoxedB (BoxedB (ResB.Err 0))]
+    (set! b.val (my-scratch (Ok (string.int->string 42))))
+    (take-b b.val)))
+(define (f-macro-ret) : ResB
+  (my-scratch (Ok (string.int->string 42))))
 (define (main) : i64
-  (+ (+ (f-let-i64) (f-ann)) (f-call)))"))
+  (+
+    (+ (+ (f-let-i64) (f-ann)) (+ (f-call) (f-set-dotted)))
+    (+
+      (+ (f-set-struct) (f-set-tuple))
+      (+
+        (+ (f-set-array) (f-set-deref))
+        (+ (+ (f-replace) (f-array-push)) (+ (+ (f-macro-call) (f-macro-set-dotted)) (take-b (f-macro-ret))))))))"))
     ;; Non-tail unannotated binding must not inherit the function's return type.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source

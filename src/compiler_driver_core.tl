@@ -26,7 +26,6 @@
 (import compiler_cfg_core as cfg_core)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_diagnostic)
-(import stdlib.clone as clone_gen)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_load)
@@ -5045,7 +5044,13 @@
   (Ok compiler_ast_types.AstDeclPathList)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
-(clone_gen.gen-clone ResultCompilerDriverPackagePaths)
+(define (clone-result-compiler-driver-package-paths
+  [value : (& value ResultCompilerDriverPackagePaths)]) : ResultCompilerDriverPackagePaths
+  (match value
+    [(Ok paths) (Ok (compiler_ast_types.clone-ast-decl-path-list paths))]
+    [(Err diag)
+      (Err
+        (box (compiler_diagnostic.clone-compiler-diagnostic (& (deref diag)))))]))
 
 ;; Only copied strings cross the discovery boundary. Interned ownership and
 ;; provenance ids belong to the retiring session, and are deliberately absent.

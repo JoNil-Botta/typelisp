@@ -2269,7 +2269,7 @@
               manifest-dir
               package-owner
               deps
-              (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
+              (cfg_core.compiler-cfg-snapshot-to-env (& cfg-names))
               cache-scope-prefix))]
         [retired : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]

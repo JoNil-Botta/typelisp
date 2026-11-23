@@ -5067,14 +5067,15 @@
 ;; while discovery owns every parsed node, interned name and derived surface.
 ;; Restore the enclosing session before freeing the temporary owners so the
 ;; following doctest (including inline worker fallback) starts with live state.
-(define (compiler-driver-load-package-paths-with-runtime
+(define (compiler-driver-load-package-discovery-paths
   [input-path : String]
   [target : be_state.CompilerBackendTarget]
   [cfg-names : (& cfg-names svec.Vec)]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [emit-entry : bool]) : ResultCompilerDriverPackagePaths
+  [emit-entry : bool]
+  [include-module-holders : bool]) : ResultCompilerDriverPackagePaths
   (let
     [home : arena.Arena (arena.current)]
     [parent : compiler_load.CompilerLoadSessionState
@@ -5122,7 +5123,7 @@
             ;; unsafe: publishes global surface facts; cleared before this arena ends
             ;; unsafe: interned names live in the persistent intern arena, not this one
             (compiler-driver-load-package-file-with-runtime-cfg
-              input-path
+              (string.copy (& input-path))
               stdlib-roots
               manifest-dir
               deps
@@ -5130,10 +5131,16 @@
               (compiler-driver-target-cfgs
                 target
                 (target_cfg.compiler-target-user-cfgs cfg-names))))
-            [(Ok _ paths _ _)
+            [(Ok _ paths _ seen)
               (in-arena
                 home
-                (Ok (compiler-driver-copy-package-discovery-paths paths)))]
+                (Ok
+                  (if include-module-holders
+                    (compiler_load.compiler-load-package-reachable-paths
+                      (& input-path)
+                      (& paths)
+                      seen)
+                    (compiler-driver-copy-package-discovery-paths paths))))]
             [(Err diag)
               (in-arena
                 home
@@ -5168,6 +5175,42 @@
         (unsafe
           (arena.tl_arena_destroy intern-arena))
         result))))
+
+(define (compiler-driver-load-package-paths-with-runtime
+  [input-path : String]
+  [target : be_state.CompilerBackendTarget]
+  [cfg-names : (& cfg-names svec.Vec)]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [emit-entry : bool]) : ResultCompilerDriverPackagePaths
+  (compiler-driver-load-package-discovery-paths
+    input-path
+    target
+    cfg-names
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry
+    false))
+
+(define (compiler-driver-load-package-preflight-paths
+  [input-path : String]
+  [target : be_state.CompilerBackendTarget]
+  [cfg-names : (& cfg-names svec.Vec)]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [emit-entry : bool]) : ResultCompilerDriverPackagePaths
+  (compiler-driver-load-package-discovery-paths
+    input-path
+    target
+    cfg-names
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry
+    true))
 
 (define (compiler-driver-load-package-file-with-runtime-owned-cfg
   [input-path : String]

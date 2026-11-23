@@ -105,6 +105,21 @@
       [(OkIoBytes contents)
         (doc-test-extract-source (byte_buf.to-string contents))])))
 
+(define (doc-test-package-file-has-examples? [path : (& str)]) : bool
+  (with-scratch
+    (match (io.try-read-file path)
+      [(ErrIoBytes _) false]
+      [(OkIoBytes contents)
+        (let
+          [text : String (byte_buf.to-string contents)]
+          (and
+            (string.contains (& text) "```")
+            (match (doc-test-extract-source text)
+              [(Extraction examples errors)
+                (or
+                  (> (doc_example_vec.len (& examples)) 0)
+                  (> (doc_error_vec.len (& errors)) 0))])))])))
+
 (defenum DocTestMaybeString
   (No)
   (Some String))
@@ -1349,7 +1364,7 @@
     ;; floor, so the cfgs travel as a snapshot of name strings and are interned
     ;; again here, after the reset (#8663).
     [cfgs : sym_i64_env.SymI64Env
-      (cfg_core.compiler-cfg-snapshot-to-env cfg-snapshot)]
+      (cfg_core.compiler-cfg-snapshot-to-env (& cfg-snapshot))]
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
     [source-line : i64

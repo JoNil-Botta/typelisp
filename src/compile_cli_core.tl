@@ -2,7 +2,7 @@
 ;;
 ;; Wraps compiler_driver_core.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--no-entry] [--target <target>]
-;; [--opt-level <0|1|2>] [--backend-mode scalar] [--stdlib-root <dir>...]
+;; [--opt-level <0|1|2|s> -Os] [--backend-mode scalar] [--stdlib-root <dir>...]
 ;; [--cfg <name>...] [--profile-allocations]`,
 ;; plus `check <file.tl> [--stdlib-root <dir>...]`.
 ;; Bootstrap scripts drive the compiler through this `compile` subcommand.
@@ -214,7 +214,7 @@
         [args : cli_option.CliArgs
           (cli_option.cli-args
             "compile"
-            "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+            "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
              --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
              -o <file> --pic --no-entry --emit-ir --dump-ir --verify-ir
              --trace-passes"
@@ -315,7 +315,7 @@
       [args : cli_option.CliArgs
         (cli_option.cli-args
           "compile"
-          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
            --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
            -o --emit-ir --pic --no-entry --verify-ir --prefix-cache-stats --windows-coff-plan"
           (+ batch-path-idx 1)

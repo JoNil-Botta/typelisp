@@ -36,6 +36,9 @@
 (import compiler_intern as ci)
 (import compiler_ir_types as ir)
 (import compiler_lower as lower)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_opt_level as opt_level))
 (import compiler_optimize as opt)
 (import compiler_object as cobj)
 (import compiler_windows_coff_core)
@@ -461,7 +464,7 @@
 
 ;; Options a package build accepts.
 (define (build-package-cli-options) : String
-  "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+  "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
    --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
    --profile <dev|release> --release --locked --update-lock")
 
@@ -563,7 +566,7 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "build"
-        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
          --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
          --profile <dev|release> --release --locked --update-lock --resolved-dep"
         idx
@@ -5176,10 +5179,13 @@
           request.mode
           request.emit-entry
           request.crt-entry
-          ;; The assembly entry owns runtime helpers needed by archive
-          ;; members. Keep the explicit Linux direct-object route for packages
-          ;; whose objects can link with the minimal native entry.
-          (if (and archive-runtime (not request.linux-budget-override))
+          ;; Size-optimized archive members can call any fixed-size allocator.
+          ;; The assembly runtime provides those entry points.
+          (if (and
+            archive-runtime
+            (or
+              (not request.linux-budget-override)
+              (opt_level.opt-level-size? request.opt-level)))
             (Fallback ForcedAssembly)
             preflight)
           lowered)]
@@ -5864,7 +5870,7 @@
       (build-package-worker-append-option
         args5
         "--opt-level"
-        (string.int->string opt-level))]
+        (cli_option.cli-option-opt-level-name opt-level))]
     [debug-args : process.ProcessStringList
       (if (ir.compiler-debug-info-enabled?)
         (build_run_core.source-tool-args-append args6 "--debug")
@@ -6926,7 +6932,7 @@
       (cli_option.cli-args
         "build"
         (str_cat.str-cat
-          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
            --debug|-g|--backtrace -o <exe> --backend-mode <mode>
            --manifest-path <file> --profile --release --locked --update-lock "
           (build-link-cli-options))

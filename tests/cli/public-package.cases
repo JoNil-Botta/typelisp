@@ -1710,7 +1710,7 @@ exit 5
 # #8534, #8963, #9745 and #9081: an archive needs the runtime even when the consumer
 # needs no allocation of its own. An unused aggregate extern needs no layout.
 case package-archive-runtime
-opt 0 1 2
+opt 0 1 2 s
 file typelisp.pkg
 (package
   (name "archive_runtime")
@@ -1729,6 +1729,7 @@ file vendor/depabi/typelisp.pkg
 end-file
 file vendor/depabi/src/main.tl
 (defstruct Pt (x i64) (y i64))
+(defstruct WidePt (x i64) (y i64) (z i64))
 (defstruct Word (x i64))
 (defenum Flag (Off) (On) (Number i64))
 (define exported-number : i64 2)
@@ -1743,7 +1744,8 @@ file vendor/depabi/src/main.tl
   (array-ref values 0))
 (define (allocate [x : i64]) : i64
   (let [b : (Box Pt) (box (Pt x 1))]
-    (__tl-project-field (deref b) x)))
+    [wide : (Box WidePt) (box (WidePt (__tl-project-field (deref b) x) 2 3))]
+    (__tl-project-field (deref wide) x)))
 end-file
 file src/main.tl
 (import depabi.src.main as dep)
@@ -1779,6 +1781,11 @@ stdout contains unused_archive_function
 exec nm "{{dir}}/target/release/archive_runtime"
 stdout not-contains unused_archive_function
 stdout not-contains tl_memchr
+step direct-object-override
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/archive_runtime"
+exit 42
 end-if
 step allocating-consumer
 run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --cfg archive-allocating-consumer

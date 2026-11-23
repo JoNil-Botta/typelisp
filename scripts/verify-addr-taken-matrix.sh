@@ -3,7 +3,7 @@ set -eu
 
 # verify-addr-taken-matrix.sh - adversarial matrix for the address-taken-local
 # rule (#8190): every program of tests/addr-taken-matrix/ compiles and runs at
-# --opt-level 0, 1 and 2.
+# --opt-level 0, 1, 2 and s.
 #
 # A local whose address is taken is memory, not a value: a store or call
 # through the exposed address redefines it without naming it, so no pass may
@@ -11,11 +11,11 @@ set -eu
 # locals"). Each program here reproduces one optimizer shape and declares its
 # own result in a header comment:
 #
-#   ;; Expected exit 42 at --opt-level 0, 1 and 2.
+#   ;; Expected exit 42 at --opt-level 0, 1, 2 and s.
 #
-# The gate compiles the program three times, assembles and links each result
+# The gate compiles the program four times, assembles and links each result
 # with as/ld (scripts/lib-native-link.sh), runs it with no arguments, and fails
-# when the three exit codes differ or differ from the declared expected exit.
+# when the four exit codes differ or differ from the declared expected exit.
 # Programs take no arguments, so io.arg-count is 1.
 #
 # The programs are independent, so they run in parallel:
@@ -60,7 +60,7 @@ declared_exit() {
 }
 
 # run_program FILE
-#   One worker: build FILE at opt0/1/2 and record its row. The three codes are
+#   One worker: build FILE at opt0/1/2/s and record its row. The four codes are
 #   recorded even when they disagree, so the summary names them; only a failed
 #   compile, link or missing declaration stops this worker.
 run_program() {
@@ -69,7 +69,7 @@ run_program() {
     _expected=$(declared_exit "$_source")
     [ -n "$_expected" ] || fail "$_source: no 'expected exit <N>' header comment"
     _codes=
-    for _level in 0 1 2; do
+    for _level in 0 1 2 s; do
         _asm=$WORKDIR/work/$_name.opt$_level.s
         _obj=$WORKDIR/work/$_name.opt$_level.$OBJ_EXT
         _bin=$WORKDIR/work/$_name.opt$_level$BIN_EXT
@@ -140,13 +140,13 @@ program_count=$#
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/work" "$WORKDIR/rows"
 
-echo "[addr-taken-matrix] $program_count program(s) at opt0/1/2 with $JOBS worker(s)"
+echo "[addr-taken-matrix] $program_count program(s) at opt0/1/2/s with $JOBS worker(s)"
 export TYPELISP_BIN=$COMPILER
 if ! printf '%s\n' "$@" | xargs -P "$JOBS" -L 1 "$0" --job; then
     fail "a program did not compile, link or declare an expected exit"
 fi
 
-printf 'program\texpected\topt0\topt1\topt2\n' > "$WORKDIR/matrix.tsv"
+printf 'program\texpected\topt0\topt1\topt2\topts\n' > "$WORKDIR/matrix.tsv"
 sort "$WORKDIR"/rows/*.tsv >> "$WORKDIR/matrix.tsv"
 rows=$(ls "$WORKDIR/rows" | wc -l | tr -d ' ')
 [ "$rows" -eq "$program_count" ] ||
@@ -154,24 +154,24 @@ rows=$(ls "$WORKDIR/rows" | wc -l | tr -d ' ')
 
 failed=0
 _line=0
-while IFS="	" read -r _name _expected _o0 _o1 _o2; do
+while IFS="	" read -r _name _expected _o0 _o1 _o2 _os; do
     _line=$((_line + 1))
     [ "$_line" -gt 1 ] || continue
     _file=${FIXTURE_DIR#"$ROOT"/}/$_name.tl
-    if [ "$_o0" != "$_o1" ] || [ "$_o1" != "$_o2" ]; then
-        echo "[addr-taken-matrix] FAIL $_file: opt0=$_o0 opt1=$_o1 opt2=$_o2," \
+    if [ "$_o0" != "$_o1" ] || [ "$_o1" != "$_o2" ] || [ "$_o2" != "$_os" ]; then
+        echo "[addr-taken-matrix] FAIL $_file: opt0=$_o0 opt1=$_o1 opt2=$_o2 opts=$_os," \
             "levels disagree (expected exit $_expected)" >&2
         failed=$((failed + 1))
     elif [ "$_o0" != "$_expected" ]; then
-        echo "[addr-taken-matrix] FAIL $_file: opt0=$_o0 opt1=$_o1 opt2=$_o2," \
+        echo "[addr-taken-matrix] FAIL $_file: opt0=$_o0 opt1=$_o1 opt2=$_o2 opts=$_os," \
             "expected exit $_expected" >&2
         failed=$((failed + 1))
     fi
 done < "$WORKDIR/matrix.tsv"
 
 if [ "$failed" -gt 0 ]; then
-    fail "$failed of $program_count program(s) did not agree at opt0/1/2" \
+    fail "$failed of $program_count program(s) did not agree at opt0/1/2/s" \
         "(table: $WORKDIR/matrix.tsv)"
 fi
-echo "[addr-taken-matrix] $program_count program(s) agree at opt0/1/2 and with" \
+echo "[addr-taken-matrix] $program_count program(s) agree at opt0/1/2/s and with" \
     "their declared exit (table: $WORKDIR/matrix.tsv)"

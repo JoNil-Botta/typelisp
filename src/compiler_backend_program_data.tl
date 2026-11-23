@@ -2529,21 +2529,23 @@
             (+ end 1))]
         [line : String (string.substring body start (- next start))]
         (cond
-          [(string.eq (& line) ".L_tl_alloc16:\n")
-            (set!
-              buf
-              (text_buf.append
-                buf
-                (compiler-backend-function-section target "tl_alloc16")))
-            (set! buf (text_buf.append buf ".globl tl_alloc16\ntl_alloc16:\n"))]
           [(compiler-backend-runtime-fast-alloc-entry? (& line))
-            (set!
-              buf
-              (text_buf.append
+            ;; The archive can reference this size class. Keep the local
+            ;; label for calls from within the executable.
+            (let
+              [symbol : String
+                (string.substring (& line) 3 (- (- next start) 5))]
+              (set!
                 buf
-                (compiler-backend-function-section
-                  target
-                  (& (string.substring (& line) 0 (- (- next start) 2))))))]
+                (text_buf.append
+                  buf
+                  (str_cat.str-cat
+                    (compiler-backend-function-section target (& symbol))
+                    ".globl "
+                    symbol
+                    "\n"
+                    symbol
+                    ":\n"))))]
           [(string.is-string-prefix-at (& line) "    .text" 0)
             (set! in-text? true)]
           [(or

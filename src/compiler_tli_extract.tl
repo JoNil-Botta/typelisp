@@ -6,7 +6,6 @@
 (import compiler_typecheck_api as api)
 (import compiler_typecheck_core as tc)
 (import compiler_global_effects as effects)
-(import compiler_ctfe as ctfe)
 (import compiler_intern as intern)
 (import compiler_diagnostic as diag)
 (import compiler_lower as lower)
@@ -34,7 +33,10 @@
 (import (vector.vector i64) as indices)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci as tlci))
 (cfg
-  embedded-stdlib-tlci
+  (all embedded-stdlib-tlci test)
+  (import compiler_embedded_stdlib_tlci_payload_seed as tlci_payload))
+(cfg
+  (all embedded-stdlib-tlci (not test))
   (import compiler_embedded_stdlib_tlci_payload as tlci_payload))
 
 (defstruct TliSource
@@ -178,20 +180,40 @@
   [name : intern.InternSyntaxId]) : tli.TliCleanup
   (let
     [raw : i64 (intern.intern-syntax-id-value name)]
-    [handle : i64 (tc.tc-global-effect-handle ctx tc.TcNameIdList.Nil raw)]
+    [handle : i64
+      (tc.tc-move-qualified-value-symbol-handle-id
+        ctx
+        raw
+        (tc.tc-global-effect-handle ctx tc.TcNameIdList.Nil raw))]
     [kind : i64 (symbols.compiler-symbol-handle-kind handle)]
+    [index : i64 (symbols.compiler-symbol-handle-index handle)]
     (tli.TliCleanup.Fn
-      (if (and
-        (symbols.compiler-symbols-handle-found? handle)
-        (or
-          (= kind (symbols.compiler-symbol-kind-function-define))
-          (= kind (symbols.compiler-symbol-kind-extern))))
-        (tli-extract-symbol-at
-          ctx
-          (symbols.compiler-symbol-handle-index handle))
-        (tc.macro-tlci-catalog-identity
-          (string.copy (tc.tc-context-module ctx))
-          (tli-extract-name raw))))))
+      (cond
+        [(or
+            (= kind (symbols.compiler-symbol-kind-function-define))
+            (= kind (symbols.compiler-symbol-kind-extern)))
+          (tli-extract-symbol-at ctx index)]
+        [(or
+            (= kind (symbols.compiler-symbol-kind-struct-cleanup))
+            (= kind (symbols.compiler-symbol-kind-enum-cleanup)))
+          (match (symbols.compiler-symbols-decl-at-index
+            (tc.tc-context-symbols (& ctx))
+            index)
+            [(Ok decl)
+              (match (ast.ast-decl-unwrapped (& decl))
+                [(or (DefStruct _ _ _ (Fn cleanup) _)
+                     (DefStructLifetimes _ _ _ _ (Fn cleanup) _)
+                     (DefEnum _ _ (Fn cleanup) _)
+                     (DefEnumLifetimes _ _ _ (Fn cleanup) _))
+                  (tc.macro-tlci-catalog-identity
+                    (tli-extract-module-name (tli-extract-owner ctx index))
+                    (tli-extract-name (intern.intern-syntax-id-value cleanup)))]
+                [_ (io.panic "TLI expected a cleanup declaration")])]
+            [(Err message) (io.panic message)])]
+        [else
+          (tc.macro-tlci-catalog-identity
+            (string.copy (tc.tc-context-module ctx))
+            (tli-extract-name raw))]))))
 
 (define (tli-extract-fields
   [ctx : tc.TcContext]
@@ -428,7 +450,7 @@
   (indirect (__tl_dyn-array i64))
   (global-arena (__tl_dyn-array i64))
   (param-arena (__tl_dyn-array i64))
-  (param-calls (__tl_dyn-array (__tl_dyn-array i64))))
+  (arena-graph effects.Graph))
 
 (define (tli-extract-effects [ctx : tc.TcContext]) : TliExtractEffects
   (let
@@ -448,24 +470,8 @@
           (deref state).arena-graph)]
       [global-writes : (__tl_dyn-array writes.Vec)
         (__tl_make-array writes.Vec count)]
-      [param-calls : (__tl_dyn-array (__tl_dyn-array i64))
-        (__tl_make-array (__tl_dyn-array i64) 0)]
-      [param-limit : i64 0]
       (for [index (iterator.range 0 count)]
-        (set! (array-ref global-writes index) (writes.new))
-        (match (symbols.compiler-symbols-decl-at-index
-          (tc.tc-context-symbols (& ctx))
-          index)
-          [(Ok decl)
-            (match (ast.ast-decl-unwrapped (& decl))
-              [(DefFn _ _ params _ _ _)
-                (set!
-                  param-limit
-                  (if (> params.len param-limit)
-                    params.len
-                    param-limit))]
-              [_ unit])]
-          [(Err message) (io.panic message)]))
+        (set! (array-ref global-writes index) (writes.new)))
       (for [index (iterator.range 0 count)]
         (when
           (effects.written? (& graph) index)
@@ -490,15 +496,6 @@
       ;; Put a witness on the indirect union itself so callers are detected
       ;; even when the union has no global writer.
       (effects.add-write! (&mut graph) count count)
-      (set! param-calls (__tl_make-array (__tl_dyn-array i64) param-limit))
-      (for [index (iterator.range 0 param-limit)]
-        (let
-          [key : i64 (tc.tc-arena-store-parameter-key count index)]
-          (set!
-            (array-ref param-calls index)
-            (if (effects.written? (& arena-graph) key)
-              (effects.summary! (&mut arena-graph) key)
-              (__tl_make-array i64 0)))))
       (TliExtractEffects
         global-writes
         (effects.summary! (&mut graph) count)
@@ -508,7 +505,7 @@
         (effects.summary!
           (&mut arena-graph)
           (tc.tc-arena-store-argument-key count))
-        param-calls))))
+        arena-graph))))
 
 (define (tli-extract-summary
   [facts : (& facts TliExtractEffects)]
@@ -522,13 +519,14 @@
     [mask : i64 0]
     [extra : indices.Vec (indices.new)]
     (for [param (iterator.range 0 params)]
-      (let
-        [summary (& (array-ref facts.param-calls param))]
-        (when
-          (and (> (array-length summary) 0) (!= (array-ref summary index) 0))
-          (if (< param 64)
-            (set! mask (bit-or mask (shl 1 param)))
-            (indices.push-ref! (&mut extra) param)))))
+      (when
+        (effects.direct-writer?
+          (& facts.arena-graph)
+          index
+          (tc.tc-arena-store-parameter-key facts.arena-graph.indirect param))
+        (if (< param 64)
+          (set! mask (bit-or mask (shl 1 param)))
+          (indices.push-ref! (&mut extra) param))))
     (tli.TliFnSummary
       (+
         (tli-extract-flag unsafe-decl 1)
@@ -543,11 +541,12 @@
           8)
         (tli-extract-flag (!= (array-ref facts.global-arena index) 0) 16)
         (tli-extract-flag
-          (or
-            (!= (array-ref facts.indirect index) 0)
-            (!= (array-ref facts.param-arena index) 0))
-          32)
-        (tli-extract-flag must-use 128))
+          (!= (array-ref facts.indirect index) 0)
+          tli.tli-fn-has-indirect-effects)
+        (tli-extract-flag must-use 128)
+        (tli-extract-flag
+          (!= (array-ref facts.param-arena index) 0)
+          tli.tli-fn-stores-ambient-arena-arg))
       mask
       (tli-extract-finish-vector i64 extra)
       (tli-extract-copy-writes (& (array-ref facts.globals index)))
@@ -713,52 +712,6 @@
       index
       digest)))
 
-;; A checked (comptime ...) initializer still carries its source node. Run
-;; the same evaluator the checker used and retain the scalar result on wire.
-(define (tli-extract-initializer
-  [ctx : tc.TcContext]
-  [names : lower.LowerNameCache]
-  [expr : ast.AstExpr]
-  [ty : ast.AstType]) : lower.ResultLowerValue
-  (match expr
-    [(or (Spanned inner _) (MacroExpansion inner _ _) (Ann inner _))
-      (tli-extract-initializer ctx names (tc.tc-context-expr-get ctx inner) ty)]
-    [(Cast inner cast-ty)
-      (tli-extract-initializer
-        ctx
-        names
-        (tc.tc-context-expr-get ctx inner)
-        (tc.tc-context-type-get ctx cast-ty))]
-    [(Comptime inner)
-      (let
-        [env : ctfe.CtfeEnv
-          (tc.tc-ctfe-env-for-comptime ctx (tc.tc-context-expr-get ctx inner))]
-        (match (ctfe.compiler-ctfe-eval
-          (& (tc.tc-context-expr-get ctx inner))
-          env
-          (ctfe.ctfe-fuel-limit))
-          [(Ok value _)
-            (lower.ResultLowerValue.Ok
-              (match value
-                [(I64 n) (ir.CompilerIrValue.I64 n)]
-                [(or (F64 f) (F32 f))
-                  (ir.CompilerIrValue.F64
-                    (match (& ty)
-                      [(F32) (cast (math.f32-to-bits (cast f : f32)) : u64)]
-                      [_ (math.f64-to-bits f)]))]
-                [(Bool value) (ir.CompilerIrValue.Bool value)]
-                [(Char value) (ir.CompilerIrValue.Char value)]
-                [(String value _) (ir.CompilerIrValue.String value)]
-                [(Unit) (ir.CompilerIrValue.Unit)]
-                [_
-                  (return
-                    (lower.ResultLowerValue.Err
-                      (box
-                        (lower.lower-diagnostic
-                          "TLI comptime initializer has no scalar payload"))))]))]
-          [(Err diagnostic) (lower.ResultLowerValue.Err diagnostic)]))]
-    [_ (lower.lower-global-value ctx names expr ty)]))
-
 (define (tli-extract-value!
   [out : (&mut TliExtractModule)]
   [ctx : tc.TcContext]
@@ -791,7 +744,7 @@
             [(Err message) (io.panic message)])])]
     [const : tli.TliConst (tli.TliConst.None)]
     [runtime-init : bool false]
-    (match (tli-extract-initializer
+    (match (lower.lower-global-value
       ctx
       names
       (tc.tc-context-expr-get ctx expr)
@@ -852,12 +805,17 @@
           (tli.TliGlobalWrite (string.copy (& row.symbol)) row.flags))))
     out))
 
-;; The checker treats the well-known stdlib.comptime surface as compile-time
-;; even though those declarations are written without generated metadata.
+;; Generated declarations carry comptime provenance. The handwritten
+;; stdlib.comptime surface is also compile-time by module identity.
 (define (tli-extract-comptime? [ctx : tc.TcContext] [decl : (& ast.AstDecl)]) : bool
-  (or
-    (ast.ast-decl-comptime-only? decl)
-    (symbols.compiler-symbols-comptime-module-id? (tc.tc-context-module-id ctx))))
+  (and
+    (or
+      (ast.ast-decl-comptime-only? decl)
+      (symbols.compiler-symbols-comptime-module-id?
+        (tc.tc-context-module-id ctx)))
+    (match (ast.ast-decl-generated-meta decl)
+      [(No) true]
+      [_ false])))
 
 (define (tli-extract-local-fn!
   [out : (&mut TliExtractModule)]
@@ -1509,7 +1467,6 @@
           (string.copy (& (array-ref paths-out slot)))
           cfg-digest
           (tuple-ref (__tl_array-take! records live slot) 1))))
-    (tc.tc-global-call-effects-finish! (tc.tc-context-job-state ctx))
     (tli.TliBundle bundle-flags build target modules)))
 
 (define (tli-extract
@@ -1522,26 +1479,35 @@
     [cfg-digest : (Array u8 32) (tli-extract-cfg-digest request.cfgs)]
     [records : (__tl_dyn-array TliExtractModule)
       (tli-extract-open-modules (& request) sources)]
-    (match (api.typecheck-compiler-request-checked request)
-      [(Ok _ ctx env paths)
-        (let
-          [bundle : tli.TliBundle
-            (tli-extract-checked
-              ctx
-              env
-              (& paths)
-              sources
-              records
-              (& cfg-digest)
-              bundle-flags
-              build
-              target)]
-          (if (tli-extract-pin-imports! (&mut bundle) sources)
-            (Ok bundle)
-            (Err "TLI import cycle cannot pin module record digests")))]
-      [(or (Partial diagnostics _ _ _) (Err diagnostics))
-        (Err
-          (diag.compiler-diagnostic-render
-            (&
-              (diag.compiler-diagnostic-list-first
-                (& (__tl-box-place diagnostics))))))])))
+    [job : tc.TcJobState request.job-state]
+    (set! request.retain-global-call-effects true)
+    (let
+      [result : TliExtractResult
+        (match (api.typecheck-compiler-request-checked request)
+          [(Ok _ ctx env paths)
+            (let
+              [bundle : tli.TliBundle
+                (tli-extract-checked
+                  ctx
+                  env
+                  (& paths)
+                  sources
+                  records
+                  (& cfg-digest)
+                  bundle-flags
+                  build
+                  target)]
+              (if (tli-extract-pin-imports! (&mut bundle) sources)
+                (Ok bundle)
+                (Err "TLI import cycle cannot pin module record digests")))]
+          [(or (Partial diagnostics _ _ _) (Err diagnostics))
+            (Err
+              (diag.compiler-diagnostic-render
+                (&
+                  (diag.compiler-diagnostic-list-first
+                    (& (__tl-box-place diagnostics))))))])]
+      (tc.tc-global-call-effects-finish! job)
+      (cfg
+        embedded-stdlib-tlci
+        (tlci.compiler-embedded-stdlib-tlci-session-close!))
+      result)))

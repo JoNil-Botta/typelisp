@@ -19,6 +19,7 @@
   "(module fixture)
 (import stdlib.string)
 (import stdlib.io)
+(import stdlib.arena)
 (defstruct Handle (:must-use) (:opaque) (:cleanup close-handle)
   (code i8) (fd i64 (:cleanup close-fd)))
 (define (close-fd [fd : i64]) : unit unit)
@@ -27,13 +28,30 @@
 (defstruct Borrowed (:lifetimes r) (fd (& r i64)))
 (define (borrow [value : (& r i64)]) : (Borrowed r) (Borrowed value))
 (define value : i64 (comptime (+ 20 22)))
+(define converted : f64 (cast (comptime 42) : f64))
 (define g : String \"\")
 (define (stash) : unit (set! g (string.append \"a\" \"b\")))
 (define (relay) : unit (stash))
+(define (arena-handle [a : arena.Arena]) : arena.Arena a)
+(define (stash-in-arena [a : arena.Arena]) : unit
+  (in-arena (arena-handle a) (set! g (string.copy \"kept\"))))
+(define (put [out : (&mut String)]) : unit
+  (set! (deref out) (string.append \"a\" \"b\")))
 (define (scoped [f : (-> unit)]) : unit (with-arena phase (f)))
+(define (noop) : unit unit)
+(define (caller [x : i64]) : unit (scoped noop))
+(define (forward [a : (-> unit)] [b : (-> unit)]) : unit (scoped b))
+(define (wrap [a : (-> unit)] [b : (-> unit)]) : unit
+  (scoped b)
+  (with-arena phase (b)))
 (define (startup) : i64 3)
 (define first : i64 (startup))
 (define second : i64 (startup))
+(defmacro (emit-runtime [f : Expr] [v : Expr]) : Decls
+  `(begin
+    (define (,f) : unit (set! g (string.append \"a\" \"b\")))
+    (define ,v : i64 (startup))))
+(emit-runtime mutate generated)
 (define (stop) : never (io.panic \"stop\"))
 (unsafe (define (unsafe-id [x : i64]) : i64 x))
 (defdispatch dispatch (scalar startup))
@@ -41,10 +59,9 @@
 (defmacro (keep [value : Expr]) : Expr value)
 ")
 
-(define (extract-fixture-module) : tli.TliModuleRecord
+(define (extract-fixture-module [source : String]) : tli.TliModuleRecord
   (api.compiler-typecheck-reset-load-session!)
   (let
-    [source : String (extract-fixture)]
     [cfgs : sym_i64_env.SymI64Env (api.typecheck-compiler-source-language-cfgs)]
     [roots : strings.Vec (strings.new)]
     [sources : (__tl_dyn-array extract.TliSource)
@@ -98,12 +115,21 @@
       (return (& (array-ref row.functions index)))))
   (io.panic name))
 
+(define (extract-fixture-value
+  [row : (& row tli.TliModuleRecord)]
+  [name : (& str)]) : (& row tli.TliValueDecl)
+  (for [index (iterator.range 0 (array-length row.values))]
+    (when
+      (string.eq (& (array-ref row.values index).name) name)
+      (return (& (array-ref row.values index)))))
+  (io.panic name))
+
 (test
   tli-checked-program-roundtrip
   (let
-    [row : tli.TliModuleRecord (extract-fixture-module)]
+    [row : tli.TliModuleRecord (extract-fixture-module (extract-fixture))]
     (test.assert-string-eq (& row.name) "fixture" "module owner")
-    (test.assert-i64-eq (array-length row.imports) 2 "both import edges")
+    (test.assert-i64-eq (array-length row.imports) 3 "three import edges")
     (test.assert-i64-eq (array-length row.types) 4 "structs and enum")
     (let
       [event (& (array-ref row.types 1))]
@@ -198,23 +224,87 @@
         (cast (array-ref stash.summary.global-writes 0).flags : i64)
         1
         "direct write flag"))
+    (let
+      [explicit (extract-fixture-fn (& row) "stash-in-arena")]
+      [put (extract-fixture-fn (& row) "put")]
+      [caller (extract-fixture-fn (& row) "caller")]
+      [forward (extract-fixture-fn (& row) "forward")]
+      [wrap (extract-fixture-fn (& row) "wrap")]
+      [mutate (extract-fixture-fn (& row) "mutate")]
+      (test.assert-i64-eq
+        (bit-and explicit.summary.effect-flags 16)
+        0
+        "explicit arena global write does not use the ambient arena")
+      (test.assert-i64-eq
+        (bit-and put.summary.effect-flags 288)
+        256
+        "ambient arena argument store has its own effect bit")
+      (test.assert-i64-eq caller.summary.arena-arg-store-mask 0 "plain caller")
+      (test.assert-i64-eq
+        forward.summary.arena-arg-store-mask
+        0
+        "forwarded callback")
+      (test.assert-i64-eq
+        wrap.summary.arena-arg-store-mask
+        2
+        "direct call of parameter 1")
+      (test.assert-i64-eq
+        (bit-and mutate.summary.effect-flags 6)
+        0
+        "generated function is runtime and can mutate globals")
+      (test.assert-i64-eq
+        (array-length mutate.summary.global-writes)
+        1
+        "generated function records its global write"))
+    (test.assert-i64-eq (bit-and row.flags 1) 1 "module has global inits")
     (test.assert-i64-eq
       (array-length row.global-inits)
-      2
-      "two runtime global inits")
+      5
+      "five runtime global inits")
     (test.assert-string-eq
       (& (array-ref row.global-inits 0))
+      "__global_init_fixture/value"
+      "comptime initializer symbol")
+    (test.assert-string-eq
+      (& (array-ref row.global-inits 1))
+      "__global_init_fixture/converted"
+      "cast comptime initializer symbol")
+    (test.assert-string-eq
+      (& (array-ref row.global-inits 2))
       "__global_init_fixture/first"
       "first startup symbol")
     (test.assert-string-eq
-      (& (array-ref row.global-inits 1))
+      (& (array-ref row.global-inits 3))
       "__global_init_fixture/second"
       "second startup symbol")
-    (match (& (array-ref row.values 3).const-value)
-      [(I64 n) (test.assert-i64-eq n 42 "comptime result payload")]
-      [_ (io.panic "expected an integer constant")])
+    (test.assert-string-eq
+      (& (array-ref row.global-inits 4))
+      "__global_init_fixture/generated"
+      "generated startup symbol")
     (let
-      [macro (& (array-ref row.macros 0))]
+      [value (extract-fixture-value (& row) "value")]
+      [converted (extract-fixture-value (& row) "converted")]
+      [generated (extract-fixture-value (& row) "generated")]
+      (test.assert-i64-eq
+        value.flags
+        4
+        "comptime expression has a runtime init")
+      (test.assert-i64-eq
+        converted.flags
+        4
+        "cast comptime expression has a runtime init")
+      (test.assert-i64-eq
+        generated.flags
+        4
+        "generated value has a runtime init")
+      (match (& converted.ty)
+        [(F64) unit]
+        [_ (io.panic "expected an f64 value")])
+      (match (& converted.const-value)
+        [(None) unit]
+        [_ (io.panic "cast comptime initializer has no static payload")]))
+    (let
+      [macro (& (array-ref row.macros 1))]
       (test.assert-string-eq
         (& macro.identity)
         "fixture/keep"
@@ -227,3 +317,28 @@
         (array-length macro.params)
         1
         "macro parameter preserved"))))
+
+(test
+  tli-cleanup-symbols-use-defining-module
+  (let
+    [row : tli.TliModuleRecord
+      (extract-fixture-module
+        "(module fixture)
+(import stdlib.crypto_secret as other)
+(defstruct Wrapped (:cleanup other.close-fixed) (code i64))
+(defenum Choice (:cleanup other.close-bytes-result) (Empty))
+")]
+    (match (& (array-ref row.types 0).cleanup)
+      [(Fn name)
+        (test.assert-string-eq
+          name
+          "stdlib.crypto_secret/close-bytes-result"
+          "imported enum cleanup")]
+      [_ (io.panic "expected an enum cleanup")])
+    (match (& (array-ref row.types 1).cleanup)
+      [(Fn name)
+        (test.assert-string-eq
+          name
+          "stdlib.crypto_secret/close-fixed"
+          "imported struct cleanup")]
+      [_ (io.panic "expected a struct cleanup")])))

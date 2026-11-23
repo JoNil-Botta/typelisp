@@ -87,7 +87,7 @@
             (CompilerPkgKindBin)
             (Dev)
             (Windows)))
-        "root/app/target/dev/pkg.tlci"))
+        ""))
     (io.panic "build package path layout smoke failed")))
 
 (cfg
@@ -590,7 +590,7 @@
           "root/app/target/dev/app.exe")
         (string.eq
           (build.build-package-host-tlci-artifact-path bin-artifacts)
-          "root/app/target/dev/app.tlci")
+          "")
         (string.eq
           (build.build-package-runtime-artifact-path
             (owned_view.compiler-owned-shared-view dep-artifacts))

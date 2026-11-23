@@ -3162,7 +3162,7 @@
       "    .pushsection .rdata$TLAS,\"dr\"\n"
       "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
     "    .ifndef .L_tl_abort_table\n    .balign 4\n.L_tl_abort_table:\n    .endif\n"
-    "    .long \\pc - .\n    .long \\path - .\n    .long \\line\n    .long \\column\n"
+    "    .long \\pc - ., \\path - ., \\line, \\column\n"
     "    .popsection\n    .set .L_tl_abort_used_\\kind, 1\n    .endm\n"))
 
 ;; Only volatile scratch registers are touched before the call. The frame
@@ -3170,9 +3170,16 @@
 ;; can call from its red zone), and Win64 gets its own outgoing shadow space.
 ;; The existing runtime readers see the same four-word descriptor.
 (define (compiler-backend-abort-table-trailer
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]
+  [site-count : i64]) : String
+  (when (= site-count 0) (return ""))
   (let
     [windows? : bool (be_state.compiler-backend-target-coff? target)]
+    [debug? : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    ;; Speculative emission can leave fewer rows than sites. The assembler
+    ;; guard below still requires a surviving row, so one allocated site
+    ;; guarantees exactly one possible caller of the thunk.
+    [scan? : bool (> site-count 1)]
     [site-reg : String
       (if windows?
         "%rcx"
@@ -3183,32 +3190,39 @@
         0)]
     (str_cat.str-cat
       "    .section .text\n    .ifdef .L_tl_abort_table\n"
-      (if windows?
-        "    .pushsection .rdata$TLAS,\"dr\"\n"
-        "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
-      ".L_tl_abort_table_end:\n    .popsection\n    .text\n"
+      (if scan?
+        (str_cat.str-cat
+          (if windows?
+            "    .pushsection .rdata$TLAS,\"dr\"\n"
+            "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
+          ".L_tl_abort_table_end:\n    .popsection\n")
+        "")
       "    .irp kind, tl_oob_abort_at, tl_div_abort_at, tl_shift_abort_at, tl_panic_at\n"
       "    .ifdef .L_tl_abort_used_\\kind\n.L_tl_abort_\\kind:\n"
       "    leaq 1f(%rip), %r11\n    jmp .L_tl_abort_lookup\n1:\n    jmp \\kind\n"
       "    .endif\n    .endr\n"
       (if windows?
         "    .seh_proc .L_tl_abort_lookup\n.L_tl_abort_lookup:\n    pushq %rbp\n    .seh_pushreg %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n    leaq 64(%rsp), %rbp\n    .seh_setframe %rbp, 64\n    .seh_endprologue\n    andq $-16, %rsp\n"
-        (if (compiler_ir_types.compiler-debug-info-enabled?)
+        (if debug?
           ".L_tl_abort_lookup:\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"
           ".L_tl_abort_lookup:\n    pushq %rbp\n    movq %rsp, %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"))
-      "    movq 8(%rbp), %rax\n    leaq .L_tl_abort_table(%rip), %r10\n"
-      "2:\n    leaq .L_tl_abort_table_end(%rip), "
-      site-reg
-      "\n    cmpq "
-      site-reg
-      ", %r10\n    jae 3f\n    movslq (%r10), "
-      site-reg
-      "\n    addq %r10, "
-      site-reg
-      "\n    cmpq %rax, "
-      site-reg
-      "\n    je 4f\n    addq $16, %r10\n    jmp 2b\n3:\n    ud2\n"
-      "4:\n    leaq "
+      "    leaq .L_tl_abort_table(%rip), %r10\n"
+      (if scan?
+        (str_cat.str-cat
+          "    movq 8(%rbp), %rax\n"
+          "2:\n    leaq .L_tl_abort_table_end(%rip), "
+          site-reg
+          "\n    cmpq "
+          site-reg
+          ", %r10\n    jae 3f\n    movslq (%r10), "
+          site-reg
+          "\n    addq %r10, "
+          site-reg
+          "\n    cmpq %rax, "
+          site-reg
+          "\n    je 4f\n    addq $16, %r10\n    jmp 2b\n3:\n    ud2\n4:\n")
+        "")
+      "    leaq "
       (string.int->string site-offset)
       "(%rsp), "
       site-reg
@@ -3216,17 +3230,18 @@
       site-reg
       ")\n    movslq 12(%r10), %rax\n    movq %rax, 24("
       site-reg
-      ")\n    movslq 4(%r10), %rax\n    leaq 4(%r10,%rax), %rax\n"
-      "    movq (%rax), %r10\n    movq %r10, ("
+      ")\n    movslq 4(%r10), %rax\n"
+      "    movdqu 4(%r10,%rax), %xmm0\n    movdqu %xmm0, ("
       site-reg
-      ")\n    movq 8(%rax), %rax\n    movq %rax, 8("
-      site-reg
-      ")\n    call *%r11\n    ud2\n.L_tl_abort_lookup_end:\n"
+      ")\n    call *%r11\n    ud2\n"
+      (if debug?
+        ".L_tl_abort_lookup_end:\n"
+        "")
       (cond
         [windows? "    .seh_endproc\n"]
-        [(compiler_ir_types.compiler-debug-info-enabled?) "    .cfi_endproc\n"]
+        [debug? "    .cfi_endproc\n"]
         [else ""])
-      (if (compiler_ir_types.compiler-debug-info-enabled?)
+      (if debug?
         (str_cat.str-cat
           (compiler-backend-backtrace-map-section target)
           "    .balign 8\n    .quad .L_tl_abort_lookup\n    .quad .L_tl_abort_lookup_end\n"

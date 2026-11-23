@@ -24042,12 +24042,10 @@ tl_shared_object_init:
                   (text_buf.append
                     with-functions
                     (str_cat.str-cat
-                      (if (>
+                      (be_scalar.compiler-backend-abort-table-trailer
+                        target
                         (be_state.compiler-backend-state-abort-site-counter
-                          program-index.backend-state)
-                        0)
-                        (be_scalar.compiler-backend-abort-table-trailer target)
-                        "")
+                          program-index.backend-state))
                       (be_scalar.compiler-backend-backtrace-map-trailer target)
                       (be_scalar.compiler-backend-debug-trailer
                         target

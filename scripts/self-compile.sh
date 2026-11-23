@@ -11,7 +11,7 @@ set -eu
 #              and write a record with the value and its full measurement
 #              identity (argv, cwd, env, procedure hash, compiler hash and the
 #              environment reuse key).
-#   check      PR CI, after ci-verify: gate the PR's own cost
+#   check      PR CI, after measurement: gate the PR's own cost
 #              M(T) - M(B), T the tested merge and B its first parent, at
 #              TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM (5000) less the
 #              class-M bound (1000). That bound is headroom: a landing may
@@ -35,6 +35,7 @@ cd "$ROOT"
 SC_WAIT_SECONDS=${TYPELISP_SELF_COMPILE_WAIT_SECONDS:-1800}
 SC_POLL_SECONDS=${TYPELISP_SELF_COMPILE_POLL_SECONDS:-60}
 SC_JOB_SETTLE_SECONDS=120
+SC_API_ATTEMPTS=3
 SC_WALK_LIMIT=${TYPELISP_SELF_COMPILE_WALK_LIMIT:-200}
 SC_OUT=target/self-compile
 SC_GATE_RECORD=$SC_OUT/measurement/record.tsv
@@ -43,7 +44,7 @@ usage() {
     cat <<'EOF'
 usage:
   scripts/self-compile.sh measure --compiler PATH
-  scripts/self-compile.sh check        (GitHub Actions pull_request, Linux)
+  scripts/self-compile.sh check [--cached-base-only]  (GitHub Actions pull_request, Linux)
   scripts/self-compile.sh reference    (GitHub Actions push or dry run, Linux)
   scripts/self-compile.sh ledger --prepare  (validate records; output needs-tools)
   scripts/self-compile.sh ledger       (finish the prepared ledger)
@@ -53,6 +54,8 @@ measure runs the self_compile measurement on PATH (the bootstrap fixpoint
 compiler) and writes target/self-compile/measurement/record.tsv. Outside
 GitHub-hosted Actions the record is `local` and is never gated or reused:
 compare two local trees with the same-host delta in perf/README.md.
+--cached-base-only checks an already published base reference once and defers
+to the final check if none is usable. The final check may measure the base.
 EOF
 }
 
@@ -272,8 +275,8 @@ sc_json_ok() {
     jq -e . "$1" >/dev/null 2>&1
 }
 
-# sc_api ENDPOINT OUT  ->  the response body in OUT, from the first of three
-# attempts that succeeds. Each attempt writes its own OUT.attempt-N.
+# sc_api ENDPOINT OUT  ->  the response body in OUT, from the first successful
+# attempt. Each attempt writes its own OUT.attempt-N.
 sc_api() {
     _sa_try=1
     while :; do
@@ -283,7 +286,7 @@ sc_api() {
             cp "$2.attempt-$_sa_try" "$2"
             return 0
         fi
-        [ "$_sa_try" -lt 3 ] || return 1
+        [ "$_sa_try" -lt "$SC_API_ATTEMPTS" ] || return 1
         _sa_try=$((_sa_try + 1))
         sleep 10
     done
@@ -563,6 +566,12 @@ sc_require_actions() {
 }
 
 sc_cmd_check() {
+    _scc_cached=0
+    case "$*" in
+        '') ;;
+        --cached-base-only) _scc_cached=1; SC_API_ATTEMPTS=1 ;;
+        *) usage >&2; return 2 ;;
+    esac
     sc_require_actions check
     _scc_pr=${TYPELISP_SELF_COMPILE_PR_NUMBER:-}
     _scc_event_head=${TYPELISP_SELF_COMPILE_PR_HEAD:-}
@@ -571,8 +580,6 @@ sc_cmd_check() {
     esac
     sc_is_sha "$_scc_event_head" || sc_fail "TYPELISP_SELF_COMPILE_PR_HEAD is not a commit id"
     _scc_out=$SC_OUT/pr
-    [ ! -e "$_scc_out" ] || sc_fail "$_scc_out already exists"
-    mkdir -p "$_scc_out"
 
     _scc_t=$(git rev-parse HEAD)
     [ "$_scc_t" = "${GITHUB_SHA:-}" ] || sc_fail "checkout $_scc_t is not GITHUB_SHA ${GITHUB_SHA:-}"
@@ -592,8 +599,39 @@ sc_cmd_check() {
         sc_fail "the gate record's tree is not the tested tree"
     [ "$(sc_record_get "$SC_GATE_RECORD" authority)" = hosted ] ||
         sc_fail "the gate record is not from a GitHub-hosted runner"
+
+    if [ -f "$_scc_out/result.tsv" ]; then
+        _scc_msg=$(sc_pr_record_binding "$_scc_out" "$_scc_pr" "$_scc_h" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_REPOSITORY") ||
+            sc_fail "invalid completed check: $_scc_msg"
+        [ "$(sc_record_get "$_scc_out/result.tsv" merge)" = "$_scc_t" ] &&
+            [ "$(sc_record_get "$_scc_out/result.tsv" base)" = "$_scc_b" ] &&
+            [ "$(sc_record_get "$_scc_out/base.tsv" tree)" = "$(sc_commit_tree "$_scc_b")" ] &&
+            cmp -s "$SC_GATE_RECORD" "$_scc_out/head.tsv" ||
+            sc_fail "completed check does not match the tested merge, base and measurement"
+        [ "$(sc_record_get "$_scc_out/result.tsv" declaration_problems)" = - ] ||
+            sc_fail "completed check has declaration problems"
+        case "$(sc_record_get "$_scc_out/result.tsv" status)" in
+            ok | declared-ok) sc_log "reusing the completed self_compile check"; return 0 ;;
+            *) sc_fail "completed check did not pass" ;;
+        esac
+    fi
+
+    if [ -f "$_scc_out/deferred.tsv" ]; then
+        [ "$_scc_cached" = 0 ] || return 0
+        rm "$_scc_out/deferred.tsv"
+    else
+        [ ! -e "$_scc_out" ] || sc_fail "$_scc_out already exists"
+        mkdir -p "$_scc_out"
+    fi
     cp "$SC_GATE_RECORD" "$_scc_out/head.tsv"
-    sc_fetch_commit "$_scc_b"
+    if [ "$_scc_cached" = 1 ]; then
+        if ! git cat-file -e "$_scc_b^{commit}" 2>/dev/null; then
+            sc_defer_check "$_scc_out" "$_scc_b" base-commit-unavailable
+            return 0
+        fi
+    else
+        sc_fetch_commit "$_scc_b"
+    fi
 
     # Declarations.
     _scc_own="$SC_DECLARATION_DIR/pr-$_scc_pr.tsv"
@@ -610,11 +648,13 @@ sc_cmd_check() {
         fi
     fi
 
-    # M(B): the verified reference, waiting for a pending one.
+    # M(B): resolve once in the gate pool. Only the final check can wait.
     _scc_waited=0
     while :; do
         _scc_refdir="$_scc_out/reference-$_scc_waited"
+        [ "$_scc_cached" = 0 ] || _scc_refdir="$_scc_out/reference-cached"
         sc_resolve_reference "$_scc_b" "$_scc_out/head.tsv" "$_scc_refdir"
+        [ "$_scc_cached" = 0 ] || break
         [ "$SC_REF_STATUS" = pending ] || break
         [ "$_scc_waited" -lt "$SC_WAIT_SECONDS" ] || break
         sc_log "reference for $_scc_b is pending; waiting"
@@ -624,6 +664,9 @@ sc_cmd_check() {
     if [ "$SC_REF_STATUS" = ok ]; then
         cp "$_scc_refdir/record.tsv" "$_scc_out/base.tsv"
         _scc_source="reference run $SC_REF_RUN attempt $SC_REF_ATTEMPT"
+    elif [ "$_scc_cached" = 1 ]; then
+        sc_defer_check "$_scc_out" "$_scc_b" "$SC_REF_STATUS"
+        return 0
     else
         sc_log "no usable reference for $_scc_b ($SC_REF_STATUS):"
         sed 's/^/  /' "$_scc_refdir/reasons" >&2
@@ -676,7 +719,8 @@ sc_cmd_check() {
         cat "$_scc_out/gate.tsv"
         sc_record_line declaration_problems "${_scc_decl_problems:--}"
         sc_run_lines
-    } > "$_scc_out/result.tsv"
+    } > "$_scc_out/result.tsv.tmp"
+    mv "$_scc_out/result.tsv.tmp" "$_scc_out/result.tsv"
 
     _scc_own_ir=$(sc_record_get "$_scc_out/gate.tsv" own)
     _scc_ppm=$(sc_record_get "$_scc_out/gate.tsv" own_ppm)
@@ -723,6 +767,14 @@ sc_cmd_check() {
         explain-improvement) sc_annotate warning "improvement beyond -5000 ppm: both reviewers must explain its source" ;;
     esac
     return "$_scc_rc"
+}
+
+sc_defer_check() {
+    {
+        sc_record_line base "$2"
+        sc_record_line reference_status "$3"
+    } > "$1/deferred.tsv"
+    sc_log "deferring the self_compile check for $2 ($3)"
 }
 
 # --- reference ---------------------------------------------------------------------

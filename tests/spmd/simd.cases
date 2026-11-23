@@ -292,6 +292,18 @@ source benchmarks/spmd_shuffle/bench.tl
 mode avx2 avx512
 not-match vpermd|vpermq|vector_shuffle_
 
+# The 65-element runtime fixture covers unrolled groups and the remainder.
+case shuffle-unrolled-gangs
+source tests/integration/spmd_shuffle_simd.tl
+mode avx2
+opt 2
+in fn _tl_spmd_shuffle_simd_unrolled_identity
+narrow labeled-block:__unroll_body:
+count = 4 ^[[:space:]]+vpaddq[ ]
+not-match vpermd|vector_shuffle_
+in fn _tl_spmd_shuffle_simd_unrolled_dynamic
+count = 4 ^[.]L.*vector_shuffle_.*__unroll_body_v[0-9]+_permute:$
+
 # A three-lane partial gang with exactly sized value and selector arrays. SIMD
 # modes only: scalar has one-lane gangs, a different selector contract.
 case shuffle-tail-selector

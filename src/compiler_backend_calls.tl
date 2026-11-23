@@ -6117,7 +6117,7 @@
                   (be_scalar.compiler-backend-emit-group-copy
                     type-segment-bases
                     assignments
-                    dst
+                    (& (Var dst))
                     value
                     vars
                     ty
@@ -6127,7 +6127,7 @@
               (be_scalar.compiler-backend-emit-group-copy
                 type-segment-bases
                 assignments
-                dst
+                (& (Var dst))
                 value
                 vars
                 ty
@@ -8086,7 +8086,7 @@
       (be_scalar.compiler-backend-emit-group-copy
         type-segment-bases
         assignments
-        dst
+        (& (Var dst))
         (be_state.compiler-backend-global-shared-view src)
         vars
         ty
@@ -8939,10 +8939,17 @@
             (string.eq call-symbol "tl_alloc")
             (and
               (= name cbi.compiler-builtin-id-tl-alloc-global)
-              (string.eq call-symbol "tl_alloc_global"))))
+              (string.eq call-symbol "tl_alloc_global")
+              (not
+                (be_state.compiler-backend-state-optimize-for-size?
+                  backend-state)))))
         (Ok
           (str_cat.str-cat
-            (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
+            (if (and
+              (not
+                (be_state.compiler-backend-state-optimize-for-size?
+                  backend-state))
+              (compiler-backend-inline-fast-alloc? fast-alloc-size))
               (compiler-backend-emit-inline-fast-alloc
                 target
                 function

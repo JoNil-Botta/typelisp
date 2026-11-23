@@ -1269,6 +1269,63 @@
       job)))
 
 (test
+  raw-field-store-retargets-unspanned-variant
+  (let
+    [pools (ast.ast-node-pool-context-capture-active)]
+    [job (tc_core.tc-job-state-new)]
+    [ctx
+      (tc-checked-nominal-test-context
+        pools
+        job
+        "(defenum A (Empty))\n(defenum B (Empty))\n(defstruct Holder (state A))")]
+    [top-env
+      (match (tc_core.tc-build-top-env ctx (tc_core.tc-context-program ctx))
+        [(Ok env) env]
+        [(Err message) (io.panic message)])]
+    [macro-state (tc_core.tc-context-macro-state ctx)]
+    [pointer (ci.intern "p")]
+    [holder
+      (tc_core.tc-resolve-type ctx (ast.AstType.Var (ci.intern "Holder")))]
+    [env
+      (tc_core.tc-enter-unsafe
+        (tc_core.tc-bind-id
+          top-env
+          pointer
+          (ast.ast-ty-mut-ptr-with-pools pools (& holder))))]
+    ;; Build `(set! (. (deref p) state) Empty)` with a direct, unspanned RHS.
+    [receiver
+      (ast.ast-expr-box-take-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var pointer)))]
+    [value
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Var (ci.intern "Empty")))]
+    [store
+      (ast.ast-expr-struct-set-id-with-pools
+        pools
+        receiver
+        (ci.intern "state")
+        value)]
+    (tc_core.tc-hygiene-reset-active-top-env! macro-state top-env)
+    (match (tc_core.tc-expr-id ctx env store)
+      [(Ok (Unit)) unit]
+      [(Err message) (io.panic message)]
+      [_ (io.panic "raw field store must have type unit")])
+    (match (tc_core.tc-context-expr-get ctx value)
+      [(Var name)
+        (unless
+          (=
+            (tc_core.macro-hygiene-global-source-name-id-or
+              (tc_core.tc-context-structural-session ctx)
+              name
+              name)
+            (ci.intern "A.Empty"))
+          (io.panic "raw field store did not retarget Empty to A.Empty"))]
+      [_ (io.panic "raw field store changed the variant expression form")])
+    (tc_core.tc-hygiene-clear-active-top-env! macro-state)))
+
+(test
   checked-nominal-facts-reject-replaced-symbol-owners
   (let
     [pools (ast.ast-node-pool-context-capture-active)]
@@ -14515,12 +14572,10 @@
         (= (ast.ast-node-pool-context-expr-len expanded) past-end))]
     [_install : unit (ast.ast-node-pool-compat-context-use! expanded)]
     [query : bool
-      (match (tc_core.tc-expr-if-with-expected-or-actual
+      (match (tc_core.tc-expr-with-expected-or-actual
         ctx
         (tc_core.tc-empty-env)
-        condition
-        value
-        value
+        (ast.AstExpr.If condition value value)
         ast.AstType.I64)
         [(tc_core.ResultTcType.Ok ty) (tc_core.tc-type-eq ty ast.AstType.I64)]
         [_ false])]
@@ -14581,12 +14636,10 @@
         [_ false])]
     [_live : unit (ast.ast-node-pool-context-install! expanded)]
     [mirrored-query : bool
-      (match (tc_core.tc-expr-if-with-expected-or-actual
+      (match (tc_core.tc-expr-with-expected-or-actual
         ctx
         (tc_core.tc-empty-env)
-        condition
-        value
-        value
+        (ast.AstExpr.If condition value value)
         ast.AstType.I64)
         [(tc_core.ResultTcType.Ok ty) (tc_core.tc-type-eq ty ast.AstType.I64)]
         [_ false])]
@@ -17848,27 +17901,198 @@
 
 (cfg
   test
-  (defstruct BorrowViewObserverState
+  (test
+    selected-let-keeps-hints-after-unrepresented-binding
+    (ast_tests.with-test-interns
+      (let
+        [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [job : tc_core.TcJobState (tc_core.tc-serial-job-state)]
+        [hints : tc_core.TcInlayHintState
+          (tc_core.tc-job-state-inlay-hints job)]
+        [_reset : unit (tc_core.tc-inlay-hints-reset-for-state! hints)]
+        [_enable : unit (tc_core.tc-inlay-hints-enable-for-state! hints)]
+        [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+        [expression : i64
+          (match (parser.parse-ast-expr-with-pools
+            (parser.compiler-parse-dispatch-env)
+            pools
+            (macro-output-source-sexpr
+              "(let [p (tuple 1 2)]\n  (let [total 41]\n    total))"))
+            [(Ok id) id]
+            [_ (io.panic "selected let hint fixture must parse")])]
+        [env : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+        [intern-state : ci.InternCompatState
+          (ci.intern-compat-state-capture-active)]
+        [lease : (typed.TypedBodyLease intern-state)
+          (tc-selected-test-lease ctx (& intern-state))]
+        [bindings : tc_core.TcSelectedBindings
+          (tc_core.tc-selected-bindings-new (& lease))]
+        [store : typed.TypedStore (tc-selected-test-store (& lease))]
+        [saved : tc_core.TcTypeEnvScopedRuntimeSave
+          (tc_core.tc-type-env-scoped-runtime-enter!
+            (tc_core.tc-type-env-scoped-carrier-from-env env))]
+        [accepted? : bool
+          (match (tc_core.tc-infer-selected-id
+            ctx
+            env
+            expression
+            ast.AstMaybeType.No
+            (tc_core.tc-infer-unlocated-source)
+            (tc_core.tc-selected-capture (&mut store) (& lease) (&mut bindings)))
+            [(tc_core.TcSelectedResult.Ok
+                (ast.AstType.I32)
+                (tc_core.TcSelectedOccurrence.Unrepresented)
+                _)
+              true]
+            [_ false])]
+        [initializer-hint? : bool false]
+        [use-hint? : bool false]
+        (tc_core.tc-type-env-scoped-runtime-restore! saved)
+        (typed.typed-store-retire! (&mut store))
+        (for [i
+          (iterator.range 0 (tc_core.tc-inlay-hints-size-for-state hints))]
+          (let
+            [line : i64 (tc_core.tc-inlay-hint-line-at-for-state hints i)]
+            [col : i64 (tc_core.tc-inlay-hint-col-at-for-state hints i)]
+            (when
+              (string.eq
+                (tc_core.tc-inlay-hint-type-at-for-state hints i)
+                "i32")
+              (cond
+                [(and (= line 2) (= col 15)) (set! initializer-hint? true)]
+                [(and (= line 3) (= col 5)) (set! use-hint? true)]
+                [else unit]))))
+        (tc_core.tc-inlay-hints-reset-for-state! hints)
+        (test.assert-true
+          accepted?
+          "the tuple forces the let to be unrepresented")
+        (test.assert-true initializer-hint? "the later binding has an i32 hint")
+        (test.assert-true use-hint? "the later variable use has a type")))))
+
+(cfg
+  test
+  (defstruct TcTestExpressionObserver
     (watched i64)
     (events (__tl_dyn-array i64))))
 
 (cfg
   test
-  (define (borrow-view-observe!
+  (define (tc-test-observe-expression!
     [address : i64]
     [_ctx : tc_core.TcContext]
     [_env : tc_core.TcTypeEnv]
     [event : tc_core.TcSemanticEvent]) : unit
     (let
-      [state : BorrowViewObserverState
+      [state : TcTestExpressionObserver
         (unsafe
-          (ptr-read (int->ptr address : (Ptr BorrowViewObserverState))))]
+          (ptr-read (int->ptr address : (Ptr TcTestExpressionObserver))))]
       (match event
         [(tc_core.TcSemanticEvent.ExpressionEnter expression)
           (when (= expression state.watched) (+= (array-ref state.events 0) 1))]
         [(tc_core.TcSemanticEvent.Expression expression _ _)
           (when (= expression state.watched) (+= (array-ref state.events 1) 1))]
         [_ unit]))))
+
+(cfg
+  test
+  (test
+    selected-unary-mismatch-retries-without-capture
+    (ast_tests.with-test-interns
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+        [name : i64 (ci.intern "x")]
+        [variable : i64 (ast.ast-node-pool-context-expr-push pools (Var name))]
+        [operand : ast.AstExpr
+          (Begin (ast.ast-expr-cons variable (& (ast.ast-expr-list-new))))]
+        [operand-id : i64
+          (ast.ast-node-pool-context-expr-push pools (clone operand))]
+        [expression : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (Unary ast.AstUnOp.Not operand-id))]
+        [job : tc_core.TcJobState (tc_core.tc-context-job-state ctx)]
+        [env : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env-with-job-state job)
+            name
+            ast.AstType.I64)]
+        [state : TcTestExpressionObserver
+          (TcTestExpressionObserver variable (__tl_make-array 0 0))]
+        [observer : tc_core.TcSemanticObserver
+          (tc_core.tc-semantic-observer-new
+            (unsafe
+              (cast (ptr->int (ptr-addr-of state)) : i64))
+            tc-test-observe-expression!)]
+        [intern-state : ci.InternCompatState
+          (ci.intern-compat-state-capture-active)]
+        [lease : (typed.TypedBodyLease intern-state)
+          (tc-selected-test-lease ctx (& intern-state))]
+        [bindings : tc_core.TcSelectedBindings
+          (tc_core.tc-selected-bindings-new (& lease))]
+        [store : typed.TypedStore (tc-selected-test-store (& lease))]
+        [before : u64 store.next-serial]
+        (match (tc_core.tc-infer-selected
+          ctx
+          env
+          operand
+          typed.TypedSyntax.Generated
+          (ast.AstMaybeType.Some ast.AstType.Bool)
+          (tc_core.tc-infer-unlocated-source)
+          false
+          (tc_core.tc-selected-capture (&mut store) (& lease) (&mut bindings)))
+          [(tc_core.TcSelectedResult.Ok
+              (ast.AstType.I64)
+              (tc_core.TcSelectedOccurrence.Unrepresented)
+              _)
+            unit]
+          [_ (io.panic "the contextual operand must retain its i64 type")])
+        (let
+          [start : u64 store.next-serial]
+          [operand-handles : u64 (- start before)]
+          (tc_core.tc-job-state-set-semantic-observer! job observer)
+          (tc_core.tc-context-set-semantic-observer! ctx observer)
+          (let
+            [rejected? : bool
+              (match (tc_core.tc-infer-selected-id
+                ctx
+                env
+                expression
+                (ast.AstMaybeType.Some ast.AstType.Bool)
+                (tc_core.tc-infer-unlocated-source)
+                (tc_core.tc-selected-capture
+                  (&mut store)
+                  (& lease)
+                  (&mut bindings)))
+                [(tc_core.TcSelectedResult.Err message _)
+                  (string.contains message "not")]
+                [_ false])]
+            (tc_core.tc-context-set-semantic-observer!
+              ctx
+              (tc_core.TcSemanticObserver 0))
+            (tc_core.tc-job-state-set-semantic-observer!
+              job
+              (tc_core.TcSemanticObserver 0))
+            (test.assert-true rejected? "not rejects the i64 operand")
+            (test.assert-i64-eq
+              (array-ref state.events 0)
+              1
+              "operand enters once")
+            (test.assert-i64-eq
+              (array-ref state.events 1)
+              1
+              "operand exits once")
+            (test.assert-true
+              (= (- store.next-serial start) (+ operand-handles (cast 1 : u64)))
+              "only the unary and contextual operand attempts mint handles")
+            (test.assert-i64-eq
+              store.occurrence-count
+              0
+              "no occurrence survives")
+            (typed.typed-store-retire! (&mut store))))))))
 
 (cfg
   test
@@ -17882,44 +18106,60 @@
           (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "p.0")))]
         [borrow : i64
           (ast.ast-node-pool-context-expr-push pools (Borrow true -1 place))]
+        [span : ast.AstSourceSpan (ast.ast-source-span 9 10 9 21)]
+        [spanned : i64 (ast.ast-expr-source-view-with-pools pools borrow span)]
+        [compact : i64
+          (ast.ast-expr-source-view-with-pools
+            pools
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (MacroExpansion
+                borrow
+                (tc_core.macro-expansion-provenance-id -1 -1)
+                (ctfe_support.ctfe-compact-caller-origin-name)))
+            span)]
         [ctx : tc_core.TcContext (tc-selected-test-context pools)]
         [env : tc_core.TcTypeEnv
           (tc_core.tc-bind-id (tc_core.tc-empty-env) (ci.intern "p") (I64))]
-        [state : BorrowViewObserverState
-          (BorrowViewObserverState borrow (__tl_make-array 0 0))]
+        [state : TcTestExpressionObserver
+          (TcTestExpressionObserver borrow (__tl_make-array 0 0))]
         [observer : tc_core.TcSemanticObserver
           (tc_core.tc-semantic-observer-new
             (unsafe
               (cast (ptr->int (ptr-addr-of state)) : i64))
-            borrow-view-observe!)]
+            tc-test-observe-expression!)]
         (tc_core.tc-job-state-set-semantic-observer!
           (tc_core.tc-context-job-state ctx)
           observer)
         (tc_core.tc-context-set-semantic-observer! ctx observer)
-        (for [view-mode (iterator.range 0 2)]
+        (for [view-mode (iterator.range 0 3)]
           (for [expected-mode (iterator.range 0 2)]
             (set! (array-ref state.events 0) 0)
             (set! (array-ref state.events 1) 0)
-            (match (tc_core.tc-check-operand-view
-              ctx
-              env
-              borrow
-              (ast.ast-source-span 9 10 9 21)
-              (= view-mode 1)
-              (Unit)
-              (= expected-mode 1)
-              false)
-              [(tc_core.ResultTcType.Err message)
-                (let
-                  [diag : cdiag.CompilerDiagnostic
-                    (tc_core.tc-diag-at-start message)]
+            (let
+              [id : i64
+                (match view-mode
+                  [0 borrow]
+                  [1 spanned]
+                  [_ compact])]
+              [result : tc_core.ResultTcType
+                (if (= expected-mode 1)
+                  (tc_core.tc-expr-with-expected-or-actual-id ctx env id (Unit))
+                  (tc_core.tc-expr-id ctx env id))]
+              (match result
+                [(tc_core.ResultTcType.Err message)
+                  (let
+                    [diag : cdiag.CompilerDiagnostic
+                      (tc_core.tc-diag-at-start message)]
+                    (test.assert-true
+                      (string.eq
+                        (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                        "E0215")
+                      "a malformed dotted borrow retains its place diagnostic"))]
+                [_
                   (test.assert-true
-                    (string.eq
-                      (cdiag.compiler-diagnostic-code-or-empty (& diag))
-                      "E0215")
-                    "a malformed dotted borrow retains its place diagnostic"))]
-              [_
-                (test.assert-true false "a malformed dotted borrow is rejected")])
+                    false
+                    "a malformed dotted borrow is rejected")]))
             (test.assert-i64-eq
               (array-ref state.events 0)
               1

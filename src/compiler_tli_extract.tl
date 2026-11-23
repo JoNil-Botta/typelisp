@@ -19,10 +19,8 @@
 (import stdlib.crypto_sha256 as sha)
 (import stdlib.iterator)
 (import stdlib.io)
-(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
-(import (vector.vector String) as strings)
 (import (vector.vector tli.TliImport core) as imports)
 (import (vector.vector tli.TliTypeDecl core) as types)
 (import (vector.vector tli.TliFnDecl core) as functions)
@@ -32,22 +30,17 @@
 (import (vector.vector tli.TliGlobalWrite core) as writes)
 (import (vector.vector i64) as indices)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci as tlci))
-(cfg
-  (all embedded-stdlib-tlci test)
-  (import compiler_embedded_stdlib_tlci_payload_seed as tlci_payload))
-(cfg
-  (all embedded-stdlib-tlci (not test))
-  (import compiler_embedded_stdlib_tlci_payload as tlci_payload))
 
 (defstruct TliSource
   (module-name String)
   (path String)
   (digest (Array u8 32)))
 
+(import (vector.vector TliSource core) as source_rows)
+
 (defstruct TliExtractModule
   (flags i64)
   (imports imports.Vec)
-  (inits strings.Vec)
   (types types.Vec)
   (functions functions.Vec)
   (values values.Vec)
@@ -690,20 +683,43 @@
                 tags)))]))
     out))
 
+(cfg
+  embedded-stdlib-tlci
+  (define (tli-extract-native-catalog-digest [generation : i64]) : (Array u8 32)
+    (with-arena
+      digest-scratch
+      (let
+        [frame : i64
+          (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
+        [bytes : (__tl_dyn-array u8)
+          (unsafe
+            ;; The decoder caches in its own arena. Only the temporary
+            ;; uncompressed frame bytes stay in digest-scratch.
+            (tlci.compiler-embedded-stdlib-tlci-decode-frame frame true))]
+        (when
+          (= (array-length (& bytes)) 0)
+          (io.panic "TLI native macro catalog is unavailable"))
+        (codec.tli-module-digest (& bytes) 0 (array-length (& bytes)))))))
+
 (define (tli-extract-macro
   [ctx : tc.TcContext]
   [module-name : String]
   [name : String]
   [params : (& ast.AstMacroParamList)]
-  [ret : ast.AstType]
-  [_catalog : (& (Array u8 32))]) : tli.TliMacroHandle
+  [ret : ast.AstType]) : tli.TliMacroHandle
   (let
     [identity : String
       (tc.macro-tlci-catalog-identity
         (string.copy (& module-name))
         (string.copy (& name)))]
-    [flags : i64
-      (+ 4 (tli-extract-flag (tc.tc-macro-result-decl-emitting? (& ret)) 8))]
+    [result-kind : u8
+      (cast
+        (cond
+          [(tc.tc-macro-result-module? (& ret)) 2]
+          [(tc.tc-macro-result-decls? (& ret)) 1]
+          [else 0])
+        : u8)]
+    [flags : i64 (+ 4 (tli-extract-flag (!= result-kind (cast 0 : u8)) 8))]
     [index : i64 -1]
     [digest : (Array u8 32) (make-array u8 32)]
     (cfg
@@ -711,14 +727,15 @@
       (match (tlci.compiler-embedded-stdlib-tlci-catalog-lookup
         (string.copy (& identity)))
         [(Resolved entry)
+          (set! index entry.entry-index)
           (set!
-            index
-            (tlci.compiler-embedded-stdlib-tlci-session-index
-              entry.catalog-generation))
-          (set! digest (deref _catalog))
+            digest
+            (tli-extract-native-catalog-digest entry.catalog-generation))
           (+= flags 1)]
-        [(Shell _)
-          (set! digest (deref _catalog))
+        [(Shell entry)
+          (set!
+            digest
+            (tli-extract-native-catalog-digest entry.catalog-generation))
           (+= flags 2)]
         [_ unit]))
     (tli.TliMacroHandle
@@ -726,6 +743,7 @@
       module-name
       identity
       flags
+      result-kind
       (tli-extract-macro-params ctx params)
       index
       digest)))
@@ -770,12 +788,7 @@
       [(Ok value)
         (set! const (tli-extract-const (& value) (ast.ty-node-persist (& ty))))]
       [(Err _) (set! runtime-init (= (bit-and flags 1) 0))])
-    (when
-      runtime-init
-      (set! out.flags (bit-or out.flags 1))
-      (strings.push-ref!
-        (&mut out.inits)
-        (str_cat.str-cat "__global_init_" (string.copy (& symbol)))))
+    (when runtime-init (set! out.flags (bit-or out.flags 1)))
     (values.push-ref!
       (&mut out.values)
       (tli.TliValueDecl
@@ -789,6 +802,8 @@
           (match (& const)
             [(None) 0]
             [_ 8]))
+        false
+        (__tl_make-array tli.TliExternLinkInput 0)
         const))))
 
 (defmacro (tli-extract-finish-vector [element-type : Expr] [source : Expr]) : Expr
@@ -913,7 +928,7 @@
       [(Metadata abi symbol links flags _)
         (let
           [link : String (string.copy (intern.intern-id-str symbol))]
-          (set! out.flags (bit-or out.flags 8))
+          (when (> links.len 0) (set! out.flags (bit-or out.flags 8)))
           (match kind
             [(Function)
               (match (tc.tc-resolve-type ctx ty)
@@ -963,6 +978,8 @@
                   (+
                     (tli-extract-flag comptime-only 1)
                     (tli-extract-flag unsafe-decl 2))
+                  true
+                  (tli-extract-link-inputs (& links))
                   (tli.TliConst.None)))]))])))
 
 (define (tli-extract-decl!
@@ -974,8 +991,7 @@
   [unsafe-decl : bool]
   [decl : (& ast.AstDecl)]
   [lower-state : lower.CompilerLowerState]
-  [facts : (& facts TliExtractEffects)]
-  [catalog : (& (Array u8 32))]) : unit
+  [facts : (& facts TliExtractEffects)]) : unit
   (let
     [comptime-only : bool (tli-extract-comptime? ctx decl)]
     [type-flags : i64
@@ -1078,8 +1094,7 @@
             module-name
             (tli-extract-name name)
             (& params)
-            ret
-            catalog))]
+            ret))]
       [(DefDispatch _ name _)
         (let
           [spelling : String (tli-extract-name name)]
@@ -1104,14 +1119,20 @@
 (define (tli-extract-push-import!
   [out : (&mut out imports.Vec)]
   [name : String]
-  [tag : i64]) : unit
+  [tag : i64]
+  [alias : String]
+  [item : String]) : unit
   (for [index (iterator.range 0 out.len)]
     (let
       [row (& (array-ref out.slots index))]
       (when
-        (and (= row.kind tag) (string.eq (& row.module-name) (& name)))
+        (and
+          (= row.kind tag)
+          (string.eq (& row.module-name) (& name))
+          (string.eq (& row.alias) (& alias))
+          (string.eq (& row.item) (& item)))
         (return unit))))
-  (imports.push-ref! out (tli.TliImport name tag (make-array u8 32))))
+  (imports.push-ref! out (tli.TliImport name tag alias item (make-array u8 32))))
 
 (define (tli-extract-import-alias
   [decls : (& decls ast.AstDeclList)]
@@ -1196,7 +1217,7 @@
             (when
               (>= slot 0)
               (match (& spec)
-                [(Spec kind path expected _ _)
+                [(Spec kind path expected alias _)
                   (let
                     [name : String
                       (match kind
@@ -1223,7 +1244,13 @@
                       (tli-extract-push-import!
                         (&mut (array-ref records slot).imports)
                         name
-                        tag)))])))]
+                        tag
+                        (match alias
+                          [(Some id) (tli-extract-name id)]
+                          [(No) ""])
+                        (match kind
+                          [(ModuleItem id) (tli-extract-name id)]
+                          [_ ""]))))])))]
         [_ unit]))))
 
 (define (tli-extract-finish-module
@@ -1232,20 +1259,42 @@
   [cfg-digest : (& (Array u8 32))]
   [record : TliExtractModule]) : tli.TliModuleRecord
   (match record
-    [(TliExtractModule flags imps inits tys fns vals macs disps)
-      (tli.TliModuleRecord
-        (string.copy (& source.module-name))
-        path
-        source.digest
-        (deref cfg-digest)
-        flags
-        (tli-extract-finish-vector tli.TliImport imps)
-        (tli-extract-finish-vector String inits)
-        (tli-extract-finish-vector tli.TliTypeDecl tys)
-        (tli-extract-finish-vector tli.TliFnDecl fns)
-        (tli-extract-finish-vector tli.TliValueDecl vals)
-        (tli-extract-finish-vector tli.TliMacroHandle macs)
-        (tli-extract-finish-vector tli.TliDispatchDecl disps))]))
+    [(TliExtractModule flags imps tys fns vals macs disps)
+      (let
+        [inits : (__tl_dyn-array String)
+          (__tl_make-array String (bit-and flags 1))]
+        (when
+          (> (array-length inits) 0)
+          (set!
+            (array-ref inits 0)
+            (tli.tli-module-init-symbol (& source.module-name))))
+        (tli.TliModuleRecord
+          (string.copy (& source.module-name))
+          path
+          source.digest
+          (deref cfg-digest)
+          flags
+          (tli-extract-finish-vector tli.TliImport imps)
+          inits
+          (tli-extract-finish-vector tli.TliTypeDecl tys)
+          (tli-extract-finish-vector tli.TliFnDecl fns)
+          (tli-extract-finish-vector tli.TliValueDecl vals)
+          (tli-extract-finish-vector tli.TliMacroHandle macs)
+          (tli-extract-finish-vector tli.TliDispatchDecl disps)))]))
+
+(define (tli-extract-empty-module [path : (& str)]) : TliExtractModule
+  (TliExtractModule
+    (tli-extract-flag
+      (or
+        (string.eq path "stdlib/runtime.tl")
+        (string.eq path "stdlib/core_macros.tl"))
+      16)
+    (imports.new)
+    (types.new)
+    (functions.new)
+    (values.new)
+    (macros.new)
+    (dispatches.new)))
 
 (define (tli-extract-open-modules
   [request : (& request api.TypecheckRequest)]
@@ -1258,21 +1307,7 @@
     (for [slot (iterator.range 0 count)]
       (let
         [path (& (array-ref sources slot).path)]
-        (set!
-          (array-ref records slot)
-          (TliExtractModule
-            (tli-extract-flag
-              (or
-                (string.eq path "stdlib/runtime.tl")
-                (string.eq path "stdlib/core_macros.tl"))
-              16)
-            (imports.new)
-            (strings.new)
-            (types.new)
-            (functions.new)
-            (values.new)
-            (macros.new)
-            (dispatches.new)))))
+        (set! (array-ref records slot) (tli-extract-empty-module path))))
     (match (& request.program)
       [(Program decls)
         (tli-extract-imports!
@@ -1283,13 +1318,19 @@
           (ast.ast-node-pool-context-expr-segment-bases (& request.pools)))])
     records))
 
+(define (tli-extract-find-record
+  [modules : (& modules (__tl_dyn-array tli.TliModuleRecord))]
+  [name : (& str)]) : i64
+  (for [index (iterator.range 0 (array-length modules))]
+    (when (string.eq name (& (array-ref modules index).name)) (return index)))
+  -1)
+
 ;; Hash a dependency with the same pool and record encoding the final bundle
 ;; uses. Visiting dependencies first makes every in-bundle import pin exact.
 ;; Imports outside the requested source set have no interface artifact here.
 (define (tli-extract-pin-module!
   [ctx : (&mut ctx codec.TliWriteContext)]
   [modules : (&mut modules (__tl_dyn-array tli.TliModuleRecord))]
-  [sources : (& sources (__tl_dyn-array TliSource))]
   [states : (&mut states (__tl_dyn-array i64))]
   [digests : (&mut digests (__tl_dyn-array sha.Sha256Digest))]
   [slot : i64]) : bool
@@ -1303,20 +1344,14 @@
         (for [index (iterator.range 0 count)]
           (let
             [target : i64
-              (tli-extract-find-module
-                sources
+              (tli-extract-find-record
+                modules
                 (&
                   (array-ref (array-ref modules slot).imports index).module-name))]
             (when
               (>= target 0)
               (unless
-                (tli-extract-pin-module!
-                  ctx
-                  modules
-                  sources
-                  states
-                  digests
-                  target)
+                (tli-extract-pin-module! ctx modules states digests target)
                 (return false))
               (set!
                 (array-ref (array-ref modules slot).imports index).interface-sha256
@@ -1330,9 +1365,7 @@
       (set! (array-ref states slot) 2)
       true]))
 
-(define (tli-extract-pin-imports!
-  [bundle : (&mut bundle tli.TliBundle)]
-  [sources : (& sources (__tl_dyn-array TliSource))]) : bool
+(define (tli-extract-pin-imports! [bundle : (&mut bundle tli.TliBundle)]) : bool
   (let
     [count : i64 (array-length bundle.modules)]
     [ctx : codec.TliWriteContext
@@ -1348,7 +1381,6 @@
         (tli-extract-pin-module!
           (&mut ctx)
           (&mut bundle.modules)
-          sources
           (&mut states)
           (&mut digests)
           slot)
@@ -1387,6 +1419,83 @@
               [_ unit])])))
     next))
 
+(define (tli-extract-source-for-path
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [path : (& str)]) : i64
+  (for [index (iterator.range 0 (array-length sources))]
+    (when (string.eq path (& (array-ref sources index).path)) (return index)))
+  -1)
+
+(define (tli-extract-add-generated-sources
+  [ctx : tc.TcContext]
+  [paths : (& ast.AstDeclPathList)]
+  [sources : (& sources (__tl_dyn-array TliSource))]) : (__tl_dyn-array
+    TliSource)
+  (let
+    [seen : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    [out : source_rows.Vec (source_rows.new)]
+    [decls : ast.AstDeclList
+      (match (tc.tc-context-program ctx)
+        [(Program decls) (deref decls)])]
+    [count : i64
+      (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
+    (for [index (iterator.range 0 (array-length sources))]
+      (let
+        [source (& (array-ref sources index))]
+        (source_rows.push-ref!
+          (&mut out)
+          (TliSource
+            (string.copy (& source.module-name))
+            (string.copy (& source.path))
+            source.digest))))
+    (for [index (iterator.range 0 count)]
+      (let
+        [id : i64 (tli-extract-owner ctx index)]
+        (when
+          (and
+            (not (symbols.compiler-symbol-root-module-id? id))
+            (not (sym_i64_env.sym-i64-contains-id (& seen) id)))
+          (set! seen (sym_i64_env.sym-i64-bind-id seen id 1))
+          (let
+            [name : String (tli-extract-module-name id)]
+            (when
+              (< (tli-extract-find-module sources (& name)) 0)
+              (let
+                [path : String
+                  (symbols.compiler-symbol-path-at-index
+                    (& decls)
+                    paths
+                    index
+                    0)]
+                [origin : i64 (tli-extract-source-for-path sources (& path))]
+                (when
+                  (>= origin 0)
+                  (source_rows.push-ref!
+                    (&mut out)
+                    (TliSource name path (array-ref sources origin).digest)))))))))
+    (tli-extract-finish-vector TliSource out)))
+
+(define (tli-extract-extend-records
+  [original : (__tl_dyn-array TliExtractModule)]
+  [sources : (& sources (__tl_dyn-array TliSource))]) : (__tl_dyn-array
+    TliExtractModule)
+  (let
+    [count : i64 (array-length original)]
+    [records : (__tl_dyn-array TliExtractModule)
+      (__tl_make-array TliExtractModule (array-length sources))]
+    [live : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref live index) true))
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref records index)
+        (tuple-ref (__tl_array-take! original live index) 1)))
+    (for [index (iterator.range count (array-length sources))]
+      (set!
+        (array-ref records index)
+        (tli-extract-empty-module (& (array-ref sources index).path))))
+    records))
+
 (define (tli-extract-checked
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
@@ -1410,14 +1519,6 @@
     [paths-out : (__tl_dyn-array String) (__tl_make-array String count)]
     [modules : (__tl_dyn-array tli.TliModuleRecord)
       (__tl_make-array tli.TliModuleRecord count)]
-    [catalog : (Array u8 32)
-      (cfg
-        embedded-stdlib-tlci
-        (codec.tli-module-digest
-          (& tlci_payload.embedded-stdlib-tlci-bytes)
-          0
-          (array-length tlci_payload.embedded-stdlib-tlci-bytes))
-        (make-array u8 32))]
     [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [names : lower.LowerNameCache
       (lower.lower-name-cache-from-env
@@ -1473,8 +1574,7 @@
                 (array-ref unsafe-decls index)
                 (& decl)
                 lower-state
-                (& facts)
-                (& catalog))]
+                (& facts))]
             [(Err message) (io.panic message)]))))
     (for [slot (iterator.range 0 count)]
       (set!
@@ -1503,18 +1603,22 @@
         (match (api.typecheck-compiler-request-checked request)
           [(Ok _ ctx env paths)
             (let
+              [all-sources : (__tl_dyn-array TliSource)
+                (tli-extract-add-generated-sources ctx (& paths) sources)]
+              [all-records : (__tl_dyn-array TliExtractModule)
+                (tli-extract-extend-records records (& all-sources))]
               [bundle : tli.TliBundle
                 (tli-extract-checked
                   ctx
                   env
                   (& paths)
-                  sources
-                  records
+                  (& all-sources)
+                  all-records
                   (& cfg-digest)
                   bundle-flags
                   build
                   target)]
-              (if (tli-extract-pin-imports! (&mut bundle) sources)
+              (if (tli-extract-pin-imports! (&mut bundle))
                 (Ok bundle)
                 (Err "TLI import cycle cannot pin module record digests")))]
           [(or (Partial diagnostics _ _ _) (Err diagnostics))

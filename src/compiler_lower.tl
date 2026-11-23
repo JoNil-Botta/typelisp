@@ -27526,7 +27526,8 @@
            (ast.AstExpr.Xgetbv _) (ast.AstExpr.WithResource _))
         (set! child-writes (CountMentions))]
       [_ unit])
-    (unless root?
+    (unless
+      root?
       (when (<= scan.write-budget 0) (return false))
       (set! scan.write-budget (- scan.write-budget 1)))
     (match write-mode
@@ -27564,14 +27565,17 @@
       (for [index (iterator.range 0 children.len)]
         (let
           [id : i64 (ast.ast-expr-list-get (& children) index -1)]
-          (when (>= id 0)
+          (when
+            (>= id 0)
             (unless
               (lower-body-proof-node!
                 ctx
                 (lower-context-expr-get ctx id)
                 child-exposure
                 child-loop?
-                (if (and read-first-child? (= index 0)) (ReadPointer) child-writes)
+                (if (and read-first-child? (= index 0))
+                  (ReadPointer)
+                  child-writes)
                 false
                 scan)
               (return false)))

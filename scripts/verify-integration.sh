@@ -1645,7 +1645,7 @@ check_u64_float_cast_asm() {
     assert_contains "$_asm" "    subsd " "$_label"
     assert_contains "$_asm" "    subss " "$_label"
     assert_contains "$_asm" '    btsq $63, ' "$_label"
-    assert_contains "$_asm" "    movzbq" "$_label"
+    assert_contains "$_asm" "    movzbl" "$_label"
     if ! awk '
         /u8_to_f64/ { in_u8 = 1 }
         in_u8 && /ret/ { exit bad }

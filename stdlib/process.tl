@@ -27,6 +27,7 @@
 ;#
 ;# Usage: `(import stdlib.process)`
 ;#
+(import stdlib.clone)
 (import stdlib.string)
 (import stdlib.vector)
 (import stdlib.io)
@@ -165,6 +166,16 @@
   (ProcessSpawnFailed String)
   (ProcessWaitFailed String)
   (ProcessUnsupported String))
+
+(clone.gen-clone ProcessStringList)
+
+(clone.gen-clone ProcessEnvList)
+
+(clone.gen-clone ProcessMaybeString)
+
+(clone.gen-clone ProcessCommand)
+
+(clone.gen-clone ProcessError)
 
 ;: Result type for process execution APIs.
 (defenum ResultProcessOutput

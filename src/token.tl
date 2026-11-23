@@ -32,6 +32,7 @@
 ;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
 ;; are appended last so the existing variants/tags keep their stable ordering
 ;; for every importer.
+(import stdlib.clone)
 (import compiler_abort as abort)
 (import compiler_intern as ci)
 (import stdlib.string)
@@ -51,6 +52,8 @@
   (Backtick)
   (Comma)
   (CommaAt))
+
+(stdlib.clone.gen-clone Token)
 
 (define (token-intern-payload [id : ci.InternId]) : ci.InternId
   id)

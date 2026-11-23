@@ -245,3 +245,25 @@ reference and the GHASH multiply body is byte-identical.
    -    jle .Lf53_if_else.15
    +    jbe .Lf53_if_else.15
     .Lf53_if_then.14:
+
+## Never-call terminator re-pin (PR #9889)
+
+`compiler-ir-instr-terminator?` now treats `Never`-returning calls as block
+terminators (#9809). In the `audit.tl` `main` harness, the inlined
+`buf.as-bytes` bounds check on `sealed.ciphertext` calls `tl_oob_abort`
+(returning `Never`), so its post-check continuation no longer sees a phantom
+fall-through from `call tl_oob_abort` and eliminates two redundant reloads of
+the `sealed.ciphertext` pointer and length. Re-derived pins:
+
+- linux opt2: 1 body, `main` only (`shape-linux-x86_64-opt2.sha256`);
+- windows opt2: 1 body, `main` only (`shape-windows-x86_64-opt2.sha256`);
+- linux opt1 and windows opt1: unchanged.
+
+Per changed body, checked before re-pinning: every AES, GHASH, GCM, scrub,
+secret and `gcm_audit_{seal,open}` body is byte-identical. In `main`, the only
+change is removing the two redundant loads (`movq (%rax), %rdi` and
+`movq 8(%rax), %r13` on linux; `movq (%rax), %rdx` and `movq 8(%rax), %r13` on
+windows) after the `tl_oob_abort` checks and keeping the loaded values live
+across the checks (swapping `%rax`/`%rsi` on linux and `%rax`/`%rcx` on windows
+for the `sealed` struct copy). No instruction is added and no branch, call,
+table reference, address form or wipe changes.

@@ -15,7 +15,7 @@
   (let
     [decoded : String (parsed-string encoded)]
     [roundtrip : String
-      (parsed-string (json.stringify (JsonString (clone decoded))))]
+      (parsed-string (json.stringify (JsonString (string.copy (& decoded)))))]
     (test.assert-string-eq (& decoded) expected "decoded UTF-8 bytes")
     (test.assert-string-eq
       (& roundtrip)
@@ -35,7 +35,7 @@
   (let
     [decoded : String (parsed-string encoded)]
     [roundtrip : String
-      (parsed-string (json.stringify (JsonString (clone decoded))))]
+      (parsed-string (json.stringify (JsonString (string.copy (& decoded)))))]
     (match (utf8.decode-at (& decoded) 0)
       [(Scalar scalar next)
         (test.assert-i64-eq

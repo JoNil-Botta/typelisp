@@ -4,6 +4,7 @@
 ;; decoder cannot agree on a mistake unnoticed. The rest feeds every byte
 ;; split, fragmentation and malformed variant through the readers and
 ;; decoders and checks the exact error code, offset and alert.
+(import stdlib.string)
 (import stdlib.byte_buf)
 (import stdlib.net.tls_wire as tls)
 (import stdlib.profile)
@@ -61,7 +62,10 @@
   [actual : (& actual bytes)]
   [expected : String]
   [message : String]) : unit
-  (test.assert-owned-string-eq (hex-string actual) expected (clone message)))
+  (test.assert-owned-string-eq
+    (hex-string actual)
+    expected
+    (string.copy (& message))))
 
 (define (assert-same
   [actual : (& actual bytes)]
@@ -70,19 +74,19 @@
   (test.assert-owned-string-eq
     (hex-string actual)
     (hex-string expected)
-    (clone message)))
+    (string.copy (& message))))
 
 (define (assert-buf
   [actual : byte_buf.ByteBuf]
   [expected : (& expected bytes)]
   [message : String]) : unit
-  (assert-same (view (& actual)) expected (clone message)))
+  (assert-same (view (& actual)) expected (string.copy (& message))))
 
 (define (assert-buf-hex
   [actual : byte_buf.ByteBuf]
   [expected : String]
   [message : String]) : unit
-  (assert-hex (view (& actual)) expected (clone message)))
+  (assert-hex (view (& actual)) expected (string.copy (& message))))
 
 (define (hex-of [buf : byte_buf.ByteBuf]) : String
   (hex-string (view (& buf))))
@@ -107,9 +111,9 @@
   [offset : i64]
   [alert : i64]
   [message : String]) : unit
-  (test.assert-i64-eq error.code code (clone (clone message)))
-  (test.assert-i64-eq error.offset offset (clone (clone message)))
-  (test.assert-i64-eq error.alert alert (clone message)))
+  (test.assert-i64-eq error.code code (string.copy (& message)))
+  (test.assert-i64-eq error.offset offset (string.copy (& message)))
+  (test.assert-i64-eq error.alert alert (string.copy (& message))))
 
 (define (expect-check-error
   [result : tls.TlsWireCheck]
@@ -118,9 +122,9 @@
   [alert : i64]
   [message : String]) : unit
   (match result
-    [(TlsWireOk) (test.assert-true false (clone message))]
+    [(TlsWireOk) (test.assert-true false (string.copy (& message)))]
     [(TlsWireErr error)
-      (assert-error (& error) code offset alert (clone message))]))
+      (assert-error (& error) code offset alert (string.copy (& message)))]))
 
 (define (expect-check-ok [result : tls.TlsWireCheck] [message : String]) : unit
   (match result
@@ -129,7 +133,7 @@
       (test.assert-owned-string-eq
         (tls.error-name error.code)
         "none"
-        (clone message))]))
+        (string.copy (& message)))]))
 
 (define (limits) : tls.TlsWireLimits
   (tls.default-limits))
@@ -454,9 +458,9 @@
         [(TlsRecordNeedMore consumed) (set! cursor (+ cursor consumed))]
         [(TlsRecordComplete consumed _) (set! cursor (+ cursor consumed))]
         [(TlsRecordFailed error)
-          (assert-error (& error) code offset alert (clone message))
+          (assert-error (& error) code offset alert (string.copy (& message)))
           (set! failed true)]))
-    (test.assert-true failed (clone message))
+    (test.assert-true failed (string.copy (& message)))
     (match (tls.record-reader-next! (&mut reader) (view (& input)) protected)
       [(TlsRecordFailed error)
         (assert-error
@@ -482,9 +486,9 @@
         (test.assert-i64-eq
           consumed
           (byte_buf.len (& input))
-          (clone (clone message)))
-        (test.assert-i64-eq header.length length (clone message))]
-      [_ (test.assert-true false (clone message))])))
+          (string.copy (& message)))
+        (test.assert-i64-eq header.length length (string.copy (& message)))]
+      [_ (test.assert-true false (string.copy (& message)))])))
 
 ;: A header for a record of `content-type` and `length` followed by `length`
 ;: zero bytes (or ones for change_cipher_spec).
@@ -902,8 +906,9 @@
     [plaintext : byte_buf.ByteBuf (hex-bytes hex)]
     (match (tls.decode-inner-plaintext (view (& plaintext)) inner-limits)
       [(TlsInnerPlaintextErr error)
-        (assert-error (& error) code offset alert (clone message))]
-      [(TlsInnerPlaintextOk _) (test.assert-true false (clone message))])))
+        (assert-error (& error) code offset alert (string.copy (& message)))]
+      [(TlsInnerPlaintextOk _)
+        (test.assert-true false (string.copy (& message)))])))
 
 (define (expect-inner-ok
   [hex : String]
@@ -915,13 +920,16 @@
     [plaintext : byte_buf.ByteBuf (hex-bytes hex)]
     (match (tls.decode-inner-plaintext (view (& plaintext)) inner-limits)
       [(TlsInnerPlaintextOk inner)
-        (test.assert-i64-eq inner.content-type content-type (clone message))
-        (test.assert-i64-eq inner.length length (clone message))]
+        (test.assert-i64-eq
+          inner.content-type
+          content-type
+          (string.copy (& message)))
+        (test.assert-i64-eq inner.length length (string.copy (& message)))]
       [(TlsInnerPlaintextErr error)
         (test.assert-owned-string-eq
           (tls.error-name error.code)
           "none"
-          (clone message))])))
+          (string.copy (& message)))])))
 
 ;; --- handshake reassembly ---------------------------------------------------------
 ;: Messages reassembled from a fragmented feed: their concatenated encodings,
@@ -1014,8 +1022,8 @@
   [message : String]) : unit
   (let
     [result : Reassembly (reassemble content split chunk)]
-    (assert-same (view (& result.frames)) content (clone message))
-    (assert-hex (view (& result.types)) types (clone message))))
+    (assert-same (view (& result.frames)) content (string.copy (& message)))
+    (assert-hex (view (& result.types)) types (string.copy (& message)))))
 
 (define (handshake-splits) : unit
   (let
@@ -1203,7 +1211,7 @@
       tls.error-message-too-large
       offset
       tls.alert-decode-error
-      (clone message))))
+      (string.copy (& message)))))
 
 (define (handshake-size-limits) : unit
   (let
@@ -1549,7 +1557,7 @@
     (assert-buf
       (tls.encode-client-hello (byte_buf.new) (& hello))
       (view (& encoded))
-      (clone message))))
+      (string.copy (& message)))))
 
 (define (roundtrip-server-hello
   [hex : String]
@@ -1561,18 +1569,18 @@
     (test.assert-bool-eq
       (tls.server-hello-retry? (& hello))
       retry
-      (clone message))
-    (test.assert-i64-eq hello.cipher-suite 0x1301 (clone message))
+      (string.copy (& message)))
+    (test.assert-i64-eq hello.cipher-suite 0x1301 (string.copy (& message)))
     (test.assert-i64-eq
       (code
         (tls.decode-selected-version
           (extension-of (& hello.extensions) tls.extension-supported-versions)))
       0x0304
-      (clone message))
+      (string.copy (& message)))
     (assert-buf
       (tls.encode-server-hello (byte_buf.new) (& hello))
       (view (& encoded))
-      (clone message))))
+      (string.copy (& message)))))
 
 (define (server-hello-vectors) : unit
   (let
@@ -1710,24 +1718,30 @@
   (let
     [encoded : byte_buf.ByteBuf (flight-message hex index)]
     [value : tls.TlsCertificate (certificate (& encoded))]
-    (test.assert-i64-eq (byte_buf.len (& value.context)) 0 (clone message))
-    (test.assert-i64-eq (array-length value.entries) 1 (clone message))
+    (test.assert-i64-eq
+      (byte_buf.len (& value.context))
+      0
+      (string.copy (& message)))
+    (test.assert-i64-eq
+      (array-length value.entries)
+      1
+      (string.copy (& message)))
     (test.assert-i64-eq
       (byte_buf.len (& (array-ref value.entries 0).data))
       data-length
-      (clone message))
+      (string.copy (& message)))
     (test.assert-i64-eq
       (array-length (array-ref value.entries 0).extensions)
       0
-      (clone message))
+      (string.copy (& message)))
     (test.assert-i64-eq
       (cast (byte_buf.ref (& (array-ref value.entries 0).data) 0) : i64)
       0x30
-      (clone message))
+      (string.copy (& message)))
     (assert-buf
       (tls.encode-certificate (byte_buf.new) (& value))
       (view (& encoded))
-      (clone message))))
+      (string.copy (& message)))))
 
 (define (check-verify-and-finished
   [hex : String]
@@ -1736,25 +1750,26 @@
   [signature-length : i64]
   [message : String]) : unit
   (let
-    [verify-bytes : byte_buf.ByteBuf (flight-message (clone hex) first)]
+    [verify-bytes : byte_buf.ByteBuf
+      (flight-message (string.copy (& hex)) first)]
     [verify : tls.TlsCertificateVerify (certificate-verify (& verify-bytes))]
     [finished-bytes : byte_buf.ByteBuf (flight-message hex (+ first 1))]
-    (test.assert-i64-eq verify.algorithm algorithm (clone message))
+    (test.assert-i64-eq verify.algorithm algorithm (string.copy (& message)))
     (test.assert-i64-eq
       (byte_buf.len (& verify.signature))
       signature-length
-      (clone message))
+      (string.copy (& message)))
     (assert-buf
       (tls.encode-certificate-verify (byte_buf.new) (& verify))
       (view (& verify-bytes))
-      (clone message))
+      (string.copy (& message)))
     (match (tls.decode-finished (body-of (& finished-bytes)) 32)
       [(TlsBytesOk verify-data)
         (assert-buf
           (tls.encode-finished (byte_buf.new) (view (& verify-data)))
           (view (& finished-bytes))
-          (clone message))]
-      [(TlsBytesErr _) (test.assert-true false (clone message))])))
+          (string.copy (& message)))]
+      [(TlsBytesErr _) (test.assert-true false (string.copy (& message)))])))
 
 (define (server-flight-vectors) : unit
   (let
@@ -1942,8 +1957,8 @@
       context
       (& block-limits))
       [(TlsExtensionsErr error)
-        (assert-error (& error) code offset alert (clone message))]
-      [(TlsExtensionsOk _) (test.assert-true false (clone message))])))
+        (assert-error (& error) code offset alert (string.copy (& message)))]
+      [(TlsExtensionsOk _) (test.assert-true false (string.copy (& message)))])))
 
 (define (expect-block-types
   [hex : String]
@@ -1958,16 +1973,22 @@
       context
       (& block-limits))
       [(TlsExtensionsOk extensions)
-        (assert-buf-hex (extension-types (& extensions)) types (clone message))
+        (assert-buf-hex
+          (extension-types (& extensions))
+          types
+          (string.copy (& message)))
         (let
           [encoded : byte_buf.ByteBuf
             (tls.encode-extensions (byte_buf.new) (& extensions))]
-          (assert-same (view (& encoded)) (view (& block)) (clone message)))]
+          (assert-same
+            (view (& encoded))
+            (view (& block))
+            (string.copy (& message))))]
       [(TlsExtensionsErr error)
         (test.assert-owned-string-eq
           (tls.error-name error.code)
           "none"
-          (clone message))])))
+          (string.copy (& message)))])))
 
 (define (extension-block-rules) : unit
   (let
@@ -2220,8 +2241,8 @@
         code
         offset
         tls.alert-decode-error
-        (clone message))]
-    [(TlsCodesOk _) (test.assert-true false (clone message))]))
+        (string.copy (& message)))]
+    [(TlsCodesOk _) (test.assert-true false (string.copy (& message)))]))
 
 (define (expect-bytes-error
   [result : tls.TlsBytesResult]
@@ -2231,8 +2252,8 @@
   [message : String]) : unit
   (match result
     [(TlsBytesErr error)
-      (assert-error (& error) code offset alert (clone message))]
-    [(TlsBytesOk _) (test.assert-true false (clone message))]))
+      (assert-error (& error) code offset alert (string.copy (& message)))]
+    [(TlsBytesOk _) (test.assert-true false (string.copy (& message)))]))
 
 (define (expect-list-error
   [result : tls.TlsBytesListResult]
@@ -2246,8 +2267,8 @@
         code
         offset
         tls.alert-decode-error
-        (clone message))]
-    [(TlsBytesListOk _) (test.assert-true false (clone message))]))
+        (string.copy (& message)))]
+    [(TlsBytesListOk _) (test.assert-true false (string.copy (& message)))]))
 
 (define (expect-shares-error
   [result : tls.TlsKeySharesResult]
@@ -2257,8 +2278,8 @@
   [message : String]) : unit
   (match result
     [(TlsKeySharesErr error)
-      (assert-error (& error) code offset alert (clone message))]
-    [(TlsKeySharesOk _) (test.assert-true false (clone message))]))
+      (assert-error (& error) code offset alert (string.copy (& message)))]
+    [(TlsKeySharesOk _) (test.assert-true false (string.copy (& message)))]))
 
 (define (list-hex [result : tls.TlsBytesListResult]) : String
   (match result
@@ -2702,7 +2723,7 @@
       (tls.error-name
         (decode-status msg-type (view (& body)) (& decode-limits)))
       (tls.error-name code)
-      (clone message))))
+      (string.copy (& message)))))
 
 ;: Every strict prefix of every message vector fails, and every single-byte
 ;: change either decodes or fails inside the message.

@@ -207,14 +207,14 @@
       [buf : TextBuf (stdlib.text_buf.empty)]
       (stdlib.text_buf.append! buf "")
       (stdlib.text_buf.text-buf-test-assert-text-buf
-        (clone buf)
+        (clone-text-buf (& buf))
         ""
         "mutable empty append leaves buffer empty")
       (stdlib.text_buf.append! buf "alpha")
       (stdlib.text_buf.append! buf "")
       (stdlib.text_buf.append! buf " beta")
       (stdlib.text_buf.text-buf-test-assert-text-buf
-        (clone buf)
+        (clone-text-buf (& buf))
         "alpha beta"
         "mutable append order"))
     (let
@@ -244,7 +244,7 @@
         (set! buf (stdlib.text_buf.append buf "x"))
         (set! i (+ i 1)))
       (stdlib.text_buf.text-buf-test-assert-text-buf
-        (clone buf)
+        (clone-text-buf (& buf))
         "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         "dense chunk order crosses capacity boundary")
       (test.assert-i64-eq
@@ -253,8 +253,10 @@
         "dense chunk count crosses capacity boundary"))
     (let
       [base : TextBuf (stdlib.text_buf.append (stdlib.text_buf.empty) "base")]
-      [left : TextBuf (stdlib.text_buf.append (clone base) "-left")]
-      [right : TextBuf (stdlib.text_buf.append (clone base) "-right")]
+      [left : TextBuf
+        (stdlib.text_buf.append (clone-text-buf (& base)) "-left")]
+      [right : TextBuf
+        (stdlib.text_buf.append (clone-text-buf (& base)) "-right")]
       (stdlib.text_buf.text-buf-test-assert-text-buf
         base
         "base"
@@ -279,7 +281,8 @@
           (with-escape
             outer-arena
             (let
-              [child : TextBuf (stdlib.text_buf.append (clone base) "-inner")]
+              [child : TextBuf
+                (stdlib.text_buf.append (clone-text-buf (& base)) "-inner")]
               (string.eq
                 (stdlib.text_buf.render child)
                 "oooooooooooooooooooooooooooooooo-inner")))]
@@ -288,7 +291,7 @@
             outer-arena
             (let
               [sibling : TextBuf
-                (stdlib.text_buf.append (clone base) "-sibling")]
+                (stdlib.text_buf.append (clone-text-buf (& base)) "-sibling")]
               (string.eq
                 (stdlib.text_buf.render sibling)
                 "oooooooooooooooooooooooooooooooo-sibling")))]
@@ -344,11 +347,11 @@
       [original : TextBuf
         (stdlib.text_buf.append (stdlib.text_buf.empty) "keep")]
       (stdlib.text_buf.text-buf-test-assert-text-buf
-        (stdlib.text_buf.clear (clone original))
+        (stdlib.text_buf.clear (clone-text-buf (& original)))
         ""
         "clear returns empty")
       (stdlib.text_buf.text-buf-test-assert-text-buf
-        (stdlib.text_buf.reset (clone original))
+        (stdlib.text_buf.reset (clone-text-buf (& original)))
         ""
         "reset returns empty")
       (stdlib.text_buf.text-buf-test-assert-text-buf
@@ -359,12 +362,12 @@
       [buf : TextBuf (stdlib.text_buf.append (stdlib.text_buf.empty) "drop")]
       (stdlib.text_buf.clear! buf)
       (stdlib.text_buf.text-buf-test-assert-text-buf
-        (clone buf)
+        (clone-text-buf (& buf))
         ""
         "mutable clear empties buffer")
       (stdlib.text_buf.append! buf "again")
       (stdlib.text_buf.text-buf-test-assert-text-buf
-        (clone buf)
+        (clone-text-buf (& buf))
         "again"
         "mutable append after clear")
       (stdlib.text_buf.reset! buf)

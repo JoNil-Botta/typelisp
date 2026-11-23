@@ -11184,4 +11184,8 @@
          (TailCall _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
          (TotalEnumSwitch _ _ _ _ _))
       true]
+    [(or (Call _ _ _ ty) (CallIndirect _ _ _ ty) (CallIndirectC _ _ _ ty))
+      (match (& ty)
+        [(ast.AstType.Never) true]
+        [_ false])]
     [_ false]))

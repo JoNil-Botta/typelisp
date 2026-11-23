@@ -1,3 +1,4 @@
+(import stdlib.string)
 (import stdlib.io)
 
 (defstruct Store
@@ -7,7 +8,7 @@
 (defmacro (first-slot [b : Expr]) : Expr
   `(let
     [s (& (box-get ,b))]
-    (clone (array-ref s.slots 0))))
+    (string.copy (& (array-ref s.slots 0)))))
 
 (define (first-via-ref [b : (& b (Box Store))]) : String
   (first-slot b))

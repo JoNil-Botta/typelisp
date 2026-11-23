@@ -1,3 +1,4 @@
+(import stdlib.string)
 (import stdlib.byte_buf)
 (import stdlib.ssh_wire_core as wire)
 (import stdlib.test)
@@ -197,8 +198,8 @@
   [message : String]) : unit
   (let
     [d : wire.SshDecoder (decode-name-list encoded (small-limits))]
-    (test.assert-true d.failed (clone message))
-    (test.assert-i64-eq d.error.code code (clone message))
+    (test.assert-true d.failed (string.copy (& message)))
+    (test.assert-i64-eq d.error.code code (string.copy (& message)))
     (test.assert-i64-eq d.error.offset offset message)))
 
 (define (assert-name-lists) : unit
@@ -318,7 +319,7 @@
 (define (assert-mpint-error [encoded : String] [code : i64] [message : String]) : unit
   (let
     [d : wire.SshDecoder (decode-mpint encoded)]
-    (test.assert-true d.failed (clone message))
+    (test.assert-true d.failed (string.copy (& message)))
     (test.assert-i64-eq d.error.code code message)))
 
 (define (assert-mpints) : unit
@@ -549,7 +550,7 @@
           (bytes-eq?
             (byte_buf.as-bytes (& split))
             (byte_buf.as-bytes (& whole)))
-          (clone message))
+          (string.copy (& message)))
         (set! chunk (+ chunk 1))))))
 
 (define (ident-error-code [text : String] [accept-banner : bool]) : i64
@@ -698,7 +699,7 @@
       (let
         [exact : byte_buf.ByteBuf
           (byte_buf.push
-            (byte_buf.push (clone buf) (cast 13 : u8))
+            (byte_buf.push (byte_buf.clone-byte-buf (& buf)) (cast 13 : u8))
             (cast 10 : u8))]
         [exact-text : String (byte_buf.to-string exact)]
         (test.assert-i64-eq
@@ -898,7 +899,7 @@
           (bytes-eq?
             (byte_buf.as-bytes (& split))
             (byte_buf.as-bytes (& whole)))
-          (clone message))
+          (string.copy (& message)))
         (set! chunk (+ chunk 1))))))
 
 (define (assert-clear-packets) : unit
@@ -951,8 +952,8 @@
     (test.assert-i64-eq
       (cast (byte_buf.bytes-ref view 0) : i64)
       70
-      (clone message))
-    (test.assert-i64-eq (wire.read-be view 1 4) code (clone message))
+      (string.copy (& message)))
+    (test.assert-i64-eq (wire.read-be view 1 4) code (string.copy (& message)))
     (test.assert-i64-eq (wire.read-be view 5 4) offset message)))
 
 (define (assert-malformed-packets) : unit

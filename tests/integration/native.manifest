@@ -565,7 +565,7 @@ clone_read_receiver_lent|all|0,1,2|tests/integration/clone_read_receiver_lent.tl
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_deep_expression|all|-,0,1,2|tests/integration/clone_deep_expression.tl|42|-|-|clone_deep_expression_owner.tl stdlib/arena.tl stdlib/clone.tl stdlib/comptime.tl stdlib/hashmap.tl stdlib/string.tl stdlib/vector.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
-explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
+explicit_clone_generation|all|-,0,1,2|tests/integration/explicit_clone_generation.tl|42|-|-|explicit_clone_generation_owner.tl stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 enum_same_name_clone|all|0,1,2|tests/integration/enum_same_name_clone.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 enum_same_name_scratch|all|0,1,2|tests/integration/enum_same_name_scratch.tl|42|-|-|-|-
 clone_dynarray_scalar_bulk|all|-|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-

@@ -129,7 +129,8 @@
         (tc.tc-prefix-default-cache-scope)
         pools
         source-names
-        (ci.intern-compat-state-capture-active))]
+        (ci.intern-compat-state-capture-active)
+        false)]
     (match checked
       [(Partial diag _ _ _)
         (tc.tc-clone-root-collection-abort! job-state)

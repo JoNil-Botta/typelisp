@@ -1533,7 +1533,8 @@
       (tli-read-extern-link-inputs! rd pool)]
     [params : (__tl_dyn-array tli.TliParam) (tli-read-params! rd pool true)]
     [ret : tli.TliType (tli-read-type! rd pool true 1)]
-    [effect-flags : i64 (tli-read-flags! rd 191)]
+    [effect-flags : i64
+      (tli-read-flags! rd (bit-or 191 tli.tli-fn-stores-ambient-arena-arg))]
     (when
       (= 0 (bit-and effect-flags 2))
       (tli-check-runtime-signature! rd (& params) (& ret)))

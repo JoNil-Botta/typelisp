@@ -1,6 +1,8 @@
 ;; A Box field reached through a reference keeps its origin, while owned
 ;; moves, explicit clones, shared reads, Copy fields and writes through a
 ;; mutable view stay accepted (#8927).
+(import stdlib.clone)
+
 (defstruct Inner
   (b (Box i64)))
 
@@ -21,7 +23,7 @@
 ;; caller's box unchanged.
 (define (clone-and-write [r : (& r Holder)]) : i64
   (let
-    [copy : (Box i64) (clone r.b)]
+    [copy : (Box i64) (clone.deep r.b)]
     (set! (deref copy) 100)
     (deref copy)))
 

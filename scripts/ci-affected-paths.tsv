@@ -302,6 +302,8 @@ src/compiler_stack_traffic.tl	stage2-selfhost-compile-manifest	@compiler	Direct 
 src/compiler_state_schema.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_symbols.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_tli_codec.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by the compile manifest.
+src/compiler_tli_extract.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked interface extraction.
+src/compiler_tli_extract_tests.tl	stage2-inline-typelisp-tests	@compiler	Checked interface extraction and wire round trip.
 src/compiler_tli_types.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by the compile manifest.
 src/compiler_typecheck_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -761,3 +763,4 @@ stdlib/crypto_secret.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt nat
 stdlib/tests/crypto_aes128_gcm_inline.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.
 stdlib/tests/crypto_aes128_gcm_kat_inline.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.
 tests/addr-taken-matrix/*	stage2-addr-taken-matrix	@corpus	Adversarial address-taken-local programs compiled and run at opt0/1/2; pending/ leaders move here as their fixes land.
+tools/embedded-stdlib-tli/roundtrip.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked embedded stdlib interface round trip.

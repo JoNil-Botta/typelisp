@@ -5061,6 +5061,37 @@
             false
             (tc-literal-type-checked literal))])]))
 
+;; Operands and modes describe the capture replay. Keep their construction
+;; inside that branch so a type query only runs the legacy kernel.
+(defmacro (tc-infer-selected-staged-form
+  [ctx : Expr]
+  [env : Expr]
+  [expr : Expr]
+  [code : Expr]
+  [operands : Expr]
+  [modes : Expr]
+  [syntax : Expr]
+  [expected : Expr]
+  [source : Expr]
+  [sink : Expr]) : Expr
+  `(match ,sink
+    [(TcSelectedSink.Query)
+      (tc-selected-unrepresented
+        (tc-infer-selected-legacy ,ctx ,env ,expr ,syntax ,expected)
+        TcSelectedSink.Query)]
+    [(TcSelectedSink.Capture store lease bindings)
+      (tc-infer-selected-form
+        ,ctx
+        ,env
+        ,expr
+        ,code
+        ,operands
+        ,modes
+        ,syntax
+        ,expected
+        ,source
+        (TcSelectedSink.Capture store lease bindings))]))
+
 (define (tc-infer-selected-inner
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -5468,7 +5499,7 @@
           ;; element: the others are evaluated and dropped, so only the selected
           ;; element's loans flow into the result (form 154).
           [(tc-selected-literal-select? ctx env receiver index)
-            (tc-infer-selected-form
+            (tc-infer-selected-staged-form
               ctx
               env
               expr
@@ -5493,42 +5524,19 @@
                 syntax
                 source
                 sink))]))]
-    [(ast.AstExpr.Array items)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-array-literal)
-        (tc-selected-list-ids (& items))
-        (tc-selected-modes (ast.ast-expr-list-len (& items)) 7)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.DynArray items)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-dyn-array-literal)
-        (tc-selected-list-ids (& items))
-        (tc-selected-modes (ast.ast-expr-list-len (& items)) 7)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.Box inner-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-box)
-        (tc-selected-ids1 inner-id)
-        (tc-selected-ids1 2)
-        syntax
-        expected
-        source
-        sink)]
+    [(or (ast.AstExpr.Array _) (ast.AstExpr.DynArray _) (ast.AstExpr.Box _)
+         (ast.AstExpr.BoxSet _ _) (ast.AstExpr.CpuIdEax _ _)
+         (ast.AstExpr.CpuIdEbx _ _) (ast.AstExpr.CpuIdEcx _ _)
+         (ast.AstExpr.CpuIdEdx _ _) (ast.AstExpr.Xgetbv _)
+         (ast.AstExpr.Syscall _) (ast.AstExpr.StringFromBytes _ _)
+         (ast.AstExpr.ArrayData _) (ast.AstExpr.StringData _)
+         (ast.AstExpr.MakeArray _ _) (ast.AstExpr.FixedMakeArray _ _)
+         (ast.AstExpr.ArrayTake _ _ _) (ast.AstExpr.Quote _)
+         (ast.AstExpr.Quasiquote _) (ast.AstExpr.BinaryData _)
+         (ast.AstExpr.ProgramEnvp) (ast.AstExpr.ProgramArgc)
+         (ast.AstExpr.ProgramArgv) (ast.AstExpr.ArrayPush _ _)
+         (ast.AstExpr.StringRef _ _))
+      (tc-infer-selected-data-form ctx env expr syntax expected source sink)]
     [(ast.AstExpr.BoxTake receiver)
       (tc-infer-selected-deref
         ctx
@@ -5547,83 +5555,6 @@
         env
         expr
         receiver
-        syntax
-        expected
-        source
-        sink)]
-    ;; `(set! (deref b) v)`: a conflict on the written box or referent is
-    ;; reported at `b`, as an assignment to it.
-    [(ast.AstExpr.BoxSet box-id value-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-box-set)
-        (tc-selected-ids2 box-id value-id)
-        (tc-selected-ids2 8 6)
-        syntax
-        expected
-        source
-        sink)]
-    ;; `(syscall n args ...)` and `(string-from-bytes ptr len)` (unsafe) read
-    ;; integer and raw-pointer values only: no operand is a tracked place.
-    ;; CPU feature instructions (forms 130-134): plain integer operands.
-    [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        130
-        (tc-selected-ids2 leaf-id subleaf-id)
-        (tc-selected-modes 2 2)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        131
-        (tc-selected-ids2 leaf-id subleaf-id)
-        (tc-selected-modes 2 2)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        132
-        (tc-selected-ids2 leaf-id subleaf-id)
-        (tc-selected-modes 2 2)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        133
-        (tc-selected-ids2 leaf-id subleaf-id)
-        (tc-selected-modes 2 2)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.Xgetbv register-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        134
-        (tc-selected-ids1 register-id)
-        (tc-selected-modes 1 2)
         syntax
         expected
         source
@@ -5648,191 +5579,26 @@
         expected
         source
         sink)]
-    [(ast.AstExpr.Syscall args)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-syscall)
-        (tc-selected-list-ids (& args))
-        (tc-selected-modes (ast.ast-expr-list-len (& args)) 2)
-        syntax
-        expected
-        source
+    ;; These macro-only operands keep the legacy typing and diagnostics.
+    ;; Type literals are Expr values inside a transformer.
+    [(ast.AstExpr.TypeLiteral ty-id)
+      (tc-selected-unrepresented (tc-type-literal-expr-type ctx ty-id) sink)]
+    [(ast.AstExpr.BracketClause _)
+      (TcSelectedResult.Err
+        "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand"
         sink)]
-    [(ast.AstExpr.StringFromBytes ptr-id len-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-string-from-bytes)
-        (tc-selected-ids2 ptr-id len-id)
-        (tc-selected-ids2 2 3)
-        syntax
-        expected
-        source
+    [(ast.AstExpr.Unquote _)
+      (TcSelectedResult.Err
+        "typecheck: unquote is only valid inside quasiquote"
         sink)]
-    [(ast.AstExpr.ArrayData array-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-array-data)
-        (tc-selected-ids1 array-id)
-        (tc-selected-ids1 0)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.StringData str-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-string-data)
-        (tc-selected-ids1 str-id)
-        (tc-selected-ids1 0)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.MakeArray _ len-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-make-array)
-        (tc-selected-ids1 len-id)
-        (tc-selected-ids1 3)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.FixedMakeArray _ len-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-fixed-make-array)
-        (tc-selected-ids1 len-id)
-        (tc-selected-ids1 3)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.ArrayTake array-id live-id index-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-array-take)
-        (tc-selected-ids3 array-id live-id index-id)
-        (tc-selected-ids3 8 1 3)
-        syntax
-        expected
-        source
-        sink)]
-    ;; Embedded bytes and the environment pointer are fresh values with no
-    ;; operands.
-    ;; A quoted template is a fresh syntax value; a quasiquote reads each
-    ;; unquoted `Expr` or spliced `ExprList` (Copy handles) into it.
-    [(ast.AstExpr.Quote _)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-fresh-data)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.Quasiquote template)
-      (let
-        [operands : (__tl_dyn-array i64) (tc-selected-no-i64s)]
-        [modes : (__tl_dyn-array i64) (tc-selected-no-i64s)]
-        (tc-selected-quasiquote-operands!
-          ctx
-          (tc-context-expr-get ctx template)
-          (&mut operands))
-        (while (< (array-length modes) (array-length operands))
-          (tc-selected-i64s-push! (&mut modes) 2))
-        (tc-infer-selected-form
-          ctx
-          env
-          expr
-          (tc-selected-form-code-quasiquote)
-          operands
-          modes
-          syntax
-          expected
-          source
-          sink))]
-    [(ast.AstExpr.BinaryData _)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-fresh-data)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.ProgramEnvp)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-fresh-data)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.ProgramArgc)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-program-argc)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.ProgramArgv)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-program-argv)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.ArrayPush array-id value-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-array-push)
-        (tc-selected-ids2 array-id value-id)
-        (tc-selected-ids2 8 4)
-        syntax
-        expected
-        source
+    [(ast.AstExpr.UnquoteSplicing _)
+      (TcSelectedResult.Err
+        "typecheck: unquote-splicing is only valid inside quasiquote"
         sink)]
     [(ast.AstExpr.ArraySet array-id index-id value-id)
       (if (tc-selected-slice-reference? ctx env array-id)
         ;; A slice element is written through the (mutable) reference.
-        (tc-infer-selected-form
+        (tc-infer-selected-staged-form
           ctx
           env
           expr
@@ -5878,7 +5644,7 @@
                   ctx
                   (tc-context-expr-get ctx array-id)))
               (= (tc-selected-receiver-mode ctx array-id) 2))
-            (tc-infer-selected-form
+            (tc-infer-selected-staged-form
               ctx
               env
               expr
@@ -5904,7 +5670,7 @@
               sink)]
           [(tc-selected-fixed-element-store? ctx env array-id index-id)
             ;; An exact fixed-array element: named and located as legacy.
-            (tc-infer-selected-form
+            (tc-infer-selected-staged-form
               ctx
               env
               expr
@@ -5916,7 +5682,7 @@
               source
               sink)]
           [else
-            (tc-infer-selected-form
+            (tc-infer-selected-staged-form
               ctx
               env
               expr
@@ -5927,23 +5693,11 @@
               expected
               source
               sink)]))]
-    [(ast.AstExpr.StringRef str-id index-id)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-string-ref)
-        (tc-selected-ids2 str-id index-id)
-        (tc-selected-ids2 0 3)
-        syntax
-        expected
-        source
-        sink)]
     ;; A comparison of move-only values (strings, aggregates) reads both
     ;; operands through shared borrows, as Rust's `PartialEq::eq(&a, &b)`.
     [(ast.AstExpr.Binary op left-id right-id)
       (if (tc-selected-borrowing-comparison? ctx env op left-id)
-        (tc-infer-selected-form
+        (tc-infer-selected-staged-form
           ctx
           env
           expr
@@ -6017,8 +5771,8 @@
           (tc-infer-selected-with-resource-scoped
             ctx
             env
-            (& bindings)
-            (& body)
+            bindings
+            body
             syntax
             expected
             source
@@ -6160,22 +5914,16 @@
         syntax
         source
         sink)]
-    ;; A bare unsafe block (without a span) types like the legacy bare form:
-    ;; inferred alone, then adapted to the context.
     [(ast.AstExpr.Unsafe exprs)
-      (tc-selected-contextual-result
+      (tc-infer-selected-unsafe
         ctx
         env
+        (& exprs)
+        syntax
         expected
-        (tc-infer-selected-unsafe
-          ctx
-          env
-          (& exprs)
-          syntax
-          ast.AstMaybeType.No
-          TcMaybeAstSourceSpan.No
-          source
-          sink))]
+        TcMaybeAstSourceSpan.No
+        source
+        sink)]
     [(ast.AstExpr.Cast inner-id ty-id)
       (tc-selected-contextual-result
         ctx
@@ -10172,6 +9920,14 @@
       sink))
     [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
     [(TcSelectedResult.Ok arena-ty arena-occurrence noted)
+      (when
+        (not (tc-arena-allocation-target? ctx (tc-global-shared-view arena-ty)))
+        (return
+          (TcSelectedResult.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.ArenaOwnership)
+              "typecheck: in-arena arena must be Arena")
+            noted)))
       (let
         [next : (TcSelectedSink store lease intern bind)
           (match (tc-in-arena-region
@@ -10191,102 +9947,93 @@
                 ctx
                 (tc-arena-store-regionless-key arena-id))
               noted])]
-        (if (not
-          (tc-arena-allocation-target? ctx (tc-global-shared-view arena-ty)))
-          (TcSelectedResult.Err
-            (tc-kind-message
-              (cdiag.CompilerTypecheckKind.ArenaOwnership)
-              "typecheck: in-arena arena must be Arena")
-            next)
-          (let
-            [arena : ast.AstExpr (tc-context-expr-get ctx arena-id)]
-            [body-env : TcTypeEnv
-              (tc-in-arena-body-env
-                ctx
-                env
-                (tc-global-shared-view arena)
-                (tc-global-shared-view arena-ty))]
-            (match (tc-infer-selected-begin
-              ctx
-              body-env
-              body
-              typed.TypedSyntax.Generated
-              expected
-              (tc-global-shared-view source)
-              next)
-              [(TcSelectedResult.Err message after)
-                (TcSelectedResult.Err message after)]
-              [(TcSelectedResult.Ok body-ty body-occurrence after)
-                (let
-                  [result-ty : ast.AstType
-                    (tc-in-arena-body-result
-                      ctx
-                      env
-                      (tc-global-shared-view arena)
-                      (tc-global-shared-view arena-ty)
-                      (tc-global-shared-view body-ty))]
-                  (match arena-occurrence
-                    [(TcSelectedOccurrence.Selected arena-child)
-                      (match body-occurrence
-                        [(TcSelectedOccurrence.Selected body-child)
-                          (if (or
-                            (tc-selected-same-type?
-                              (tc-global-shared-view result-ty)
+        [arena : ast.AstExpr (tc-context-expr-get ctx arena-id)]
+        [body-env : TcTypeEnv
+          (tc-in-arena-body-env
+            ctx
+            env
+            (tc-global-shared-view arena)
+            (tc-global-shared-view arena-ty))]
+        (match (tc-infer-selected-begin
+          ctx
+          body-env
+          body
+          typed.TypedSyntax.Generated
+          expected
+          (tc-global-shared-view source)
+          next)
+          [(TcSelectedResult.Err message after)
+            (TcSelectedResult.Err message after)]
+          [(TcSelectedResult.Ok body-ty body-occurrence after)
+            (let
+              [result-ty : ast.AstType
+                (tc-in-arena-body-result
+                  ctx
+                  env
+                  (tc-global-shared-view arena)
+                  (tc-global-shared-view arena-ty)
+                  (tc-global-shared-view body-ty))]
+              (match arena-occurrence
+                [(TcSelectedOccurrence.Selected arena-child)
+                  (match body-occurrence
+                    [(TcSelectedOccurrence.Selected body-child)
+                      (if (or
+                        (tc-selected-same-type?
+                          (tc-global-shared-view result-ty)
+                          (tc-global-shared-view body-ty))
+                        (and
+                          (or
+                            ;; A Copy value read from arena storage leaves
+                            ;; with the arena's tag erased: a copy of the
+                            ;; value.
+                            (tc-type-copyable?
+                              ctx
                               (tc-global-shared-view body-ty))
-                            (and
-                              (or
-                                ;; A Copy value read from arena storage leaves
-                                ;; with the arena's tag erased: a copy of the
-                                ;; value.
-                                (tc-type-copyable?
-                                  ctx
-                                  (tc-global-shared-view body-ty))
-                                ;; An untagged body value (a fresh literal in a
-                                ;; scratch body) takes the arena's tag: only a
-                                ;; tag is added, and the graph erases tags.
-                                (match (tc-type-outer-region
-                                  (tc-global-shared-view body-ty))
-                                  [(Some _) false]
-                                  [(No) true]))
-                              (tc-selected-same-type?
-                                (tc-selected-strip-arena-tags
-                                  ctx
-                                  body-env
-                                  (tc-global-shared-view result-ty))
-                                (tc-selected-strip-arena-tags
-                                  ctx
-                                  body-env
-                                  (tc-global-shared-view body-ty)))))
-                            (let
-                              [children : (__tl_dyn-array
-                                typed.TypedOccurrenceId)
-                                (__tl_make-array typed.TypedOccurrenceId 2)]
-                              (set! (array-ref children 0) arena-child)
-                              (set! (array-ref children 1) body-child)
-                              (tc-selected-publish
-                                (ResultTcType.Ok result-ty)
-                                syntax
-                                source
-                                (typed.TypedOperation.Primitive
-                                  (typed.TypedPrimitive.Builtin
-                                    (tc-selected-form-code-in-arena)
-                                    2))
-                                children
-                                after))
-                            (TcSelectedResult.Ok
-                              result-ty
-                              TcSelectedOccurrence.Unrepresented
-                              after))]
-                        [(TcSelectedOccurrence.Unrepresented)
-                          (TcSelectedResult.Ok
-                            result-ty
-                            TcSelectedOccurrence.Unrepresented
-                            after)])]
+                            ;; An untagged body value (a fresh literal in a
+                            ;; scratch body) takes the arena's tag: only a
+                            ;; tag is added, and the graph erases tags.
+                            (match (tc-type-outer-region
+                              (tc-global-shared-view body-ty))
+                              [(Some _) false]
+                              [(No) true]))
+                          (tc-selected-same-type?
+                            (tc-selected-strip-arena-tags
+                              ctx
+                              body-env
+                              (tc-global-shared-view result-ty))
+                            (tc-selected-strip-arena-tags
+                              ctx
+                              body-env
+                              (tc-global-shared-view body-ty)))))
+                        (let
+                          [children : (__tl_dyn-array typed.TypedOccurrenceId)
+                            (__tl_make-array typed.TypedOccurrenceId 2)]
+                          (set! (array-ref children 0) arena-child)
+                          (set! (array-ref children 1) body-child)
+                          (tc-selected-publish
+                            (ResultTcType.Ok result-ty)
+                            syntax
+                            source
+                            (typed.TypedOperation.Primitive
+                              (typed.TypedPrimitive.Builtin
+                                (tc-selected-form-code-in-arena)
+                                2))
+                            children
+                            after))
+                        (TcSelectedResult.Ok
+                          result-ty
+                          TcSelectedOccurrence.Unrepresented
+                          after))]
                     [(TcSelectedOccurrence.Unrepresented)
                       (TcSelectedResult.Ok
                         result-ty
                         TcSelectedOccurrence.Unrepresented
-                        after)]))]))))]))
+                        after)])]
+                [(TcSelectedOccurrence.Unrepresented)
+                  (TcSelectedResult.Ok
+                    result-ty
+                    TcSelectedOccurrence.Unrepresented
+                    after)]))]))]))
 
 ;; `(ann e : T)` typed as legacy `tc-expr-inner`: `e` is typed against `T` and
 ;; must be compatible with it. The form is `e` itself when its checked type is
@@ -14212,6 +13959,11 @@
   (match (tc-infer-selected-legacy ctx env expr syntax expected)
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
+      (when
+        (match (& sink)
+          [(TcSelectedSink.Query) true]
+          [_ false])
+        (return (tc-selected-unrepresented (ResultTcType.Ok ty) sink)))
       (match (tc-resolve-type ctx (tc-global-shared-view ty))
         [(ast.AstType.Tuple elems)
           (let
@@ -14418,6 +14170,188 @@
                 (tc-selected-unrepresented (ResultTcType.Ok ty) next))]
             [(TcSelectedOccurrence.Unrepresented)
               (tc-selected-unrepresented (ResultTcType.Ok ty) next)])])]))
+
+(defstruct TcSelectedFormPlan
+  (code i64)
+  (operands (__tl_dyn-array i64))
+  (modes (__tl_dyn-array i64)))
+
+(define (tc-infer-selected-data-form
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (when
+    (match (& sink)
+      [(TcSelectedSink.Query) true]
+      [_ false])
+    (return
+      (tc-selected-unrepresented
+        (tc-infer-selected-legacy ctx env expr syntax expected)
+        sink)))
+  (let
+    [plan : TcSelectedFormPlan
+      (match (tc-global-shared-view expr)
+        [(ast.AstExpr.Array items)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-array-literal)
+            (tc-selected-list-ids (& items))
+            (tc-selected-modes (ast.ast-expr-list-len (& items)) 7))]
+        [(ast.AstExpr.DynArray items)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-dyn-array-literal)
+            (tc-selected-list-ids (& items))
+            (tc-selected-modes (ast.ast-expr-list-len (& items)) 7))]
+        [(ast.AstExpr.Box inner-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-box)
+            (tc-selected-ids1 inner-id)
+            (tc-selected-ids1 2))]
+        ;; `(set! (deref b) v)`: a conflict on the written box or referent is
+        ;; reported at `b`, as an assignment to it.
+        [(ast.AstExpr.BoxSet box-id value-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-box-set)
+            (tc-selected-ids2 box-id value-id)
+            (tc-selected-ids2 8 6))]
+        ;; `(syscall n args ...)` and `(string-from-bytes ptr len)` (unsafe) read
+        ;; integer and raw-pointer values only: no operand is a tracked place.
+        ;; CPU feature instructions (forms 130-134): plain integer operands.
+        [(ast.AstExpr.CpuIdEax leaf-id subleaf-id)
+          (TcSelectedFormPlan
+            130
+            (tc-selected-ids2 leaf-id subleaf-id)
+            (tc-selected-modes 2 2))]
+        [(ast.AstExpr.CpuIdEbx leaf-id subleaf-id)
+          (TcSelectedFormPlan
+            131
+            (tc-selected-ids2 leaf-id subleaf-id)
+            (tc-selected-modes 2 2))]
+        [(ast.AstExpr.CpuIdEcx leaf-id subleaf-id)
+          (TcSelectedFormPlan
+            132
+            (tc-selected-ids2 leaf-id subleaf-id)
+            (tc-selected-modes 2 2))]
+        [(ast.AstExpr.CpuIdEdx leaf-id subleaf-id)
+          (TcSelectedFormPlan
+            133
+            (tc-selected-ids2 leaf-id subleaf-id)
+            (tc-selected-modes 2 2))]
+        [(ast.AstExpr.Xgetbv register-id)
+          (TcSelectedFormPlan
+            134
+            (tc-selected-ids1 register-id)
+            (tc-selected-modes 1 2))]
+        [(ast.AstExpr.Syscall args)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-syscall)
+            (tc-selected-list-ids (& args))
+            (tc-selected-modes (ast.ast-expr-list-len (& args)) 2))]
+        [(ast.AstExpr.StringFromBytes ptr-id len-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-string-from-bytes)
+            (tc-selected-ids2 ptr-id len-id)
+            (tc-selected-ids2 2 3))]
+        [(ast.AstExpr.ArrayData array-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-array-data)
+            (tc-selected-ids1 array-id)
+            (tc-selected-ids1 0))]
+        [(ast.AstExpr.StringData str-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-string-data)
+            (tc-selected-ids1 str-id)
+            (tc-selected-ids1 0))]
+        [(ast.AstExpr.MakeArray _ len-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-make-array)
+            (tc-selected-ids1 len-id)
+            (tc-selected-ids1 3))]
+        [(ast.AstExpr.FixedMakeArray _ len-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-fixed-make-array)
+            (tc-selected-ids1 len-id)
+            (tc-selected-ids1 3))]
+        [(ast.AstExpr.ArrayTake array-id live-id index-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-array-take)
+            (tc-selected-ids3 array-id live-id index-id)
+            (tc-selected-ids3 8 1 3))]
+        [(ast.AstExpr.Quote _)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-fresh-data)
+            (tc-selected-no-i64s)
+            (tc-selected-no-i64s))]
+        ;; Embedded bytes and the environment pointer are fresh values with no
+        ;; operands.
+        [(ast.AstExpr.BinaryData _)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-fresh-data)
+            (tc-selected-no-i64s)
+            (tc-selected-no-i64s))]
+        [(ast.AstExpr.ProgramEnvp)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-fresh-data)
+            (tc-selected-no-i64s)
+            (tc-selected-no-i64s))]
+        [(ast.AstExpr.ProgramArgc)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-program-argc)
+            (tc-selected-no-i64s)
+            (tc-selected-no-i64s))]
+        [(ast.AstExpr.ProgramArgv)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-program-argv)
+            (tc-selected-no-i64s)
+            (tc-selected-no-i64s))]
+        [(ast.AstExpr.ArrayPush array-id value-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-array-push)
+            (tc-selected-ids2 array-id value-id)
+            (tc-selected-ids2 8 4))]
+        [(ast.AstExpr.StringRef str-id index-id)
+          (TcSelectedFormPlan
+            (tc-selected-form-code-string-ref)
+            (tc-selected-ids2 str-id index-id)
+            (tc-selected-ids2 0 3))]
+        ;; Only Capture builds a plan for the children of a syntax template.
+        [(ast.AstExpr.Quasiquote template)
+          (let
+            [operands : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+            (tc-selected-quasiquote-operands!
+              ctx
+              (tc-context-expr-get ctx template)
+              (&mut operands))
+            (let
+              [modes : (__tl_dyn-array i64)
+                (tc-selected-modes (array-length operands) 2)]
+              (TcSelectedFormPlan
+                (tc-selected-form-code-quasiquote)
+                operands
+                modes)))]
+        [_
+          (return
+            (TcSelectedResult.Err "typecheck: invalid selected data form" sink))])]
+    (match plan
+      [(TcSelectedFormPlan code operands modes)
+        (tc-infer-selected-form
+          ctx
+          env
+          expr
+          code
+          operands
+          modes
+          syntax
+          expected
+          source
+          sink)])))
 
 (define (tc-infer-selected-form
   [ctx : TcContext]
@@ -15081,6 +15015,11 @@
     expected)
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
+      (when
+        (match (& sink)
+          [(TcSelectedSink.Query) true]
+          [_ false])
+        (return (tc-selected-unrepresented (ResultTcType.Ok ty) sink)))
       (match (tc-infer-selected-form-operands
         ctx
         env
@@ -18501,15 +18440,22 @@
         [(ResultTcType.Err checked) checked]
         [(ResultTcType.Ok _) message])]))
 
+;; Only Capture retains checked argument occurrences and signature roles.
+(defenum TcSelectedCallStaging
+  (Query)
+  (Capture (__tl_dyn-array typed.TypedOccurrenceId) (__tl_dyn-array bool)))
+
+(defenum TcSelectedCallArgsResult
+  (:lifetimes store lease intern bind)
+  (Ok TcSelectedCallStaging bool (TcSelectedSink store lease intern bind))
+  (Err String (TcSelectedSink store lease intern bind)))
+
 (define (tc-infer-selected-call-args
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : ast.AstExpr]
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstTypeList)]
-  ;; Per parameter: whether the signature brands it with an arena
-  ;; (`tc-selected-arena-branded-params`).
-  [branded : (& branded (__tl_dyn-array bool))]
   [allow-region-args : bool]
   ;; A constructor's result: its arguments are stored into it.
   [constructor : ast.AstMaybeType]
@@ -18526,10 +18472,10 @@
   ;; `tc-call-arena-store-region`, once per call.
   [arena-region : i64]
   [index : i64]
-  [children : (__tl_dyn-array typed.TypedOccurrenceId)]
+  [staging : TcSelectedCallStaging]
   [represented? : bool]
   [source : ownership.OwnershipSource]
-  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedArgsResult
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedCallArgsResult
     store
     lease
     intern
@@ -18546,8 +18492,8 @@
           (tc-global-shared-view func)
           -1
           (No))
-        (TcSelectedArgsResult.Ok children represented? sink))
-      (TcSelectedArgsResult.Err
+        (TcSelectedCallArgsResult.Ok staging represented? sink))
+      (TcSelectedCallArgsResult.Err
         (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg)
         sink))
     (let
@@ -18567,7 +18513,7 @@
         (tc-global-shared-view arg)
         (tc-global-shared-view want))
         [(ResultTcExpr.Err message)
-          (TcSelectedArgsResult.Err
+          (TcSelectedCallArgsResult.Err
             (tc-locate-error-at-expr (tc-context-expr-bases ctx) arg message)
             sink)]
         [(ResultTcExpr.Ok effective-arg)
@@ -18739,7 +18685,7 @@
                                 represented?
                                 sink)]))))])]))
             [(TcSelectedResult.Err message next)
-              (TcSelectedArgsResult.Err message next)]
+              (TcSelectedCallArgsResult.Err message next)]
             [(TcSelectedResult.Ok got child next)
               (when
                 collect-arg-types?
@@ -18750,7 +18696,7 @@
                 (tc-global-shared-view got)
                 (tc-global-shared-view want))
                 [(TcInferredTypeMatch.Mismatch actual)
-                  (TcSelectedArgsResult.Err
+                  (TcSelectedCallArgsResult.Err
                     (tc-locate-error-at-expr
                       (tc-context-expr-bases ctx)
                       arg
@@ -18786,7 +18732,7 @@
                       (tc-type-regions-all-scratch? (tc-global-shared-view got)))
                     (not (tc-type-contains-reference? (& got)))
                     (not (tc-tagged-arena-handle-borrow? ctx (clone got) want)))
-                    (TcSelectedArgsResult.Err
+                    (TcSelectedCallArgsResult.Err
                       (tc-region-call-arg-error
                         (tc-context-expr-bases ctx)
                         (tc-global-shared-view effective-arg))
@@ -18807,48 +18753,59 @@
                                   (clone got))]
                               [(ResultTcUnit.Err message)
                                 (ResultTcUnit.Err message)])])]
-                      [selected? : bool
-                        (match child
-                          [(TcSelectedOccurrence.Selected id)
-                            (set! (array-ref children index) id)
-                            true]
-                          [(TcSelectedOccurrence.Unrepresented) false])]
                       (match stored
                         [(ResultTcUnit.Err message)
-                          (TcSelectedArgsResult.Err message next)]
+                          (TcSelectedCallArgsResult.Err message next)]
                         [(ResultTcUnit.Ok)
                           (when
                             (match (& constructor)
                               [(ast.AstMaybeType.Some _) true]
                               [(ast.AstMaybeType.No) false])
                             (tc-type-join-regions-into! env constructed (& got)))
-                          (tc-infer-selected-call-args
-                            ctx
-                            env
-                            func
-                            args
-                            params
-                            branded
-                            allow-region-args
-                            constructor
-                            constructed
-                            collect-arg-types?
-                            arg-types
-                            arity-msg
-                            arena-region
-                            (+ index 1)
-                            children
-                            (and
-                              represented?
-                              selected?
-                              (or
-                                (>= index (array-length branded))
-                                (not (array-ref branded index))
-                                (tc-selected-arena-brand-exact?
-                                  (tc-global-shared-view got)
-                                  (tc-global-shared-view want))))
-                            source
-                            next)])))])])]))))
+                          (let
+                            [next-represented? : bool false]
+                            [next-staging : TcSelectedCallStaging
+                              (match staging
+                                [(TcSelectedCallStaging.Query)
+                                  TcSelectedCallStaging.Query]
+                                [(TcSelectedCallStaging.Capture
+                                  children
+                                  branded)
+                                  (match child
+                                    [(TcSelectedOccurrence.Selected id)
+                                      (set! (array-ref children index) id)
+                                      (set!
+                                        next-represented?
+                                        (and
+                                          represented?
+                                          (or
+                                            (>= index (array-length branded))
+                                            (not (array-ref branded index))
+                                            (tc-selected-arena-brand-exact?
+                                              (tc-global-shared-view got)
+                                              (tc-global-shared-view want)))))]
+                                    [(TcSelectedOccurrence.Unrepresented) unit])
+                                  (TcSelectedCallStaging.Capture
+                                    children
+                                    branded)])]
+                            (tc-infer-selected-call-args
+                              ctx
+                              env
+                              func
+                              args
+                              params
+                              allow-region-args
+                              constructor
+                              constructed
+                              collect-arg-types?
+                              arg-types
+                              arity-msg
+                              arena-region
+                              (+ index 1)
+                              next-staging
+                              next-represented?
+                              source
+                              next))])))])])]))))
 
 ;; The region tags (`(in r T)`) anywhere in a type.
 (define (tc-selected-region-tags-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
@@ -19267,8 +19224,15 @@
                       (return (TcSelectedResult.Err message sink))])]
                 [declared-view : ast.AstTypeList
                   (tc-global-shared-view declared-params)]
-                [branded : (__tl_dyn-array bool)
-                  (tc-selected-arena-branded-params ctx (& declared-params))]
+                [staging : TcSelectedCallStaging
+                  (match (& sink)
+                    [(TcSelectedSink.Query) TcSelectedCallStaging.Query]
+                    [(TcSelectedSink.Capture _ _ _)
+                      (TcSelectedCallStaging.Capture
+                        (__tl_make-array typed.TypedOccurrenceId args.len)
+                        (tc-selected-arena-branded-params
+                          ctx
+                          (& declared-params)))])]
                 [params : ast.AstTypeList
                   (if (ast.ast-lifetime-list-empty? (& lifetimes))
                     declared-params
@@ -19279,8 +19243,6 @@
                   (if (ast.ast-lifetime-list-empty? (& lifetimes))
                     declared-ret
                     (tc-lifetime-subst-type subst declared-ret))]
-                [children : (__tl_dyn-array typed.TypedOccurrenceId)
-                  (__tl_make-array typed.TypedOccurrenceId args.len)]
                 [arg-types : (__tl_dyn-array ast.AstType)
                   (tc-selected-no-types)]
                 ;; A call through a function value reads the callee first.
@@ -19312,7 +19274,6 @@
                         (tc-global-shared-view func)
                         (& args)
                         (& params)
-                        (& branded)
                         allow-region-args
                         (if (= key -1)
                           (ast.AstMaybeType.Some
@@ -19330,11 +19291,11 @@
                           (tc-global-shared-view params))
                         (tc-call-arena-store-region ctx env)
                         0
-                        children
+                        staging
                         true
                         (tc-global-shared-view source)
                         callee-sink)
-                        [(TcSelectedArgsResult.Err message next)
+                        [(TcSelectedCallArgsResult.Err message next)
                           (TcSelectedResult.Err
                             (if call-scoped?
                               (tc-selected-call-scoped-diagnostic
@@ -19348,7 +19309,7 @@
                                 message)
                               message)
                             next)]
-                        [(TcSelectedArgsResult.Ok selected represented? next)
+                        [(TcSelectedCallArgsResult.Ok staged represented? next)
                           (match (match (tc-check-thread-channel-send-call
                             ctx
                             env
@@ -19372,91 +19333,101 @@
                               (TcSelectedResult.Err message next)]
                             [(ResultTcUnit.Ok)
                               (let
-                                [ended : TcSelectedBrands
-                                  (if (ast.ast-lifetime-list-empty?
-                                    (& lifetimes))
-                                    (TcSelectedBrands
-                                      TcNameIdList.Nil
-                                      TcNameIdList.Nil)
-                                    (tc-selected-invalidate-call-brands
+                                [result : ResultTcType
+                                  (if (= key -1)
+                                    (ResultTcType.Ok constructed)
+                                    (tc-call-erased-owner-result
                                       ctx
                                       env
                                       (& args)
-                                      (& params)))]
+                                      (& params)
+                                      (& arg-types)
+                                      constructed))]
                                 (tc-selected-contextual-result
                                   ctx
                                   env
                                   expected
-                                  (tc-selected-with-thread-users
-                                    env
-                                    (tc-selected-sent-owners
-                                      ctx
-                                      env
-                                      (tc-global-shared-view func)
-                                      (& args))
-                                    syntax
-                                    (ownership.ownership-source-copy (& source))
-                                    (tc-selected-with-release-checks
-                                      ctx
-                                      env
-                                      ended.brands
-                                      syntax
-                                      (ownership.ownership-source-copy
-                                        (& source))
-                                      (tc-selected-with-region-ends
-                                        ctx
-                                        env
-                                        ended.brands
-                                        ended.args
-                                        syntax
-                                        (tc-global-shared-view source)
-                                        (tc-selected-publish-call
-                                          (if (= key -1)
-                                            (ResultTcType.Ok constructed)
-                                            (tc-call-erased-owner-result
+                                  (match staged
+                                    [(TcSelectedCallStaging.Query)
+                                      (tc-selected-unrepresented result next)]
+                                    [(TcSelectedCallStaging.Capture selected _)
+                                      (let
+                                        [ended : TcSelectedBrands
+                                          (if (ast.ast-lifetime-list-empty?
+                                            (& lifetimes))
+                                            (TcSelectedBrands
+                                              TcNameIdList.Nil
+                                              TcNameIdList.Nil)
+                                            (tc-selected-invalidate-call-brands
                                               ctx
                                               env
                                               (& args)
-                                              (& params)
-                                              (& arg-types)
-                                              constructed))
-                                          ;; Key -1 names a constructor (no declaration),
-                                          ;; -2 a call through a function value.
-                                          (cond
-                                            [(= key -1)
-                                              typed.TypedCallKind.Construct]
-                                            [(= key -2)
-                                              (typed.TypedCallKind.Indirect
-                                                (tc-selected-effect-callee-id
-                                                  ctx
-                                                  env
-                                                  func-id))]
-                                            [(tc-selected-discharge-call?
-                                                ctx
-                                                (tc-global-shared-view func)
-                                                (& params))
-                                              (typed.TypedCallKind.Discharge
-                                                key)]
-                                            [else
-                                              (typed.TypedCallKind.Declared key)])
-                                          (tc-call-published-signature
-                                            shadow
-                                            (tc-global-shared-view fn-ty))
+                                              (& params)))]
+                                        (tc-selected-with-thread-users
+                                          env
+                                          (tc-selected-sent-owners
+                                            ctx
+                                            env
+                                            (tc-global-shared-view func)
+                                            (& args))
                                           syntax
-                                          source
-                                          (tc-selected-with-callee
-                                            selected
-                                            (& callee))
-                                          (and
-                                            represented?
-                                            (or
-                                              (!= key -2)
-                                              (match (& callee)
-                                                [(TcSelectedOccurrence.Selected
-                                                    _)
-                                                  true]
-                                                [_ false])))
-                                          next))))))])]))]))]
+                                          (ownership.ownership-source-copy
+                                            (& source))
+                                          (tc-selected-with-release-checks
+                                            ctx
+                                            env
+                                            ended.brands
+                                            syntax
+                                            (ownership.ownership-source-copy
+                                              (& source))
+                                            (tc-selected-with-region-ends
+                                              ctx
+                                              env
+                                              ended.brands
+                                              ended.args
+                                              syntax
+                                              (tc-global-shared-view source)
+                                              (tc-selected-publish-call
+                                                result
+                                                ;; Key -1 names a constructor (no declaration),
+                                                ;; -2 a call through a function value.
+                                                (cond
+                                                  [(= key -1)
+                                                    typed.TypedCallKind.Construct]
+                                                  [(= key -2)
+                                                    (typed.TypedCallKind.Indirect
+                                                      (tc-selected-effect-callee-id
+                                                        ctx
+                                                        env
+                                                        func-id))]
+                                                  [(tc-selected-discharge-call?
+                                                      ctx
+                                                      (tc-global-shared-view
+                                                        func)
+                                                      (& params))
+                                                    (typed.TypedCallKind.Discharge
+                                                      key)]
+                                                  [else
+                                                    (typed.TypedCallKind.Declared
+                                                      key)])
+                                                (tc-call-published-signature
+                                                  shadow
+                                                  (tc-global-shared-view fn-ty))
+                                                syntax
+                                                source
+                                                (tc-selected-with-callee
+                                                  selected
+                                                  (& callee))
+                                                (and
+                                                  represented?
+                                                  (or
+                                                    (!= key -2)
+                                                    (match (& callee)
+                                                      [(TcSelectedOccurrence.Selected
+                                                          _)
+                                                        true]
+                                                      [_ false])))
+                                                next)))))])))])]))]))]
             [_
               (TcSelectedResult.Err
                 "typecheck: call target is not a function"
@@ -21541,7 +21512,7 @@
               ctx
               (tc-context-expr-get ctx receiver))
             (tc-selected-copy-referent-receiver? ctx env receiver))
-          (tc-infer-selected-form
+          (tc-infer-selected-staged-form
             ctx
             env
             expr
@@ -21580,7 +21551,7 @@
                 [(ast.AstType.Box _) true]
                 [_ false])]
             [(ResultTcType.Err _) false])
-          (tc-infer-selected-form
+          (tc-infer-selected-staged-form
             ctx
             env
             expr
@@ -21592,7 +21563,7 @@
             source
             sink)]
         [(tc-selected-copy-referent-receiver? ctx env receiver)
-          (tc-infer-selected-form
+          (tc-infer-selected-staged-form
             ctx
             env
             expr
@@ -58936,37 +58907,6 @@
                   (cdiag.compiler-diagnostic-box-shared-view diag)]
                 (Err
                   (cdiag.compiler-diagnostic-typecheck-error-text (& diag-view)))))]))]
-    [(Box inner-box)
-      (match (tc-type-strip-region (tc-resolve-type ctx expected))
-        [(Box inner-ty)
-          (let
-            [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-            [want : ast.AstType (ast.ty-node-get inner-ty)]
-            [_
-              (try
-                (tc-ensure-cleanup-resource-not-stored-expr
-                  ctx
-                  env
-                  (tc-global-shared-view inner)))]
-            (let
-              [got
-                (try
-                  (tc-expr-with-expected-or-actual
-                    ctx
-                    env
-                    inner
-                    (tc-global-shared-view want)))]
-              [_
-                (try
-                  (tc-expect
-                    (tc-global-shared-view got)
-                    (tc-global-shared-view want)
-                    "typecheck: box inner type mismatch"))]
-              (Ok
-                (tc-tag-active-region
-                  env
-                  (ast.ast-ty-box (& (tc-contextual-result-type want got)))))))]
-        [_ (tc-expr ctx env expr)])]
     [(Call func-box _)
       (let
         [_
@@ -71144,8 +71084,8 @@
 (define (tc-infer-selected-with-resource-scoped
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [body : (& body ast.AstExprList)]
+  [bindings : ast.AstResourceBindingList]
+  [body : ast.AstExprList]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
@@ -71163,21 +71103,27 @@
     [sink : (TcSelectedSink store lease intern bind)
       (tc-selected-counted-sink counted)]
     [result : (TcSelectedResult store lease intern bind)
-      (tc-infer-selected-with-resource-at
-        ctx
-        env
-        bindings
-        body
-        0
-        syntax
-        expected
-        source
-        (__tl_make-array
-          typed.TypedOccurrenceId
-          (+ (ast.ast-resource-binding-list-len bindings) 1))
-        true
-        -1
-        sink)]
+      (match sink
+        [(TcSelectedSink.Query)
+          (tc-selected-unrepresented
+            (tc-with-resource-expr ctx env bindings body expected)
+            TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings-state)
+          (tc-infer-selected-with-resource-at
+            ctx
+            env
+            (& bindings)
+            (& body)
+            0
+            syntax
+            expected
+            source
+            (__tl_make-array
+              typed.TypedOccurrenceId
+              (+ (ast.ast-resource-binding-list-len (& bindings)) 1))
+            true
+            -1
+            (TcSelectedSink.Capture store lease bindings-state))])]
     (when scoped? (tc-type-env-scoped-runtime-restore! saved))
     (tc-selected-scope-finish env binding-count result)))
 
@@ -71806,6 +71752,11 @@
     expected)
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
+      (when
+        (match (& sink)
+          [(TcSelectedSink.Query) true]
+          [_ false])
+        (return (tc-selected-unrepresented (ResultTcType.Ok ty) sink)))
       (let
         [expr-bases : i64 (tc-context-expr-bases ctx)]
         [source-id : i64 (ast.ast-for-owned-step-source-name payload)]
@@ -136712,7 +136663,8 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state-input : ci.InternCompatState]) : ResultCompilerTypecheckChecked
+  [intern-state-input : ci.InternCompatState]
+  [retain-global-call-effects : bool]) : ResultCompilerTypecheckChecked
   (tc-typecheck-specialized-program-with-selected-lowering
     load-state
     prefix-cache
@@ -136724,7 +136676,8 @@
     pools
     source-names
     intern-state-input
-    false))
+    false
+    retain-global-call-effects))
 
 (define (tc-typecheck-specialized-program-with-selected-lowering
   [load-state : cload.CompilerLoadSessionState]
@@ -136737,7 +136690,8 @@
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state-input : ci.InternCompatState]
-  [capture-lowering? : bool]) : ResultCompilerTypecheckChecked
+  [capture-lowering? : bool]
+  [retain-global-call-effects : bool]) : ResultCompilerTypecheckChecked
   (let
     [intern-state : ci.InternCompatState intern-state-input]
     ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
@@ -136775,7 +136729,9 @@
             job-source-names
             body-state
             semantic-observer)))]
-    (tc-global-call-effects-finish! job-state)
+    (unless
+      retain-global-call-effects
+      (tc-global-call-effects-finish! job-state))
     (ast.ast-node-pool-context-capture-active! pools)
     (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
     (match checked

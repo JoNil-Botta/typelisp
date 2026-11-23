@@ -72,7 +72,10 @@ run_checkout_root_self_test() (
 required_native_identities() {
     printf '%s\n' \
         stdlib.clone/deep \
+        stdlib.clone/clone-nominal-value \
+        stdlib.clone/nominal-hook-name \
         stdlib.clone/gen-clone \
+        stdlib.clone/gen-clone-named \
         stdlib.clone/synthesize-helpers \
         stdlib.dense_list/compiler-dense-list-operations \
         stdlib.serialize/serialize \

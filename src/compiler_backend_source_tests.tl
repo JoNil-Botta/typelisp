@@ -160,7 +160,8 @@
         "private-backend-source"
         (ast.ast-node-pool-context-capture-active)
         (intern.intern-compat-state-capture-active)
-        (tc.TcSemanticObserver 0))]
+        (tc.TcSemanticObserver 0)
+        false)]
     [surface-owner : i64
       (load.compiler-load-session-state-surface-summary-owner-arena-ensure!
         (& context.load-state))]

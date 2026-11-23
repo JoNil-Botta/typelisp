@@ -284,6 +284,12 @@ these compact records. Every unresolved failure stays listed.
   step must come out unchanged. The rules are the same; the repair step never
   measures, so when the PR's identity differs from the pair's the entry stays
   unattributed.
+- An unreproduced `comparability-failure` whose step was measured and whose PR
+  records were uploaded is repaired by a later ledger run when the runner's
+  identity matches the uploaded landed record: it reuses a comparable uploaded
+  reproduced base or measures the PR's base and tested merge (seeding a rebuilt
+  synthetic merge from its pushed base parent) and recomputes the entry with
+  unchanged step.
 - If the artifact chain is lost, a reviewed
   `perf/self-compile-ledger-checkpoint.tsv` (a copy of an account) restores
   continuity.

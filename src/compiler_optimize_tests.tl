@@ -82828,6 +82828,33 @@ done:
             snapshot)
           "the fallback returns the exact input")])))
 
+(test
+  standalone-pass-commit-rejects-invalid-rewrite
+  (let
+    [func (irt.func "function @before() -> unit vars 0 {\nentry:\nreturn\n}")]
+    [broken
+      (irt.func "function @after() -> unit vars 0 {\nentry:\nreturn\nreturn\n}")]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [commit
+      (opt.opt-function-pass-commit
+        "test_pass"
+        func
+        (&
+          (opt.OptBlockRewriteResult.Result
+            (opt.opt-function-blocks broken)
+            0
+            true)))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (match commit
+      [(Result _ changed?)
+        (test.assert-true (not changed?) "invalid plan rejected")])
+    (test.assert-true
+      (string.contains
+        (& ice)
+        "pass `test_pass` rewrote verified function `before` into IR the verifier rejects")
+      "a verified input makes an invalid rewrite an internal error")))
+
 ;; #9013: bounds_group runs below the pipeline on a body nothing promises
 ;; verifies: a function SSA construction could not rename keeps its duplicate
 ;; definitions through every pass that refused it. The pass entry's first round
@@ -87019,6 +87046,159 @@ return
         (test.assert-true
           (string.eq actual (array-ref expected i))
           (str_cat.str-cat "base final-verifier golden " (string.int->string i)))))))
+
+(test
+  verifier-block-terminators
+  (let
+    [cases : (Array String 9)
+      (array
+        "function @term() -> unit vars 1 {\nentry:\nreturn\n%0 = mov 1 : i64\n}"
+        "function @term() -> unit vars 1 {\nentry:\n%0 = mov 1 : i64\njump exit\n%0 = mov 2 : i64\nexit:\nreturn\n}"
+        "function @term() -> unit vars 1 {\nentry:\n%0 = call stop() : never\nreturn\n}"
+        "function @term(cb=%0:(-> never)) -> unit vars 2 {\nentry:\n%1 = call* %0() : never\nreturn\n}"
+        "function @term(cb=%0:(CFunc non-null (-> never))) -> unit vars 2 {\nentry:\n%1 = call_c* %0() : never\nreturn\n}"
+        "function @term() -> unit vars 1 {\nentry:\n%0 = call stop() : never\n}"
+        "function @term(cb=%0:(-> never)) -> unit vars 2 {\nentry:\n%1 = call* %0() : never\n}"
+        "function @term(cb=%0:(CFunc non-null (-> never))) -> unit vars 2 {\nentry:\n%1 = call_c* %0() : never\n}"
+        "function @term() -> unit vars 1 {\nentry:\n%0 = call resume() : unit\nreturn\n}")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [func (irt.func (clone (array-ref cases i)))]
+        [expected : String
+          (if (< i 5)
+            "optimizer verify: instruction after terminator in block entry"
+            "Ok")]
+        [final : opt.ResultCompilerOptimizeVerify
+          (opt.opt-verify-final-function (& func))]
+        [ssa : opt.ResultCompilerOptimizeVerify
+          (opt.opt-verify-function (& func))]
+        (match (& final)
+          [(Ok) (test.assert-true (string.eq expected "Ok") "final accepted")]
+          [(Err reason)
+            (test.assert-true (string.eq reason expected) "final rejection")])
+        (match (& ssa)
+          [(Ok) (test.assert-true (string.eq expected "Ok") "SSA accepted")]
+          [(Err reason)
+            (test.assert-true (string.eq reason expected) "SSA rejection")])))))
+
+(test
+  verifier-block-terminators-refresh-invalidates-cache
+  (let
+    [clean
+      (irt.func
+        "function @ok() -> unit vars 1 {\nentry:\n%0 = mov 1 : i64\nreturn\n}")]
+    [broken
+      (irt.func
+        "function @ok() -> unit vars 1 {\nentry:\nreturn\n%0 = mov 1 : i64\n}")]
+    [ctx (opt.opt-cfg-context-build (opt.opt-function-blocks (& clean)))]
+    (test.assert-true
+      (opt.opt-verify-ok?
+        (& (opt.opt-verify-function-with-context (& clean) (& ctx))))
+      "fresh context accepts clean blocks")
+    (opt.opt-cfg-index-refresh-blocks!
+      (& ctx.index)
+      (& (opt.opt-function-blocks (& broken))))
+    (test.assert-true
+      (match (opt.opt-verify-function-with-context (& broken) (& ctx))
+        [(Err reason)
+          (string.eq
+            reason
+            "optimizer verify: instruction after terminator in block entry")]
+        [(Ok) false])
+      "refreshed context detects post-terminator instruction")
+    (opt.opt-cfg-index-refresh-blocks!
+      (& ctx.index)
+      (& (opt.opt-function-blocks (& clean))))
+    (test.assert-true
+      (opt.opt-verify-ok?
+        (& (opt.opt-verify-function-with-context (& clean) (& ctx))))
+      "re-refreshed context accepts restored clean blocks")))
+
+(test
+  verifier-store-owned-region-types-use-explicit-pools
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 16)]
+    [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [owner-id : i64 (ir.compiler-ir-symbol "owner")]
+    [str-id : i64
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.String))]
+    [i64-id : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    [reg-str-ty : ast.AstType (ast.AstType.Region owner-id str-id)]
+    [reg-str-id : i64
+      (ast.ast-node-pool-context-type-push pools (clone reg-str-ty))]
+    [nested-reg-str-ty : ast.AstType (ast.AstType.Region owner-id reg-str-id)]
+    [inv-str-ty : ast.AstType (ast.AstType.Invalidate owner-id str-id)]
+    [reg-i64-ty : ast.AstType (ast.AstType.Region owner-id i64-id)]
+    [make-program
+      (lambda ([ty : ast.AstType]) : ir.CompilerIrProgram
+        (let
+          [params : ir.CompilerIrParamSeq
+            (ir.compiler-ir-param-seq-prepend
+              (ir.CompilerIrParam.Param "dst" (ast.AstType.Ptr i64-id) 0)
+              (ir.compiler-ir-param-seq-prepend
+                (ir.CompilerIrParam.Param "val" (clone ty) 1)
+                (ir.compiler-ir-param-seq-empty)))]
+          [instrs : ir.CompilerIrInstrBuilder
+            (ir.compiler-ir-instr-builder-with-capacity 2)]
+          [blocks : ir.CompilerIrBlockBuilder
+            (ir.compiler-ir-block-builder-with-capacity 1)]
+          [funcs : ir.CompilerIrFunctionBuilder
+            (ir.compiler-ir-function-builder-with-capacity 1)]
+          (ir.compiler-ir-instr-builder-push!
+            (&mut instrs)
+            (ir.CompilerIrInstr.StoreOwned
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.Var 1)
+              ty))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut instrs)
+            (ir.CompilerIrInstr.Return (ir.CompilerIrMaybeValue.No)))
+          (ir.compiler-ir-block-builder-push!
+            (&mut blocks)
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
+              (ir.compiler-ir-instr-builder-to-seq instrs)))
+          (ir.compiler-ir-function-builder-push!
+            (&mut funcs)
+            (ir.CompilerIrFunction.Function
+              (ir.compiler-ir-symbol "store_owned_case")
+              params
+              (ast.AstType.Unit)
+              2
+              (ir.compiler-ir-block-builder-to-list blocks)
+              (ir.CompilerIrFunctionAbi.Ordinary)))
+          (opt-tailrec-array-authorize
+            pools
+            (ir.CompilerIrProgram.Program
+              (ir.compiler-ir-global-seq-empty)
+              (ir.compiler-ir-function-builder-to-seq funcs)
+              (ir.compiler-ir-extern-seq-empty)
+              (ir.CompilerIrReturnStorageAuthority.None)))))]
+    [p-reg : ir.CompilerIrProgram (make-program reg-str-ty)]
+    [p-nested : ir.CompilerIrProgram (make-program nested-reg-str-ty)]
+    [p-inv : ir.CompilerIrProgram (make-program inv-str-ty)]
+    [p-bad : ir.CompilerIrProgram (make-program reg-i64-ty)]
+    (test.assert-true
+      (opt.opt-verify-ok?
+        (& (opt.opt-verify-program-with-owners pools (& interns) (& p-reg))))
+      "StoreOwned accepts Region String from non-installed pools")
+    (test.assert-true
+      (opt.opt-verify-ok?
+        (& (opt.opt-verify-program-with-owners pools (& interns) (& p-nested))))
+      "StoreOwned accepts nested Region String from non-installed pools")
+    (test.assert-true
+      (opt.opt-verify-ok?
+        (& (opt.opt-verify-program-with-owners pools (& interns) (& p-inv))))
+      "StoreOwned accepts Invalidate String from non-installed pools")
+    (test.assert-true
+      (match (opt.opt-verify-program-with-owners pools (& interns) (& p-bad))
+        [(Err reason)
+          (string.contains
+            (& reason)
+            "optimizer verify: store_owned requires DynArray or String")]
+        [(Ok) false])
+      "StoreOwned rejects Region i64 from non-installed pools")))
 
 ;; These failures must come from optimizer instruction-proof dispatch, after
 ;; SSA admission, not from calling the storage proof helper directly.

@@ -1,8 +1,11 @@
 ;; Integer-bit oracle for IEEE comparisons. Every operator executes even when
 ;; an earlier result is wrong; counters also witness one evaluation per operand.
+(import stdlib.iterator)
 (import stdlib.math)
 
 (define eval-count : i64
+  0)
+(define inverse-bits : i64
   0)
 
 (define (expected-mask [left : u64] [right : u64] [sign : u64] [infinity : u64]) : i64
@@ -70,6 +73,29 @@
       32
       0)))
 
+(define (inverse-mask-f64 [a : f64] [b : f64])
+  (:export-symbol "tl_inverse_mask_f64") : i64
+  (set! inverse-bits 0)
+  (if (= a b)
+    unit
+    (+= inverse-bits 1))
+  (if (!= a b)
+    unit
+    (+= inverse-bits 2))
+  (if (< a b)
+    unit
+    (+= inverse-bits 4))
+  (if (<= a b)
+    unit
+    (+= inverse-bits 8))
+  (if (> a b)
+    unit
+    (+= inverse-bits 16))
+  (if (>= a b)
+    unit
+    (+= inverse-bits 32))
+  inverse-bits)
+
 ;; Recursion prevents inlining so each predicate also uses the bool-return path.
 (define (return-f64 [a : f64] [b : f64] [op : i64]) : bool
   (cond
@@ -100,6 +126,7 @@
       ;; assume reflexive equality or non-strict ordering for possible NaNs.
       (if (or
         (!= actual expected)
+        (!= (inverse-mask-f64 left right) (- 63 expected))
         (!= eval-count 12)
         (!= (= left left) self-equal)
         (!= (!= left left) (not self-equal))
@@ -145,6 +172,29 @@
       32
       0)))
 
+(define (inverse-mask-f32 [a : f32] [b : f32])
+  (:export-symbol "tl_inverse_mask_f32") : i64
+  (set! inverse-bits 0)
+  (if (= a b)
+    unit
+    (+= inverse-bits 1))
+  (if (!= a b)
+    unit
+    (+= inverse-bits 2))
+  (if (< a b)
+    unit
+    (+= inverse-bits 4))
+  (if (<= a b)
+    unit
+    (+= inverse-bits 8))
+  (if (> a b)
+    unit
+    (+= inverse-bits 16))
+  (if (>= a b)
+    unit
+    (+= inverse-bits 32))
+  inverse-bits)
+
 ;; Recursion prevents inlining so each predicate also uses the bool-return path.
 (define (return-f32 [a : f32] [b : f32] [op : i64]) : bool
   (cond
@@ -170,6 +220,7 @@
       ;; assume reflexive equality or non-strict ordering for possible NaNs.
       (if (or
         (!= actual expected)
+        (!= (inverse-mask-f32 left right) (- 63 expected))
         (!= eval-count 12)
         (!= (= left left) self-equal)
         (!= (!= left left) (not self-equal))
@@ -189,6 +240,78 @@
               (set! ok false))
             (set! op (+ op 1)))
           ok)))))
+
+;; The runtime divisor is read from a table so the oracle always divides.
+;; Check both signs and the limiting exponents against IEEE division bitwise.
+(define (literal-div-f64 [x : f64] [kind : i64])
+  (:export-symbol "tl_literal_div_f64") : f64
+  (cond
+    [(= kind 0) (/ (* 1.0 x) 1.0)]
+    [(= kind 1) (/ x 2.0)]
+    [(= kind 2) (/ x -2.0)]
+    [(= kind 3) (/ x 4.49423283715579e+307)]
+    [(= kind 4) (/ x -2.2250738585072014e-308)]
+    [(= kind 5) (/ x 8.98846567431158e+307)]
+    [(= kind 6) (/ x 1.1125369292536007e-308)]
+    [else (/ x 3.0)]))
+
+(define (check-division-f64 [bits : u64]) : bool
+  (let
+    [x : f64 (math.f64-from-bits bits)]
+    [divisors : (Array u64 8)
+      (array
+        (cast 0x3ff0000000000000 : u64)
+        0x4000000000000000
+        0xc000000000000000
+        0x7fd0000000000000
+        0x8010000000000000
+        0x7fe0000000000000
+        0x8000000000000
+        0x4008000000000000)]
+    (for [kind (iterator.range 0 8)]
+      (let
+        [divisor : f64 (math.f64-from-bits (array-ref divisors kind))]
+        (when
+          (!=
+            (math.f64-to-bits (literal-div-f64 x kind))
+            (math.f64-to-bits (/ x divisor)))
+          (return false))))
+    true))
+
+(define (literal-div-f32 [x : f32] [kind : i64])
+  (:export-symbol "tl_literal_div_f32") : f32
+  (cond
+    [(= kind 0) (/ (* 1.0 x) 1.0)]
+    [(= kind 1) (/ x 2.0)]
+    [(= kind 2) (/ x -2.0)]
+    [(= kind 3) (/ x 8.507059173023462e+37)]
+    [(= kind 4) (/ x -1.1754943508222875e-38)]
+    [(= kind 5) (/ x 1.7014118346046923e+38)]
+    [(= kind 6) (/ x 5.877471754111438e-39)]
+    [else (/ x 3.0)]))
+
+(define (check-division-f32 [bits : u32]) : bool
+  (let
+    [x : f32 (math.f32-from-bits bits)]
+    [divisors : (Array u32 8)
+      (array
+        (cast 0x3f800000 : u32)
+        0x40000000
+        0xc0000000
+        0x7e800000
+        0x80800000
+        0x7f000000
+        0x400000
+        0x40400000)]
+    (for [kind (iterator.range 0 8)]
+      (let
+        [divisor : f32 (math.f32-from-bits (array-ref divisors kind))]
+        (when
+          (!=
+            (math.f32-to-bits (literal-div-f32 x kind))
+            (math.f32-to-bits (/ x divisor)))
+          (return false))))
+    true))
 
 (define (main) : i64
   (let
@@ -243,6 +366,8 @@
     (while (< i 20)
       (let
         [j : i64 0]
+        (when (not (check-division-f64 (array-ref wide i))) (return 3))
+        (when (not (check-division-f32 (array-ref narrow i))) (return 4))
         (while (< j 20)
           (when
             (not (check-f64 (array-ref wide i) (array-ref wide j)))

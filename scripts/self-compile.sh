@@ -427,28 +427,45 @@ sc_run_fallback() {
     _srf_head=$2
     _srf_record=$3
     _srf_role=$4
+    if [ "$#" -ge 5 ]; then
+        _srf_seed=$5
+    else
+        _srf_seed=$_srf_base
+    fi
+    case "$_srf_record" in
+        /*) _srf_record_path=$_srf_record ;;
+        *) _srf_record_path=$ROOT/$_srf_record ;;
+    esac
     _srf_tool=$(mktemp -d "${RUNNER_TEMP:-/tmp}/self-compile-tool.XXXXXX") ||
         sc_fail "cannot create a directory for the fallback tool copy"
     cp "$SC_TOOL_DIR/self-compile.sh" "$SC_TOOL_DIR/lib-self-compile.sh" \
         "$SC_TOOL_DIR/self-compile-self-test.sh" "$SC_TOOL_DIR/fetch-stage0.sh" "$_srf_tool/"
     TYPELISP_SELF_COMPILE_ROOT=$ROOT sh "$_srf_tool/self-compile.sh" fallback \
-        "$_srf_base" "$_srf_head" "$ROOT/$_srf_record" "$_srf_role"
+        "$_srf_base" "$_srf_head" "$_srf_record_path" "$_srf_role" "$_srf_seed"
 }
 
-# fallback BASE HEAD RECORD ROLE
+# fallback BASE HEAD RECORD ROLE [SEED_COMMIT]
 #   Measure BASE on this runner at this path: set HEAD's target/ aside,
 #   check out BASE, overlay HEAD's measurement harness (explicit in the
 #   record's procedure), build BASE's own fixpoint compiler with BASE's
-#   ci-verify and seeded from the newest stage0 release at or before BASE,
-#   measure it, and restore HEAD and its target/.
+#   ci-verify and seeded from the newest stage0 release at or before
+#   SEED_COMMIT (default BASE; for a local synthetic merge commit not on the
+#   remote, callers pass its pushed base parent), measure it, and restore HEAD
+#   and its target/.
 sc_cmd_fallback() {
-    [ "$#" -eq 4 ] || { usage >&2; exit 2; }
+    [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || { usage >&2; exit 2; }
     _scf_base=$1
     _scf_head=$2
     _scf_record=$3
     _scf_role=$4
+    if [ "$#" -eq 5 ]; then
+        _scf_seed_commit=$5
+    else
+        _scf_seed_commit=$_scf_base
+    fi
     sc_is_sha "$_scf_base" || sc_fail "fallback base is not a commit id: $_scf_base"
     sc_is_sha "$_scf_head" || sc_fail "fallback head is not a commit id: $_scf_head"
+    sc_is_sha "$_scf_seed_commit" || sc_fail "fallback seed commit is not a commit id: $_scf_seed_commit"
     [ "$(git rev-parse HEAD)" = "$_scf_head" ] || sc_fail "checkout is not at $_scf_head"
     git diff --quiet && git diff --cached --quiet ||
         sc_fail "tracked files changed during CI; refusing to switch the checkout"
@@ -498,8 +515,8 @@ sc_cmd_fallback() {
         # before the base: the mutable stage0-latest may have been republished
         # from a newer commit whose stricter compiler cannot build it (#9823).
         _scf_seed=$ROOT/target/stage0/typelisp
-        sc_log "fallback: seeding $_scf_base from the newest permanent stage0 at or before it"
-        sh "$SC_TOOL_DIR/fetch-stage0.sh" --at-commit "$_scf_base" "$ROOT/target/stage0" ||
+        sc_log "fallback: seeding $_scf_base from the newest permanent stage0 at or before $_scf_seed_commit"
+        sh "$SC_TOOL_DIR/fetch-stage0.sh" --at-commit "$_scf_seed_commit" "$ROOT/target/stage0" ||
             _scf_status=1
     fi
     if [ "$_scf_status" -eq 0 ]; then
@@ -991,6 +1008,62 @@ sc_ledger_pair_measure() {
     fi
 }
 
+# sc_fetch_pr_head PR_HEAD PR_NUM  ->  ensure PR_HEAD is available locally,
+# falling back to refs/pull/<PR>/head when a bare-SHA fetch fails.
+sc_fetch_pr_head() {
+    _sfph_h=$1
+    _sfph_pr=$2
+    git cat-file -e "$_sfph_h^{commit}" 2>/dev/null && return 0
+    if git fetch --no-tags origin "$_sfph_h" >/dev/null 2>&1 &&
+        git cat-file -e "$_sfph_h^{commit}" 2>/dev/null; then
+        return 0
+    fi
+    case "$_sfph_pr" in
+        "" | *[!0-9]*) return 1 ;;
+    esac
+    git fetch --no-tags origin "refs/pull/$_sfph_pr/head" >/dev/null 2>&1 &&
+        git cat-file -e "$_sfph_h^{commit}" 2>/dev/null
+}
+
+# sc_ledger_reproduce_head TARGET_COMMIT HEAD_COMMIT DEST BASE PR_HEAD PR_NUM TESTED_TREE
+#   Measure the PR's tested merge T as DEST/rep-head.tsv in the landed identity:
+#   reuse DEST/landed.tsv when TARGET_COMMIT has TESTED_TREE, otherwise rebuild
+#   T with git merge-tree and measure it via sc_run_fallback seeded at BASE.
+sc_ledger_reproduce_head() {
+    _slrh_target=$1
+    _slrh_head=$2
+    _slrh_dest=$3
+    _slrh_b=$4
+    _slrh_h=$5
+    _slrh_pr=$6
+    _slrh_tt=$7
+    _slrh_problem() {
+        echo "$*" > "$_slrh_dest/reproduction-problem"
+        return 1
+    }
+    if [ "$_slrh_tt" = "$(sc_commit_tree "$_slrh_target")" ]; then
+        cp "$_slrh_dest/landed.tsv" "$_slrh_dest/rep-head.tsv"
+        sc_record_line reproduction "T measured as the landed commit (same tree)" >> "$_slrh_dest/reproduction"
+        return 0
+    fi
+    git cat-file -e "$_slrh_b^{commit}" 2>/dev/null ||
+        git fetch --no-tags origin "$_slrh_b" >/dev/null 2>&1 ||
+        { _slrh_problem "cannot fetch the tested base $_slrh_b"; return 1; }
+    sc_fetch_pr_head "$_slrh_h" "$_slrh_pr" ||
+        { _slrh_problem "cannot fetch the PR head $_slrh_h"; return 1; }
+    _slrh_tree=$(git merge-tree --write-tree "$_slrh_b" "$_slrh_h" 2>/dev/null | sed -n 1p) ||
+        { _slrh_problem "the tested merge of $_slrh_b and $_slrh_h does not rebuild cleanly"; return 1; }
+    [ "$_slrh_tree" = "$_slrh_tt" ] ||
+        { _slrh_problem "the rebuilt merge tree $_slrh_tree is not the tested tree $_slrh_tt"; return 1; }
+    _slrh_t=$(GIT_AUTHOR_NAME=self-compile GIT_AUTHOR_EMAIL=self-compile@invalid \
+        GIT_COMMITTER_NAME=self-compile GIT_COMMITTER_EMAIL=self-compile@invalid \
+        git commit-tree "$_slrh_tree" -p "$_slrh_b" -p "$_slrh_h" -m "self-compile ledger: rebuilt tested merge") ||
+        { _slrh_problem "could not record the rebuilt tested merge"; return 1; }
+    sc_run_fallback "$_slrh_t" "$_slrh_head" "$_slrh_dest/rep-head.tsv" head-reproduction "$_slrh_b" ||
+        { _slrh_problem "measuring the rebuilt tested merge on the ledger runner failed"; return 1; }
+    sc_record_line reproduction "T rebuilt as $_slrh_t (tree $_slrh_tree)" >> "$_slrh_dest/reproduction"
+}
+
 # sc_ledger_reproduce C DEST WORK
 #   The merged PR's T and B were measured in an identity that differs from the
 #   landed pair's. Reproduce them on this runner in one identity with the pair
@@ -1022,30 +1095,13 @@ sc_ledger_reproduce() {
     fi
     _slr_b=$(sc_record_get "$_slr_dest/pr.tsv" base)
     _slr_h=$(sc_record_get "$_slr_dest/pr.tsv" head)
+    _slr_pr=$(sc_record_get "$_slr_dest/pr.tsv" pr 2>/dev/null || true)
     _slr_tt=$(sc_record_get "$_slr_dest/pr-head.tsv" tree)
     sc_is_sha "$_slr_b" && sc_is_sha "$_slr_h" && sc_is_sha "$_slr_tt" ||
         { _slr_problem "the PR record lacks its tested base, head or tree"; return 1; }
     sc_run_fallback "$_slr_b" "$_slr_c" "$_slr_dest/rep-base.tsv" base-fallback ||
         { _slr_problem "measuring the tested base $_slr_b on the ledger runner failed"; return 1; }
-    if [ "$_slr_tt" = "$(sc_commit_tree "$_slr_c")" ]; then
-        cp "$_slr_dest/landed.tsv" "$_slr_dest/rep-head.tsv"
-        sc_record_line reproduction "T measured as the landed commit (same tree)" >> "$_slr_dest/reproduction"
-        return 0
-    fi
-    git cat-file -e "$_slr_h^{commit}" 2>/dev/null ||
-        git fetch --no-tags origin "$_slr_h" >/dev/null 2>&1 ||
-        { _slr_problem "cannot fetch the PR head $_slr_h"; return 1; }
-    _slr_tree=$(git merge-tree --write-tree "$_slr_b" "$_slr_h" 2>/dev/null | sed -n 1p) ||
-        { _slr_problem "the tested merge of $_slr_b and $_slr_h does not rebuild cleanly"; return 1; }
-    [ "$_slr_tree" = "$_slr_tt" ] ||
-        { _slr_problem "the rebuilt merge tree $_slr_tree is not the tested tree $_slr_tt"; return 1; }
-    _slr_t=$(GIT_AUTHOR_NAME=self-compile GIT_AUTHOR_EMAIL=self-compile@invalid \
-        GIT_COMMITTER_NAME=self-compile GIT_COMMITTER_EMAIL=self-compile@invalid \
-        git commit-tree "$_slr_tree" -p "$_slr_b" -p "$_slr_h" -m "self-compile ledger: rebuilt tested merge") ||
-        { _slr_problem "could not record the rebuilt tested merge"; return 1; }
-    sc_run_fallback "$_slr_t" "$_slr_c" "$_slr_dest/rep-head.tsv" head-reproduction ||
-        { _slr_problem "measuring the rebuilt tested merge on the ledger runner failed"; return 1; }
-    sc_record_line reproduction "T rebuilt as $_slr_t (tree $_slr_tree)" >> "$_slr_dest/reproduction"
+    sc_ledger_reproduce_head "$_slr_c" "$_slr_c" "$_slr_dest" "$_slr_b" "$_slr_h" "$_slr_pr" "$_slr_tt"
 }
 
 # sc_ledger_attach_pr PR_DIR IN PARENT  ->  the merged PR's records in the
@@ -1114,13 +1170,15 @@ sc_ledger_walk_line() {
     printf '%s\tyes\t%s\t%s\t%s\n' "$_slwl_x" "$_slwl_account" "$_slwl_entry" "$_slwl_checkpoint"
 }
 
-# sc_ledger_repair_entries ACCOUNT WORK OUT
+# sc_ledger_repair_entries ACCOUNT WORK OUT [HEAD_COMMIT]
 #   An entry without an accounted step is replaced when its commit's ledger has
 #   since been re-run and produced a complete entry. An entry whose step was
-#   measured but whose PR was not found is re-attributed here instead
-#   (sc_ledger_reattribute): a re-run of that commit's ledger would run that
-#   commit's own, older scripts.
+#   measured but whose own cost is missing is repaired here instead: missing
+#   attribution by re-attributing its PR (sc_ledger_reattribute), and an
+#   unreproduced comparability failure by reproducing its PR comparison in the
+#   uploaded landed identity (sc_ledger_reproduce_repair).
 sc_ledger_repair_entries() {
+    _slre_head=${4:-$(git rev-parse HEAD)}
     cp "$1" "$3"
     for _slre_c in $(awk -F '\t' '$1 == "entry" && ($6 == "-" || $7 == "-") { print $2 }' "$1"); do
         _slre_dir=$2/repair-$_slre_c
@@ -1134,14 +1192,115 @@ sc_ledger_repair_entries() {
         _slre_entry=$_slre_dir/artifact/entry.tsv
         _slre_how="from its re-run"
         if ! sc_record_get "$_slre_entry" own >/dev/null 2>&1; then
-            sc_ledger_reattribute "$_slre_c" "$_slre_dir" || continue
-            _slre_entry=$_slre_dir/reattributed/entry.tsv
-            _slre_how="by re-attributing its PR"
+            if [ "$(sc_record_get "$_slre_entry" attribution 2>/dev/null || true)" = missing ]; then
+                sc_ledger_reattribute "$_slre_c" "$_slre_dir" || continue
+                _slre_entry=$_slre_dir/reattributed/entry.tsv
+                _slre_how="by re-attributing its PR"
+            else
+                case "$(sc_record_get "$_slre_entry" outcome 2>/dev/null || true)" in
+                    comparability-failure | comparability-failure+numerical-failure)
+                        sc_ledger_reproduce_repair "$_slre_c" "$_slre_head" "$_slre_dir" || continue
+                        _slre_entry=$_slre_dir/reproduced/entry.tsv
+                        _slre_how="by reproducing its PR comparison"
+                        ;;
+                    *)
+                        continue
+                        ;;
+                esac
+            fi
         fi
         sc_account_apply "$3" "$_slre_entry" > "$3.next"
         mv "$3.next" "$3"
         sc_log "repaired the ledger entry of $_slre_c $_slre_how"
     done
+}
+
+# sc_ledger_reproduce_repair COMMIT HEAD_COMMIT DIR  ->  DIR/reproduced/entry.tsv,
+# COMMIT's entry recomputed from the pair and PR records its ledger run uploaded
+# (DIR/artifact, already bound to that run), reproducing the PR comparison on
+# this runner in the uploaded landed identity without altering landed.tsv or
+# parent.tsv so step stays unchanged.
+sc_ledger_reproduce_repair() {
+    _slrr_c=$1
+    _slrr_head=$2
+    _slrr_dir=$3
+    _slrr_old=$_slrr_dir/artifact/entry.tsv
+    _slrr_art_in=$_slrr_dir/artifact/entry-inputs
+    _slrr_in=$_slrr_dir/reproduced/inputs
+    _slrr_work=$_slrr_dir/reproduced/work
+    [ "${TYPELISP_SELF_COMPILE_TOOLS_READY:-}" = true ] || {
+        sc_log "cannot repair $_slrr_c: measurement tools are not installed"
+        return 1
+    }
+    case "$(sc_record_get "$_slrr_old" outcome 2>/dev/null || true)" in
+        comparability-failure | comparability-failure+numerical-failure) ;;
+        *) return 1 ;;
+    esac
+    [ "$(sc_record_get "$_slrr_old" attribution 2>/dev/null || true)" != missing ] || return 1
+    for _slrr_f in landed.tsv parent.tsv pr.tsv pr-head.tsv pr-base.tsv; do
+        [ -f "$_slrr_art_in/$_slrr_f" ] || return 1
+    done
+    mkdir -p "$_slrr_in" "$_slrr_work"
+    for _slrr_f in landed-reference.tsv landed.tsv parent-reference.tsv parent.tsv pr.tsv pr-head.tsv pr-base.tsv; do
+        if [ -f "$_slrr_art_in/$_slrr_f" ]; then
+            cp "$_slrr_art_in/$_slrr_f" "$_slrr_in/"
+        fi
+    done
+    sc_record_validate "$_slrr_in/landed.tsv" >/dev/null || return 1
+    sc_record_validate "$_slrr_in/parent.tsv" >/dev/null || return 1
+    sc_record_validate "$_slrr_in/pr-head.tsv" >/dev/null || return 1
+    sc_record_validate "$_slrr_in/pr-base.tsv" >/dev/null || return 1
+    # The commit, its parent, their trees and merges-between come from git.
+    _slrr_p=$(git rev-parse --verify -q "$_slrr_c^1") || return 1
+    printf '%s\n' "$_slrr_c" > "$_slrr_in/commit"
+    printf '%s\n' "$_slrr_p" > "$_slrr_in/parent"
+    git rev-parse "$_slrr_c^{tree}" > "$_slrr_in/tree.commit" || return 1
+    git rev-parse "$_slrr_p^{tree}" > "$_slrr_in/tree.parent" || return 1
+    _slrr_b=$(sc_record_get "$_slrr_in/pr.tsv" base 2>/dev/null || true)
+    _slrr_h=$(sc_record_get "$_slrr_in/pr.tsv" head 2>/dev/null || true)
+    _slrr_pr=$(sc_record_get "$_slrr_in/pr.tsv" pr 2>/dev/null || true)
+    _slrr_tt=$(sc_record_get "$_slrr_in/pr-head.tsv" tree 2>/dev/null || true)
+    _slrr_tb=$(sc_record_get "$_slrr_in/pr-base.tsv" tree 2>/dev/null || true)
+    sc_is_sha "$_slrr_b" && sc_is_sha "$_slrr_h" && sc_is_sha "$_slrr_tt" && sc_is_sha "$_slrr_tb" || return 1
+    [ "$(sc_record_get "$_slrr_in/pr-base.tsv" commit)" = "$_slrr_b" ] || return 1
+    [ "$(sc_record_get "$_slrr_in/pr-head.tsv" commit)" = "$(sc_record_get "$_slrr_in/pr.tsv" merge 2>/dev/null || true)" ] || return 1
+    if git merge-base --is-ancestor "$_slrr_b" "$_slrr_p" 2>/dev/null; then
+        git log --first-parent --format=%H "$_slrr_b..$_slrr_p" > "$_slrr_in/merges-between"
+    fi
+    sc_this_runner_record "$_slrr_work/runner.tsv" "$_slrr_in/landed.tsv" || return 1
+    if ! sc_records_comparable "$_slrr_in/landed.tsv" "$_slrr_work/runner.tsv" >/dev/null; then
+        sc_log "cannot repair $_slrr_c: this runner's measurement identity differs from its landed record"
+        return 1
+    fi
+    if [ -f "$_slrr_art_in/rep-base.tsv" ] &&
+        sc_record_validate "$_slrr_art_in/rep-base.tsv" >/dev/null &&
+        [ "$(sc_record_get "$_slrr_art_in/rep-base.tsv" commit)" = "$_slrr_b" ] &&
+        [ "$(sc_record_get "$_slrr_art_in/rep-base.tsv" tree)" = "$_slrr_tb" ] &&
+        sc_records_comparable "$_slrr_art_in/rep-base.tsv" "$_slrr_in/landed.tsv" >/dev/null; then
+        cp "$_slrr_art_in/rep-base.tsv" "$_slrr_in/rep-base.tsv"
+    else
+        sc_run_fallback "$_slrr_b" "$_slrr_head" "$_slrr_in/rep-base.tsv" base-fallback || {
+            sc_log "cannot repair $_slrr_c: measuring tested base $_slrr_b failed"
+            return 1
+        }
+    fi
+    if ! sc_ledger_reproduce_head "$_slrr_c" "$_slrr_head" "$_slrr_in" "$_slrr_b" "$_slrr_h" "$_slrr_pr" "$_slrr_tt"; then
+        sc_log "cannot repair $_slrr_c: $(cat "$_slrr_in/reproduction-problem" 2>/dev/null)"
+        return 1
+    fi
+    sc_ledger_binary_checks "$_slrr_in"
+    {
+        sc_ledger_entry "$_slrr_in"
+        sc_record_line pair_source "$(sc_record_get "$_slrr_old" pair_source 2>/dev/null || true)"
+        if sc_record_get "$_slrr_old" reconciliation >/dev/null 2>&1; then
+            sc_record_line reconciliation "$(sc_record_get "$_slrr_old" reconciliation)"
+        fi
+        sc_record_line reproduced "ledger run ${GITHUB_RUN_ID:-} attempt ${GITHUB_RUN_ATTEMPT:-}"
+    } > "$_slrr_dir/reproduced/entry.tsv"
+    # The same pair records must give the same step.
+    [ "$(sc_record_get "$_slrr_dir/reproduced/entry.tsv" commit 2>/dev/null || true)" = "$_slrr_c" ] &&
+        [ "$(sc_record_get "$_slrr_dir/reproduced/entry.tsv" step 2>/dev/null || true)" = "$(sc_record_get "$_slrr_old" step)" ] &&
+        sc_record_get "$_slrr_dir/reproduced/entry.tsv" own >/dev/null 2>&1
 }
 
 # sc_ledger_reattribute COMMIT DIR  ->  DIR/reattributed/entry.tsv, COMMIT's
@@ -1189,6 +1348,14 @@ sc_ledger_reattribute() {
     [ "$(sc_record_get "$2/reattributed/entry.tsv" commit 2>/dev/null || true)" = "$1" ] &&
         [ "$(sc_record_get "$2/reattributed/entry.tsv" step 2>/dev/null || true)" = "$(sc_record_get "$_slra_old" step)" ] &&
         sc_record_get "$2/reattributed/entry.tsv" own >/dev/null 2>&1
+}
+
+# sc_account_has_repairable_comparability ACCOUNT  ->  succeeds when ACCOUNT
+# carries an entry whose step was measured, whose own cost is missing, and
+# whose outcome is an unreproduced comparability failure (alone or paired with
+# numerical-failure from landed-gate-window).
+sc_account_has_repairable_comparability() {
+    awk -F '\t' '$1 == "entry" && ($5 == "comparability-failure" || $5 == "comparability-failure+numerical-failure") && $6 != "-" && $7 == "-" { found = 1; exit } END { exit found ? 0 : 1 }' "$1"
 }
 
 sc_cmd_ledger_prepare() {
@@ -1245,6 +1412,26 @@ sc_cmd_ledger_prepare() {
         }
     }; then
         _scl_tools=yes
+    fi
+    if [ "$_scl_tools" = no ] && [ -z "$_scl_outcome" ] &&
+        git cat-file -e "$_scl_p:$SC_REFERENCE_WORKFLOW" 2>/dev/null; then
+        sc_fetch_run_artifact ledger "$_scl_p" "$SC_LEDGER_JOB_NAME" "$SC_LEDGER_ARTIFACT" "$_scl_work/parent-ledger"
+        if [ "$SC_RUN_STATUS" = ok ] &&
+            [ "$(sc_record_get "$_scl_work/parent-ledger/artifact/producer.tsv" commit 2>/dev/null || true)" = "$_scl_p" ] &&
+            [ "$(sc_record_get "$_scl_work/parent-ledger/artifact/producer.tsv" run.id 2>/dev/null || true)" = "$SC_RUN_ID" ] &&
+            [ "$(sc_record_get "$_scl_work/parent-ledger/artifact/producer.tsv" run.attempt 2>/dev/null || true)" = "$SC_RUN_ATTEMPT" ] &&
+            [ -f "$_scl_work/parent-ledger/artifact/account.tsv" ] &&
+            sc_account_valid "$_scl_work/parent-ledger/artifact/account.tsv" "$_scl_p"; then
+            if sc_account_has_repairable_comparability "$_scl_work/parent-ledger/artifact/account.tsv"; then
+                _scl_tools=yes
+            fi
+        else
+            # Parent's ledger is pending, unavailable, or lacks a valid
+            # account.tsv (so completion will wait for it or walk back to an
+            # ancestor / checkpoint); request tools conservatively so any
+            # repairable comparability-failure can be reproduced.
+            _scl_tools=yes
+        fi
     fi
     {
         sc_record_line pair_rc "$_scl_pair_rc"
@@ -1395,7 +1582,7 @@ sc_cmd_ledger() {
     fi
     if [ -z "$_scl_plan_outcome" ]; then
         mkdir -p "$_scl_work/account-steps" "$_scl_work/repair"
-        sc_ledger_repair_entries "$_scl_work/account-base.tsv" "$_scl_work/repair" "$_scl_work/account-steps/0.tsv"
+        sc_ledger_repair_entries "$_scl_work/account-base.tsv" "$_scl_work/repair" "$_scl_work/account-steps/0.tsv" "$_scl_c"
         _scl_n=0
         for _scl_g in $(awk -F '\t' '$1 == "gap" { print $2 }' "$_scl_out/plan.tsv"); do
             if [ "$_scl_g" = "$_scl_c" ]; then

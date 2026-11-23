@@ -135,6 +135,10 @@ grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
 # Dumping them must resolve syntax IDs through their owner, never as pool indexes.
 STRUCTURAL_SOURCE="$ROOT/tests/golden/ir_structural_names.tl"
 for opt in 0 1 2; do
+    "$COMPILER" compile "$ROOT/tests/golden/ir_never_return.tl" \
+        --dump-ir --verify-ir --opt-level "$opt" \
+        -o "$WORKDIR/never-return-$opt.ir" \
+        >"$WORKDIR/never-return-$opt.stdout" 2>"$WORKDIR/never-return-$opt.stderr"
     while IFS=$TAB read -r source primary; do
         for target in linux-x86_64 windows-x86_64; do
             "$COMPILER" compile "$ROOT/$primary" \

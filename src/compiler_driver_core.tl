@@ -3087,7 +3087,8 @@
   [has-target : bool]
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
-  [emit-entry : bool]) : ResultCompilerDriverBuffer
+  [emit-entry : bool]
+  [closed-executable : bool]) : ResultCompilerDriverBuffer
   (match (compiler-driver-emit-lowered-result
     (CompilerDriverOutputRoute.Buffer)
     input-path
@@ -3098,7 +3099,7 @@
     opt-level
     emit-entry
     false
-    false)
+    closed-executable)
     [(Emitted (Buffer output) advisories) (Ok output advisories)]
     [(Emitted (Err diagnostic) advisories) (Err diagnostic advisories)]
     [_ (io.panic "compiler driver: unexpected emit result")]))
@@ -4685,7 +4686,13 @@
         has-target
         mode
         opt-level
-        emit-entry))))
+        emit-entry
+        (and
+          emit-entry
+          (be_state.compiler-backend-target-elf? target)
+          (cfg_core.compiler-cfg-enabled?
+            cfgs
+            (ci.intern "closed-executable-image")))))))
 
 (define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]

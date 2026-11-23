@@ -122,7 +122,7 @@
   [instr : (& cobj.CompilerObjectX64Instr)]) : i64
   (match instr
     [(Label _) 0]
-    [(or (Call _) (TailCall _) (Jump _)) 5]
+    [(or (Call _) (TailCall _) (Jump _) (LoadAbsAddress _)) 5]
     [(or (Ja _) (Jcc _ _)) 6]
     [(Branch _ _) 14]
     [(SubRspImm8 _) 4]
@@ -153,7 +153,7 @@
       (+= index 1))
     ok))
 
-;; The rel32 fields of one text instruction and the symbols they target.
+;; The four-byte fixup fields of one text instruction and their symbols.
 ;; Each field is the instruction's last four bytes, except that Branch
 ;; (`test %rax; jnz true; jmp false`) has its jnz field at bytes 5..8.
 ;; The targets are borrowed from the instruction.
@@ -170,6 +170,7 @@
     [(TailCall target) (One (TailCall) target)]
     [(or (Jump target) (Ja target) (Jcc _ target)) (One (Branch) target)]
     [(Branch true-target false-target) (Branch true-target false-target)]
+    [(LoadAbsAddress target) (One (Abs32) target)]
     [(or (LoadRip target) (MovRcxRip target) (MovRdxRip target)
          (XorpdRip target))
       (One (RipValue) target)]
@@ -236,23 +237,24 @@
 ;; them (COFF's ADDR32NB, used by unwind and resource tables).
 (define (compiler-object-layout-relocation-supported?
   [reloc : (& cobj.CompilerObjectRelocation)]
-  [addr32nb : bool]) : bool
+  [coff? : bool]) : bool
   (match reloc
     [(Relocation section _ kind _)
       (match section
         [(Text)
           (match kind
             [(or (Call) (TailCall) (RipValue) (RipAddress) (Branch)) true]
+            [(Abs32) (not coff?)]
             [_ false])]
         [_
           (match kind
             [(Abs64) true]
-            [(Addr32Nb) addr32nb]
+            [(Addr32Nb) coff?]
             [_ false])])]))
 
 (define (compiler-object-layout-relocation-list-supported?
   [relocs : (& relocs cobj.CompilerObjectRelocationList)]
-  [addr32nb : bool]) : bool
+  [coff? : bool]) : bool
   (let
     [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
@@ -260,7 +262,7 @@
     (while (and ok (< index count))
       (if (compiler-object-layout-relocation-supported?
         (& (cobj.compiler-object-relocation-list-ref relocs index))
-        addr32nb)
+        coff?)
         (+= index 1)
         (set! ok false)))
     ok))
@@ -530,6 +532,7 @@
       (compiler-object-layout-push-rel32-instr! out "e9")]
     [(LoadRip _) (compiler-object-layout-push-rel32-instr! out "488b05")]
     [(LoadRipAddress _) (compiler-object-layout-push-rel32-instr! out "488d05")]
+    [(LoadAbsAddress _) (compiler-object-layout-push-rel32-instr! out "b8")]
     [(LoadRipAddressR11 _)
       (compiler-object-layout-push-rel32-instr! out "4c8d1d")]
     [(StoreRip _) (compiler-object-layout-push-rel32-instr! out "488905")]

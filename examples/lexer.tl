@@ -23,6 +23,7 @@
 ;; vector reads can return a `(Token.Ident text)` token whose payload is still
 ;; projectable through `match`.
 ;;
+(import stdlib.clone)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -37,6 +38,8 @@
   (LParen)
   (RParen)
   (End))
+
+(stdlib.clone.gen-clone Token)
 
 (import (vector.vector Token) as token-vec)
 

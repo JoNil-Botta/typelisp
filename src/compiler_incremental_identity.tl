@@ -5,6 +5,7 @@
 ;; provide typed inputs and receive one portable, versioned transcript plus its
 ;; exact SHA-256 fingerprint.  No cwd, arena address, intern id, temporary path,
 ;; scheduler order, or observation-only flag is admitted by this schema.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_owned_view as owned_view)
@@ -145,6 +146,8 @@
   (name String)
   (value String))
 
+(stdlib.clone.gen-clone CompilerIncrementalConfigField)
+
 ;; This synthetic resolved record makes known material dimensions explicit
 ;; without pretending to freeze the compiler's still-distributed CLI/config
 ;; precedence.  Newly material options can be carried as canonical extensions.
@@ -226,6 +229,8 @@
   (ordered? bool)
   (sequence String)
   (ordinal i64))
+
+(stdlib.clone.gen-clone CompilerIncrementalEncodedRecord)
 
 (import stdlib.vector)
 (import stdlib.sort)

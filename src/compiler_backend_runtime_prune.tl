@@ -210,12 +210,14 @@
             (< cursor end)
             (<= (ptr-read (ptr-offset data cursor)) 32))
             (+= cursor 1))
+          ;; Abort rows record the uses of each handler in the .irp list.
           (unless
             (or
               (has-prefix? data cursor end ".extern ")
               (has-prefix? data cursor end ".globl ")
               (has-prefix? data cursor end ".type ")
-              (has-prefix? data cursor end ".size "))
+              (has-prefix? data cursor end ".size ")
+              (has-prefix? data cursor end ".irp "))
             (while (< cursor end)
               (let
                 [byte : u8 (ptr-read (ptr-offset data cursor))]

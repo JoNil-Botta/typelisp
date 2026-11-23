@@ -1152,7 +1152,7 @@
         false])))
 
 (define (tltest-function-base-defined?
-  [funcs : ir.CompilerIrFunctionSeq]
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
   [base : String]) : bool
   (let
     [index : i64 0]
@@ -1190,7 +1190,9 @@
       [(Ok lowered _ _lower-owner)
         (match lowered
           [(Program _ functions _ _authority)
-            (tltest-function-base-defined? functions "clone$Pair")])]
+            (and
+              (tltest-function-base-defined? (& functions) "clone-vec")
+              (not (tltest-function-base-defined? (& functions) "clone$Pair")))])]
       [(Err _) false])))
 
 (define (tltest-nested-module-macro-vector-loaded-ok?
@@ -1223,7 +1225,7 @@
           target)
         (begin
           (io.print-error
-            "nested module macro vector fixture did not emit clone$Pair")
+            "nested module macro vector fixture did not lower a direct Copy vector clone")
           (return false)))
       true]))
 
@@ -1263,9 +1265,11 @@
                 [view : (& items (Slice ,T)) (vec.view (& items))]
                 (= (array-length view) 1))]
             (if has-one
-              (match (vec.pop-ref! (&mut items))
-                [(vec.Pop.Ok _) 42]
-                [(vec.Pop.Empty) 0])
+              (let
+                [copied : vec.Vec (vec.clone-vec (& items))]
+                (match (vec.pop-ref! (&mut copied))
+                  [(vec.Pop.Ok _) 42]
+                  [(vec.Pop.Empty) 0]))
               0))))))))
 
 (import (slice-user i64) as user)

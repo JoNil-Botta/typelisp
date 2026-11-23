@@ -12064,6 +12064,154 @@ high:
       (text_buf.render (compiler-backend-peephole-text-buf-once chunks))]
     (string.eq legacy chunked)))
 
+;; Exercise both final-record consumers. The fixtures omit layout and
+;; fallthrough-jump deletion so the final pass sees the exact incoming edges.
+(define (compiler-backend-tail-test-stream [asm : (& str)]) : String
+  (text_buf.render
+    (compiler-backend-peephole-text-buf-once
+      (text_buf.append (text_buf.empty) (string.copy asm)))))
+
+(define (compiler-backend-tail-test-buffer [asm : (& str)]) : String
+  (compiler-backend-peephole-asm-once (string.copy asm)))
+
+(define (compiler-backend-tail-test-whole-source
+  [entry : (& str)]
+  [data : (& str)]) : String
+  (str_cat.str-cat
+    "tail_test:\n"
+    entry
+    "    testl %eax, %eax\n    jne .L_tail_test_first\n    jmp .L_tail_test_second\n"
+    ".L_tail_test_first:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n"
+    ".L_tail_test_second:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n"
+    data
+    ".L_tail_test_join:\n    ret\n"))
+
+(test
+  peephole-tail-merges-identical-blocks
+  (let
+    [input : String (compiler-backend-tail-test-whole-source "" "")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    (test.assert-true
+      (and
+        (string.eq (& out) (compiler-backend-tail-test-buffer (& input)))
+        (asm-has?
+          out
+          "    jne .L_tail_test_first\n    jmp .L_tail_test_first\n"
+          ".L_tail_test_first:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n")
+        (asm-lacks? out ".L_tail_test_second"))
+      "both renderers redirect the duplicate's incoming branch and remove its body")))
+
+(test
+  peephole-tail-merges-identical-suffixes
+  (let
+    [input : String
+      (str_cat.str-cat
+        "tail_suffix:\n    testl %eax, %eax\n    jne .L_suffix_second\n"
+        "    movl $301, %r10d\n    movq $401, %r8\n    movq %r8, (%rbx)\n"
+        "    jmp .L_suffix_join\n"
+        ".L_suffix_second:\n    movl $302, %r10d\n    movq $401, %r8\n"
+        "    movq %r8, (%rbx)\n    jmp .L_suffix_join\n"
+        ".L_suffix_join:\n    ret\n")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    (test.assert-true
+      (and
+        (string.eq (& out) (compiler-backend-tail-test-buffer (& input)))
+        (asm-has?
+          out
+          "    movl $301, %r10d\n    jmp .L_tail_tail_suffix."
+          "    movl $302, %r10d\n.L_tail_tail_suffix."
+          "    movq %r8, (%rbx)\n.L_suffix_join:\n")
+        (asm-lacks? out "    jmp .L_suffix_join\n"))
+      "branching to the longest shared fallthrough suffix takes one jump")))
+
+(test
+  peephole-tail-preserves-located-abort-sites
+  (let
+    [input : String
+      (str_cat.str-cat
+        "tail_abort:\n    testl %eax, %eax\n    jne .L_abort_second\n"
+        "    movq $401, %r8\n    call .L_tl_abort_tl_oob_abort_at\n"
+        ".L_tl_abort_site_1_bounds:\n"
+        "    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"
+        ".L_abort_second:\n    movq $401, %r8\n"
+        "    call .L_tl_abort_tl_oob_abort_at\n"
+        ".L_tl_abort_site_2_bounds:\n"
+        "    .tl_abort_row .L_tl_abort_site_2_bounds, .L_tl_str_fat, 5, 9, tl_oob_abort_at\n"
+        "    ret\n    .size tail_abort, . - tail_abort\n")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    [buf : String (compiler-backend-tail-test-buffer (& input))]
+    [site-one : String
+      "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_1_bounds:\n    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"]
+    [site-two : String
+      "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_2_bounds:\n    .tl_abort_row .L_tl_abort_site_2_bounds, .L_tl_str_fat, 5, 9, tl_oob_abort_at\n"]
+    (test.assert-true
+      (and (asm-has? out site-one site-two) (asm-has? buf site-one site-two))
+      "every located abort retains its own adjacent return-PC label and span row")))
+
+(test
+  peephole-tail-preserves-address-taken-and-jump-table-labels
+  (let
+    [address : String
+      (compiler-backend-tail-test-whole-source
+        "    leaq .L_tail_test_second(%rip), %rsi\n"
+        "")]
+    [table : String
+      (compiler-backend-tail-test-whole-source
+        ""
+        ".L_tail_test_switch:\n    .long .L_tail_test_second - .L_tail_test_switch\n")]
+    [split-table : String
+      (str_cat.str-cat
+        ".section .rodata\n.L_tail_external_table:\n    .long .L_tail_test_second\n"
+        ".text\n.globl tail_test\n"
+        (compiler-backend-tail-test-whole-source "" "    jmp *%r11\n"))]
+    [split-out : String (compiler-backend-tail-test-stream (& split-table))]
+    [address-out : String (compiler-backend-tail-test-stream (& address))]
+    [table-out : String (compiler-backend-tail-test-stream (& table))]
+    (test.assert-true
+      (and
+        (string.eq
+          (& address-out)
+          (compiler-backend-tail-test-buffer (& address)))
+        (string.eq (& table-out) (compiler-backend-tail-test-buffer (& table)))
+        (asm-has?
+          address-out
+          "leaq .L_tail_test_second(%rip), %rsi"
+          ".L_tail_test_second:")
+        (asm-has?
+          table-out
+          ".long .L_tail_test_second -"
+          ".L_tail_test_second:")
+        (asm-has?
+          split-out
+          "    .long .L_tail_test_second\n"
+          ".L_tail_test_second:")
+        (string.eq
+          (& split-out)
+          (compiler-backend-tail-test-buffer (& split-table))))
+      "address and table operands pin the second definition in both renderers")))
+
+(test
+  peephole-tail-preserves-seh-and-ret
+  (let
+    [body : String
+      (compiler-backend-tail-test-whole-source "    .seh_endprologue\n" "")]
+    [seh : String
+      (str_cat.str-cat ".seh_proc tail_test\n" body "    .seh_endproc\n")]
+    [returns : String
+      (str_cat.str-cat
+        "tail_return:\n    testl %eax, %eax\n    jne .L_ret_second\n"
+        "    movq $401, %r8\n    ret\n"
+        ".L_ret_second:\n    movq $401, %r8\n    ret\n")]
+    [seh-out : String (compiler-backend-tail-test-stream (& seh))]
+    [ret-out : String (compiler-backend-tail-test-stream (& returns))]
+    (test.assert-true
+      (and
+        (string.eq (& seh) (& seh-out))
+        (string.eq (& seh-out) (compiler-backend-tail-test-buffer (& seh)))
+        (string.eq (& returns) (& ret-out))
+        (string.eq (& ret-out) (compiler-backend-tail-test-buffer (& returns))))
+      "SEH functions and ret-ending blocks remain intact")))
+
 ;; COLD-1: the render moves each abort stub behind its function and inverts
 ;; the check's branch; a guard that is not a pure abort stub stays inline.
 (define (compiler-backend-cold-split-source) : String
@@ -16189,7 +16337,7 @@ f:
     (be_peephole.compiler-backend-expand-stack-probes! state (&mut records))
     (let
       [text : String
-        (be_peephole.compiler-backend-peephole-records-render records)]
+        (be_peephole.compiler-backend-peephole-records-render records true)]
       (test.assert-true
         (asm-has?
           text
@@ -16206,11 +16354,13 @@ f:
     [linux : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     [windows : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Windows))]
+        (be_state.CompilerBackendTarget.Windows)
+        true)]
     (test.assert-true
       (asm-has? linux "    pushq %r11\n" "    movq 8192(%rsp), %r11\n")
       "the PIC whole-text boundary expands Linux probes")
@@ -16224,7 +16374,8 @@ f:
     [text : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "# tl-stack-entry\n    subq $32768, %rsp\n    subq $4096, %rsp\n    movq %r11, (%rsp)\n    addq $4096, %rsp\n# tl-stack-entry\n    subq $32776, %rsp\n    movq %r11, (%rsp)\n    addq $32776, %rsp\n    subq $4104, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     (test.assert-true
       (asm-has? text "    subq $32768, %rsp\n    subq $4096, %rsp\n")
       "entry 32768 plus balanced transient 4096 remains unprobed")
@@ -41989,7 +42140,9 @@ b_keep:
                 stream
                 (be_state.compiler-backend-global-shared-view records))]
             [rendered : String
-              (be_peephole.compiler-backend-peephole-records-render records)]
+              (be_peephole.compiler-backend-peephole-records-render
+                records
+                true)]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState
@@ -42161,7 +42314,8 @@ b_keep:
         (be_peephole.compiler-backend-peephole-records-buffer
           (text_buf_borrowed.empty-like (& asm))
           records
-          asm))]
+          asm
+          true))]
     (backend.compiler-backend-peephole-records-retire! stream)
     result))
 
@@ -46668,3 +46822,224 @@ user_fn:
           [(Err _) true]
           [(Ok _) false])
         "malformed group-copy operands fail before emitting assembly"))))
+
+(define (compiler-backend-global-init-small-array-tuple-source) : String
+  "(define (minus-one) : i8 -1)
+(define (get-f32) : f32 2.5)
+(define (get-i64) : i64 6)
+(define a-i8 : (Array i8 4) (array (minus-one) 2 3 4))
+(define a-f32 : (Array f32 3) (array 1.5 (get-f32) 3.5))
+(define a-i64 : (Array i64 2) (array 5 (get-i64)))
+(define a-str : (Array String 2) (array \"left\" \"right\"))
+(define a-static : (Array i8 4) (array 1 2 3 4))
+(define t-i8 : (Tuple i8 i8 i8 i8) (tuple (minus-one) 2 3 4))
+(define t-f32 : (Tuple f32 f32 f32) (tuple 1.5 (get-f32) 3.5))
+(define t-i64 : (Tuple i64 i64) (tuple 5 (get-i64)))
+(define (main) : i64
+  (+ (cast (array-ref a-i8 1) : i64)
+     (+ (array-ref a-i64 1)
+        (+ (cast (array-ref a-static 1) : i64)
+           (+ (cast (tuple-ref t-i8 1) : i64) (tuple-ref t-i64 1))))))")
+
+;; #8488: small fixed-array and fixed-tuple runtime initializers emit clean
+;; startup calls and keep constant scalar fixed arrays on their static path.
+(test
+  backend-global-init-small-array-tuple-asm
+  (match (backend.compiler-backend-emit-source
+    (compiler-backend-global-init-small-array-tuple-source))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (unless
+        (and
+          (asm-has? asm "_tl___global_init_a_i8:")
+          (asm-has? asm "_tl___global_init_a_f32:")
+          (asm-has? asm "_tl___global_init_a_i64:")
+          (asm-has? asm "_tl___global_init_a_str:")
+          (asm-has? asm "_tl___global_init_t_i8:")
+          (asm-has? asm "_tl___global_init_t_f32:")
+          (asm-has? asm "_tl___global_init_t_i64:")
+          (asm-lacks? asm "_tl___global_init_a_static:")
+          (asm-has? asm "_tl_a_static:\n    .quad .+8\n"))
+        (io.panic "small array/tuple global init assembly shape mismatch"))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "small array/tuple global init backend emission failed")]))
+
+(define (compiler-backend-tail-memory-param-source) : String
+  "(define (g-arr [t : (& t (Array i64 4))] [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [x : i64]) : i64
+  (array-ref t 0))
+(define (g-reg [t : (& t (Array i64 4))] [x : i64]) : i64
+  (array-ref t 0))
+(define (f-overlap [t : (Array i64 4)] [x : i64]) : i64
+  (g-arr (& t) 1 2 3 4 5 x))
+(define (f-nonoverlap-reg [t : (Array i64 4)] [x : i64]) : i64
+  (g-reg (& t) x))
+(define (f-box-deref [t : (Tuple (Box (Array i64 4)) i64 i64)] [x : i64]) : i64
+  (g-arr (& (deref (tuple-ref t 0))) 1 2 3 4 5 x))
+(define (main) : i64
+  (+ (f-overlap (array 7 7 7 7) 42)
+     (+ (f-nonoverlap-reg (array 7 7 7 7) 42)
+        (f-box-deref (tuple (box (array 7 7 7 7)) 1 2) 42))))")
+
+;; Authored IR bypassing lowering: mode 0 passes overlapping Memory param %0 to
+;; a 7-arg tail call (must emit call, not jmp); mode 1 loads %0 in Address role
+;; and passes the loaded value (no escape -> keeps jmp); mode 2 places the
+;; Memory param at incoming stack slot 1 past a scalar stack arg while the tail
+;; call only writes slot 0 (no overlap -> keeps jmp).
+(define (compiler-backend-tail-memory-param-ir-program [mode : i64]) : ir.CompilerIrProgram
+  (let
+    [callee-id : i64 (ir.compiler-ir-test-symbol "mem_tail_callee")]
+    [caller-id : i64 (ir.compiler-ir-test-symbol "mem_tail_caller")]
+    [mem-ty : ast.AstType
+      (ast.AstType.Struct
+        (ir.compiler-ir-symbol "__tl_internal_abi_mem_s32__arr4"))]
+    [callee-params : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity 7)]
+    [_cp : unit
+      (for [i (iterator.range 0 7)]
+        (ir.compiler-ir-param-builder-push!
+          (&mut callee-params)
+          (ir.CompilerIrParam.Param "p" (ast.AstType.I64) i)))]
+    [callee : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        callee-id
+        (ir.compiler-ir-param-builder-to-seq callee-params)
+        (ast.AstType.I64)
+        7
+        (irt.blocks "entry:
+          return %0")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [caller-params : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity 8)]
+    [caller-vars : i64
+      (if (= mode 2)
+        8
+        3)]
+    [_caller-p : unit
+      (if (= mode 2)
+        (begin
+          (for [i (iterator.range 0 7)]
+            (ir.compiler-ir-param-builder-push!
+              (&mut caller-params)
+              (ir.CompilerIrParam.Param "a" (ast.AstType.I64) i)))
+          (ir.compiler-ir-param-builder-push!
+            (&mut caller-params)
+            (ir.CompilerIrParam.Param "t" mem-ty 7)))
+        (begin
+          (ir.compiler-ir-param-builder-push!
+            (&mut caller-params)
+            (ir.CompilerIrParam.Param "t" mem-ty 0))
+          (ir.compiler-ir-param-builder-push!
+            (&mut caller-params)
+            (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 1))))]
+    [caller-blocks : ir.CompilerIrBlockList
+      (cond
+        [(= mode 0)
+          (irt.blocks
+            "entry:
+              tailcall mem_tail_callee(%0, 1, 2, 3, 4, 5, %1) : i64")]
+        [(= mode 1)
+          (irt.blocks
+            "entry:
+              %2 = load %0 : i64
+              tailcall mem_tail_callee(%2, 1, 2, 3, 4, 5, %1) : i64")]
+        [else
+          (irt.blocks
+            "entry:
+              tailcall mem_tail_callee(%7, 1, 2, 3, 4, 5, %6) : i64")])]
+    [caller : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        caller-id
+        (ir.compiler-ir-param-builder-to-seq caller-params)
+        (ast.AstType.I64)
+        caller-vars
+        caller-blocks
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [main-fn : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "main")
+        (ir.compiler-ir-param-seq-empty)
+        (ast.AstType.I64)
+        0
+        (irt.blocks "entry:
+          return 0")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [fns : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& callee)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& caller)
+            (& (ir.compiler-ir-function-seq1 (& main-fn))))))]
+    (ir.CompilerIrProgram.Program
+      (ir.compiler-ir-global-seq-empty)
+      fns
+      (ir.compiler-ir-extern-seq-empty)
+      (ir.CompilerIrReturnStorageAuthority.None))))
+
+;; #9289: verify overlapping SysV Memory-param tail calls fall back to `call`
+;; while non-overlapping tail calls (register-only, Box deref, and non-overlap
+;; stack slot) stay `jmp`.
+(test
+  backend-tail-call-memory-param-overlap-and-nonoverlap-asm
+  (match (backend.compiler-backend-emit-source
+    (compiler-backend-tail-memory-param-source))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [overlap-body : String
+          (compiler-backend-asm-function-body asm "_tl_f_overlap")]
+        [reg-body : String
+          (compiler-backend-asm-function-body asm "_tl_f_nonoverlap_reg")]
+        [box-body : String
+          (compiler-backend-asm-function-body asm "_tl_f_box_deref")]
+        (unless
+          (and
+            (asm-has? overlap-body "    call _tl_g_arr\n")
+            (asm-lacks? overlap-body "    jmp _tl_g_arr\n")
+            (asm-has? reg-body "    jmp _tl_g_reg\n")
+            (asm-lacks? reg-body "    call _tl_g_reg\n")
+            (asm-has? reg-body "    leaq ")
+            (asm-has? box-body "    jmp _tl_g_arr\n")
+            (asm-lacks? box-body "    call _tl_g_arr\n"))
+          (io.panic "tail-call Memory-param source asm shape mismatch")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "tail-call Memory-param source emission failed")])
+  (match (backend.compiler-backend-emit-program-linux
+    (compiler-backend-tail-memory-param-ir-program 0))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_mem_tail_caller")]
+        (unless
+          (and
+            (asm-has? body "    call _tl_mem_tail_callee\n")
+            (asm-lacks? body "    jmp _tl_mem_tail_callee\n"))
+          (io.panic
+            "overlapping authored-IR Memory param tailcall must emit call")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "authored-IR mode 0 emission failed")])
+  (match (backend.compiler-backend-emit-program-linux
+    (compiler-backend-tail-memory-param-ir-program 1))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_mem_tail_caller")]
+        (unless
+          (and
+            (asm-has? body "    jmp _tl_mem_tail_callee\n")
+            (asm-lacks? body "    call _tl_mem_tail_callee\n"))
+          (io.panic "non-escaping Memory param load tailcall must keep jmp")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "authored-IR mode 1 emission failed")])
+  (match (backend.compiler-backend-emit-program-linux
+    (compiler-backend-tail-memory-param-ir-program 2))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_mem_tail_caller")]
+        (unless
+          (and
+            (asm-has? body "    jmp _tl_mem_tail_callee\n")
+            (asm-lacks? body "    call _tl_mem_tail_callee\n"))
+          (io.panic
+            "non-overlapping stack slot Memory param tailcall must keep jmp")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "authored-IR mode 2 emission failed")]))

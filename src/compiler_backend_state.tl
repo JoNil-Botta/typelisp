@@ -9,6 +9,7 @@
 (import compiler_abi)
 (import compiler_regalloc)
 (import compiler_liveness)
+(import compiler_opt_level as opt_level)
 (import compiler_profile_state as profile_state)
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
@@ -1144,6 +1145,7 @@
   ;; exact intern capability so concurrent backend jobs never consult a
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
+  (tail-merging-enabled bool)
   (optimize-for-size bool)
   (user-symbol-cache-keys (__tl_dyn-array i64))
   (user-symbol-cache-values (__tl_dyn-array String))
@@ -1261,6 +1263,7 @@
         (compiler-backend-global-shared-view intern-state)
         owner-arena
         0
+        false
         false
         false
         ;; User-symbol storage is deliberately lazy.  In particular, a
@@ -1772,6 +1775,29 @@
     (set!
       (deref (compiler-backend-state-ptr state)).scalar-registers-enabled
       enabled)))
+
+(define (compiler-backend-state-tail-merging-enabled?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).tail-merging-enabled))
+
+(define (compiler-backend-state-set-tail-merging-enabled!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).tail-merging-enabled
+      enabled)))
+
+;; The branch-tail scan is reserved for the high-quality path, along with
+;; scalar register allocation.
+(define (compiler-backend-state-set-opt-level!
+  [state : CompilerBackendState]
+  [opt-level : i64]) : unit
+  (let
+    [high-quality? : bool (opt_level.opt-level-full? opt-level)]
+    (compiler-backend-state-set-scalar-registers-enabled! state high-quality?)
+    (compiler-backend-state-set-tail-merging-enabled! state high-quality?)))
 
 (define (compiler-backend-state-optimize-for-size?
   [state : CompilerBackendState]) : bool

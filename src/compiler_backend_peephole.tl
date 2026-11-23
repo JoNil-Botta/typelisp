@@ -3471,6 +3471,25 @@
   [owners : be_state.CompilerBackendPeepholeOwners]
   [slot : i64]
   [bytes : i64]) : be_state.CompilerBackendPeepholeOwners
+  (when
+    (=
+      (bit-or
+        owners.rax
+        owners.rcx
+        owners.rdx
+        owners.rbx
+        owners.rsi
+        owners.rdi
+        owners.r8
+        owners.r9
+        owners.r10
+        owners.r11
+        owners.r12
+        owners.r13
+        owners.r14
+        owners.r15)
+      0)
+    (return owners))
   (let
     [key : i64 (- slot 1)]
     [base : i64 (bit-and key 2)]
@@ -5038,6 +5057,17 @@
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : i64
   (shr rec.meta compiler-backend-peephole-record-mem-count-shift))
 
+(define (compiler-backend-peephole-simple-stack-lea? [meta : i64]) : bool
+  (and
+    (=
+      (bit-and
+        (shr meta compiler-backend-peephole-record-flags-shift)
+        (bit-or
+          compiler-backend-sweep-line-flag-leaq
+          compiler-backend-sweep-line-flag-fatal-mem))
+      compiler-backend-sweep-line-flag-leaq)
+    (= (shr meta compiler-backend-peephole-record-mem-count-shift) 1)))
+
 ;; First non-space index of the record's line. Only the never-in-practice
 ;; multi-reference fallback needs it, so it is recomputed instead of stored.
 (define (compiler-backend-peephole-record-mnemonic-start
@@ -5648,7 +5678,9 @@
   ;; the one-operand inc/dec/neg), or -1 after any other line.
   (flags-reg i64)
   (probe-cands (__tl_dyn-array i64))
-  (probe-cand-len i64))
+  (probe-cand-len i64)
+  (stack-lea-cands (__tl_dyn-array i64))
+  (stack-lea-cand-len i64))
 
 (define (compiler-backend-peephole-records-publish!
   [walk : CompilerBackendPeepholeWalkState]) : unit
@@ -5685,7 +5717,9 @@
     walk.close-cands
     walk.close-cand-len
     walk.probe-cands
-    walk.probe-cand-len))
+    walk.probe-cand-len
+    walk.stack-lea-cands
+    walk.stack-lea-cand-len))
 
 (define (compiler-backend-peephole-records-state-grow!
   [stream : be_state.CompilerBackendStreamState]) : unit
@@ -6094,6 +6128,23 @@
           (+ ms ml)
           (- (string.string-length text) (+ ms ml)))))))
 
+(define (compiler-backend-peephole-note-stack-lea!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
+  [index : i64]) : unit
+  (let
+    [len : i64 walk.stack-lea-cand-len]
+    (when
+      (>= len (array-length walk.stack-lea-cands))
+      (let
+        [old : (__tl_dyn-array i64) walk.stack-lea-cands]
+        [grown : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ 16 (* 2 (array-length old))))]
+        (for [i (iterator.range 0 len)]
+          (set! (array-ref grown i) (array-ref old i)))
+        (set! walk.stack-lea-cands grown)))
+    (set! (array-ref walk.stack-lea-cands len) index)
+    (set! walk.stack-lea-cand-len (+ len 1))))
+
 (define (compiler-backend-peephole-records-push!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : be_state.CompilerBackendPeepholeLine]) : unit
@@ -6133,6 +6184,10 @@
     (set!
       (array-ref walk.lines index)
       (compiler-backend-peephole-line-record line))
+    (when
+      (compiler-backend-peephole-simple-stack-lea?
+        (array-ref walk.lines index).meta)
+      (compiler-backend-peephole-note-stack-lea! walk index))
     (set! (array-ref walk.live index) 1)
     (set! walk.flags-reg flags-next)
     (set! walk.len (+ index 1))))
@@ -6218,32 +6273,28 @@
   (let
     [ms : i64 (compiler-backend-peephole-desc-mnemonic-start line)]
     [ml : i64 (compiler-backend-peephole-desc-mnemonic-len line)]
-    [suffix : i64
-      (be_state.compiler-backend-peephole-byte-at line.data (- (+ ms ml) 1))]
-    [width : i64
-      (cond
-        [(= (be_state.compiler-backend-peephole-byte-at line.data ms) 115)
-          (if (=
-            (be_state.compiler-backend-peephole-byte-at line.data (+ ms 1))
-            101)
-            1
-            (cond
-              [(= suffix 98) 1]
-              [(= suffix 119) 2]
-              [(= suffix 108) 4]
-              [else 8]))]
-        [(= suffix 98) 1]
-        [(= suffix 119) 2]
-        [(= suffix 108) 4]
-        [else 8])]
     [slot : i64
       (compiler-backend-peephole-stack-destination-key
         line.data
         (+ ms ml)
         (compiler-backend-peephole-desc-end line))]
-    (if (> slot 0)
-      (compiler-backend-peephole-owners-clear-extent owners slot width)
-      (compiler-backend-peephole-owners-empty))))
+    (when (<= slot 0) (return (compiler-backend-peephole-owners-empty)))
+    (let
+      [suffix : i64
+        (be_state.compiler-backend-peephole-byte-at line.data (- (+ ms ml) 1))]
+      [width : i64
+        (cond
+          [(and
+              (= (be_state.compiler-backend-peephole-byte-at line.data ms) 115)
+              (=
+                (be_state.compiler-backend-peephole-byte-at line.data (+ ms 1))
+                101))
+            1]
+          [(= suffix 98) 1]
+          [(= suffix 119) 2]
+          [(= suffix 108) 4]
+          [else 8])]
+      (compiler-backend-peephole-owners-clear-extent owners slot width))))
 
 (define (compiler-backend-peephole-line-clobber-owners-desc
   [carry-safe : (& carry-safe be_state.CompilerBackendPeepholeCarrySafeView)]
@@ -7087,152 +7138,142 @@
       [(and (>= offset -128) (<= offset 127)) 1]
       [else 4])))
 
-(define (compiler-backend-peephole-compact-stack-addresses!
-  [records : (&mut records be_state.CompilerBackendPeepholeLineVec)]) : unit
+(define (compiler-backend-peephole-stack-address-barrier?
+  [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]
+  [flags : i64]) : bool
+  (or
+    (!=
+      (compiler-backend-peephole-record-kind rec)
+      compiler-backend-sweep-line-kind-instruction)
+    (!=
+      (bit-and
+        flags
+        (bit-or
+          compiler-backend-sweep-line-flag-bare-rsp
+          compiler-backend-sweep-line-flag-bare-rsp-tail))
+      0)))
+
+(define (compiler-backend-peephole-compact-stack-address-window!
+  [records : (&mut records be_state.CompilerBackendPeepholeLineVec)]
+  [index : i64]) : unit
   (let
-    [base : i64 -1]
-    [bias : i64 0]
-    [base-line : i64 0]
-    [base-start : i64 0]
-    (for [i (iterator.range 0 records.len)]
+    [anchor : (& records be_state.CompilerBackendPeepholeLineRecord)
+      (& (array-ref records.lines index))]
+    (when
+      (compiler-backend-peephole-stack-address-barrier?
+        anchor
+        (compiler-backend-peephole-record-flags anchor))
+      (return unit))
+    (let
+      [data : (Ptr u8) (compiler-backend-peephole-record-data anchor)]
+      [ms : i64 (compiler-backend-peephole-record-mnemonic-start anchor)]
+      [end-of-anchor : i64 (compiler-backend-peephole-record-end anchor)]
+      [comma : i64
+        (compiler-backend-peephole-find-comma-space-range data ms end-of-anchor)]
       (when
-        (= (array-ref records.live i) 1)
-        (let
-          [rec : (& records be_state.CompilerBackendPeepholeLineRecord)
-            (& (array-ref records.lines i))]
-          [flags : i64 (compiler-backend-peephole-record-flags rec)]
-          [simple-lea? : bool
-            (and
-              (!= (bit-and flags compiler-backend-sweep-line-flag-leaq) 0)
-              (= (compiler-backend-peephole-record-mem-count rec) 1)
-              (= (bit-and flags compiler-backend-sweep-line-flag-fatal-mem) 0))]
+        (or
+          (< comma 0)
+          (<=
+            (compiler-backend-peephole-stack-destination-key
+              data
+              (+ ms 4)
+              comma)
+            0))
+        (return unit))
+      (let
+        [reg-start : i64 (+ comma 2)]
+        [base : i64
+          (compiler-backend-peephole-token-reg-index-range
+            data
+            reg-start
+            end-of-anchor)]
+        [bias : i64 anchor.value]
+        (when (< base 0) (return unit))
+        (for [i (iterator.range (+ index 1) records.len)]
           (when
-            (or (>= base 0) simple-lea?)
+            (= (array-ref records.live i) 1)
             (let
-              [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
-              [start : i64 (compiler-backend-peephole-record-start rec)]
-              [end : i64 (compiler-backend-peephole-record-end rec)]
-              [ms : i64 (compiler-backend-peephole-record-mnemonic-start rec)]
-              [instruction? : bool
-                (=
-                  (compiler-backend-peephole-record-kind rec)
-                  compiler-backend-sweep-line-kind-instruction)]
-              [mov? : bool
-                (and
+              [rec : (& records be_state.CompilerBackendPeepholeLineRecord)
+                (& (array-ref records.lines i))]
+              [flags : i64 (compiler-backend-peephole-record-flags rec)]
+              ;; A simple LEA always ends this window, even if its operand
+              ;; spelling or destination prevents it from opening a new one.
+              (when
+                (or
+                  (compiler-backend-peephole-stack-address-barrier? rec flags)
+                  (compiler-backend-peephole-simple-stack-lea? rec.meta))
+                (return unit))
+              (let
+                [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+                [end : i64 (compiler-backend-peephole-record-end rec)]
+                [ms : i64 (compiler-backend-peephole-record-mnemonic-start rec)]
+                [mention? : bool
+                  (compiler-backend-peephole-range-mentions-reg-index?
+                    data
+                    ms
+                    end
+                    base)]
+                (if (and
                   (<= (+ ms 5) end)
                   (be_operand.compiler-backend-peephole-range-eq?
                     data
                     ms
                     (+ ms 5)
-                    "movq "))]
-              [mention? : bool
-                (and
-                  (>= base 0)
-                  (compiler-backend-peephole-range-mentions-reg-index?
-                    data
-                    ms
-                    end
-                    base))]
-              (cond
-                [(or
-                    (not instruction?)
-                    (!=
-                      (bit-and
-                        flags
-                        (bit-or
-                          compiler-backend-sweep-line-flag-bare-rsp
-                          compiler-backend-sweep-line-flag-bare-rsp-tail))
-                      0))
-                  (set! base -1)]
-                [simple-lea?
-                  (let
-                    [comma : i64
-                      (compiler-backend-peephole-find-comma-space-range
-                        data
-                        ms
-                        end)]
-                    [reg-start : i64 (+ comma 2)]
-                    [reg : i64
-                      (if (or
-                        (< comma 0)
-                        (<=
-                          (compiler-backend-peephole-stack-destination-key
-                            data
-                            (+ ms 4)
-                            comma)
-                          0))
-                        -1
-                        (compiler-backend-peephole-token-reg-index-range
-                          data
-                          reg-start
-                          end))]
-                    (set! base reg)
+                    "movq "))
+                  (begin
                     (when
-                      (>= reg 0)
-                      (set! bias rec.value)
-                      (set! base-line i)
-                      (set! base-start reg-start)))]
-                [mov?
-                  (when
-                    (and
-                      (>= base 0)
-                      (= (compiler-backend-peephole-record-mem-count rec) 1)
-                      (=
-                        (bit-and
-                          flags
-                          compiler-backend-sweep-line-flag-fatal-mem)
-                        0))
-                    (let
-                      [disp : i64 (- rec.value bias)]
-                      (when
-                        (and
-                          (be_operand.compiler-backend-imm32? disp)
-                          (<
-                            (compiler-backend-peephole-stack-address-cost
-                              disp
-                              (= base 10)
-                              (= base 11))
-                            (compiler-backend-peephole-stack-address-cost
-                              rec.value
-                              true
-                              false)))
-                        (let
-                          [anchor : (&
-                            records
-                            be_state.CompilerBackendPeepholeLineRecord)
-                            (& (array-ref records.lines base-line))]
-                          [base-text : String
-                            (string.substring
-                              anchor.src
-                              base-start
-                              (-
-                                (compiler-backend-peephole-record-end anchor)
-                                base-start))]
-                          [text : String
-                            (compiler-backend-peephole-rewrite-stack-address
-                              rec
-                              start
-                              end
-                              ms
-                              disp
-                              base-text)]
-                          (unless
-                            (string.eq text "")
-                            (let
-                              [span : i64 (shl (string.string-length text) 32)]
-                              (set!
-                                (array-ref records.lines i)
-                                (be_state.CompilerBackendPeepholeLineRecord
-                                  text
-                                  span
-                                  (bit-or
-                                    rec.meta
-                                    compiler-backend-peephole-record-owned-bit)
-                                  rec.cand
-                                  rec.epilogue
-                                  rec.value))))))))
-                  (when mention? (set! base -1))]
-                [else
+                      (and
+                        (= (compiler-backend-peephole-record-mem-count rec) 1)
+                        (=
+                          (bit-and
+                            flags
+                            compiler-backend-sweep-line-flag-fatal-mem)
+                          0))
+                      (let
+                        [disp : i64 (- rec.value bias)]
+                        (when
+                          (and
+                            (be_operand.compiler-backend-imm32? disp)
+                            (<
+                              (compiler-backend-peephole-stack-address-cost
+                                disp
+                                (= base 10)
+                                (= base 11))
+                              (compiler-backend-peephole-stack-address-cost
+                                rec.value
+                                true
+                                false)))
+                          (let
+                            [base-text : String
+                              (string.substring
+                                (array-ref records.lines index).src
+                                reg-start
+                                (- end-of-anchor reg-start))]
+                            [text : String
+                              (compiler-backend-peephole-rewrite-stack-address
+                                rec
+                                (compiler-backend-peephole-record-start rec)
+                                end
+                                ms
+                                disp
+                                base-text)]
+                            (unless
+                              (string.eq text "")
+                              (let
+                                [span : i64
+                                  (shl (string.string-length text) 32)]
+                                (set!
+                                  (array-ref records.lines i)
+                                  (be_state.CompilerBackendPeepholeLineRecord
+                                    text
+                                    span
+                                    (bit-or
+                                      rec.meta
+                                      compiler-backend-peephole-record-owned-bit)
+                                    rec.cand
+                                    rec.epilogue
+                                    rec.value))))))))
+                    (when mention? (return unit)))
                   (let
                     [space : i64
                       (be_operand.compiler-backend-peephole-scan-byte-range
@@ -7240,20 +7281,29 @@
                         ms
                         end
                         32)]
-                    [last-reg : i64
-                      (compiler-backend-peephole-last-operand-reg-index
-                        data
-                        space
-                        end)]
                     (unless
                       (and
                         (not mention?)
-                        (>= last-reg 0)
+                        (>=
+                          (compiler-backend-peephole-last-operand-reg-index
+                            data
+                            space
+                            end)
+                          0)
                         (compiler-backend-peephole-mnemonic-single-dest?
                           data
                           ms
                           (- space ms)))
-                      (set! base -1)))]))))))))
+                      (return unit))))))))))))
+
+(define (compiler-backend-peephole-compact-stack-addresses!
+  [records : (&mut records be_state.CompilerBackendPeepholeLineVec)]) : unit
+  (for [i (iterator.range 0 records.stack-lea-cand-len)]
+    (let
+      [index : i64 (array-ref records.stack-lea-cands i)]
+      (when
+        (= (array-ref records.live index) 1)
+        (compiler-backend-peephole-compact-stack-address-window! records index)))))
 
 (define (compiler-backend-peephole-rewrite-stack-address
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]
@@ -12274,6 +12324,8 @@
         (__tl_make-array i64 0)
         0
         (- 0 1)
+        (__tl_make-array i64 0)
+        0
         (__tl_make-array i64 0)
         0)]
     [_walk-open : unit

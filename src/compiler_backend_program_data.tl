@@ -205,6 +205,13 @@
       (set! key (bit-or (shl key 8) (cast (string.string-ref text i) : i64))))
     key))
 
+(define compiler-backend-literal-prefix-filter-size : i64
+  65536)
+
+(define (compiler-backend-literal-prefix-filter-index [key : i64]) : i64
+  ;; Multiplicative hashing takes the high 16 bits of the wrapped product.
+  (cast (shr (cast (* key -7046029254386353131) : u64) 48) : i64))
+
 ;; Index only prefixes that can remove an entire payload. A match must still
 ;; prove equality across the full byte range. Only a strictly longer owner
 ;; can take over a payload, so the placement graph is acyclic. Six bytes
@@ -212,100 +219,107 @@
 ;; one byte lookup at each position and avoids most hash-table probes.
 (define (compiler-backend-literal-place-interiors!
   [ordered : (&mut ordered literal_vec.Vec)]) : unit
-  (let
-    [links : (__tl_dyn-array i64) (__tl_make-array i64 ordered.len)]
-    [filter : (__tl_dyn-array bool) (__tl_make-array bool 4096)]
-    [prefixes : backend_i64_i64_map.Map
-      (backend_i64_i64_map.with-capacity ordered.len)]
-    (for [i (iterator.range 0 ordered.len)]
-      (let
-        [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
-        [text : String (compiler-backend-literal-text entry.slot-address)]
-        (when
-          (and
-            (= entry.owner i)
-            (>=
-              (string.string-length text)
-              compiler-backend-literal-prefix-length))
-          (let
-            [key : i64 (compiler-backend-literal-prefix-key (& text))]
-            (set!
-              (array-ref links i)
-              (backend_i64_i64_map.get-value-or (& prefixes) key 0))
-            (set! (array-ref filter (bit-and key 4095)) true)
-            (backend_i64_i64_map.insert-ref! (&mut prefixes) key (+ i 1))))))
-    (for [i (iterator.range 0 ordered.len)]
-      (let
-        [host : CompilerBackendLiteralKey (array-ref ordered.slots i)]
-        [text : String (compiler-backend-literal-text host.slot-address)]
-        [length : i64 (string.string-length text)]
-        (when
-          (and
-            (= host.owner i)
-            (> length compiler-backend-literal-prefix-length))
-          (let
-            [key : i64 (compiler-backend-literal-prefix-key (& text))]
-            (for [offset
-              (iterator.range
-                0
-                (+ 1 (- length compiler-backend-literal-prefix-length)))]
-              (let
-                [link : i64
-                  (if (array-ref filter (bit-and key 4095))
-                    (backend_i64_i64_map.get-value-or (& prefixes) key 0)
-                    0)]
-                (while (> link 0)
-                  (let
-                    [index : i64 (- link 1)]
-                    [entry : CompilerBackendLiteralKey
-                      (array-ref ordered.slots index)]
-                    (when
-                      (= entry.owner index)
-                      (let
-                        [candidate : String
-                          (compiler-backend-literal-text entry.slot-address)]
-                        [need : i64 (string.string-length candidate)]
-                        (when
-                          (and
-                            (< need length)
-                            (<= need (- length offset))
-                            (string.is-string-prefix-at text candidate offset))
-                          (set!
-                            (array-ref ordered.slots index)
-                            (CompilerBackendLiteralKey
-                              entry.slot-address
-                              i
-                              offset
-                              0)))))
-                    (set! link (array-ref links index))))
-                (when
-                  (< (+ offset compiler-backend-literal-prefix-length) length)
-                  (set!
-                    key
-                    (bit-or
-                      (bit-and (shl key 8) 281474976710655)
-                      (cast
-                        (string.string-ref
-                          text
-                          (+ offset compiler-backend-literal-prefix-length))
-                        : i64))))))))))
-    (for [i (iterator.range 0 ordered.len)]
-      (let
-        [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
-        [owner : i64 entry.owner]
-        [offset : i64 entry.offset]
-        [parent : CompilerBackendLiteralKey (array-ref ordered.slots owner)]
-        (while (!= owner parent.owner)
-          (+= offset parent.offset)
-          (set! owner parent.owner)
-          (set! parent (array-ref ordered.slots owner)))
-        (set!
-          (array-ref ordered.slots i)
-          (CompilerBackendLiteralKey
-            entry.slot-address
-            owner
-            offset
-            parent.slot-address))))))
+  (with-arena
+    scratch
+    (let
+      [links : (__tl_dyn-array i64) (__tl_make-array i64 ordered.len)]
+      [filter : (__tl_dyn-array bool)
+        (__tl_make-array bool compiler-backend-literal-prefix-filter-size)]
+      [prefixes : backend_i64_i64_map.Map
+        (backend_i64_i64_map.with-capacity ordered.len)]
+      (for [i (iterator.range 0 ordered.len)]
+        (let
+          [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+          [text : String (compiler-backend-literal-text entry.slot-address)]
+          (when
+            (and
+              (= entry.owner i)
+              (>=
+                (string.string-length (& text))
+                compiler-backend-literal-prefix-length))
+            (let
+              [key : i64 (compiler-backend-literal-prefix-key (& text))]
+              (set!
+                (array-ref links i)
+                (backend_i64_i64_map.get-value-or (& prefixes) key 0))
+              (set!
+                (array-ref
+                  filter
+                  (compiler-backend-literal-prefix-filter-index key))
+                true)
+              (backend_i64_i64_map.insert-ref! (&mut prefixes) key (+ i 1))))))
+      (for [i (iterator.range 0 ordered.len)]
+        (let
+          [host : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+          [text : String (compiler-backend-literal-text host.slot-address)]
+          [length : i64 (string.string-length (& text))]
+          (when
+            (and
+              (= host.owner i)
+              (> length compiler-backend-literal-prefix-length))
+            (let
+              [key : i64 (compiler-backend-literal-prefix-key (& text))]
+              (for [offset
+                (iterator.range
+                  0
+                  (+ 1 (- length compiler-backend-literal-prefix-length)))]
+                (let
+                  [link : i64
+                    (if (array-ref
+                      filter
+                      (compiler-backend-literal-prefix-filter-index key))
+                      (backend_i64_i64_map.get-value-or (& prefixes) key 0)
+                      0)]
+                  (while (> link 0)
+                    (let
+                      [index : i64 (- link 1)]
+                      [entry : CompilerBackendLiteralKey
+                        (array-ref ordered.slots index)]
+                      (when
+                        (= entry.owner index)
+                        (let
+                          [candidate : String
+                            (compiler-backend-literal-text entry.slot-address)]
+                          [need : i64 (string.string-length (& candidate))]
+                          (when
+                            (and
+                              (< need length)
+                              (<= need (- length offset))
+                              (string.is-string-prefix-at
+                                (& text)
+                                (& candidate)
+                                offset))
+                            (set! (array-ref ordered.slots index).owner i)
+                            (set! (array-ref ordered.slots index).offset offset))))
+                      (set! link (array-ref links index))))
+                  (when
+                    (< (+ offset compiler-backend-literal-prefix-length) length)
+                    (set!
+                      key
+                      (bit-or
+                        (bit-and (shl key 8) 281474976710655)
+                        (cast
+                          (string.string-ref
+                            (& text)
+                            (+ offset compiler-backend-literal-prefix-length))
+                          : i64))))))))))))
+  (for [i (iterator.range 0 ordered.len)]
+    (let
+      [entry : CompilerBackendLiteralKey (array-ref ordered.slots i)]
+      [owner : i64 entry.owner]
+      [offset : i64 entry.offset]
+      [parent : CompilerBackendLiteralKey (array-ref ordered.slots owner)]
+      (while (!= owner parent.owner)
+        (+= offset parent.offset)
+        (set! owner parent.owner)
+        (set! parent (array-ref ordered.slots owner)))
+      (set!
+        (array-ref ordered.slots i)
+        (CompilerBackendLiteralKey
+          entry.slot-address
+          owner
+          offset
+          parent.slot-address)))))
 
 (define (compiler-backend-literal-records
   [strings : be_state.BackendStringSeq]

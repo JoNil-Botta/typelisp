@@ -7,6 +7,8 @@
 ;; so any divergence in the reconstructed nodes fails the build.
 ;; Referenced only as the serialize strategy module in the generated import
 ;; below, which the unused-import rule does not count as a reference.
+(import stdlib.clone)
+
 ;; lint-allow: unused-import
 (import stdlib.json)
 (import stdlib.math)
@@ -19,6 +21,8 @@
   (count i64)
   (active bool)
   (marks (Array i64 3)))
+
+(clone.gen-clone Sample)
 
 (import (serialize.serialize json Sample) as sample_json)
 
@@ -50,7 +54,7 @@
 ;; decode-bool/decode-string/sequence-length/sequence-element-value (the
 ;; `return` and internal BoxGet template kinds).
 (define (round-trip [sample : Sample]) : i64
-  (match (sample_json.decode (sample_json.encode (clone sample)))
+  (match (sample_json.decode (sample_json.encode (clone-sample (& sample))))
     [(Ok decoded)
       (if (and
         (string.eq decoded.label sample.label)
@@ -64,7 +68,7 @@
   (let
     [marks : (Array i64 3) (array 1 2 3)]
     [sample : Sample (Sample "tag" 7 true marks)]
-    [rendered : String (label-of (clone sample))]
+    [rendered : String (label-of (clone-sample (& sample)))]
     (if (and
       (string.eq rendered "tag!")
       (= (round-trip sample) 3)

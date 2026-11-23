@@ -38,7 +38,7 @@
   (match result
     [(ErrProcessOutput error)
       (test.assert-true
-        (process.error-spawn-failed? (clone error))
+        (process.error-spawn-failed? (process.clone-process-error (& error)))
         "process missing executable spawn failed")
       (assert-owned-string-eq
         (process.error-message error)
@@ -56,7 +56,7 @@
   (match result
     [(ErrProcessChild error)
       (test.assert-true
-        (process.error-spawn-failed? (clone error))
+        (process.error-spawn-failed? (process.clone-process-error (& error)))
         "process async missing executable spawn failed")
       (assert-owned-string-eq
         (process.error-message error)
@@ -69,7 +69,7 @@
   (match result
     [(ErrProcessChild error)
       (test.assert-true
-        (process.error-unsupported? (clone error))
+        (process.error-unsupported? (process.clone-process-error (& error)))
         "process async unsupported")
       (assert-owned-string-eq
         (process.error-message error)
@@ -82,7 +82,7 @@
   (match result
     [(ErrProcessOutput error)
       (test.assert-true
-        (process.error-unsupported? (clone error))
+        (process.error-unsupported? (process.clone-process-error (& error)))
         "process async wait unsupported")
       (assert-owned-string-eq
         (process.error-message error)
@@ -96,8 +96,8 @@
   (match result
     [(ErrProcessOutput error)
       (test.assert-true
-        (process.error-wait-failed? (clone error))
-        (clone message))
+        (process.error-wait-failed? (process.clone-process-error (& error)))
+        (string.copy (& message)))
       (assert-owned-string-eq
         (process.error-message error)
         "process: invalid or consumed child capability"
@@ -362,7 +362,9 @@
         (let
           [first-token : i64 (deref first.authority)]
           (with
-            ([copied-live (clone first) process.cleanup-process-child])
+            ([copied-live
+                (process.ProcessChild (box first-token))
+                process.cleanup-process-child])
             (assert-process-output-invalid-child
               (process.wait (&mut copied-live))
               "copied live child capability"))

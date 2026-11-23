@@ -9,7 +9,7 @@
     (begin
       (while (< index (array-length texts))
         (let
-          [copy : String (clone (array-ref texts index))]
+          [copy : String (string.copy (& (array-ref texts index)))]
           (begin
             (set! total (+ total (string.string-length copy)))
             (set! index (+ index 1)))))

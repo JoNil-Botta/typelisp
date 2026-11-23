@@ -148,7 +148,8 @@
 
 ;: Copy a failure without retaining any caller storage.
 (define (zlib-error-copy [error : (& error ZlibError)]) : ZlibError
-  (ZlibError (clone error.kind) error.input error.output))
+  (match error
+    [(ZlibError kind input output) (ZlibError kind input output)]))
 
 ;: Enter the sticky failed phase.
 (define (zlib-fail! [state : (&mut state Decoder)] [kind : ZlibErrorKind]) : unit

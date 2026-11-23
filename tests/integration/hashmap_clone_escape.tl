@@ -1,4 +1,4 @@
-;; A generated hashmap built in a scratch arena and escaped with `clone` keeps
+;; A generated hashmap built in a scratch arena and escaped with `clone-map` keeps
 ;; its exact layout after the scratch is destroyed (#8384): the same length,
 ;; capacity, tombstone count, slot iteration order and lookups. The optimizer's
 ;; program summaries escape their result tables this way.
@@ -53,10 +53,10 @@
     [capacity : i64 (imap.capacity (& built))]
     [deleted : i64 (imap.deleted (& built))]
     [order : i64 (slot-order-hash (& built))]
-    [copy : imap.Map (clone built)]
+    [copy : imap.Map (imap.clone-map (& built))]
     [empty-scratch : arena.Arena (arena.make)]
     [empty : imap.Map (in-arena empty-scratch (imap.new))]
-    [empty-copy : imap.Map (clone empty)]
+    [empty-copy : imap.Map (imap.clone-map (& empty))]
     (arena.destroy-safe! scratch)
     (arena.destroy-safe! empty-scratch)
     (if (and

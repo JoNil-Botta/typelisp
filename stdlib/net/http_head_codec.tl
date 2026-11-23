@@ -799,7 +799,8 @@
               out
               (http_types.headers-append
                 out
-                (clone (array-ref headers.slots index)))))
+                (http_types.clone-http-header-field
+                  (& (array-ref headers.slots index))))))
           (set! index (+ index 1))))
       out)))
 
@@ -875,16 +876,16 @@
           (set! parser.line-start head-len)
           (HttpParserLineContinue)])
       (if (= line-len 0)
-        (let
-          [framing : HttpFramingState parser.framing]
-          (match (select-response-plan
-            (& framing)
-            parser.status-code
-            (clone parser.request-method)
-            (clone parser.connect-capability)
-            head-len)
-            [(HttpResponsePlanErr error) (HttpParserLineErr error)]
-            [(HttpResponsePlanOk plan) (HttpParserLineComplete plan)]))
+        (match (& (deref parser))
+          [(fields framing status-code request-method connect-capability)
+            (match (select-response-plan
+              (& framing)
+              status-code
+              request-method
+              connect-capability
+              head-len)
+              [(HttpResponsePlanErr error) (HttpParserLineErr error)]
+              [(HttpResponsePlanOk plan) (HttpParserLineComplete plan)])])
         (if (>= parser.headers.len parser.limits.max-fields)
           (HttpParserLineErr
             (http_types.peer-error (HttpTooManyFields) parser.line-start))
@@ -901,7 +902,8 @@
                   (set! field.sensitivity (http_types.HttpHeaderSensitive))
                   unit)
                 (match (apply-response-field
-                  (clone parser.framing)
+                  (match (& (deref parser))
+                    [(fields framing) framing])
                   (& field)
                   value-offset)
                   [(HttpResponseFieldErr error) (HttpParserLineErr error)]
@@ -911,7 +913,8 @@
                         [value : (& field bytes)
                           (http_types.header-value-bytes (& field.value))]
                         (match (apply-trailer-names
-                          (clone parser.trailer-names)
+                          (http_types.clone-http-header-name-set
+                            (& parser.trailer-names))
                           value
                           value-offset
                           parser.limits.max-name-bytes)
@@ -983,16 +986,17 @@
                         [framing : HttpFramingState parser.framing]
                         [headers : http_types.HttpHeaders
                           (canonicalize-content-length
-                            (clone parser.headers)
+                            (http_types.clone-http-headers (& parser.headers))
                             (& framing))]
                         (set!
                           completed-head
                           (http_types.HttpResponseHead
                             (Http11)
                             (http_types.HttpStatus parser.status-code)
-                            (clone parser.reason)
+                            (http_types.clone-http-reason (& parser.reason))
                             headers
-                            (clone parser.trailer-names)
+                            (http_types.clone-http-header-name-set
+                              (& parser.trailer-names))
                             plan
                             (byte_buf.len parser.buffer)))
                         (set! result-kind 1)
@@ -1239,19 +1243,13 @@
                       (set! failed true)]
                     [(HttpConnectionFieldOk) unit])]
                 [(name-eq-string (& field.name) "content-length")
-                  (match (apply-content-length
-                    (clone framing)
-                    value
-                    value-offset)
+                  (match (apply-content-length framing value value-offset)
                     [(HttpContentLengthErr error)
                       (set! failure (request-localize-error error))
                       (set! failed true)]
                     [(HttpContentLengthOk next) (set! framing next)])]
                 [(name-eq-string (& field.name) "transfer-encoding")
-                  (match (apply-transfer-encoding
-                    (clone framing)
-                    value
-                    value-offset)
+                  (match (apply-transfer-encoding framing value value-offset)
                     [(HttpTransferEncodingErr error)
                       (set! failure (request-localize-error error))
                       (set! failed true)]
@@ -1259,7 +1257,7 @@
                 [(name-eq-string (& field.name) "trailer")
                   (set! saw-trailer true)
                   (match (apply-trailer-names
-                    (clone trailer-names)
+                    (http_types.clone-http-header-name-set (& trailer-names))
                     value
                     value-offset
                     limits.max-name-bytes)
@@ -1383,7 +1381,9 @@
         [else
           (HttpPreparedRequestOk
             (HttpPreparedRequest
-              (HttpRequestPlanChunked authorization (clone facts.trailer-names))
+              (HttpRequestPlanChunked
+                authorization
+                (http_types.clone-http-header-name-set (& facts.trailer-names)))
               false
               0
               true

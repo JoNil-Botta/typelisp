@@ -230,7 +230,7 @@
 
 (define (trailer-error-code
   [error : (& error trailer.HttpResponseTrailerError)]) : i64
-  (match (clone error.kind)
+  (match error.kind
     [(HttpResponseTrailerFieldError field-kind)
       (match field-kind
         [(HttpInvalidFieldName) 1]
@@ -264,7 +264,7 @@
         [right : (& wire bytes)
           (byte_buf.bytes-slice-view view split (- n split))]
         (match (trailer.response-trailer-parser-feed
-          (new-parser-with (clone limits) (http_types.header-name-set-empty))
+          (new-parser-with limits (http_types.header-name-set-empty))
           left)
           [(HttpResponseTrailerFeedNeedInput next first-consumed)
             (test.assert-i64-eq first-consumed split "error split prefix")
@@ -519,7 +519,7 @@
     [exact-view : (& exact bytes) (byte_buf.str-as-bytes (& exact))]
     [over-view : (& over bytes) (byte_buf.str-as-bytes (& over))]
     (match (trailer.response-trailer-parser-feed
-      (new-parser-with (clone limits) (http_types.header-name-set-empty))
+      (new-parser-with limits (http_types.header-name-set-empty))
       exact-view)
       [(HttpResponseTrailerFeedComplete _ _) unit]
       [_ (fail "exact retained trailer cap rejected")])

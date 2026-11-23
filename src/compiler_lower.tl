@@ -57920,10 +57920,15 @@
             (lower-emit-splat state (I64 lanes) lanes elem-ty)
             (LaneCount)
             cache)])]
-    ;; Shuffle selectors may span two i64 vectors when the element lane count
-    ;; exceeds the selector lane count. Its emitter owns that split, so a
-    ;; generic leaf cache would materialize an unused, incorrectly shaped ID.
-    [(Shuffle _ _) (Emit state Unit cache)]
+    ;; The source uses the map's element width. Selector lanes use a separate
+    ;; i64 shape, and the dynamic emitter reads their cached array bases.
+    [(Shuffle source _)
+      (lower-vector-map-preheader-cache-leaves
+        state
+        lanes
+        elem-ty
+        (deref source)
+        cache)]
     [(Stage staged value)
       (match (lower-vector-map-preheader-cache-leaves
         state
@@ -58028,20 +58033,36 @@
   [gang-count : ir.CompilerIrValue]
   [lanes : i64]
   [plan : LowerVectorMapValue]
-  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  [emit-mode : LowerVectorMapEmitMode]
+  [cache : (& cache LowerVectorMapValueCache)]) : LowerExpr
   (match plan
     [(Array array-var)
-      (match emit-mode
-        [(Full)
-          (lower-emit-sequence-vector-load state array-var index lanes (I64))]
-        [(Predicated _ mask)
-          (lower-emit-sequence-predicated-load
+      (match (lower-vector-map-value-cache-lookup cache (ArrayData array-var))
+        [(Some data-ptr)
+          (lower-emit-vector-array-data-for-mode
             state
-            array-var
+            data-ptr
             index
-            mask
             lanes
-            (I64))])]
+            (I64)
+            emit-mode)]
+        [(No)
+          (match emit-mode
+            [(Full)
+              (lower-emit-sequence-vector-load
+                state
+                array-var
+                index
+                lanes
+                (I64))]
+            [(Predicated _ mask)
+              (lower-emit-sequence-predicated-load
+                state
+                array-var
+                index
+                mask
+                lanes
+                (I64))])])]
     [(Uniform value) (lower-emit-splat state value lanes (I64))]
     [(LaneIndex)
       (match (lower-emit-lane-id state lanes (I64))
@@ -58066,7 +58087,8 @@
         (lower-global-shared-view gang-count)
         lanes
         (deref staged)
-        (lower-global-shared-view emit-mode))
+        (lower-global-shared-view emit-mode)
+        cache)
         [(Expr staged-state _ _)
           (lower-emit-shuffle-selector-plan
             staged-state
@@ -58075,7 +58097,8 @@
             gang-count
             lanes
             (deref value)
-            emit-mode)])]
+            emit-mode
+            cache)])]
     [(BinOp op lhs rhs)
       (match (lower-emit-shuffle-selector-plan
         state
@@ -58084,7 +58107,8 @@
         (lower-global-shared-view gang-count)
         lanes
         (deref lhs)
-        (lower-global-shared-view emit-mode))
+        (lower-global-shared-view emit-mode)
+        cache)
         [(Expr lhs-state lhs-value _)
           (match (lower-emit-shuffle-selector-plan
             lhs-state
@@ -58093,7 +58117,8 @@
             gang-count
             lanes
             (deref rhs)
-            (lower-global-shared-view emit-mode))
+            (lower-global-shared-view emit-mode)
+            cache)
             [(Expr rhs-state rhs-value _)
               (match (lower-emit-vector-map-binop
                 rhs-state
@@ -58124,71 +58149,65 @@
     [_ (Expr state Unit (I64))]))
 
 (define (lower-emit-dynamic-vector-shuffle
-  [ctx : tc_core.TcContext]
   [state : LowerState]
   [index-var : i64]
   [lanes : i64]
   [elem-ty : ast.AstType]
-  [source-plan : LowerVectorMapValue]
+  [source-value : ir.CompilerIrValue]
   [selector-plan : LowerVectorMapValue]
-  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  [emit-mode : LowerVectorMapEmitMode]
+  [cache : (& cache LowerVectorMapValueCache)]) : LowerExpr
   (let
     [selector-lanes : i64
       (lower-simd-lanes-for-elem (lower-state-mode state) (I64))]
     [index-value : ir.CompilerIrValue (Var index-var)]
     (match emit-mode
       [(Full)
-        (match (lower-emit-vector-map-value
-          ctx
+        (match (lower-emit-shuffle-selector-plan
           state
-          index-var
-          lanes
-          (lower-global-shared-view elem-ty)
-          source-plan)
-          [(Expr source-state source-value _)
-            (match (lower-emit-shuffle-selector-plan
-              source-state
-              (lower-global-shared-view index-value)
-              0
-              (I64 lanes)
-              selector-lanes
-              (lower-global-shared-view selector-plan)
-              (Full))
-              [(Expr low-state selector-low _)
-                (if (> lanes selector-lanes)
-                  (match (lower-emit-binop
-                    low-state
-                    Add
-                    index-value
-                    (I64 selector-lanes)
-                    (I64))
-                    [(Expr high-index-state high-index _)
-                      (match (lower-emit-shuffle-selector-plan
-                        high-index-state
-                        high-index
-                        selector-lanes
-                        (I64 lanes)
-                        selector-lanes
-                        selector-plan
-                        (Full))
-                        [(Expr high-state selector-high _)
-                          (lower-emit-vector-shuffle-instr
-                            high-state
-                            source-value
-                            selector-low
-                            (Some selector-high)
-                            (I64 lanes)
-                            lanes
-                            elem-ty)])])
-                  (lower-emit-vector-shuffle-instr
-                    low-state
-                    source-value
-                    selector-low
-                    (No)
+          (lower-global-shared-view index-value)
+          0
+          (I64 lanes)
+          selector-lanes
+          (lower-global-shared-view selector-plan)
+          (Full)
+          cache)
+          [(Expr low-state selector-low _)
+            (if (> lanes selector-lanes)
+              (match (lower-emit-binop
+                low-state
+                Add
+                index-value
+                (I64 selector-lanes)
+                (I64))
+                [(Expr high-index-state high-index _)
+                  (match (lower-emit-shuffle-selector-plan
+                    high-index-state
+                    high-index
+                    selector-lanes
                     (I64 lanes)
-                    lanes
-                    elem-ty))])])]
-      [(Predicated end-value source-mask)
+                    selector-lanes
+                    selector-plan
+                    (Full)
+                    cache)
+                    [(Expr high-state selector-high _)
+                      (lower-emit-vector-shuffle-instr
+                        high-state
+                        source-value
+                        selector-low
+                        (Some selector-high)
+                        (I64 lanes)
+                        lanes
+                        elem-ty)])])
+              (lower-emit-vector-shuffle-instr
+                low-state
+                source-value
+                selector-low
+                (No)
+                (I64 lanes)
+                lanes
+                elem-ty))])]
+      [(Predicated end-value _)
         (match (lower-emit-binop
           state
           Sub
@@ -58196,73 +58215,65 @@
           (lower-global-shared-view index-value)
           (I64))
           [(Expr count-state active-lanes _)
-            (match (lower-emit-predicated-vector-map-value
-              ctx
+            (match (lower-emit-tail-mask
               count-state
-              index-var
+              (lower-global-shared-view index-value)
               (lower-global-shared-view end-value)
-              source-mask
-              lanes
-              (lower-global-shared-view elem-ty)
-              source-plan)
-              [(Expr source-state source-value _)
-                (match (lower-emit-tail-mask
-                  source-state
+              selector-lanes)
+              [(Expr low-mask-state low-mask _)
+                (match (lower-emit-shuffle-selector-plan
+                  low-mask-state
                   (lower-global-shared-view index-value)
-                  (lower-global-shared-view end-value)
-                  selector-lanes)
-                  [(Expr low-mask-state low-mask _)
-                    (match (lower-emit-shuffle-selector-plan
-                      low-mask-state
-                      (lower-global-shared-view index-value)
-                      0
-                      (lower-global-shared-view active-lanes)
-                      selector-lanes
-                      (lower-global-shared-view selector-plan)
-                      (Predicated (lower-global-shared-view end-value) low-mask))
-                      [(Expr low-state selector-low _)
-                        (if (> lanes selector-lanes)
-                          (match (lower-emit-binop
-                            low-state
-                            Add
-                            index-value
-                            (I64 selector-lanes)
-                            (I64))
-                            [(Expr high-index-state high-index _)
-                              (match (& high-index)
-                                [(Var high-index-var)
-                                  (match (lower-emit-tail-mask
-                                    high-index-state
-                                    (lower-global-shared-view high-index)
-                                    (lower-global-shared-view end-value)
-                                    selector-lanes)
-                                    [(Expr high-mask-state high-mask _)
-                                      (match (lower-emit-shuffle-selector-plan
-                                        high-mask-state
-                                        high-index
-                                        selector-lanes
-                                        (lower-global-shared-view active-lanes)
-                                        selector-lanes
-                                        selector-plan
-                                        (Predicated end-value high-mask))
-                                        [(Expr high-state selector-high _)
-                                          (lower-emit-vector-shuffle-instr
-                                            high-state
-                                            source-value
-                                            selector-low
-                                            (Some selector-high)
-                                            active-lanes
-                                            lanes
-                                            elem-ty)])])]
-                                [_ (Expr high-index-state Unit elem-ty)])])
-                          (lower-emit-vector-shuffle-instr
-                            low-state
-                            source-value
-                            selector-low
-                            (No)
-                            active-lanes
-                            lanes
-                            elem-ty))])])])])])))
+                  0
+                  (lower-global-shared-view active-lanes)
+                  selector-lanes
+                  (lower-global-shared-view selector-plan)
+                  (Predicated (lower-global-shared-view end-value) low-mask)
+                  cache)
+                  [(Expr low-state selector-low _)
+                    (if (> lanes selector-lanes)
+                      (match (lower-emit-binop
+                        low-state
+                        Add
+                        index-value
+                        (I64 selector-lanes)
+                        (I64))
+                        [(Expr high-index-state high-index _)
+                          (match (& high-index)
+                            [(Var high-index-var)
+                              (match (lower-emit-tail-mask
+                                high-index-state
+                                (lower-global-shared-view high-index)
+                                (lower-global-shared-view end-value)
+                                selector-lanes)
+                                [(Expr high-mask-state high-mask _)
+                                  (match (lower-emit-shuffle-selector-plan
+                                    high-mask-state
+                                    high-index
+                                    selector-lanes
+                                    (lower-global-shared-view active-lanes)
+                                    selector-lanes
+                                    selector-plan
+                                    (Predicated end-value high-mask)
+                                    cache)
+                                    [(Expr high-state selector-high _)
+                                      (lower-emit-vector-shuffle-instr
+                                        high-state
+                                        source-value
+                                        selector-low
+                                        (Some selector-high)
+                                        active-lanes
+                                        lanes
+                                        elem-ty)])])]
+                            [_ (Expr high-index-state Unit elem-ty)])])
+                      (lower-emit-vector-shuffle-instr
+                        low-state
+                        source-value
+                        selector-low
+                        (No)
+                        active-lanes
+                        lanes
+                        elem-ty))])])])])))
 
 (define (lower-emit-vector-shuffle
   [ctx : tc_core.TcContext]
@@ -58298,15 +58309,24 @@
             elem-ty
             source-plan)])]
     [_
-      (lower-emit-dynamic-vector-shuffle
+      (match (lower-emit-vector-map-value-for-mode
         ctx
         state
         index-var
         lanes
-        elem-ty
+        (lower-global-shared-view elem-ty)
         source-plan
-        selector-plan
-        emit-mode)]))
+        (lower-global-shared-view emit-mode))
+        [(Expr source-state source-value _)
+          (lower-emit-dynamic-vector-shuffle
+            source-state
+            index-var
+            lanes
+            elem-ty
+            source-value
+            selector-plan
+            emit-mode
+            (& (lower-vector-map-value-cache-empty)))])]))
 
 (define (lower-emit-vector-map-value
   [ctx : tc_core.TcContext]
@@ -58489,21 +58509,14 @@
 (define (lower-emit-vector-array-data-for-mode
   [state : LowerState]
   [data-ptr : ir.CompilerIrValue]
-  [index-var : i64]
+  [index : ir.CompilerIrValue]
   [lanes : i64]
   [elem-ty : ast.AstType]
   [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
   (match emit-mode
-    [(Full)
-      (lower-emit-vector-load-data state data-ptr (Var index-var) lanes elem-ty)]
+    [(Full) (lower-emit-vector-load-data state data-ptr index lanes elem-ty)]
     [(Predicated _ mask)
-      (lower-emit-predicated-load-data
-        state
-        data-ptr
-        (Var index-var)
-        mask
-        lanes
-        elem-ty)]))
+      (lower-emit-predicated-load-data state data-ptr index mask lanes elem-ty)]))
 
 (define (lower-emit-vector-map-value-cached
   [ctx : tc_core.TcContext]
@@ -58527,7 +58540,7 @@
                 (lower-emit-vector-array-data-for-mode
                   state
                   data-ptr
-                  index-var
+                  (Var index-var)
                   lanes
                   elem-ty
                   emit-mode)
@@ -58659,17 +58672,30 @@
             (LaneCount)
             cache)])]
     [(Shuffle source selector)
-      (match (lower-emit-vector-shuffle
+      (match (lower-emit-vector-map-value-cached
         ctx
         state
         index-var
         lanes
-        elem-ty
+        (lower-global-shared-view elem-ty)
         (deref source)
-        (deref selector)
-        emit-mode)
-        [(Expr shuffle-state shuffle-value _)
-          (Emit shuffle-state shuffle-value cache)])]
+        (lower-global-shared-view emit-mode)
+        cache)
+        [(Emit source-state source-value source-cache)
+          (match (& (deref selector))
+            [(LaneIndex) (Emit source-state source-value source-cache)]
+            [_
+              (match (lower-emit-dynamic-vector-shuffle
+                source-state
+                index-var
+                lanes
+                elem-ty
+                source-value
+                (deref selector)
+                emit-mode
+                (& source-cache))
+                [(Expr shuffle-state shuffle-value _)
+                  (Emit shuffle-state shuffle-value source-cache)])])])]
     [(Stage staged value)
       (match (lower-emit-vector-map-value-cached
         ctx

@@ -33359,7 +33359,8 @@
         [(No) true]
         [(Some _) false])]))
 
-(define (opt-loop-rotation-top-test-blocks [constant-edge? : bool]) : ir.CompilerIrBlockList
+(define (opt-loop-rotation-top-test-blocks
+  [entry-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
     (irt.blocks
       "loop:
@@ -33370,13 +33371,46 @@
          jump loop
        exit:
          return %1")
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instrs
-        (ir.CompilerIrInstr.Mov 1 (I64 0) (I64))
-        (if constant-edge?
-          (irt.instr "branch true, loop, exit")
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))))))
+    (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") entry-instrs)))
+
+(define (opt-loop-rotation-unrelated-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %0 = mov true : bool
+       branch %0, left, right
+     left:
+       jump merge
+     right:
+       jump merge
+     merge:
+       %1 = phi [1, left], [2, right] : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       jump loop
+     loop:
+       %3 = lt %2, %1 : bool
+       branch %3, body, exit
+     body:
+       %2 = add %2, 1 : i64
+       jump loop
+     exit:
+       return %2"))
+
+(define (opt-loop-rotation-exit-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %1 = mov 0 : i64
+       jump loop
+     loop:
+       %2 = lt %1, 10 : bool
+       branch %2, body, exit
+     body:
+       %1 = add %1, 1 : i64
+       jump loop
+     exit:
+       %3 = phi [%1, loop] : i64
+       return %3"))
 
 (define (opt-loop-rotation-false-body-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -52473,7 +52507,9 @@
 
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
-    [raw : ir.CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
+    [raw : ir.CompilerIrBlockList
+      (opt-loop-rotation-top-test-blocks
+        (irt.instrs "%1 = mov 0 : i64\n jump loop"))]
     [_addr-taken : unit (opt.opt-function-addr-taken-install! 0 (& raw))]
     [rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
@@ -52482,8 +52518,26 @@
     [constant-edge-rotated : ir.CompilerIrBlockList
       (match (opt.opt-loop-rotation-normalized-function-result
         (ast.ast-node-pool-reader-context-current)
-        (opt-cfg-test-function (opt-loop-rotation-top-test-blocks true)))
+        (opt-cfg-test-function
+          (opt-loop-rotation-top-test-blocks
+            (irt.instrs "%1 = mov 0 : i64\n branch true, loop, exit"))))
         [(Result blocks _ _) blocks])]
+    [mov-edge-rotated : ir.CompilerIrBlockList
+      (match (opt.opt-loop-rotation-normalized-function-result
+        (ast.ast-node-pool-reader-context-current)
+        (opt-cfg-test-function
+          (opt-loop-rotation-top-test-blocks
+            (irt.instrs
+              "%1 = mov 0 : i64
+               %3 = mov true : bool
+               %3 = mov false : bool
+               branch %3, exit, loop"))))
+        [(Result blocks _ _) blocks])]
+    [unrelated-phi-rotated : ir.CompilerIrBlockList
+      (opt.opt-loop-rotation-blocks
+        (ast.ast-node-pool-reader-context-current)
+        (& (opt-loop-rotation-unrelated-phi-blocks)))]
+    [exit-phi : ir.CompilerIrBlockList (opt-loop-rotation-exit-phi-blocks)]
     [false-body-rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
         (ast.ast-node-pool-reader-context-current)
@@ -52599,6 +52653,33 @@
             (ir.compiler-ir-label "body")
             (ir.compiler-ir-label "exit")))
         18]
+      [(not
+          (opt-loop-rotation-successors?
+            mov-edge-rotated
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-label "exit")))
+        19]
+      [(or
+          (opt-block-list-has-label?
+            (ir.compiler-ir-block-list-view unrelated-phi-rotated)
+            (ir.compiler-ir-label "loop"))
+          (!=
+            (opt-count-phi-blocks
+              (ir.compiler-ir-block-list-view unrelated-phi-rotated))
+            1))
+        20]
+      [(not
+          (let
+            [unchanged
+              (opt.opt-loop-rotation-blocks
+                (ast.ast-node-pool-reader-context-current)
+                (& exit-phi))]
+            (opt.opt-block-list-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              unchanged
+              exit-phi)))
+        21]
       [else 42])))
 
 ;; Nested-loop SSA fixture: the inner-loop counter/accumulator phis at the

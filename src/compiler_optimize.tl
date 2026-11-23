@@ -16793,12 +16793,18 @@
 (define (opt-cfg-fold-branches-instr-seq-rewrite!
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (for [index (iterator.range 0 count)]
+    [last : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+    ;; Branches terminate basic blocks. Leave all non-branch instructions and
+    ;; branches that cannot fold in their existing slots.
+    (when
+      (and
+        (>= last 0)
+        (opt-cfg-foldable-branch-instr?
+          (ir.compiler-ir-instr-seq-ref instrs last)))
       (ir.compiler-ir-instr-seq-set!
         (&mut instrs)
-        index
-        (opt-cfg-fold-branch (ir.compiler-ir-instr-seq-ref instrs index))))))
+        last
+        (opt-cfg-fold-branch (ir.compiler-ir-instr-seq-ref instrs last))))))
 
 (define (opt-cfg-fold-branches-block-seq-rewrite!
   [blocks : (& ir.CompilerIrBlockSeq)]) : unit
@@ -18798,10 +18804,10 @@
   (not (opt-label-contains body label)))
 
 (define (opt-loop-rotation-header-shape
-  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [index : (& index OptCfgIndex)]
   [header : i64]
   [body : OptLabelSet]) : OptLoopRotationHeader
-  (match (opt-cfg-find-block blocks header)
+  (match (opt-cfg-index-find-block index header)
     [(No) (No)]
     [(Some block)
       (match block
@@ -18816,6 +18822,8 @@
                   [(Branch _ true-label false-label)
                     (if (and
                       (opt-loop-rotation-header-prefix-ok? instrs 0 last)
+                      (not (opt-cfg-block-starts-with-phi? index true-label))
+                      (not (opt-cfg-block-starts-with-phi? index false-label))
                       (or
                         (and
                           (opt-loop-rotation-body-target?
@@ -18853,6 +18861,90 @@
     [(Some block)
       (match block
         [(Block _ instrs) (opt-loop-rotation-final-jump-to? (& instrs) target)])]))
+
+(define (opt-loop-rotation-literal-def
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [def : i64]) : ir.CompilerIrMaybeValue
+  (if (< def 0)
+    (No)
+    (match (ir.compiler-ir-instr-seq-borrow instrs def)
+      [(Mov _ (Bool known) (Bool)) (Some (Bool known))]
+      [_ (No)])))
+
+(define (opt-loop-rotation-entry-value
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : (& index OptCfgIndex)]
+  [label : i64]
+  [cond : (& cond ir.CompilerIrValue)]
+  [last : i64]) : ir.CompilerIrMaybeValue
+  (match cond
+    [(Bool known) (Some (Bool known))]
+    [(Var var)
+      (if (opt-addr-taken-operand? cond)
+        (No)
+        (let
+          [def : i64 (opt-ctor-fwd-find-def instrs (- last 1) var)]
+          (if (>= def 0)
+            (opt-loop-rotation-literal-def instrs def)
+            ;; SPMD may place invariant setup in its own preheader. With a
+            ;; single predecessor the most recent definition there reaches it.
+            (let
+              [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+              (if (= (opt-label-count preds) 1)
+                (match (opt-cfg-index-find-block index (opt-label-ref preds 0))
+                  [(Some (Block _ pred-instrs))
+                    (opt-loop-rotation-literal-def
+                      (& pred-instrs)
+                      (opt-ctor-fwd-find-def
+                        (& pred-instrs)
+                        (- pred-instrs.len 2)
+                        var))]
+                  [(No) (No)])
+                (No))))))]
+    [_ (No)]))
+
+;; The entry branch is replaced with the cloned guard. Its untaken edge can
+;; disappear only if the other successor has no edge-indexed Phi inputs.
+(define (opt-loop-rotation-entry-compatible?
+  [index : (& index OptCfgIndex)]
+  [label : i64]
+  [header : i64]
+  [normalize? : bool]) : bool
+  (match (opt-cfg-index-find-block index label)
+    [(No) false]
+    [(Some block)
+      (match block
+        [(Block _ instrs)
+          (let
+            [last : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+            (and
+              (>= last 0)
+              (match (ir.compiler-ir-instr-seq-borrow instrs last)
+                [(Jump target) (= target header)]
+                [(Branch cond yes no)
+                  (and
+                    normalize?
+                    (match (opt-loop-rotation-entry-value
+                      instrs
+                      index
+                      label
+                      cond
+                      last)
+                      [(Some (Bool known))
+                        (and
+                          (=
+                            (if known
+                              yes
+                              no)
+                            header)
+                          (not
+                            (opt-cfg-block-starts-with-phi?
+                              index
+                              (if known
+                                no
+                                yes))))]
+                      [_ false]))]
+                [_ false])))])]))
 
 (define (opt-loop-rotation-replace-final-jump
   [pools : ast.AstNodePoolContext]
@@ -18947,24 +19039,33 @@
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [_loops : (& _loops opt_natural_loop_vec.Vec)]
-  [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
+  [loop : (& loop OptNaturalLoop)]
+  [normalize? : bool]) : OptBlockListPassResult
   (let
     [header : i64 (opt-natural-loop-header loop)]
     [latch : i64 (opt-natural-loop-latch loop)]
     [body : OptLabelSet (opt-natural-loop-body loop)]
     [preds : OptLabelSet (opt-pred-map-lookup context.pred-map header)]
-    (match (opt-natural-loop-preheader loop)
-      [(No) (Result blocks false)]
-      [(Some preheader)
+    (if (and
+      (= (opt-natural-loop-latch-count loop) 1)
+      (= (opt-label-count preds) 2)
+      (opt-label-contains preds latch)
+      (opt-loop-rotation-edge-compatible? blocks latch header))
+      (let
+        [first : i64 (opt-label-ref preds 0)]
+        [preheader : i64
+          (if (= first latch)
+            (opt-label-ref preds 1)
+            first)]
         (if (and
-          (= (opt-natural-loop-latch-count loop) 1)
-          (= (opt-label-count preds) 2)
-          (opt-label-contains preds preheader)
-          (opt-label-contains preds latch)
-          (opt-loop-rotation-edge-compatible? blocks preheader header)
-          (opt-loop-rotation-edge-compatible? blocks latch header))
-          (match (opt-loop-rotation-header-shape blocks header body)
+          (opt-cfg-index-reachable? (& context.index) preheader)
+          (not (opt-label-contains body preheader))
+          (opt-loop-rotation-entry-compatible?
+            (& context.index)
+            preheader
+            header
+            normalize?))
+          (match (opt-loop-rotation-header-shape (& context.index) header body)
             [(No) (Result blocks false)]
             [(Header guard)
               (opt-loop-rotation-apply-guard
@@ -18974,14 +19075,15 @@
                 preheader
                 latch
                 (& guard))])
-          (Result blocks false))])))
+          (Result blocks false)))
+      (Result blocks false))))
 
 (define (opt-loop-rotation-loops
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [loops : (& loops opt_natural_loop_vec.Vec)]
-  [remaining : (& remaining (Slice OptNaturalLoop))]) : OptBlockListPassResult
+  [remaining : (& remaining (Slice OptNaturalLoop))]
+  [normalize? : bool]) : OptBlockListPassResult
   (match remaining
     [(slice) (Result blocks false)]
     [(slice loop & rest)
@@ -18989,12 +19091,12 @@
         pools
         (compiler-opt-global-shared-view blocks)
         context
-        loops
-        loop)
+        loop
+        normalize?)
         [(Result next changed)
           (if changed
             (Result next true)
-            (opt-loop-rotation-loops pools blocks context loops rest))])]))
+            (opt-loop-rotation-loops pools blocks context rest normalize?))])]))
 
 ;; The step already builds a CFG context for `blocks`. Carry it out so the
 ;; fixpoint below can hand the LAST step's context -- the one built for the
@@ -19005,7 +19107,8 @@
 
 (define (opt-loop-rotation-blocks-once-result
   [pools : ast.AstNodePoolContext]
-  [blocks : (& ir.CompilerIrBlockList)]) : OptLoopRotationCtxResult
+  [blocks : (& ir.CompilerIrBlockList)]
+  [normalize? : bool]) : OptLoopRotationCtxResult
   (let
     [context : OptCfgContext
       (opt-cfg-context-build
@@ -19018,20 +19121,25 @@
       pools
       (owned_view.compiler-owned-reference-shared-view blocks)
       context
-      loops
-      (opt_natural_loop_vec.view loops))
+      (opt_natural_loop_vec.view loops)
+      normalize?)
       [(Result next changed) (Result next changed context)])))
 
 (define (opt-loop-rotation-blocks-fixed-result
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
-  [remaining : i64]) : OptBlockCtxResult
+  [remaining : i64]
+  [normalize? : bool]) : OptBlockCtxResult
   (if (<= remaining 0)
     (Result blocks (opt-cfg-context-empty) false)
-    (match (opt-loop-rotation-blocks-once-result pools (& blocks))
+    (match (opt-loop-rotation-blocks-once-result pools (& blocks) normalize?)
       [(Result next changed context)
         (if changed
-          (opt-loop-rotation-blocks-fixed-result pools next (- remaining 1))
+          (opt-loop-rotation-blocks-fixed-result
+            pools
+            next
+            (- remaining 1)
+            normalize?)
           ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
           ;; when it reports no change, so `context` is valid for `next`.
           (Result next context true))])))
@@ -19042,12 +19150,9 @@
   ;; The natural-loop finder is dominance based, so let it decide whether the
   ;; CFG contains a loop. Textual block order is not a loop property: inlining
   ;; and block layout may put a latch before its header.
-  (if (opt-ssa-blocks-have-phi? blocks)
-    (Result blocks (opt-cfg-context-empty) false)
-    (opt-loop-rotation-blocks-fixed-result
-      pools
-      (compiler-opt-global-shared-view blocks)
-      (+ 1 (ir.compiler-ir-block-list-count blocks)))))
+  (let
+    [remaining : i64 (+ 1 (ir.compiler-ir-block-list-count blocks))]
+    (opt-loop-rotation-blocks-fixed-result pools blocks remaining false)))
 
 ;; The SPMD lowerer emits `branch true, vector-header, tail` before the vector
 ;; loop. Speculatively normalize that effective single-successor edge so
@@ -19060,17 +19165,9 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-addr-taken-refresh! frame (& blocks))
-      (if (opt-ssa-blocks-have-phi? blocks)
-        (Result blocks (opt-cfg-context-empty) false)
-        (let
-          [normalized : ir.CompilerIrBlockList
-            (if (opt-cfg-blocks-have-foldable-branch? blocks)
-              (opt-cfg-fold-branches-blocks (& blocks))
-              blocks)]
-          (opt-loop-rotation-blocks-fixed-result
-            pools
-            (compiler-opt-global-shared-view normalized)
-            (+ 1 (ir.compiler-ir-block-list-count normalized)))))]))
+      (let
+        [remaining : i64 (+ 1 (ir.compiler-ir-block-list-count blocks))]
+        (opt-loop-rotation-blocks-fixed-result pools blocks remaining true))]))
 
 (define (opt-loop-rotation-blocks
   [pools : ast.AstNodePoolContext]
@@ -19086,7 +19183,11 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-addr-taken-refresh! frame (& blocks))
-      (opt-loop-rotation-blocks-result pools blocks)]))
+      ;; Preserve the scalar pipeline's pre-SSA contract. The speculative SIMD
+      ;; route checks changed edges individually and verifies its final CFG.
+      (if (opt-ssa-blocks-have-phi? blocks)
+        (Result blocks (opt-cfg-context-empty) false)
+        (opt-loop-rotation-blocks-result pools blocks))]))
 
 ;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
 ;;
@@ -49360,7 +49461,7 @@
             rewritten)
           (> trap-count 0)))]))
 
-(define (opt-switch-block-starts-with-phi?
+(define (opt-cfg-block-starts-with-phi?
   [index : (& index OptCfgIndex)]
   [label : i64]) : bool
   (match (opt-cfg-index-find-block index label)
@@ -49381,7 +49482,7 @@
   [default-label : i64]) : bool
   (if (or
     (opt-switch-candidate-has-label? all-items default-label)
-    (opt-switch-block-starts-with-phi? index default-label))
+    (opt-cfg-block-starts-with-phi? index default-label))
     false
     (match items
       [(Nil) true]
@@ -49390,7 +49491,7 @@
           [(Candidate _ _ _ arm-label _ _)
             (and
               (not (opt-switch-candidate-has-label? all-items arm-label))
-              (not (opt-switch-block-starts-with-phi? index arm-label))
+              (not (opt-cfg-block-starts-with-phi? index arm-label))
               (let
                 [items-2 (opt-switch-candidate-tail items)]
                 (opt-switch-targets-safe-from?
@@ -49590,7 +49691,7 @@
           [target : i64 (opt-switch-block-sole-jump (& block))]
           (if (or
             (= target (ir.compiler-ir-label-none))
-            (opt-switch-block-starts-with-phi? index target))
+            (opt-cfg-block-starts-with-phi? index target))
             label
             (opt-switch-thread-arm-from index target (- fuel 1))))])))
 
@@ -62763,6 +62864,7 @@
   (index-var i64)
   (next-var i64)
   (step i64)
+  (gangs i64)
   (ity ast.AstType)
   (bound ir.CompilerIrValue)
   (cmp-op ir.CompilerIrBinOp)
@@ -69924,7 +70026,9 @@
 (define (opt-unroll-simd-body-instr-ok? [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(BoundsCheck _ _ _) false]
-    [(VectorStore _) true]
+    ;; Shuffle's checks run in gang order, with backend labels keyed by each
+    ;; cloned destination. Word and MaskNot are pure value operations here.
+    [(or (VectorStore _) (Word _ _ _ _) (MaskNot _ _ _) (VectorShuffle _)) true]
     [_ (opt-unroll-body-instr-ok? instr)]))
 
 (define (opt-unroll-simd-vector-instr? [instr : (& instr ir.CompilerIrInstr)]) : bool
@@ -69957,6 +70061,26 @@
       (return true))
     unit)
   false)
+
+;; Multiple loads can amortize the address setup across a wider group. Keep
+;; the smaller group when the surrounding CFG has already acquired phis or
+;; when a gang carries an expanding shuffle check.
+(define (opt-unroll-simd-group-gangs
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [last : i64]
+  [loads : i64]
+  [stores : i64]) : i64
+  (if (= stores 0)
+    16
+    (if (or (< loads 2) (opt-ssa-blocks-have-phi? blocks))
+      4
+      (begin
+        (for [index (iterator.range 0 last)]
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
+            [(VectorShuffle _) (return 4)]
+            [_ unit]))
+        16))))
 
 ;; A self-loop candidate must have exactly one predecessor besides itself.
 (define (opt-unroll-simd-outside-pred [preds : OptLabelSet] [loop-label : i64]) : OptLoopPreheader
@@ -70226,9 +70350,18 @@
                                       (opt-cfg-predecessors blocks label)
                                       label)
                                       [(Some pred-label)
-                                        (if (opt-unroll-pred-retargetable?
-                                          blocks
-                                          pred-label)
+                                        (if (and
+                                          (opt-unroll-pred-retargetable?
+                                            blocks
+                                            pred-label)
+                                          (match (opt-cfg-find-block
+                                            blocks
+                                            tail-label)
+                                            [(Some (Block _ tail-instrs))
+                                              (opt-unroll-no-phi-from?
+                                                (& tail-instrs)
+                                                0)]
+                                            [(No) false]))
                                           (match (opt-unroll-simd-memory-shape
                                             type-segment-bases
                                             defs
@@ -70265,6 +70398,12 @@
                                                     index-var
                                                     next-var
                                                     step
+                                                    (opt-unroll-simd-group-gangs
+                                                      blocks
+                                                      instrs
+                                                      cond-index
+                                                      load-count
+                                                      store-count)
                                                     (ast.ty-node-persist ity)
                                                     bound
                                                     cmp-op
@@ -70424,7 +70563,7 @@
               ty))]
         [_ (opt-unroll-clone-instr remap cell copy instr)])]))
 
-;; Emit sixteen sequential remapped copies.
+;; Emit sequential remapped copies for the selected group size.
 (define (opt-unroll-simd-copies
   [type-segment-bases : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -70433,11 +70572,12 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [memory-bases : (& memory-bases OptUnrollSimdMemoryList)]
   [group-bases : (& group-bases (__tl_dyn-array i64))]
-  [step : i64]) : ir.CompilerIrInstrSeq
+  [step : i64]
+  [gangs : i64]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (* 16 last))]
-    (for [copy (iterator.range 0 16)]
+      (ir.compiler-ir-instr-builder-with-capacity (* gangs last))]
+    (for [copy (iterator.range 0 gangs)]
       (for [index (iterator.range 0 last)]
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
@@ -70541,6 +70681,7 @@
         [cond-index : i64 shape.cond-index]
         [index-var : i64 shape.index-var]
         [step : i64 shape.step]
+        [group-step : i64 (* step shape.gangs)]
         [ity : ast.AstType shape.ity]
         [bound : ir.CompilerIrValue shape.bound]
         [cmp-op : ir.CompilerIrBinOp shape.cmp-op]
@@ -70584,7 +70725,8 @@
             (&mut cell)
             memory-bases
             group-bases
-            step)]
+            step
+            shape.gangs)]
         [end-index : i64 (opt-unroll-alloc-var (&mut cell))]
         [end-next : i64 (opt-unroll-alloc-var (&mut cell))]
         [remainder-ok : i64 (opt-unroll-alloc-var (&mut cell))]
@@ -70603,7 +70745,7 @@
                 ngroup
                 (Sub)
                 (compiler-opt-global-shared-view bound)
-                (I64 (* step 16))
+                (I64 group-step)
                 (compiler-opt-global-shared-view ity)))
             ;; Reject a wrapped bound - 16*step.
             (ir.compiler-ir-instr-builder-push!
@@ -70677,7 +70819,7 @@
                 end-index
                 (Add)
                 (Var iu)
-                (I64 (* step 16))
+                (I64 group-step)
                 (compiler-opt-global-shared-view ity)))
             (ir.compiler-ir-instr-builder-push!
               (&mut unrolled-builder)
@@ -70827,6 +70969,17 @@
       [(VectorStore _) (return true)]
       [_ unit]))
   false)
+
+(define (opt-unroll-simd-blocks-have-store?
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
+  (match blocks
+    [(slice) false]
+    [(slice block & rest)
+      (match block
+        [(Block _ instrs)
+          (or
+            (opt-unroll-simd-instrs-have-store? (& instrs))
+            (opt-unroll-simd-blocks-have-store? rest))])]))
 
 ;; The mutable-SIMD entry has no prescan, so it installs the address-taken
 ;; gate's set only for a block it would otherwise rewrite (#9420).
@@ -103418,36 +103571,42 @@
 (define (opt-pass-rotation
   [pools : ast.AstNodePoolContext]
   [state : OptPassState]) : OptPassState
-  (let
-    [rotation : OptBlockCtxResult
-      (opt-loop-rotation-function-result pools (& (opt-pass-func state)))]
-    [simd : OptFunctionCtxResult
-      (match (opt-loop-rotation-normalized-function-result
-        pools
-        (opt-pass-func state))
-        [(Result blocks ctx valid?)
-          (let
-            [rotated : ir.CompilerIrFunction
-              (let
-                [func (opt-pass-func state)]
-                (opt-function-with-frame-blocks
-                  func
-                  (opt-pass-frame state)
-                  blocks))]
-            (if valid?
-              (opt-unroll-simd-function-with-context-result
-                state.type-segment-bases
-                ctx
-                rotated
-                true)
-              (Result rotated ctx)))])]
-    ;; A successful SIMD rewrite always allocates fresh destinations; rotation
-    ;; itself leaves the frame alone.
-    (if (match (& simd)
-      [(Result simd-func _)
-        (> (opt-function-frame simd-func) (opt-pass-frame state))])
-      (opt-pass-with-ctx-result (& simd) (& state))
-      (opt-pass-with-block-ctx (& rotation) state))))
+  (when
+    (let
+      [blocks (opt-pass-blocks state)]
+      (opt-unroll-simd-blocks-have-store?
+        (ir.compiler-ir-block-list-view blocks)))
+    (let
+      [simd : OptFunctionCtxResult
+        (match (opt-loop-rotation-normalized-function-result
+          pools
+          (opt-pass-func state))
+          [(Result blocks ctx valid?)
+            (let
+              [rotated : ir.CompilerIrFunction
+                (let
+                  [func (opt-pass-func state)]
+                  (opt-function-with-frame-blocks
+                    func
+                    (opt-pass-frame state)
+                    blocks))]
+              (if valid?
+                (opt-unroll-simd-function-with-context-result
+                  state.type-segment-bases
+                  ctx
+                  rotated
+                  true)
+                (Result rotated ctx)))])]
+      ;; A successful SIMD rewrite always allocates fresh destinations;
+      ;; rotation itself leaves the frame alone.
+      (when
+        (match (& simd)
+          [(Result simd-func _)
+            (> (opt-function-frame simd-func) (opt-pass-frame state))])
+        (return (opt-pass-with-ctx-result (& simd) (& state))))))
+  (opt-pass-with-block-ctx
+    (& (opt-loop-rotation-function-result pools (& (opt-pass-func state))))
+    state))
 
 ;; --- dead_global_store --------------------------------------------------------
 ;;

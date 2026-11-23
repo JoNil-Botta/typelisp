@@ -59,6 +59,48 @@
       (set! i (+ i 1)))
     ok))
 
+(define (unrolled-identity
+  [src : (& src (Slice i64))]
+  [dst : (&mut dst (Slice i64))]
+  [n : i64]
+  [offset : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set!
+      (array-ref dst i)
+      (spmd-shuffle (+ (array-ref src i) offset) (program-index)))))
+
+(define (unrolled-dynamic
+  [src : (& src (Slice i64))]
+  [selectors : (& selectors (Slice i64))]
+  [dst : (&mut dst (Slice i64))]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set!
+      (array-ref dst i)
+      (spmd-shuffle (array-ref src i) (array-ref selectors i)))))
+
+(define (unrolled-shuffles-ok?) : bool
+  (let
+    [n : i64 65]
+    [src : i64v.Vec (i64z.make n)]
+    [selectors : i64v.Vec (i64z.make n)]
+    [identity : i64v.Vec (i64z.make n)]
+    [dynamic : i64v.Vec (i64z.make n)]
+    (init (&mut src) n)
+    (unrolled-identity (i64v.view (& src)) (i64v.view-mut (&mut identity)) n 3)
+    (unrolled-dynamic
+      (i64v.view (& src))
+      (i64v.view (& selectors))
+      (i64v.view-mut (&mut dynamic))
+      n)
+    (let
+      [total (sum (& dynamic) n)]
+      (and
+        (= (sum (& identity) n) 6500)
+        (or (= total 6305) (= total 6017) (= total 5633))))))
+
 (define (main) : i64
   (let
     [n : i64 19]
@@ -164,6 +206,7 @@
       (same64 (& xs) (& rot2) full)
       (or (= (sum (& repeat) full) 0) (= (sum (& repeat) full) 8))
       (= (sum (& uniform-selector) full) 0)
-      (= (sum (& uniform-source) full) 1232))
+      (= (sum (& uniform-source) full) 1232)
+      (unrolled-shuffles-ok?))
       42
       1)))

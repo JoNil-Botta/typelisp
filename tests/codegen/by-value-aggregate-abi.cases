@@ -76,12 +76,13 @@ count = 1 ^[[:space:]]+movups[[:space:]]+\([^)]*\),[[:space:]]*%xmm[0-9]+$
 count = 1 ^[[:space:]]+movups[[:space:]]+%xmm[0-9]+,[[:space:]]*\([^)]*\)$
 match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$
 # Three bytes are not a Win64 register return size: sret rcx, byref rdx, and
-# exactly a two-byte word plus the remaining byte.
+# exactly a two-byte word plus the remaining byte. The 32-bit destinations
+# also clear the upper halves of their 64-bit registers.
 in fn-globl _tl_by_value_aggregate_abi_abi_array_u8_3
 match ^[[:space:]]+movq[[:space:]]+%rcx,
 match ^[[:space:]]+movq[[:space:]]+%rdx,
-count = 1 ^[[:space:]]+movzwq[[:space:]]+\([^)]*\),[[:space:]]*%r[a-z0-9]+$
+count = 1 ^[[:space:]]+movzwl[[:space:]]+\([^)]*\),[[:space:]]*%(e[a-z]+|r[0-9]+d)$
 count = 1 ^[[:space:]]+movw[[:space:]]+%r[a-z0-9]+w,[[:space:]]*\([^)]*\)$
-count = 1 ^[[:space:]]+movzbq[[:space:]]+2\(%r[a-z0-9]+\),[[:space:]]*%r[a-z0-9]+$
+count = 1 ^[[:space:]]+movzbl[[:space:]]+2\(%r[a-z0-9]+\),[[:space:]]*%(e[a-z]+|r[0-9]+d)$
 count = 1 ^[[:space:]]+movb[[:space:]]+%r[a-z0-9]+b,[[:space:]]*2\(%r[a-z0-9]+\)$
 match ^[[:space:]]+movq[[:space:]]+[^,]+,[[:space:]]*%rax$

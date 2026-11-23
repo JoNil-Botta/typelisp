@@ -71,10 +71,13 @@ grep -Eq 'CompilerObjectX64Instr\.Bytes bytes' src/compiler_backend_object_targe
 # Integer register and imm32 moves are typed machine records (#7055): both
 # routes build them through compiler_machine_x64, which alone spells and
 # encodes them. These literals remain only for forms outside that family: the
-# stack probe's `movl $frame, %eax` (a frame operation) and the full-width
-# `movq $imm64` (#7022). A new spelling of either family member must be a record
-# instead, and a count change here must say why.
-count_matches 1 '"    movl \$"' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_scalar.tl src/compiler_backend_calls.tl src/compiler_backend_peephole.tl src/compiler_backend_simd.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
+# stack probe's `movl $frame, %eax`, the closed non-PIC Linux ELF literal-address
+# move, and the full-width `movq $imm64` (#7022). The literal-address move takes
+# a symbol resolved by an R_X86_64_32 relocation; MovRI takes an integer.
+# A new spelling of a typed family member must be a record instead.
+count_matches 2 '"    movl \$"' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_scalar.tl src/compiler_backend_calls.tl src/compiler_backend_peephole.tl src/compiler_backend_simd.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
+count_matches 1 '"    movl \$"' src/compiler_backend_scalar.tl
+count_matches 1 '"    movl \$"' src/compiler_backend_operands.tl
 count_matches 1 '"    movq \$"' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_scalar.tl src/compiler_backend_calls.tl src/compiler_backend_peephole.tl src/compiler_backend_simd.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
 count_matches 0 'mov-(reg-reg|imm32-reg)-bytes' src/compiler_backend.tl src/compiler_backend_div_magic.tl src/compiler_backend_state.tl src/compiler_backend_operands.tl src/compiler_backend_program_facts.tl src/compiler_backend_scalar.tl src/compiler_backend_calls.tl src/compiler_backend_peephole.tl src/compiler_backend_simd.tl src/compiler_backend_program_data.tl src/compiler_backend_object.tl
 

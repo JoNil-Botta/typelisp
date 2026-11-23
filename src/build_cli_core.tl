@@ -27,6 +27,7 @@
 (import (hashmap.hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
+(import tli_cli_core as tli_cli)
 (import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
 (import compiler_backend_object as be_object)
@@ -41,6 +42,9 @@
   (import compiler_opt_level as opt_level))
 (import compiler_optimize as opt)
 (import compiler_object as cobj)
+(import linker_archive_core as archive)
+(import linker_ar_dialect_reader as ar)
+(import linker_elf_object_reader as elf)
 (import compiler_windows_coff_core)
 (import doc_test)
 (import test_cli_core)
@@ -464,9 +468,11 @@
 
 ;; Options a package build accepts.
 (define (build-package-cli-options) : String
-  "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
-   --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
-   --profile <dev|release> --release --locked --update-lock")
+  (str_cat.str-cat
+    "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
+     --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
+     --profile <dev|release> --release --locked --update-lock "
+    (tli_cli.tli-sysroot-cli-options)))
 
 (define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
   (let
@@ -479,12 +485,14 @@
     [profile : BuildProfile (build-default-profile)]
     [has-profile : bool false]
     [lock-policy : BuildPackageLockPolicy (Default)]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
       (cli_option.cli-compile-options
         (target_cfg.compiler-target-cfg-host)
         (build-package-default-opt-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (if has-output
@@ -536,6 +544,14 @@
             (&mut args)
             "build: accepts only one source file")]
         [else (set! has-source true)]))
+    (unless
+      args.failed
+      (let
+        [sysroot-error : String
+          (tli_cli.tli-build-sysroot-error (& sysroot) options.target)]
+        (when
+          (> (string.string-length (& sysroot-error)) 0)
+          (cli_option.cli-args-fail! (&mut args) sysroot-error))))
     (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (cond
       [args.failed (Err args.error)]
@@ -5138,6 +5154,99 @@
           (be_object.compiler-direct-object-fallback-transcript reason)))]
     [(Err message) (Err message)]))
 
+(define (build-package-elf-member-needs-runtime?
+  [bytes : (& bytes str)]
+  [request : (& elf.ElfReadRequest)]) : bool
+  (let
+    [size : i64 (string.string-length bytes)]
+    (when (> size request.limits.max-input-bytes) (return true))
+    (let
+      [data : (__tl_dyn-array u8) (__tl_make-array u8 size)]
+      (unsafe
+        (string.str-copy-borrowed-bytes-into
+          bytes
+          (__tl_array-data data)
+          0
+          size))
+      (match (elf.read-object (& data) request)
+        [(ReadFailed _) true]
+        [(ReadObject object)
+          (for [symbol (& object.symbols)]
+            (match (& symbol.section)
+              [(Undefined)
+                (let
+                  [name
+                    (string.substring-view
+                      bytes
+                      symbol.name.offset
+                      symbol.name.size)]
+                  ;; Package symbols are mangled with _tl_. The native
+                  ;; runtime supplies the unprefixed tl_ ABI.
+                  (when (string.is-string-prefix-at name "tl_" 0) (return true)))]
+              [_ unit]))
+          false]))))
+
+(define (build-package-elf-archive-needs-runtime? [path : (& str)]) : bool
+  (let
+    [limits : elf.ElfLimits (elf.default-limits)]
+    [size : i64 (fs.file-size path)]
+    (when (or (< size 0) (> size limits.max-input-bytes)) (return true))
+    (match (io.try-read-file path)
+      [(ErrIoBytes _) true]
+      [(OkIoBytes buffer)
+        (let
+          [bytes : String (byte_buf.to-string buffer)]
+          [request : elf.ElfReadRequest
+            (elf.ElfReadRequest (elf.ElfIdentity 0 0) limits)]
+          (match (ar.read
+            (& bytes)
+            (archive.ArchiveIdentity 0 0)
+            (GnuSystemV)
+            (archive.ArchiveLimits
+              request.limits.max-input-bytes
+              65536
+              16777216
+              4
+              1048576
+              1
+              67108864))
+            [(ReadFailed _) true]
+            [(ReadArchive parsed)
+              (for [member (& parsed.members)]
+                (match (& member.kind)
+                  [(Ordinary)
+                    (when
+                      (build-package-elf-member-needs-runtime?
+                        (string.substring-view
+                          (& bytes)
+                          member.content-offset
+                          member.content-size)
+                        (& request))
+                      (return true))]
+                  [_ unit]))
+              false]))])))
+
+(define (build-package-archives-need-runtime?
+  [target : be_state.CompilerBackendTarget]
+  [inputs : (& inputs build_run_core.SourceToolLinkInputs)]) : bool
+  (and
+    (build_run_core.source-tool-link-inputs-have-archives? inputs)
+    (if (and
+      (be_state.compiler-backend-target-elf? target)
+      (build_run_core.source-tool-linux-direct-object-enabled?))
+      (let
+        [archives (build_run_core.source-tool-link-inputs-archives inputs)]
+        (for [i (iterator.range 0 (process.args-count archives))]
+          (let
+            [path : String (process.args-ref archives i)]
+            (when
+              (with-arena
+                archive-check
+                (build-package-elf-archive-needs-runtime? (& path)))
+              (return true))))
+        false)
+      true)))
+
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-prepare-owned-runtime
@@ -5179,13 +5288,9 @@
           request.mode
           request.emit-entry
           request.crt-entry
-          ;; Size-optimized archive members can call any fixed-size allocator.
-          ;; The assembly runtime provides those entry points.
-          (if (and
-            archive-runtime
-            (or
-              (not request.linux-budget-override)
-              (opt_level.opt-level-size? request.opt-level)))
+          ;; Archive members can need runtime entry points that the consumer's
+          ;; IR does not reference. The assembly runtime provides them.
+          (if archive-runtime
             (Fallback ForcedAssembly)
             preflight)
           lowered)]
@@ -5277,8 +5382,7 @@
             (owned_view.compiler-owned-shared-view entry-path))
           (and
             emit-entry
-            (build_run_core.source-tool-link-inputs-have-archives?
-              (& link-inputs))))]
+            (build-package-archives-need-runtime? target (& link-inputs))))]
       [_abort : unit
         (match (owned_view.compiler-owned-shared-view prepared)
           [(Err message)
@@ -6935,6 +7039,8 @@
           "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
            --debug|-g|--backtrace -o <exe> --backend-mode <mode>
            --manifest-path <file> --profile --release --locked --update-lock "
+          (tli_cli.tli-sysroot-cli-options)
+          " "
           (build-link-cli-options))
         idx
         count)]
@@ -6944,12 +7050,14 @@
     [has-output : bool false]
     [link-inputs : build_run_core.SourceToolLinkInputs
       (build_run_core.source-tool-link-inputs-empty)]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
       (cli_option.cli-compile-options
         (target_cfg.compiler-target-cfg-host)
         (opt.compiler-optimize-default-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (if has-output
@@ -6999,6 +7107,14 @@
         [else
           (set! source (string.copy (& args.arg)))
           (set! has-source true)]))
+    (unless
+      args.failed
+      (let
+        [sysroot-error : String
+          (tli_cli.tli-build-sysroot-error (& sysroot) options.target)]
+        (when
+          (> (string.string-length (& sysroot-error)) 0)
+          (cli_option.cli-args-fail! (&mut args) sysroot-error))))
     (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (cond
       [args.failed (Err args.error)]

@@ -1,9 +1,12 @@
+(import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
+
 ;; Portable semantic interfaces. Offsets are absolute; u64 wire fields other
 ;; than offsets and lengths are stored as their full i64 bit patterns.
 (define tli-magic : i64
   0x00494c54)
 (define tli-schema-version : i64
-  1)
+  2)
 (define tli-header-size : i64
   112)
 (define tli-directory-entry-size : i64
@@ -118,6 +121,8 @@
 (defstruct TliImport
   (module-name String)
   (kind i64)
+  (alias String)
+  (item String)
   (interface-sha256 (Array u8 32)))
 
 (defstruct TliExternLinkInput
@@ -175,6 +180,8 @@
   (link-symbol String)
   (ty TliType)
   (flags i64)
+  (is-extern bool)
+  (extern-link-inputs (__tl_dyn-array TliExternLinkInput))
   (const-value TliConst))
 
 (defstruct TliMacroParam
@@ -188,6 +195,7 @@
   (module-name String)
   (identity String)
   (flags i64)
+  (result-kind u8)
   (params (__tl_dyn-array TliMacroParam))
   (tlci-entry-index i64)
   (tlci-catalog-sha256 (Array u8 32)))
@@ -224,3 +232,7 @@
   (record-offset i64)
   (record-len i64)
   (module-sha256 (Array u8 32)))
+
+;; Shared spelling for the interface producer and the archive producer.
+(define (tli-module-init-symbol [module-name : (& str)]) : String
+  (str_cat.str-cat "__tl_mod_init_" (string.copy module-name)))

@@ -220,13 +220,15 @@ echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE
 # src/ boundaries as well as the size bound: compiler sources receive the union
 # of normal, deprecated-concat and redundant-begin rules in one parse/traversal,
 # while the other source units retain their existing opt-in rule scope.
+# The TLI round-trip tool needs the compiler import root used by its build.
 LINT_CHUNK_DIR="$WORKDIR/chunks"
 rm -rf "$LINT_CHUNK_DIR"
 mkdir -p "$LINT_CHUNK_DIR"
 awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
     {
         source_rules = ($0 ~ /^src\//)
-        if (count == 0 || count == size || source_rules != previous_rules) {
+        compiler_tool = ($0 == "tools/embedded-stdlib-tli/roundtrip.tl")
+        if (count == 0 || count == size || source_rules != previous_rules || compiler_tool != previous_tool) {
             if (count != 0) close(path)
             chunk++
             count = 0
@@ -235,6 +237,7 @@ awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
         print $0 >> path
         count++
         previous_rules = source_rules
+        previous_tool = compiler_tool
     }
 ' "$FILES"
 
@@ -248,14 +251,20 @@ for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
     lint_chunk_index=$((lint_chunk_index + 1))
     set --
     src_rules=0
+    compiler_tool=0
     while IFS= read -r lint_source; do
         [ -n "$lint_source" ] || continue
         set -- "$@" "$lint_source"
-        case "$lint_source" in src/*) src_rules=1 ;; esac
+        case "$lint_source" in
+            src/*) src_rules=1 ;;
+            tools/embedded-stdlib-tli/roundtrip.tl) compiler_tool=1 ;;
+        esac
     done < "$lint_chunk"
     if [ "$src_rules" -eq 1 ]; then
         set -- --deprecated-string-concat --redundant-begin --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
         src_concat_chunk_index=$((src_concat_chunk_index + 1))
+    elif [ "$compiler_tool" -eq 1 ]; then
+        set -- --stdlib-root "$ROOT/src" "$@"
     fi
     if [ "$NAME_CASE_CURRENT" -eq 1 ]; then
         set -- --name-case "$@"

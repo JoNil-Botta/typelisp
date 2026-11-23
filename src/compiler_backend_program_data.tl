@@ -1478,25 +1478,6 @@
         [_ true])]
     [_ false]))
 
-(define (compiler-backend-elf-symbol-section
-  [section : (& str)]
-  [symbol : (& str)]
-  [attributes : (& str)]) : String
-  (let
-    [suffix : String
-      (if (string.is-string-prefix-at symbol "\"" 0)
-        (string.substring symbol 1 (- (string.string-length symbol) 2))
-        (string.copy symbol))]
-    (str_cat.str-cat ".section \"" section "." suffix "\"," attributes "\n")))
-
-(define (compiler-backend-function-section
-  [target : be_state.CompilerBackendTarget]
-  [symbol : (& str)]) : String
-  (match target
-    [(Linux)
-      (compiler-backend-elf-symbol-section ".text" symbol "\"ax\",@progbits")]
-    [(Windows) (str_cat.str-cat ".section .text,\"xr\",one_only," symbol "\n")]))
-
 (define (compiler-backend-emit-runtime-global
   [target : be_state.CompilerBackendTarget]
   [symbol : String]
@@ -1555,17 +1536,17 @@
                   [(Linux)
                     (cond
                       [zeroed?
-                        (compiler-backend-elf-symbol-section
+                        (be_operand.compiler-backend-elf-symbol-section
                           ".bss"
                           (& symbol)
                           "\"aw\",@nobits")]
                       [private?
-                        (compiler-backend-elf-symbol-section
+                        (be_operand.compiler-backend-elf-symbol-section
                           ".rodata"
                           (& symbol)
                           "\"a\",@progbits")]
                       [else
-                        (compiler-backend-elf-symbol-section
+                        (be_operand.compiler-backend-elf-symbol-section
                           ".data"
                           (& symbol)
                           "\"aw\",@progbits")])]
@@ -2468,29 +2449,28 @@
   (let
     [features : runtime_common.CompilerBackendRuntimeFeatures
       (compiler-backend-runtime-features plan)]
-    (cond
-      [(and
-        emit-entry
-        (be_state.compiler-backend-state-archive-runtime? backend-state))
-        (set! features.alloc true)
-        (set! features.region-mark true)
-        (set! features.region-reset true)
-        (set! features.leaf-mask 127)]
-      [emit-entry
-        (let
-          [used : i64
-            (compiler-backend-runtime-used-leaf-mask
-              backend-state
-              runtime-index
-              referenced
-              externs)]
+    (when
+      emit-entry
+      (let
+        [used : i64
+          (compiler-backend-runtime-used-leaf-mask
+            backend-state
+            runtime-index
+            referenced
+            externs)]
+        (if (be_state.compiler-backend-state-archive-runtime? backend-state)
+          (begin
+            (set! features.alloc true)
+            (set! features.region-mark true)
+            (set! features.region-reset true)
+            ;; Only an explicit reference enables the test-only quarantine.
+            (set! features.leaf-mask (bit-or 63 (bit-and used 64))))
           (set!
             features.leaf-mask
             (match target
               [(be_state.CompilerBackendTarget.Linux) used]
               [(be_state.CompilerBackendTarget.Windows)
-                (bit-or features.leaf-mask (bit-and used 96))])))]
-      [else unit])
+                (bit-or features.leaf-mask (bit-and used 96))])))))
     features))
 
 (define (compiler-backend-runtime-data-for-target
@@ -2540,24 +2520,37 @@
                 (text_buf.append
                   buf
                   (str_cat.str-cat
-                    (compiler-backend-function-section target (& symbol))
+                    (be_operand.compiler-backend-function-section
+                      target
+                      (& symbol))
                     ".globl "
                     symbol
                     "\n"
                     symbol
                     ":\n"))))]
+          [(string.is-string-prefix-at (& line) ".L_tl_alloc_win_commit_to:" 0)
+            ;; The commit helper has callers outside the last size class.
+            (text_buf.append!
+              buf
+              (be_operand.compiler-backend-function-section
+                target
+                ".L_tl_alloc_win_commit_to"))]
           [(string.is-string-prefix-at (& line) "    .text" 0)
             (set! in-text? true)]
           [(or
               (string.is-string-prefix-at (& line) "    .data" 0)
+              (string.is-string-prefix-at (& line) "    .bss" 0)
               (string.is-string-prefix-at (& line) "    .section ." 0))
             (set! in-text? false)]
-          [(and in-text? (string.is-string-prefix-at (& line) "    .globl " 0))
+          [(and
+              in-text?
+              (>= end 0)
+              (string.is-string-prefix-at (& line) "    .globl " 0))
             (set!
               buf
               (text_buf.append
                 buf
-                (compiler-backend-function-section
+                (be_operand.compiler-backend-function-section
                   target
                   (& (string.substring (& line) 11 (- end (+ start 11)))))))]
           [else unit])
@@ -3488,6 +3481,7 @@
                   (let
                     [switch-buf : text_buf.TextBuf
                       (be_facts.compiler-backend-emit-switch-tables-functions-into
+                        target
                         functions
                         program-index
                         (be_state.compiler-backend-state-absolute-switch-ok?

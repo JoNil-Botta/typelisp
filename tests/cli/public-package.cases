@@ -1760,7 +1760,9 @@ file src/main.tl
 (cfg
   (not archive-allocating-consumer)
   (define (main) : i64
-    (from-dependency 40)))
+    (cfg archive-scalar-consumer
+      (dep.allocate 42)
+      (from-dependency 40))))
 (cfg
   archive-allocating-consumer
   (define (main) : i64
@@ -1781,8 +1783,15 @@ stdout contains unused_archive_function
 exec nm "{{dir}}/target/release/archive_runtime"
 stdout not-contains unused_archive_function
 stdout not-contains tl_memchr
+in file {{dir}}/target/release/archive_runtime.s
+not-contains tl_arena_sanitize_enable:
 step direct-object-override
 exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/archive_runtime"
+exit 42
+step direct-object-override-scalar-consumer
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --backend-mode scalar --cfg archive-scalar-consumer
 stderr empty
 exec "{{dir}}/target/release/archive_runtime"
 exit 42
@@ -1792,3 +1801,37 @@ run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --cfg archi
 stderr empty
 exec "{{dir}}/target/release/archive_runtime{{exe}}"
 exit 42
+
+
+# Keep each ELF jump table collectable with its function and each COFF
+# table in its function's COMDAT.
+case entryless-switch-sections
+opt 2
+file switches.tl
+(defenum Flag (Off) (On) (Number i64) (Three) (Four) (Five))
+
+(define (live-switch [flag : Flag] [x : i64]) : i64
+  (match flag [Off 1] [On x] [(Number n) n] [Three 3] [Four 4] [Five 5]))
+
+(define (unused-switch [flag : Flag]) : i64
+  (match flag [Off 11] [On 12] [(Number n) n] [Three 13] [Four 14] [Five 15]))
+end-file
+step win64-entryless-switch
+run compile "{{dir}}/switches.tl" --no-entry --target windows-x86_64 --backend-mode scalar --opt-level {{opt}} -o "{{dir}}/switches-win64.s"
+in file {{dir}}/switches-win64.s
+count-fixed = 2 _switch_table:
+count-fixed = 2 .section .text,"xr",one_only,_tl_switches_live_switch
+count-fixed = 2 .section .text,"xr",one_only,_tl_switches_unused_switch
+exec clang --target=x86_64-pc-windows-msvc -c "{{dir}}/switches-win64.s" -o "{{dir}}/switches-win64.obj"
+stderr empty
+if-host linux
+step elf-entryless-switch-gc
+run compile "{{dir}}/switches.tl" --no-entry --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} -o "{{dir}}/switches-linux.s"
+in file {{dir}}/switches-linux.s
+count-fixed = 2 _switch_table:
+exec as -o "{{dir}}/switches-linux.o" "{{dir}}/switches-linux.s"
+exec ld --gc-sections -e _tl_switches_live_switch -o "{{dir}}/switches-linux" "{{dir}}/switches-linux.o"
+exec nm "{{dir}}/switches-linux"
+stdout contains _tl_switches_live_switch
+stdout not-contains _tl_switches_unused_switch
+end-if

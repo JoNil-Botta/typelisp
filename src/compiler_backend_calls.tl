@@ -77,8 +77,13 @@
 (define (compiler-backend-fast-alloc-supported-size? [size : i64]) : bool
   (and (> size 0) (<= size 64) (= (% size 8) 0)))
 
-(define (compiler-backend-inline-fast-alloc? [size : i64]) : bool
-  (compiler-backend-fast-alloc-supported-size? size))
+(define (compiler-backend-inline-fast-alloc?
+  [size : i64]
+  [function-state : be_state.CompilerBackendFunctionState]
+  [label : i64]) : bool
+  (and
+    (compiler-backend-fast-alloc-supported-size? size)
+    (be_state.compiler-backend-function-loop-block? function-state label)))
 
 (define (compiler-backend-fast-alloc-site-label
   [function : String]
@@ -6116,7 +6121,7 @@
                   (be_scalar.compiler-backend-emit-group-copy
                     type-segment-bases
                     assignments
-                    dst
+                    (& (Var dst))
                     value
                     vars
                     ty
@@ -6126,7 +6131,7 @@
               (be_scalar.compiler-backend-emit-group-copy
                 type-segment-bases
                 assignments
-                dst
+                (& (Var dst))
                 value
                 vars
                 ty
@@ -8085,7 +8090,7 @@
       (be_scalar.compiler-backend-emit-group-copy
         type-segment-bases
         assignments
-        dst
+        (& (Var dst))
         (be_state.compiler-backend-global-shared-view src)
         vars
         ty
@@ -8949,8 +8954,15 @@
           (str_cat.str-cat
             (if (and
               (not library-object?)
-              (not size-optimized?)
-              (compiler-backend-inline-fast-alloc? fast-alloc-size))
+              (or
+                (= name cbi.compiler-builtin-id-tl-alloc-global)
+                (and
+                  (not size-optimized?)
+                  (compiler-backend-inline-fast-alloc?
+                    fast-alloc-size
+                    (be_state.compiler-backend-state-function-state
+                      backend-state)
+                    current-label))))
               (compiler-backend-emit-inline-fast-alloc
                 target
                 function

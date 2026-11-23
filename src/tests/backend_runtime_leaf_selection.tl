@@ -133,6 +133,7 @@
     [index (be_data.compiler-backend-runtime-index-empty)]
     [refs (be_state.BackendSymbolSeq (__tl_make-array i64 0) 0)]
     [externs (ir.compiler-ir-extern-seq-empty)]
+    [sanitizer : i64 (ci.intern "tl_arena_sanitize_enable")]
     [state
       (be_state.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
@@ -178,5 +179,25 @@
             library.leaf-mask
             31
             "entryless library helper exports")
-          (test.assert-i64-eq win.leaf-mask 31 "Windows helper selection"))]
+          (test.assert-i64-eq win.leaf-mask 31 "Windows helper selection")
+          (be_state.compiler-backend-state-set-archive-runtime! state true)
+          (for [count (iterator.range 0 2)]
+            (let
+              [archive-refs
+                (be_state.BackendSymbolSeq (__tl_make-array i64 1) count)]
+              (set! (array-ref archive-refs.slots 0) sanitizer)
+              (let
+                [archive
+                  (be_data.compiler-backend-runtime-features-for-emission
+                    (Linux)
+                    plan
+                    state
+                    index
+                    archive-refs
+                    (ir.compiler-ir-extern-seq-empty)
+                    true)]
+                (test.assert-i64-eq
+                  archive.leaf-mask
+                  (+ 63 (* 64 count))
+                  "archive runtime enables the sanitizer only when referenced")))))]
       [_ (test.assert-true false "runtime plan")])))

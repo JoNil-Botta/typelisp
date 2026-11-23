@@ -2260,29 +2260,39 @@
             0
             buf))])))
 
-;; Every switch table of the program, in one run: `.rodata` for the 32-bit
-;; absolute entries a non-PIC ELF image can relocate, `.text` for the relative
-;; entries every other model folds at assembly time.
+;; Executables share a section for their switch tables. Library objects
+;; split the tables so a linker can collect each function independently.
 (define (compiler-backend-emit-switch-tables-functions-into
+  [target : be_state.CompilerBackendTarget]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : be_state.CompilerBackendProgramIndex]
   [absolute : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (compiler-backend-emit-switch-tables-function-seq-into
-    functions
-    program-index
-    absolute
-    0
-    (text_buf.append
-      buf
-      (if absolute
-        "    .section .rodata\n"
-        "    .text\n"))))
+  (let
+    [sectioned? : bool
+      (be_state.compiler-backend-state-library-object?
+        program-index.backend-state)]
+    (compiler-backend-emit-switch-tables-function-seq-into
+      target
+      functions
+      program-index
+      absolute
+      sectioned?
+      0
+      (if sectioned?
+        buf
+        (text_buf.append
+          buf
+          (if absolute
+            "    .section .rodata\n"
+            "    .text\n"))))))
 
 (define (compiler-backend-emit-switch-tables-function-seq-into
+  [target : be_state.CompilerBackendTarget]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : be_state.CompilerBackendProgramIndex]
   [absolute : bool]
+  [sectioned? : bool]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
@@ -2297,21 +2307,59 @@
               (compiler-backend-phi-target-labels-for-blocks
                 (be_state.compiler-backend-global-shared-view blocks)))]
           (compiler-backend-emit-switch-tables-function-seq-into
+            target
             functions
             program-index
             absolute
+            sectioned?
             (+ index 1)
             (match (be_state.compiler-backend-global-shared-view blocks)
               [(Array seq)
-                (compiler-backend-emit-switch-tables-seq-into
-                  (compiler-backend-function-label-scope program-index name)
-                  (be_state.compiler-backend-function-state-phi-targets
-                    (be_state.compiler-backend-state-function-state
-                      program-index.backend-state))
-                  absolute
-                  seq
-                  0
-                  buf)])))])))
+                (let
+                  [scope
+                    (compiler-backend-function-label-scope program-index name)]
+                  [targets
+                    (be_state.compiler-backend-function-state-phi-targets
+                      (be_state.compiler-backend-state-function-state
+                        program-index.backend-state))]
+                  (if sectioned?
+                    (let
+                      [tables
+                        (compiler-backend-emit-switch-tables-seq-into
+                          scope
+                          targets
+                          absolute
+                          seq
+                          0
+                          (text_buf.empty))]
+                      (if (text_buf.empty? (& tables))
+                        buf
+                        (let
+                          [symbol
+                            (be_operand.compiler-backend-function-symbol-index
+                              program-index
+                              name)]
+                          [section
+                            (if absolute
+                              (be_operand.compiler-backend-elf-symbol-section
+                                ".rodata"
+                                (& symbol)
+                                "\"a\",@progbits")
+                              ;; COFF case-minus-table expressions stay inside
+                              ;; the same COMDAT as the function body.
+                              (be_operand.compiler-backend-function-section
+                                target
+                                (& symbol)))]
+                          (text_buf.append
+                            (text_buf.append buf section)
+                            (text_buf.render tables)))))
+                    (compiler-backend-emit-switch-tables-seq-into
+                      scope
+                      targets
+                      absolute
+                      seq
+                      0
+                      buf)))])))])))
 
 (define (compiler-backend-switch-validate-one
   [targets : be_state.BackendSymbolSeq]

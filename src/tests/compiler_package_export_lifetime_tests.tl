@@ -111,7 +111,7 @@
                         ;; unsafe: the native report strings are read before this arena ends
                         (build.build-package-tlci-capture-exports
                           (& context)
-                          manifest
+                          (& manifest)
                           mode
                           decls
                           paths

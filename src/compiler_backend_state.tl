@@ -1,3 +1,4 @@
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (cfg compile-profile (import stdlib.io))
 (cfg compile-profile (import stdlib.profile))
@@ -1010,6 +1011,8 @@
 (defenum CompilerBackendTarget
   (Linux)
   (Windows))
+
+(clone_gen.gen-clone CompilerBackendTarget)
 
 (defenum CompilerBackendObjectFormatPolicy
   (Elf)
@@ -2179,6 +2182,8 @@
   (Scalar)
   (Avx2)
   (Avx512))
+
+(clone_gen.gen-clone CompilerBackendMode)
 
 (define (compiler-backend-mode-scalar? [mode : CompilerBackendMode]) : bool
   (match mode

@@ -4,6 +4,7 @@
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
+(import stdlib.clone as clone_gen)
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
@@ -179,6 +180,7 @@
 
 (defstruct BuildPackageArtifactPaths
   (runtime String)
+  ;; Empty for executable packages.
   (tlci String))
 
 (defstruct BuildPackageCommitFile
@@ -361,10 +363,14 @@
   (Dev)
   (Release))
 
+(clone_gen.gen-clone BuildProfile)
+
 (defenum BuildPackageLockPolicy
   (Default)
   (Locked)
   (Update))
+
+(clone_gen.gen-clone BuildPackageLockPolicy)
 
 (defenum BuildPackageLockEntryStatus
   (Matched package_lock_core.PackageLockEntry)
@@ -817,7 +823,9 @@
       kind
       profile
       target)
-    (build-package-tlci-path-profile manifest-dir name profile)))
+    (if (build-package-kind-lib? kind)
+      (build-package-tlci-path-profile manifest-dir name profile)
+      "")))
 
 (define (build-package-runtime-artifact-path
   [artifacts : BuildPackageArtifactPaths]) : String
@@ -2942,11 +2950,17 @@
     (build-package-tlci-owner-stdlib-path? owner path)))
 
 (define (build-package-tlci-metadata
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [callables : tlci.TlciSpmdCallables]) : tlci.TlciMetadata
   (if (= (tlci.tlci-spmd-callables-len callables) 0)
-    (tlci.tlci-make-metadata "v1" manifest.name manifest.version)
-    (tlci.tlci-make-metadata-v2 manifest.name manifest.version callables)))
+    (tlci.tlci-make-metadata
+      "v1"
+      (string.copy (& manifest.name))
+      (string.copy (& manifest.version)))
+    (tlci.tlci-make-metadata-v2
+      (string.copy (& manifest.name))
+      (string.copy (& manifest.version))
+      callables)))
 
 (defstruct BuildPackageTlciCallableCollector
   (items tlci.TlciSpmdCallables)
@@ -3358,7 +3372,7 @@
 (define (build-package-tlci-macro-collector
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [source-set : (& source-set package_source_core.PackageSourceSet)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciMacroCollector
   (let
@@ -3373,7 +3387,7 @@
       paths
       ""
       ""
-      manifest.name
+      (string.copy (& manifest.name))
       owned-sources
       (&mut out)
       (&mut captures))
@@ -3439,7 +3453,7 @@
 
 (define (build-package-tlci-callable-collector
   [source-set : (& source-set package_source_core.PackageSourceSet)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciCallableCollector
@@ -3451,7 +3465,7 @@
       paths
       ""
       ""
-      manifest.name
+      (string.copy (& manifest.name))
       mode
       owned-sources
       (BuildPackageTlciCallableCollector (tlci.tlci-spmd-callables-empty) ""))))
@@ -3478,9 +3492,9 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (defstruct BuildPackageTlciSourceInputs
-    (source-set package_source_core.PackageSourceSet)
-    (digest i64)))
+  (defenum BuildPackageTlciSourceInputs
+    (Image package_source_core.PackageSourceSet i64)
+    (NoImage)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -3509,7 +3523,7 @@
               (str_cat.str-cat
                 "build: failed to compute package source digest: "
                 message))]
-          [(Ok digest) (Ok (BuildPackageTlciSourceInputs source-set digest))])))))
+          [(Ok digest) (Ok (Image source-set digest))])))))
 
 ;; Only canonical text and owned catalog strings cross runtime lowering. Native
 ;; captures themselves contain AST pool indices and must remain inside capture.
@@ -3519,7 +3533,7 @@
 
 (define (build-package-tlci-capture-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
@@ -3551,7 +3565,7 @@
 
 (define (build-package-tlci-collect-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
@@ -3560,7 +3574,7 @@
     [collector : BuildPackageTlciCallableCollector
       (build-package-tlci-callable-collector
         source-set
-        (owned_view.compiler-owned-shared-view manifest)
+        manifest
         mode
         (owned_view.compiler-owned-shared-view decls)
         (owned_view.compiler-owned-shared-view paths))]
@@ -3568,7 +3582,7 @@
       (build-package-tlci-macro-collector
         context
         source-set
-        (owned_view.compiler-owned-shared-view manifest)
+        manifest
         decls
         paths)]
     [names : (__tl_dyn-array String) macro-collector.names]
@@ -3590,9 +3604,9 @@
   (define (build-package-tlci-text-with-surface
     [exports : ResultBuildPackageTlciExports]
     [producer-identity : String]
-    [source-inputs : BuildPackageTlciSourceInputs]
+    [source-digest : i64]
     [surface : package_surface.PackageSurfacePayloads]) : ResultBuildPackageTlciText
-    (match (package_surface.package-surface-pack surface source-inputs.digest)
+    (match (package_surface.package-surface-pack surface source-digest)
       [(Err message)
         (Err
           (str_cat.str-cat
@@ -4335,7 +4349,9 @@
           (owned_view.compiler-owned-shared-view dir)
           "f"
           fingerprint-path)
-        (build-package-stage-file dir "t" tlci-path)))))
+        (if (> (string.string-length tlci-path) 0)
+          (build-package-stage-file dir "t" tlci-path)
+          "")))))
 
 (define (build-package-remove-staged-file [path : String]) : unit
   (fs.try-remove-file-if-exists (& path))
@@ -4349,7 +4365,9 @@
   (build-package-remove-staged-file paths.obj)
   (build-package-remove-staged-file paths.artifact)
   (build-package-remove-staged-file paths.fingerprint)
-  (build-package-remove-staged-file paths.tlci)
+  (when
+    (> (string.string-length (& paths.tlci)) 0)
+    (build-package-remove-staged-file paths.tlci))
   (let
     [dir : String paths.dir]
     (fs.try-remove-dir-if-exists (& dir)))
@@ -4395,7 +4413,9 @@
     (build-package-remove-staged-file-after-rollback paths.obj rollback)
     (build-package-remove-staged-file-after-rollback paths.artifact rollback)
     (build-package-remove-staged-file-after-rollback paths.fingerprint rollback)
-    (build-package-remove-staged-file-after-rollback paths.tlci rollback)
+    (when
+      (> (string.string-length (& paths.tlci)) 0)
+      (build-package-remove-staged-file-after-rollback paths.tlci rollback))
     (let
       [dir : String paths.dir]
       (if (build-package-rollback-recovery-required? rollback)
@@ -4742,14 +4762,16 @@
             "Fresh ")
           artifact-path
           "\n"))
-      (io.print-format
-        "{}"
-        (str_cat.str-cat
-          (if tlci-dirty
-            "Built "
-            "Fresh ")
-          tlci-path
-          "\n"))
+      (when
+        (> (string.string-length (& tlci-path)) 0)
+        (io.print-format
+          "{}"
+          (str_cat.str-cat
+            (if tlci-dirty
+              "Built "
+              "Fresh ")
+            tlci-path
+            "\n")))
       0)
     0))
 
@@ -4870,10 +4892,12 @@
       (build-package-runtime-fingerprint-path
         (owned_view.compiler-owned-shared-view artifact-path))]
     [tlci-dirty : bool
-      (not
-        (build-package-file-text-eq?
-          (owned_view.compiler-owned-shared-view tlci-path)
-          (owned_view.compiler-owned-shared-view tlci-text)))]
+      (and
+        (> (string.string-length (& tlci-path)) 0)
+        (not
+          (build-package-file-text-eq?
+            (owned_view.compiler-owned-shared-view tlci-path)
+            (owned_view.compiler-owned-shared-view tlci-text))))]
     (match (build-package-runtime-input-transcript
       kind
       target
@@ -4994,10 +5018,12 @@
     [augmented-asm : String
       (build_run_core.source-tool-augment-assembly-for-target asm target)]
     [tlci-dirty : bool
-      (not
-        (build-package-file-text-eq?
-          (owned_view.compiler-owned-shared-view tlci-path)
-          (owned_view.compiler-owned-shared-view tlci-text)))]
+      (and
+        (> (string.string-length (& tlci-path)) 0)
+        (not
+          (build-package-file-text-eq?
+            (owned_view.compiler-owned-shared-view tlci-path)
+            (owned_view.compiler-owned-shared-view tlci-text))))]
     (match (build-package-runtime-input-transcript
       kind
       target
@@ -5318,7 +5344,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-finish-fresh-artifacts-with-surface
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
-    [manifest : load.CompilerPkgManifest]
+    [manifest : (& manifest load.CompilerPkgManifest)]
     [source-inputs : BuildPackageTlciSourceInputs]
     [seen : sym_i64_env.SymI64Env]
     [name : String]
@@ -5342,29 +5368,33 @@
     [tlci-path : String]
     [announce : bool]
     [cfgs : sym_i64_env.SymI64Env]) : i64
-    (package_surface.package-surface-capture-start!
-      (package_surface.package-surface-identity-key
-        (owned_view.compiler-owned-shared-view name)
-        (owned_view.compiler-owned-shared-view owned-paths)
-        source-inputs.digest
-        (owned_view.compiler-owned-shared-view producer-identity)
-        (build_run_core.source-tool-target-name target))
-      (sym_i64_env.sym-i64-copy seen))
     (let
-      [source-context : compiler_tlci_native_producer.TlciNativeSourceContext
-        (compiler_tlci_native_producer.tlci-native-source-context-new
-          (compiler_driver_core.compiler-driver-state-pool-context
-            (& scope.state))
-          (compiler_driver_core.compiler-driver-state-owned-interns
-            (& scope.state)))]
       [exports : ResultBuildPackageTlciExports
-        (build-package-tlci-capture-exports
-          (& source-context)
-          manifest
-          mode
-          (owned_view.compiler-owned-shared-view decls)
-          source-paths
-          source-inputs.source-set)]
+        (match (& source-inputs)
+          [(Image source-set digest)
+            (package_surface.package-surface-capture-start!
+              (package_surface.package-surface-identity-key
+                (owned_view.compiler-owned-shared-view name)
+                (owned_view.compiler-owned-shared-view owned-paths)
+                digest
+                (owned_view.compiler-owned-shared-view producer-identity)
+                (build_run_core.source-tool-target-name target))
+              (sym_i64_env.sym-i64-copy seen))
+            (let
+              [source-context : compiler_tlci_native_producer.TlciNativeSourceContext
+                (compiler_tlci_native_producer.tlci-native-source-context-new
+                  (compiler_driver_core.compiler-driver-state-pool-context
+                    (& scope.state))
+                  (compiler_driver_core.compiler-driver-state-owned-interns
+                    (& scope.state)))]
+              (build-package-tlci-capture-exports
+                (& source-context)
+                manifest
+                mode
+                (owned_view.compiler-owned-shared-view decls)
+                source-paths
+                source-set))]
+          [_ (Err "")])]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-prepare-owned-runtime
           (owned_view.compiler-owned-shared-view scope)
@@ -5383,53 +5413,58 @@
           (and
             emit-entry
             (build-package-archives-need-runtime? target (& link-inputs))))]
-      [_abort : unit
-        (match (owned_view.compiler-owned-shared-view prepared)
-          [(Err message)
-            (package_surface.package-surface-capture-abort! message)]
-          [_ unit])]
       [captured : package_surface.ResultPackageSurfacePayloads
-        (package_surface.package-surface-capture-take)]
+        (if (> (string.string-length (& tlci-path)) 0)
+          (begin
+            (match (& prepared)
+              [(Err message)
+                (package_surface.package-surface-capture-abort!
+                  (string.copy message))]
+              [_ unit])
+            (package_surface.package-surface-capture-take))
+          (Err ""))]
       [_release : unit (build-package-runtime-scope-release! scope)]
-      (match (owned_view.compiler-owned-shared-view prepared)
+      [tlci : ResultBuildPackageTlciText
+        (match (& prepared)
+          [(Err _) (Ok "")]
+          [_
+            (match source-inputs
+              [(NoImage) (Ok "")]
+              [(Image _ digest)
+                (match captured
+                  [(Err message)
+                    (Err
+                      (str_cat.str-cat
+                        "build: failed to capture package frontend surface: "
+                        message))]
+                  [(Ok surface)
+                    (build-package-tlci-text-with-surface
+                      exports
+                      (string.copy (& producer-identity))
+                      digest
+                      surface)])])])]
+      (match tlci
         [(Err message)
           (io.print-error message)
           1]
-        [_
-          (match captured
-            [(Err message)
-              (io.print-error
-                (str_cat.str-cat
-                  "build: failed to capture package frontend surface: "
-                  message))
-              1]
-            [(Ok surface)
-              (match (build-package-tlci-text-with-surface
-                exports
-                (owned_view.compiler-owned-shared-view producer-identity)
-                source-inputs
-                surface)
-                [(Err message)
-                  (io.print-error message)
-                  1]
-                [(Ok tlci-text)
-                  (build-package-finish-prepared-runtime
-                    prepared
-                    name
-                    kind
-                    target
-                    opt-level
-                    profile
-                    mode
-                    producer-identity
-                    output-dir
-                    asm-path
-                    obj-path
-                    artifact-path
-                    link-inputs
-                    tlci-path
-                    tlci-text
-                    announce)])])]))))
+        [(Ok tlci-text)
+          (build-package-finish-prepared-runtime
+            prepared
+            name
+            kind
+            target
+            opt-level
+            profile
+            mode
+            producer-identity
+            output-dir
+            asm-path
+            obj-path
+            artifact-path
+            link-inputs
+            tlci-path
+            tlci-text
+            announce)]))))
 
 (define (build-package-doctest-paths
   [owner : String]
@@ -5470,7 +5505,7 @@
   [manifest-dir : String]
   [deps : load.CompilerPkgDeps]
   [emit-entry : bool]) : i64
-  (match (compiler_driver_core.compiler-driver-load-package-paths-with-runtime
+  (match (compiler_driver_core.compiler-driver-load-package-preflight-paths
     entry-path
     target
     cfg-names
@@ -5494,57 +5529,45 @@
             target
             (target_cfg.compiler-target-user-cfgs cfg-names))))]))
 
-(define (build-inline-test-typecheck-package-sources
-  [manifest-path : String]
-  [stdlib-roots : cli_svec.Vec]
-  [manifest-dir : String]
-  [name : String]
-  [deps : load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : i64
-  (match (package_source_core.package-source-discover-for
-    "build"
-    manifest-path
-    true)
-    [(Err message)
-      (io.print-error message)
-      1]
-    [(Ok source-set)
-      (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-        source-set.sources
-        stdlib-roots
-        manifest-dir
-        name
-        deps
-        cfgs
-        "typecheck-prefix-inline-build-package")]))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (defstruct BuildPackageEmitRequest
+    (manifest-path String)
+    (manifest load.CompilerPkgManifest)
+    (target be_state.CompilerBackendTarget)
+    (opt-level i64)
+    (profile BuildProfile)
+    (mode be_state.CompilerBackendMode)
+    (stdlib-roots cli_svec.Vec)
+    (producer-identity String)
+    (entry-path String)
+    (manifest-dir String)
+    (kind load.CompilerPkgKind)
+    (asm-path String)
+    (obj-path String)
+    (artifact-path String)
+    (tlci-path String)
+    (manifest-link-inputs build_run_core.SourceToolLinkInputs)
+    (dep-link-inputs build_run_core.SourceToolLinkInputs)
+    (emit-entry bool)
+    (compile-cfgs cfg_core.CompilerCfgSnapshot)
+    (announce bool)
+    (lock-policy BuildPackageLockPolicy)
+    (cfg-names cli_svec.Vec)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (build-package-emit-one-with-surface
-    [manifest-path : String]
-    [manifest : load.CompilerPkgManifest]
-    [target : be_state.CompilerBackendTarget]
-    [opt-level : i64]
-    [profile : BuildProfile]
-    [mode : be_state.CompilerBackendMode]
-    [stdlib-roots : cli_svec.Vec]
-    [producer-identity : String]
-    [entry-path : String]
-    [manifest-dir : String]
-    [kind : load.CompilerPkgKind]
-    [asm-path : String]
-    [obj-path : String]
-    [artifact-path : String]
-    [tlci-path : String]
-    [manifest-link-inputs : build_run_core.SourceToolLinkInputs]
-    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
-    [emit-entry : bool]
-    [compile-cfgs : sym_i64_env.SymI64Env]
-    [announce : bool]) : i64
+  (defenum ResultBuildPackageEmit
+    (Finished i64)
+    (Preflight cli_svec.Vec bool)))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-attempt
+    [request : (& BuildPackageEmitRequest)]
+    [check-closure : bool]) : ResultBuildPackageEmit
     (let
       [home : arena.Arena (arena.current)]
-      [cfg-names : cfg_core.CompilerCfgSnapshot
-        (cfg_core.compiler-cfg-snapshot-from-env compile-cfgs)]
       (with-scratch
         (let
           [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope
@@ -5552,140 +5575,195 @@
               ;; unsafe: installs the global load session; replaced before this arena ends
               (compiler_driver_core.compiler-driver-package-runtime-scope-new
                 home))]
-          [status : i64
+          [result : ResultBuildPackageEmit
             (in-arena
               home
               (unsafe
-                ;; unsafe: installs the global surface capture; released before this arena ends
-                ;; unsafe: interned names live in the persistent intern arena, not this one
+                ;; unsafe: the runtime scope owns the loaded frontend and surface capture
                 (build-package-emit-one-in-runtime-scope
                   (owned_view.compiler-owned-shared-view scope)
-                  manifest-path
-                  manifest
-                  target
-                  opt-level
-                  profile
-                  mode
-                  stdlib-roots
-                  producer-identity
-                  entry-path
-                  manifest-dir
-                  kind
-                  asm-path
-                  obj-path
-                  artifact-path
-                  tlci-path
-                  manifest-link-inputs
-                  dep-link-inputs
-                  emit-entry
-                  (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
-                  announce)))]
+                  request
+                  check-closure)))]
           (unsafe
-            ;; unsafe: installs the global load session; replaced before this arena ends
-            (build-package-runtime-scope-release! scope))
-          status)))))
+            ;; unsafe: restores the enclosing load session before the scratch arena ends
+            (match (& result)
+              [(Preflight _ _)
+                (compiler_driver_core.compiler-driver-package-runtime-scope-release!
+                  scope)]
+              [_ (build-package-runtime-scope-release! scope)]))
+          result)))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-one-with-surface
+    [request : (& BuildPackageEmitRequest)]) : i64
+    (match (build-package-emit-attempt request true)
+      [(Finished status) status]
+      [(Preflight inline-sources doctests)
+        (let
+          [inline-status : i64
+            (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
+              inline-sources
+              (cli_svec.clone-vec (& request.stdlib-roots))
+              (string.copy (& request.manifest-dir))
+              (string.copy (& request.manifest.name))
+              (load.clone-compiler-pkg-deps (& request.manifest.deps))
+              (cfg_core.compiler-cfg-snapshot-to-env (& request.compile-cfgs))
+              "typecheck-prefix-inline-build-package")]
+          (when (not (= inline-status 0)) (return inline-status))
+          (compiler_driver_core.compiler-driver-reset-file-state!)
+          (ci.intern-persistent-arena-reset!)
+          (when
+            doctests
+            (let
+              [status : i64
+                (build-package-run-doctest-worker-or-inline
+                  (string.copy (& request.manifest.name))
+                  (string.copy (& request.entry-path))
+                  (string.copy (& request.manifest-path))
+                  (be_state.clone-compiler-backend-target (& request.target))
+                  request.opt-level
+                  (clone-build-profile (& request.profile))
+                  (be_state.clone-compiler-backend-mode (& request.mode))
+                  (clone-build-package-lock-policy (& request.lock-policy))
+                  (load.clone-compiler-pkg-deps (& request.manifest.deps))
+                  (load.clone-compiler-pkg-dep-list
+                    (& request.manifest.deps.ordered))
+                  (cli_svec.clone-vec (& request.stdlib-roots))
+                  (& request.cfg-names)
+                  (string.copy (& request.manifest-dir))
+                  request.emit-entry)]
+              (when (not (= status 0)) (return status))
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (ci.intern-persistent-arena-reset!)))
+          (match (build-package-emit-attempt request false)
+            [(Finished status) status]
+            [(Preflight _ _)
+              (io.print-error "build: package preflight did not complete")
+              1]))])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-one-in-runtime-scope
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
-    [manifest-path : String]
-    [manifest : load.CompilerPkgManifest]
-    [target : be_state.CompilerBackendTarget]
-    [opt-level : i64]
-    [profile : BuildProfile]
-    [mode : be_state.CompilerBackendMode]
-    [stdlib-roots : cli_svec.Vec]
-    [producer-identity : String]
-    [entry-path : String]
-    [manifest-dir : String]
-    [kind : load.CompilerPkgKind]
-    [asm-path : String]
-    [obj-path : String]
-    [artifact-path : String]
-    [tlci-path : String]
-    [manifest-link-inputs : build_run_core.SourceToolLinkInputs]
-    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
-    [emit-entry : bool]
-    [compile-cfgs : sym_i64_env.SymI64Env]
-    [announce : bool]) : i64
-    (match (build-package-tlci-source-inputs manifest-path producer-identity)
-      [(Err message)
-        (io.print-error message)
-        1]
-      [(Ok source-inputs)
-        (match (compiler_driver_core.compiler-driver-package-runtime-load
-          (owned_view.compiler-owned-shared-view scope)
-          (owned_view.compiler-owned-shared-view entry-path)
-          (owned_view.compiler-owned-shared-view stdlib-roots)
-          (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view manifest.deps)
-          emit-entry
-          compile-cfgs)
-          [(Err diag)
-            (io.print-error
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (deref diag)))
-            1]
-          [(Ok decls paths _ seen)
-            (let
-              [owned-paths : ast.AstDeclPathList
-                (load.compiler-load-package-owned-paths-for-decls
-                  (& manifest.name)
-                  (& manifest-dir)
-                  (& stdlib-roots)
-                  (& entry-path)
-                  (& decls)
-                  (& paths))]
-              [metadata-link-inputs : build_run_core.SourceToolLinkInputs
-                (build_run_core.source-tool-link-inputs-from-decls
-                  (owned_view.compiler-owned-shared-view decls)
-                  (build_run_core.source-tool-link-inputs-empty))]
-              ;; The dependency section keeps each package's raw arguments.
-              [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                (build_run_core.clone-source-tool-link-inputs
-                  (&
-                    (build_run_core.source-tool-link-inputs-merge-with
-                      (build_run_core.source-tool-link-inputs-merge
-                        manifest-link-inputs
-                        metadata-link-inputs)
-                      dep-link-inputs
-                      false)))]
-              [crt-entry : bool
-                (and
-                  emit-entry
-                  (build_run_core.source-tool-linux-crt-entry?
-                    target
-                    effective-link-inputs))]
-              (build-package-finish-fresh-artifacts-with-surface
-                scope
-                (owned_view.compiler-owned-shared-view manifest)
-                source-inputs
-                seen
-                (owned_view.compiler-owned-shared-view manifest.name)
-                kind
-                target
-                opt-level
-                profile
-                mode
-                producer-identity
-                (owned_view.compiler-owned-shared-view entry-path)
-                emit-entry
-                crt-entry
-                decls
-                paths
-                owned-paths
-                (build-package-output-dir-profile
-                  manifest-dir
-                  manifest.name
-                  profile)
-                asm-path
-                obj-path
-                artifact-path
-                effective-link-inputs
-                tlci-path
-                announce
-                compile-cfgs))])])))
+    [request : (& BuildPackageEmitRequest)]
+    [check-closure : bool]) : ResultBuildPackageEmit
+    (match (compiler_driver_core.compiler-driver-package-runtime-load
+      (owned_view.compiler-owned-shared-view scope)
+      (string.copy (& request.entry-path))
+      (cli_svec.clone-vec (& request.stdlib-roots))
+      (string.copy (& request.manifest-dir))
+      (load.clone-compiler-pkg-deps (& request.manifest.deps))
+      request.emit-entry
+      (cfg_core.compiler-cfg-snapshot-to-env (& request.compile-cfgs)))
+      [(Err diag)
+        (io.print-error
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (deref diag)))
+        (Finished 1)]
+      [(Ok decls paths _ seen)
+        (when
+          check-closure
+          (let
+            [files : cli_svec.Vec
+              (package_source_core.package-source-reachable-owned-files
+                (&
+                  (load.compiler-load-package-reachable-paths
+                    (& request.entry-path)
+                    (& paths)
+                    seen))
+                (& request.manifest-dir)
+                (& request.stdlib-roots))]
+            [inline-sources : cli_svec.Vec (cli_svec.new)]
+            [doctests : bool false]
+            (for [index (iterator.range 0 (cli_svec.len (& files)))]
+              (let
+                [path : String (cli_svec.get (& files) index "")]
+                (when
+                  (test_cli_core.tltest-source-has-inline-tests?
+                    (string.copy (& path)))
+                  (cli_svec.push-ref!
+                    (&mut inline-sources)
+                    (string.copy (& path))))
+                (unless
+                  doctests
+                  (set!
+                    doctests
+                    (doc_test.doc-test-package-file-has-examples? (& path))))))
+            (when
+              (or doctests (> (cli_svec.len (& inline-sources)) 0))
+              (return (Preflight inline-sources doctests)))))
+        (let
+          [source-inputs : BuildPackageTlciSourceInputs
+            (match (if (> (string.string-length (& request.tlci-path)) 0)
+              (build-package-tlci-source-inputs
+                (string.copy (& request.manifest-path))
+                (& request.producer-identity))
+              (ResultBuildPackageTlciSourceInputs.Ok (NoImage)))
+              [(Err message)
+                (io.print-error message)
+                (return (Finished 1))]
+              [(Ok inputs) inputs])]
+          [owned-paths : ast.AstDeclPathList
+            (load.compiler-load-package-owned-paths-for-decls
+              (& request.manifest.name)
+              (& request.manifest-dir)
+              (& request.stdlib-roots)
+              (& request.entry-path)
+              (& decls)
+              (& paths))]
+          [metadata-link-inputs : build_run_core.SourceToolLinkInputs
+            (build_run_core.source-tool-link-inputs-from-decls
+              (owned_view.compiler-owned-shared-view decls)
+              (build_run_core.source-tool-link-inputs-empty))]
+          ;; The dependency section keeps each package's raw arguments.
+          [effective-link-inputs : build_run_core.SourceToolLinkInputs
+            (build_run_core.clone-source-tool-link-inputs
+              (&
+                (build_run_core.source-tool-link-inputs-merge-with
+                  (build_run_core.source-tool-link-inputs-merge
+                    (build_run_core.clone-source-tool-link-inputs
+                      (& request.manifest-link-inputs))
+                    metadata-link-inputs)
+                  (build_run_core.clone-source-tool-link-inputs
+                    (& request.dep-link-inputs))
+                  false)))]
+          [crt-entry : bool
+            (and
+              request.emit-entry
+              (build_run_core.source-tool-linux-crt-entry?
+                (be_state.clone-compiler-backend-target (& request.target))
+                effective-link-inputs))]
+          (Finished
+            (build-package-finish-fresh-artifacts-with-surface
+              scope
+              (& request.manifest)
+              source-inputs
+              seen
+              (string.copy (& request.manifest.name))
+              (load.clone-compiler-pkg-kind (& request.kind))
+              (be_state.clone-compiler-backend-target (& request.target))
+              request.opt-level
+              (clone-build-profile (& request.profile))
+              (be_state.clone-compiler-backend-mode (& request.mode))
+              (string.copy (& request.producer-identity))
+              (string.copy (& request.entry-path))
+              request.emit-entry
+              crt-entry
+              decls
+              paths
+              owned-paths
+              (build-package-output-dir-profile
+                (string.copy (& request.manifest-dir))
+                (string.copy (& request.manifest.name))
+                (clone-build-profile (& request.profile)))
+              (string.copy (& request.asm-path))
+              (string.copy (& request.obj-path))
+              (string.copy (& request.artifact-path))
+              effective-link-inputs
+              (string.copy (& request.tlci-path))
+              request.announce
+              (cfg_core.compiler-cfg-snapshot-to-env (& request.compile-cfgs)))))])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -5781,73 +5859,35 @@
                 (owned_view.compiler-owned-shared-view manifest-path))
               target)]
           [emit-entry : bool (build-package-kind-entry? kind)]
-          [inline-test-status : i64
-            (build-inline-test-typecheck-package-sources
-              (owned_view.compiler-owned-shared-view manifest-path)
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              (owned_view.compiler-owned-shared-view manifest-dir)
-              (owned_view.compiler-owned-shared-view name)
-              (owned_view.compiler-owned-shared-view manifest.deps)
-              (build-package-compile-cfgs
+          (build-package-emit-one-with-surface
+            (&
+              (BuildPackageEmitRequest
+                manifest-path
+                manifest
                 target
-                compile-context.root-compiler
-                cfg-names))]
-          [_reset-after-inline-tests : unit
-            (if (= inline-test-status 0)
-              (begin
-                (compiler_driver_core.compiler-driver-reset-file-state!)
-                (ci.intern-persistent-arena-reset!))
-              unit)]
-          (if (= inline-test-status 0)
-            (let
-              [pre-emit-doctest-status : i64
-                (build-package-run-doctest-worker-or-inline
-                  name
-                  (owned_view.compiler-owned-shared-view entry-path)
-                  (owned_view.compiler-owned-shared-view manifest-path)
-                  target
-                  opt-level
-                  profile
-                  mode
-                  lock-policy
-                  (owned_view.compiler-owned-shared-view manifest.deps)
-                  (load.compiler-pkg-deps-list
-                    (owned_view.compiler-owned-shared-view manifest.deps))
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
-                  (& cfg-names)
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  emit-entry)]
-              [_reset-after-pre-emit-doctests : unit
-                (begin
-                  (compiler_driver_core.compiler-driver-reset-file-state!)
-                  (ci.intern-persistent-arena-reset!))]
-              (if (= pre-emit-doctest-status 0)
-                (build-package-emit-one-with-surface
-                  manifest-path
-                  manifest
-                  target
-                  opt-level
-                  profile
-                  mode
-                  stdlib-roots
-                  producer-identity
-                  entry-path
-                  manifest-dir
-                  kind
-                  asm-path
-                  obj-path
-                  artifact-path
-                  tlci-path
-                  manifest-link-inputs
-                  dep-link-inputs
-                  emit-entry
+                opt-level
+                profile
+                mode
+                stdlib-roots
+                producer-identity
+                entry-path
+                manifest-dir
+                kind
+                asm-path
+                obj-path
+                artifact-path
+                tlci-path
+                manifest-link-inputs
+                dep-link-inputs
+                emit-entry
+                (cfg_core.compiler-cfg-snapshot-from-env
                   (build-package-compile-cfgs
                     target
                     compile-context.root-compiler
-                    cfg-names)
-                  announce)
-                pre-emit-doctest-status))
-            inline-test-status))))))
+                    cfg-names))
+                announce
+                lock-policy
+                (cli_svec.clone-vec cfg-names)))))))))
 
 (cfg
   (not

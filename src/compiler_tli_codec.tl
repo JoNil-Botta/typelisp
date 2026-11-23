@@ -1,4 +1,4 @@
-;; .tli v1 is a standalone wire format. Callers own the arena in which they
+;; .tli v2 is a standalone wire format. Callers own the arena in which they
 ;; open a directory and decode its records.
 (import compiler_tli_types as tli)
 (import compiler_incremental_binary as binary)
@@ -381,6 +381,8 @@
   [row : (& row tli.TliImport)]) : unit
   (tli-write-name! ctx (& row.module-name))
   (tli-write-u8! ctx row.kind)
+  (tli-write-name! ctx (& row.alias))
+  (tli-write-name! ctx (& row.item))
   (tli-write-digest! ctx (& row.interface-sha256)))
 
 (define (tli-write-extern-link-input!
@@ -508,6 +510,12 @@
   (tli-write-name! ctx (& row.link-symbol))
   (tli-write-type! ctx (& row.ty))
   (tli-write-u32! ctx row.flags)
+  (tli-write-bool! ctx row.is-extern)
+  (tli-write-u32! ctx (array-length row.extern-link-inputs))
+  (for [index (iterator.range 0 (array-length row.extern-link-inputs))]
+    (tli-write-extern-link-input!
+      ctx
+      (& (array-ref row.extern-link-inputs index))))
   (tli-write-const! ctx (& row.const-value)))
 
 (define (tli-write-macro-param!
@@ -528,6 +536,7 @@
   (tli-write-name! ctx (& row.module-name))
   (tli-write-name! ctx (& row.identity))
   (tli-write-u32! ctx row.flags)
+  (tli-write-u8! ctx (cast row.result-kind : i64))
   (tli-write-u32! ctx (array-length row.params))
   (for [index (iterator.range 0 (array-length row.params))]
     (tli-write-macro-param! ctx (& (array-ref row.params index))))
@@ -573,7 +582,12 @@
             [item (& (array-ref row.imports index))]
             (keys.push-ref!
               (&mut order)
-              (tli-order-key ctx (& item.module-name) item.kind "" index))))
+              (tli-order-key
+                ctx
+                (& item.module-name)
+                item.kind
+                (& item.alias)
+                index))))
         (key_sort.sort! (&mut order) tli-key-less?)
         (let
           [slots (keys.slots (& order))]
@@ -1377,17 +1391,22 @@
 (define (tli-read-import!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool (__tl_dyn-array String))]) : tli.TliImport
-  (tli.TliImport
-    (tli-read-name! rd pool)
-    (tli-read-tag! rd 4)
-    (tli-read-digest! rd)))
+  (let
+    [name : String (tli-read-name! rd pool)]
+    [kind : i64 (tli-read-tag! rd 4)]
+    [alias : String (tli-read-name! rd pool)]
+    [item : String (tli-read-name! rd pool)]
+    (when
+      (!= (= kind 2) (> (string.string-length (& item)) 0))
+      (tli-fail! rd tli-error-tag "TLI import item disagrees with import kind"))
+    (tli.TliImport name kind alias item (tli-read-digest! rd))))
 
 (define (tli-read-imports!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array tli.TliImport)
   (let
     [count : i64
-      (tli-read-count! rd 37 (comptime (size-of (type tli.TliImport))))]
+      (tli-read-count! rd 45 (comptime (size-of (type tli.TliImport))))]
     [items : (__tl_dyn-array tli.TliImport)
       (__tl_make-array tli.TliImport count)]
     [index : i64 0]
@@ -1402,10 +1421,10 @@
             rd
             (& previous.module-name)
             previous.kind
-            ""
+            (& previous.alias)
             (& item.module-name)
             item.kind
-            "")))
+            (& item.alias))))
       (+= index 1))
     items))
 
@@ -1514,7 +1533,7 @@
     [length : i64 (cursor.read-u32! (&mut rd.cursor))]
     (when
       (or (not (= offset 0)) (not (= length 0)))
-      (tli-fail! rd tli-error-offset "TLI v1 reserves inline IR offsets"))
+      (tli-fail! rd tli-error-offset "TLI v2 reserves inline IR offsets"))
     (tli.TliFnSummary effect-flags mask extra writes offset length)))
 
 (define (tli-read-fn-decl!
@@ -1535,6 +1554,9 @@
     [ret : tli.TliType (tli-read-type! rd pool true 1)]
     [effect-flags : i64
       (tli-read-flags! rd (bit-or 191 tli.tli-fn-stores-ambient-arena-arg))]
+    (when
+      (and (= abi 3) (= (array-length params) 0))
+      (tli-fail! rd tli-error-tag "TLI typed varargs function has no tail type"))
     (when
       (= 0 (bit-and effect-flags 2))
       (tli-check-runtime-signature! rd (& params) (& ret)))
@@ -1600,14 +1622,29 @@
     [ty : tli.TliType (tli-read-type! rd pool true 1)]
     [flags : i64 (tli-read-flags! rd 15)]
     (when (= 0 (bit-and flags 1)) (tli-check-runtime-type! rd (& ty)))
-    (tli.TliValueDecl name module-name symbol ty flags (tli-read-const! rd))))
+    (let
+      [is-extern : bool (tli-read-bool! rd)]
+      [links : (__tl_dyn-array tli.TliExternLinkInput)
+        (tli-read-extern-link-inputs! rd pool)]
+      (when
+        (and (not is-extern) (> (array-length links) 0))
+        (tli-fail! rd tli-error-tag "TLI local value has extern link inputs"))
+      (tli.TliValueDecl
+        name
+        module-name
+        symbol
+        ty
+        flags
+        is-extern
+        links
+        (tli-read-const! rd)))))
 
 (define (tli-read-value-decls!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array tli.TliValueDecl)
   (let
     [count : i64
-      (tli-read-count! rd 18 (comptime (size-of (type tli.TliValueDecl))))]
+      (tli-read-count! rd 23 (comptime (size-of (type tli.TliValueDecl))))]
     [items : (__tl_dyn-array tli.TliValueDecl)
       (__tl_make-array tli.TliValueDecl count)]
     [index : i64 0]
@@ -1661,9 +1698,15 @@
     [module-name : String (tli-read-name! rd pool)]
     [identity : String (tli-read-name! rd pool)]
     [flags : i64 (tli-read-flags! rd 15)]
+    [result-kind : i64 (tli-read-tag! rd 2)]
     [params : (__tl_dyn-array tli.TliMacroParam)
       (tli-read-macro-params! rd pool)]
     [entry : i64 (cursor.read-u64! (&mut rd.cursor))]
+    (when
+      (or
+        (= (bit-and flags 3) 3)
+        (!= (!= (bit-and flags 8) 0) (!= result-kind 0)))
+      (tli-fail! rd tli-error-tag "TLI macro flags disagree with its kind"))
     (when
       (if (= 0 (bit-and flags 1))
         (not (= entry -1))
@@ -1674,6 +1717,7 @@
       module-name
       identity
       flags
+      (cast result-kind : u8)
       params
       entry
       (tli-read-digest! rd))))
@@ -1684,7 +1728,7 @@
     tli.TliMacroHandle)
   (let
     [count : i64
-      (tli-read-count! rd 60 (comptime (size-of (type tli.TliMacroHandle))))]
+      (tli-read-count! rd 61 (comptime (size-of (type tli.TliMacroHandle))))]
     [items : (__tl_dyn-array tli.TliMacroHandle)
       (__tl_make-array tli.TliMacroHandle count)]
     [index : i64 0]
@@ -2004,7 +2048,7 @@
               (tli-fail!
                 (&mut rd)
                 tli-error-offset
-                "TLI v1 reserves the compact IR range")]
+                "TLI v2 reserves the compact IR range")]
             [(> count tli-max-count)
               (tli-fail!
                 (&mut rd)

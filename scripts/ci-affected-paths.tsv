@@ -1,6 +1,7 @@
 # Reviewed path map. Globs match whole repo-relative paths; * spans /.
 # Required is the local minimum. Advisory adds its column to the required set.
 # Groups resolve through ci-affected-inputs.tsv. Unknown/unreviewed inputs fail to full.
+# Both columns name inputs that keep CI harness self-tests in the hosted lane plans.
 path	required	advisory	reason
 # Safety fixture owners for #8570, #8915 and #8897.
 @always	bootstrap-compiler,bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests	-	Shared local hygiene and documented-source content guard, with canonical producer dependencies.
@@ -124,6 +125,7 @@ SPEC.md	stage2-docs-pages-build-path,stage2-public-tool-affected-map,stage2-publ
 CONTRIBUTING.md	stage2-docs-pages-build-path	@docs	Published contributor documentation links.
 src/TESTING.md	stage2-docs-pages-build-path	@docs	Published testing documentation and links.
 .github/*	*	-	Workflow and action changes can alter every gate contract.
+perf/self-compile-declarations/*	linux-self-compile-check	-	PR own-cost declarations consumed by the self-compile check.
 src/tests/compile_cli_verify_ir_advisories_smoke.tl	ir-observability-golden	@compiler	Direct fixture input in verify-ir-observability.sh.
 src/tests/compiler_backend_cmp_mem_fold_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-integration.sh.
 src/tests/compiler_backend_runtime_fixture.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Direct fixture input in verify-integration.sh.

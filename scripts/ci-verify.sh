@@ -315,7 +315,6 @@ read_handoff() {
 # because gates may run in different pool workers.
 CI_VERIFY_STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
 CI_VERIFY_STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
-CI_VERIFY_OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
 CI_VERIFY_PROFILE_PATH_FILE="$ROOT/target/ci-verify-compile-profile-cli.path"
 
 # ci_verify_load_handoffs NEEDS
@@ -328,7 +327,6 @@ ci_verify_load_handoffs() {
     STAGE1_BIN="$CI_VERIFY_UNPRODUCED/previous-stage-compiler"
     STAGE2_BIN="$CI_VERIFY_UNPRODUCED/converged-compiler"
     COMPILE_PROFILE_BIN="$CI_VERIFY_UNPRODUCED/compile-profile-compiler"
-    OPT2_REFERENCE_ASM="$CI_VERIFY_UNPRODUCED/build-invariance-opt1-reference.s"
     case ",$1," in
         *,bootstrap-compiler,*)
             read_handoff "bootstrap previous-stage compiler capture" "$CI_VERIFY_STAGE1_PATH_FILE" || return 1
@@ -337,16 +335,6 @@ ci_verify_load_handoffs() {
             read_handoff "bootstrap fixpoint compiler capture" "$CI_VERIFY_STAGE2_PATH_FILE" || return 1
             STAGE2_BIN=$CI_VERIFY_HANDOFF
             ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
-            ;;
-    esac
-    case ",$1," in
-        *,stage2-opt1-opt2-build-invariance,*)
-            read_handoff "build-invariance opt1 reference handoff" "$CI_VERIFY_OPT2_REFERENCE_PATH_FILE" || return 1
-            OPT2_REFERENCE_ASM=$CI_VERIFY_HANDOFF
-            if [ ! -s "$OPT2_REFERENCE_ASM" ]; then
-                ci_verify_error "build-invariance published a missing or empty assembly: $OPT2_REFERENCE_ASM"
-                return 1
-            fi
             ;;
     esac
     case ",$1," in
@@ -509,29 +497,12 @@ stage2_can_compile_native_windows() {
     return 0
 }
 
-# Linux build-invariance publishes its validated stage4 src/main @ opt1
-# assembly; the opt2 gate reuses it as its reference instead of compiling it
-# again. Windows has no build-invariance gate, so the opt2 gate retains its
-# standalone reference compile there.
 gate_build_invariance() {
-    TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE=$CI_VERIFY_OPT2_REFERENCE_PATH_FILE \
-        TYPELISP_CI_REFERENCE_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
-        scripts/check-build-invariance.sh || return $?
-    ci_verify_load_handoffs stage2-opt1-opt2-build-invariance || return $?
-    if [ -n "$CI_COMPILER_ENVELOPE_DIR" ]; then
-        ci_timing_run build-invariance-opt1-reference artifact-snapshot \
-            scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" \
-            "$HOST_OS" build-invariance-opt1-reference "$OPT2_REFERENCE_ASM" "$TYPELISP_BIN"
-    fi
+    TYPELISP_CI_REFERENCE_ENVELOPE_DIR=$CI_REFERENCE_ENVELOPE_DIR scripts/check-build-invariance.sh
 }
 
 gate_opt2_cli_regression() {
-    if [ "$HOST_OS" = windows ]; then
-        scripts/check-opt2-cli-regression.sh
-        return $?
-    fi
-    echo "[ci-verify] opt2 gate reuses build-invariance reference: $OPT2_REFERENCE_ASM"
-    TYPELISP_OPT2_CLI_REFERENCE_ASM=$OPT2_REFERENCE_ASM scripts/check-opt2-cli-regression.sh
+    scripts/check-opt2-cli-regression.sh
 }
 
 # The compile-profile verifier reuses the embedded stdlib image the image gate
@@ -577,10 +548,15 @@ gate_instruction_counts() {
 }
 
 # self_compile has no checked row: this gate records the measurement and its
-# identity, and in CI scripts/self-compile.sh check gates the PR's own cost
-# against main's reference for the tested base after ci-verify (perf/README.md).
+# identity for the PR's comparison against main's reference (perf/README.md).
 gate_self_compile_measurement() {
     scripts/self-compile.sh measure --compiler "$STAGE2_BIN"
+}
+
+gate_self_compile_check() {
+    if [ -n "${TYPELISP_SELF_COMPILE_PR_NUMBER:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
+        scripts/self-compile.sh check --cached-base-only
+    fi
 }
 
 gate_heavy_instruction_counts() {
@@ -815,6 +791,12 @@ case "${TYPELISP_CI_COMPILER_ENVELOPES:-0}" in
     *) ci_verify_error "invalid compiler envelope mode"; exit 2 ;;
 esac
 
+# The reference envelope binds its assembly to the bootstrap parity role.
+CI_REFERENCE_ENVELOPE_DIR=
+case ",$CI_VERIFY_PLAN_IDS" in
+    *,bootstrap-fixpoint,*) CI_REFERENCE_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR ;;
+esac
+
 # Produced compilers and artifact paths are set only by the gate that produces
 # them. Until that gate passes they name a path that cannot exist, so a missing
 # need fails its consumer instead of falling back to some other compiler. A gate
@@ -823,8 +805,7 @@ esac
 CI_VERIFY_UNPRODUCED="$ROOT/target/ci-verify-unproduced"
 rm -rf "$CI_VERIFY_UNPRODUCED"
 CI_VERIFY_NO_COMPILER="$CI_VERIFY_UNPRODUCED/gate-names-no-compiler"
-rm -f "$CI_VERIFY_STAGE1_PATH_FILE" "$CI_VERIFY_STAGE2_PATH_FILE" \
-    "$CI_VERIFY_OPT2_REFERENCE_PATH_FILE" "$CI_VERIFY_PROFILE_PATH_FILE"
+rm -f "$CI_VERIFY_STAGE1_PATH_FILE" "$CI_VERIFY_STAGE2_PATH_FILE" "$CI_VERIFY_PROFILE_PATH_FILE"
 
 # run_gate LABEL NEEDS COMPILER COMMAND
 #   Run one gate in a subshell, so nothing it sets or exits reaches the next
@@ -1026,6 +1007,20 @@ if [ "$ci_verify_status" -ne 0 ]; then
         fi
     done < "$CI_VERIFY_PLAN_FILE"
     exit "${ci_verify_first_failure:-1}"
+fi
+
+# Build-invariance can run beside bootstrap parity. Publish its validated
+# assembly only after both gates have passed and the parity role exists.
+if [ -n "$CI_REFERENCE_ENVELOPE_DIR" ]; then
+    case ",$CI_VERIFY_PLAN_IDS" in
+        *,stage2-opt1-opt2-build-invariance,*)
+            ci_verify_load_handoffs bootstrap-compiler
+            ci_timing_run build-invariance-opt1-reference artifact-snapshot \
+                scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_REFERENCE_ENVELOPE_DIR" \
+                "$HOST_OS" build-invariance-opt1-reference \
+                "$ROOT/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s" "$STAGE2_BIN"
+            ;;
+    esac
 fi
 
 # A selection that does not close over the whole inventory proves only its own

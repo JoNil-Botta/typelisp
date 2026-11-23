@@ -41,7 +41,7 @@ linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit 
 stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-compiler	stage2	256	-	scripts/verify-spmd-runtime-dispatch.sh
 stage2-app-workflow-corpus	all	stage2 application workflow corpus	bootstrap-compiler	stage2	512	-	scripts/verify-app-corpus.sh
 tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	-	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
-embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests	-	-	256	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
+embedded-stdlib-tlci-resource-verifier-self-tests	linux	embedded stdlib TLCI resource verifier self-tests	-	-	256	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test
 windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-memory-limit.ps1
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	256	-	scripts/verify-cross-mode-differential.sh --self-test
 integration-batch-observability	all	integration batch observability	-	-	256	-	scripts/verify-integration.sh --self-test-batch-observability
@@ -50,25 +50,25 @@ build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-	-	256	-	scripts/analyze-selfhost-build-asm-size.sh --self-test
 cli-help-surface	all	CLI help surface	-	-	256	-	scripts/check-cli-help-surface.sh --self-test
 compiler-state-schema-boundary	all	compiler state schema boundary	-	-	256	-	scripts/check-compiler-state-schema.sh --self-test && scripts/check-compiler-state-schema.sh
-tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-	-	256	-	scripts/check-tlci-native-route-size.sh --self-test
+tlci-native-route-size-ratchet-self-tests	linux	TLCI native route size ratchet self-tests	-	-	256	-	scripts/check-tlci-native-route-size.sh --self-test
 zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-	-	256	-	scripts/check-zero-cons.sh --self-test
 zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-	-	512	-	scripts/check-zero-cons.sh --fixtures
 shared-view-count-ratchet	all	shared-view count ratchet	-	-	256	-	scripts/check-shared-view-count.sh --self-test && scripts/check-shared-view-count.sh
-spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-	-	256	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test
-c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-	-	256	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test
-instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-	-	256	-	scripts/check-instruction-counts.sh --self-test
-self-compile-gate-self-tests	all	self-compile gate self-tests	-	-	256	-	scripts/self-compile.sh --self-test
-compiler-scaling-comparison-self-tests	all	compiler scaling comparison self-tests	-	-	256	-	scripts/check-compiler-scaling.sh --self-test
-cli-tools-benchmark-repetition-self-test	all	CLI tools benchmark repetition self-test	-	-	256	-	sh scripts/benchmark-cli-tools.sh --self-test
-stage0-release-publication-verifier-self-tests	all	stage0 release publication verifier self-tests	-	-	256	-	scripts/verify-stage0-release.sh --self-test
-stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-	-	256	-	scripts/publish-stage0-latest.sh --self-test
-stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-compiler,bootstrap-fixpoint	stage2	7168	-	gate_build_invariance
+spmd-mode-instruction-count-harness-self-tests	linux	SPMD mode instruction-count harness self-tests	-	-	256	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test
+c-measured-region-instruction-harness-self-tests	linux	C measured-region instruction harness self-tests	-	-	256	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test
+instruction-count-comparison-self-tests	linux	instruction-count comparison self-tests	-	-	256	-	scripts/check-instruction-counts.sh --self-test
+self-compile-gate-self-tests	linux	self-compile gate self-tests	-	-	256	-	scripts/self-compile.sh --self-test
+compiler-scaling-comparison-self-tests	linux	compiler scaling comparison self-tests	-	-	256	-	scripts/check-compiler-scaling.sh --self-test
+cli-tools-benchmark-repetition-self-test	linux	CLI tools benchmark repetition self-test	-	-	256	-	sh scripts/benchmark-cli-tools.sh --self-test
+stage0-release-publication-verifier-self-tests	linux	stage0 release publication verifier self-tests	-	-	256	-	scripts/verify-stage0-release.sh --self-test
+stage0-latest-staged-publication-self-tests	linux	stage0 latest staged publication self-tests	-	-	256	-	scripts/publish-stage0-latest.sh --self-test
+stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-compiler	stage2	7168	-	gate_build_invariance
 embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-compiler	stage2	6144	embedded-image	scripts/verify-embedded-stdlib-tlci.sh
 stage2-windows-coff-batch-plan	all	stage2 Windows COFF batch plan	bootstrap-compiler	stage2	512	-	scripts/verify-compile-batch-windows-coff.sh
 stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh --only 'broadcast-*' tests/spmd/gang-width.cases
 stage2-arena-sanitizer-selfhost	linux	stage2 arena sanitizer self-host	bootstrap-compiler,embedded-stdlib-tlci-image	stage2	2816	build-stamp,embedded-image	scripts/verify-arena-sanitizer-selfhost.sh
 stage2-linux-stack-protection	linux	Linux stack guards and probes	bootstrap-compiler	stage2	6144	-	scripts/verify-linux-stack-protection.sh
-stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-compiler,stage2-opt1-opt2-build-invariance@linux	stage2	7680	build-stamp,root-release	gate_opt2_cli_regression
+stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-compiler	stage2	7680	build-stamp,root-release	gate_opt2_cli_regression
 stage2-ownership-model	all	ownership core model and production comparison	bootstrap-compiler	stage2	1280	-	scripts/verify-ownership-model.sh
 stage2-deterministic-assembly	all	stage2 deterministic assembly	bootstrap-compiler,stage2-selfhost-compile-manifest	stage2	512	-	env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
 stage2-stdlib-selfhost-verifier	all	stage2 stdlib selfhost verifier	bootstrap-compiler	stage2	3584	-	scripts/verify-stdlib-selfhost.sh
@@ -114,6 +114,7 @@ stage2-crypto-stack-residue	all	stage2 crypto stack residue and mutants	bootstra
 stage2-examples	all	stage2 examples	bootstrap-compiler	stage2	512	-	scripts/verify-examples.sh
 stage2-benchmark-comparison-correctness	all	stage2 benchmark comparison correctness	bootstrap-compiler	stage2	256	-	gate_benchmark_correctness
 linux-self-compile-measurement	linux	Linux self-compile measurement	bootstrap-compiler	stage2	2048	instruction-count	gate_self_compile_measurement
+linux-self-compile-check	linux	Linux self-compile cached-base check	linux-self-compile-measurement	-	256	-	gate_self_compile_check
 stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/wipe asm shape gate	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha256-*' tests/codegen/crypto-sha.cases
 stage2-native-integration-corpus-opt-levels	all	stage2 native integration corpus pinned opt levels	bootstrap-compiler	stage2	4608	-	scripts/verify-integration.sh --shard opt-levels
 stage2-addr-taken-matrix	linux	stage2 address-taken matrix	bootstrap-compiler	stage2	1024	-	scripts/verify-addr-taken-matrix.sh
@@ -121,7 +122,7 @@ stage2-sde-fallback-gang-width	all	stage2 forced-SDE AVX-512 gang width	bootstra
 stage2-cli-host-action-smoke	linux	stage2 CLI host-action smoke	bootstrap-compiler	stage2	4352	-	scripts/check-stage1-wrapper.sh
 compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-compiler	stage2	2048	-	scripts/verify-compiler-arena-debug.sh
 stage2-optimization-corpus-correctness	all	stage2 optimization corpus correctness	bootstrap-compiler	stage2	512	-	scripts/run-optimization-benchmarks.sh --correctness
-benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-tests	bootstrap-compiler	stage2	256	-	scripts/bench.sh --self-test
+benchmark-wall-clock-harness-self-tests	linux	benchmark wall-clock harness self-tests	bootstrap-compiler	stage2	256	-	scripts/bench.sh --self-test
 stage2-core-ir-dependency-boundary	all	stage2 core IR dependency boundary	bootstrap-compiler	stage2	1280	-	scripts/verify-core-ir-dependencies.sh
 typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-compiler	stage2	256	-	env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
 stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-compiler	stage2	5120	-	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.cases

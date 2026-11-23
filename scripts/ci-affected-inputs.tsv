@@ -1,5 +1,6 @@
 # Reviewed input classes for every canonical gate. A missing/new gate makes group selection fall back to the full table.
 # compiler/stdlib/corpus include all produced-compiler consumers, plus direct source/corpus readers below.
+# CI lanes may omit independent class "-" self-tests when a PR leaves their inputs alone.
 id	classes	reason
 stage2-inline-aggregate-scaling	compiler,stdlib,corpus	Bounds depth-40 binary inline aggregate check and opt0/1/2 compile on the produced compiler.
 x64-executable-template-registry-coverage	compiler,corpus	Reads compiler source structure directly; retain for source and corpus recommendations.
@@ -36,6 +37,7 @@ embedded-stdlib-tlci-bounded-resource-report	compiler,stdlib,corpus	Consumes com
 stage2-native-integration-corpus	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-native-integration-corpus-opt-levels	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 linux-self-compile-measurement	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+linux-self-compile-check	compiler,stdlib,corpus	Compares the measured compiler against the tested base using the self-compile declarations.
 linux-instruction-count-baseline	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 tlci-mutation-bootstrap-fixpoint	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-inline-typelisp-tests	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

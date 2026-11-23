@@ -1095,10 +1095,11 @@ st_e2e_check_repo() {
     )
 }
 
-# st_e2e_check NAME HEAD_IR BASE_SOURCE [DECLARATION]  ->  `rc status own`
+# st_e2e_check NAME HEAD_IR BASE_SOURCE [DECLARATION [MODE]] -> `rc status own`
 # BASE_SOURCE: reference (B's verified reference), fallback (no reference;
 # the in-place measurement is replaced by a fixture record), or badstamp
-# (a fallback record stamped with another commit).
+# (a fallback record stamped with another commit). In pending mode the
+# producing job is still running. MODE can exercise the cached or resume path.
 st_e2e_check() {
     _sec_dir=$ST_E2E/check-$1
     st_e2e_check_repo "$_sec_dir/repo" "${4:-}"
@@ -1122,7 +1123,7 @@ st_e2e_check() {
             ir_count="$2" run.id=700 run.event=pull_request
         st_record "$_sec_dir/base.tsv" commit="$_sec_b" tree="$(st_tree "$_sec_b")" ir_count=116113939859 run.id=850
         case "$3" in
-            reference) st_reference_api "$_sec_b" 850 "$_sec_dir/base.tsv" ;;
+            reference | pending) st_reference_api "$_sec_b" 850 "$_sec_dir/base.tsv" ;;
             fallback)
                 st_record "$_sec_dir/fallback.tsv" commit="$_sec_b" tree="$(st_tree "$_sec_b")" \
                     ir_count=116113939859 role=base-fallback run.id=700 run.event=pull_request
@@ -1133,18 +1134,62 @@ st_e2e_check() {
                 ;;
         esac
         printf '{"workflow_runs": []}\n' > "$_sec_dir/no-runs.json"
-        if [ "$3" != reference ]; then
-            st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_sec_b&per_page=50" \
-                < "$_sec_dir/no-runs.json"
-        fi
+        case "$3" in
+            reference) ;;
+            pending)
+                st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 in_progress "" |
+                    st_api_put "repos/$ST_REPO/actions/runs/850/jobs?filter=all&per_page=100"
+                ;;
+            *)
+                st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_sec_b&per_page=50" \
+                    < "$_sec_dir/no-runs.json"
+                ;;
+        esac
         sc_run_fallback() {
             cp "$_sec_dir/fallback.tsv" "$3"
         }
         _sec_rc=0
-        (sc_cmd_check) > "$_sec_dir/check.log" 2>&1 || _sec_rc=$?
+        _sec_out=target/self-compile/pr
+        _sec_mode=${5:-full}
+        if [ "$_sec_mode" != full ]; then
+            (
+                sleep() { sc_fail "cached check waited"; }
+                sc_fetch_commit() { sc_fail "cached check fetched a commit"; }
+                sc_run_fallback() { sc_fail "cached check attempted an in-place fallback"; }
+                sc_cmd_check --cached-base-only
+            ) > "$_sec_dir/cached.log" 2>&1 || _sec_rc=$?
+        fi
+        case "$_sec_mode" in
+            full) (sc_cmd_check) > "$_sec_dir/check.log" 2>&1 || _sec_rc=$? ;;
+            cached)
+                if [ -f "$_sec_out/deferred.tsv" ]; then
+                    [ ! -e "$_sec_out/result.tsv" ] || sc_fail "deferred check wrote a result"
+                    printf '%s deferred %s' "$_sec_rc" "$(sc_record_get "$_sec_out/deferred.tsv" reference_status)"
+                    return
+                fi
+                ;;
+            resume | resume-invalid)
+                [ "$_sec_rc" -eq 0 ] && [ -f "$_sec_out/result.tsv" ] || sc_fail "missing passing cached result"
+                if [ "$_sec_mode" = resume-invalid ]; then
+                    GITHUB_RUN_ATTEMPT=2
+                fi
+                (
+                    sc_api() { sc_fail "completed check repeated an API request"; }
+                    sc_run_fallback() { sc_fail "completed check attempted an in-place fallback"; }
+                    sc_cmd_check
+                ) > "$_sec_dir/check.log" 2>&1 || _sec_rc=$?
+                ;;
+            resume-deferred)
+                [ "$_sec_rc" -eq 0 ] && [ ! -e "$_sec_out/result.tsv" ] &&
+                    [ "$(sc_record_get "$_sec_out/deferred.tsv" reference_status)" = absent ] ||
+                    sc_fail "missing deferred marker"
+                (sc_cmd_check) > "$_sec_dir/check.log" 2>&1 || _sec_rc=$?
+                [ ! -e "$_sec_out/deferred.tsv" ] || sc_fail "deferred marker survived full check"
+                ;;
+        esac
         printf '%s %s %s' "$_sec_rc" \
-            "$(sc_record_get target/self-compile/pr/result.tsv status 2>/dev/null || echo none)" \
-            "$(sc_record_get target/self-compile/pr/result.tsv own 2>/dev/null || echo none)"
+            "$(sc_record_get "$_sec_out/result.tsv" status 2>/dev/null || echo none)" \
+            "$(sc_record_get "$_sec_out/result.tsv" own 2>/dev/null || echo none)"
     )
 }
 
@@ -1511,6 +1556,20 @@ st_e2e() {
         "0 declared-ok 580569700"
     st_eq "e2e check refuses a fallback stamped with another commit" "$(st_e2e_check stamp 116113940859 badstamp)" \
         "1 none none"
+    st_eq "cached check passes with a verified reference" "$(st_e2e_check cached-ok 116113940859 reference '' cached)" \
+        "0 ok 1000"
+    st_eq "cached check fails a regression" "$(st_e2e_check cached-reg 116694509559 reference '' cached)" \
+        "1 REGRESSION 580569700"
+    st_eq "cached check defers a pending reference" "$(st_e2e_check cached-pending 116113940859 pending '' cached)" \
+        "0 deferred pending"
+    st_eq "cached check defers a missing reference" "$(st_e2e_check cached-absent 116113940859 fallback '' cached)" \
+        "0 deferred absent"
+    st_eq "full check reuses a passing cached result" "$(st_e2e_check resume 116113940859 reference '' resume)" \
+        "0 ok 1000"
+    st_eq "full check rejects a cached result from another attempt" \
+        "$(st_e2e_check resume-invalid 116113940859 reference '' resume-invalid)" "1 ok 1000"
+    st_eq "full check resumes a deferred comparison through fallback" \
+        "$(st_e2e_check resume-deferred 116113940859 fallback '' resume-deferred)" "0 ok 1000"
 
     st_e2e_ledger_repo "$ST_E2E/ledger-repo"
     _st_p0=$(git -C "$ST_E2E/ledger-repo" rev-parse HEAD~2)

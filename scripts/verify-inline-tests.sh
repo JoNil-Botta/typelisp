@@ -62,14 +62,17 @@ export TYPELISP_STDLIB_TEST_EMPTY=
 export TYPELISP_STDLIB_TEST_VALUE=env-value-854
 export TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three"
 
-# The discovered sources run as contiguous chunks in a bounded pool
+# The discovered sources run as LPT-scheduled chunks in a bounded pool
 # (scripts/lib-bounded-pool.sh): TYPELISP_INLINE_TEST_WORKERS `typelisp test
-# --batch` processes at once (1-3, default 2), each under an enforced memory cap
+# --batch` processes at once (1-3, default 3), each under an enforced memory cap
 # and timeout (a user cgroup on Linux, a Job Object on Windows). A batch shares
 # nothing between its sources, because the driver resets for each one, so a
-# chunk costs only its own process start. Contiguous chunks concatenate back
-# into the discovered order, so the checks below read one combined stream.
-INLINE_TEST_WORKERS=${TYPELISP_INLINE_TEST_WORKERS:-2}
+# chunk costs only its own process start. Heaviest sources (weighted by
+# transitive import closure and file length) are placed into small chunks at
+# the front of the queue and fast sources into full chunks at the tail, so all
+# workers drain together without a late straggler. Every chunk's stdout is
+# verified against its list and the combined paths against the discovered set.
+INLINE_TEST_WORKERS=${TYPELISP_INLINE_TEST_WORKERS:-3}
 case "$INLINE_TEST_WORKERS" in
     1 | 2 | 3) ;;
     *)
@@ -78,7 +81,8 @@ case "$INLINE_TEST_WORKERS" in
         ;;
 esac
 INLINE_TEST_CHUNK_FILES=12
-INLINE_TEST_CHUNK_CAP_MIB=6144
+INLINE_TEST_CHUNK_TARGET_COUNT=32
+INLINE_TEST_CHUNK_CAP_MIB=4096
 INLINE_TEST_POOL_BUDGET_MIB=$((INLINE_TEST_WORKERS * INLINE_TEST_CHUNK_CAP_MIB))
 INLINE_TEST_JOB_TIMEOUT_SECONDS=1800
 INLINE_TEST_PEAK_BYTES=0
@@ -97,24 +101,126 @@ show_streams() {
     fi
 }
 
-# Write `<dir>/chunk-NNN.list` files of at most INLINE_TEST_CHUNK_FILES
-# consecutive sources and the pool queue (`chunk-NNN|<cap MiB>`) naming them in
-# order.
+# Write `<dir>/chunk-NNN.list` files of at most INLINE_TEST_CHUNK_FILES sources
+# in LPT (longest-processing-time-first) order, weighted by transitive import
+# closure plus own line count, and write the pool queue (`chunk-NNN|<cap MiB>`).
+# Heaviest sources land in small chunks at the front of the queue while light
+# sources pack into full chunks at the tail so workers finish together.
 inline_test_plan_chunks() {
     _plan_sources=$1
     _plan_dir=$2
     _plan_queue=$3
     : > "$_plan_queue"
-    awk -v size="$INLINE_TEST_CHUNK_FILES" -v dir="$_plan_dir" \
-        -v cap="$INLINE_TEST_CHUNK_CAP_MIB" -v queue="$_plan_queue" '
-        {
-            job = sprintf("chunk-%03d", int((NR - 1) / size) + 1)
-            if (job != last) {
-                if (last != "") close(dir "/" last ".list")
-                print job "|" cap >> queue
-                last = job
+    awk -v size="$INLINE_TEST_CHUNK_FILES" \
+        -v target_chunks="$INLINE_TEST_CHUNK_TARGET_COUNT" \
+        -v dir="$_plan_dir" \
+        -v cap="$INLINE_TEST_CHUNK_CAP_MIB" \
+        -v queue="$_plan_queue" '
+        function resolve_mod(mod,    p, _line) {
+            p = "src/" mod ".tl"
+            if ((getline _line < p) >= 0) {
+                close(p)
+                return p
             }
-            print > (dir "/" job ".list")
+            p = mod
+            gsub(/\./, "/", p)
+            p = p ".tl"
+            if ((getline _line < p) >= 0) {
+                close(p)
+                return p
+            }
+            return ""
+        }
+        function scan_file(path,    line, n, mod, dep, i) {
+            if (path in scanned) return
+            scanned[path] = 1
+            n = 0
+            deg[path] = 0
+            while ((getline line < path) > 0) {
+                n++
+                if (line ~ /^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+/) {
+                    mod = line
+                    sub(/^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+\(?/, "", mod)
+                    sub(/[[:space:]\)\r].*/, "", mod)
+                    if (mod != "" && !seen_edge[path SUBSEP mod]++) {
+                        dep = resolve_mod(mod)
+                        if (dep != "" && dep != path) {
+                            deg[path]++
+                            edge[path, deg[path]] = dep
+                        }
+                    }
+                }
+            }
+            close(path)
+            lines[path] = n
+            for (i = 1; i <= deg[path]; i++) {
+                scan_file(edge[path, i])
+            }
+        }
+        function closure_weight(root,    qhead, qtail, u, v, i, tot, vis, q) {
+            qhead = 1
+            qtail = 1
+            q[1] = root
+            vis[root] = 1
+            tot = 0
+            while (qhead <= qtail) {
+                u = q[qhead++]
+                tot += lines[u]
+                for (i = 1; i <= deg[u]; i++) {
+                    v = edge[u, i]
+                    if (!(v in vis)) {
+                        vis[v] = 1
+                        q[++qtail] = v
+                    }
+                }
+            }
+            return tot + lines[root] * 16 + 1000
+        }
+        {
+            if ($0 == "") next
+            files[++nfiles] = $0
+            scan_file($0)
+        }
+        END {
+            total_w = 0
+            for (i = 1; i <= nfiles; i++) {
+                f = files[i]
+                w[f] = closure_weight(f)
+                total_w += w[f]
+            }
+            # Sort descending by weight, tie-breaking ascending by path.
+            for (i = 2; i <= nfiles; i++) {
+                kf = files[i]
+                kw = w[kf]
+                j = i - 1
+                while (j >= 1 && (w[files[j]] < kw || (w[files[j]] == kw && files[j] > kf))) {
+                    files[j + 1] = files[j]
+                    j--
+                }
+                files[j + 1] = kf
+            }
+            target_w = (target_chunks > 0) ? (total_w / target_chunks) : 0
+            c = 0
+            cf = 0
+            cw = 0
+            last = ""
+            for (i = 1; i <= nfiles; i++) {
+                f = files[i]
+                fw = w[f]
+                if (cf == 0 || cf >= size || (target_w > 0 && cw + fw > target_w)) {
+                    if (last != "") close(dir "/" last ".list")
+                    c++
+                    job = sprintf("chunk-%03d", c)
+                    print job "|" cap >> queue
+                    last = job
+                    cf = 0
+                    cw = 0
+                }
+                print f > (dir "/" last ".list")
+                cf++
+                cw += fw
+            }
+            if (last != "") close(dir "/" last ".list")
         }
     ' "$_plan_sources"
 }
@@ -155,6 +261,14 @@ inline_test_settle_chunk() {
         show_streams "$_settle_stdout" "$_settle_stderr"
         exit 1
     fi
+    _settle_paths="$_settle_dir/$_settle_job.paths"
+    sed -n 's/^TypeLisp test file: \(.*\) ([0-9][0-9]* test(s))$/\1/p' \
+        "$_settle_stdout" | tr -d '\r' > "$_settle_paths"
+    if ! cmp -s "$_settle_list" "$_settle_paths"; then
+        echo "inline test $_settle_job output paths disagreed with its list" >&2
+        show_streams "$_settle_stdout" "$_settle_stderr"
+        exit 1
+    fi
     _settle_files=$(wc -l < "$_settle_list" | tr -d ' ')
     _settle_tests=$(sed -n 's/^TypeLisp test file: .* (\([0-9][0-9]*\) test(s))$/\1/p' \
         "$_settle_stdout" | tr -d '\r' | awk '{ total += $1 } END { print total + 0 }')
@@ -171,9 +285,8 @@ inline_test_settle_chunk() {
 }
 
 # Checks over the combined chunk streams: one count line and one success
-# summary per discovered source, the discovered order exactly, and no source
-# that ran zero tests. The order check is also the partition proof: every
-# discovered source ran in exactly one chunk.
+# summary per discovered source, exact partition completeness (every discovered
+# source ran in exactly one chunk), and no source that ran zero tests.
 inline_test_check_combined() {
     _check_discovered=$1
     _check_stdout=$2
@@ -191,8 +304,10 @@ inline_test_check_combined() {
         show_streams "$_check_stdout" "$_check_stderr"
         exit 1
     fi
-    if ! cmp -s "$_check_discovered" "$_check_paths"; then
-        echo "inline test execution did not preserve discovered source order" >&2
+    LC_ALL=C sort "$_check_discovered" > "$_check_discovered.sorted"
+    LC_ALL=C sort "$_check_paths" > "$_check_paths.sorted"
+    if ! cmp -s "$_check_discovered.sorted" "$_check_paths.sorted"; then
+        echo "inline test execution did not cover the exact discovered source set" >&2
         show_streams "$_check_stdout" "$_check_stderr"
         exit 1
     fi
@@ -214,11 +329,17 @@ inline_test_check_combined() {
 inline_test_self_test_fixture() {
     _fixture_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/case.XXXXXX")
     _self_dir=$_fixture_dir
-    printf '%s\n' a.tl b.tl c.tl > "$_fixture_dir/discovered.txt"
+    printf ';; light\n' > "$_fixture_dir/a.tl"
+    printf ';; light\n' > "$_fixture_dir/b.tl"
+    awk 'BEGIN { for (i = 0; i < 200; i++) print ";; heavy" }' > "$_fixture_dir/c.tl"
+    printf '%s\n' "$_fixture_dir/a.tl" "$_fixture_dir/b.tl" "$_fixture_dir/c.tl" > "$_fixture_dir/discovered.txt"
     _fixture_saved_size=$INLINE_TEST_CHUNK_FILES
+    _fixture_saved_target=$INLINE_TEST_CHUNK_TARGET_COUNT
     INLINE_TEST_CHUNK_FILES=2
+    INLINE_TEST_CHUNK_TARGET_COUNT=0
     inline_test_plan_chunks "$_fixture_dir/discovered.txt" "$_fixture_dir" "$_fixture_dir/queue"
     INLINE_TEST_CHUNK_FILES=$_fixture_saved_size
+    INLINE_TEST_CHUNK_TARGET_COUNT=$_fixture_saved_target
     for _fixture_job in chunk-001 chunk-002; do
         : > "$_fixture_dir/$_fixture_job.stdout"
         : > "$_fixture_dir/$_fixture_job.stderr"
@@ -298,8 +419,9 @@ inline_test_self_test_chunks() {
     printf 'chunk-001|%s\nchunk-002|%s\n' "$INLINE_TEST_CHUNK_CAP_MIB" \
         "$INLINE_TEST_CHUNK_CAP_MIB" > "$_self_dir/expected-queue"
     if ! cmp -s "$_self_dir/queue" "$_self_dir/expected-queue" ||
-        [ "$(cat "$_self_dir/chunk-001.list" "$_self_dir/chunk-002.list")" != "$(cat "$_self_dir/discovered.txt")" ]; then
-        echo "inline test chunk self-test: the plan does not partition the sources in order" >&2
+        [ "$(head -n 1 "$_self_dir/chunk-001.list")" != "$_self_dir/c.tl" ] ||
+        [ "$(cat "$_self_dir/chunk-001.list" "$_self_dir/chunk-002.list" | LC_ALL=C sort)" != "$(LC_ALL=C sort "$_self_dir/discovered.txt")" ]; then
+        echo "inline test chunk self-test: the LPT plan did not schedule heaviest first or partition all sources" >&2
         exit 1
     fi
     if ! ( inline_test_self_test_settle_all "$_self_dir" ) > "$_self_dir/out" 2>&1; then
@@ -330,13 +452,17 @@ inline_test_self_test_chunks() {
 
     inline_test_self_test_fixture "$_self_dir"
     printf 'z.tl\n' > "$_self_dir/chunk-002.list"
-    sed -i.bak 's/c\.tl/z.tl/' "$_self_dir/chunk-002.stdout"
+    sed -i.bak 's|[^ ]*b\.tl|z.tl|' "$_self_dir/chunk-002.stdout"
     inline_test_self_test_expect_failure "a chunk that ran a source outside the discovered list" "$_self_dir"
 
     inline_test_self_test_fixture "$_self_dir"
-    printf 'chunk-002|%s\nchunk-001|%s\n' "$INLINE_TEST_CHUNK_CAP_MIB" \
+    sed -i.bak 's|[^ ]*b\.tl|z.tl|' "$_self_dir/chunk-002.stdout"
+    inline_test_self_test_expect_failure "a chunk whose output paths disagreed with its list" "$_self_dir"
+
+    inline_test_self_test_fixture "$_self_dir"
+    printf 'chunk-001|%s\nchunk-001|%s\n' "$INLINE_TEST_CHUNK_CAP_MIB" \
         "$INLINE_TEST_CHUNK_CAP_MIB" > "$_self_dir/queue"
-    inline_test_self_test_expect_failure "chunks settled out of order" "$_self_dir"
+    inline_test_self_test_expect_failure "duplicate chunk skipping a discovered source" "$_self_dir"
 
     inline_test_self_test_fixture "$_self_dir"
     sed -i.bak 's/ 0 failed;/ 1 failed;/' "$_self_dir/chunk-002.stderr"
@@ -422,30 +548,28 @@ WORKDIR="$ROOT/target/inline-test-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
-CANDIDATES="$WORKDIR/candidates.txt"
+DISCOVERED_RAW="$WORKDIR/discovered.raw"
 DISCOVERED="$WORKDIR/discovered.txt"
-: > "$CANDIDATES"
+: > "$DISCOVERED_RAW"
 : > "$DISCOVERED"
 
+set --
 for root in src stdlib tools tests/integration tests/inline examples; do
     if [ -d "$root" ]; then
-        find "$root" \
-            -type f \
-            -name '*.tl' \
-            ! -path '*/target/*'
+        set -- "$@" "$root"
     fi
-done | sort > "$CANDIDATES"
-
-has_inline_test_item() {
-    grep -Eq '^[[:space:]]*\(test([[:space:]]|\)|$)' "$1"
-}
-
-while IFS= read -r source; do
-    [ -n "$source" ] || continue
-    if has_inline_test_item "$source"; then
-        printf '%s\n' "$source" >> "$DISCOVERED"
+done
+if [ "$#" -gt 0 ]; then
+    discover_rc=0
+    grep -rlE --include='*.tl' --exclude-dir=target \
+        '^[[:space:]]*\(test([[:space:]]|\)|$)' "$@" > "$DISCOVERED_RAW" ||
+        discover_rc=$?
+    if [ "$discover_rc" -gt 1 ]; then
+        echo "inline test discovery failed (grep exit $discover_rc)" >&2
+        exit "$discover_rc"
     fi
-done < "$CANDIDATES"
+    LC_ALL=C sort -u "$DISCOVERED_RAW" > "$DISCOVERED"
+fi
 
 if [ ! -s "$DISCOVERED" ]; then
     echo "inline test verification found no inline test-bearing TypeLisp files" >&2

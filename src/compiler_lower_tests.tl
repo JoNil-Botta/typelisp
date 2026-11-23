@@ -1837,7 +1837,7 @@
     [(Err _) false]))
 
 ;; The canonical standalone traversal is the independent oracle for the
-;; summary carried by existing write/set-value walks. This tests the actual
+;; summary carried by the joined body scan. This tests the actual
 ;; cached field as well as independent small budgets and an incomplete carrier.
 (define (lower-test-precheck-carrier-agrees?
   [ctx : tc_core.TcContext]
@@ -1845,11 +1845,16 @@
   [carrier-budget : i64]
   [address-budget : i64]) : bool
   (let
-    [roots : lower_i64_i64_map.Map (lower_i64_i64_map.new)]
-    [values : lower_i64_i64_map.Map (lower_i64_i64_map.new)]
     [canonical-budget : i64 address-budget]
-    [summary : lower.LowerExposurePrecheck
-      (lower.LowerExposurePrecheck false address-budget carrier-budget 0)]
+    [summary : lower.LowerBodyProofScan
+      (lower.LowerBodyProofScan
+        false
+        false
+        address-budget
+        carrier-budget
+        carrier-budget
+        (lower_i64_i64_map.new)
+        (lower_i64_i64_map.new))]
     [canonical : bool
       (lower.lower-exposure-has-address?
         ctx
@@ -1857,14 +1862,16 @@
         false
         (&mut canonical-budget))]
     [complete : bool
-      (lower.lower-loop-written-roots-scan!
+      (lower.lower-body-proof-node!
         ctx
         expr
-        (&mut roots)
-        (&mut values)
+        0
+        false
+        (lower.LowerBodyWriteMode.ScanWrites)
+        true
         (&mut summary))]
-    (if (or complete summary.found)
-      (= summary.found canonical)
+    (if (or complete summary.address-found)
+      (= summary.address-found canonical)
       ;; The result is unavailable, so production must run the oracle.
       (= carrier-budget 0))))
 
@@ -1879,7 +1886,7 @@
     [budget : i64 lower.lower-written-roots-scan-budget]
     [canonical : bool
       (lower.lower-exposure-has-address? ctx (clone expr) false (&mut budget))]
-    (lower.lower-function-state-scan-written-roots! ctx state expr)
+    (lower.lower-function-state-scan-body-proofs! ctx state expr)
     (let
       [cached : i64
         (unsafe
@@ -2039,6 +2046,96 @@
     (ast.ast-node-pool-context-install! active)))
 
 (test
+  compiler-lower-body-proofs-loop-rhs-and-mention-only
+  (let
+    [active : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 8)]
+    [target : i64 (ci.intern-generated-name "scan-target")]
+    [mentioned : i64 (ci.intern-generated-name "scan-mention")]
+    [read-only : i64 (ci.intern-generated-name "scan-read")]
+    [plain : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [inside : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [outside : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [other : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [spmd-rhs : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    [condition : i64
+      (ast.ast-node-pool-context-expr-push pools (Set target inside))]
+    [nested : i64
+      (ast.ast-node-pool-context-expr-push pools (Set target other))]
+    [quote-id : i64 (ast.ast-node-pool-context-expr-push pools (Quote nested))]
+    [var-id : i64 (ast.ast-node-pool-context-expr-push pools (Var mentioned))]
+    [mention-id : i64
+      (ast.ast-node-pool-context-expr-push pools (LaneValue var-id))]
+    [read-id : i64 (ast.ast-node-pool-context-expr-push pools (Var read-only))]
+    [addr-id : i64
+      (ast.ast-node-pool-context-expr-push pools (PtrAddrOf read-id))]
+    [ptr-id : i64
+      (ast.ast-node-pool-context-expr-push pools (PtrOffset addr-id plain))]
+    [load-id : i64 (ast.ast-node-pool-context-expr-push pools (PtrRead ptr-id))]
+    [spmd-set : i64
+      (ast.ast-node-pool-context-expr-push pools (Set target spmd-rhs))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools)]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [state : lower.CompilerLowerFunctionState
+      (lower.compiler-lower-function-state-new owner)]
+    (ast.ast-node-pool-context-install! pools)
+    (let
+      [inner-body : ast.AstExprList
+        (ast.ast-expr-cons quote-id (& (ast.ast-expr-list-new)))]
+      [inner : i64
+        (ast.ast-node-pool-context-expr-push pools (While plain inner-body))]
+      [loop-body : ast.AstExprList
+        (ast.ast-expr-cons inner (& (ast.ast-expr-list-new)))]
+      [body : ast.AstExprList (ast.ast-expr-list-new)]
+      (ast.ast-expr-list-push
+        (&mut body)
+        (ast.ast-node-pool-context-expr-push pools (Set target outside)))
+      (ast.ast-expr-list-push
+        (&mut body)
+        (ast.ast-node-pool-context-expr-push pools (While condition loop-body)))
+      (ast.ast-expr-list-push (&mut body) mention-id)
+      (ast.ast-expr-list-push (&mut body) load-id)
+      (ast.ast-expr-list-push
+        (&mut body)
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (SpmdReduce
+            (box
+              (ast.AstSpmdReduce.Reduce
+                (Sum)
+                target
+                (I64)
+                plain
+                plain
+                plain
+                spmd-set)))))
+      (lower.lower-function-state-scan-body-proofs! ctx state (Begin body)))
+    (test.assert-true
+      (and
+        (lower.compiler-lower-function-state-set-in-loop? state inside)
+        (lower.compiler-lower-function-state-set-in-loop? state other)
+        (not (lower.compiler-lower-function-state-set-in-loop? state outside))
+        (not (lower.compiler-lower-function-state-set-in-loop? state spmd-rhs)))
+      "RHS membership includes loop conditions and quoted descendants of nested loops")
+    (test.assert-true
+      (and
+        (lower.compiler-lower-function-state-name-written? state target)
+        (lower.compiler-lower-function-state-name-written? state mentioned)
+        (not
+          (lower.compiler-lower-function-state-name-written? state read-only))
+        (lower.compiler-lower-function-state-raw-address-free? state))
+      "unknown forms count mentions and immediate reads through offsets preserve the raw proof")
+    (ast.ast-node-pool-context-install! active)))
+
+(test
   compiler-lower-fused-precheck-helper-invalidation
   (let
     [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
@@ -2109,12 +2206,18 @@
       (test.assert-true
         (lower.lower-exposure-has-address? ctx (clone body) false (&mut budget))
         "canonical exhaustion conservatively requires the census")
-      (lower.lower-function-state-scan-written-roots! ctx state body)
+      (lower.lower-function-state-scan-body-proofs! ctx state body)
       (test.assert-i64-eq
         (unsafe
           (deref (lower.compiler-lower-function-state-view state)).address-precheck)
         -1
-        "the incomplete production carrier leaves the standalone fallback available"))
+        "the incomplete production carrier leaves the standalone fallback available")
+      (test.assert-true
+        (and
+          (lower.compiler-lower-function-state-name-written? state 0)
+          (lower.compiler-lower-function-state-set-in-loop? state tree)
+          (not (lower.compiler-lower-function-state-raw-address-free? state)))
+        "exhausted write, loop and raw-address proofs all fail closed"))
     (ast.ast-node-pool-context-install! active)))
 
 ;; Call and operator operands, and indirect callees in ordinary and tail

@@ -45,6 +45,8 @@ per-pass native mappings and generation-checked handles remain independent.
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
+Prebuilt `.tli` interfaces, their `.tlci` companion and the archive layout are
+specified in [prebuilt module interfaces](../docs/prebuilt-module-interfaces.md).
 File and package loads share module-identity validation and typed loader
 diagnostics under the [loader contract](compiler-invariants.md#cli).
 Standalone backend target source helpers use the same executable prelude loader and

@@ -516,14 +516,6 @@
   (scopes lower_i64_i64_map.Map)
   (exposed (__tl_dyn-array i64)))
 
-;; The carrier walk counts the same nodes as the canonical quick pre-check.
-;; A found address or exhausted independent budget is an exact `true` result.
-(defstruct LowerExposurePrecheck
-  (found bool)
-  (budget i64)
-  (walk-budget i64)
-  (mode i64))
-
 (defstruct CompilerLowerFunctionStateData
   (owner-address i64)
   (inline-helper-stack LowerIdSet)
@@ -8690,7 +8682,7 @@
       (set! (deref data).written-roots roots)
       (set! (deref data).written-roots-complete complete))))
 
-(define (compiler-lower-function-state-loop-written-roots-set!
+(define (compiler-lower-function-state-loop-set-values-set!
   [state : CompilerLowerFunctionState]
   [set-values : lower_i64_i64_map.Map]) : unit
   (let
@@ -16735,6 +16727,14 @@
         [(Ok info) (tc_core.tc-layout-info-align info)]
         [(Err _) fallback])]))
 
+;; Classifiers of a type's head do not need to resolve its children.
+;; Preserve the ordinary resolver for a source name or transparent wrapper.
+(define (lower-resolve-type-head [ctx : tc_core.TcContext] [ty : ast.AstType]) : ast.AstType
+  (match (& ty)
+    [(or (Var _) (VarArgs _ _) (Region _ _) (Invalidate _ _))
+      (tc_core.tc-resolve-type ctx ty)]
+    [_ ty]))
+
 ;; Whether a reference to the type-pool node `inner` is a fat reference
 ;; (`ast.ast-type-fat-referent?`): a borrowed Slice or `bytes`. Region wrappers
 ;; on the referent are transparent; owning containers are not looked through.
@@ -16742,12 +16742,12 @@
   (ast.ast-type-fat-referent?
     (&
       (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner))))))
+        (lower-resolve-type-head ctx (tc_core.tc-context-type-get ctx inner))))))
 
 (define (lower-type-size [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-resolve-type ctx (lower-global-shared-view ty))
+    (match (lower-resolve-type-head ctx (lower-global-shared-view ty))
       [(or (I32) (U32) (F32)) 4]
       [(or (I16) (U16)) 2]
       [(or (I8) (U8) (Bool) (Char)) 1]
@@ -16997,7 +16997,7 @@
 (define (lower-type-align [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-resolve-type ctx (lower-global-shared-view ty))
+    (match (lower-resolve-type-head ctx (lower-global-shared-view ty))
       [(or (I32) (U32) (F32)) 4]
       [(or (I16) (U16)) 2]
       [(or (I8) (U8) (Bool) (Char) (Unit) (Never) (Expr) (ExprList)) 1]
@@ -17467,7 +17467,7 @@
   [ty : (& ty ast.AstType)]) : bool
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]
-    (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
       [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)
            (Array _ _))
         true]
@@ -17477,7 +17477,7 @@
   [ctx : tc_core.TcContext]
   [ty : (& ty ast.AstType)]) : bool
   (match (tc_core.tc-type-strip-region
-    (tc_core.tc-resolve-type
+    (lower-resolve-type-head
       ctx
       (owned_view.compiler-owned-reference-shared-view ty)))
     [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _)) true]
@@ -17495,7 +17495,7 @@
   [ctx : tc_core.TcContext]
   [ty : (& ty ast.AstType)]) : bool
   (match (tc_core.tc-type-strip-region
-    (tc_core.tc-resolve-type
+    (lower-resolve-type-head
       ctx
       (owned_view.compiler-owned-reference-shared-view ty)))
     [(or (Ref _ inner) (MutRef _ inner)) (lower-fat-reference? ctx inner)]
@@ -17527,7 +17527,7 @@
 ;; path, where excess rebuilds would overflow the per-function scratch arena
 ;; into a second chunk whose rewind leaks into later lowering.
 (define (lower-type-register-words [ctx : tc_core.TcContext] [ty : ast.AstType]) : i64
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
     [(or (Ref _ inner) (MutRef _ inner))
       (if (lower-fat-reference? ctx inner)
         2
@@ -18965,19 +18965,19 @@
         [(Expr len-state len _) (Fields len-state ptr len)])]))
 
 (define (lower-str-ref-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
     [(Ref _ inner)
       (match (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
+        (lower-resolve-type-head ctx (tc_core.tc-context-type-get ctx inner)))
         [(Str) true]
         [_ false])]
     [_ false]))
 
 (define (lower-bytes-ref-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
     [(or (Ref _ inner) (MutRef _ inner))
       (match (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))
+        (lower-resolve-type-head ctx (tc_core.tc-context-type-get ctx inner)))
         [(Bytes) true]
         [_ false])]
     [_ false]))
@@ -19372,6 +19372,9 @@
 (define (lower-supported-reference-referent-type?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
+  (match (& ty)
+    [(or (Ptr _) (MutPtr _)) (return true)]
+    [_ unit])
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-canonicalize-inferred-type ctx (tc_core.tc-resolve-type ctx ty)))
     ;; Borrowing a raw-pointer value borrows the one-word pointer slot; it does
@@ -19694,10 +19697,7 @@
   [stack : LowerIdSet]) : bool
   (let
     [resolved : ast.AstType
-      (tc_core.tc-type-strip-region
-        (tc_core.tc-canonicalize-inferred-type
-          ctx
-          (tc_core.tc-resolve-type ctx ty)))]
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
     (match (& resolved)
       ;; Bare Slice is unsized and is never a directly lowerable value.  The
       ;; Slice arm below is reached only through Ref/MutRef's referent helper.
@@ -19705,7 +19705,7 @@
       [_
         (if (not (tc_core.tc-type-contains-reference? (& resolved)))
           true
-          (match resolved
+          (match (tc_core.tc-canonicalize-inferred-type ctx resolved)
             [(or (Ref _ inner) (MutRef _ inner))
               (lower-supported-reference-referent-type?
                 ctx
@@ -23316,7 +23316,7 @@
 (define (lower-supported-capture-type?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
     [(or (I64) (U64) (F64) (I32) (U32) (F32) (I16) (U16) (I8) (U8) (Bool) (Char)
          (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (CFunc _ _) (Func _ _)
          (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
@@ -24230,10 +24230,7 @@
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (compiler-lower-function-state-raw-address-free-set!
-    function-state
-    (lower-body-raw-address-free? ctx (lower-global-shared-view body)))
-  (lower-function-state-scan-written-roots!
+  (lower-function-state-scan-body-proofs!
     ctx
     function-state
     (lower-global-shared-view body))
@@ -27352,229 +27349,6 @@
 (define lower-written-roots-scan-budget : i64
   1048576)
 
-(define (lower-function-state-scan-written-roots!
-  [ctx : tc_core.TcContext]
-  [function-state : CompilerLowerFunctionState]
-  [body : ast.AstExpr]) : unit
-  (let
-    [roots : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 16)]
-    [budget : i64 lower-written-roots-scan-budget]
-    [complete : bool
-      (lower-written-roots-scan-node!
-        ctx
-        (lower-global-shared-view body)
-        (&mut roots)
-        (&mut budget))]
-    [loop-roots : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 8)]
-    [loop-set-values : lower_i64_i64_map.Map
-      (lower_i64_i64_map.with-capacity 8)]
-    [precheck : LowerExposurePrecheck
-      (LowerExposurePrecheck false lower-written-roots-scan-budget budget 0)]
-    [loop-complete : bool
-      (and
-        complete
-        (lower-loop-written-roots-scan!
-          ctx
-          body
-          (&mut loop-roots)
-          (&mut loop-set-values)
-          (&mut precheck)))]
-    ;; An incomplete carrier cannot establish `false`: use the canonical
-    ;; standalone traversal later. A discovered `true` is already exact.
-    (unsafe
-      (set!
-        (deref (compiler-lower-function-state-ptr function-state)).address-precheck
-        (if precheck.found
-          1
-          (if loop-complete
-            0
-            -1))))
-    (compiler-lower-function-state-written-roots-set!
-      function-state
-      roots
-      loop-complete)
-    (compiler-lower-function-state-loop-written-roots-set!
-      function-state
-      loop-set-values)))
-
-;; Names written inside some loop: each loop node's whole subtree is scanned
-;; with the written-roots scanner into the shared set. The loop discovery and
-;; set-value walks together carry the exact address pre-check in preorder.
-(define (lower-loop-written-roots-scan!
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]
-  [roots : (&mut roots lower_i64_i64_map.Map)]
-  [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
-  (if (<= precheck.walk-budget 0)
-    false
-    (begin
-      (set! precheck.walk-budget (- precheck.walk-budget 1))
-      (let
-        [previous-mode : i64 precheck.mode]
-        [child-mode : i64 previous-mode]
-        [loop? : bool
-          (match (& expr)
-            [(or (ast.AstExpr.While _ _) (ast.AstExpr.ForOwnedState _)
-                 (ast.AstExpr.ForOwnedStep _) (ast.AstExpr.Foreach _)
-                 (ast.AstExpr.ForeachActive _ _))
-              true]
-            [(ast.AstExpr.PtrAddrOf _)
-              (when (= previous-mode 1) (set! child-mode -2))
-              false]
-            [(or (ast.AstExpr.Lambda _) (ast.AstExpr.Quote _)
-                 (ast.AstExpr.Quasiquote _) (ast.AstExpr.Comptime _))
-              (set! child-mode -1)
-              false]
-            [(or (ast.AstExpr.SpmdReduce _) (ast.AstExpr.SpmdScan _)
-                 (ast.AstExpr.SpmdCompact _))
-              (set! child-mode 1)
-              false]
-            [_ false])]
-        (if loop?
-          (and
-            (lower-written-roots-scan-node!
-              ctx
-              (lower-global-shared-view expr)
-              roots
-              (&mut precheck.walk-budget))
-            ;; This walk observes the loop root, so it is not counted twice.
-            (lower-loop-set-values-collect! ctx expr set-values precheck))
-          (begin
-            ;; -2 is a loop-enclosed address, -1 an analysis boundary.
-            ;; Classification shares the carrier dispatch; its budget still
-            ;; counts only nodes visited by the independent canonical check.
-            (cond
-              [(or (< previous-mode 0) precheck.found)
-                (set! child-mode previous-mode)]
-              [(<= precheck.budget 0)
-                (set! precheck.found true)
-                (set! child-mode previous-mode)]
-              [else
-                (set! precheck.budget (- precheck.budget 1))
-                (when
-                  (= child-mode -2)
-                  (set! precheck.found true)
-                  (set! child-mode previous-mode))])
-            (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
-            (let
-              [complete : bool
-                (lower-loop-written-roots-children?
-                  ctx
-                  (ast.ast-expr-child-ids expr)
-                  0
-                  roots
-                  set-values
-                  precheck)]
-              (when
-                (!= child-mode previous-mode)
-                (set! precheck.mode previous-mode))
-              complete)))))))
-
-(define (lower-loop-written-roots-children?
-  [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
-  [index : i64]
-  [roots : (&mut roots lower_i64_i64_map.Map)]
-  [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
-  (if (>= index children.len)
-    true
-    (and
-      (lower-loop-written-roots-scan!
-        ctx
-        (lower-context-expr-get
-          ctx
-          (ast.ast-expr-list-get (& children) index -1))
-        roots
-        set-values
-        precheck)
-      (lower-loop-written-roots-children?
-        ctx
-        children
-        (+ index 1)
-        roots
-        set-values
-        precheck))))
-
-;; Record the right-hand-side id of every `set!` in a loop subtree. The
-;; independent address budget ignores nested-function/quoted descendants,
-;; whereas this original set-value traversal keeps its existing coverage.
-(define (lower-loop-set-values-collect!
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]
-  [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
-  (if (<= precheck.walk-budget 0)
-    false
-    (begin
-      (set! precheck.walk-budget (- precheck.walk-budget 1))
-      (let
-        [previous-mode : i64 precheck.mode]
-        [child-mode : i64 previous-mode]
-        (match (& expr)
-          [(ast.AstExpr.Set _ value-box)
-            (lower_i64_i64_map.insert-ref! set-values value-box 1)]
-          [(ast.AstExpr.PtrAddrOf _)
-            (when (= previous-mode 1) (set! child-mode -2))]
-          [(or (ast.AstExpr.Lambda _) (ast.AstExpr.Quote _)
-               (ast.AstExpr.Quasiquote _) (ast.AstExpr.Comptime _))
-            (set! child-mode -1)]
-          [(or (ast.AstExpr.While _ _) (ast.AstExpr.Foreach _)
-               (ast.AstExpr.ForeachActive _ _) (ast.AstExpr.SpmdReduce _)
-               (ast.AstExpr.SpmdScan _) (ast.AstExpr.SpmdCompact _)
-               (ast.AstExpr.ForOwnedState _) (ast.AstExpr.ForOwnedStep _))
-            (set! child-mode 1)]
-          [_ unit])
-        (cond
-          [(or (< previous-mode 0) precheck.found)
-            (set! child-mode previous-mode)]
-          [(<= precheck.budget 0)
-            (set! precheck.found true)
-            (set! child-mode previous-mode)]
-          [else
-            (set! precheck.budget (- precheck.budget 1))
-            (when
-              (= child-mode -2)
-              (set! precheck.found true)
-              (set! child-mode previous-mode))])
-        (when (!= child-mode previous-mode) (set! precheck.mode child-mode))
-        (let
-          [complete : bool
-            (lower-loop-set-values-children?
-              ctx
-              (ast.ast-expr-child-ids expr)
-              0
-              set-values
-              precheck)]
-          (when
-            (!= child-mode previous-mode)
-            (set! precheck.mode previous-mode))
-          complete)))))
-
-(define (lower-loop-set-values-children?
-  [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
-  [index : i64]
-  [set-values : (&mut set-values lower_i64_i64_map.Map)]
-  [precheck : (&mut precheck LowerExposurePrecheck)]) : bool
-  (if (>= index children.len)
-    true
-    (and
-      (lower-loop-set-values-collect!
-        ctx
-        (lower-context-expr-get
-          ctx
-          (ast.ast-expr-list-get (& children) index -1))
-        set-values
-        precheck)
-      (lower-loop-set-values-children?
-        ctx
-        children
-        (+ index 1)
-        set-values
-        precheck))))
-
 ;; Record `name` (and the root binding of a dotted field spelling) as written.
 ;; A structural key (a macro-hygienic binder) is an exact binding identity and
 ;; is recorded as itself. False when a dotted spelling's root cannot be
@@ -27605,33 +27379,35 @@
         true]
       [else false])))
 
-;; Every name mentioned anywhere in `expr-id` is written.
+(define (lower-written-roots-note-mention!
+  [ctx : tc_core.TcContext]
+  [expr : (& ast.AstExpr)]
+  [roots : (&mut roots lower_i64_i64_map.Map)]) : bool
+  (match expr
+    [(or (ast.AstExpr.Var name) (ast.AstExpr.Set name _))
+      (lower-written-roots-note-name! ctx name roots)]
+    [_ true]))
+
+;; A write place contributes all names, including from a computed place.
 (define (lower-written-roots-note-mentions!
   [ctx : tc_core.TcContext]
   [expr-id : i64]
   [roots : (&mut roots lower_i64_i64_map.Map)]
   [budget : (&mut budget i64)]) : bool
-  (if (< expr-id 0)
-    true
-    (if (<= (deref budget) 0)
-      false
-      (begin
-        (set! (deref budget) (- (deref budget) 1))
-        (let
-          [expr : ast.AstExpr (lower-context-expr-get ctx expr-id)]
-          (and
-            (match (& expr)
-              [(ast.AstExpr.Var name)
-                (lower-written-roots-note-name! ctx name roots)]
-              [(ast.AstExpr.Set name _)
-                (lower-written-roots-note-name! ctx name roots)]
-              [_ true])
-            (lower-written-roots-note-mention-children!
-              ctx
-              (ast.ast-expr-child-ids expr)
-              0
-              roots
-              budget)))))))
+  (when (< expr-id 0) (return true))
+  (when (<= (deref budget) 0) (return false))
+  (set! (deref budget) (- (deref budget) 1))
+  (let
+    [expr : ast.AstExpr (lower-context-expr-get ctx expr-id)]
+    (unless
+      (lower-written-roots-note-mention! ctx (& expr) roots)
+      (return false))
+    (lower-written-roots-note-mention-children!
+      ctx
+      (ast.ast-expr-child-ids expr)
+      0
+      roots
+      budget)))
 
 (define (lower-written-roots-note-mention-children!
   [ctx : tc_core.TcContext]
@@ -27654,73 +27430,16 @@
         roots
         budget))))
 
-(define (lower-written-roots-scan!
+(define (lower-written-roots-note-own!
   [ctx : tc_core.TcContext]
-  [expr-id : i64]
-  [roots : (&mut roots lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
-  (if (< expr-id 0)
-    true
-    (if (<= (deref budget) 0)
-      false
-      (begin
-        (set! (deref budget) (- (deref budget) 1))
-        (lower-written-roots-scan-node!
-          ctx
-          (lower-context-expr-get ctx expr-id)
-          roots
-          budget)))))
-
-;; The pointer operand of `ptr-read`: an address taken right here (through
-;; casts and offsets) is only read, the shared-view idiom the raw-address
-;; proof also accepts. Any other pointer expression is scanned normally.
-(define (lower-written-roots-scan-read-pointer!
-  [ctx : tc_core.TcContext]
-  [expr-id : i64]
-  [roots : (&mut roots lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
-  (if (< expr-id 0)
-    true
-    (if (<= (deref budget) 0)
-      false
-      (begin
-        (set! (deref budget) (- (deref budget) 1))
-        (match (lower-context-expr-get ctx expr-id)
-          [(ast.AstExpr.PtrAddrOf place)
-            (lower-written-roots-scan! ctx place roots budget)]
-          [(ast.AstExpr.Spanned inner _)
-            (lower-written-roots-scan-read-pointer! ctx inner roots budget)]
-          [(ast.AstExpr.Ann inner _)
-            (lower-written-roots-scan-read-pointer! ctx inner roots budget)]
-          [(ast.AstExpr.PtrCast inner _)
-            (lower-written-roots-scan-read-pointer! ctx inner roots budget)]
-          [(ast.AstExpr.PtrOffset inner offset)
-            (and
-              (lower-written-roots-scan-read-pointer! ctx inner roots budget)
-              (lower-written-roots-scan! ctx offset roots budget))]
-          [_ (lower-written-roots-scan! ctx expr-id roots budget)])))))
-
-;; One node: note the names its own write (if any) may reach, then scan its
-;; children. A form that is neither a known write nor known write-free counts
-;; everything it mentions.
-(define (lower-written-roots-scan-node!
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]
-  [roots : (&mut roots lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
-  (match (& expr)
-    [(ast.AstExpr.PtrRead pointer)
-      (lower-written-roots-scan-read-pointer! ctx pointer roots budget)]
-    [_ (lower-written-roots-scan-general-node! ctx expr roots budget)]))
-
-(define (lower-written-roots-scan-general-node!
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]
+  [expr : (& ast.AstExpr)]
   [roots : (&mut roots lower_i64_i64_map.Map)]
   [budget : (&mut budget i64)]) : bool
   (let
     [place : i64
-      (match (& expr)
+      (match expr
+        [(ast.AstExpr.Set name _)
+          (return (lower-written-roots-note-name! ctx name roots))]
         [(ast.AstExpr.StructSet target _ _) target]
         [(ast.AstExpr.ArraySet array _ _) array]
         [(ast.AstExpr.ArrayTake array _ _) array]
@@ -27734,68 +27453,187 @@
             -1)]
         [(ast.AstExpr.PtrAddrOf target) target]
         [_ -1])]
-    [own-write : bool
-      (match (& expr)
-        [(ast.AstExpr.Set name _)
-          (lower-written-roots-note-name! ctx name roots)]
-        [_
-          (if (>= place 0)
-            (lower-written-roots-note-mentions! ctx place roots budget)
-            true)])]
-    ;; These are the forms lowering consumes before this pass. One that
-    ;; appears anyway has a subtree that is not lowered yet, so its operands
-    ;; are counted as mentions instead of scanned.
-    [scan-children? : bool
-      (match (& expr)
-        [(ast.AstExpr.Foreach _) false]
-        [(ast.AstExpr.ForeachActive _ _) false]
-        [(ast.AstExpr.ForOwnedState _) false]
-        [(ast.AstExpr.ForOwnedStep _) false]
-        [(ast.AstExpr.LaneValue _) false]
-        [(ast.AstExpr.SpmdReduce _) false]
-        [(ast.AstExpr.SpmdScan _) false]
-        [(ast.AstExpr.SpmdCompact _) false]
-        [(ast.AstExpr.SpmdBroadcast _ _) false]
-        [(ast.AstExpr.SpmdShuffle _ _) false]
-        [(ast.AstExpr.Syscall _) false]
-        [(ast.AstExpr.CpuIdEax _ _) false]
-        [(ast.AstExpr.CpuIdEbx _ _) false]
-        [(ast.AstExpr.CpuIdEcx _ _) false]
-        [(ast.AstExpr.CpuIdEdx _ _) false]
-        [(ast.AstExpr.Xgetbv _) false]
-        [(ast.AstExpr.WithResource _) false]
-        [_ true])]
-    (and
-      own-write
-      (if scan-children?
-        (lower-written-roots-scan-children!
-          ctx
-          (ast.ast-expr-child-ids (lower-global-shared-view expr))
-          0
-          roots
-          budget)
-        (lower-written-roots-note-mention-children!
-          ctx
-          (ast.ast-expr-child-ids expr)
-          0
-          roots
-          budget)))))
+    (or (< place 0) (lower-written-roots-note-mentions! ctx place roots budget))))
 
-(define (lower-written-roots-scan-children!
+(defenum LowerBodyWriteMode
+  (ScanWrites)
+  (ReadPointer)
+  (CountMentions))
+
+(defstruct LowerBodyProofScan
+  (raw-address bool)
+  (address-found bool)
+  (address-budget i64)
+  (write-budget i64)
+  (walk-budget i64)
+  (names lower_i64_i64_map.Map)
+  (loop-set-values lower_i64_i64_map.Map))
+
+;; Exposure follows the standalone pre-check: -1 below a boundary, 0
+;; outside a repeating region and 1 inside one. Syntactic loop membership
+;; also covers nested-function and quoted descendants, and excludes SPMD.
+(define (lower-body-proof-node!
   [ctx : tc_core.TcContext]
-  [children : ast.AstExprList]
-  [index : i64]
-  [roots : (&mut roots lower_i64_i64_map.Map)]
-  [budget : (&mut budget i64)]) : bool
-  (if (>= index children.len)
-    true
-    (and
-      (lower-written-roots-scan!
+  [expr : ast.AstExpr]
+  [exposure : i64]
+  [inside-loop? : bool]
+  [write-mode : LowerBodyWriteMode]
+  [root? : bool]
+  [scan : (&mut scan LowerBodyProofScan)]) : bool
+  (when (<= scan.walk-budget 0) (return false))
+  (set! scan.walk-budget (- scan.walk-budget 1))
+  (when
+    (and (>= exposure 0) (not scan.address-found))
+    (if (<= scan.address-budget 0)
+      (set! scan.address-found true)
+      (set! scan.address-budget (- scan.address-budget 1))))
+  (let
+    [child-exposure : i64 exposure]
+    [child-loop? : bool inside-loop?]
+    [child-writes : LowerBodyWriteMode (ScanWrites)]
+    [read-first-child? : bool false]
+    [scan-own? : bool false]
+    (match (& expr)
+      [(ast.AstExpr.Set _ value)
+        (when
+          inside-loop?
+          (lower_i64_i64_map.insert-ref! (&mut scan.loop-set-values) value 1))]
+      [(ast.AstExpr.PtrAddrOf _)
+        (set! scan.raw-address true)
+        (when (= exposure 1) (set! scan.address-found true))]
+      [(ast.AstExpr.PtrRead _) (set! read-first-child? true)]
+      [(or (ast.AstExpr.Lambda _) (ast.AstExpr.Quote _)
+           (ast.AstExpr.Quasiquote _) (ast.AstExpr.Comptime _))
+        (set! child-exposure -1)]
+      [(ast.AstExpr.While _ _)
+        (when (>= exposure 0) (set! child-exposure 1))
+        (set! child-loop? true)]
+      [(or (ast.AstExpr.Foreach _) (ast.AstExpr.ForeachActive _ _)
+           (ast.AstExpr.ForOwnedState _) (ast.AstExpr.ForOwnedStep _))
+        (when (>= exposure 0) (set! child-exposure 1))
+        (set! child-loop? true)
+        (set! child-writes (CountMentions))]
+      [(or (ast.AstExpr.SpmdReduce _) (ast.AstExpr.SpmdScan _)
+           (ast.AstExpr.SpmdCompact _))
+        (when (>= exposure 0) (set! child-exposure 1))
+        (set! child-writes (CountMentions))]
+      ;; These forms normally disappear before lowering. Count everything
+      ;; they mention as written if they remain.
+      [(or (ast.AstExpr.LaneValue _) (ast.AstExpr.SpmdBroadcast _ _)
+           (ast.AstExpr.SpmdShuffle _ _) (ast.AstExpr.Syscall _)
+           (ast.AstExpr.CpuIdEax _ _) (ast.AstExpr.CpuIdEbx _ _)
+           (ast.AstExpr.CpuIdEcx _ _) (ast.AstExpr.CpuIdEdx _ _)
+           (ast.AstExpr.Xgetbv _) (ast.AstExpr.WithResource _))
+        (set! child-writes (CountMentions))]
+      [_ unit])
+    (unless
+      root?
+      (when (<= scan.write-budget 0) (return false))
+      (set! scan.write-budget (- scan.write-budget 1)))
+    (match write-mode
+      [(CountMentions)
+        (set! child-writes (CountMentions))
+        (set! read-first-child? false)
+        (unless
+          (lower-written-roots-note-mention! ctx (& expr) (&mut scan.names))
+          (return false))]
+      [(ReadPointer)
+        ;; An address taken as the pointer operand of ptr-read, including
+        ;; through these wrappers, does not make its place written.
+        (match (& expr)
+          [(ast.AstExpr.PtrAddrOf _) unit]
+          [(or (ast.AstExpr.Spanned _ _) (ast.AstExpr.Ann _ _)
+               (ast.AstExpr.PtrCast _ _) (ast.AstExpr.PtrOffset _ _))
+            (set! read-first-child? true)]
+          [_
+            ;; The ordinary write classification charges this node again.
+            (when (<= scan.write-budget 0) (return false))
+            (set! scan.write-budget (- scan.write-budget 1))
+            (set! scan-own? true)])]
+      [(ScanWrites) (set! scan-own? true)])
+    (when
+      scan-own?
+      (unless
+        (lower-written-roots-note-own!
+          ctx
+          (& expr)
+          (&mut scan.names)
+          (&mut scan.write-budget))
+        (return false)))
+    (let
+      [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+      (for [index (iterator.range 0 children.len)]
+        (let
+          [id : i64 (ast.ast-expr-list-get (& children) index -1)]
+          (when
+            (>= id 0)
+            (unless
+              (lower-body-proof-node!
+                ctx
+                (lower-context-expr-get ctx id)
+                child-exposure
+                child-loop?
+                (if (and read-first-child? (= index 0))
+                  (ReadPointer)
+                  child-writes)
+                false
+                scan)
+              (return false)))
+          unit)))
+    true))
+
+(define (lower-function-state-scan-body-proofs!
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [body : ast.AstExpr]) : unit
+  (let
+    [scan : LowerBodyProofScan
+      (LowerBodyProofScan
+        false
+        false
+        lower-written-roots-scan-budget
+        lower-written-roots-scan-budget
+        lower-written-roots-scan-budget
+        (lower_i64_i64_map.with-capacity 16)
+        (lower_i64_i64_map.with-capacity 8))]
+    [complete : bool
+      (lower-body-proof-node!
         ctx
-        (ast.ast-expr-list-get (& children) index -1)
-        roots
-        budget)
-      (lower-written-roots-scan-children! ctx children (+ index 1) roots budget))))
+        (lower-global-shared-view body)
+        0
+        false
+        (ScanWrites)
+        true
+        (&mut scan))]
+    ;; If the shared walk stopped before completing the pre-check, the
+    ;; census must consult the standalone traversal.
+    (unsafe
+      (set!
+        (deref (compiler-lower-function-state-ptr function-state)).address-precheck
+        (cond [scan.address-found 1] [complete 0] [else -1])))
+    ;; The standalone raw proof can charge a pointer operand twice. An
+    ;; address-free walk within half its budget proves it would complete.
+    (compiler-lower-function-state-raw-address-free-set!
+      function-state
+      (or
+        (and
+          complete
+          (not scan.raw-address)
+          (>=
+            scan.walk-budget
+            (-
+              lower-written-roots-scan-budget
+              (/ lower-raw-address-scan-budget 2))))
+        (lower-body-raw-address-free? ctx (lower-global-shared-view body))))
+    (match scan
+      [(LowerBodyProofScan _ _ _ _ _ names values)
+        (compiler-lower-function-state-written-roots-set!
+          function-state
+          names
+          complete)
+        (compiler-lower-function-state-loop-set-values-set!
+          function-state
+          values)])))
 
 ;; A literal operand (through transparent wrappers) denotes a constant that no
 ;; later evaluation can change.
@@ -31376,7 +31214,13 @@
       (let
         [expr-ty (try (lower-lookup-type-id ctx type-cache env type-env name))]
         (Ok (tc_core.tc-type-without-regions expr-ty)))]
-    [(or (Ann _ ty-id) (Cast _ ty-id))
+    ;; These raw-pointer operations have explicit result types. The checker
+    ;; has already verified the operand and the enclosing unsafe context.
+    [(PtrNullCheck _) (Ok (Bool))]
+    [(PtrToInt _) (Ok (U64))]
+    [(PtrWrite _ _) (Ok (Unit))]
+    [(or (Ann _ ty-id) (Cast _ ty-id) (PtrNull ty-id) (PtrCast _ ty-id)
+         (IntToPtr _ ty-id))
       (Ok
         (tc_core.tc-type-without-regions
           (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx ty-id))))]
@@ -36949,7 +36793,7 @@
 (define (lower-internal-structural-type?
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+  (match (tc_core.tc-type-strip-region (lower-resolve-type-head ctx ty))
     [(or (Tuple _) (Array _ _)) true]
     [_ false]))
 
@@ -47464,26 +47308,41 @@
           [(ast.AstExpr.While _ _)
             (let
               [children : ast.AstExprList
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))]
+                (ast.ast-expr-child-ids (lower-global-shared-view expr))]
+              [before : i64 (deref budget)]
               [once : i64
                 (lower-alias-scan-children
                   ctx
                   type-env
-                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
+                  (lower-global-shared-view children)
                   0
                   name
                   written
                   in-call?
                   budget)]
-              (lower-alias-scan-children
-                ctx
-                type-env
-                children
-                0
-                name
-                once
-                in-call?
-                budget))]
+              (cond
+                [(< once 0) once]
+                ;; Repeating with the same state consumes the same budget.
+                [(= once written)
+                  (let
+                    [spent : i64 (- before (deref budget))]
+                    (if (>= (deref budget) spent)
+                      (begin
+                        (set! (deref budget) (- (deref budget) spent))
+                        once)
+                      (begin
+                        (set! (deref budget) 0)
+                        -1)))]
+                [else
+                  (lower-alias-scan-children
+                    ctx
+                    type-env
+                    children
+                    0
+                    name
+                    once
+                    in-call?
+                    budget)]))]
           ;; A closure captures by value when it is made: a mention is a read
           ;; whose later use this walk cannot place.
           [(ast.AstExpr.Lambda _)
@@ -74657,10 +74516,7 @@
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (compiler-lower-function-state-raw-address-free-set!
-    function-state
-    (lower-body-raw-address-free? ctx (lower-global-shared-view body)))
-  (lower-function-state-scan-written-roots!
+  (lower-function-state-scan-body-proofs!
     ctx
     function-state
     (lower-global-shared-view body))

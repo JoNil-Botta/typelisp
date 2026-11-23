@@ -3697,17 +3697,29 @@
       (VectorReduce 8 Max (Var 2) 4 (I64))
       "  %8 = vector_reduce_max %2 lanes 4 : i64")
     (compiler-ir-renders-as?
-      (compiler_ir_types.ir-instr-vector-prefix 42 Sum (Var 7) (I64 -3) 4 (I64))
-      "  %42 = vector_prefix_sum %7, carry -3 lanes 4 : i64")
+      (VectorReduce 8 LastLane (Var 2) 4 (I64))
+      "  %8 = vector_reduce_last_lane %2 lanes 4 : i64")
     (compiler-ir-renders-as?
-      (compiler_ir_types.ir-instr-vector-prefix 42 Max (Var 7) (I64 -3) 4 (I64))
-      "  %42 = vector_prefix_max %7, carry -3 lanes 4 : i64")
+      (compiler_ir_types.ir-instr-vector-prefix 42 Sum (Var 7) (Var 9) 4 (I64))
+      "  %42 = vector_prefix_sum %7, carry %9 lanes 4 : i64")
     (compiler-ir-renders-as?
-      (compiler_ir_types.ir-instr-vector-prefix 42 All (Var 7) (I64 -3) 4 (I64))
-      "  %42 = vector_prefix_all %7, carry -3 lanes 4 : i64")
+      (compiler_ir_types.ir-instr-vector-prefix
+        42
+        SplatLast
+        (Var 7)
+        Unit
+        4
+        (I64))
+      "  %42 = vector_prefix_splat_last %7, carry unit lanes 4 : i64")
     (compiler-ir-renders-as?
-      (compiler_ir_types.ir-instr-vector-prefix 42 Any (Var 7) (I64 -3) 4 (I64))
-      "  %42 = vector_prefix_any %7, carry -3 lanes 4 : i64")
+      (compiler_ir_types.ir-instr-vector-prefix 42 Max (Var 7) (Var 9) 4 (I64))
+      "  %42 = vector_prefix_max %7, carry %9 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-prefix 42 All (Var 7) (Var 9) 4 (I64))
+      "  %42 = vector_prefix_all %7, carry %9 lanes 4 : i64")
+    (compiler-ir-renders-as?
+      (compiler_ir_types.ir-instr-vector-prefix 42 Any (Var 7) (Var 9) 4 (I64))
+      "  %42 = vector_prefix_any %7, carry %9 lanes 4 : i64")
     (compiler-ir-renders-as?
       (MaskReduce 9 All (Var 5) 4)
       "  %9 = mask_reduce_all %5 lanes 4")
@@ -3777,7 +3789,7 @@
         42
         (Min)
         (Var 7)
-        (I64 -3)
+        (Var 9)
         4
         (I64))]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
@@ -3791,7 +3803,7 @@
           (cis.InternStructuralSessionHandle 0)
           (ast.ast-node-pool-reader-type-segment-bases)
           (& instr))
-        "  %42 = vector_prefix_min %7, carry -3 lanes 4 : i64")
+        "  %42 = vector_prefix_min %7, carry %9 lanes 4 : i64")
       (compiler-ir-effect-is? instr Pure)
       (match cloned
         [(VectorPrefix payload-box)
@@ -3826,9 +3838,7 @@
                 [(Min) true]
                 [_ false])
               (compiler-ir-value-var-eq? src 7)
-              (match carry
-                [(I64 value) (= value -3)]
-                [_ false])
+              (compiler-ir-value-var-eq? carry 9)
               (= lanes 4)
               (match ty
                 [(I64) true]

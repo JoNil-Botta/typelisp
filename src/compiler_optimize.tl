@@ -5908,7 +5908,8 @@
   (match op
     [(Sum) 0]
     [(Min) 1]
-    [(Max) 2]))
+    [(Max) 2]
+    [(LastLane) 3]))
 
 (define (opt-vector-reduce-eq
   [a : ir.CompilerIrVectorReduceOp]
@@ -5921,7 +5922,8 @@
     [(Min) 1]
     [(Max) 2]
     [(All) 3]
-    [(Any) 4]))
+    [(Any) 4]
+    [(SplatLast) 5]))
 
 (define (opt-vector-prefix-op-eq?
   [a : ir.CompilerIrVectorPrefixOp]

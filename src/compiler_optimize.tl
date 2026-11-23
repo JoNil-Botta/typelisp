@@ -19038,18 +19038,21 @@
           [def : i64 (opt-ctor-fwd-find-def instrs (- last 1) var)]
           (if (>= def 0)
             (opt-loop-rotation-literal-def instrs def)
-            ;; SPMD may place invariant setup in its own preheader. With a
-            ;; single predecessor the most recent definition there reaches it.
+            ;; SPMD may place invariant setup in its own preheader. A single
+            ;; predecessor supplies every incoming value except at the
+            ;; function entry, which also receives the caller's values.
             (let
               [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
-              (if (= (opt-label-count preds) 1)
+              (if (and
+                (!= label (opt-cfg-index-label index 0))
+                (= (opt-label-count preds) 1))
                 (match (opt-cfg-index-find-block index (opt-label-ref preds 0))
                   [(Some (Block _ pred-instrs))
                     (opt-loop-rotation-literal-def
                       (& pred-instrs)
                       (opt-ctor-fwd-find-def
                         (& pred-instrs)
-                        (- pred-instrs.len 2)
+                        (- pred-instrs.len 1)
                         var))]
                   [(No) (No)])
                 (No))))))]
@@ -70231,8 +70234,6 @@
 (define (opt-unroll-simd-body-instr-ok? [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(BoundsCheck _ _ _) false]
-    ;; Shuffle's checks run in gang order, with backend labels keyed by each
-    ;; cloned destination. Word and MaskNot are pure value operations here.
     [(or (VectorStore _) (Word _ _ _ _) (MaskNot _ _ _) (VectorShuffle _)) true]
     [_ (opt-unroll-body-instr-ok? instr)]))
 
@@ -70245,14 +70246,42 @@
     [_ false]))
 
 (define (opt-unroll-simd-body-ok?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [last : i64]) : bool
   (for [index (iterator.range 0 last)]
-    (unless
-      (opt-unroll-simd-body-instr-ok?
-        (ir.compiler-ir-instr-seq-borrow instrs index))
-      (return false))
-    unit)
+    (let
+      [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+      (unless (opt-unroll-simd-body-instr-ok? instr) (return false))
+      (let
+        [dst : i64
+          (match instr
+            [(VectorShuffle payload-box) (deref payload-box).dst]
+            [(MaskNot dst _ _) dst]
+            [_ -1])]
+        ;; These destinations are freshened per gang. In particular each
+        ;; shuffle needs a unique destination for its backend check labels.
+        (when
+          (and
+            (>= dst 0)
+            (or
+              (opt-used-contains
+                (&
+                  (opt-unroll-uses-before
+                    instrs
+                    0
+                    (+ index 1)
+                    (opt_i64_i64_map.with-capacity 8)))
+                dst)
+              (opt-used-contains
+                (&
+                  (opt-unroll-const-outside-uses
+                    (ir.compiler-ir-block-list-view blocks)
+                    label
+                    (opt_i64_i64_map.with-capacity 64)))
+                dst)))
+          (return false)))))
   true)
 
 (define (opt-unroll-simd-body-has-vector?
@@ -70523,7 +70552,11 @@
                                       [_ false])
                                     (!= label entry-label)
                                     (opt-unroll-invariant-bound? defs bound)
-                                    (opt-unroll-simd-body-ok? instrs cond-index)
+                                    (opt-unroll-simd-body-ok?
+                                      blocks
+                                      label
+                                      instrs
+                                      cond-index)
                                     (opt-unroll-simd-body-has-vector?
                                       instrs
                                       cond-index)

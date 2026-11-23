@@ -39051,6 +39051,75 @@
     (opt-unroll-mutable-map-test-blocks mode)
     Ordinary))
 
+(define (opt-test-simd-unroll-keeps-blocks? [func : ir.CompilerIrFunction]) : bool
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    [type-bases (ast.ast-node-pool-reader-type-segment-bases)]
+    (match (opt.opt-unroll-simd-function-with-context-result
+      type-bases
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+      func
+      true)
+      [(Result result _)
+        (let
+          [result-blocks (opt.opt-function-blocks result)]
+          (opt.opt-block-list-eq type-bases blocks result-blocks))])))
+
+(test
+  simd-unroll-rejects-recurrent-shuffle
+  (test.assert-true
+    (opt-test-simd-unroll-keeps-blocks?
+      (irt.func
+        "function @recurrent_shuffle(n=%0:i64, src=%1:i64, dst=%2:i64) -> unit vars 11 {
+entry:
+  %3 = mov 0 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  %7 = lane_id 4 : i64
+  %8 = splat 3 lanes 4 : i64
+  %6 = vector_sub %8, %7 lanes 4 : i64
+  branch %5, body, exit
+body:
+  %8 = vector_load %1, %3 lanes 4 : i64
+  %7 = vector_shuffle %7, %6, active 4 lanes 4 : i64
+  %10 = vector_add %8, %7 lanes 4 : i64
+  vector_store %2, %3, %10 lanes 4 : i64
+  %3 = mov %4 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+exit:
+  return
+}"))
+    "each shuffle reads the previous gang's vector"))
+
+(test
+  simd-unroll-rejects-recurrent-mask-not
+  (test.assert-true
+    (opt-test-simd-unroll-keeps-blocks?
+      (irt.func
+        "function @recurrent_mask(n=%0:i64, src=%1:i64, dst=%2:i64) -> unit vars 10 {
+entry:
+  %3 = mov 0 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  %6 = lane_id 4 : i64
+  %7 = vector_compare_eq %6, %6 lanes 4 : i64
+  branch %5, body, exit
+body:
+  %8 = vector_load %1, %3 lanes 4 : i64
+  %7 = mask_not %7 lanes 4
+  %9 = select %7, %8, %6 lanes 4 : i64
+  vector_store %2, %3, %9 lanes 4 : i64
+  %3 = mov %4 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+exit:
+  return
+}"))
+    "each mask negation reads the previous gang's mask"))
+
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [acc : i64]) : i64
@@ -52504,6 +52573,66 @@
             0))
         61]
       [else 42])))
+
+(define (opt-test-normalized-rotation-keeps-loop?
+  [func : ir.CompilerIrFunction]) : bool
+  (match (opt.opt-loop-rotation-normalized-function-result
+    (ast.ast-node-pool-reader-context-current)
+    func)
+    [(Result blocks _ _)
+      (opt-block-list-has-label?
+        (ir.compiler-ir-block-list-view blocks)
+        (ir.compiler-ir-label "loop"))]))
+
+(test
+  rotation-entry-backedge-keeps-parameter
+  (test.assert-true
+    (opt-test-normalized-rotation-keeps-loop?
+      (irt.func
+        "function @entry_backedge(flag=%0:bool, src=%1:i64, dst=%2:i64) -> unit vars 6 {
+entry:
+  %3 = mov 0 : i64
+  branch %0, loop, done
+loop:
+  %4 = lt %3, 16 : bool
+  branch %4, body, repeat
+body:
+  %5 = vector_load %1, %3 lanes 4 : i64
+  vector_store %2, %3, %5 lanes 4 : i64
+  %3 = add %3, 4 : i64
+  jump loop
+repeat:
+  %0 = mov true : bool
+  jump entry
+done:
+  return
+}"))
+    "the caller supplies the flag on the first entry"))
+
+(test
+  rotation-entry-fallthrough-sees-last-definition
+  (test.assert-true
+    (opt-test-normalized-rotation-keeps-loop?
+      (irt.func
+        "function @fallthrough(src=%0:i64, dst=%1:i64) -> unit vars 6 {
+entry:
+  %2 = mov 0 : i64
+  %3 = mov true : bool
+  %3 = mov false : bool
+pre:
+  branch %3, loop, done
+loop:
+  %4 = lt %2, 16 : bool
+  branch %4, body, done
+body:
+  %5 = vector_load %0, %2 lanes 4 : i64
+  vector_store %1, %2, %5 lanes 4 : i64
+  %2 = add %2, 4 : i64
+  jump loop
+done:
+  return
+}"))
+    "the final fallthrough instruction sets the flag to false"))
 
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let

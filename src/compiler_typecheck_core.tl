@@ -6023,40 +6023,17 @@
             expected
             source
             sink)])]
-    [(ast.AstExpr.Foreach _)
-      (tc-infer-selected-spmd-scoped ctx env expr syntax expected source sink)]
-    [(ast.AstExpr.SpmdReduce _)
-      (tc-infer-selected-spmd-scoped ctx env expr syntax expected source sink)]
-    [(ast.AstExpr.SpmdScan _)
-      (tc-infer-selected-spmd-scoped ctx env expr syntax expected source sink)]
-    [(ast.AstExpr.SpmdCompact _)
-      (tc-infer-selected-spmd-scoped ctx env expr syntax expected source sink)]
-    [(ast.AstExpr.ForeachActive _ _)
-      (tc-infer-selected-spmd-scoped ctx env expr syntax expected source sink)]
-    ;; Lane-crossing reads of Copy scalars and lane identity (SPEC 5.15).
-    [(ast.AstExpr.SpmdBroadcast value lane)
-      (tc-infer-selected-form
+    [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+         (ForeachActive _ _) (SpmdBroadcast _ _) (SpmdShuffle _ _)
+         (SpmdProgramIndex) (SpmdProgramCount) (LaneValue _))
+      (tc-infer-selected-spmd-scoped
         ctx
         env
         expr
-        (tc-selected-form-code-spmd-broadcast)
-        (tc-selected-ids2 value lane)
-        (tc-selected-ids2 0 0)
         syntax
         expected
         source
-        sink)]
-    [(ast.AstExpr.SpmdShuffle value lane)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-spmd-shuffle)
-        (tc-selected-ids2 value lane)
-        (tc-selected-ids2 0 0)
-        syntax
-        expected
-        source
+        false
         sink)]
     [(ast.AstExpr.Ann inner-id ty-id)
       (tc-infer-selected-ann
@@ -6065,33 +6042,6 @@
         expr
         inner-id
         ty-id
-        syntax
-        expected
-        source
-        sink)]
-    ;; `(lane-value v)` in a serialized lane is `v` itself.
-    [(ast.AstExpr.LaneValue value-box)
-      (tc-infer-selected-id ctx env value-box expected source sink)]
-    [(ast.AstExpr.SpmdProgramIndex)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-program-index)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
-        syntax
-        expected
-        source
-        sink)]
-    [(ast.AstExpr.SpmdProgramCount)
-      (tc-infer-selected-form
-        ctx
-        env
-        expr
-        (tc-selected-form-code-program-count)
-        (tc-selected-no-i64s)
-        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -14492,53 +14442,75 @@
     expected)
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
-      (match sink
-        [(TcSelectedSink.Query)
-          (TcSelectedResult.Ok
-            ty
-            TcSelectedOccurrence.Unrepresented
-            TcSelectedSink.Query)]
-        [(TcSelectedSink.Capture store lease bindings)
-          (let
-            [count : i64 (array-length operands)]
-            [_verb : unit
-              (set!
-                bindings.write-verb
-                (cond
-                  [(= code (tc-selected-form-code-array-push)) "push onto"]
-                  [(or
-                      (= code (tc-selected-form-code-array-set))
-                      (= code (tc-selected-form-code-fixed-element-set))
-                      (= code (tc-selected-form-code-slice-store)))
-                    "assign to an element of"]
-                  [(= code (tc-selected-form-code-box-set)) "assign through"]
-                  [else ""]))]
-            (match (tc-infer-selected-form-operands
-              ctx
-              env
-              operands
-              modes
-              0
-              (tc-global-shared-view ty)
-              (__tl_make-array typed.TypedOccurrenceId count)
-              (tc-global-shared-view source)
-              (TcSelectedSink.Capture store lease bindings))
-              [(TcSelectedArgsResult.Err message next)
-                (TcSelectedResult.Err message next)]
-              [(TcSelectedArgsResult.Ok children represented? next)
-                (if represented?
-                  (tc-selected-publish
-                    (ResultTcType.Ok ty)
-                    syntax
-                    source
-                    (typed.TypedOperation.Primitive
-                      (typed.TypedPrimitive.Builtin code count))
-                    children
-                    next)
-                  (TcSelectedResult.Ok
-                    ty
-                    TcSelectedOccurrence.Unrepresented
-                    next))]))])]))
+      (tc-infer-selected-form-typed
+        ctx
+        env
+        ty
+        code
+        operands
+        modes
+        syntax
+        source
+        sink)]))
+
+(define (tc-infer-selected-form-typed
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : ast.AstType]
+  [code : i64]
+  [operands : (__tl_dyn-array i64)]
+  [modes : (__tl_dyn-array i64)]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match sink
+    [(TcSelectedSink.Query)
+      (TcSelectedResult.Ok
+        ty
+        TcSelectedOccurrence.Unrepresented
+        TcSelectedSink.Query)]
+    [(TcSelectedSink.Capture store lease bindings)
+      (let
+        [count : i64 (array-length operands)]
+        [_verb : unit
+          (set!
+            bindings.write-verb
+            (cond
+              [(= code (tc-selected-form-code-array-push)) "push onto"]
+              [(or
+                  (= code (tc-selected-form-code-array-set))
+                  (= code (tc-selected-form-code-fixed-element-set))
+                  (= code (tc-selected-form-code-slice-store)))
+                "assign to an element of"]
+              [(= code (tc-selected-form-code-box-set)) "assign through"]
+              [else ""]))]
+        (match (tc-infer-selected-form-operands
+          ctx
+          env
+          operands
+          modes
+          0
+          (tc-global-shared-view ty)
+          (__tl_make-array typed.TypedOccurrenceId count)
+          (tc-global-shared-view source)
+          (TcSelectedSink.Capture store lease bindings))
+          [(TcSelectedArgsResult.Err message next)
+            (TcSelectedResult.Err message next)]
+          [(TcSelectedArgsResult.Ok children represented? next)
+            (if represented?
+              (tc-selected-publish
+                (ResultTcType.Ok ty)
+                syntax
+                source
+                (typed.TypedOperation.Primitive
+                  (typed.TypedPrimitive.Builtin code count))
+                children
+                next)
+              (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next))]))]))
 
 ;; The expected type of a consumed operand: mode 2 none, 3 an index (i64),
 ;; 4 a pushed element, 5 a stored element (of operand 0, a borrowed array).
@@ -33388,8 +33360,8 @@
 ;; marker and visible binder associations, including on a rejected body.
 ;; --- SPMD `foreach` (#8449) -----------------------------------------------
 ;;
-;; `(foreach ([i : T start end]) body)` (SPEC 5.15): legacy typing decides the
-;; form (unit) and its SPMD rules (uniform/varying values, lane-disjoint
+;; `(foreach ([i : T start end]) body)` (SPEC 5.15): SPMD validation checks the
+;; form (unit) and its lane rules (uniform/varying values, lane-disjoint
 ;; writes, no early exits, no `set!` of an outer binding outside
 ;; `foreach-active`). For ownership the scalar reference semantics is a loop:
 ;; `start` and `end` are evaluated once, then the body runs once per logical
@@ -33443,13 +33415,478 @@
         (not (tc-type-copyable? ctx (tc-global-shared-view ty)))]
       [(ResultTcType.Err _) false])))
 
-;; An SPMD form in its own binding scope (its index and per-iteration names).
+(define (tc-infer-selected-spmd-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : ResultTcType
+  (match expr
+    [(Foreach fe-box)
+      (match (ast.ast-foreach-box-shared-view fe-box)
+        [(Foreach index index-ty start-box end-box body-box)
+          (let
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
+            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
+              (let
+                [start-ty
+                  (try
+                    (tc-expr-with-expected-or-actual-id
+                      ctx
+                      env
+                      start-box
+                      (tc-global-shared-view resolved-index-ty)))]
+                (if (tc-integer-type? start-ty)
+                  (let
+                    [end-ty
+                      (try
+                        (tc-expr-with-expected-or-actual-id
+                          ctx
+                          env
+                          end-box
+                          (tc-global-shared-view resolved-index-ty)))]
+                    (if (tc-integer-type? end-ty)
+                      (let
+                        [body-env : TcTypeEnv
+                          (tc-bind-id
+                            env
+                            index
+                            (tc-global-shared-view resolved-index-ty))]
+                        [body-ty (try (tc-expr-id ctx body-env body-box))]
+                        [_
+                          (try
+                            (tc-expect
+                              body-ty
+                              (Unit)
+                              (tc-kind-message
+                                (Spmd)
+                                "typecheck: foreach body must be unit")))]
+                        (let
+                          [_
+                            (try
+                              (tc-spmd-check-foreach-body
+                                ctx
+                                (tc-context-expr-bases ctx)
+                                env
+                                index
+                                resolved-index-ty
+                                body))]
+                          (Ok (Unit))))
+                      (Err
+                        (tc-kind-message
+                          (Spmd)
+                          "typecheck: foreach end expression must be integer"))))
+                  (Err
+                    (tc-kind-message
+                      (Spmd)
+                      "typecheck: foreach start expression must be integer"))))
+              (Err
+                (tc-kind-message
+                  (Spmd)
+                  "typecheck: foreach index type must be integer"))))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-box
+            outer-end-box
+            inner
+            inner-ty
+            inner-start-box
+            inner-end-box
+            body-box)
+          (if (and
+            (tc-foreach2-coordinate-type? (tc-resolve-type ctx outer-ty))
+            (tc-foreach2-coordinate-type? (tc-resolve-type ctx inner-ty)))
+            (let
+              [_
+                (try
+                  (tc-foreach2-bounds-ok
+                    ctx
+                    env
+                    outer-start-box
+                    outer-end-box
+                    inner-start-box
+                    inner-end-box))]
+              (let
+                [body-ty
+                  (try
+                    (tc-expr-id
+                      ctx
+                      (tc-bind-id (tc-bind-id env outer (I64)) inner (I64))
+                      body-box))]
+                [_
+                  (try
+                    (tc-expect
+                      body-ty
+                      (Unit)
+                      (tc-kind-message
+                        (Spmd)
+                        "typecheck: foreach body must be unit")))]
+                (let
+                  [_
+                    (try
+                      (tc-spmd-check-foreach2-body-with-env
+                        ctx
+                        (tc-context-expr-bases ctx)
+                        env
+                        (tc-spmd-env-from-type-env env)
+                        outer
+                        inner
+                        inner-start-box
+                        inner-end-box
+                        body-box))]
+                  (Ok (Unit)))))
+            (Err
+              (tc-kind-message
+                (Spmd)
+                "typecheck: rank-2 foreach coordinate types must be i64")))])]
+    [(SpmdReduce reduce-box)
+      (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
+        [(Reduce op index index-ty start-box end-box init-box value-box)
+          (let
+            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
+            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
+              (let
+                [start-ty (try (tc-expr-id ctx env start-box))]
+                (if (tc-integer-type? start-ty)
+                  (let
+                    [end-ty (try (tc-expr-id ctx env end-box))]
+                    (if (tc-integer-type? end-ty)
+                      (let
+                        [value-env : TcTypeEnv
+                          (tc-bind-id
+                            env
+                            index
+                            (tc-global-shared-view resolved-index-ty))]
+                        [result-ty
+                          (try
+                            (tc-spmd-reduce-init-value-type
+                              ctx
+                              (tc-context-expr-bases ctx)
+                              env
+                              value-env
+                              op
+                              init
+                              (tc-global-shared-view value)))]
+                        [_
+                          (try
+                            (tc-spmd-check-reduce-value-broadcasts
+                              ctx
+                              (tc-context-expr-bases ctx)
+                              env
+                              index
+                              resolved-index-ty
+                              value))]
+                        (Ok result-ty))
+                      (Err
+                        (tc-kind-message
+                          (Spmd)
+                          "typecheck: spmd-reduce end expression must be integer"))))
+                  (Err
+                    (tc-kind-message
+                      (Spmd)
+                      "typecheck: spmd-reduce start expression must be integer"))))
+              (Err
+                (tc-kind-message
+                  (Spmd)
+                  "typecheck: spmd-reduce index type must be integer"))))])]
+    [(SpmdScan scan-box)
+      (match (ast.ast-spmd-scan-box-shared-view scan-box)
+        [(Scan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
+            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
+            [resolved-prefix-ty : ast.AstType (tc-resolve-type ctx prefix-ty)]
+            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
+              (let
+                [start-ty
+                  (try
+                    (tc-expr-with-expected-or-actual-id
+                      ctx
+                      env
+                      start-box
+                      (tc-global-shared-view resolved-index-ty)))]
+                (if (tc-integer-type? start-ty)
+                  (let
+                    [end-ty
+                      (try
+                        (tc-expr-with-expected-or-actual-id
+                          ctx
+                          env
+                          end-box
+                          (tc-global-shared-view resolved-index-ty)))]
+                    (if (tc-integer-type? end-ty)
+                      (let
+                        [value-env : TcTypeEnv
+                          (tc-bind-id
+                            env
+                            index
+                            (tc-global-shared-view resolved-index-ty))]
+                        [body-env : TcTypeEnv
+                          (tc-bind-id
+                            value-env
+                            prefix
+                            (tc-global-shared-view resolved-prefix-ty))]
+                        [_
+                          (try
+                            (tc-spmd-scan-init-value-type
+                              ctx
+                              (tc-context-expr-bases ctx)
+                              env
+                              value-env
+                              op
+                              (tc-global-shared-view resolved-prefix-ty)
+                              init
+                              value))]
+                        (let
+                          [body-ty (try (tc-expr-id ctx body-env body-box))]
+                          [_
+                            (try
+                              (tc-expect
+                                body-ty
+                                (Unit)
+                                (tc-kind-message
+                                  (Spmd)
+                                  "typecheck: spmd-scan body must be unit")))]
+                          (let
+                            [_
+                              (try
+                                (tc-spmd-check-scan-body
+                                  ctx
+                                  (tc-context-expr-bases ctx)
+                                  env
+                                  index
+                                  resolved-index-ty
+                                  prefix
+                                  resolved-prefix-ty
+                                  body))]
+                            (Ok (Unit)))))
+                      (Err
+                        (tc-kind-message
+                          (Spmd)
+                          "typecheck: spmd-scan end expression must be integer"))))
+                  (Err
+                    (tc-kind-message
+                      (Spmd)
+                      "typecheck: spmd-scan start expression must be integer"))))
+              (Err
+                (tc-kind-message
+                  (Spmd)
+                  "typecheck: spmd-scan index type must be integer"))))])]
+    [(SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (tc-spmd-compact-expr-type
+            ctx
+            env
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)])]
+    [(SpmdBroadcast value-box lane-box)
+      (let
+        [lane-ty
+          (try (tc-expr-with-expected-or-actual-id ctx env lane-box (I64)))]
+        [_
+          (try
+            (tc-expect
+              (tc-resolve-type ctx lane-ty)
+              (I64)
+              (tc-kind-message
+                (Spmd)
+                "typecheck: spmd-broadcast lane must have type i64")))]
+        [value-ty (try (tc-expr-id ctx env value-box))]
+        (if (tc-spmd-broadcast-type-supported?
+          (tc-resolve-type ctx (tc-global-shared-view value-ty)))
+          (Ok value-ty)
+          (Err (tc-spmd-broadcast-type-message))))]
+    [(SpmdShuffle value-box lane-box)
+      (let
+        [lane-ty
+          (try (tc-expr-with-expected-or-actual-id ctx env lane-box (I64)))]
+        [_
+          (try
+            (tc-expect
+              (tc-resolve-type ctx lane-ty)
+              (I64)
+              (tc-kind-message
+                (Spmd)
+                "typecheck: spmd-shuffle lane must have type i64")))]
+        [value-ty (try (tc-expr-id ctx env value-box))]
+        (if (tc-spmd-broadcast-type-supported?
+          (tc-resolve-type ctx (tc-global-shared-view value-ty)))
+          (Ok value-ty)
+          (Err (tc-spmd-shuffle-type-message))))]
+    [(or (SpmdProgramIndex) (SpmdProgramCount)) (Ok (I64))]
+    [(ForeachActive lane body-box)
+      (let
+        [body-ty (try (tc-expr-id ctx (tc-bind-id env lane (I64)) body-box))]
+        [_
+          (try
+            (tc-expect
+              body-ty
+              (Unit)
+              (tc-kind-message
+                (Spmd)
+                "typecheck: foreach-active body must be unit")))]
+        (Ok (Unit)))]
+    [(LaneValue value) (tc-expr-id ctx env value)]
+    [_ (Err "typecheck: internal unexpected SPMD expression")]))
+
+(define (tc-spmd-type-scoped-bindings? [expr : (& expr ast.AstExpr)]) : bool
+  (match expr
+    [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+         (ForeachActive _ _))
+      true]
+    [_ false]))
+
+(define (tc-infer-selected-spmd-type-scoped
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : ResultTcType
+  (if (tc-type-env-scoped-identity-exhausted? env)
+    (ResultTcType.Err (tc-selected-error typed.TypedError.Exhausted))
+    (if (and
+      (tc-type-env-scoped-runtime-active? env)
+      (tc-spmd-type-scoped-bindings? (& expr)))
+      (let
+        [saved : TcTypeEnvScopedRuntimeSave
+          (tc-type-env-scoped-runtime-save env)]
+        [result : ResultTcType (tc-infer-selected-spmd-type ctx env expr)]
+        (tc-type-env-scoped-runtime-restore! saved)
+        (if (tc-type-env-scoped-identity-exhausted? env)
+          (ResultTcType.Err (tc-selected-error typed.TypedError.Exhausted))
+          result))
+      (tc-infer-selected-spmd-type ctx env expr))))
+
 (define (tc-infer-selected-spmd-scoped
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [legacy-lane-value? : bool]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  ;; Selected lane-value uses the caller's expectation and provenance. The
+  ;; raw entry records the operand through the intrinsic ID check below.
+  (match (& expr)
+    [(LaneValue value)
+      (unless
+        legacy-lane-value?
+        (return (tc-infer-selected-id ctx env value expected source sink)))]
+    [_ unit])
+  (let
+    [intrinsic : ResultTcType
+      (tc-infer-selected-spmd-type-scoped ctx env (tc-global-shared-view expr))]
+    [checked : ResultTcType
+      (match expected
+        [(ast.AstMaybeType.No) intrinsic]
+        [(ast.AstMaybeType.Some want)
+          (tc-expr-result-with-expected-or-actual ctx env want false intrinsic)])]
+    (match checked
+      [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
+      [(ResultTcType.Ok ty)
+        (match sink
+          [(TcSelectedSink.Query)
+            (TcSelectedResult.Ok
+              ty
+              TcSelectedOccurrence.Unrepresented
+              TcSelectedSink.Query)]
+          [(TcSelectedSink.Capture store lease bindings)
+            (match expr
+              [(SpmdBroadcast value lane)
+                (tc-infer-selected-form-typed
+                  ctx
+                  env
+                  ty
+                  (tc-selected-form-code-spmd-broadcast)
+                  (tc-selected-ids2 value lane)
+                  (tc-selected-ids2 0 0)
+                  syntax
+                  source
+                  (TcSelectedSink.Capture store lease bindings))]
+              [(SpmdShuffle value lane)
+                (tc-infer-selected-form-typed
+                  ctx
+                  env
+                  ty
+                  (tc-selected-form-code-spmd-shuffle)
+                  (tc-selected-ids2 value lane)
+                  (tc-selected-ids2 0 0)
+                  syntax
+                  source
+                  (TcSelectedSink.Capture store lease bindings))]
+              [(SpmdProgramIndex)
+                (tc-infer-selected-form-typed
+                  ctx
+                  env
+                  ty
+                  (tc-selected-form-code-program-index)
+                  (tc-selected-no-i64s)
+                  (tc-selected-no-i64s)
+                  syntax
+                  source
+                  (TcSelectedSink.Capture store lease bindings))]
+              [(SpmdProgramCount)
+                (tc-infer-selected-form-typed
+                  ctx
+                  env
+                  ty
+                  (tc-selected-form-code-program-count)
+                  (tc-selected-no-i64s)
+                  (tc-selected-no-i64s)
+                  syntax
+                  source
+                  (TcSelectedSink.Capture store lease bindings))]
+              [_
+                (tc-infer-selected-spmd-capture-scoped
+                  ctx
+                  env
+                  expr
+                  ty
+                  syntax
+                  source
+                  (TcSelectedSink.Capture store lease bindings))])])])))
+
+;; An SPMD form in its own binding scope (its index and per-iteration names).
+(define (tc-infer-selected-spmd-capture-scoped
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [ty : ast.AstType]
+  [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
@@ -33465,59 +33902,43 @@
     [sink : (TcSelectedSink store lease intern bind)
       (tc-selected-counted-sink counted)]
     [result : (TcSelectedResult store lease intern bind)
-      (match (tc-global-shared-view expr)
+      (match expr
         [(ast.AstExpr.Foreach fe-box)
-          (tc-infer-selected-foreach
-            ctx
-            env
-            expr
-            fe-box
-            syntax
-            expected
-            source
-            sink)]
+          (tc-infer-selected-foreach ctx env ty fe-box syntax source sink)]
         [(ast.AstExpr.SpmdReduce reduce-box)
           (tc-infer-selected-spmd-reduce
             ctx
             env
-            expr
+            ty
             reduce-box
             syntax
-            expected
             source
             sink)]
         [(ast.AstExpr.SpmdScan scan-box)
-          (tc-infer-selected-spmd-scan
-            ctx
-            env
-            expr
-            scan-box
-            syntax
-            expected
-            source
-            sink)]
+          (tc-infer-selected-spmd-scan ctx env ty scan-box syntax source sink)]
         [(ast.AstExpr.SpmdCompact compact-box)
           (tc-infer-selected-spmd-compact
             ctx
             env
-            expr
+            ty
             compact-box
             syntax
-            expected
             source
             sink)]
         [(ast.AstExpr.ForeachActive lane body-box)
           (tc-infer-selected-foreach-active
             ctx
             env
-            expr
+            ty
             lane
             body-box
             syntax
-            expected
             source
             sink)]
-        [_ (tc-selected-unrepresented (tc-expr ctx env expr) sink)])]
+        [_
+          (TcSelectedResult.Err
+            "typecheck: internal unexpected SPMD loop expression"
+            sink)])]
     (when scoped? (tc-type-env-scoped-runtime-restore! saved))
     (tc-selected-scope-finish env binding-count result)))
 
@@ -33526,185 +33947,168 @@
 (define (tc-infer-selected-spmd-reduce
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
+  [ty : ast.AstType]
   [reduce-box : (Box ast.AstSpmdReduce)]
   [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy ctx env expr syntax expected)
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
-        [(ast.AstSpmdReduce.Reduce
-            _
-            index
-            index-ty
-            start-box
-            end-box
-            init-box
-            value-box)
-          (let
-            [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
-            (match (tc-infer-selected-spmd-heads
-              ctx
+  (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
+    [(ast.AstSpmdReduce.Reduce
+        _
+        index
+        index-ty
+        start-box
+        end-box
+        init-box
+        value-box)
+      (let
+        [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
+        (match (tc-infer-selected-spmd-heads
+          ctx
+          env
+          (tc-global-shared-view resolved)
+          start-box
+          end-box
+          init-box
+          (ast.AstMaybeType.Some (tc-global-shared-view ty))
+          (tc-global-shared-view source)
+          sink)
+          [(TcSelectedSpmdHeads.Done result) result]
+          [(TcSelectedSpmdHeads.Ok heads next)
+            (match (tc-selected-foreach-index
               env
+              index
               (tc-global-shared-view resolved)
-              start-box
-              end-box
-              init-box
-              (ast.AstMaybeType.Some (tc-global-shared-view ty))
+              (tc-global-shared-view ty)
               (tc-global-shared-view source)
-              sink)
-              [(TcSelectedSpmdHeads.Done result) result]
-              [(TcSelectedSpmdHeads.Ok heads next)
-                (match (tc-selected-foreach-index
-                  env
-                  index
-                  (tc-global-shared-view resolved)
-                  (tc-global-shared-view ty)
+              next)
+              [(TcSelectedForeachIndex.Done result) result]
+              [(TcSelectedForeachIndex.Ok body-env init after)
+                (match (tc-infer-selected-id
+                  ctx
+                  body-env
+                  value-box
+                  (ast.AstMaybeType.Some (tc-global-shared-view ty))
                   (tc-global-shared-view source)
-                  next)
-                  [(TcSelectedForeachIndex.Done result) result]
-                  [(TcSelectedForeachIndex.Ok body-env init after)
-                    (match (tc-infer-selected-id
-                      ctx
-                      body-env
-                      value-box
-                      (ast.AstMaybeType.Some (tc-global-shared-view ty))
-                      (tc-global-shared-view source)
-                      after)
-                      [(TcSelectedResult.Err message done)
-                        (TcSelectedResult.Err message done)]
-                      [(TcSelectedResult.Ok _ value done)
-                        (tc-selected-publish-spmd-loop
-                          ty
-                          (tc-selected-form-code-spmd-result)
-                          syntax
-                          source
-                          heads
-                          (tc-selected-occurrences2
-                            (TcSelectedOccurrence.Selected init)
-                            value)
-                          done)])])]))])]))
+                  after)
+                  [(TcSelectedResult.Err message done)
+                    (TcSelectedResult.Err message done)]
+                  [(TcSelectedResult.Ok _ value done)
+                    (tc-selected-publish-spmd-loop
+                      ty
+                      (tc-selected-form-code-spmd-result)
+                      syntax
+                      source
+                      heads
+                      (tc-selected-occurrences2
+                        (TcSelectedOccurrence.Selected init)
+                        value)
+                      done)])])]))]))
 
 ;; `(spmd-scan op ([i : T start end] [prefix : P init]) value body)`: the
 ;; inclusive prefix is bound after `value` for `body` alone.
 (define (tc-infer-selected-spmd-scan
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
+  [ty : ast.AstType]
   [scan-box : (Box ast.AstSpmdScan)]
   [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy ctx env expr syntax expected)
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match (ast.ast-spmd-scan-box-shared-view scan-box)
-        [(ast.AstSpmdScan.Scan
-            _
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
-            [resolved-prefix : ast.AstType (tc-resolve-type ctx prefix-ty)]
-            (match (tc-infer-selected-spmd-heads
-              ctx
+  (match (ast.ast-spmd-scan-box-shared-view scan-box)
+    [(ast.AstSpmdScan.Scan
+        _
+        index
+        index-ty
+        start-box
+        end-box
+        prefix
+        prefix-ty
+        init-box
+        value-box
+        body-box)
+      (let
+        [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
+        [resolved-prefix : ast.AstType (tc-resolve-type ctx prefix-ty)]
+        (match (tc-infer-selected-spmd-heads
+          ctx
+          env
+          (tc-global-shared-view resolved)
+          start-box
+          end-box
+          init-box
+          (ast.AstMaybeType.Some (tc-global-shared-view resolved-prefix))
+          (tc-global-shared-view source)
+          sink)
+          [(TcSelectedSpmdHeads.Done result) result]
+          [(TcSelectedSpmdHeads.Ok heads next)
+            (match (tc-selected-foreach-index
               env
+              index
               (tc-global-shared-view resolved)
-              start-box
-              end-box
-              init-box
-              (ast.AstMaybeType.Some (tc-global-shared-view resolved-prefix))
+              (tc-global-shared-view ty)
               (tc-global-shared-view source)
-              sink)
-              [(TcSelectedSpmdHeads.Done result) result]
-              [(TcSelectedSpmdHeads.Ok heads next)
-                (match (tc-selected-foreach-index
-                  env
-                  index
-                  (tc-global-shared-view resolved)
-                  (tc-global-shared-view ty)
+              next)
+              [(TcSelectedForeachIndex.Done result) result]
+              [(TcSelectedForeachIndex.Ok index-env index-init after)
+                (match (tc-infer-selected-id
+                  ctx
+                  index-env
+                  value-box
+                  (ast.AstMaybeType.Some
+                    (tc-global-shared-view resolved-prefix))
                   (tc-global-shared-view source)
-                  next)
-                  [(TcSelectedForeachIndex.Done result) result]
-                  [(TcSelectedForeachIndex.Ok index-env index-init after)
-                    (match (tc-infer-selected-id
-                      ctx
+                  after)
+                  [(TcSelectedResult.Err message done)
+                    (TcSelectedResult.Err message done)]
+                  [(TcSelectedResult.Ok _ value done)
+                    (match (tc-selected-foreach-index
                       index-env
-                      value-box
-                      (ast.AstMaybeType.Some
-                        (tc-global-shared-view resolved-prefix))
+                      prefix
+                      (tc-global-shared-view resolved-prefix)
+                      (tc-global-shared-view ty)
                       (tc-global-shared-view source)
-                      after)
-                      [(TcSelectedResult.Err message done)
-                        (TcSelectedResult.Err message done)]
-                      [(TcSelectedResult.Ok _ value done)
-                        (match (tc-selected-foreach-index
-                          index-env
-                          prefix
-                          (tc-global-shared-view resolved-prefix)
-                          (tc-global-shared-view ty)
+                      done)
+                      [(TcSelectedForeachIndex.Done result) result]
+                      [(TcSelectedForeachIndex.Ok body-env prefix-init later)
+                        (match (tc-infer-selected-sequence-child
+                          ctx
+                          body-env
+                          body-box
+                          ast.AstMaybeType.No
                           (tc-global-shared-view source)
-                          done)
-                          [(TcSelectedForeachIndex.Done result) result]
-                          [(TcSelectedForeachIndex.Ok
-                              body-env
-                              prefix-init
-                              later)
-                            (match (tc-infer-selected-sequence-child
-                              ctx
-                              body-env
-                              body-box
-                              ast.AstMaybeType.No
-                              (tc-global-shared-view source)
-                              true
-                              later)
-                              [(TcSelectedResult.Err message last)
-                                (TcSelectedResult.Err message last)]
-                              [(TcSelectedResult.Ok _ body last)
-                                (tc-selected-publish-spmd-loop
-                                  ty
-                                  -1
-                                  syntax
-                                  source
-                                  heads
-                                  (let
-                                    [items : (__tl_dyn-array
-                                      TcSelectedOccurrence)
-                                      (tc-selected-no-selected)]
-                                    (tc-selected-selected-push!
-                                      (&mut items)
-                                      (TcSelectedOccurrence.Selected index-init))
-                                    (tc-selected-selected-push!
-                                      (&mut items)
-                                      value)
-                                    (tc-selected-selected-push!
-                                      (&mut items)
-                                      (TcSelectedOccurrence.Selected
-                                        prefix-init))
-                                    (tc-selected-selected-push!
-                                      (&mut items)
-                                      body)
-                                    items)
-                                  last)])])])])]))])]))
+                          true
+                          later)
+                          [(TcSelectedResult.Err message last)
+                            (TcSelectedResult.Err message last)]
+                          [(TcSelectedResult.Ok _ body last)
+                            (tc-selected-publish-spmd-loop
+                              ty
+                              -1
+                              syntax
+                              source
+                              heads
+                              (let
+                                [items : (__tl_dyn-array TcSelectedOccurrence)
+                                  (tc-selected-no-selected)]
+                                (tc-selected-selected-push!
+                                  (&mut items)
+                                  (TcSelectedOccurrence.Selected index-init))
+                                (tc-selected-selected-push! (&mut items) value)
+                                (tc-selected-selected-push!
+                                  (&mut items)
+                                  (TcSelectedOccurrence.Selected prefix-init))
+                                (tc-selected-selected-push! (&mut items) body)
+                                items)
+                              last)])])])])]))]))
 
 ;; `(spmd-compact ([i : T start end] [slot : i64 init]) keep? body)`: `keep?`
 ;; per logical input; a kept one binds `slot` and runs `body`; the result is
@@ -33712,104 +34116,99 @@
 (define (tc-infer-selected-spmd-compact
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
+  [ty : ast.AstType]
   [compact-box : (Box ast.AstSpmdCompact)]
   [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy ctx env expr syntax expected)
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match (ast.ast-spmd-compact-box-shared-view compact-box)
-        [(ast.AstSpmdCompact.Compact
-            index
-            index-ty
-            start-box
-            end-box
-            slot
-            slot-ty
-            init-box
-            keep-box
-            body-box)
-          (let
-            [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
-            [resolved-slot : ast.AstType (tc-resolve-type ctx slot-ty)]
-            (match (tc-infer-selected-spmd-heads
-              ctx
+  (match (ast.ast-spmd-compact-box-shared-view compact-box)
+    [(ast.AstSpmdCompact.Compact
+        index
+        index-ty
+        start-box
+        end-box
+        slot
+        slot-ty
+        init-box
+        keep-box
+        body-box)
+      (let
+        [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
+        [resolved-slot : ast.AstType (tc-resolve-type ctx slot-ty)]
+        (match (tc-infer-selected-spmd-heads
+          ctx
+          env
+          (tc-global-shared-view resolved)
+          start-box
+          end-box
+          init-box
+          (ast.AstMaybeType.Some (tc-global-shared-view resolved-slot))
+          (tc-global-shared-view source)
+          sink)
+          [(TcSelectedSpmdHeads.Done result) result]
+          [(TcSelectedSpmdHeads.Ok heads next)
+            (match (tc-selected-foreach-index
               env
+              index
               (tc-global-shared-view resolved)
-              start-box
-              end-box
-              init-box
-              (ast.AstMaybeType.Some (tc-global-shared-view resolved-slot))
+              (tc-global-shared-view ty)
               (tc-global-shared-view source)
-              sink)
-              [(TcSelectedSpmdHeads.Done result) result]
-              [(TcSelectedSpmdHeads.Ok heads next)
-                (match (tc-selected-foreach-index
-                  env
-                  index
-                  (tc-global-shared-view resolved)
-                  (tc-global-shared-view ty)
+              next)
+              [(TcSelectedForeachIndex.Done result) result]
+              [(TcSelectedForeachIndex.Ok index-env index-init after)
+                (match (tc-infer-selected-id
+                  ctx
+                  index-env
+                  keep-box
+                  (ast.AstMaybeType.Some ast.AstType.Bool)
                   (tc-global-shared-view source)
-                  next)
-                  [(TcSelectedForeachIndex.Done result) result]
-                  [(TcSelectedForeachIndex.Ok index-env index-init after)
-                    (match (tc-infer-selected-id
-                      ctx
+                  after)
+                  [(TcSelectedResult.Err message done)
+                    (TcSelectedResult.Err message done)]
+                  [(TcSelectedResult.Ok _ keep done)
+                    (match (tc-selected-foreach-index
                       index-env
-                      keep-box
-                      (ast.AstMaybeType.Some ast.AstType.Bool)
+                      slot
+                      (tc-global-shared-view resolved-slot)
+                      (tc-global-shared-view ty)
                       (tc-global-shared-view source)
-                      after)
-                      [(TcSelectedResult.Err message done)
-                        (TcSelectedResult.Err message done)]
-                      [(TcSelectedResult.Ok _ keep done)
-                        (match (tc-selected-foreach-index
-                          index-env
-                          slot
-                          (tc-global-shared-view resolved-slot)
-                          (tc-global-shared-view ty)
+                      done)
+                      [(TcSelectedForeachIndex.Done result) result]
+                      [(TcSelectedForeachIndex.Ok body-env slot-init later)
+                        (match (tc-infer-selected-sequence-child
+                          ctx
+                          body-env
+                          body-box
+                          ast.AstMaybeType.No
                           (tc-global-shared-view source)
-                          done)
-                          [(TcSelectedForeachIndex.Done result) result]
-                          [(TcSelectedForeachIndex.Ok body-env slot-init later)
-                            (match (tc-infer-selected-sequence-child
-                              ctx
-                              body-env
-                              body-box
-                              ast.AstMaybeType.No
+                          true
+                          later)
+                          [(TcSelectedResult.Err message last)
+                            (TcSelectedResult.Err message last)]
+                          [(TcSelectedResult.Ok _ body last)
+                            (match (tc-selected-publish-kept
                               (tc-global-shared-view source)
-                              true
-                              later)
-                              [(TcSelectedResult.Err message last)
-                                (TcSelectedResult.Err message last)]
-                              [(TcSelectedResult.Ok _ body last)
-                                (match (tc-selected-publish-kept
-                                  (tc-global-shared-view source)
-                                  keep
-                                  slot-init
-                                  body
-                                  last)
-                                  [(TcSelectedResult.Err message final)
-                                    (TcSelectedResult.Err message final)]
-                                  [(TcSelectedResult.Ok _ kept final)
-                                    (tc-selected-publish-spmd-loop
-                                      ty
-                                      (tc-selected-form-code-spmd-result)
-                                      syntax
-                                      source
-                                      heads
-                                      (tc-selected-occurrences2
-                                        (TcSelectedOccurrence.Selected
-                                          index-init)
-                                        kept)
-                                      final)])])])])])]))])]))
+                              keep
+                              slot-init
+                              body
+                              last)
+                              [(TcSelectedResult.Err message final)
+                                (TcSelectedResult.Err message final)]
+                              [(TcSelectedResult.Ok _ kept final)
+                                (tc-selected-publish-spmd-loop
+                                  ty
+                                  (tc-selected-form-code-spmd-result)
+                                  syntax
+                                  source
+                                  heads
+                                  (tc-selected-occurrences2
+                                    (TcSelectedOccurrence.Selected index-init)
+                                    kept)
+                                  final)])])])])])]))]))
 
 ;; A compact iteration's kept branch: `(if keep? (begin slot body) unit)`.
 (define (tc-selected-publish-kept
@@ -33865,50 +34264,44 @@
 (define (tc-infer-selected-foreach-active
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
+  [ty : ast.AstType]
   [lane : i64]
   [body-box : i64]
   [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy ctx env expr syntax expected)
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match (tc-selected-foreach-index
-        env
-        lane
-        ast.AstType.I64
-        (tc-global-shared-view ty)
+  (match (tc-selected-foreach-index
+    env
+    lane
+    ast.AstType.I64
+    (tc-global-shared-view ty)
+    (tc-global-shared-view source)
+    sink)
+    [(TcSelectedForeachIndex.Done result) result]
+    [(TcSelectedForeachIndex.Ok body-env init next)
+      (match (tc-infer-selected-sequence-child
+        ctx
+        body-env
+        body-box
+        ast.AstMaybeType.No
         (tc-global-shared-view source)
-        sink)
-        [(TcSelectedForeachIndex.Done result) result]
-        [(TcSelectedForeachIndex.Ok body-env init next)
-          (match (tc-infer-selected-sequence-child
-            ctx
-            body-env
-            body-box
-            ast.AstMaybeType.No
-            (tc-global-shared-view source)
-            true
-            next)
-            [(TcSelectedResult.Err message done)
-              (TcSelectedResult.Err message done)]
-            [(TcSelectedResult.Ok _ body done)
-              (tc-selected-publish-spmd-loop
-                ty
-                -1
-                syntax
-                source
-                (tc-selected-no-selected)
-                (tc-selected-occurrences2
-                  (TcSelectedOccurrence.Selected init)
-                  body)
-                done)])])]))
+        true
+        next)
+        [(TcSelectedResult.Err message done)
+          (TcSelectedResult.Err message done)]
+        [(TcSelectedResult.Ok _ body done)
+          (tc-selected-publish-spmd-loop
+            ty
+            -1
+            syntax
+            source
+            (tc-selected-no-selected)
+            (tc-selected-occurrences2 (TcSelectedOccurrence.Selected init) body)
+            done)])]))
 
 ;; `start`, `end` (of the index type) and `init` (of `init-type`), evaluated
 ;; once in source order.
@@ -33974,149 +34367,145 @@
 (define (tc-infer-selected-foreach
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
+  [ty : ast.AstType]
   [fe-box : (Box ast.AstForeach)]
   [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy ctx env expr syntax expected)
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match (ast.ast-foreach-box-shared-view fe-box)
-        [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
-          (let
-            [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
+  (match (ast.ast-foreach-box-shared-view fe-box)
+    [(ast.AstForeach.Foreach index index-ty start-box end-box body-box)
+      (let
+        [resolved : ast.AstType (tc-resolve-type ctx index-ty)]
+        (match (tc-infer-selected-id
+          ctx
+          env
+          start-box
+          (ast.AstMaybeType.Some (tc-global-shared-view resolved))
+          (tc-global-shared-view source)
+          sink)
+          [(TcSelectedResult.Err message next)
+            (TcSelectedResult.Err message next)]
+          [(TcSelectedResult.Ok _ start after-start)
             (match (tc-infer-selected-id
               ctx
               env
-              start-box
+              end-box
               (ast.AstMaybeType.Some (tc-global-shared-view resolved))
               (tc-global-shared-view source)
-              sink)
+              after-start)
               [(TcSelectedResult.Err message next)
                 (TcSelectedResult.Err message next)]
-              [(TcSelectedResult.Ok _ start after-start)
-                (match (tc-infer-selected-id
-                  ctx
+              [(TcSelectedResult.Ok _ end after-end)
+                (match (tc-selected-foreach-index
                   env
-                  end-box
-                  (ast.AstMaybeType.Some (tc-global-shared-view resolved))
+                  index
+                  (tc-global-shared-view resolved)
+                  (tc-global-shared-view ty)
                   (tc-global-shared-view source)
-                  after-start)
-                  [(TcSelectedResult.Err message next)
-                    (TcSelectedResult.Err message next)]
-                  [(TcSelectedResult.Ok _ end after-end)
-                    (match (tc-selected-foreach-index
-                      env
-                      index
-                      (tc-global-shared-view resolved)
-                      (tc-global-shared-view ty)
+                  after-end)
+                  [(TcSelectedForeachIndex.Done result) result]
+                  [(TcSelectedForeachIndex.Ok body-env init next)
+                    (match (tc-infer-selected-sequence-child
+                      ctx
+                      body-env
+                      body-box
+                      ast.AstMaybeType.No
                       (tc-global-shared-view source)
-                      after-end)
-                      [(TcSelectedForeachIndex.Done result) result]
-                      [(TcSelectedForeachIndex.Ok body-env init next)
-                        (match (tc-infer-selected-sequence-child
-                          ctx
-                          body-env
-                          body-box
-                          ast.AstMaybeType.No
-                          (tc-global-shared-view source)
-                          true
-                          next)
-                          [(TcSelectedResult.Err message done)
-                            (TcSelectedResult.Err message done)]
-                          [(TcSelectedResult.Ok _ body done)
-                            (tc-selected-publish-spmd-loop
-                              ty
-                              -1
-                              syntax
-                              source
-                              (tc-selected-occurrences2 start end)
-                              (tc-selected-occurrences2
-                                (TcSelectedOccurrence.Selected init)
-                                body)
-                              done)])])])]))]
-        ;; A 2-D domain (#7190): the four bounds are evaluated once, in
-        ;; source order, outside both indices; each row binds `outer` and
-        ;; runs a 1-D loop over `inner` (`lower-foreach2`).
-        [(ast.AstForeach.Foreach2
-            outer
-            _
-            outer-start
-            outer-end
-            inner
-            _
-            inner-start
-            inner-end
-            body-box)
-          (match (tc-infer-selected-foreach2-heads
-            ctx
+                      true
+                      next)
+                      [(TcSelectedResult.Err message done)
+                        (TcSelectedResult.Err message done)]
+                      [(TcSelectedResult.Ok _ body done)
+                        (tc-selected-publish-spmd-loop
+                          ty
+                          -1
+                          syntax
+                          source
+                          (tc-selected-occurrences2 start end)
+                          (tc-selected-occurrences2
+                            (TcSelectedOccurrence.Selected init)
+                            body)
+                          done)])])])]))]
+    ;; A 2-D domain (#7190): the four bounds are evaluated once, in
+    ;; source order, outside both indices; each row binds `outer` and
+    ;; runs a 1-D loop over `inner` (`lower-foreach2`).
+    [(ast.AstForeach.Foreach2
+        outer
+        _
+        outer-start
+        outer-end
+        inner
+        _
+        inner-start
+        inner-end
+        body-box)
+      (match (tc-infer-selected-foreach2-heads
+        ctx
+        env
+        outer-start
+        outer-end
+        inner-start
+        inner-end
+        (tc-global-shared-view source)
+        sink)
+        [(TcSelectedSpmdHeads.Done result) result]
+        [(TcSelectedSpmdHeads.Ok heads after-heads)
+          (match (tc-selected-foreach-index
             env
-            outer-start
-            outer-end
-            inner-start
-            inner-end
+            outer
+            ast.AstType.I64
+            (tc-global-shared-view ty)
             (tc-global-shared-view source)
-            sink)
-            [(TcSelectedSpmdHeads.Done result) result]
-            [(TcSelectedSpmdHeads.Ok heads after-heads)
+            after-heads)
+            [(TcSelectedForeachIndex.Done result) result]
+            [(TcSelectedForeachIndex.Ok row-env outer-init after-outer)
               (match (tc-selected-foreach-index
-                env
-                outer
+                row-env
+                inner
                 ast.AstType.I64
                 (tc-global-shared-view ty)
                 (tc-global-shared-view source)
-                after-heads)
+                after-outer)
                 [(TcSelectedForeachIndex.Done result) result]
-                [(TcSelectedForeachIndex.Ok row-env outer-init after-outer)
-                  (match (tc-selected-foreach-index
-                    row-env
-                    inner
-                    ast.AstType.I64
-                    (tc-global-shared-view ty)
+                [(TcSelectedForeachIndex.Ok body-env inner-init after-inner)
+                  (match (tc-infer-selected-sequence-child
+                    ctx
+                    body-env
+                    body-box
+                    ast.AstMaybeType.No
                     (tc-global-shared-view source)
-                    after-outer)
-                    [(TcSelectedForeachIndex.Done result) result]
-                    [(TcSelectedForeachIndex.Ok body-env inner-init after-inner)
-                      (match (tc-infer-selected-sequence-child
-                        ctx
-                        body-env
-                        body-box
-                        ast.AstMaybeType.No
-                        (tc-global-shared-view source)
-                        true
-                        after-inner)
-                        [(TcSelectedResult.Err message done)
-                          (TcSelectedResult.Err message done)]
-                        [(TcSelectedResult.Ok _ body done)
-                          (match (tc-selected-publish-spmd-loop
-                            ast.AstType.Unit
+                    true
+                    after-inner)
+                    [(TcSelectedResult.Err message done)
+                      (TcSelectedResult.Err message done)]
+                    [(TcSelectedResult.Ok _ body done)
+                      (match (tc-selected-publish-spmd-loop
+                        ast.AstType.Unit
+                        -1
+                        typed.TypedSyntax.Generated
+                        (ownership.ownership-source-copy (& source))
+                        (tc-selected-no-selected)
+                        (tc-selected-occurrences2
+                          (TcSelectedOccurrence.Selected inner-init)
+                          body)
+                        done)
+                        [(TcSelectedResult.Err message row-done)
+                          (TcSelectedResult.Err message row-done)]
+                        [(TcSelectedResult.Ok _ row row-done)
+                          (tc-selected-publish-spmd-loop
+                            ty
                             -1
-                            typed.TypedSyntax.Generated
-                            (ownership.ownership-source-copy (& source))
-                            (tc-selected-no-selected)
+                            syntax
+                            source
+                            heads
                             (tc-selected-occurrences2
-                              (TcSelectedOccurrence.Selected inner-init)
-                              body)
-                            done)
-                            [(TcSelectedResult.Err message row-done)
-                              (TcSelectedResult.Err message row-done)]
-                            [(TcSelectedResult.Ok _ row row-done)
-                              (tc-selected-publish-spmd-loop
-                                ty
-                                -1
-                                syntax
-                                source
-                                heads
-                                (tc-selected-occurrences2
-                                  (TcSelectedOccurrence.Selected outer-init)
-                                  row)
-                                row-done)])])])])])])]))
+                              (TcSelectedOccurrence.Selected outer-init)
+                              row)
+                            row-done)])])])])])]))
 
 ;; A rank-2 foreach's four bounds (each an i64), evaluated in source order in
 ;; the enclosing scope.
@@ -58607,8 +58996,7 @@
 
 (define (tc-expr-scoped-bindings? [expr : (& expr ast.AstExpr)]) : bool
   (match expr
-    [(or (Let _) (While _ _) (ForOwnedState _) (ForOwnedStep _) (Foreach _)
-         (SpmdReduce _) (SpmdScan _) (SpmdCompact _) (ForeachActive _ _)
+    [(or (Let _) (While _ _) (ForOwnedState _) (ForOwnedStep _)
          (WithResource _))
       true]
     [_ false]))
@@ -92334,8 +92722,7 @@
   (match expr
     [(Spanned inner-box span)
       (tc-check-spanned-operand ctx env inner-box span (Unit) false false)]
-    [(or (MacroExpansion inner _ _) (LaneValue inner))
-      (tc-expr-id ctx env inner)]
+    [(MacroExpansion inner _ _) (tc-expr-id ctx env inner)]
     [(Literal lit) (tc-literal-type-checked lit)]
     [(BinaryData _) (Ok (ast.ast-ty-dyn-array (& (U8))))]
     [(Var name)
@@ -92706,343 +93093,24 @@
             0
             (ownership.ownership-expansion-none))
           TcSelectedSink.Query))]
-    [(Foreach fe-box)
-      (match (ast.ast-foreach-box-shared-view fe-box)
-        [(Foreach index index-ty start-box end-box body-box)
-          (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
-            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
-              (let
-                [start-ty
-                  (try
-                    (tc-expr-with-expected-or-actual-id
-                      ctx
-                      env
-                      start-box
-                      (tc-global-shared-view resolved-index-ty)))]
-                (if (tc-integer-type? start-ty)
-                  (let
-                    [end-ty
-                      (try
-                        (tc-expr-with-expected-or-actual-id
-                          ctx
-                          env
-                          end-box
-                          (tc-global-shared-view resolved-index-ty)))]
-                    (if (tc-integer-type? end-ty)
-                      (let
-                        [body-env : TcTypeEnv
-                          (tc-bind-id
-                            env
-                            index
-                            (tc-global-shared-view resolved-index-ty))]
-                        [body-ty (try (tc-expr-id ctx body-env body-box))]
-                        [_
-                          (try
-                            (tc-expect
-                              body-ty
-                              (Unit)
-                              (tc-kind-message
-                                (Spmd)
-                                "typecheck: foreach body must be unit")))]
-                        (let
-                          [_
-                            (try
-                              (tc-spmd-check-foreach-body
-                                ctx
-                                (tc-context-expr-bases ctx)
-                                env
-                                index
-                                resolved-index-ty
-                                body))]
-                          (Ok (Unit))))
-                      (Err
-                        (tc-kind-message
-                          (Spmd)
-                          "typecheck: foreach end expression must be integer"))))
-                  (Err
-                    (tc-kind-message
-                      (Spmd)
-                      "typecheck: foreach start expression must be integer"))))
-              (Err
-                (tc-kind-message
-                  (Spmd)
-                  "typecheck: foreach index type must be integer"))))]
-        [(Foreach2
-            outer
-            outer-ty
-            outer-start-box
-            outer-end-box
-            inner
-            inner-ty
-            inner-start-box
-            inner-end-box
-            body-box)
-          (if (and
-            (tc-foreach2-coordinate-type? (tc-resolve-type ctx outer-ty))
-            (tc-foreach2-coordinate-type? (tc-resolve-type ctx inner-ty)))
-            (let
-              [_
-                (try
-                  (tc-foreach2-bounds-ok
-                    ctx
-                    env
-                    outer-start-box
-                    outer-end-box
-                    inner-start-box
-                    inner-end-box))]
-              (let
-                [body-ty
-                  (try
-                    (tc-expr-id
-                      ctx
-                      (tc-bind-id (tc-bind-id env outer (I64)) inner (I64))
-                      body-box))]
-                [_
-                  (try
-                    (tc-expect
-                      body-ty
-                      (Unit)
-                      (tc-kind-message
-                        (Spmd)
-                        "typecheck: foreach body must be unit")))]
-                (let
-                  [_
-                    (try
-                      (tc-spmd-check-foreach2-body-with-env
-                        ctx
-                        (tc-context-expr-bases ctx)
-                        env
-                        (tc-spmd-env-from-type-env env)
-                        outer
-                        inner
-                        inner-start-box
-                        inner-end-box
-                        body-box))]
-                  (Ok (Unit)))))
-            (Err
-              (tc-kind-message
-                (Spmd)
-                "typecheck: rank-2 foreach coordinate types must be i64")))])]
-    [(SpmdReduce reduce-box)
-      (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
-        [(Reduce op index index-ty start-box end-box init-box value-box)
-          (let
-            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
-            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
-              (let
-                [start-ty (try (tc-expr-id ctx env start-box))]
-                (if (tc-integer-type? start-ty)
-                  (let
-                    [end-ty (try (tc-expr-id ctx env end-box))]
-                    (if (tc-integer-type? end-ty)
-                      (let
-                        [value-env : TcTypeEnv
-                          (tc-bind-id
-                            env
-                            index
-                            (tc-global-shared-view resolved-index-ty))]
-                        [result-ty
-                          (try
-                            (tc-spmd-reduce-init-value-type
-                              ctx
-                              (tc-context-expr-bases ctx)
-                              env
-                              value-env
-                              op
-                              init
-                              (tc-global-shared-view value)))]
-                        [_
-                          (try
-                            (tc-spmd-check-reduce-value-broadcasts
-                              ctx
-                              (tc-context-expr-bases ctx)
-                              env
-                              index
-                              resolved-index-ty
-                              value))]
-                        (Ok result-ty))
-                      (Err
-                        (tc-kind-message
-                          (Spmd)
-                          "typecheck: spmd-reduce end expression must be integer"))))
-                  (Err
-                    (tc-kind-message
-                      (Spmd)
-                      "typecheck: spmd-reduce start expression must be integer"))))
-              (Err
-                (tc-kind-message
-                  (Spmd)
-                  "typecheck: spmd-reduce index type must be integer"))))])]
-    [(SpmdScan scan-box)
-      (match (ast.ast-spmd-scan-box-shared-view scan-box)
-        [(Scan
-            op
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [init : ast.AstExpr (tc-context-expr-get ctx init-box)]
-            [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            [resolved-index-ty : ast.AstType (tc-resolve-type ctx index-ty)]
-            [resolved-prefix-ty : ast.AstType (tc-resolve-type ctx prefix-ty)]
-            (if (tc-integer-type? (tc-global-shared-view resolved-index-ty))
-              (let
-                [start-ty
-                  (try
-                    (tc-expr-with-expected-or-actual-id
-                      ctx
-                      env
-                      start-box
-                      (tc-global-shared-view resolved-index-ty)))]
-                (if (tc-integer-type? start-ty)
-                  (let
-                    [end-ty
-                      (try
-                        (tc-expr-with-expected-or-actual-id
-                          ctx
-                          env
-                          end-box
-                          (tc-global-shared-view resolved-index-ty)))]
-                    (if (tc-integer-type? end-ty)
-                      (let
-                        [value-env : TcTypeEnv
-                          (tc-bind-id
-                            env
-                            index
-                            (tc-global-shared-view resolved-index-ty))]
-                        [body-env : TcTypeEnv
-                          (tc-bind-id
-                            value-env
-                            prefix
-                            (tc-global-shared-view resolved-prefix-ty))]
-                        [_
-                          (try
-                            (tc-spmd-scan-init-value-type
-                              ctx
-                              (tc-context-expr-bases ctx)
-                              env
-                              value-env
-                              op
-                              (tc-global-shared-view resolved-prefix-ty)
-                              init
-                              value))]
-                        (let
-                          [body-ty (try (tc-expr-id ctx body-env body-box))]
-                          [_
-                            (try
-                              (tc-expect
-                                body-ty
-                                (Unit)
-                                (tc-kind-message
-                                  (Spmd)
-                                  "typecheck: spmd-scan body must be unit")))]
-                          (let
-                            [_
-                              (try
-                                (tc-spmd-check-scan-body
-                                  ctx
-                                  (tc-context-expr-bases ctx)
-                                  env
-                                  index
-                                  resolved-index-ty
-                                  prefix
-                                  resolved-prefix-ty
-                                  body))]
-                            (Ok (Unit)))))
-                      (Err
-                        (tc-kind-message
-                          (Spmd)
-                          "typecheck: spmd-scan end expression must be integer"))))
-                  (Err
-                    (tc-kind-message
-                      (Spmd)
-                      "typecheck: spmd-scan start expression must be integer"))))
-              (Err
-                (tc-kind-message
-                  (Spmd)
-                  "typecheck: spmd-scan index type must be integer"))))])]
-    [(SpmdCompact compact-box)
-      (match (ast.ast-spmd-compact-box-shared-view compact-box)
-        [(Compact
-            index
-            index-ty
-            start-box
-            end-box
-            slot
-            slot-ty
-            init-box
-            keep-box
-            body-box)
-          (tc-spmd-compact-expr-type
-            ctx
-            env
-            index
-            index-ty
-            start-box
-            end-box
-            slot
-            slot-ty
-            init-box
-            keep-box
-            body-box)])]
-    [(SpmdBroadcast value-box lane-box)
-      (let
-        [lane-ty
-          (try (tc-expr-with-expected-or-actual-id ctx env lane-box (I64)))]
-        [_
-          (try
-            (tc-expect
-              (tc-resolve-type ctx lane-ty)
-              (I64)
-              (tc-kind-message
-                (Spmd)
-                "typecheck: spmd-broadcast lane must have type i64")))]
-        [value-ty (try (tc-expr-id ctx env value-box))]
-        (if (tc-spmd-broadcast-type-supported?
-          (tc-resolve-type ctx (tc-global-shared-view value-ty)))
-          (Ok value-ty)
-          (Err (tc-spmd-broadcast-type-message))))]
-    [(SpmdShuffle value-box lane-box)
-      (let
-        [lane-ty
-          (try (tc-expr-with-expected-or-actual-id ctx env lane-box (I64)))]
-        [_
-          (try
-            (tc-expect
-              (tc-resolve-type ctx lane-ty)
-              (I64)
-              (tc-kind-message
-                (Spmd)
-                "typecheck: spmd-shuffle lane must have type i64")))]
-        [value-ty (try (tc-expr-id ctx env value-box))]
-        (if (tc-spmd-broadcast-type-supported?
-          (tc-resolve-type ctx (tc-global-shared-view value-ty)))
-          (Ok value-ty)
-          (Err (tc-spmd-shuffle-type-message))))]
-    [(or (SpmdProgramIndex) (SpmdProgramCount) (ProgramArgc)) (Ok (I64))]
-    [(ForeachActive lane body-box)
-      (let
-        [body-ty (try (tc-expr-id ctx (tc-bind-id env lane (I64)) body-box))]
-        [_
-          (try
-            (tc-expect
-              body-ty
-              (Unit)
-              (tc-kind-message
-                (Spmd)
-                "typecheck: foreach-active body must be unit")))]
-        (Ok (Unit)))]
+    [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
+         (ForeachActive _ _) (SpmdBroadcast _ _) (SpmdShuffle _ _)
+         (SpmdProgramIndex) (SpmdProgramCount) (LaneValue _))
+      (tc-selected-project
+        (tc-infer-selected-spmd-scoped
+          ctx
+          env
+          expr
+          typed.TypedSyntax.Generated
+          ast.AstMaybeType.No
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))
+          true
+          TcSelectedSink.Query))]
+    [(ProgramArgc) (Ok (I64))]
     [(Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
         [(Match scrutinee-box arms)

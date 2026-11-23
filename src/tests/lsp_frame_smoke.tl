@@ -2195,19 +2195,17 @@
       [machine-json : String
         (json.stringify
           (lsp.lsp-json-array
-            (let
-              [docs-copy (lvf.clone-lsp-document-vec (& docs))]
-              (lsp.lsp-code-action-lint-from
-                docs-copy
-                (string.copy (& uri))
-                (string.copy (& path))
-                (string.copy (& text))
-                version
-                (lint_core.LintFindings machine-slots 1)
-                (json.clone-json (& request-range))
-                (json.clone-json-seq (& context))
-                0
-                (json.list-empty)))))]
+            (lsp.lsp-code-action-lint-from
+              (& docs)
+              (string.copy (& uri))
+              (string.copy (& path))
+              (string.copy (& text))
+              version
+              (lint_core.LintFindings machine-slots 1)
+              (json.clone-json (& request-range))
+              (json.clone-json-seq (& context))
+              0
+              (json.list-empty))))]
       [uncertain-json : String
         (json.stringify
           (lsp.lsp-json-array

@@ -14749,14 +14749,10 @@
   (slots (__tl_dyn-array CompilerPkgDep))
   (len i64))
 
-(clone_gen.gen-clone CompilerPkgDepList)
-
 ;: Package dependencies preserve manifest order for deterministic builds while
 ;: indexing aliases for duplicate detection and `pkg:<alias>/...` resolution.
 (defstruct CompilerPkgDeps
   (ordered CompilerPkgDepList))
-
-(clone_gen.gen-clone CompilerPkgDeps)
 
 ;: Package artifact kind: binary executable or static library.
 (defenum CompilerPkgKind
@@ -14850,6 +14846,17 @@
         (array-ref dst (+ dst-offset index))
         (clone-compiler-pkg-dep (& (array-ref src.slots index)))))))
 
+(define (clone-compiler-pkg-dep-list [source : (& CompilerPkgDepList)]) : CompilerPkgDepList
+  (let
+    [count : i64 source.len]
+    [slots : (__tl_dyn-array CompilerPkgDep)
+      (__tl_make-array CompilerPkgDep count)]
+    (compiler-pkg-dep-list-copy-into (&mut slots) source 0)
+    (CompilerPkgDepList slots count)))
+
+(define (clone-compiler-pkg-deps [source : (& CompilerPkgDeps)]) : CompilerPkgDeps
+  (CompilerPkgDeps (clone-compiler-pkg-dep-list (& source.ordered))))
+
 ;: Append `dep`. Every push right-sizes a fresh array, so callers that keep
 ;: extending the same list from several branches never share a buffer.
 (define (compiler-pkg-dep-list-push
@@ -14892,11 +14899,10 @@
     [(CompilerPkgKindBin) (NoDependency)]
     [(CompilerPkgKindLib)
       (let
-        [deps : CompilerPkgDepList
-          (compiler-pkg-deps-list (clone-compiler-pkg-deps (& manifest.deps)))]
-        (if (= (compiler-pkg-dep-list-count (& deps)) 0)
+        [deps : (& manifest CompilerPkgDepList) (& manifest.deps.ordered)]
+        (if (= (compiler-pkg-dep-list-count deps) 0)
           (NoDependency)
-          (Dependency (compiler-pkg-dep-list-at (& deps) 0))))]))
+          (Dependency (compiler-pkg-dep-list-at deps 0))))]))
 
 ;: Explain the dependency-free library invariant and its supported
 ;: composition/native-link alternatives.

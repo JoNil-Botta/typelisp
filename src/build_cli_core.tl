@@ -461,7 +461,7 @@
 
 ;; Options a package build accepts.
 (define (build-package-cli-options) : String
-  "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+  "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
    --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
    --profile <dev|release> --release --locked --update-lock")
 
@@ -563,7 +563,7 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "build"
-        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
          --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
          --profile <dev|release> --release --locked --update-lock --resolved-dep"
         idx
@@ -5850,7 +5850,7 @@
       (build-package-worker-append-option
         args5
         "--opt-level"
-        (string.int->string opt-level))]
+        (cli_option.cli-option-opt-level-name opt-level))]
     [debug-args : process.ProcessStringList
       (if (ir.compiler-debug-info-enabled?)
         (build_run_core.source-tool-args-append args6 "--debug")
@@ -6912,7 +6912,7 @@
       (cli_option.cli-args
         "build"
         (str_cat.str-cat
-          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
            --debug|-g|--backtrace -o <exe> --backend-mode <mode>
            --manifest-path <file> --profile --release --locked --update-lock "
           (build-link-cli-options))

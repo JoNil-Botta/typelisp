@@ -1,4 +1,3 @@
-(import stdlib.clone as clone_gen)
 (import cli_option_core as cli_option)
 
 ;; lsp_frame_core.tl - Main-free selfhost LSP stdio framing and JSON-RPC slice.
@@ -494,8 +493,6 @@
   (stdout String)
   (stderr String))
 
-(clone_gen.gen-clone LspFrameMemoryState)
-
 (define lsp-frame-memory-state : LspFrameMemoryState
   (LspFrameMemoryState
     false
@@ -544,6 +541,9 @@
     (set!
       lsp-frame-memory-state.stdout
       (str_cat.str-cat-scoped lsp-frame-memory-state.stdout text))))
+
+(define (lsp-frame-memory-copy-stdout) : String
+  (string.copy (& lsp-frame-memory-state.stdout)))
 
 (define (lsp-frame-memory-stderr-append! [text : String]) : unit
   (in-arena
@@ -14043,7 +14043,7 @@
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing))]
-    [captured-stdout : String (string.copy (& lsp-frame-memory-state.stdout))]
+    [captured-stdout : String (lsp-frame-memory-copy-stdout)]
     [captured-stderr : String (string.copy (& lsp-frame-memory-state.stderr))]
     [transport-head : i64 lsp-frame-memory-state.owner.handle]
     [_fresh-after : unit (lsp-frame-fresh-session-reset!)]

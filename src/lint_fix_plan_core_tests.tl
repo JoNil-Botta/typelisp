@@ -550,9 +550,7 @@
   (let
     [findings : lint_core.LintFindings
       (redundant-begin-findings (string.copy (& source)))]
-    [count : i64
-      (lint_core.lint-findings-count
-        (lint_core.clone-lint-findings (& findings)))]
+    [count : i64 findings.len]
     [snap : planner.LintFixSnapshot (planner.snapshot "fix.tl" source 1 true)]
     [slots : (__tl_dyn-array planner.LintFixCandidate)
       (__tl_make-array planner.LintFixCandidate count)]

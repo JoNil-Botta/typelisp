@@ -43,7 +43,6 @@
 ;#       (io.stdout-write bytes))
 ;#     0))
 ;# ```
-(import stdlib.clone as clone_gen)
 (import stdlib.byte_buf)
 (import stdlib.comptime)
 (import stdlib.format)
@@ -1897,8 +1896,6 @@
   (IoInterrupted String)
   (IoSystemCode i64 String)
   (IoUnknown String))
-
-(clone_gen.gen-clone IoError)
 
 ;: Result type for string-returning file I/O APIs.
 (defenum ResultIoString

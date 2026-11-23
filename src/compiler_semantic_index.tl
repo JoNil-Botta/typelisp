@@ -1,6 +1,5 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
 (import stdlib.iterator)
-(import stdlib.clone as clone_gen)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -540,118 +539,6 @@
         (__tl_make-array String 0)
         (__tl_make-array CompilerSemanticVisibleBinding 0)
         0))))
-
-(clone_gen.gen-clone CompilerSemanticProvenance)
-
-(clone_gen.gen-clone CompilerSemanticSpan)
-
-(clone_gen.gen-clone CompilerSemanticRecord)
-
-(clone_gen.gen-clone CompilerSemanticSourcePathInfo)
-
-(clone_gen.gen-clone CompilerSemanticVisibleBinding)
-
-(clone_gen.gen-clone CompilerSemanticBinding)
-
-(clone_gen.gen-clone CompilerSemanticModuleInfo)
-
-(clone_gen.gen-clone CompilerSemanticModuleEvent)
-
-(clone_gen.gen-clone CompilerSemanticScopeEvent)
-
-(clone_gen.gen-clone CompilerSemanticTopCandidateRef)
-
-(defmacro (clone-source-index-prefix
-  [T : type]
-  [items : Expr]
-  [len : Expr]
-  [copy : Expr]) : Expr
-  `(let
-    [count : i64 ,len]
-    [slots : (__tl_dyn-array ,T) (__tl_make-array ,T count)]
-    (for [index (iterator.range 0 count)]
-      (set! (array-ref slots index) (,copy (& (array-ref ,items index)))))
-    slots))
-
-(define (compiler-semantic-source-index-copy-in-current-arena
-  [source : (& CompilerSemanticSourceIndex)]
-  [owner : i64]) : CompilerSemanticSourceIndex
-  (CompilerSemanticSourceIndex
-    owner
-    (clone-source-index-prefix
-      CompilerSemanticRecord
-      source.records
-      source.len
-      clone-compiler-semantic-record)
-    source.len
-    (clone-source-index-prefix
-      String
-      source.canonical-symbols
-      source.canonical-symbol-len
-      string.copy)
-    source.canonical-symbol-len
-    source.complete
-    (clone-source-index-prefix
-      CompilerSemanticSourcePathInfo
-      source.paths
-      source.path-len
-      clone-compiler-semantic-source-path-info)
-    source.path-len
-    (clone-source-index-prefix
-      CompilerSemanticModuleInfo
-      source.modules
-      source.module-len
-      clone-compiler-semantic-module-info)
-    source.module-len
-    (clone-source-index-prefix
-      CompilerSemanticModuleEvent
-      source.module-events
-      source.module-event-len
-      clone-compiler-semantic-module-event)
-    source.module-event-len
-    (clone-source-index-prefix
-      CompilerSemanticScopeEvent
-      source.scope-events
-      source.scope-event-len
-      clone-compiler-semantic-scope-event)
-    source.scope-event-len
-    source.scope-region-count
-    (clone-source-index-prefix
-      CompilerSemanticBinding
-      source.bindings
-      source.binding-len
-      clone-compiler-semantic-binding)
-    source.binding-len
-    (clone-source-index-prefix
-      CompilerSemanticTopCandidateRef
-      source.top-candidates
-      source.top-candidate-len
-      clone-compiler-semantic-top-candidate-ref)
-    (clone-source-index-prefix
-      String
-      source.top-labels
-      source.top-candidate-len
-      string.copy)
-    (clone-source-index-prefix
-      CompilerSemanticVisibleBinding
-      source.top-visible-bindings
-      source.top-candidate-len
-      clone-compiler-semantic-visible-binding)
-    source.top-candidate-len))
-
-;: Owned indexes get independent storage and release authority. Unowned
-;: indexes allocate their live prefixes in the caller's active arena.
-(define (clone-compiler-semantic-source-index
-  [source : (& CompilerSemanticSourceIndex)]) : CompilerSemanticSourceIndex
-  (if (> source.owner-arena 0)
-    (let
-      [owner : i64 (arena.tl_arena_make)]
-      (+= compiler-semantic-source-index-live-owners 1)
-      (in-arena
-        (unsafe
-          (arena.Arena owner))
-        (compiler-semantic-source-index-copy-in-current-arena source owner)))
-    (compiler-semantic-source-index-copy-in-current-arena source 0)))
 
 (define (compiler-semantic-binding-snapshot-empty) : CompilerSemanticBindingSnapshot
   (CompilerSemanticBindingSnapshot -1))

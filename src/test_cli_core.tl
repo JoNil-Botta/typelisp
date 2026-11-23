@@ -431,7 +431,7 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "test"
-        "--stdlib-root <dir> --cfg <name> --target <target> --debug|-g|--backtrace --opt-level <0|1|2>
+        "--stdlib-root <dir> --cfg <name> --target <target> --debug|-g|--backtrace --opt-level <0|1|2|s> -Os
          --check --list --filter <substring> --exact <name> --include-ignored
          --include-slow --shuffle --seed <u64> --backend-mode <mode>
          --manifest-path <file> --batch <file> --prefix-cache-stats"

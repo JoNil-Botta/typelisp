@@ -24276,14 +24276,6 @@
           (if nominal-sret?
             (+ source-start param-count)
             (- 0 1)))]
-      [ret-ir-ty : ast.AstType
-        (match (& ret-class)
-          [(LowerCAbiAggregate.Unsupported _) (ast.AstType.U64)]
-          [_
-            (lower-internal-return-physical-type
-              ctx
-              mode
-              (lower-global-shared-view ret-ty))])]
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
@@ -24315,11 +24307,22 @@
           source-start
           (+ source-start param-count))]
       (lower-spmd-enumerate-function! ctx state (clone body))
-      (match ret-class
-        [(LowerCAbiAggregate.Unsupported message)
-          (ResultLowerFunction.Err
-            (box (lower-diagnostic-at-expr ctx body message)))]
-        [_
+      (if (match (& ret-class)
+        [(LowerCAbiAggregate.Unsupported _) true]
+        [_ false])
+        (match ret-class
+          [(LowerCAbiAggregate.Unsupported message)
+            (ResultLowerFunction.Err
+              (box (lower-diagnostic-at-expr ctx body message)))]
+          [_
+            (ResultLowerFunction.Err
+              (box (lower-diagnostic-at-expr ctx body "")))])
+        (let
+          [ret-ir-ty : ast.AstType
+            (lower-internal-return-physical-type-from-class
+              ctx
+              (lower-global-shared-view ret-ty)
+              ret-class)]
           (match (lower-load-captures
             ctx
             state
@@ -24449,7 +24452,7 @@
                         (ResultLowerFunction.Err message)])]
                   [(ResultLowerEnv.Err message)
                     (ResultLowerFunction.Err message)]))]
-            [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)])]))))
+            [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)]))))))
 
 (define (lower-lambda-noncapturing
   [ctx : tc_core.TcContext]
@@ -36960,6 +36963,15 @@
       (lower-global-shared-view resolved)
       (lower-internal-param-class ctx mode resolved))))
 
+(define (lower-internal-return-physical-type-from-class
+  [ctx : tc_core.TcContext]
+  [resolved : ast.AstType]
+  [classification : LowerCAbiAggregate]) : ast.AstType
+  (match (& classification)
+    [(No) (lower-one-word-register-storage-type ctx (& resolved))]
+    [(Unsupported _) (ast.AstType.U64)]
+    [_ (lower-internal-transport-type ctx resolved classification)]))
+
 (define (lower-internal-return-physical-type
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
@@ -36967,11 +36979,10 @@
   (let
     [resolved : ast.AstType
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    [classification : LowerCAbiAggregate
-      (lower-internal-return-class ctx mode (lower-global-shared-view resolved))]
-    (match (& classification)
-      [(No) (lower-one-word-register-storage-type ctx resolved)]
-      [_ (lower-internal-transport-type ctx resolved classification)])))
+    (lower-internal-return-physical-type-from-class
+      ctx
+      resolved
+      (lower-internal-return-class ctx mode (lower-global-shared-view resolved)))))
 
 ;; A package declaration describes the physical signature of the same internal
 ;; body. In particular, a one-word floating struct uses SSE and hidden result
@@ -72720,6 +72731,7 @@
     (lower-global-shared-view func-ty)
     args
     (lower-global-shared-view ret-ty)
+    1
     sret-var)
     false
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
@@ -73360,14 +73372,104 @@
         (tc_core.tc-context-type-get ctx inner))]
     [_ false]))
 
-;; Prove the storage selected by a place is outside this frame. Copy aggregate
-;; match bindings and unknown local aliases deliberately fail this proof.
+;; Whether `ty` is passed in the SysV incoming stack-argument area (structural
+;; aggregate > 16B). On Win64 large structural params use `ByRef` caller-frame
+;; copies outside the outgoing stack-argument area and stay unaffected.
+(define (lower-tail-call-sysv-memory-param-type?
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [ty : ast.AstType]) : bool
+  (match (lower-internal-param-class ctx mode ty)
+    [(LowerCAbiAggregate.Memory _) true]
+    [_ false]))
+
+;; Whether a tail call with formal parameter types `types` (plus `leading-int`
+;; leading GP args such as `__tl_env` and an optional hidden nominal sret slot
+;; when `sret-var >= 0`) writes any outgoing stack argument on SysV. Only
+;; outgoing stack arguments can overwrite an incoming SysV Memory-class
+;; parameter; register-only tail jumps leave incoming stack params untouched.
+;; On Win64 `lower-tail-call-sysv-memory-param-type?` is always false (`ByRef`),
+;; so this predicate only affects SysV Memory-class parameters.
+(define (lower-tail-call-sysv-outgoing-stack-args?
+  [ctx : tc_core.TcContext]
+  [types : (& types ast.AstTypeList)]
+  [leading-int : i64]
+  [sret-var : i64]) : bool
+  (let
+    [int-idx : i64 leading-int]
+    [float-idx : i64 0]
+    [count : i64 (ast.ast-type-list-len types)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-resolve-type
+              ctx
+              (tc_core.tc-context-type-get
+                ctx
+                (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))]
+        (cond
+          [(match (& ty)
+              [(or (ast.AstType.Tuple _) (ast.AstType.Array _ _)) true]
+              [_ false])
+            (return true)]
+          [(lower-type-register-group? ctx (& ty))
+            (let
+              [w0-sse : bool
+                (lower-register-word-sse-type?
+                  (lower-register-word-type ctx (& ty) 0))]
+              [w1-sse : bool
+                (lower-register-word-sse-type?
+                  (lower-register-word-type ctx (& ty) 1))]
+              [next-int : i64
+                (+
+                  int-idx
+                  (if w0-sse
+                    0
+                    1)
+                  (if w1-sse
+                    0
+                    1))]
+              [next-float : i64
+                (+
+                  float-idx
+                  (if w0-sse
+                    1
+                    0)
+                  (if w1-sse
+                    1
+                    0))]
+              (when (or (> next-int 6) (> next-float 8)) (return true))
+              (set! int-idx next-int)
+              (set! float-idx next-float))]
+          [else
+            (let
+              [storage-ty : ast.AstType
+                (lower-one-word-register-storage-type ctx (& ty))]
+              [is-sse : bool
+                (match (& storage-ty)
+                  [(or (ast.AstType.F32) (ast.AstType.F64)) true]
+                  [_ false])]
+              (if is-sse
+                (begin
+                  (when (>= float-idx 8) (return true))
+                  (+= float-idx 1))
+                (begin
+                  (when (>= int-idx 6) (return true))
+                  (+= int-idx 1))))])))
+    (and (>= sret-var 0) (>= int-idx 6))))
+
+;; Prove the storage selected by a place is outside this frame (and outside
+;; incoming SysV stack-param storage whenever `outgoing-stack-args?` can
+;; overwrite it). Copy aggregate match bindings and unknown local aliases
+;; deliberately fail this proof.
 (define (lower-tail-call-external-place?
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [expr : (& expr ast.AstExpr)]) : bool
+  [expr : (& expr ast.AstExpr)]
+  [outgoing-stack-args? : bool]) : bool
   (match (ast.ast-expr-unspan (& expr))
     [(Ann inner _)
       (lower-tail-call-external-place?
@@ -73375,7 +73477,8 @@
         state
         env
         type-env
-        (& (lower-context-expr-get ctx inner)))]
+        (& (lower-context-expr-get ctx inner))
+        outgoing-stack-args?)]
     [(Var name)
       (if (tc_core.tc-dotted-local-field-name-id? ctx type-env name)
         (match (tc_core.tc-dotted-local-field-expr-id ctx type-env name)
@@ -73385,7 +73488,8 @@
               state
               env
               type-env
-              (& (lower-context-expr-get ctx id)))]
+              (& (lower-context-expr-get ctx id))
+              outgoing-stack-args?)]
           [(Err _) false])
         (or
           ;; A typed global binding has no local IR binding. Its storage
@@ -73408,7 +73512,14 @@
                     [_
                       (and
                         (lower-type-inline-storage? ctx (& resolved))
-                        (not (lower-type-register-resident? ctx resolved)))]))]
+                        (not (lower-type-register-resident? ctx (& resolved)))
+                        (not
+                          (and
+                            outgoing-stack-args?
+                            (lower-tail-call-sysv-memory-param-type?
+                              ctx
+                              (lower-state-mode state)
+                              resolved))))]))]
               [(Err _) false]))))]
     [(or (StructGet receiver _) (TupleRef receiver _))
       (lower-tail-call-external-place?
@@ -73416,7 +73527,8 @@
         state
         env
         type-env
-        (& (lower-context-expr-get ctx receiver)))]
+        (& (lower-context-expr-get ctx receiver))
+        outgoing-stack-args?)]
     [(ArrayRef source _)
       (let
         [array : ast.AstExpr (lower-context-expr-get ctx source)]
@@ -73426,8 +73538,36 @@
             (tc_core.tc-expr ctx type-env (lower-context-expr-get ctx source)))
             [(Ok ty) (lower-tail-call-heap-container-type? ctx ty)]
             [(Err _) false])
-          (lower-tail-call-external-place? ctx state env type-env array)))]
-    [(BoxGet _) true]
+          (lower-tail-call-external-place?
+            ctx
+            state
+            env
+            type-env
+            (& array)
+            outgoing-stack-args?)))]
+    [(or (BoxGet receiver-box) (BoxTake receiver-box))
+      (match (lower-query-with-visible-lifetimes
+        type-env
+        (tc_core.tc-expr ctx type-env (lower-context-expr-get ctx receiver-box)))
+        [(Ok ty)
+          (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+            [(Box _) true]
+            [(or (Ref _ inner) (MutRef _ inner))
+              (match (tc_core.tc-type-strip-region
+                (tc_core.tc-resolve-type
+                  ctx
+                  (tc_core.tc-context-type-get ctx inner)))
+                [(Box _) true]
+                [_
+                  (lower-tail-call-external-place?
+                    ctx
+                    state
+                    env
+                    type-env
+                    (& (lower-context-expr-get ctx receiver-box))
+                    outgoing-stack-args?)])]
+            [_ false])]
+        [(Err _) false])]
     [_ false]))
 
 (define (lower-tail-call-safe-address-arg?
@@ -73435,7 +73575,8 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [expr : (& expr ast.AstExpr)]) : bool
+  [expr : (& expr ast.AstExpr)]
+  [outgoing-stack-args? : bool]) : bool
   (match (ast.ast-expr-unspan (& expr))
     [(Ann inner _)
       (lower-tail-call-safe-address-arg?
@@ -73443,12 +73584,19 @@
         state
         env
         type-env
-        (& (lower-context-expr-get ctx inner)))]
+        (& (lower-context-expr-get ctx inner))
+        outgoing-stack-args?)]
     [(Borrow mutable _ place-id)
       (let
         [place : ast.AstExpr (lower-context-expr-get ctx place-id)]
         (or
-          (lower-tail-call-external-place? ctx state env type-env (& place))
+          (lower-tail-call-external-place?
+            ctx
+            state
+            env
+            type-env
+            (& place)
+            outgoing-stack-args?)
           ;; A shared borrow of a plain dynamic-array variable, or of a String
           ;; variable lent as `str`, is the variable's heap handle. A borrow of
           ;; any other plain variable names this frame: its own storage or a
@@ -73492,20 +73640,29 @@
                 (lower-context-expr-get ctx source-id)))
               [(Ok ty) (lower-tail-call-heap-container-type? ctx ty)]
               [(Err _) false])
-            (lower-tail-call-external-place? ctx state env type-env (& source))
+            (lower-tail-call-external-place?
+              ctx
+              state
+              env
+              type-env
+              (& source)
+              outgoing-stack-args?)
             (lower-tail-call-safe-param-borrow-arg?
               ctx
               state
               env
               type-env
-              source))))]
+              (& source)
+              outgoing-stack-args?))))]
     [_ false]))
 
 ;; A borrow of a tail parameter is as safe as passing the parameter itself in
 ;; two cases:
 ;; - a shared borrow of a by-value aggregate parameter passed in memory points
 ;;   at storage the caller provided, not at this frame, so it stays valid when
-;;   a tail call reuses the frame;
+;;   a tail call reuses the frame -- except on SysV when the parameter lives in
+;;   the incoming stack-argument area and outgoing tail stack args can
+;;   overwrite it (#9289);
 ;; - a borrow of a reference parameter is a reborrow: it lowers to that same
 ;;   reference (`lower-borrow-var-address`), so the callee receives exactly the
 ;;   pointer it would get from the parameter (#9137).
@@ -73514,7 +73671,8 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [expr : (& expr ast.AstExpr)]) : bool
+  [expr : (& expr ast.AstExpr)]
+  [outgoing-stack-args? : bool]) : bool
   (match (ast.ast-expr-unspan (& expr))
     [(Borrow mutable _ place-box)
       (let
@@ -73531,7 +73689,14 @@
                 [(Ok ty)
                   (and
                     (lower-type-inline-storage? ctx (& ty))
-                    (not (lower-type-register-resident? ctx ty)))]
+                    (not (lower-type-register-resident? ctx (& ty)))
+                    (not
+                      (and
+                        outgoing-stack-args?
+                        (lower-tail-call-sysv-memory-param-type?
+                          ctx
+                          (lower-state-mode state)
+                          ty))))]
                 [(Err _) false])))))]
     [_ false]))
 
@@ -73558,7 +73723,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
-  [types : (& types ast.AstTypeList)]) : bool
+  [types : (& types ast.AstTypeList)]
+  [outgoing-stack-args? : bool]) : bool
   (when (not (= exprs.len (ast.ast-type-list-len types))) (return true))
   (for [index (iterator.range 0 exprs.len)]
     (let
@@ -73627,13 +73793,15 @@
                     state
                     env
                     type-env
-                    (& effective))
+                    (& effective)
+                    outgoing-stack-args?)
                   (lower-tail-call-safe-address-arg?
                     ctx
                     state
                     env
                     type-env
-                    effective))))
+                    (& effective)
+                    outgoing-stack-args?))))
             (return true))
           unit]
         [(Err _) (return true)])))
@@ -73686,6 +73854,7 @@
   [func-ty : ast.AstType]
   [args : (& args ast.AstExprList)]
   [ret-ty : ast.AstType]
+  [leading-int : i64]
   [sret-var : i64]) : bool
   (or
     ;; Structural ABI values use explicit materialization/call transforms;
@@ -73696,13 +73865,23 @@
     (and (< sret-var 0) (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
       [(Func param-types _)
-        (lower-tail-call-unsafe-args?
-          ctx
-          state
-          env
-          type-env
-          args
-          (& (tc_core.tc-resolve-type-list ctx (deref param-types))))]
+        (let
+          [resolved-params : ast.AstTypeList
+            (tc_core.tc-resolve-type-list ctx (deref param-types))]
+          [outgoing-stack-args? : bool
+            (lower-tail-call-sysv-outgoing-stack-args?
+              ctx
+              (& resolved-params)
+              leading-int
+              sret-var)]
+          (lower-tail-call-unsafe-args?
+            ctx
+            state
+            env
+            type-env
+            args
+            (& resolved-params)
+            outgoing-stack-args?))]
       [_ true])))
 
 (define (lower-tail-call-append-current-sret-arg
@@ -73774,6 +73953,7 @@
                       func-ty
                       args
                       (lower-global-shared-view ret-ty)
+                      0
                       sret-var))]
                 [(Err _) false])
               (lower-tail-call-direct-supported?
@@ -75082,14 +75262,6 @@
           (if nominal-sret?
             (+ source-start param-count)
             (- 0 1)))]
-      [ret-ir-ty : ast.AstType
-        (match (& ret-class)
-          [(LowerCAbiAggregate.Unsupported _) (ast.AstType.U64)]
-          [_
-            (lower-internal-return-physical-type
-              ctx
-              mode
-              (lower-global-shared-view ret-ty))])]
       [type-env : tc_core.TcTypeEnv
         (tc_core.tc-bind-return-type
           (tc_core.tc-bind-params
@@ -75142,11 +75314,22 @@
           params
           (lower-global-shared-view ret-ty))]
       (lower-spmd-enumerate-function! ctx state (clone body))
-      (match ret-class
-        [(LowerCAbiAggregate.Unsupported message)
-          (ResultLowerFunction.Err
-            (box (lower-diagnostic-at-expr ctx body message)))]
-        [_
+      (if (match (& ret-class)
+        [(LowerCAbiAggregate.Unsupported _) true]
+        [_ false])
+        (match ret-class
+          [(LowerCAbiAggregate.Unsupported message)
+            (ResultLowerFunction.Err
+              (box (lower-diagnostic-at-expr ctx body message)))]
+          [_
+            (ResultLowerFunction.Err
+              (box (lower-diagnostic-at-expr ctx body "")))])
+        (let
+          [ret-ir-ty : ast.AstType
+            (lower-internal-return-physical-type-from-class
+              ctx
+              (lower-global-shared-view ret-ty)
+              ret-class)]
           (if (lower-supported-function-return-type?
             ctx
             (lower-global-shared-view ret-ty))
@@ -75264,7 +75447,7 @@
                 (lower-diagnostic-at-expr
                   ctx
                   body
-                  "lower: unsupported expression"))))]))))
+                  "lower: unsupported expression")))))))))
 
 (define (lower-global-value
   [ctx : tc_core.TcContext]

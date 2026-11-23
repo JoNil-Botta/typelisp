@@ -150,6 +150,9 @@ slice_view_mut_owner_read_reject|check-fail|tests/safety/slice_view_mut_owner_re
 slice_view_mut_owner_write_reject|check-fail|tests/safety/slice_view_mut_owner_write_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_view_mut_shared_subview_reject|check-fail|tests/safety/slice_view_mut_shared_subview_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
 slice_view_mut_double_reject|check-fail|tests/safety/slice_view_mut_double_reject.tl|-|cannot mutably borrow borrowed place `items`
+slice_view_mut_arena_dynarray_reject|check-fail|tests/safety/slice_view_mut_arena_dynarray_reject.tl|-|cannot mutably borrow borrowed place `items`
+slice_view_mut_arena_array_reject|check-fail|tests/safety/slice_view_mut_arena_array_reject.tl|-|cannot mutably borrow borrowed place `items`
+slice_view_mut_projected_array_reject|check-fail|tests/safety/slice_view_mut_projected_array_reject.tl|-|cannot mutably borrow borrowed place `b.items`
 slice_view_parent_child_shared_reject|check-fail|tests/safety/slice_view_parent_child_shared_reject.tl|-|cannot assign to borrowed place `parent[0]`
 # #8179: passing the parent view to a `&mut` parameter reborrows it under a live child.
 slice_view_parent_call_child_live_reject|check-fail|tests/safety/slice_view_parent_call_child_live_reject.tl|tests/safety/slice_view_parent_call_child_live_reject.tl:14:14|error[E0207]: typecheck: cannot mutably borrow borrowed place `parent`
@@ -2486,6 +2489,7 @@ mir_with_arena_scoped_ok|run-exit|tests/safety/mir_with_arena_scoped_ok.tl|42|-
 mir_with_arena_moved_outer_reject|check-fail|tests/safety/mir_with_arena_moved_outer_reject.tl|tests/safety/mir_with_arena_moved_outer_reject.tl:13:29|use of moved value `owned`
 mir_with_arena_borrow_conflict_reject|check-fail|tests/safety/mir_with_arena_borrow_conflict_reject.tl|tests/safety/mir_with_arena_borrow_conflict_reject.tl:11:28|cannot assign to borrowed place `values[0]`
 mir_cfunc_value_call_ok|check-ok|tests/safety/mir_cfunc_value_call_ok.tl|-|-
+mir_lifetime_foreign_calls_ok|check-ok|tests/safety/mir_lifetime_foreign_calls_ok.tl|-|-
 mir_cfunc_unsafe_call_reject|check-fail|tests/safety/mir_cfunc_unsafe_call_reject.tl|tests/safety/mir_cfunc_unsafe_call_reject.tl:7:3|C function pointer requires unsafe context
 mir_cfunc_value_lend_ok|check-ok|tests/safety/mir_cfunc_value_lend_ok.tl|-|-
 mir_cfunc_value_lend_moved_reject|check-fail|tests/safety/mir_cfunc_value_lend_moved_reject.tl|tests/safety/mir_cfunc_value_lend_moved_reject.tl:10:23|use of moved value `s`

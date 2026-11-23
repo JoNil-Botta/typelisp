@@ -107,11 +107,11 @@ source tests/integration/bce_binary_interval.tl
 in fn _tl_bce_binary_interval_search_div
 count = 1 __bce_guard:$
 count >= 1 __bce_fast:$
-count = 1 call tl_oob_abort_at
+count = 1 call \.L_tl_abort_tl_oob_abort_at
 in fn _tl_bce_binary_interval_search_shift
 count = 1 __bce_guard:$
 count >= 1 __bce_fast:$
-count = 1 call tl_oob_abort_at
+count = 1 call \.L_tl_abort_tl_oob_abort_at
 
 # SROA-2: the four-word enum of the lattice join lives in registers -- no frame,
 # no wide copy, no frame-slot store or compare; JT-2 threads the equality match
@@ -281,7 +281,7 @@ not-match ^[[:space:]]+addq \$1, %r[a-z0-9]+$
 count = 1 ^[[:space:]]+leaq 16\(%r[a-z0-9]+\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
 match ^[[:space:]]+(shlq \$4, %r[a-z0-9]+|imulq \$16, %r[a-z0-9]+, %r[a-z0-9]+)$
-not-contains call tl_oob_abort
+not-match call (\.L_tl_abort_)?tl_oob_abort
 
 # No jmp may target a label reached by falling through label definitions only;
 # a then-only branch loses its merge jump, a two-armed one keeps it, and the
@@ -411,7 +411,7 @@ count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
 in fn tl_dfb_abort_only
 metric csr-pushes >= 2
 metric csr-pushes-parity = even
-contains call tl_oob_abort
+match call (\.L_tl_abort_)?tl_oob_abort
 count = 1 ^[[:space:]]+call[ ]
 count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
 count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
@@ -426,7 +426,7 @@ source tests/safety/dead_frame_abort_only_trap.tl
 in fn _tl_dead_frame_abort_only_trap_probe
 metric csr-pushes >= 2
 metric csr-pushes-parity = even
-contains call tl_oob_abort_at
+contains call .L_tl_abort_tl_oob_abort_at
 count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
 count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
 
@@ -447,7 +447,7 @@ contains jmp _tl_dead_frame_boundary_dfb_sink
 metric call-alignment:0 = ok
 match \.seh_stackalloc[ ]
 in fn tl_dfb_abort_only$typelisp
-contains call tl_oob_abort
+match call (\.L_tl_abort_)?tl_oob_abort
 match \.seh_stackalloc[ ]
 in fn _tl_dead_frame_boundary_dfb_returning
 contains call _tl_dead_frame_boundary_dfb_probe
@@ -474,7 +474,7 @@ count >= 1 ^[[:space:]]+call[ ]
 count = 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
 not-match [-][0-9]+\(%rsp\)
 in fn tl_rzl_abort
-contains call tl_oob_abort_at
+contains call .L_tl_abort_tl_oob_abort_at
 count = 1 ^[[:space:]]+call[ ]
 count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
 count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
@@ -511,7 +511,7 @@ case global-handle-cse
 source tests/integration/global_handle_cse.tl
 in fn _tl_global_handle_cse_probe
 count-fixed = 1 _tl_global_handle_cse_gtab(%rip)
-contains call tl_oob_abort
+match call (\.L_tl_abort_)?tl_oob_abort
 
 # GAP4: one length load and one data load survive the interleaved stores, and
 # the store goes through the forwarded data register.
@@ -540,7 +540,7 @@ source tests/integration/cmp_fold_load.tl
 in fn _tl_cmp_fold_load_check
 contains cmpq %rsi, 8(%rdi)
 not-match ^[[:space:]]+movq .*\(%r[^)]*\), %r
-not-contains call tl_oob_abort
+not-match call (\.L_tl_abort_)?tl_oob_abort
 
 # M6-I: a scalar global read folds into the compare's rip-relative operand, on
 # either side, with the unfolded branch sense; a twice-read local refuses.
@@ -754,15 +754,15 @@ in asm
 match ^_tl_synth_wrapped_probe_sp_probe:$
 count = 1 ^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$
 in fn _tl_synth_wrapped_probe_sp_get_or
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 
 case synth-wrapped-probe-abort
 source tests/integration/synth_wrapped_probe_abort.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_synth_wrapped_probe_abort_sp_get_or
 not-match ^[[:space:]]+call _tl_synth_wrapped_probe_abort_sp_probe$
-count >= 1 ^[[:space:]]+call tl_oob_abort
-count = 3 ^[[:space:]]+call tl_oob_abort_at$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+count = 3 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at$
 count = 0 ^[[:space:]]+call tl_oob_abort$
 in asm
 count >= 3 ^\.L_tl_abort_site_[0-9]+_bounds:$
@@ -784,7 +784,7 @@ in asm
 match ^_tl_synth_tail_wrapper_sp_get_or:$
 count = 1 ^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$
 in fn _tl_synth_tail_wrapper_sp_slot_id
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 
 case synth-tail-wrapper-abort
 source tests/integration/synth_tail_wrapper_abort.tl
@@ -792,8 +792,8 @@ target linux-x86_64 windows-x86_64
 in fn _tl_synth_tail_wrapper_abort_sp_slot_id
 not-match ^[[:space:]]+call _tl_synth_tail_wrapper_abort_sp_get_or$
 not-match ^[[:space:]]+jmp _tl_synth_tail_wrapper_abort_sp_get_or$
-count >= 1 ^[[:space:]]+call tl_oob_abort
-count = 3 ^[[:space:]]+call tl_oob_abort_at$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+count = 3 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at$
 count = 0 ^[[:space:]]+call tl_oob_abort$
 in asm
 count >= 3 ^\.L_tl_abort_site_[0-9]+_bounds:$
@@ -808,7 +808,7 @@ source tests/integration/synth_struct_accessor.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_synth_struct_accessor_sa_value
 not-match ^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 in asm
 match ^_tl_synth_struct_accessor_sa_lookup_in:$
 count = 1 ^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$
@@ -818,7 +818,7 @@ source tests/integration/synth_struct_accessor_abort.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_synth_struct_accessor_abort_sa_value
 not-match ^[[:space:]]+call _tl_synth_struct_accessor_abort_sa_lookup_in$
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 
 # Checked match-arm wrappers, post-multi-call lookups and dispatch arms inline
 # their checked callee while it stays reachable elsewhere.
@@ -834,7 +834,7 @@ in asm
 match ^_tl_checked_arm_wrapper_aw_get_or:$
 count = 1 ^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$
 in fn _tl_checked_arm_wrapper_aw_slot_id
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 
 case checked-arm-wrapper-abort
 source tests/integration/checked_arm_wrapper_abort.tl
@@ -842,7 +842,7 @@ target linux-x86_64 windows-x86_64
 in fn _tl_checked_arm_wrapper_abort_aw_slot_id
 not-match ^[[:space:]]+call _tl_checked_arm_wrapper_abort_aw_get_or$
 not-match ^[[:space:]]+jmp _tl_checked_arm_wrapper_abort_aw_get_or$
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 
 case checked-post-multi-call
 source tests/integration/checked_post_multi_call.tl
@@ -855,14 +855,14 @@ match 2654435761
 in asm
 match ^_tl_checked_post_multi_call_pm_probe:$
 in fn _tl_checked_post_multi_call_pm_lookup
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 
 case checked-post-multi-call-abort
 source tests/integration/checked_post_multi_call_abort.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_checked_post_multi_call_abort_pm_lookup
 not-match ^[[:space:]]+call _tl_checked_post_multi_call_abort_pm_probe$
-count >= 1 ^[[:space:]]+call tl_oob_abort
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
 
 case checked-dispatch-arm
 source tests/integration/checked_dispatch_arm.tl
@@ -871,7 +871,7 @@ match ^_tl_checked_dispatch_arm_da_dispatch:$
 in fn _tl_checked_dispatch_arm_da_dispatch
 not-match ^[[:space:]]+call _tl_checked_dispatch_arm_da_fold$
 not-match ^[[:space:]]+jmp _tl_checked_dispatch_arm_da_fold$
-count >= 8 ^[[:space:]]+call tl_oob_abort_at
+count >= 8 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at
 in asm
 match ^_tl_checked_dispatch_arm_da_fold:$
 
@@ -880,7 +880,7 @@ source tests/integration/checked_dispatch_arm_abort.tl
 target linux-x86_64 windows-x86_64
 in fn _tl_checked_dispatch_arm_abort_da_dispatch
 not-match ^[[:space:]]+call _tl_checked_dispatch_arm_abort_da_fold$
-count >= 8 ^[[:space:]]+call tl_oob_abort_at
+count >= 8 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at
 
 # A constant index's bounds check compares an immediate.
 case const-index-bounds
@@ -888,7 +888,7 @@ source tests/integration/const_index_bounds.tl
 in fn _tl_const_index_bounds_get2
 contains cmpq $2, %rax
 not-match ^[[:space:]]+mov[lq][[:space:]]+\$2,
-contains call tl_oob_abort
+match call (\.L_tl_abort_)?tl_oob_abort
 
 # %rbp is the sixth callee-saved register, used as a value (never a frame base).
 case rbp-sixth-csr
@@ -961,7 +961,7 @@ source tests/integration/licm_desc_hoist.tl
 in fn _tl_licm_desc_hoist_sum_loop
 count = 1 ^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$
-contains call tl_oob_abort
+match call (\.L_tl_abort_)?tl_oob_abort
 
 # A global cell read across a memory-clean call is promoted to a register;
 # under register pressure, or with a writing callee, it is not.
@@ -1438,7 +1438,7 @@ in fn _tl_alias_typed_word_atw_scan_ints
 narrow after:^\.L[A-Za-z0-9_.]*while_body\.1:$
 count = 0 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
-contains call tl_oob_abort_at
+contains call .L_tl_abort_tl_oob_abort_at
 
 # The versioned global shift loop's fast self-loop is check-free with a folded
 # +24 store and no global reload.
@@ -1447,7 +1447,7 @@ source tests/integration/alias_global_shift.tl
 in fn main
 narrow fast-self-loop:, 24(
 not-contains _tl_alias_global_shift_al_vec(%rip)
-not-contains call tl_oob_abort
+not-match call (\.L_tl_abort_)?tl_oob_abort
 count = 0 ^[[:space:]]+j(ae|b)[ ]
 count = 1 ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 24\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
@@ -1459,7 +1459,7 @@ case vt-offset-copy
 source tests/integration/vt_offset_copy.tl
 in fn main
 narrow fast-region:,8), %r
-not-contains call tl_oob_abort
+not-match call (\.L_tl_abort_)?tl_oob_abort
 count = 0 ^[[:space:]]+j(ae|b)[ ]
 count = 1 ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
@@ -1470,7 +1470,7 @@ case vt-derived-stride
 source tests/integration/vt_derived_stride.tl
 in fn main
 narrow fast-region:movq 8(%r
-not-contains call tl_oob_abort
+not-match call (\.L_tl_abort_)?tl_oob_abort
 count = 0 ^[[:space:]]+j(ae|b)[ ]
 count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
 count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$

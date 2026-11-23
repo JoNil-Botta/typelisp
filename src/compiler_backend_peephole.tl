@@ -499,7 +499,7 @@
 ;;
 ;; So a push (or an `%rsp`-lowering `subq`) does not commit its depth at once:
 ;; it enters a two-slot pending window, and the third one displaces the oldest
-;; into `deepest`. The `leaq .L_tl_abort_site_...` that only a located abort
+;; into `deepest`. The `# tl_abort_operand_stage` that only a located abort
 ;; tail emits HOLDS the window's entries -- its own two pushes, and never more,
 ;; since nothing else is enqueued between them and it -- and the noreturn abort
 ;; call that follows DISCARDS them, which is the continuation that proves the
@@ -598,18 +598,18 @@
                     (be_state.compiler-backend-peephole-byte-at data (- end 2))
                     115))]
               (cond
-                ;; The located abort tail's descriptor load: hold the two
+                ;; The located abort tail's staging marker: hold the two
                 ;; pushes in front of it until the continuation says whether
                 ;; the path returns. Only reachable while something is
                 ;; pending, so an ordinary line pays one integer compare.
                 [(and
                   (> pend-count 0)
-                  (<= (+ m 22) end)
+                  (<= (+ m 24) end)
                   (be_operand.compiler-backend-peephole-range-eq?
                     data
                     m
-                    (+ m 22)
-                    "leaq .L_tl_abort_site_"))
+                    (+ m 24)
+                    "# tl_abort_operand_stage"))
                   (if (>= held-count 1)
                     (if (> held0 deepest)
                       (set! deepest held0)
@@ -2266,16 +2266,15 @@
       (set! (deref data).sweep-addr-flushed (deref data).sweep-addr-count)
       (set! (deref data).sweep-addr-overflow false))))
 
-;; First record at/after `start` whose trimmed content begins ".globl" (the next
-;; function/helper boundary); returns that record's index, or `count`. The probe
-;; is a packed bit decided once, when the record was built.
+;; First function or helper boundary at/after `start`, or `count`. The
+;; probe is a packed bit decided once, when the record was built.
 (define (compiler-backend-sweep-region-end-records
   [recs : (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord)]
   [start : i64]
   [count : i64]) : i64
   (for [i (iterator.range start count)]
     (when
-      (compiler-backend-peephole-record-globl?
+      (compiler-backend-peephole-record-sweep-boundary?
         (be_state.compiler-backend-global-array-element-shared-view recs i))
       (return i)))
   count)
@@ -3716,6 +3715,7 @@
         (= (be_state.compiler-backend-peephole-byte-at data (- e 1)) 32))
         (-= e 1))
       (or
+        (compiler-backend-cold-prefix? data i e "call .L_tl_abort_tl_")
         (be_operand.compiler-backend-peephole-range-eq?
           data
           i
@@ -4987,7 +4987,7 @@
   4294967295)
 
 ;; `meta` low half: sweep line kind, the 13 sweep line flags in their own bit
-;; values, the two render bits, the `.globl` region-boundary bit and the access
+;; values, the two render bits, the sweep boundary bit and the access
 ;; width. High half: the count of `(%rsp)` memory references, which is bounded
 ;; by the line length and so always fits.
 (define compiler-backend-peephole-record-kind-mask : i64
@@ -5000,7 +5000,7 @@
   32768)
 (define compiler-backend-peephole-record-owned-bit : i64
   65536)
-(define compiler-backend-peephole-record-globl-bit : i64
+(define compiler-backend-peephole-record-sweep-boundary-bit : i64
   131072)
 (define compiler-backend-peephole-record-width-shift : i64
   18)
@@ -5050,9 +5050,10 @@
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : bool
   (not (= (bit-and rec.meta compiler-backend-peephole-record-owned-bit) 0)))
 
-(define (compiler-backend-peephole-record-globl?
+(define (compiler-backend-peephole-record-sweep-boundary?
   [rec : be_state.CompilerBackendPeepholeLineRecord]) : bool
-  (not (= (bit-and rec.meta compiler-backend-peephole-record-globl-bit) 0)))
+  (not
+    (= (bit-and rec.meta compiler-backend-peephole-record-sweep-boundary-bit) 0)))
 
 (define (compiler-backend-peephole-record-width
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : i64
@@ -5114,7 +5115,7 @@
       (bit-or
         (compiler-backend-peephole-desc-start line)
         (shl end compiler-backend-peephole-record-span-shift))]
-    ;; newline / owned / `.globl` bits plus the width every non-instruction
+    ;; Newline, ownership and sweep boundary bits plus the width every non-instruction
     ;; record carries. Shared by all four record shapes below.
     [base-meta : i64
       (bit-or
@@ -5128,12 +5129,23 @@
         (if (and
           (<= (+ ms 6) end)
           (= (be_state.compiler-backend-peephole-byte-at data ms) 46)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 1)) 103)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 2)) 108)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 3)) 111)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 4)) 98)
-          (= (be_state.compiler-backend-peephole-byte-at data (+ ms 5)) 108))
-          compiler-backend-peephole-record-globl-bit
+          (or
+            (and
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 1)) 103)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 2)) 108)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 3)) 111)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 4)) 98)
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 5)) 108))
+            ;; The conditional lookup helper is object-local. Its frame is
+            ;; independent of the preceding user's function, like a .globl.
+            (and
+              (= (be_state.compiler-backend-peephole-byte-at data (+ ms 1)) 105)
+              (be_operand.compiler-backend-peephole-range-eq?
+                data
+                ms
+                end
+                ".ifdef .L_tl_abort_table"))))
+          compiler-backend-peephole-record-sweep-boundary-bit
           0))]
     [plain-meta : i64
       (bit-or base-meta (shl 8 compiler-backend-peephole-record-width-shift))]
@@ -7372,16 +7384,15 @@
 ;;       jb .Lf27_bounds_ok.3                 jae .Lf27_bounds_ok.3.cold
 ;;       pushq %r9                          .Lf27_bounds_ok.3:
 ;;       ...                                  ...
-;;       call tl_oob_abort_at                 (last line of the function body)
-;;       jmp .L_tl_abort_site_1_bounds_end  .Lf27_bounds_ok.3.cold:
-;;       .balign 8                            pushq %r9
-;;     .L_tl_abort_site_1_bounds:             ...
-;;       .quad ...                            call tl_oob_abort_at
-;;     .L_tl_abort_site_1_bounds_end:         ... site descriptor ...
-;;     .Lf27_bounds_ok.3:                     jmp .Lf27_bounds_ok.3
+;;       call .L_tl_abort_tl_oob_abort_at      (last line of the function body)
+;;     .L_tl_abort_site_1_bounds:             .Lf27_bounds_ok.3.cold:
+;;       .tl_abort_row ...                    ...
+;;     .Lf27_bounds_ok.3:                     call .L_tl_abort_tl_oob_abort_at
+;;                                          .L_tl_abort_site_1_bounds:
+;;                                            .tl_abort_row ...
 ;;
 ;; Inline, every passed check costs a TAKEN branch and leaves 40-80 bytes of
-;; never-executed code and descriptor data between two hot instructions, which
+;; never-executed code between two hot instructions, which
 ;; spreads a loop over more fetch blocks, i-cache lines and uop-cache ways. This
 ;; is the placement LLVM gives a noreturn path (cold-block placement): out of
 ;; line, so the passing check falls through, not-taken, into the next hot
@@ -7391,17 +7402,15 @@
 ;; The rewrite runs at render time, after every peephole, sweep and fold has
 ;; finished with the record stream, so no textual analysis ever sees the new
 ;; order. It preserves semantics by construction: the inverted jump reaches the
-;; stub under exactly the condition that falls into it inline, the stub runs
-;; with the same registers and stack, and the `jmp` appended to it keeps the
-;; original (never taken) fall-through edge back to the continuation.
+;; stub under exactly the condition that falls into it inline. The stub runs
+;; with the same registers and stack and the abort call has no return edge.
 ;;
 ;; A stub moves only when the records between the jump and its target label are
 ;; all stub-shaped: at least one noreturn abort call
 ;; (`compiler-backend-peephole-line-noreturn-abort?`), no other call, no `ret`,
-;; no conditional jump, `jmp` only to the stub's own `.L_tl_abort_site_` labels,
-;; no directive but `.balign`/`.p2align`/`.quad`, and no label but the stub's own
-;; `.L_tl_abort_site_` data labels. Nothing position-dependent (`.loc`, CFI, SEH,
-;; a section switch, a numeric local label) can therefore move. The moved stub
+;; no jump, and no label except the stub's own `.L_tl_abort_site_` return
+;; address labels. The row directive and operand staging comment travel with
+;; the stub. Position-dependent directives (`.loc`, CFI, SEH) stay in place. The moved stub
 ;; is named after its unique continuation label (`T.cold`); a stub that closes
 ;; at a numeric `1:` is named after its unique abort-site label instead, keeps
 ;; `1:` in place for any other `1f` that targets it, and returns through a
@@ -7425,7 +7434,7 @@
 ;; jumps to the first one's label (`compiler-backend-cold-shared-body`). The
 ;; body runs the same instruction from any check, and the shared stub stays
 ;; inside the function, so only the never-used return address differs. A stub
-;; with staged arguments, a site descriptor or a `.loc` line keeps its own.
+;; with staged arguments, a site row or a `.loc` line keeps its own.
 (define compiler-backend-cold-stub-scan-limit : i64
   48)
 
@@ -7741,38 +7750,15 @@
                                     "call")
                                   (set! result (- 0 1))]
                                 [else unit]))]
-                          [(= lead 106)
-                            (let
-                              [last : i64
-                                (compiler-backend-cold-line-last data first end)]
-                              [op-end : i64
-                                (compiler-backend-cold-token-end
-                                  data
-                                  first
-                                  last)]
-                              (if (and
-                                (be_operand.compiler-backend-peephole-range-eq?
-                                  data
-                                  first
-                                  op-end
-                                  "jmp")
+                          [(or
+                              (= lead 106)
+                              (and
+                                (= lead 114)
                                 (compiler-backend-cold-prefix?
                                   data
-                                  (compiler-backend-cold-line-first
-                                    data
-                                    op-end
-                                    last)
-                                  last
-                                  ".L_tl_abort_site_"))
-                                unit
-                                (set! result (- 0 1))))]
-                          [(and
-                              (= lead 114)
-                              (compiler-backend-cold-prefix?
-                                data
-                                first
-                                end
-                                "ret"))
+                                  first
+                                  end
+                                  "ret")))
                             (set! result (- 0 1))]
                           ;; A stub stages at most a handful of abort arguments
                           ;; before its call; a longer run is ordinary code.
@@ -7792,17 +7778,14 @@
                             data
                             first
                             last
-                            ".balign ")
-                          (compiler-backend-cold-prefix?
-                            data
-                            first
-                            last
-                            ".p2align ")
-                          (compiler-backend-cold-prefix?
-                            data
-                            first
-                            last
-                            ".quad "))
+                            "# tl_abort_operand_stage")
+                          (and
+                            saw-abort
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              ".tl_abort_row ")))
                           unit
                           (set! result (- 0 1))))])))
               (+= j 1))))
@@ -8021,6 +8004,12 @@
                 (be_state.compiler-backend-peephole-byte-at data first)
                 0)]
             (cond
+              [(compiler-backend-cold-prefix?
+                  data
+                  first
+                  end
+                  "# tl_abort_operand_stage")
+                (-= j 1)]
               [(not
                   (=
                     (compiler-backend-peephole-record-kind rec)
@@ -8460,85 +8449,7 @@
       (ptr-write! (ptr-offset dst (+ pos n)) (cast 10 : u8)))
     (+ pos (+ n 1))))
 
-;; Emit planned stubs [from, to) out of line.
-;; A stub's records, copied out of line. Its abort call never returns, so
-;; nothing after the call is reached: the `jmp` that stepped over the site
-;; descriptor, and the continuation label that jump was the only reader of, are
-;; left behind, and no jump back to the hot path is written. The descriptor
-;; itself stays -- the call's argument addresses it. A stub has no other exit
-;; (the planner admits only the abort sequence), so this drops no live path.
-(define (compiler-backend-cold-stub-body!
-  [v : be_state.CompilerBackendPeepholeLineVec]
-  [from : i64]
-  [to : i64]
-  [dst : (MutPtr u8)]
-  [start-pos : i64]) : i64
-  (let
-    [pos : i64 start-pos]
-    [cursor : i64 from]
-    [after-call? : bool false]
-    [skip-label : String ""]
-    (for [j (iterator.range from to)]
-      (when
-        (= (array-ref v.live j) 1)
-        (let
-          [rec : be_state.CompilerBackendPeepholeLineRecord
-            (be_state.compiler-backend-global-array-element-shared-view
-              v.lines
-              j)]
-          [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
-          [start : i64 (compiler-backend-peephole-record-start rec)]
-          [end : i64 (compiler-backend-peephole-record-end rec)]
-          [first : i64 (compiler-backend-cold-line-first data start end)]
-          [last : i64 (compiler-backend-cold-line-last data first end)]
-          [kind : i64 (compiler-backend-peephole-record-kind rec)]
-          (cond
-            [(and
-                (= kind compiler-backend-sweep-line-kind-instruction)
-                (compiler-backend-peephole-line-noreturn-abort? data start end))
-              (set! after-call? true)]
-            [(and
-              after-call?
-              (= kind compiler-backend-sweep-line-kind-instruction)
-              (compiler-backend-cold-prefix? data first last "jmp "))
-              (set!
-                pos
-                (compiler-backend-peephole-records-blit-range!
-                  v
-                  cursor
-                  j
-                  dst
-                  pos))
-              (set! cursor (+ j 1))
-              (set!
-                skip-label
-                (str_cat.str-cat
-                  (string.substring rec.src (+ first 4) (- last (+ first 4)))
-                  ":"))
-              (set! after-call? false)]
-            [(and
-              (= kind compiler-backend-sweep-line-kind-label)
-              (> (string.string-length skip-label) 1)
-              (be_operand.compiler-backend-peephole-range-eq?
-                data
-                first
-                last
-                skip-label))
-              (set!
-                pos
-                (compiler-backend-peephole-records-blit-range!
-                  v
-                  cursor
-                  j
-                  dst
-                  pos))
-              (set! cursor (+ j 1))
-              (set! skip-label "")]
-            [(= kind compiler-backend-sweep-line-kind-instruction)
-              (set! after-call? false)]
-            [else unit]))))
-    (compiler-backend-peephole-records-blit-range! v cursor to dst pos)))
-
+;; Emit planned stubs [from, to) out of line. Each call and its row move together.
 (define (compiler-backend-cold-emit-stubs!
   [v : be_state.CompilerBackendPeepholeLineVec]
   [plan : CompilerBackendColdPlan]
@@ -8573,8 +8484,8 @@
                 pos)))
           (set!
             pos
-            (compiler-backend-cold-stub-body!
-              (be_state.compiler-backend-global-shared-view v)
+            (compiler-backend-peephole-records-blit-range!
+              v
               (+ (array-ref plan.jcc k) 1)
               (array-ref plan.target k)
               dst

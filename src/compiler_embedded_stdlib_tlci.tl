@@ -4714,7 +4714,7 @@
   [session : i64]
   [arg-a : i64]
   [arg-b : i64]
-  [_arg-c : i64]) : i64
+  [type-item : i64]) : i64
   (compiler-comptime-host-status-callback
     session
     (if (or
@@ -4727,25 +4727,32 @@
           (compiler-comptime-host-array-element-shared-view
             compiler-comptime-host-locals
             arg-a)]
-        (match (compiler-comptime-host-value-expr-list value)
-          [(Some items)
-            (if (or
-              (< arg-b 0)
-              (>= arg-b (ctfe_support.ctfe-expr-list-length items)))
-              tlci.tlci-host-callback-status-bad-request
-              (let
-                [node : i64 (ctfe_support.ctfe-expr-list-nth items arg-b)]
-                (match value
-                  [(CapturedExprList _ pools)
-                    (compiler-comptime-host-push!
-                      (CapturedExpr
-                        node
-                        (ctfe_support.ctfe-untyped-expr-type)
-                        pools))]
-                  [_
-                    (compiler-comptime-host-push!
-                      (Expr node (ctfe_support.ctfe-untyped-expr-type)))])))]
-          [(None) tlci.tlci-host-callback-status-bad-request])))))
+        (if (= type-item 1)
+          (compiler-comptime-host-replace-built!
+            0
+            (ctfe_support.ctfe-expr-list-type-nth
+              (& value)
+              arg-b
+              (compiler-comptime-host-session-pools)))
+          (match (compiler-comptime-host-value-expr-list value)
+            [(Some items)
+              (if (or
+                (< arg-b 0)
+                (>= arg-b (ctfe_support.ctfe-expr-list-length items)))
+                tlci.tlci-host-callback-status-bad-request
+                (let
+                  [node : i64 (ctfe_support.ctfe-expr-list-nth items arg-b)]
+                  (match value
+                    [(CapturedExprList _ pools)
+                      (compiler-comptime-host-push!
+                        (CapturedExpr
+                          node
+                          (ctfe_support.ctfe-untyped-expr-type)
+                          pools))]
+                    [_
+                      (compiler-comptime-host-push!
+                        (Expr node (ctfe_support.ctfe-untyped-expr-type)))])))]
+            [(None) tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; Local-slot twins of the operand Expr shape probes. They inspect the
 ;; let-bound Expr without consuming or duplicating its stack value and answer

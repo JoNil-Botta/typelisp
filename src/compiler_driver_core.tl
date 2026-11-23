@@ -1777,7 +1777,7 @@
 
 (cfg
   compile-profile
-  (define (compiler-driver-batch-profile-line
+  (define (compiler-driver-batch-profile-print!
     [ordinal : i64]
     [marker : String]
     [elapsed-ms : i64]
@@ -1785,19 +1785,26 @@
     [live-delta : i64]
     [peak-delta : i64]
     [live-bytes : i64]
-    [baseline-delta : i64]) : String
-    (str_cat.str-cat
-      "\ncompile-batch-profile|"
-      (string.int->string ordinal)
-      "|"
-      marker
-      (compiler-driver-profile-field elapsed-ms)
-      (compiler-driver-profile-field alloc-delta)
-      (compiler-driver-profile-field live-delta)
-      (compiler-driver-profile-field peak-delta)
-      (compiler-driver-profile-field live-bytes)
-      (compiler-driver-profile-field baseline-delta)
-      "\n")))
+    [baseline-delta : i64]) : unit
+    ;; Entry-start and steady rows run in the batch's long-lived arena.
+    ;; Reclaim each row's formatting buffers as soon as it is written.
+    (let
+      [mark : arena.ArenaMark (arena.mark)]
+      (io.print-error
+        (str_cat.str-cat
+          "\ncompile-batch-profile|"
+          (string.int->string ordinal)
+          "|"
+          marker
+          (compiler-driver-profile-field elapsed-ms)
+          (compiler-driver-profile-field alloc-delta)
+          (compiler-driver-profile-field live-delta)
+          (compiler-driver-profile-field peak-delta)
+          (compiler-driver-profile-field live-bytes)
+          (compiler-driver-profile-field baseline-delta)
+          "\n"))
+      (unsafe
+        (arena.rewind mark)))))
 
 (cfg
   compile-profile
@@ -1838,20 +1845,19 @@
         compiler-driver-batch-profile-best-peak-metric
         0)
       (compiler-driver-batch-profile-reset-baseline! state)
-      (io.print-error
-        (compiler-driver-batch-profile-line
-          ordinal
-          "entry-start"
-          0
-          0
-          0
-          0
+      (compiler-driver-batch-profile-print!
+        ordinal
+        "entry-start"
+        0
+        0
+        0
+        0
+        live-bytes
+        (-
           live-bytes
-          (-
-            live-bytes
-            (compiler-driver-profile-value
-              state
-              compiler-driver-batch-profile-first-live-metric)))))))
+          (compiler-driver-profile-value
+            state
+            compiler-driver-batch-profile-first-live-metric))))))
 
 (cfg
   compile-profile
@@ -1874,32 +1880,31 @@
               (compiler-driver-profile-value
                 state
                 compiler-driver-batch-profile-start-live-metric))))]
-      (io.print-error
-        (compiler-driver-batch-profile-line
-          ordinal
-          marker
-          (-
-            end-ms
-            (compiler-driver-profile-value
-              state
-              compiler-driver-batch-profile-start-ms-metric))
-          (-
-            end-total
-            (compiler-driver-profile-value
-              state
-              compiler-driver-batch-profile-start-total-metric))
-          (-
-            end-live
-            (compiler-driver-profile-value
-              state
-              compiler-driver-batch-profile-start-live-metric))
-          peak-delta
+      (compiler-driver-batch-profile-print!
+        ordinal
+        marker
+        (-
+          end-ms
+          (compiler-driver-profile-value
+            state
+            compiler-driver-batch-profile-start-ms-metric))
+        (-
+          end-total
+          (compiler-driver-profile-value
+            state
+            compiler-driver-batch-profile-start-total-metric))
+        (-
           end-live
-          (-
-            end-live
-            (compiler-driver-profile-value
-              state
-              compiler-driver-batch-profile-first-live-metric))))
+          (compiler-driver-profile-value
+            state
+            compiler-driver-batch-profile-start-live-metric))
+        peak-delta
+        end-live
+        (-
+          end-live
+          (compiler-driver-profile-value
+            state
+            compiler-driver-batch-profile-first-live-metric)))
       (compiler-driver-profile-set!
         state
         compiler-driver-batch-profile-best-peak-metric

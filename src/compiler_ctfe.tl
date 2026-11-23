@@ -6496,8 +6496,8 @@
   (ctfe-reflected-root-name-id session name-id))
 
 ;; The reference a `""` module owner denotes. Only an authorized owner names
-;; the entry module, and only a plain spelling can become its reference: an
-;; inspected identity already says what it refers to.
+;; the entry module. A name with a structural syntax identity already says
+;; what it refers to. Computed declaration names still need root authority.
 (define (ctfe-root-reference-id
   [state : CompilerCtfeMacroState]
   [name-id : i64]
@@ -6505,8 +6505,7 @@
   (if (and
     root-authority
     (< name-id (ci.intern-structural-key-base))
-    (not (= name-id cbi.compiler-builtin-id-fix-empty))
-    (not (ci.intern-generated-id-active? name-id)))
+    (not (= name-id cbi.compiler-builtin-id-fix-empty)))
     (ctfe-reflected-root-declaration-id
       (compiler-ctfe-macro-state-structural-session state)
       name-id)
@@ -6558,12 +6557,12 @@
                 (Var
                   (if (string.eq module "")
                     (ctfe-root-reference-id state name-id root-authority)
-                    (if (or
-                      (ci.intern-generated-canonical-id? module-id)
-                      (ci.intern-generated-canonical-id? name-id))
-                      (ctfe-generated-dotted-append-member-id module-id name-id)
-                      (ci.intern
-                        (str_cat.str-cat module (str_cat.str-cat "." name)))))))
+                    (cis.intern-macro-global-identity-raw
+                      (cis.intern-structural-session-macro-global-identity
+                        (compiler-ctfe-macro-state-structural-session state)
+                        cis.InternMacroGlobalRole.Context
+                        module-id
+                        name-id)))))
               (ctfe-untyped-expr-type))]))]
     [(None)
       (if (= query-kind 0)

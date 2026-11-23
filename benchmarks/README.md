@@ -49,7 +49,9 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | `mul_small_constants` | Serial wrapping multiply/xor recurrence using factors 3, 5, and 9; exposes constant-multiply latency without affine recurrence folding. |
 | `mul_wide_power` | The same serial multiply/xor recurrence with the wide power-of-two factor 2^34. |
 | `array_sum` | `Vec i64` fill + repeated backing-storage sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
-| `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads separated by a direct call that writes through a distinct mutable-reference root (refs #5201, #5216). The C baseline keeps that call `noinline`; the TypeLisp side inlines it since #8137 (see the benchmark header). The read field is a runtime input on both sides (#8914). |
+| `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads around writes through a distinct mutable-reference root (refs #5201, #5216). Both compilers can inline. Each iteration updates the exclusive pair, and both executables consume its final state. |
+| `fp_mixed_recurrence` | Mixed integer and floating-point parameters enter a leaf that computes an index-weighted recurrence in `f64`. |
+| `fp_taylor_exp` | Degree-12 Taylor approximation of `exp` on a bounded interval, using the same polynomial as `math_exp/taylor_exp.tl`. |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
 | `hashmap_get` | Generated i64/i64 hashmap hit/miss lookups on a fixed map, focused on the read probe path (refs #2166). |
 | `hashmap_insert` | Repeatedly build and populate a fresh generated i64/i64 hashmap, focused on the insert probe path (refs #2165). |

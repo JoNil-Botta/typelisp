@@ -23770,11 +23770,9 @@
 ;; A Linux shared object needs object code with no text relocation, no
 ;; local-exec TLS and no exported internal symbol. The emission keeps the
 ;; executable code everywhere else, so the model is applied by one pass over
-;; the finished assembly (`compiler-backend-shared-object-assembly`) plus two
-;; emission changes the pass cannot make: the program has no entry, only
-;; `tl_shared_object_init`, and an abort-site descriptor is placed in
-;; `.data.rel.ro` instead of inline in `.text`. The executable code model's
-;; output is unchanged.
+;; the finished assembly (`compiler-backend-shared-object-assembly`) plus
+;; one emission change the pass cannot make: `tl_shared_object_init` takes
+;; the place of the executable entry point.
 (define (compiler-backend-shared-object-target-message
   [target : be_state.CompilerBackendTarget]) : String
   (str_cat.str-cat
@@ -23957,7 +23955,9 @@ tl_shared_object_init:
                 (be_state.compiler-backend-global-shared-view functions)
                 program-index
                 (be_state.compiler-backend-global-shared-view span-index)))
-            (be_scalar.compiler-backend-backtrace-map-prefix target))]
+            (str_cat.str-cat
+              (be_scalar.compiler-backend-backtrace-map-prefix target)
+              (be_scalar.compiler-backend-abort-table-prefix target)))]
         [function-input : text_buf.TextBuf
           (if (be_facts.compiler-backend-assembly-stream-active?
             (be_state.compiler-backend-state-stream-state
@@ -24040,6 +24040,10 @@ tl_shared_object_init:
                   (text_buf.append
                     with-functions
                     (str_cat.str-cat
+                      (be_scalar.compiler-backend-abort-table-trailer
+                        target
+                        (be_state.compiler-backend-state-abort-site-counter
+                          program-index.backend-state))
                       (be_scalar.compiler-backend-backtrace-map-trailer target)
                       (be_scalar.compiler-backend-debug-trailer
                         target

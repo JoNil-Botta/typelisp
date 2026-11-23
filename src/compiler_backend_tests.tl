@@ -4885,7 +4885,7 @@
           (asm-has?
             asm
             "    jae .Lf0_str_bounds_ok.0.cold\n.Lf0_str_bounds_ok.0:\n")
-          (asm-has? asm "    call tl_oob_abort")
+          (asm-has? asm "    call .L_tl_abort_tl_oob_abort_at\n")
           (asm-lacks? asm "tl_oob_abort:\n"))
         (be_state.backend-and4
           (asm-has? asm "    movq 8(%r10), %r8\n")
@@ -11092,18 +11092,12 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
-    jmp .L_tl_abort_site_1_bounds_end
-    .balign 8
+    call .L_tl_abort_tl_oob_abort_at
 .L_tl_abort_site_1_bounds:
-    .quad .L_tl_str_data
-    .quad 18
-    .quad 4
-    .quad 9
-.L_tl_abort_site_1_bounds_end:
+    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at
 .Lf0_bounds_ok.1:
     movq -8(%rbp), %r10
     movq (%r10), %rax
@@ -11114,18 +11108,12 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
-    jmp .L_tl_abort_site_1_bounds_end
-    .balign 8
+    call .L_tl_abort_tl_oob_abort_at
 .L_tl_abort_site_1_bounds:
-    .quad .L_tl_str_data
-    .quad 18
-    .quad 4
-    .quad 9
-.L_tl_abort_site_1_bounds_end:
+    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at
 .Lf0_bounds_ok.1:
     movq (%r10), %rax
 "]
@@ -11192,10 +11180,10 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
+    call .L_tl_abort_tl_oob_abort_at
     jmp .Lf0_bounds_ok.1
 .Lf0_bounds_ok.1:
     movq -8(%rbp), %r10
@@ -11207,10 +11195,10 @@ high:
     ja .Lf0_bounds_ok.1
     pushq 16(%rbp)
     pushq $5
-    leaq .L_tl_abort_site_1_bounds(%rip), %rdi
+    # tl_abort_operand_stage
     popq %rsi
     popq %rdx
-    call tl_oob_abort_at
+    call .L_tl_abort_tl_oob_abort_at
 .Lf0_bounds_ok.1:
     movq (%r10), %rax
 "]
@@ -12083,11 +12071,11 @@ high:
     ".text\n.globl f\n    .type f,@function\nf:\n"
     "    cmpq %r9, %rdi\n    jb .Lf0_bounds_ok.1\n"
     "    pushq %r9\n    pushq %rdi\n"
-    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
-    "    popq %rsi\n    popq %rdx\n    call tl_oob_abort_at\n"
-    "    jmp .L_tl_abort_site_1_bounds_end\n    .balign 8\n"
-    ".L_tl_abort_site_1_bounds:\n    .quad 7\n"
-    ".L_tl_abort_site_1_bounds_end:\n.Lf0_bounds_ok.1:\n"
+    "    # tl_abort_operand_stage\n"
+    "    popq %rsi\n    popq %rdx\n    call .L_tl_abort_tl_oob_abort_at\n"
+    ".L_tl_abort_site_1_bounds:\n"
+    "    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"
+    ".Lf0_bounds_ok.1:\n"
     "    testq %r8, %r8\n    jne 1f\n    call tl_div_abort\n1:\n"
     "    cmpq $0, %rax\n    jb .Lf0_mixed\n    testq %rcx, %rcx\n"
     "    jne .Lf0_mixed\n    call tl_oob_abort\n.Lf0_mixed:\n"
@@ -12138,14 +12126,11 @@ high:
         out
         "    jb .Lf0_calls\n    call helper\n    call tl_oob_abort\n.Lf0_calls:\n")
       (asm-has? out "    jne .Lf0_keep\n    movq $1, %rax\n")
-      ;; The stubs, descriptor data included, sit after the last hot
-      ;; instruction and inside the function's `.size` range. The abort call
-      ;; never returns, so nothing follows it but the descriptor: no jump over
-      ;; the descriptor, no jump back to the continuation, and no `.back`
-      ;; label for one.
+      ;; The return label and its row stay with the cold call inside the
+      ;; function range. The noreturn call needs no jump to the continuation.
       (asm-has?
         out
-        "    call tl_oob_abort_at\n    .balign 8\n.L_tl_abort_site_1_bounds:\n    .quad 7\n.Lf0_bounds_ok.1.stub1.cold:\n")
+        "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_1_bounds:\n    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n.Lf0_bounds_ok.1.stub1.cold:\n")
       (asm-lacks? out "_bounds_end")
       (asm-lacks? out ".back")
       (> ret-at 0)
@@ -13124,7 +13109,7 @@ f:
 .Lf0_entry:
     cmpq %rdx, %r9
     jb .Lf0_ok
-    call tl_oob_abort_at
+    call .L_tl_abort_tl_oob_abort_at
     jmp .Lf0_join
 .Lf0_ok:
     addq $1, %r9
@@ -28243,7 +28228,7 @@ entry:
     (lacks "%rax")))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
-;; trap reaches the backend as a location-aware `call tl_oob_abort_at`.
+;; trap reaches the backend as a location-aware `call .L_tl_abort_tl_oob_abort_at`.
 (define (compiler-backend-array-access-source) : String
   "(define (get [a : (__tl_dyn-array i64)] [i : i64]) : i64 (array-ref a i))
 (define (main) : i64 0)")
@@ -28252,7 +28237,7 @@ entry:
   (asm-ok?
     (backend.compiler-backend-emit-source
       (compiler-backend-array-access-source))
-    (has "call tl_oob_abort_at")))
+    (has "call .L_tl_abort_tl_oob_abort_at")))
 
 ;; Fixed-size array set/ref emit-shape coverage. The source takes the
 ;; fixed array as a parameter; a separate literal source below covers the
@@ -28275,7 +28260,7 @@ entry:
           ;; %r10 (scratch reg choice changed); still a 64-bit cmpq against 3.
           (asm-has? asm "    cmpq $3, %r10\n")
           (asm-lacks? asm "    movl $3, %r11d\n")
-          (asm-has? asm "    call tl_oob_abort_at\n")
+          (asm-has? asm "    call .L_tl_abort_tl_oob_abort_at\n")
           ;; The index is checked before the value; the scalar element's
           ;; address is formed at the store, inside its operand.
           (asm-has? asm "    movq %r9, (%r10,%r8,8)\n")
@@ -28305,7 +28290,7 @@ entry:
       (and
         (asm-has? asm "main:\n")
         (= (backend.compiler-backend-string-count asm "    call tl_alloc\n") 0)
-        (asm-has? asm "    call tl_oob_abort_at\n")
+        (asm-has? asm "    call .L_tl_abort_tl_oob_abort_at\n")
         (not
           (let
             [needle (compiler-backend-todo-marker)]
@@ -30919,7 +30904,7 @@ entry:
           (asm-has?
             asm
             "    testq %r8, %r8\n    je .L_tl_abort_site_1_div_zero.cold\n1:\n")
-          (asm-has? asm "    call tl_div_abort_at\n")
+          (asm-has? asm "    call .L_tl_abort_tl_div_abort_at\n")
           (asm-has? asm "    cmpq $1, %rax\n    jno 1f\n")
           (asm-has?
             asm
@@ -30927,7 +30912,7 @@ entry:
           (asm-has? asm "    cqto\n")
           (asm-has? asm "    idivq %r8\n")
           (asm-has? asm "    movq %rdx, %rax\n")
-          (asm-has? asm "    .quad 46\n"))
+          (asm-has? asm ", 1, 46, tl_div_abort_at\n"))
         (asm-lacks? asm "    call tl_div_abort\n" ".globl tl_div_abort\n")
         (not
           (let
@@ -31654,7 +31639,7 @@ entry:
         (asm-has?
           asm
           "    cmpq $64, %r8\n    jae .L_tl_abort_site_2_shift_large.cold\n")
-        (asm-has? asm "    call tl_shift_abort_at\n")
+        (asm-has? asm "    call .L_tl_abort_tl_shift_abort_at\n")
         (asm-lacks? asm ".globl tl_shift_abort\n")
         (asm-lacks? asm ".L_tl_shift_msg:")
         (asm-lacks? asm "    shlq $-1, %rax\n")
@@ -39277,7 +39262,7 @@ b_keep:
 ;; they reach are dead there and compiler-backend-red-zone-decide! must not
 ;; charge the guard for them. Every OTHER dip -- a c-ABI window, a phi
 ;; cycle-break push, a real `subq` -- still counts in full, and so does a
-;; descriptor load whose continuation turns out to return.
+;; staging marker whose continuation turns out to return.
 (define (compiler-backend-abort-tail-dip-body [tail : String]) : String
   (str_cat.str-cat
     "    cmpq %rsi, %rax\n"
@@ -39291,18 +39276,12 @@ b_keep:
   (str_cat.str-cat
     "    pushq %rsi\n"
     "    pushq %rax\n"
-    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
+    "    # tl_abort_operand_stage\n"
     "    popq %rsi\n"
     "    popq %rdx\n"
     call-line
-    "    jmp .L_tl_abort_site_1_bounds_end\n"
-    "    .balign 8\n"
     ".L_tl_abort_site_1_bounds:\n"
-    "    .quad .L_tl_str_data_probe\n"
-    "    .quad 22\n"
-    "    .quad 34\n"
-    "    .quad 56\n"
-    ".L_tl_abort_site_1_bounds_end:\n"))
+    "    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat_probe, 34, 56, tl_oob_abort_at\n"))
 
 (define (compiler-backend-abort-tail-dip-red-zone?
   [text : (& text str)]
@@ -39336,7 +39315,7 @@ b_keep:
     [abort-only : String
       (compiler-backend-abort-tail-dip-body
         (compiler-backend-abort-tail-dip-located-tail
-          "    call tl_oob_abort_at\n"))]
+          "    call .L_tl_abort_tl_oob_abort_at\n"))]
     ;; The same shape whose continuation RETURNS: not a never-returning path,
     ;; so its dip is owed in full.
     [returning : String
@@ -39361,7 +39340,7 @@ b_keep:
           "    call _tl_probe_helper\n"
           "    popq %rcx\n"
           (compiler-backend-abort-tail-dip-located-tail
-            "    call tl_oob_abort_at\n")))]
+            "    call .L_tl_abort_tl_oob_abort_at\n")))]
     ;; ...and one that is still OPEN when the tail opens: the third push
     ;; displaces it out of the pending window before the marker can hold it.
     [open-window-then-abort : String
@@ -39369,9 +39348,9 @@ b_keep:
         (str_cat.str-cat
           "    pushq %rcx\n"
           (compiler-backend-abort-tail-dip-located-tail
-            "    call tl_oob_abort_at\n")))]
+            "    call .L_tl_abort_tl_oob_abort_at\n")))]
     ;; A bare (unlocated) abort pushes nothing, so an unrelated open window in
-    ;; front of it must still be counted: no descriptor load, nothing held.
+    ;; front of it must still be counted: no staging marker, nothing held.
     [bare-abort : String
       (compiler-backend-abort-tail-dip-body
         (str_cat.str-cat

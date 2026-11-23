@@ -121,6 +121,8 @@ exec env TYPELISP_BACKTRACE=short "{{dir}}/bt"
 exit 134
 stderr contains stack backtrace:
 stderr contains fatal_backtrace.tl::backtrace-leaf
+stderr contains fatal_backtrace.tl::backtrace-cleanup at tests/integration/fatal_backtrace.tl:23:3
+stderr not-contains main at tests/integration/fatal_backtrace.tl:28:3
 step private-cfg
 run compile tests/integration/fatal_backtrace.tl --cfg compiler-backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/spoof.s"
 in file {{dir}}/spoof.s

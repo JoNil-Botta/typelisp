@@ -10,6 +10,7 @@
 ;; reachability and acyclicity checks as persisted bytes, and a failure
 ;; publishes nothing. Result payloads, the result store, the planner and cache
 ;; policy live elsewhere.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_incremental_identity as identity)
@@ -171,9 +172,13 @@
   (key String)
   (query String))
 
+(stdlib.clone.gen-clone CompilerIncrementalGraphRootRecord)
+
 (defstruct CompilerIncrementalGraphNodeRecord
   (query String)
   (body String))
+
+(stdlib.clone.gen-clone CompilerIncrementalGraphNodeRecord)
 
 (import (stdlib.vector.vector CompilerIncrementalGraphRootRecord) as graph_root_vec)
 (import (stdlib.vector.vector CompilerIncrementalGraphNodeRecord) as graph_node_vec)
@@ -974,6 +979,8 @@
   (node i64)
   (child String)
   (observation String))
+
+(stdlib.clone.gen-clone CompilerIncrementalGraphEdgeRecord)
 
 (import (stdlib.vector.vector CompilerIncrementalGraphEdgeRecord) as graph_edge_vec)
 

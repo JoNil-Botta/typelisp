@@ -946,6 +946,43 @@ match \.seh_stackalloc[ ]
 match ^[[:space:]]+\.seh_savexmm %xmm6, [0-9]+$
 not-match -[0-9]+\(%rbp\)
 
+# All six predicates branch on UCOMIS flags. The opt2 layout takes the
+# opposite edge of the opt0/1 layout; both need the equality parity guards.
+case scalar-float-compare-branches
+source tests/integration/float_comparisons.tl
+opt 0 1 2
+in fn tl_inverse_mask_f64
+count >= 6 ^[[:space:]]+ucomisd[ ]
+count = 2 ^[[:space:]]+jp[ ]
+count >= 2 ^[[:space:]]+j(a|be)[ ]
+count >= 2 ^[[:space:]]+j(ae|b)[ ]
+not-match ^[[:space:]]+set[a-z]+[ ]
+in fn tl_inverse_mask_f32
+count >= 6 ^[[:space:]]+ucomiss[ ]
+count = 2 ^[[:space:]]+jp[ ]
+count >= 2 ^[[:space:]]+j(a|be)[ ]
+count >= 2 ^[[:space:]]+j(ae|b)[ ]
+not-match ^[[:space:]]+set[a-z]+[ ]
+
+case scalar-float-div-unaltered-opt0
+source tests/integration/float_comparisons.tl
+opt 0
+in fn tl_literal_div_f64
+count = 8 ^[[:space:]]+divsd[ ]
+in fn tl_literal_div_f32
+count = 8 ^[[:space:]]+divss[ ]
+
+# 3.0 and the two out-of-range exponents still require division.
+case scalar-float-div-reciprocal
+source tests/integration/float_comparisons.tl
+opt 1 2
+in fn tl_literal_div_f64
+count = 3 ^[[:space:]]+divsd[ ]
+count >= 5 ^[[:space:]]+mulsd[ ]
+in fn tl_literal_div_f32
+count = 3 ^[[:space:]]+divss[ ]
+count >= 5 ^[[:space:]]+mulss[ ]
+
 case win64-shrinkwrap-saves-allocated
 source tests/integration/bit_length_loop.tl
 target windows-x86_64

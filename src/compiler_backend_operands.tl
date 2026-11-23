@@ -3894,12 +3894,19 @@
 ;; Character-dispatch register-name -> scavenge bit. The scavenger queries
 ;; this per emitted operand; the eq-mnemonic ladder paid up to eighteen string
 ;; compares per call. Length plus three character reads decide every case.
+(define (compiler-backend-scavenge-vector-family-bit [family : i64]) : i64
+  (cond
+    [(and (>= family 2) (<= family 5)) (shl 1 (+ family 9))]
+    [(and (>= family 0) (< family 2)) (shl 1 (+ family 18))]
+    [(and (>= family 6) (< family 16)) (shl 1 (+ family 14))]
+    [else 0]))
+
 ;; Unknown names map to 0.
 (define (compiler-backend-scavenge-reg-bit [reg : (& reg str)]) : i64
   (let
     [n : i64 (string.string-length reg)]
     (cond
-      [(or (< n 3) (> n 5)) 0]
+      [(or (< n 3) (> n 6)) 0]
       [(not (= (string.string-ref reg 0) '%')) 0]
       [(= n 3)
         (if (= (string.string-ref reg 1) 'r')
@@ -3950,12 +3957,11 @@
           (if (or
             (and (or (= c1 'x') (= c1 'y') (= c1 'z')) (= c2 'm') (= c3 'm'))
             (and (= c1 'v') (= c2 'e') (= c3 'c')))
-            (cond
-              [(= (string.string-ref reg 4) '2') 2048]
-              [(= (string.string-ref reg 4) '3') 4096]
-              [(= (string.string-ref reg 4) '4') 8192]
-              [(= (string.string-ref reg 4) '5') 16384]
-              [else 0])
+            (compiler-backend-scavenge-vector-family-bit
+              (compiler_abi.compiler-abi-register-decimal-suffix
+                (string.copy reg)
+                4
+                15))
             0))])))
 
 (define (compiler-backend-scavenge-emergency-reg-supported? [reg : (& reg str)]) : bool
@@ -3980,18 +3986,11 @@
     [(= reg compiler_abi.compiler-reg-id-rsi) 65536]
     [(= reg compiler_abi.compiler-reg-id-rdi) 131072]
     [else
-      (let
-        [family : i64
-          (compiler_abi.compiler-abi-register-vector-family-index reg)]
-        (cond
-          [(= family 2) 2048]
-          [(= family 3) 4096]
-          [(= family 4) 8192]
-          [(= family 5) 16384]
-          [else 0]))]))
+      (compiler-backend-scavenge-vector-family-bit
+        (compiler_abi.compiler-abi-register-vector-family-index reg))]))
 
 (define (compiler-backend-scavenge-exclude-mask
-  [exclude : (__tl_dyn-array String)]
+  [exclude : (& exclude (__tl_dyn-array String))]
   [n : i64]) : i64
   (let
     [mask : i64 0]
@@ -4414,9 +4413,7 @@
   [fallback : String]) : String
   (let
     [exclude-mask : i64
-      (compiler-backend-scavenge-exclude-mask
-        (be_state.compiler-backend-global-shared-view exclude)
-        exclude-n)]
+      (compiler-backend-scavenge-exclude-mask (& exclude) exclude-n)]
     [cands : (__tl_dyn-array i64)
       (be_state.compiler-backend-i64-array-shared-view
         (& compiler-backend-scavenge-candidate-pool))]
@@ -4448,9 +4445,7 @@
   [cands : (& cands (__tl_dyn-array i64))]) : String
   (let
     [exclude-mask : i64
-      (compiler-backend-scavenge-exclude-mask
-        (be_state.compiler-backend-global-shared-view exclude)
-        exclude-n)]
+      (compiler-backend-scavenge-exclude-mask (& exclude) exclude-n)]
     (if (and
       (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
       (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
@@ -4470,11 +4465,75 @@
         cands
         (array-length cands)))))
 
+(define (compiler-backend-scavenge-extra-xmm
+  [function-state : be_state.CompilerBackendFunctionState]
+  [occupied-mask : i64]
+  [exclude-mask : i64]
+  [fallback : (& fallback str)]
+  [limit : i64]
+  [cands : (& cands (__tl_dyn-array i64))]) : String
+  (let
+    [fallback-bit : i64 (compiler-backend-scavenge-reg-bit fallback)]
+    [plan-mask : i64
+      (be_state.compiler-backend-function-scratch-i64
+        function-state
+        be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)]
+    (when
+      (or
+        (and
+          (= (bit-and (bit-or occupied-mask exclude-mask) fallback-bit) 0)
+          (compiler-backend-scavenge-reg-free-in-mask?
+            (be_state.compiler-backend-function-scratch-i64
+              function-state
+              be_state.compiler-backend-scratch-i64-current-instr-reserved-mask)
+            fallback))
+        (>=
+          (compiler-backend-scavenge-first-ok-index
+            function-state
+            occupied-mask
+            exclude-mask
+            plan-mask
+            cands
+            (array-length cands))
+          0))
+      (return ""))
+    ;; These volatile homes are usable when free. Emergency saves keep using
+    ;; the ordinary XMM2–XMM5 pool.
+    (for [i (iterator.range 0 limit)]
+      (when
+        (or (< i 2) (>= i 6))
+        (let
+          [reg : i64 (compiler_abi.compiler-abi-xmm-register-id i)]
+          (when
+            (compiler-backend-scavenge-candidate-ok?
+              function-state
+              occupied-mask
+              exclude-mask
+              plan-mask
+              reg)
+            (return (compiler_abi.compiler-abi-register-spelling reg))))))
+    ""))
+
 (define (compiler-backend-scavenge-xmm-reg
   [dst-var : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]
+  [backend-state : be_state.CompilerBackendState]) : String
+  (compiler-backend-scavenge-xmm-reg-for-staging
+    dst-var
+    exclude
+    exclude-n
+    fallback
+    false
+    backend-state))
+
+(define (compiler-backend-scavenge-xmm-reg-for-staging
+  [dst-var : i64]
+  [exclude : (__tl_dyn-array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [scalar-compute? : bool]
   [backend-state : be_state.CompilerBackendState]) : String
   (let
     [function-state : be_state.CompilerBackendFunctionState
@@ -4510,18 +4569,32 @@
     [cands : (__tl_dyn-array i64)
       (be_state.compiler-backend-i64-array-shared-view
         (& compiler-backend-scavenge-xmm-candidate-pool))]
-    [reg : String
+    [occupied : i64
+      (compiler-backend-scavenge-occupied-mask-over-range
+        function-state
+        point
+        hi-point)]
+    [extra : String
+      (if scalar-compute?
+        (compiler-backend-scavenge-extra-xmm
+          function-state
+          occupied
+          (compiler-backend-scavenge-exclude-mask (& ex) ex-n)
+          (& fallback)
+          (if (be_state.compiler-backend-current-fn-win64? backend-state)
+            6
+            16)
+          cands)
+        "")]
+    (if (string.eq extra "")
       (compiler-backend-scavenge-pick-from-mask
         function-state
-        (compiler-backend-scavenge-occupied-mask-over-range
-          function-state
-          point
-          hi-point)
+        occupied
         ex
         ex-n
         fallback
-        cands)]
-    reg))
+        cands)
+      extra)))
 
 ;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the
 ;; exact register the ordinary scavenger will return, including its emergency

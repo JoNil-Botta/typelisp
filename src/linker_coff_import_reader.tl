@@ -3,6 +3,7 @@
 (import linker_archive_core as archive)
 (import linker_coff_import_member_writer as imports)
 (import stdlib.byte_le as le)
+(import stdlib.string)
 (import stdlib.byte_reader as reader)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.str_cat_runtime as cat)
@@ -305,7 +306,9 @@
               [import-name : String
                 (if (= mode 0)
                   ""
-                  (imports.coff-import-effective-name (clone public) mode))]
+                  (imports.coff-import-effective-name
+                    (string.copy (& public))
+                    mode))]
               (when
                 (and
                   (not (= mode 0))
@@ -319,7 +322,7 @@
                   dll
                   (copy-text data dll-start dll-size true)
                   (imports.CoffImportPlan
-                    (clone public)
+                    (string.copy (& public))
                     import-name
                     (if (= mode 0)
                       hint

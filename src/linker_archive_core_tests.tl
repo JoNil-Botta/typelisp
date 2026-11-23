@@ -418,9 +418,12 @@
                 (& (array-ref directory.members 1))]
               [three : (& directory archive.ArchiveMember)
                 (& (array-ref directory.members 2))]
-              [first : archive.ArchiveMemberId (clone one.id)]
-              [second : archive.ArchiveMemberId (clone two.id)]
-              [third : archive.ArchiveMemberId (clone three.id)]
+              [first : archive.ArchiveMemberId
+                (archive.clone-archive-member-id (& one.id))]
+              [second : archive.ArchiveMemberId
+                (archive.clone-archive-member-id (& two.id))]
+              [third : archive.ArchiveMemberId
+                (archive.clone-archive-member-id (& three.id))]
               (test.assert-i64-eq first.header-offset 8 "first header")
               (test.assert-i64-eq second.header-offset 72 "even second header")
               (test.assert-i64-eq
@@ -753,7 +756,7 @@
               (match (archive.open!
                 (& directory)
                 (&mut session)
-                (clone member.id))
+                (archive.clone-archive-member-id (& member.id)))
                 [(Opened _ payload)
                   (test.assert-i64-eq
                     (cast (string.string-ref payload 0) : i64)

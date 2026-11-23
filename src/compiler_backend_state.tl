@@ -478,7 +478,10 @@
   (close-cands (__tl_dyn-array i64))
   (close-cand-len i64)
   (probe-cands (__tl_dyn-array i64))
-  (probe-cand-len i64))
+  (probe-cand-len i64)
+  ;; Record indices of simple stack LEAs, in emission order.
+  (stack-lea-cands (__tl_dyn-array i64))
+  (stack-lea-cand-len i64))
 
 ;; The physical chunks the streaming peephole parses in place, in emission
 ;; order, plus their combined byte count. A group chunk is one whole emitted

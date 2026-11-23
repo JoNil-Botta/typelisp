@@ -2,7 +2,9 @@
 (import linker_coff_import_reader_test_dump as dump)
 (import linker_coff_import_member_writer as imports)
 (import linker_archive_core as archive)
+(import stdlib.clone)
 (import stdlib.byte_buf)
+(import stdlib.string)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.byte_le as le)
 (import stdlib.iterator)
@@ -97,7 +99,9 @@
       (test.assert-string-eq record.plan.import-name name "import name")
       (test.assert-string-eq
         record.iat-symbol
-        (imports.coff-import-symbol (clone record.plan) 1)
+        (imports.coff-import-symbol
+          (imports.clone-coff-import-plan (& record.plan))
+          1)
         "literal IAT symbol")
       (test.assert-i64-eq record.plan.kind kind "code/data/const")
       (test.assert-i64-eq record.plan.name-mode mode "name mode")
@@ -108,8 +112,8 @@
           (byte_buf.to-array
             (byte_buf.from-string
               (imports.coff-import-short
-                (clone record.dll-spelling)
-                (clone record.plan))))]
+                (string.copy (& record.dll-spelling))
+                (imports.clone-coff-import-plan (& record.plan)))))]
         (le.set-u32! (&mut encoded) 8 record.timestamp)
         (test.assert-i64-eq
           (array-length encoded)
@@ -124,6 +128,8 @@
 
 (defenum NameCase
   (Name String i64 String))
+
+(clone.gen-clone NameCase)
 
 (define (valid-tests) : unit
   (check-record (& llvm-code) "Func" "example.dll" "Func" 0 1 0 0)
@@ -180,11 +186,17 @@
         (Name "@Foo@8" 3 "Foo")
         (Name "_Foo@8" 3 "Foo"))]
     (for [kind (iterator.range 0 3)]
-      (for [case (clone cases)]
+      (for [case (clone.deep cases)]
         (match case
           [(Name public mode name)
             (let
-              [data (short-bytes (clone public) "EXample.DLL" kind mode 65535)]
+              [data
+                (short-bytes
+                  (string.copy (& public))
+                  "EXample.DLL"
+                  kind
+                  mode
+                  65535)]
               (check-record
                 (& data)
                 public
@@ -438,6 +450,7 @@
           (expect-error (& base) (& bad) "invalid-limits" 0))))
     (for [field (iterator.range 0 4)]
       (let
+        [fields (array "input-limit" "name-limit" "output-limit" "work-limit")]
         [zero : coff.CoffImportReadLimits
           (coff.CoffImportReadLimits
             (if (= field 0)
@@ -455,10 +468,7 @@
         (expect-error
           (& base)
           (& zero)
-          (clone
-            (array-ref
-              (array "input-limit" "name-limit" "output-limit" "work-limit")
-              field))
+          (string.copy (& (array-ref fields field)))
           (if (or (= field 0) (= field 3))
             0
             20))))

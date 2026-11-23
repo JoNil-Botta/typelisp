@@ -356,7 +356,7 @@
 ;; GAP7: like address-base-filter but ADMITS a %rbp home as a direct base. Used
 ;; at the CONST-offset fused gep sites where the base occupies the memory
 ;; operand's BASE slot ALONE (no separate SIB index) -- there the %rbp base is
-;; spelled `disp(,%rbp,1)` (compiler-backend-mem-base-address). The
+;; spelled `disp( %rbp)` (compiler-backend-mem-base-address). The
 ;; DYNAMIC-index sites keep address-base-filter: a %rbp base there would need
 ;; the SIB index slot (already taken by the gep index), so it stays staged.
 (define (compiler-backend-address-base-filter-direct [home : String]) : String

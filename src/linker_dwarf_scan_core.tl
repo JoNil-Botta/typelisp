@@ -38,6 +38,7 @@
 ;; Every count and the total work are bounded by caller limits checked before
 ;; the corresponding storage grows. Output order is canonical, by
 ;; (input, section) and then offset, whatever order the views arrive in.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import stdlib.byte_le)
 (import stdlib.leb128)
@@ -298,6 +299,8 @@
   (kind i64)
   (relocatable bool)
   (bytes (__tl_dyn-array u8)))
+
+(clone.gen-clone LinkerDwarfView)
 
 ;: Caller-owned bounds, each checked before the corresponding work or growth.
 (defstruct LinkerDwarfLimits

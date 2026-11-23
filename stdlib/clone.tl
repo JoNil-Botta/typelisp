@@ -1,7 +1,8 @@
 ;# Explicit deep-clone declaration generation and the transitional compiler
 ;# handoff for compiler-checked `(clone value)` roots.
 ;#
-;# `(gen-clone T)` is the public direction: an owning module requests one
+;# With `(clone.deep value)`, callers deep-copy structural or nominal values.
+;# With `(gen-clone T)`, an owning module requests one
 ;# ordinary `clone-<kebab-name>` function with signature `(& T) -> T`. The
 ;# generated body reconstructs the aggregate and uses only ordinary language
 ;# and stdlib operations. Nominal dependencies must have their own generated
@@ -344,11 +345,35 @@
             ,source
             ,root-key-expr
             ,path-expr))
-        `(stdlib.clone.clone-borrowed-value
-          ,T
-          ,source
-          ,root-key-expr
-          ,path-expr))
+        (let
+          ;; The shared borrow strips allocation region tags from its
+          ;; referent. Preserve T for other kinds, including unsupported
+          ;; references, whose own borrow can have a different referent.
+          [use-referent? : bool
+            (match kind
+              ["region" true]
+              ["tuple" true]
+              ["array" true]
+              ["dyn-array" true]
+              ["box" true]
+              [_ false])]
+          [value-type : comptime.Expr
+            (if use-referent?
+              (comptime.reference-element-type source-type)
+              T)]
+          (if (if (string-eq kind "region")
+            (string-eq (type-kind value-type) "str")
+            false)
+            `(stdlib.clone.clone-borrowed-value
+              String
+              ,source
+              ,root-key-expr
+              ,path-expr)
+            `(stdlib.clone.clone-borrowed-value
+              ,value-type
+              ,source
+              ,root-key-expr
+              ,path-expr))))
       ;; Only a Copy payload binds by value; its copy is the clone.
       source)))
 
@@ -408,7 +433,7 @@
           `(let
             [__clone_source ,source]
             [__clone_len : i64 (array-length __clone_source)]
-            [__clone_out : ,T (__tl_make-array ,element-type __clone_len)]
+            [__clone_out (__tl_make-array ,element-type __clone_len)]
             [__clone_index : i64 0]
             (while (< __clone_index __clone_len)
               (set!
@@ -444,6 +469,53 @@
             (comptime.string-append
               (type-key T)
               (comptime.string-append " at " path))))])))
+
+;: Deep-copy a value, evaluating the operand once and preserving borrowed places.
+;:
+;: Pass a place or an rvalue such as a call result; for a conditional or block
+;: (`if`, `let`, or `match`), call `clone.deep` in each result position.
+;: A nominal type must expose its generated clone function from its owner.
+(defmacro (deep [value : comptime.Expr]) : comptime.Expr
+  (let
+    [value-type : comptime.Expr (comptime.expr-type value)]
+    [kind : String (type-kind value-type)]
+    [needs-binding? : bool
+      (match kind
+        ["tuple" true]
+        ["array" true]
+        ["dyn-array" true]
+        ["box" true]
+        ["region" true]
+        [_ false])]
+    (if needs-binding?
+      (let
+        [name : String (comptime.syntax-name-fresh "__clone_deep_source")]
+        [source : comptime.Expr (comptime.expr-var name)]
+        (comptime.expr-shared-let-scope
+          name
+          value
+          `(stdlib.clone.clone-value ,value-type ,source "" "clone.deep")))
+      (match kind
+        ["unit" value]
+        ["never" value]
+        ["bool" value]
+        ["char" value]
+        ["i64" value]
+        ["i32" value]
+        ["i16" value]
+        ["i8" value]
+        ["u64" value]
+        ["u32" value]
+        ["u16" value]
+        ["u8" value]
+        ["f64" value]
+        ["f32" value]
+        [_
+          `(stdlib.clone.clone-borrowed-value
+            ,value-type
+            (& ,value)
+            ""
+            "clone.deep")]))))
 
 ;: Generate the body of an ordinary clone function for a struct root.
 (defmacro (clone-struct-root [T : type] [root-key-expr : comptime.Expr]) : comptime.Expr

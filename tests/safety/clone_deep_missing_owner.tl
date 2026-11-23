@@ -1,0 +1,2 @@
+(defstruct Leaf
+  (value String))

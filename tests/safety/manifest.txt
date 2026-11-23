@@ -679,6 +679,12 @@ clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_importe
 gen_clone_missing_dependency_reject|check-fail|tests/safety/gen_clone_missing_dependency_reject.tl|-|gen-clone: missing explicit dependency clone-leaf
 gen_clone_cycle_reject|check-fail|tests/safety/gen_clone_cycle_reject.tl|-|gen-clone: cyclic clone dependency reaches
 gen_clone_name_collision_reject|check-fail|tests/safety/gen_clone_name_collision_reject.tl|-|gen-clone: generated name collision for clone-point
+clone_deep_missing_owner_reject|check-fail|tests/safety/clone_deep_missing_owner_reject.tl|-|at clone.deep from owner clone_deep_missing_owner; invoke gen-clone in its owner module first
+clone_deep_function_reject|check-fail|tests/safety/clone_deep_function_reject.tl|-|gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep
+clone_deep_reference_reject|check-fail|tests/safety/clone_deep_reference_reject.tl|-|gen-clone: unsupported type ref_source_i64 at clone.deep
+clone_deep_pointer_reject|check-fail|tests/safety/clone_deep_pointer_reject.tl|-|gen-clone: unsupported type ptr_i64 at clone.deep[0]
+clone_deep_cleanup_reject|check-fail|tests/safety/clone_deep_cleanup_reject.tl|-|gen-clone: unsupported cleanup-owning type struct_Resource at clone.deep
+clone_deep_conditional_reject|check-fail|tests/safety/clone_deep_conditional_reject.tl|-|use of moved value `left`
 reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`

@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+14403.911	Add 77 explicit gen-clone hooks across compiler_ast_types, compiler_ctfe, compiler_object and tlci_core for #8224 while legacy clone$ helpers still compile until #8232. CI own cost +1,509,095,158 Ir (M(T) 106,278,916,620 vs M(B) 104,769,821,462 from reference run 45132160351 attempt 1).

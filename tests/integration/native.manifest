@@ -43,6 +43,12 @@ enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner
 enum_constructor_owner_root|all|0,1,2|tests/integration/enum_constructor_owner_root.tl|42|-|-|enum_constructor_owner_defs.tl|-
 global_mut_borrow_field|all|0,1,2|tests/integration/global_mut_borrow_field.tl|5|-|-|-|-
 global_mut_borrow_storage|all|0,1,2|tests/integration/global_mut_borrow_storage.tl|42|-|-|-|-
+global_pair_store_regression|all|0,1,2|tests/integration/global_pair_store_regression.tl|25|-|-|-|-
+global_pair_store_live|all|0,1,2|tests/integration/global_pair_store_live.tl|42|-|-|-|-
+inline_global_by_value_regression|all|0,1,2|tests/integration/inline_global_by_value_regression.tl|17|-|-|-|-
+inline_global_by_value|all|0,1,2|tests/integration/inline_global_by_value.tl|42|-|-|-|-
+process_empty_step|all|0,1,2|tests/integration/process_empty_step.tl|42|-|-|-|stage-stdlib
+process_empty_step_sequence|all|0,1,2|tests/integration/process_empty_step_sequence.tl|42|-|-|-|stage-stdlib
 nested_mut_borrow_pointer|all|0,1,2|tests/integration/nested_mut_borrow_pointer.tl|5|-|-|-|-
 nested_mut_borrow_receiver|all|0,1,2|tests/integration/nested_mut_borrow_receiver.tl|5|-|-|-|-
 nested_mut_borrow_storage|all|0,1,2|tests/integration/nested_mut_borrow_storage.tl|42|-|-|-|-

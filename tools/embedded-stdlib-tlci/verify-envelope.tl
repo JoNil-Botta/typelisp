@@ -2,8 +2,8 @@
 (import compiler_embedded_stdlib_tlci_frames as frames)
 (import stdlib.byte_buf)
 (import tlci_core as tlci)
-(import compiler_owned_view as view)
 (import stdlib.iterator)
+(import stdlib.clone)
 (import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -30,8 +30,7 @@
       ;; produce a valid ordinary catalog.
       (for [case (iterator.range 0 3)]
         (let
-          [changed : (__tl_dyn-array u8)
-            (clone (view.compiler-owned-reference-shared-view envelope))]
+          [changed : (__tl_dyn-array u8) (clone.deep (deref envelope))]
           [record : i64
             (frames.compiler-embedded-stdlib-tlci-frames-record
               catalog

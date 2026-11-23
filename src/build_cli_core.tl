@@ -5451,6 +5451,15 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (clone-result-build-package-emit
+    [value : (& value ResultBuildPackageEmit)]) : ResultBuildPackageEmit
+    (match value
+      [(Finished status) (Finished status)]
+      [(Preflight inline-sources doctests)
+        (Preflight (cli_svec.clone-vec inline-sources) doctests)])))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-attempt
     [request : (& BuildPackageEmitRequest)]
     [check-closure : bool]) : ResultBuildPackageEmit

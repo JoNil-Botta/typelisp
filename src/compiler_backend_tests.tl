@@ -4383,12 +4383,12 @@
   (reg-homes "%0=%r12"))
 
 (define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
-  (asm-has? asm "    movzbq %al, %rax\n" "    movq %rax, %r12\n"))
+  (asm-has? asm "    movzbl %al, %eax\n" "    movq %rax, %r12\n"))
 
 (define (compiler-backend-typelisp-call-result-store-bool-asm-ok?
   [asm : String]) : bool
   (and
-    (asm-lacks? asm "    movzbq %al, %rax\n")
+    (asm-lacks? asm "    movzbq %al, %rax\n" "    movzbl %al, %eax\n")
     (asm-has? asm "    movq %rax, %r12\n")))
 
 (define (compiler-backend-c-abi-call-result-store-bool-ok?) : bool
@@ -4464,7 +4464,7 @@
     (has
       ".extern tl_cabi_bool_return\n"
       "    call tl_cabi_bool_return\n"
-      "    movzbq %al, %rax\n")))
+      "    movzbl %al, %eax\n")))
 
 (define (compiler-backend-c-abi-bool-return-ok?) : bool
   (be_state.backend-and4
@@ -4890,7 +4890,7 @@
         (be_state.backend-and4
           (asm-has? asm "    movq 8(%r10), %r8\n")
           (asm-has? asm "(%r10)")
-          (asm-has? asm "movzbq")
+          (asm-has? asm "movzbl")
           (asm-lacks? asm "movsbq (%r10)"))
         (asm-lacks? asm "    movq 8(%r10), %rax\n" "    jge .Lf0_str_bounds_ok")
         (not
@@ -6239,7 +6239,7 @@
           ;; The boolean is never materialised, so neither half of the
           ;; `setcc`/`movzbq` pair survives and no site spends a `test`.
           (asm-lacks? body "    setl ")
-          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    movzbq " "    movzbl ")
           (asm-lacks? body "    testq ")))]
     [(Err _) false]))
 
@@ -6358,19 +6358,19 @@
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-lt-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       "    jge "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-ult-source))
       "    setb "
-      "    movzbq "
+      "    movzbl "
       "    jae "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-neg-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       "    jl "
       true)
     (compiler-backend-flags-reuse-body-ok?
@@ -6382,7 +6382,7 @@
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-gap-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       ""
       false)))
 
@@ -12743,12 +12743,12 @@ high:
         (be_state.CompilerBackendTarget.Windows))
         [(Ok asm)
           ;; The merged emitter folds the constant index 0 directly into the
-          ;; bounds compare (`cmpq $0, %rax`) instead of materializing it in a
+          ;; bounds check (`testq %rax, %rax`) instead of materializing it in a
           ;; scratch register. The Win64 safety invariant is unchanged: the
           ;; length (in %rax) is never clobbered, so no degenerate
           ;; `cmpq %rax, %rax` self-compare is emitted.
           (and
-            (asm-has? asm "    cmpq $0, %rax\n")
+            (asm-has? asm "    testq %rax, %rax\n")
             (asm-lacks? asm "    cmpq %rax, %rax\n"))]
         [(Err _) false])]
     ok))
@@ -12956,11 +12956,12 @@ high:
     (compiler-backend-peephole-single-dest-mnemonic? "decq")
     (compiler-backend-peephole-single-dest-mnemonic? "movzbq")
     (compiler-backend-peephole-single-dest-mnemonic? "movzwq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzbl")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzwl")
     (compiler-backend-peephole-single-dest-mnemonic? "movsbq")
     (compiler-backend-peephole-single-dest-mnemonic? "movswq")
     (compiler-backend-peephole-single-dest-mnemonic? "movslq")
     (not (compiler-backend-peephole-single-dest-mnemonic? "movq"))
-    (not (compiler-backend-peephole-single-dest-mnemonic? "movzbl"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "movsd"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "imulq"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "mulq"))
@@ -14586,7 +14587,7 @@ f:
         cabi.compiler-reg-id-r15
         (ir.compiler-ir-instr-seq-empty))
       (has "    movq %rcx, %r15\n    cmpq %rcx, %r13\n    cmovb %r13, %r15\n")
-      (lacks "setb" "movzbq" "    testq "))
+      (lacks "setb" "movzbq" "movzbl" "    testq "))
     ;; signed lt -> cmovl off the same operands.
     (asm-ok?
       (compiler-backend-select-flags-asm
@@ -24770,7 +24771,7 @@ entry:
       "    leaq (%r10,%r8,4), %r10\n")
     (compiler-backend-instr-contains?
       (Load 4 (Var 1) (U8))
-      "    movzbq (%r10), %r8\n")
+      "    movzbl (%r10), %r8d\n")
     (compiler-backend-instr-contains?
       (irt.instr "store_ptr %1, 7 : i32")
       "    movl $7, (%r10)\n")
@@ -25594,7 +25595,7 @@ entry:
     [(Ok asm)
       (let
         [load-pos : i64
-          (backend.compiler-backend-string-find-from asm "    movzbq " 0)]
+          (backend.compiler-backend-string-find-from asm "    movzbl " 0)]
         [dst-base-pos : i64
           (backend.compiler-backend-string-find-from asm "    movq -8(%rbp)" 0)]
         [bad-rcx-pos : i64
@@ -25634,7 +25635,7 @@ entry:
       6)
       [(Ok asm)
         (and
-          (asm-has? asm "    movzbq (%r12,%r8,1), %rcx\n")
+          (asm-has? asm "    movzbl (%r12,%r8,1), %ecx\n")
           (asm-lacks? asm "    movq %r8, %r9\n" "    movq %r12, %r10\n")
           (not
             (let
@@ -25978,7 +25979,7 @@ entry:
         (U64)
         index
         index.backend-state)
-        [(Ok asm) (string.eq asm "    movzbq -48(%rbp), %rbx\n")]
+        [(Ok asm) (string.eq asm "    movzbl -48(%rbp), %ebx\n")]
         [(Err _) false]))))
 
 (define (compiler-backend-global-store-direct-home-shape-ok?) : bool
@@ -26514,7 +26515,7 @@ entry:
            %6 = mov %5 : i64")
         assignments
         7)
-      (has "    movzbq (%r12,%r8,1), %rcx\n")
+      (has "    movzbl (%r12,%r8,1), %ecx\n")
       (lacks "    addq (%r12"))))
 
 ;; M6: folding a single-use load into the comparing instruction's memory
@@ -26551,7 +26552,7 @@ entry:
   (asm-ok?
     (compiler-backend-cmp-mem-narrow-asm (U8) (U8) (Eq) 10)
     (has "    cmpb $10, (%r12,%r8,1)\n")
-    (lacks "    movzbq ")))
+    (lacks "    movzbq " "    movzbl ")))
 
 ;; The same at WORD width, and with a literal above the byte range so the width
 ;; is load-bearing rather than incidental.
@@ -26559,7 +26560,7 @@ entry:
   (asm-ok?
     (compiler-backend-cmp-mem-narrow-asm (U16) (U16) (Eq) 300)
     (has "    cmpw $300, (%r12,%r8,2)\n")
-    (lacks "    movzwq ")))
+    (lacks "    movzwq " "    movzwl ")))
 
 ;; Signedness/width refusal: a SIGN-extending byte load cannot produce 200, so
 ;; `ext(mem) == 200` is constant-false while `cmpb $200, (mem)` would be true
@@ -26587,9 +26588,9 @@ entry:
         ;; Same division of labour as the signed-literal refusal above: M6-C
         ;; declines the ordered narrow compare, M6-G folds the re-extension the
         ;; refusal leaves behind, so the surviving load writes the widening
-        ;; cast's home %r9 and no `movzbq %r13b, %r9` follows it.
-        (asm-has? asm "    movzbq (%r12,%r8,1), %r9\n")
-        (asm-lacks? asm "    movzbq %r13b, ")
+        ;; cast's home %r9 and no separate zero-extension follows it.
+        (asm-has? asm "    movzbl (%r12,%r8,1), %r9d\n")
+        (asm-lacks? asm "    movzbq %r13b, " "    movzbl %r13b, ")
         (asm-lacks? asm "    cmpb "))]
     [(Err _) false]))
 
@@ -26626,7 +26627,7 @@ entry:
         (compiler-backend-cmp-mem-direct-has?
           asm
           "    cmpb $47, (%r12,%r8,1)\n")
-        (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+        (asm-lacks? asm "    movzbq " "    movzbl "))]
     [(Err _) false]))
 
 ;; Unlike M6-C, an ORDERED compare folds too: the compare already runs at the
@@ -26641,7 +26642,7 @@ entry:
         (or
           (compiler-backend-cmp-mem-direct-has? asm "    jb ")
           (compiler-backend-cmp-mem-direct-has? asm "    jae "))
-        (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+        (asm-lacks? asm "    movzbq " "    movzbl "))]
     [(Err _) false]))
 
 ;; A register other operand is spelled at the byte width, on whichever side
@@ -26655,7 +26656,7 @@ entry:
           (compiler-backend-cmp-mem-direct-has?
             asm
             "    cmpb %r14b, (%r12,%r8,1)\n")
-          (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+          (asm-lacks? asm "    movzbq " "    movzbl "))]
       [(Err _) false])
     (match (compiler-backend-cmp-mem-direct-asm (U8) (Lt) (Var 4) (Var 3))
       [(Ok asm)
@@ -26663,7 +26664,7 @@ entry:
           (compiler-backend-cmp-mem-direct-has?
             asm
             "    cmpb (%r12,%r8,1), %r14b\n")
-          (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+          (asm-lacks? asm "    movzbq " "    movzbl "))]
       [(Err _) false])))
 
 ;; Refusals: an ordered compare with the literal on the LEFT (the memory operand
@@ -26674,7 +26675,7 @@ entry:
     (match (compiler-backend-cmp-mem-direct-asm (U8) (Lt) (I64 10) (Var 3))
       [(Ok asm)
         (and
-          (compiler-backend-cmp-mem-direct-has? asm "    movzbq (%r12,%r8,1), ")
+          (compiler-backend-cmp-mem-direct-has? asm "    movzbl (%r12,%r8,1), ")
           (not (compiler-backend-cmp-mem-direct-has? asm ", (%r12,%r8,1)\n")))]
       [(Err _) false])
     (match (compiler-backend-cmp-mem-direct-asm (I8) (Eq) (Var 3) (I64 200))
@@ -26927,7 +26928,7 @@ entry:
         (be_state.backend-and4
           (asm-has? body "    cmpb $10, (")
           (asm-has? body "    xorl %esi, %esi\n")
-          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    movzbq " "    movzbl ")
           (asm-lacks? body "    cmpq ")))]
     [(Err _) false]))
 
@@ -29547,10 +29548,10 @@ entry:
       "    movl $0, %r12d\n    jp 1f\n    setbe %r12b\n1:\n")
     (compiler-backend-float-unordered-sequence-ok?
       (Gt)
-      "    seta %r12b\n    movzbq %r12b, %r12\n")
+      "    seta %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-float-unordered-sequence-ok?
       (Ge)
-      "    setae %r12b\n    movzbq %r12b, %r12\n")))
+      "    setae %r12b\n    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-direct-float-compare-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
   (be_scalar.compiler-backend-emit-binop
@@ -30396,7 +30397,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    movzbq %al, %rax\n")]
+        [(Some asm) (string.eq asm "    movzbl %al, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30406,7 +30407,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    movzwq %ax, %rax\n")]
+        [(Some asm) (string.eq asm "    movzwl %ax, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30497,12 +30498,12 @@ entry:
             [(Ok negative-asm)
               (and
                 (be_state.backend-and4
-                  (asm-has? byte-asm "    movzbq %r12b, %r12\n")
+                  (asm-has? byte-asm "    movzbl %r12b, %r12d\n")
                   (asm-lacks?
                     byte-asm
                     "    andq $255, %r12\n"
                     "    andl $255, %r12d\n")
-                  (asm-has? word-asm "    movzwq %r12w, %r12\n")
+                  (asm-has? word-asm "    movzwl %r12w, %r12d\n")
                   (asm-lacks?
                     word-asm
                     "    andq $65535, %r12\n"
@@ -30540,7 +30541,7 @@ entry:
     (be_state.backend-and4
       (asm-has? asm "    movq %r15, %r12\n")
       (asm-has? asm "    setl %r12b\n")
-      (asm-has? asm "    movzbq %r12b, %r12\n")
+      (asm-has? asm "    movzbl %r12b, %r12d\n")
       (asm-lacks? asm "%rax"))
     (asm-lacks? asm "%r8")))
 
@@ -31611,7 +31612,7 @@ entry:
             "b"
             "8"
             false
-            "    movzbq %r8b, %r11"
+            "    movzbl %r8b, %r11d"
             flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si16
@@ -31625,7 +31626,7 @@ entry:
             "w"
             "16"
             false
-            "    movzwq %r8w, %r11"
+            "    movzwl %r8w, %r11d"
             flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si32
@@ -33692,7 +33693,7 @@ entry:
     [(Ok asm)
       (be_state.backend-and4
         (asm-has? asm "    call tl_tail_unit_target\n")
-        (asm-has? asm "    movq $0, %rax\n")
+        (asm-has? asm "    movl $0, %eax\n")
         (asm-lacks? asm "    leave\n    jmp tl_tail_unit_target\n")
         true)]
     [(Err _) false]))
@@ -38209,8 +38210,8 @@ entry:
         index
         7
         backend-state)
-      (has "    movzbq 48(%rbp), ")
-      (lacks "    movzbq 48(%rbp), %r9\n"))))
+      (has "    movzbl 48(%rbp), ")
+      (lacks "    movzbq 48(%rbp), %r9\n" "    movzbl 48(%rbp), %r9d\n"))))
 
 ;; #8894: the stale body cursor the float parameter copies used to consult.
 ;; Its occupancy reports every register free, although the pinned parameters

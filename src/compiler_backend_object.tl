@@ -27,6 +27,26 @@
 (import compiler_str_cat as str_cat)
 (import compiler_owned_view as owned_view)
 
+(define (compiler-backend-object-literal-address
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [symbol : String]
+  [backend-state : be_state.CompilerBackendState]) : object_target.CompilerBackendObjectTargetParts
+  (let
+    [absolute? : bool
+      (be_state.compiler-backend-state-absolute-literal-ok? backend-state)]
+    (object_target.compiler-backend-object-add-text
+      (object_target.compiler-backend-object-add-text-relocation
+        parts
+        site
+        (if absolute?
+          (Abs32)
+          (RipAddress))
+        (be_state.compiler-backend-global-shared-view symbol))
+      (if absolute?
+        (LoadAbsAddress symbol)
+        (LoadRipAddress symbol)))))
+
 (define (compiler-backend-object-value-ref
   [parts : object_target.CompilerBackendObjectTargetParts]
   [site : String]
@@ -67,25 +87,17 @@
             (be_state.compiler-backend-global-shared-view symbol))
           (LoadRipAddress symbol)))]
     [(String text)
-      (let
-        [symbol : String (be_operand.compiler-backend-string-fat-label text)]
-        (object_target.compiler-backend-object-add-text
-          (object_target.compiler-backend-object-add-text-relocation
-            parts
-            site
-            (RipAddress)
-            (be_state.compiler-backend-global-shared-view symbol))
-          (LoadRipAddress symbol)))]
+      (compiler-backend-object-literal-address
+        parts
+        site
+        (be_operand.compiler-backend-string-fat-label text)
+        program-index.backend-state)]
     [(Bytes text)
-      (let
-        [symbol : String (be_operand.compiler-backend-bytes-fat-label text)]
-        (object_target.compiler-backend-object-add-text
-          (object_target.compiler-backend-object-add-text-relocation
-            parts
-            site
-            (RipAddress)
-            (be_state.compiler-backend-global-shared-view symbol))
-          (LoadRipAddress symbol)))]
+      (compiler-backend-object-literal-address
+        parts
+        site
+        (be_operand.compiler-backend-bytes-fat-label text)
+        program-index.backend-state)]
     [(F64 bits)
       (let
         [symbol : String (be_facts.compiler-backend-f64-label bits)]
@@ -4722,6 +4734,12 @@
   (be_state.compiler-backend-state-set-emission-target-policy!
     backend-state
     (be_state.compiler-backend-target-policy-new target))
+  (be_state.compiler-backend-state-set-absolute-switch-ok!
+    backend-state
+    (and
+      emit-entry
+      (not crt-entry)
+      (be_state.compiler-backend-target-elf? target)))
   (be_state.compiler-backend-state-set-metrics!
     backend-state
     (profile_state.compiler-profile-state-metrics profile-state))

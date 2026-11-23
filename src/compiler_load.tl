@@ -27,6 +27,7 @@
 (import stdlib.fs)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as load_i64_i64_map)
+(import (hashmap.hashmap String i64) as load_path_map)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_embedded_stdlib as ces)
@@ -5435,6 +5436,55 @@
   [name-id : i64]
   [holder-source-id : i64]) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-bind-id seen name-id holder-source-id))
+
+(define (compiler-load-reachable-path-add!
+  [out : (&mut ast.AstDeclPathList)]
+  [added : (&mut load_path_map.Map)]
+  [path : (& str)]) : unit
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (unless
+      (load_path_map.contains-borrowed? added (& normalized))
+      (load_path_map.insert-ref! added (string.copy (& normalized)) 1)
+      (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+        out
+        normalized
+        -1
+        -1))))
+
+;; Some reachable modules have no declarations under the production cfg.
+;; Their module holders still identify the source for preflight.
+(define (compiler-load-package-reachable-paths
+  [entry : (& str)]
+  [paths : (& ast.AstDeclPathList)]
+  [seen : sym_i64_env.SymI64Env]) : ast.AstDeclPathList
+  (let
+    [out : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [added : load_path_map.Map (load_path_map.with-capacity 64)]
+    [last-path : String ""]
+    [cursor : sym_i64_env.SymI64Env seen]
+    [done : bool false]
+    (for [index (iterator.range 0 (ast.ast-decl-path-list-len paths))]
+      (let
+        [path : String (ast.ast-decl-path-list-get paths index "")]
+        (unless
+          (string.eq path last-path)
+          (compiler-load-reachable-path-add! (&mut out) (&mut added) (& path))
+          (set! last-path path))))
+    (compiler-load-reachable-path-add! (&mut out) (&mut added) entry)
+    (while (not done)
+      (match (sym_i64_env.sym-i64-view cursor)
+        [(SymI64ViewNil) (set! done true)]
+        [(SymI64ViewBind _ holder rest)
+          ;; Value 1 is a dedup marker. Larger values are source-path ids.
+          (when
+            (> holder 1)
+            (compiler-load-reachable-path-add!
+              (&mut out)
+              (&mut added)
+              (& (ci.intern-str holder))))
+          (set! cursor rest)]))
+    out))
 
 (define (compiler-load-duplicate-module-diagnostic [path : String]) : (Box
     cdiag.CompilerDiagnostic)

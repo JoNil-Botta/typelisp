@@ -5369,7 +5369,7 @@
   [manifest-dir : String]
   [deps : load.CompilerPkgDeps]
   [emit-entry : bool]) : i64
-  (match (compiler_driver_core.compiler-driver-load-package-paths-with-runtime
+  (match (compiler_driver_core.compiler-driver-load-package-preflight-paths
     entry-path
     target
     cfg-names
@@ -5393,57 +5393,45 @@
             target
             (target_cfg.compiler-target-user-cfgs cfg-names))))]))
 
-(define (build-inline-test-typecheck-package-sources
-  [manifest-path : String]
-  [stdlib-roots : cli_svec.Vec]
-  [manifest-dir : String]
-  [name : String]
-  [deps : load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : i64
-  (match (package_source_core.package-source-discover-for
-    "build"
-    manifest-path
-    true)
-    [(Err message)
-      (io.print-error message)
-      1]
-    [(Ok source-set)
-      (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-        source-set.sources
-        stdlib-roots
-        manifest-dir
-        name
-        deps
-        cfgs
-        "typecheck-prefix-inline-build-package")]))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (defstruct BuildPackageEmitRequest
+    (manifest-path String)
+    (manifest load.CompilerPkgManifest)
+    (target be_state.CompilerBackendTarget)
+    (opt-level i64)
+    (profile BuildProfile)
+    (mode be_state.CompilerBackendMode)
+    (stdlib-roots cli_svec.Vec)
+    (producer-identity String)
+    (entry-path String)
+    (manifest-dir String)
+    (kind load.CompilerPkgKind)
+    (asm-path String)
+    (obj-path String)
+    (artifact-path String)
+    (tlci-path String)
+    (manifest-link-inputs build_run_core.SourceToolLinkInputs)
+    (dep-link-inputs build_run_core.SourceToolLinkInputs)
+    (emit-entry bool)
+    (compile-cfgs cfg_core.CompilerCfgSnapshot)
+    (announce bool)
+    (lock-policy BuildPackageLockPolicy)
+    (cfg-names cli_svec.Vec)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (build-package-emit-one-with-surface
-    [manifest-path : String]
-    [manifest : load.CompilerPkgManifest]
-    [target : be_state.CompilerBackendTarget]
-    [opt-level : i64]
-    [profile : BuildProfile]
-    [mode : be_state.CompilerBackendMode]
-    [stdlib-roots : cli_svec.Vec]
-    [producer-identity : String]
-    [entry-path : String]
-    [manifest-dir : String]
-    [kind : load.CompilerPkgKind]
-    [asm-path : String]
-    [obj-path : String]
-    [artifact-path : String]
-    [tlci-path : String]
-    [manifest-link-inputs : build_run_core.SourceToolLinkInputs]
-    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
-    [emit-entry : bool]
-    [compile-cfgs : sym_i64_env.SymI64Env]
-    [announce : bool]) : i64
+  (defenum ResultBuildPackageEmit
+    (Finished i64)
+    (Preflight cli_svec.Vec bool)))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-attempt
+    [request : (& BuildPackageEmitRequest)]
+    [check-closure : bool]) : ResultBuildPackageEmit
     (let
       [home : arena.Arena (arena.current)]
-      [cfg-names : cfg_core.CompilerCfgSnapshot
-        (cfg_core.compiler-cfg-snapshot-from-env compile-cfgs)]
       (with-scratch
         (let
           [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope
@@ -5451,91 +5439,140 @@
               ;; unsafe: installs the global load session; replaced before this arena ends
               (compiler_driver_core.compiler-driver-package-runtime-scope-new
                 home))]
-          [status : i64
+          [result : ResultBuildPackageEmit
             (in-arena
               home
               (unsafe
-                ;; unsafe: installs the global surface capture; released before this arena ends
-                ;; unsafe: interned names live in the persistent intern arena, not this one
+                ;; unsafe: the runtime scope owns the loaded frontend and surface capture
                 (build-package-emit-one-in-runtime-scope
                   (owned_view.compiler-owned-shared-view scope)
-                  manifest-path
-                  manifest
-                  target
-                  opt-level
-                  profile
-                  mode
-                  stdlib-roots
-                  producer-identity
-                  entry-path
-                  manifest-dir
-                  kind
-                  asm-path
-                  obj-path
-                  artifact-path
-                  tlci-path
-                  manifest-link-inputs
-                  dep-link-inputs
-                  emit-entry
-                  (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
-                  announce)))]
+                  request
+                  check-closure)))]
           (unsafe
-            ;; unsafe: installs the global load session; replaced before this arena ends
-            (build-package-runtime-scope-release! scope))
-          status)))))
+            ;; unsafe: restores the enclosing load session before the scratch arena ends
+            (match (& result)
+              [(Preflight _ _)
+                (compiler_driver_core.compiler-driver-package-runtime-scope-release!
+                  scope)]
+              [_ (build-package-runtime-scope-release! scope)]))
+          result)))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-one-with-surface
+    [request : (& BuildPackageEmitRequest)]) : i64
+    (match (build-package-emit-attempt request true)
+      [(Finished status) status]
+      [(Preflight inline-sources doctests)
+        (let
+          [inline-status : i64
+            (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
+              inline-sources
+              (clone request.stdlib-roots)
+              (string.copy (& request.manifest-dir))
+              (string.copy (& request.manifest.name))
+              (clone request.manifest.deps)
+              (cfg_core.compiler-cfg-snapshot-to-env
+                (clone request.compile-cfgs))
+              "typecheck-prefix-inline-build-package")]
+          (when (not (= inline-status 0)) (return inline-status))
+          (compiler_driver_core.compiler-driver-reset-file-state!)
+          (ci.intern-persistent-arena-reset!)
+          (when
+            doctests
+            (let
+              [status : i64
+                (build-package-run-doctest-worker-or-inline
+                  (string.copy (& request.manifest.name))
+                  (string.copy (& request.entry-path))
+                  (string.copy (& request.manifest-path))
+                  (clone request.target)
+                  request.opt-level
+                  (clone request.profile)
+                  (clone request.mode)
+                  (clone request.lock-policy)
+                  (clone request.manifest.deps)
+                  (load.compiler-pkg-deps-list (clone request.manifest.deps))
+                  (clone request.stdlib-roots)
+                  (& request.cfg-names)
+                  (string.copy (& request.manifest-dir))
+                  request.emit-entry)]
+              (when (not (= status 0)) (return status))
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (ci.intern-persistent-arena-reset!)))
+          (match (build-package-emit-attempt request false)
+            [(Finished status) status]
+            [(Preflight _ _)
+              (io.print-error "build: package preflight did not complete")
+              1]))])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-one-in-runtime-scope
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
-    [manifest-path : String]
-    [manifest : load.CompilerPkgManifest]
-    [target : be_state.CompilerBackendTarget]
-    [opt-level : i64]
-    [profile : BuildProfile]
-    [mode : be_state.CompilerBackendMode]
-    [stdlib-roots : cli_svec.Vec]
-    [producer-identity : String]
-    [entry-path : String]
-    [manifest-dir : String]
-    [kind : load.CompilerPkgKind]
-    [asm-path : String]
-    [obj-path : String]
-    [artifact-path : String]
-    [tlci-path : String]
-    [manifest-link-inputs : build_run_core.SourceToolLinkInputs]
-    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
-    [emit-entry : bool]
-    [compile-cfgs : sym_i64_env.SymI64Env]
-    [announce : bool]) : i64
-    (match (if (> (string.string-length (& tlci-path)) 0)
-      (build-package-tlci-source-inputs manifest-path producer-identity)
+    [request : (& BuildPackageEmitRequest)]
+    [check-closure : bool]) : ResultBuildPackageEmit
+    (match (if (> (string.string-length (& request.tlci-path)) 0)
+      (build-package-tlci-source-inputs
+        (string.copy (& request.manifest-path))
+        (& request.producer-identity))
       (ResultBuildPackageTlciSourceInputs.Ok (NoImage)))
       [(Err message)
         (io.print-error message)
-        1]
+        (Finished 1)]
       [(Ok source-inputs)
         (match (compiler_driver_core.compiler-driver-package-runtime-load
           (owned_view.compiler-owned-shared-view scope)
-          (owned_view.compiler-owned-shared-view entry-path)
-          (owned_view.compiler-owned-shared-view stdlib-roots)
-          (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view manifest.deps)
-          emit-entry
-          compile-cfgs)
+          (string.copy (& request.entry-path))
+          (clone request.stdlib-roots)
+          (string.copy (& request.manifest-dir))
+          (clone request.manifest.deps)
+          request.emit-entry
+          (cfg_core.compiler-cfg-snapshot-to-env (clone request.compile-cfgs)))
           [(Err diag)
             (io.print-error
               (compiler_driver_core.compiler-driver-render-source-diagnostic
                 (deref diag)))
-            1]
+            (Finished 1)]
           [(Ok decls paths _ seen)
+            (when
+              check-closure
+              (let
+                [files : cli_svec.Vec
+                  (package_source_core.package-source-reachable-owned-files
+                    (&
+                      (load.compiler-load-package-reachable-paths
+                        (& request.entry-path)
+                        (& paths)
+                        seen))
+                    (& request.manifest-dir)
+                    (& request.stdlib-roots))]
+                [inline-sources : cli_svec.Vec (cli_svec.new)]
+                [doctests : bool false]
+                (for [index (iterator.range 0 (cli_svec.len (& files)))]
+                  (let
+                    [path : String (cli_svec.get (& files) index "")]
+                    (when
+                      (test_cli_core.tltest-source-has-inline-tests?
+                        (string.copy (& path)))
+                      (cli_svec.push-ref!
+                        (&mut inline-sources)
+                        (string.copy (& path))))
+                    (unless
+                      doctests
+                      (set!
+                        doctests
+                        (doc_test.doc-test-package-file-has-examples? (& path))))))
+                (when
+                  (or doctests (> (cli_svec.len (& inline-sources)) 0))
+                  (return (Preflight inline-sources doctests)))))
             (let
               [owned-paths : ast.AstDeclPathList
                 (load.compiler-load-package-owned-paths-for-decls
-                  (& manifest.name)
-                  (& manifest-dir)
-                  (& stdlib-roots)
-                  (& entry-path)
+                  (& request.manifest.name)
+                  (& request.manifest-dir)
+                  (& request.stdlib-roots)
+                  (& request.entry-path)
                   (& decls)
                   (& paths))]
               [metadata-link-inputs : build_run_core.SourceToolLinkInputs
@@ -5547,45 +5584,47 @@
                 (clone
                   (build_run_core.source-tool-link-inputs-merge-with
                     (build_run_core.source-tool-link-inputs-merge
-                      manifest-link-inputs
+                      (clone request.manifest-link-inputs)
                       metadata-link-inputs)
-                    dep-link-inputs
+                    (clone request.dep-link-inputs)
                     false))]
               [crt-entry : bool
                 (and
-                  emit-entry
+                  request.emit-entry
                   (build_run_core.source-tool-linux-crt-entry?
-                    target
+                    (clone request.target)
                     effective-link-inputs))]
-              (build-package-finish-fresh-artifacts-with-surface
-                scope
-                (owned_view.compiler-owned-shared-view manifest)
-                source-inputs
-                seen
-                (owned_view.compiler-owned-shared-view manifest.name)
-                kind
-                target
-                opt-level
-                profile
-                mode
-                producer-identity
-                (owned_view.compiler-owned-shared-view entry-path)
-                emit-entry
-                crt-entry
-                decls
-                paths
-                owned-paths
-                (build-package-output-dir-profile
-                  manifest-dir
-                  manifest.name
-                  profile)
-                asm-path
-                obj-path
-                artifact-path
-                effective-link-inputs
-                tlci-path
-                announce
-                compile-cfgs))])])))
+              (Finished
+                (build-package-finish-fresh-artifacts-with-surface
+                  scope
+                  (clone request.manifest)
+                  source-inputs
+                  seen
+                  (string.copy (& request.manifest.name))
+                  (clone request.kind)
+                  (clone request.target)
+                  request.opt-level
+                  (clone request.profile)
+                  (clone request.mode)
+                  (string.copy (& request.producer-identity))
+                  (string.copy (& request.entry-path))
+                  request.emit-entry
+                  crt-entry
+                  decls
+                  paths
+                  owned-paths
+                  (build-package-output-dir-profile
+                    (string.copy (& request.manifest-dir))
+                    (string.copy (& request.manifest.name))
+                    (clone request.profile))
+                  (string.copy (& request.asm-path))
+                  (string.copy (& request.obj-path))
+                  (string.copy (& request.artifact-path))
+                  effective-link-inputs
+                  (string.copy (& request.tlci-path))
+                  request.announce
+                  (cfg_core.compiler-cfg-snapshot-to-env
+                    (clone request.compile-cfgs)))))])])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -5681,73 +5720,35 @@
                 (owned_view.compiler-owned-shared-view manifest-path))
               target)]
           [emit-entry : bool (build-package-kind-entry? kind)]
-          [inline-test-status : i64
-            (build-inline-test-typecheck-package-sources
-              (owned_view.compiler-owned-shared-view manifest-path)
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              (owned_view.compiler-owned-shared-view manifest-dir)
-              (owned_view.compiler-owned-shared-view name)
-              (owned_view.compiler-owned-shared-view manifest.deps)
-              (build-package-compile-cfgs
+          (build-package-emit-one-with-surface
+            (&
+              (BuildPackageEmitRequest
+                manifest-path
+                manifest
                 target
-                compile-context.root-compiler
-                cfg-names))]
-          [_reset-after-inline-tests : unit
-            (if (= inline-test-status 0)
-              (begin
-                (compiler_driver_core.compiler-driver-reset-file-state!)
-                (ci.intern-persistent-arena-reset!))
-              unit)]
-          (if (= inline-test-status 0)
-            (let
-              [pre-emit-doctest-status : i64
-                (build-package-run-doctest-worker-or-inline
-                  name
-                  (owned_view.compiler-owned-shared-view entry-path)
-                  (owned_view.compiler-owned-shared-view manifest-path)
-                  target
-                  opt-level
-                  profile
-                  mode
-                  lock-policy
-                  (owned_view.compiler-owned-shared-view manifest.deps)
-                  (load.compiler-pkg-deps-list
-                    (owned_view.compiler-owned-shared-view manifest.deps))
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
-                  (& cfg-names)
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  emit-entry)]
-              [_reset-after-pre-emit-doctests : unit
-                (begin
-                  (compiler_driver_core.compiler-driver-reset-file-state!)
-                  (ci.intern-persistent-arena-reset!))]
-              (if (= pre-emit-doctest-status 0)
-                (build-package-emit-one-with-surface
-                  manifest-path
-                  manifest
-                  target
-                  opt-level
-                  profile
-                  mode
-                  stdlib-roots
-                  producer-identity
-                  entry-path
-                  manifest-dir
-                  kind
-                  asm-path
-                  obj-path
-                  artifact-path
-                  tlci-path
-                  manifest-link-inputs
-                  dep-link-inputs
-                  emit-entry
+                opt-level
+                profile
+                mode
+                stdlib-roots
+                producer-identity
+                entry-path
+                manifest-dir
+                kind
+                asm-path
+                obj-path
+                artifact-path
+                tlci-path
+                manifest-link-inputs
+                dep-link-inputs
+                emit-entry
+                (cfg_core.compiler-cfg-snapshot-from-env
                   (build-package-compile-cfgs
                     target
                     compile-context.root-compiler
-                    cfg-names)
-                  announce)
-                pre-emit-doctest-status))
-            inline-test-status))))))
+                    cfg-names))
+                announce
+                lock-policy
+                (clone (deref cfg-names))))))))))
 
 (cfg
   (not

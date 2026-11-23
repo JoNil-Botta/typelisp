@@ -4138,14 +4138,16 @@ an ignored test remains ignored until `--include-ignored`, after which its slow
 state still requires `--include-slow`.
 
 Production commands (`check`, `compile`, `build`, and `run`) type-check inline
-tests owned by the explicitly named source — or by the package's own discovered
-sources when operating on a package — before ordinary production emission. That
-preflight enables the `test` cfg predicate, so source-local fixture
+tests owned by the explicitly named source. Package `check` and `build` check
+inline tests and doctests in package-owned modules reachable from the package
+entry. `typelisp test` and `typelisp test --check` check inline tests in all
+discovered package sources, including modules outside the entry's import
+closure. Inline-test preflight enables the `test` cfg predicate, so source-local fixture
 declarations can be written as `(cfg test ...)`; ordinary production loading
 leaves them inactive. `test` items and test-only helper declarations are
 dropped before production lowering and codegen, so valid inline tests cannot
-change emitted assembly. Imports provide runtime declarations but do not have
-their inline tests checked merely because they were imported.
+change emitted assembly. For a single-file command, imports provide runtime
+declarations and inline-test preflight stays scoped to the named source.
 
 `typelisp test <file.tl>` loads the import graph, lowers inline tests owned by
 the requested source into private unit-returning functions, skips any

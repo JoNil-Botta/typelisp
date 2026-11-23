@@ -111,6 +111,21 @@
               (doc-test-extract-source (byte_buf.to-string contents))]
             (in-arena home (doc-test-extraction-copy extraction)))]))))
 
+(define (doc-test-package-file-has-examples? [path : (& str)]) : bool
+  (with-scratch
+    (match (io.try-read-file path)
+      [(ErrIoBytes _) false]
+      [(OkIoBytes contents)
+        (let
+          [text : String (byte_buf.to-string contents)]
+          (and
+            (string.contains (& text) "```")
+            (match (doc-test-extract-source text)
+              [(Extraction examples errors)
+                (or
+                  (> (doc_example_vec.len (& examples)) 0)
+                  (> (doc_error_vec.len (& errors)) 0))])))])))
+
 (defenum DocTestMaybeString
   (No)
   (Some String))

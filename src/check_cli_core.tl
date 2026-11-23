@@ -8,6 +8,7 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
+(import build_run_core)
 (import compiler_typecheck_core as tc)
 (import compiler_driver_core)
 (import doc_test)
@@ -168,7 +169,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [options : cli_option.CliCompileOptions]) : i64
-  (match (package_source_core.package-source-discover-for
+  (match (package_source_core.package-source-resolve-manifest
     "check"
     manifest-path
     has-manifest)
@@ -187,6 +188,34 @@
         [emit-entry : bool (selfhost-check-package-kind-entry? manifest.kind)]
         [_reset-file-state : unit
           (compiler_driver_core.compiler-driver-reset-file-state!)]
+        [discovery : compiler_driver_core.ResultCompilerDriverPackagePaths
+          (compiler_driver_core.compiler-driver-load-package-preflight-paths
+            (string.copy (& entry-path))
+            (build_run_core.source-tool-backend-target options.target)
+            (& options.cfgs)
+            (clone options.stdlib-roots)
+            (string.copy (& manifest-dir))
+            (clone manifest.deps)
+            emit-entry)]
+        [inline-test-status : i64
+          (match (& discovery)
+            [(Ok paths)
+              (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
+                (package_source_core.package-source-reachable-owned-files
+                  paths
+                  (& manifest-dir)
+                  (& options.stdlib-roots))
+                (clone options.stdlib-roots)
+                (string.copy (& manifest-dir))
+                (string.copy (& name))
+                (clone manifest.deps)
+                (target_cfg.compiler-target-cfgs-with-names
+                  options.target
+                  (clone options.cfgs))
+                "typecheck-prefix-inline-check-package")]
+            ;; The ordinary check below reports loader errors with its usual diagnostics.
+            [(Err _) 0])]
+        (when (not (= inline-test-status 0)) (return inline-test-status))
         (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
           entry-path
           (owned_view.compiler-owned-shared-view options.stdlib-roots)
@@ -201,44 +230,29 @@
             (compiler_driver_core.compiler-driver-print-advisories
               (& advisories))
             (let
-              ;; Doctests run after the compiler and intern arenas are reset.
-              ;; Filesystem paths are values here, so retain owned copies rather
-              ;; than carrying parser identity across that lifetime boundary.
+              ;; Retain the filesystem paths across the compiler-state reset.
               [doctest-paths : ast.AstDeclPathList
-                (selfhost-check-package-doctest-paths-snapshot paths)]
-              ;; Match standalone package inline-test runs: entry checking can
-              ;; leave enough compiler state live to exhaust long package checks.
+                (match discovery
+                  [(Ok reachable) reachable]
+                  [(Err _)
+                    (selfhost-check-package-doctest-paths-snapshot paths)])]
               [_reset-after-entry : unit
                 (begin
                   (compiler_driver_core.compiler-driver-reset-file-state!)
                   (ci.intern-persistent-arena-reset!))]
-              [inline-test-status : i64
-                (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-                  source-set.sources
-                  (owned_view.compiler-owned-shared-view options.stdlib-roots)
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  (owned_view.compiler-owned-shared-view manifest.deps)
-                  (target_cfg.compiler-target-cfgs-with-names
-                    options.target
-                    (owned_view.compiler-owned-shared-view options.cfgs))
-                  "typecheck-prefix-inline-check-package")]
-              (if (= inline-test-status 0)
-                (let
-                  [doctest-status : i64
-                    (doc_test.doc-test-report-status
-                      (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
-                        doctest-paths
-                        options.stdlib-roots
-                        manifest-dir
-                        manifest.deps
-                        (target_cfg.compiler-target-cfgs-with-names
-                          options.target
-                          options.cfgs)))]
-                  (if (= doctest-status 0)
-                    (selfhost-check-print-passed)
-                    doctest-status))
-                inline-test-status))]
+              [doctest-status : i64
+                (doc_test.doc-test-report-status
+                  (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
+                    doctest-paths
+                    options.stdlib-roots
+                    manifest-dir
+                    manifest.deps
+                    (target_cfg.compiler-target-cfgs-with-names
+                      options.target
+                      options.cfgs)))]
+              (if (= doctest-status 0)
+                (selfhost-check-print-passed)
+                doctest-status))]
           [(Err diag advisories)
             (compiler_driver_core.compiler-driver-print-advisories
               (& advisories))

@@ -13,6 +13,7 @@
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
+(import compiler_ast_types as ast)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_diagnostic)
@@ -784,6 +785,51 @@
         [(OkFsFileKind kind)
           (package-source-include-kind? normalized-path kind)]
         [(ErrFsFileKind _) false]))))
+
+;; The loader's paths are relative to the working directory or already
+;; absolute. Use absolute paths for ownership checks, and retain the loader's
+;; spelling for the later source checks and their diagnostics.
+(define (package-source-absolute-path [cwd : (& str)] [path : (& str)]) : String
+  (compiler_load.compiler-load-normalize-path
+    (if (compiler_load.compiler-load-absolute-path? path)
+      (string.copy path)
+      (package-source-root-join cwd path))))
+
+(define (package-source-reachable-owned-files
+  [paths : (& ast.AstDeclPathList)]
+  [manifest-dir : (& str)]
+  [stdlib-roots : (& svec.Vec)]) : svec.Vec
+  (let
+    [cwd : String (fs.current-dir)]
+    [root : String (package-source-absolute-path (& cwd) manifest-dir)]
+    [stdlib-dir : String (package-source-root-join (& root) "stdlib")]
+    [last-path : String ""]
+    [sources : svec.Vec (svec.new)]
+    (for [index (iterator.range 0 (ast.ast-decl-path-list-len paths))]
+      (let
+        [path : String (ast.ast-decl-path-list-get paths index "")]
+        (unless
+          (string.eq path last-path)
+          (let
+            [absolute : String (package-source-absolute-path (& cwd) (& path))]
+            (when
+              (and
+                (not (compiler_load.compiler-load-stdlib-import? path))
+                (not
+                  (compiler_load.compiler-load-path-under-root?
+                    (& absolute)
+                    (& stdlib-dir)))
+                (not
+                  (compiler_load.compiler-load-stdlib-import?
+                    (compiler_load.compiler-load-stdlib-owned-path-from-roots
+                      (string.copy (& path))
+                      stdlib-roots)))
+                (package-source-path-eligible-for-root? (& root) (& absolute)))
+              (set!
+                sources
+                (package-source-vec-insert sources (string.copy (& path)))))
+            (set! last-path path)))))
+    sources))
 
 (define (package-source-discover-for
   [command : String]

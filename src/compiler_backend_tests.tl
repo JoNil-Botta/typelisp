@@ -29384,9 +29384,9 @@ entry:
         ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 from its
         ;; old positive 176(%rsp) identity slot to -64; literal temporaries
         ;; independently reuse -8.
-        (asm-has? asm "    ucomiss -64(%rsp), %xmm2\n")
+        (asm-has? asm "    ucomiss -64(%rsp), %xmm2\n    jbe .L")
         (asm-has? asm "    addss -64(%rsp), %xmm2\n")
-        (asm-has? asm "    setb %r8b\n")
+        (asm-lacks? asm "    setb ")
         (asm-lacks? asm "    ucomiss %xmm1, %xmm0\n")
         (asm-lacks? asm "    addss %xmm1, %xmm0\n")
         (asm-lacks? asm "    cvtsd2ss ")
@@ -29425,48 +29425,58 @@ entry:
         [(Ok f32-asm)
           (and
             (be_state.backend-and4
-              (asm-has? f64-asm "    movsd %xmm2, %xmm4\n")
+              (asm-has? f64-asm "    movapd %xmm2, %xmm4\n")
               (asm-has? f64-asm "    addsd %xmm3, %xmm4\n")
-              (asm-has? f32-asm "    movss %xmm2, %xmm4\n")
+              (asm-has? f32-asm "    movaps %xmm2, %xmm4\n")
               (asm-has? f32-asm "    addss %xmm3, %xmm4\n"))
             (asm-lacks? f64-asm "%xmm0" "%xmm1")
             (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(Err _) false])]
     [(Err _) false]))
 
-(define (compiler-backend-spill-float-arith-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
-  (be_scalar.compiler-backend-emit-binop
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (regalloc.compiler-reg-var-types-insert
+(define (compiler-backend-spill-float-arith-asm
+  [ty : ast.AstType]
+  [occupied : i64]) : be_state.ResultCompilerBackend
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (set-scratch-scavenge-ctx-occupied-masks!
+      (be_state.compiler-backend-state-function-state state)
+      (__tl_make-array 0 occupied))
+    (set-state-emit-instr-post-base! state 1)
+    (set-state-emit-current-count! state 0)
+    (be_scalar.compiler-backend-emit-binop
+      (ast.ast-node-pool-reader-type-segment-bases)
       (regalloc.compiler-reg-var-types-insert
         (regalloc.compiler-reg-var-types-insert
-          (regalloc.compiler-reg-var-types-empty)
-          2
+          (regalloc.compiler-reg-var-types-insert
+            (regalloc.compiler-reg-var-types-empty)
+            2
+            (owned_view.compiler-owned-shared-view ty))
+          1
           (owned_view.compiler-owned-shared-view ty))
-        1
+        0
         (owned_view.compiler-owned-shared-view ty))
-      0
-      (owned_view.compiler-owned-shared-view ty))
-    (Empty)
-    (reg-homes "%0=%xmm3 %1=%xmm4 %2=spill:-16")
-    2
-    (Add)
-    (Var 0)
-    (Var 1)
-    ty
-    (be_state.compiler-backend-state-new
-      (ci.intern-compat-state-capture-active))))
+      (Empty)
+      (reg-homes "%0=%xmm3 %1=%xmm4 %2=spill:-16")
+      2
+      (Add)
+      (Var 0)
+      (Var 1)
+      ty
+      state)))
 
 (define (compiler-backend-spill-float-arith-home-ok?) : bool
-  (match (compiler-backend-spill-float-arith-asm (F64))
+  (match (compiler-backend-spill-float-arith-asm (F64) 0)
     [(Ok f64-asm)
-      (match (compiler-backend-spill-float-arith-asm (F32))
+      (match (compiler-backend-spill-float-arith-asm (F32) 0)
         [(Ok f32-asm)
           (and
             (be_state.backend-and4
-              (asm-has? f64-asm "    movsd %xmm3, %xmm2\n")
+              (asm-has? f64-asm "    movapd %xmm3, %xmm2\n")
               (asm-has? f64-asm "    addsd %xmm4, %xmm2\n")
-              (asm-has? f32-asm "    movss %xmm3, %xmm2\n")
+              (asm-has? f32-asm "    movaps %xmm3, %xmm2\n")
               (asm-has? f32-asm "    addss %xmm4, %xmm2\n"))
             (asm-has? f64-asm "    movsd %xmm2, -16(%rbp)\n")
             (asm-has? f32-asm "    movss %xmm2, -16(%rbp)\n")
@@ -29474,6 +29484,29 @@ entry:
             (asm-lacks? f32-asm "%xmm0" "%xmm1"))]
         [(Err _) false])]
     [(Err _) false]))
+
+(define (compiler-backend-pressured-float-arith-home-ok?) : bool
+  (let
+    [homes
+      (__tl_make-array
+        "%xmm0"
+        "%xmm1"
+        "%xmm2"
+        "%xmm3"
+        "%xmm4"
+        "%xmm5"
+        "%xmm6"
+        "%xmm7"
+        "%xmm8"
+        "%xmm9"
+        "%xmm10")]
+    [occupied : i64
+      (be_operand.compiler-backend-scavenge-exclude-mask (& homes) 11)]
+    (asm-ok?
+      (compiler-backend-spill-float-arith-asm (F64) occupied)
+      (has
+        "    movapd %xmm3, %xmm11\n    addsd %xmm4, %xmm11\n"
+        "    movsd %xmm11, -16(%rbp)\n"))))
 
 ;; Exact whole sequences prove PF handling and absence of unplanned clobbers.
 (define (compiler-backend-float-unordered-sequence-ok?
@@ -29665,7 +29698,7 @@ entry:
           (and
             (be_state.backend-and8
               (asm-has? arith-asm "    addsd %xmm4, %xmm2\n")
-              (asm-has? arith-asm "    movsd %xmm2, %xmm4\n")
+              (asm-has? arith-asm "    movapd %xmm2, %xmm4\n")
               (asm-has? cmp-asm "    movsd -24(%rbp), %xmm2\n")
               (asm-has? cmp-asm "    ucomisd %xmm3, %xmm2\n")
               (asm-has? cmp-asm "    setb %r12b\n")
@@ -36090,9 +36123,9 @@ entry:
       (=
         (be_operand.compiler-backend-scavenge-reg-bit "%xmm4")
         (be_operand.compiler-backend-scavenge-reg-bit "%zmm4"))
-      (= (backend.compiler-backend-scavenge-reg-bit-by-index 15) rax)
-      (= (backend.compiler-backend-scavenge-reg-bit-by-index 16) rsi)
-      (= (backend.compiler-backend-scavenge-reg-bit-by-index 17) rdi))))
+      (= (shl (cast 1 : i64) 15) rax)
+      (= (shl (cast 1 : i64) 16) rsi)
+      (= (shl (cast 1 : i64) 17) rdi))))
 
 (define (compiler-backend-emergency-vector-width-ok?) : bool
   (let
@@ -41006,6 +41039,7 @@ b_keep:
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)
+        (compiler-backend-pressured-float-arith-home-ok?)
         (if (compiler-backend-float-unordered-sequences-ok?)
           true
           (io.panic "backend: unordered float comparison sequences"))

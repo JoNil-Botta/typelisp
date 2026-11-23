@@ -33,6 +33,7 @@
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_builtin_ids as cbi)
 (import compiler_ir_types as ir)
+(import compiler_opt_level as opt_level)
 (import compiler_ir_return_storage as return_storage)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -5908,7 +5909,8 @@
   (match op
     [(Sum) 0]
     [(Min) 1]
-    [(Max) 2]))
+    [(Max) 2]
+    [(LastLane) 3]))
 
 (define (opt-vector-reduce-eq
   [a : ir.CompilerIrVectorReduceOp]
@@ -5921,7 +5923,8 @@
     [(Min) 1]
     [(Max) 2]
     [(All) 3]
-    [(Any) 4]))
+    [(Any) 4]
+    [(SplatLast) 5]))
 
 (define (opt-vector-prefix-op-eq?
   [a : ir.CompilerIrVectorPrefixOp]
@@ -16953,12 +16956,18 @@
 (define (opt-cfg-fold-branches-instr-seq-rewrite!
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (for [index (iterator.range 0 count)]
+    [last : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+    ;; Branches terminate basic blocks. Leave all non-branch instructions and
+    ;; branches that cannot fold in their existing slots.
+    (when
+      (and
+        (>= last 0)
+        (opt-cfg-foldable-branch-instr?
+          (ir.compiler-ir-instr-seq-ref instrs last)))
       (ir.compiler-ir-instr-seq-set!
         (&mut instrs)
-        index
-        (opt-cfg-fold-branch (ir.compiler-ir-instr-seq-ref instrs index))))))
+        last
+        (opt-cfg-fold-branch (ir.compiler-ir-instr-seq-ref instrs last))))))
 
 (define (opt-cfg-fold-branches-block-seq-rewrite!
   [blocks : (& ir.CompilerIrBlockSeq)]) : unit
@@ -18950,10 +18959,10 @@
   (not (opt-label-contains body label)))
 
 (define (opt-loop-rotation-header-shape
-  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [index : (& index OptCfgIndex)]
   [header : i64]
   [body : OptLabelSet]) : OptLoopRotationHeader
-  (match (opt-cfg-find-block blocks header)
+  (match (opt-cfg-index-find-block index header)
     [(No) (No)]
     [(Some block)
       (match block
@@ -18968,6 +18977,8 @@
                   [(Branch _ true-label false-label)
                     (if (and
                       (opt-loop-rotation-header-prefix-ok? instrs 0 last)
+                      (not (opt-cfg-block-starts-with-phi? index true-label))
+                      (not (opt-cfg-block-starts-with-phi? index false-label))
                       (or
                         (and
                           (opt-loop-rotation-body-target?
@@ -19005,6 +19016,93 @@
     [(Some block)
       (match block
         [(Block _ instrs) (opt-loop-rotation-final-jump-to? (& instrs) target)])]))
+
+(define (opt-loop-rotation-literal-def
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [def : i64]) : ir.CompilerIrMaybeValue
+  (if (< def 0)
+    (No)
+    (match (ir.compiler-ir-instr-seq-borrow instrs def)
+      [(Mov _ (Bool known) (Bool)) (Some (Bool known))]
+      [_ (No)])))
+
+(define (opt-loop-rotation-entry-value
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : (& index OptCfgIndex)]
+  [label : i64]
+  [cond : (& cond ir.CompilerIrValue)]
+  [last : i64]) : ir.CompilerIrMaybeValue
+  (match cond
+    [(Bool known) (Some (Bool known))]
+    [(Var var)
+      (if (opt-addr-taken-operand? cond)
+        (No)
+        (let
+          [def : i64 (opt-ctor-fwd-find-def instrs (- last 1) var)]
+          (if (>= def 0)
+            (opt-loop-rotation-literal-def instrs def)
+            ;; SPMD may place invariant setup in its own preheader. A single
+            ;; predecessor supplies every incoming value except at the
+            ;; function entry, which also receives the caller's values.
+            (let
+              [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+              (if (and
+                (!= label (opt-cfg-index-label index 0))
+                (= (opt-label-count preds) 1))
+                (match (opt-cfg-index-find-block index (opt-label-ref preds 0))
+                  [(Some (Block _ pred-instrs))
+                    (opt-loop-rotation-literal-def
+                      (& pred-instrs)
+                      (opt-ctor-fwd-find-def
+                        (& pred-instrs)
+                        (- pred-instrs.len 1)
+                        var))]
+                  [(No) (No)])
+                (No))))))]
+    [_ (No)]))
+
+;; The entry branch is replaced with the cloned guard. Its untaken edge can
+;; disappear only if the other successor has no edge-indexed Phi inputs.
+(define (opt-loop-rotation-entry-compatible?
+  [index : (& index OptCfgIndex)]
+  [label : i64]
+  [header : i64]
+  [normalize? : bool]) : bool
+  (match (opt-cfg-index-find-block index label)
+    [(No) false]
+    [(Some block)
+      (match block
+        [(Block _ instrs)
+          (let
+            [last : i64 (- (ir.compiler-ir-instr-seq-count instrs) 1)]
+            (and
+              (>= last 0)
+              (match (ir.compiler-ir-instr-seq-borrow instrs last)
+                [(Jump target) (= target header)]
+                [(Branch cond yes no)
+                  (and
+                    normalize?
+                    (match (opt-loop-rotation-entry-value
+                      instrs
+                      index
+                      label
+                      cond
+                      last)
+                      [(Some (Bool known))
+                        (and
+                          (=
+                            (if known
+                              yes
+                              no)
+                            header)
+                          (not
+                            (opt-cfg-block-starts-with-phi?
+                              index
+                              (if known
+                                no
+                                yes))))]
+                      [_ false]))]
+                [_ false])))])]))
 
 (define (opt-loop-rotation-replace-final-jump
   [pools : ast.AstNodePoolContext]
@@ -19099,24 +19197,33 @@
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [_loops : (& _loops opt_natural_loop_vec.Vec)]
-  [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
+  [loop : (& loop OptNaturalLoop)]
+  [normalize? : bool]) : OptBlockListPassResult
   (let
     [header : i64 (opt-natural-loop-header loop)]
     [latch : i64 (opt-natural-loop-latch loop)]
     [body : OptLabelSet (opt-natural-loop-body loop)]
     [preds : OptLabelSet (opt-pred-map-lookup context.pred-map header)]
-    (match (opt-natural-loop-preheader loop)
-      [(No) (Result blocks false)]
-      [(Some preheader)
+    (if (and
+      (= (opt-natural-loop-latch-count loop) 1)
+      (= (opt-label-count preds) 2)
+      (opt-label-contains preds latch)
+      (opt-loop-rotation-edge-compatible? blocks latch header))
+      (let
+        [first : i64 (opt-label-ref preds 0)]
+        [preheader : i64
+          (if (= first latch)
+            (opt-label-ref preds 1)
+            first)]
         (if (and
-          (= (opt-natural-loop-latch-count loop) 1)
-          (= (opt-label-count preds) 2)
-          (opt-label-contains preds preheader)
-          (opt-label-contains preds latch)
-          (opt-loop-rotation-edge-compatible? blocks preheader header)
-          (opt-loop-rotation-edge-compatible? blocks latch header))
-          (match (opt-loop-rotation-header-shape blocks header body)
+          (opt-cfg-index-reachable? (& context.index) preheader)
+          (not (opt-label-contains body preheader))
+          (opt-loop-rotation-entry-compatible?
+            (& context.index)
+            preheader
+            header
+            normalize?))
+          (match (opt-loop-rotation-header-shape (& context.index) header body)
             [(No) (Result blocks false)]
             [(Header guard)
               (opt-loop-rotation-apply-guard
@@ -19126,14 +19233,15 @@
                 preheader
                 latch
                 (& guard))])
-          (Result blocks false))])))
+          (Result blocks false)))
+      (Result blocks false))))
 
 (define (opt-loop-rotation-loops
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
-  [loops : (& loops opt_natural_loop_vec.Vec)]
-  [remaining : (& remaining (Slice OptNaturalLoop))]) : OptBlockListPassResult
+  [remaining : (& remaining (Slice OptNaturalLoop))]
+  [normalize? : bool]) : OptBlockListPassResult
   (match remaining
     [(slice) (Result blocks false)]
     [(slice loop & rest)
@@ -19141,12 +19249,12 @@
         pools
         (compiler-opt-global-shared-view blocks)
         context
-        loops
-        loop)
+        loop
+        normalize?)
         [(Result next changed)
           (if changed
             (Result next true)
-            (opt-loop-rotation-loops pools blocks context loops rest))])]))
+            (opt-loop-rotation-loops pools blocks context rest normalize?))])]))
 
 ;; The step already builds a CFG context for `blocks`. Carry it out so the
 ;; fixpoint below can hand the LAST step's context -- the one built for the
@@ -19157,7 +19265,8 @@
 
 (define (opt-loop-rotation-blocks-once-result
   [pools : ast.AstNodePoolContext]
-  [blocks : (& ir.CompilerIrBlockList)]) : OptLoopRotationCtxResult
+  [blocks : (& ir.CompilerIrBlockList)]
+  [normalize? : bool]) : OptLoopRotationCtxResult
   (let
     [context : OptCfgContext
       (opt-cfg-context-build
@@ -19170,20 +19279,25 @@
       pools
       (owned_view.compiler-owned-reference-shared-view blocks)
       context
-      loops
-      (opt_natural_loop_vec.view loops))
+      (opt_natural_loop_vec.view loops)
+      normalize?)
       [(Result next changed) (Result next changed context)])))
 
 (define (opt-loop-rotation-blocks-fixed-result
   [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
-  [remaining : i64]) : OptBlockCtxResult
+  [remaining : i64]
+  [normalize? : bool]) : OptBlockCtxResult
   (if (<= remaining 0)
     (Result blocks (opt-cfg-context-empty) false)
-    (match (opt-loop-rotation-blocks-once-result pools (& blocks))
+    (match (opt-loop-rotation-blocks-once-result pools (& blocks) normalize?)
       [(Result next changed context)
         (if changed
-          (opt-loop-rotation-blocks-fixed-result pools next (- remaining 1))
+          (opt-loop-rotation-blocks-fixed-result
+            pools
+            next
+            (- remaining 1)
+            normalize?)
           ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
           ;; when it reports no change, so `context` is valid for `next`.
           (Result next context true))])))
@@ -19194,12 +19308,9 @@
   ;; The natural-loop finder is dominance based, so let it decide whether the
   ;; CFG contains a loop. Textual block order is not a loop property: inlining
   ;; and block layout may put a latch before its header.
-  (if (opt-ssa-blocks-have-phi? blocks)
-    (Result blocks (opt-cfg-context-empty) false)
-    (opt-loop-rotation-blocks-fixed-result
-      pools
-      (compiler-opt-global-shared-view blocks)
-      (+ 1 (ir.compiler-ir-block-list-count blocks)))))
+  (let
+    [remaining : i64 (+ 1 (ir.compiler-ir-block-list-count blocks))]
+    (opt-loop-rotation-blocks-fixed-result pools blocks remaining false)))
 
 ;; The SPMD lowerer emits `branch true, vector-header, tail` before the vector
 ;; loop. Speculatively normalize that effective single-successor edge so
@@ -19212,17 +19323,9 @@
   (match func
     [(Function _ _ _ frame blocks _)
       (opt-addr-taken-refresh! frame (& blocks))
-      (if (opt-ssa-blocks-have-phi? blocks)
-        (Result blocks (opt-cfg-context-empty) false)
-        (let
-          [normalized : ir.CompilerIrBlockList
-            (if (opt-cfg-blocks-have-foldable-branch? blocks)
-              (opt-cfg-fold-branches-blocks (& blocks))
-              blocks)]
-          (opt-loop-rotation-blocks-fixed-result
-            pools
-            (compiler-opt-global-shared-view normalized)
-            (+ 1 (ir.compiler-ir-block-list-count normalized)))))]))
+      (let
+        [remaining : i64 (+ 1 (ir.compiler-ir-block-list-count blocks))]
+        (opt-loop-rotation-blocks-fixed-result pools blocks remaining true))]))
 
 (define (opt-loop-rotation-blocks
   [pools : ast.AstNodePoolContext]
@@ -19238,7 +19341,11 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
       (opt-addr-taken-refresh! frame (& blocks))
-      (opt-loop-rotation-blocks-result pools blocks)]))
+      ;; Preserve the scalar pipeline's pre-SSA contract. The speculative SIMD
+      ;; route checks changed edges individually and verifies its final CFG.
+      (if (opt-ssa-blocks-have-phi? blocks)
+        (Result blocks (opt-cfg-context-empty) false)
+        (opt-loop-rotation-blocks-result pools blocks))]))
 
 ;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
 ;;
@@ -49560,7 +49667,7 @@
             rewritten)
           (> trap-count 0)))]))
 
-(define (opt-switch-block-starts-with-phi?
+(define (opt-cfg-block-starts-with-phi?
   [index : (& index OptCfgIndex)]
   [label : i64]) : bool
   (match (opt-cfg-index-find-block index label)
@@ -49581,7 +49688,7 @@
   [default-label : i64]) : bool
   (if (or
     (opt-switch-candidate-has-label? all-items default-label)
-    (opt-switch-block-starts-with-phi? index default-label))
+    (opt-cfg-block-starts-with-phi? index default-label))
     false
     (match items
       [(Nil) true]
@@ -49590,7 +49697,7 @@
           [(Candidate _ _ _ arm-label _ _)
             (and
               (not (opt-switch-candidate-has-label? all-items arm-label))
-              (not (opt-switch-block-starts-with-phi? index arm-label))
+              (not (opt-cfg-block-starts-with-phi? index arm-label))
               (let
                 [items-2 (opt-switch-candidate-tail items)]
                 (opt-switch-targets-safe-from?
@@ -49790,7 +49897,7 @@
           [target : i64 (opt-switch-block-sole-jump (& block))]
           (if (or
             (= target (ir.compiler-ir-label-none))
-            (opt-switch-block-starts-with-phi? index target))
+            (opt-cfg-block-starts-with-phi? index target))
             label
             (opt-switch-thread-arm-from index target (- fuel 1))))])))
 
@@ -60450,6 +60557,7 @@
   ;; Set only for the inliner's checked tier, which runs the frozen priced
   ;; pipeline instead of the live one (see opt-live-only).
   (priced? bool)
+  (optimize-for-size bool)
   ;; Compile-profile ownership follows the already per-program summary bundle.
   ;; The disabled state is a one-word sentinel and allocates no summary storage.
   (profile-state profile_state.CompilerProfileState)
@@ -60492,6 +60600,7 @@
 (define (opt-program-summaries-empty-for [priced? : bool]) : OptProgramSummaries
   (OptProgramSummaries
     priced?
+    false
     (profile_state.compiler-profile-state-new)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -62968,6 +63077,7 @@
   (index-var i64)
   (next-var i64)
   (step i64)
+  (gangs i64)
   (ity ast.AstType)
   (bound ir.CompilerIrValue)
   (cmp-op ir.CompilerIrBinOp)
@@ -70129,7 +70239,7 @@
 (define (opt-unroll-simd-body-instr-ok? [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(BoundsCheck _ _ _) false]
-    [(VectorStore _) true]
+    [(or (VectorStore _) (Word _ _ _ _) (MaskNot _ _ _) (VectorShuffle _)) true]
     [_ (opt-unroll-body-instr-ok? instr)]))
 
 (define (opt-unroll-simd-vector-instr? [instr : (& instr ir.CompilerIrInstr)]) : bool
@@ -70141,14 +70251,42 @@
     [_ false]))
 
 (define (opt-unroll-simd-body-ok?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [last : i64]) : bool
   (for [index (iterator.range 0 last)]
-    (unless
-      (opt-unroll-simd-body-instr-ok?
-        (ir.compiler-ir-instr-seq-borrow instrs index))
-      (return false))
-    unit)
+    (let
+      [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+      (unless (opt-unroll-simd-body-instr-ok? instr) (return false))
+      (let
+        [dst : i64
+          (match instr
+            [(VectorShuffle payload-box) (deref payload-box).dst]
+            [(MaskNot dst _ _) dst]
+            [_ -1])]
+        ;; These destinations are freshened per gang. In particular each
+        ;; shuffle needs a unique destination for its backend check labels.
+        (when
+          (and
+            (>= dst 0)
+            (or
+              (opt-used-contains
+                (&
+                  (opt-unroll-uses-before
+                    instrs
+                    0
+                    (+ index 1)
+                    (opt_i64_i64_map.with-capacity 8)))
+                dst)
+              (opt-used-contains
+                (&
+                  (opt-unroll-const-outside-uses
+                    (ir.compiler-ir-block-list-view blocks)
+                    label
+                    (opt_i64_i64_map.with-capacity 64)))
+                dst)))
+          (return false)))))
   true)
 
 (define (opt-unroll-simd-body-has-vector?
@@ -70162,6 +70300,26 @@
       (return true))
     unit)
   false)
+
+;; Multiple loads can amortize the address setup across a wider group. Keep
+;; the smaller group when the surrounding CFG has already acquired phis or
+;; when a gang carries an expanding shuffle check.
+(define (opt-unroll-simd-group-gangs
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [last : i64]
+  [loads : i64]
+  [stores : i64]) : i64
+  (if (= stores 0)
+    16
+    (if (or (< loads 2) (opt-ssa-blocks-have-phi? blocks))
+      4
+      (begin
+        (for [index (iterator.range 0 last)]
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
+            [(VectorShuffle _) (return 4)]
+            [_ unit]))
+        16))))
 
 ;; A self-loop candidate must have exactly one predecessor besides itself.
 (define (opt-unroll-simd-outside-pred [preds : OptLabelSet] [loop-label : i64]) : OptLoopPreheader
@@ -70399,7 +70557,11 @@
                                       [_ false])
                                     (!= label entry-label)
                                     (opt-unroll-invariant-bound? defs bound)
-                                    (opt-unroll-simd-body-ok? instrs cond-index)
+                                    (opt-unroll-simd-body-ok?
+                                      blocks
+                                      label
+                                      instrs
+                                      cond-index)
                                     (opt-unroll-simd-body-has-vector?
                                       instrs
                                       cond-index)
@@ -70431,9 +70593,18 @@
                                       (opt-cfg-predecessors blocks label)
                                       label)
                                       [(Some pred-label)
-                                        (if (opt-unroll-pred-retargetable?
-                                          blocks
-                                          pred-label)
+                                        (if (and
+                                          (opt-unroll-pred-retargetable?
+                                            blocks
+                                            pred-label)
+                                          (match (opt-cfg-find-block
+                                            blocks
+                                            tail-label)
+                                            [(Some (Block _ tail-instrs))
+                                              (opt-unroll-no-phi-from?
+                                                (& tail-instrs)
+                                                0)]
+                                            [(No) false]))
                                           (match (opt-unroll-simd-memory-shape
                                             type-segment-bases
                                             defs
@@ -70470,6 +70641,12 @@
                                                     index-var
                                                     next-var
                                                     step
+                                                    (opt-unroll-simd-group-gangs
+                                                      blocks
+                                                      instrs
+                                                      cond-index
+                                                      load-count
+                                                      store-count)
                                                     (ast.ty-node-persist ity)
                                                     bound
                                                     cmp-op
@@ -70629,7 +70806,7 @@
               ty))]
         [_ (opt-unroll-clone-instr remap cell copy instr)])]))
 
-;; Emit sixteen sequential remapped copies.
+;; Emit sequential remapped copies for the selected group size.
 (define (opt-unroll-simd-copies
   [type-segment-bases : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -70638,11 +70815,12 @@
   [cell : (&mut cell (__tl_dyn-array i64))]
   [memory-bases : (& memory-bases OptUnrollSimdMemoryList)]
   [group-bases : (& group-bases (__tl_dyn-array i64))]
-  [step : i64]) : ir.CompilerIrInstrSeq
+  [step : i64]
+  [gangs : i64]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
-      (ir.compiler-ir-instr-builder-with-capacity (* 16 last))]
-    (for [copy (iterator.range 0 16)]
+      (ir.compiler-ir-instr-builder-with-capacity (* gangs last))]
+    (for [copy (iterator.range 0 gangs)]
       (for [index (iterator.range 0 last)]
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
@@ -70746,6 +70924,7 @@
         [cond-index : i64 shape.cond-index]
         [index-var : i64 shape.index-var]
         [step : i64 shape.step]
+        [group-step : i64 (* step shape.gangs)]
         [ity : ast.AstType shape.ity]
         [bound : ir.CompilerIrValue shape.bound]
         [cmp-op : ir.CompilerIrBinOp shape.cmp-op]
@@ -70789,7 +70968,8 @@
             (&mut cell)
             memory-bases
             group-bases
-            step)]
+            step
+            shape.gangs)]
         [end-index : i64 (opt-unroll-alloc-var (&mut cell))]
         [end-next : i64 (opt-unroll-alloc-var (&mut cell))]
         [remainder-ok : i64 (opt-unroll-alloc-var (&mut cell))]
@@ -70808,7 +70988,7 @@
                 ngroup
                 (Sub)
                 (compiler-opt-global-shared-view bound)
-                (I64 (* step 16))
+                (I64 group-step)
                 (compiler-opt-global-shared-view ity)))
             ;; Reject a wrapped bound - 16*step.
             (ir.compiler-ir-instr-builder-push!
@@ -70882,7 +71062,7 @@
                 end-index
                 (Add)
                 (Var iu)
-                (I64 (* step 16))
+                (I64 group-step)
                 (compiler-opt-global-shared-view ity)))
             (ir.compiler-ir-instr-builder-push!
               (&mut unrolled-builder)
@@ -71032,6 +71212,17 @@
       [(VectorStore _) (return true)]
       [_ unit]))
   false)
+
+(define (opt-unroll-simd-blocks-have-store?
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : bool
+  (match blocks
+    [(slice) false]
+    [(slice block & rest)
+      (match block
+        [(Block _ instrs)
+          (or
+            (opt-unroll-simd-instrs-have-store? (& instrs))
+            (opt-unroll-simd-blocks-have-store? rest))])]))
 
 ;; The mutable-SIMD entry has no prescan, so it installs the address-taken
 ;; gate's set only for a block it would otherwise rewrite (#9420).
@@ -103630,36 +103821,42 @@
 (define (opt-pass-rotation
   [pools : ast.AstNodePoolContext]
   [state : OptPassState]) : OptPassState
-  (let
-    [rotation : OptBlockCtxResult
-      (opt-loop-rotation-function-result pools (& (opt-pass-func state)))]
-    [simd : OptFunctionCtxResult
-      (match (opt-loop-rotation-normalized-function-result
-        pools
-        (opt-pass-func state))
-        [(Result blocks ctx valid?)
-          (let
-            [rotated : ir.CompilerIrFunction
-              (let
-                [func (opt-pass-func state)]
-                (opt-function-with-frame-blocks
-                  func
-                  (opt-pass-frame state)
-                  blocks))]
-            (if valid?
-              (opt-unroll-simd-function-with-context-result
-                state.type-segment-bases
-                ctx
-                rotated
-                true)
-              (Result rotated ctx)))])]
-    ;; A successful SIMD rewrite always allocates fresh destinations; rotation
-    ;; itself leaves the frame alone.
-    (if (match (& simd)
-      [(Result simd-func _)
-        (> (opt-function-frame simd-func) (opt-pass-frame state))])
-      (opt-pass-with-ctx-result (& simd) (& state))
-      (opt-pass-with-block-ctx (& rotation) state))))
+  (when
+    (let
+      [blocks (opt-pass-blocks state)]
+      (opt-unroll-simd-blocks-have-store?
+        (ir.compiler-ir-block-list-view blocks)))
+    (let
+      [simd : OptFunctionCtxResult
+        (match (opt-loop-rotation-normalized-function-result
+          pools
+          (opt-pass-func state))
+          [(Result blocks ctx valid?)
+            (let
+              [rotated : ir.CompilerIrFunction
+                (let
+                  [func (opt-pass-func state)]
+                  (opt-function-with-frame-blocks
+                    func
+                    (opt-pass-frame state)
+                    blocks))]
+              (if valid?
+                (opt-unroll-simd-function-with-context-result
+                  state.type-segment-bases
+                  ctx
+                  rotated
+                  true)
+                (Result rotated ctx)))])]
+      ;; A successful SIMD rewrite always allocates fresh destinations;
+      ;; rotation itself leaves the frame alone.
+      (when
+        (match (& simd)
+          [(Result simd-func _)
+            (> (opt-function-frame simd-func) (opt-pass-frame state))])
+        (return (opt-pass-with-ctx-result (& simd) (& state))))))
+  (opt-pass-with-block-ctx
+    (& (opt-loop-rotation-function-result pools (& (opt-pass-func state))))
+    state))
 
 ;; --- dead_global_store --------------------------------------------------------
 ;;
@@ -103881,7 +104078,10 @@
                   (& (opt-pass-blocks s))))
               s)
             s)))]
-    [s (opt-stage "rotation" (opt-pass-rotation pools s))]
+    [s
+      (if summaries.optimize-for-size
+        s
+        (opt-stage "rotation" (opt-pass-rotation pools s)))]
     ;; A multi-def register-group var becomes one word var per word, which the
     ;; SSA below renames (opt-group-split-function). A split hands SSA a stale
     ;; context, since the CFG index holds the block values; an untouched
@@ -104074,23 +104274,25 @@
     ;; which lost every predecessor (the pass also runs it between its own
     ;; rounds).
     [s
-      (opt-stage
-        "thread_branch"
-        (opt-pass-with-rewrite
-          (&
-            (opt-thread-const-branch-function-with-context-result
-              type-segment-bases
-              (&
-                (opt-pass-context
-                  s
-                  (let
-                    [blocks (opt-pass-blocks s)]
-                    (opt-thread-const-branch-blocks-have-candidate?
-                      type-segment-bases
-                      blocks))))
-              false
-              (& (opt-pass-func s))))
-          (& s)))]
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "thread_branch"
+          (opt-pass-with-rewrite
+            (&
+              (opt-thread-const-branch-function-with-context-result
+                type-segment-bases
+                (&
+                  (opt-pass-context
+                    s
+                    (let
+                      [blocks (opt-pass-blocks s)]
+                      (opt-thread-const-branch-blocks-have-candidate?
+                        type-segment-bases
+                        blocks))))
+                false
+                (& (opt-pass-func s))))
+            (& s))))]
     ;; The block merge closes the same stage: `phi_cmp_fold` and the fuser
     ;; above leave a merge holding one input and the compare that reads it one
     ;; block further on, and the cleanup right above is what turns that phi
@@ -104162,13 +104364,15 @@
           ctx
           (opt-loop-preheaders-function-with-context-result ctx verified? func)))]
     [s
-      (opt-stage
-        "rotate_ssa"
-        (opt-pass-move
-          s
-          func
-          ctx
-          (opt-rotate-ssa-function-with-context-result ctx verified? func)))]
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "rotate_ssa"
+          (opt-pass-move
+            s
+            func
+            ctx
+            (opt-rotate-ssa-function-with-context-result ctx verified? func))))]
     [s
       (opt-stage
         "scratch_reset"
@@ -104267,19 +104471,21 @@
     ;; canonical shape at the fixpoint cap).
     [bce-version-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [s
-      (opt-pass-observed
-        (opt-pass-move
-          s
-          func
-          ctx
-          (opt-bce-version-function-with-context-result
-            type-segment-bases
-            (& summaries.direct-call-clean)
-            (& summaries.global-cell.len-eq)
+      (if summaries.optimize-for-size
+        s
+        (opt-pass-observed
+          (opt-pass-move
+            s
+            func
             ctx
-            verified?
-            func))
-        "bce_version")]
+            (opt-bce-version-function-with-context-result
+              type-segment-bases
+              (& summaries.direct-call-clean)
+              (& summaries.global-cell.len-eq)
+              ctx
+              verified?
+              func))
+          "bce_version"))]
     ;; P-B's late slot: the versioner has had every loop now, so the
     ;; length-equality relation is read inside loop bodies too (see
     ;; opt-len-eq-late-sweep).
@@ -104342,17 +104548,19 @@
     ;; rebuilds the context for the new CFG, so the stages below keep valid
     ;; dominance facts.
     [s
-      (opt-stage
-        "unroll"
-        (opt-pass-move
-          s
-          func
-          ctx
-          (opt-unroll-function-with-context-result
-            type-segment-bases
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "unroll"
+          (opt-pass-move
+            s
+            func
             ctx
-            verified?
-            func)))]
+            (opt-unroll-function-with-context-result
+              type-segment-bases
+              ctx
+              verified?
+              func))))]
     ;; Byte-compose load combining runs immediately after the unroller: a
     ;; constant-trip loop unrolled THIS iteration exposes its straight-line
     ;; compose here, and the round's DCE below removes the dead byte
@@ -104526,11 +104734,13 @@
     ;; absorbed into its caller and reappears as an out-of-line callee, for a
     ;; rotation it was already getting.
     [s
-      (opt-stage
-        "rotate_ssa"
-        (opt-pass-with-cfg-func
-          (& (opt-uniform-phi-rotate-gated (& (opt-pass-func s))))
-          s))]
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "rotate_ssa"
+          (opt-pass-with-cfg-func
+            (& (opt-uniform-phi-rotate-gated (& (opt-pass-func s))))
+            s)))]
     ;; Sink loop-closing compares next to their branches so the backend's
     ;; compare+branch fusion fires past the flag-safe pointer-increment Gep
     ;; (the counted-fill shape's setl/movzbq/test/jne becomes cmp;jcc).
@@ -106109,9 +106319,7 @@
               (Array (ir.CompilerIrBlockSeq out seq.len))
               abi))))]))
 
-;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
-;; path), 2 = the full optimizer + scalar register allocation + inlining (the
-;; quality "ship" build).
+;; Levels 2 and s run the full optimizer with different code growth policies.
 (define (optimize-function-with-level-and-summaries-pass
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -106146,6 +106354,8 @@
             func)
           changed))
       (let
+        [_size : unit
+          (set! summaries.optimize-for-size (opt_level.opt-level-size? level))]
         [s : OptPassState
           (match (optimize-function-fixed-pass-with-summaries
             pools
@@ -106184,15 +106394,17 @@
             s)]
         [if-converted : ir.CompilerIrFunction (opt-pass-func s)]
         [s
-          (opt-pass-observed
-            (opt-pass-with-cfg-func
-              (&
-                (opt-licm-unswitch-final
-                  type-segment-bases
-                  (not s.priced?)
-                  (opt-pass-func s)))
-              s)
-            "licm_unswitch")]
+          (if (opt_level.opt-level-size? level)
+            s
+            (opt-pass-observed
+              (opt-pass-with-cfg-func
+                (&
+                  (opt-licm-unswitch-final
+                    type-segment-bases
+                    (not s.priced?)
+                    (opt-pass-func s)))
+                s)
+              "licm_unswitch"))]
         ;; Below every pass that clones a loop (opt-licm-guard-final). The
         ;; priced pipeline leaves it out, so inlining prices what it always did,
         ;; and a function without the shape a guard reads pays one scan.
@@ -106243,23 +106455,27 @@
                 (& (opt-pass-func s))))
             s)]
         [s
-          (opt-pass-with-result
-            (&
-              (opt-thread-const-branch-final-pass
-                type-segment-bases
-                (& (opt-pass-func s))))
-            s)]
+          (if (opt_level.opt-level-size? level)
+            s
+            (opt-pass-with-result
+              (&
+                (opt-thread-const-branch-final-pass
+                  type-segment-bases
+                  (& (opt-pass-func s))))
+              s))]
         ;; ST-2: the threader retargets a jump-only arm's own jump (its phi
         ;; inputs decided the tree), so an arm that fell through before it no
         ;; longer does and costs a taken `jmp` on the path around it. Once more,
         ;; below it.
         [s
-          (opt-pass-with-result
-            (&
-              (opt-cfg-straighten-below-threader-pass
-                type-segment-bases
-                (opt-pass-func s)))
-            s)]
+          (if (opt_level.opt-level-size? level)
+            s
+            (opt-pass-with-result
+              (&
+                (opt-cfg-straighten-below-threader-pass
+                  type-segment-bases
+                  (opt-pass-func s)))
+              s))]
         ;; Moves a bump-first counter's increment into its latch (the `for`
         ;; range shape). It reads final block order and labels only, and
         ;; `cmp_dup` below re-pairs the latch compare with its branch.
@@ -106331,7 +106547,7 @@
 ;; Level 1 keeps the direct path: its inline stage is the cheap tiny-leaf pass,
 ;; whose arena is a fraction of the level-2 one, and the loop reads it in place.
 (define (opt-optimizer-input-carrier [level : i64]) : i64
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     0
     (arena.tl_arena_make)))
 
@@ -106827,7 +107043,7 @@
                 "bounds_group"
                 level
                 _profile-name
-                (if (>= level 2)
+                (if (opt_level.opt-level-full? level)
                   (opt-mul-latency-function
                     (opt-bg-function type-segment-bases (& body-optimized)))
                   body-optimized))]
@@ -106885,7 +107101,8 @@
   (addrtaken opt_i64_i64_map.Map)
   ;; The same references as `refcount`, each weighted by the loop nesting depth
   ;; of the block that holds it. See opt-inline-census-depth-weight.
-  (hotcount opt_i64_i64_map.Map))
+  (hotcount opt_i64_i64_map.Map)
+  (optimize-for-size bool))
 
 (defstruct OptSccResult
   (scc-of (__tl_dyn-array i64))
@@ -107485,7 +107702,8 @@
         (opt-inline-census-bump-map
           census.hotcount
           slot
-          opt-inline-census-site-weight))]
+          opt-inline-census-site-weight)
+        census.optimize-for-size)]
     [(None) census]))
 
 (define (opt-inline-census-add-address
@@ -107497,7 +107715,11 @@
       (let
         [addrtaken : opt_i64_i64_map.Map census.addrtaken]
         (opt_i64_i64_map.insert-ref! (&mut addrtaken) slot 1)
-        (OptInlineCensus census.refcount addrtaken census.hotcount))]
+        (OptInlineCensus
+          census.refcount
+          addrtaken
+          census.hotcount
+          census.optimize-for-size))]
     [(None) census]))
 
 (define (opt-inline-census-use
@@ -107620,7 +107842,8 @@
       (OptInlineCensus
         (opt_i64_i64_map.with-capacity capacity)
         (opt_i64_i64_map.with-capacity capacity)
-        (opt_i64_i64_map.with-capacity capacity))
+        (opt_i64_i64_map.with-capacity capacity)
+        false)
       functions
       0)))
 
@@ -116485,7 +116708,7 @@
 ;; either site class.
 (define (opt-inline-single-block-site-admitted?
   [index : (& OptFunctionIndex)]
-  [census : (& OptInlineCensus)]
+  [census : (& census OptInlineCensus)]
   [func-name : i64]
   [callee-name : i64]
   [cargs : (& cargs ir.CompilerIrCallArgs)]
@@ -116494,6 +116717,17 @@
   [callee-ret : (& ast.AstType)]
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
+  (when
+    census.optimize-for-size
+    (return
+      (or
+        (opt-inline-census-absorbable? index census func-name callee-name)
+        (and
+          (<
+            (opt-inline-single-block-cost-instrs cblocks)
+            (opt-inline-cost-call-bonus))
+          (opt-inline-blocks-call-free? cblocks)
+          (not (opt-inline-blocks-have-bounds-check? cblocks))))))
   (let
     [added-blocks : i64 0]
     [body-instrs : ir.CompilerIrInstrSeq
@@ -117014,6 +117248,12 @@
         [np : i64 (opt-inline-param-count cparams)]
         (if (opt-inline-arity-ok? cargs np)
           (let
+            [absorb-class : i64
+              (opt-inline-census-absorb-class
+                index
+                census
+                func-name
+                callee-name)]
             ;; The blocks the site adds to the caller: the callee's own,
             ;; plus the continuation block the split opens. A tail-call site
             ;; opens none -- the spliced body ends in the caller's exits --
@@ -117046,13 +117286,39 @@
                 (if stage-args?
                   np
                   0))]
+            [_size : unit
+              (when
+                census.optimize-for-size
+                (if (and
+                  (opt-inline-sole-call-absorb-ok?
+                    absorb-class
+                    stage-args?
+                    cblocks)
+                  (not (opt-inline-tailrec-converted-slot? index callee-name))
+                  (not
+                    (opt-inline-cost-crosses-heavy-gate?
+                      caller-blocks
+                      added-so-far
+                      added-blocks)))
+                  (return
+                    (SitePlan
+                      (OptInlineSitePlan
+                        np
+                        added-blocks
+                        tail-slots
+                        stage-all-args?
+                        stage-args?
+                        callee-instrs
+                        absorb-class
+                        1
+                        false
+                        false
+                        false
+                        false
+                        false
+                        false)))
+                  (return (NoSitePlan))))]
             [const-args : i64 (opt-inline-args-const-count cargs)]
-            [absorb-class : i64
-              (opt-inline-census-absorb-class
-                index
-                census
-                func-name
-                callee-name)]
             ;; The site-level verdict: this site claims the callee's body,
             ;; either because it is the only one (class 1, absorption) or
             ;; because the duplicating clauses admit a copy (class 2).
@@ -119462,17 +119728,37 @@
     (arena.destroy-safe! scratch)
     current-spans))
 
-;; Inline small single-block leaf callees across the whole program. Level 2
-;; (the register-allocated quality build) runs the full census/SCC pipeline;
-;; level 1 runs only the call-free tiny-leaf pass above.
+;; A retained body cannot be absorbed for size. Treat library and export
+;; roots as having an external reference when pricing a single-site call.
+(define (opt-inline-size-retained-functions!
+  [index : (& OptFunctionIndex)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]
+  [census : (&mut census OptInlineCensus)]) : unit
+  (if (opt-function-seq-defines? functions "main")
+    (for [i (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
+      (match (ir.compiler-ir-extern-seq-borrow externs i)
+        [(Extern name-id _ _ _ _ _ _ provided _)
+          (when
+            provided
+            (match (opt-function-index-slot-id index name-id)
+              [(Some slot)
+                (opt_i64_i64_map.insert-ref! (&mut census.addrtaken) slot 1)]
+              [(None) unit]))]))
+    (for [slot (iterator.range 0 (opt-function-index-count index))]
+      (opt_i64_i64_map.insert-ref! (&mut census.addrtaken) slot 1))))
+
+;; Full optimization uses the census and SCC walk. Level 1 uses only the
+;; call-free tiny-leaf pass above.
 (define (opt-inline-program-functions-with-spans
   [pools : ast.AstNodePoolContext]
   [input : (&mut input OptOptimizerInput)]
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
+  [externs : (& ir.CompilerIrExternSeq)]
   [level : i64]
   [spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     (if (= level 1)
       (opt-inline-tiny-leaf-program-functions-with-spans (& functions) spans)
       (Program functions spans))
@@ -119501,14 +119787,25 @@
           index
           (&
             (opt-function-index-to-seq (compiler-opt-global-shared-view index))))]
+      [_size : unit
+        (when
+          (opt_level.opt-level-size? level)
+          (set! census.optimize-for-size true)
+          (opt-inline-size-retained-functions!
+            (& index)
+            (& devirt)
+            externs
+            (&mut census)))]
       [_install-owned-state : unit (opt-inline-owned-state-install! index)]
       [_synth : unit
-        (opt-inline-synth-build!
-          index
-          census
-          graph
-          scc-result
-          (& (opt-inline-slot-order scc-result)))]
+        (when
+          (opt_level.opt-level-speed? level)
+          (opt-inline-synth-build!
+            index
+            census
+            graph
+            scc-result
+            (& (opt-inline-slot-order scc-result))))]
       [_begin-price-memo : unit (opt-inline-price-memo-begin!)]
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [next-spans : ir.CompilerSourceSpans
@@ -122611,6 +122908,7 @@
         capacity)]
     (OptProgramSummaries
       false
+      false
       (profile_state.compiler-profile-state-new)
       (opt-direct-call-clean-map functions call-memory capacity)
       call-memory
@@ -122726,7 +123024,7 @@
   [externs : (& ir.CompilerIrExternSeq)]
   [reachable-functions : (& reachable-functions ir.CompilerIrFunctionSeq)]
   [level : i64]) : OptProgramSummaries
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     (opt-program-summaries-empty)
     (let
       [count : i64 (opt-function-seq-count reachable-functions)]
@@ -128016,12 +128314,12 @@
   (let
     [count : i64 (opt-function-seq-count functions)]
     (if (or
-      (< level 2)
+      (not (opt_level.opt-level-full? level))
       (<= count 0)
       (> count (opt-summary-function-limit))
       (= (ir.compiler-ir-global-seq-count globals) 0))
       (begin
-        (if (>= level 2)
+        (if (opt_level.opt-level-full? level)
           (opt-lga-trace-gate! "declined-program-gate" count)
           unit)
         functions)
@@ -130147,7 +130445,7 @@
             [_arm-checked : unit (opt-inline-checked-set-active! true)]
             [_arm-input-chunks : unit
               (when
-                (= level 2)
+                (opt_level.opt-level-full? level)
                 (opt-inline-input-chunks-arm!
                   input-retirement
                   input-chunk-bounds))]
@@ -130157,6 +130455,7 @@
                 (&mut optimizer-input)
                 type-segment-bases
                 functions
+                (& externs)
                 level
                 spans)]
             [_leave-inline-arena : unit
@@ -130185,7 +130484,7 @@
             ;; outside the retired storage.
             [source-retired? : bool
               (and
-                (= level 2)
+                (opt_level.opt-level-full? level)
                 (match input-retirement
                   [(Retain) false]
                   [(Retire owner release-input _)
@@ -130320,7 +130619,7 @@
                             optimized-functions
                             (& externs)
                             false
-                            (>= level 2))]
+                            (opt_level.opt-level-full? level))]
                         [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionSeq
@@ -130339,7 +130638,7 @@
                             specialized-functions
                             level)]
                         [merged : OptMergedProgram
-                          (if (>= level 2)
+                          (if (opt_level.opt-level-full? level)
                             (opt-merge-identical-functions
                               type-segment-bases
                               final-globals
@@ -132434,7 +132733,7 @@
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : ir.CompilerIrFunctionSeq
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     functions
     (let
       [scratch : arena.Arena (arena.make)]

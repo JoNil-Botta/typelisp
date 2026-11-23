@@ -30,7 +30,7 @@ Source (.tl)
     ↓  Parser       → AST
     ↓  Type Checker → Typed AST
     ↓  Lowerer      → IR (3-address code, basic blocks)
-    ↓  Optimizer    → constant folding, GVN/CSE, copy propagation, DCE, LICM with loop preheaders, function inlining, strength reduction; opt-level 2 adds scalar register allocation
+    ↓  Optimizer    → constant folding, GVN/CSE, copy propagation, DCE, LICM with loop preheaders, function inlining, strength reduction; opt-levels 2 and s add scalar register allocation
     ↓  Backend      → x86_64 assembly (.s)
     ↓  target tools → native executable
 ```
@@ -825,20 +825,20 @@ rewinding retires the store's address-keyed memos and diagnostic snapshot throug
 the same helper used by function typechecking; no local environment reaches a
 later function.
 
-Lower scratch ends after lowering. At opt2, `OptimizeRequest` carries optional
-synchronous retirement authority: the exact lower owner's stable address and a
-driver callback. After the surviving bodies reach the optimizer-input carrier
-and the inline arena is released, the callback retires that owner's original
-function IR before program summaries and function optimization. The optimizer
+Lower scratch ends after lowering. At levels 2 and s, `OptimizeRequest` carries
+optional synchronous retirement authority: the exact lower owner's stable address and a
+driver callback. Once the surviving bodies reach the optimizer-input carrier,
+the callback retires that owner's original function IR before the inline arena
+is released and program summaries and function optimization begin. The optimizer
 does not import the lowerer or select an ambient job. Its callback context stays
 outside the retired arena; calls without authority retain their source storage.
 At opt1 the original IR ends after optimizer copy-out; at opt0 it lasts through
 the final IR consumer. Later driver cleanup remains idempotent.
 
-Level 2 also releases the original IR progressively during the inline walk. The
-driver sets the lowering request's chunk policy before lowering, so only opt2
-lowering deep-clones function bodies into chunk arenas, rotating at a byte budget
-between complete clones; the owner's existing arena keeps the escaped
+Levels 2 and s also release original IR progressively during the inline walk.
+The driver configures lowering to deep-clone function bodies into chunk arenas
+and rotates at a byte budget between complete clones. The owner's existing
+arena keeps the escaped
 sequences' shells and slot arrays, and a chunk owns no other chunk's shells,
 metadata or bodies. The request carries the chunks' plain lower-sequence bounds
 and a second synchronous callback that releases one exact chunk of the exact
@@ -2918,11 +2918,20 @@ in the document; invalid coordinates are rejected before checking the source.
 
 Common options include `--target linux-x86_64|windows-x86_64` (Linux is the
 default output target; `test` defaults to the host), `--backend-mode
-scalar|avx2|avx512`, `--opt-level 0|1|2` (0: no IR optimizer; 1: cheap
-stack-only passes; 2: full optimizer with register allocation and inlining —
-levels never change program semantics), `--manifest-path <file>`,
-`--stdlib-root <dir>`, `--locked`, `--update-lock`, and `--cfg <name>`. The
-REPL remembers top-level declarations and evaluates bare expressions by
+scalar|avx2|avx512`, `--opt-level 0|1|2|s` (or `-Os` for size),
+`--manifest-path <file>`,
+`--stdlib-root <dir>`, `--locked`, `--update-lock`, and `--cfg <name>`.
+
+Level 0 skips IR optimization. Level 1 uses the cheap stack-only pipeline.
+Levels 2 and s use full register allocation and the full scalar optimization
+pipeline, including SSA, GVN, SCCP, LICM, DCE, memory forwarding and
+dominance-based bounds-check elimination. Level s skips loop versioning,
+unrolling, rotation, unswitching and jump threading. It inlines eligible
+single-site callees and tiny single-block callees whose estimated body cost is
+below the call overhead. Small arena allocations use shared runtime helpers.
+Optimization levels preserve program semantics.
+
+The REPL remembers top-level declarations and evaluates bare expressions by
 compiling a scratch program through the real build/run pipeline — there is no
 interpreter. `.load <file>` adds a source file's declarations to the current
 session after checking the combined session. Scalar results are printed

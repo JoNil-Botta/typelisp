@@ -782,20 +782,20 @@
         (match (ast.ast-decl-unwrapped
           (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
-          [(DefEnum decl-meta name _ variants)
-            (if (clone-variant-list-able?
-              pools
-              variants
-              names
-              current-module-id)
+          [(DefEnum decl-meta name cleanup variants)
+            (if (and
+              (not (ast.ast-enum-cleanup? cleanup))
+              (clone-variant-list-able? pools variants names current-module-id))
               (set!
                 out
                 (clone-name-set-insert-id
                   out
                   (clone-name-key-id-in-module current-module-id name)))
               unit)]
-          [(DefStruct decl-meta name _ _ fields)
-            (if (clone-struct-fields-able? pools fields names current-module-id)
+          [(DefStruct decl-meta name _ cleanup fields)
+            (if (and
+              (not (ast.ast-struct-cleanup? cleanup))
+              (clone-struct-fields-able? pools fields names current-module-id))
               (set!
                 out
                 (clone-name-set-insert-id

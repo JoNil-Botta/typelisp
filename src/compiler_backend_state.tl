@@ -1144,6 +1144,7 @@
   ;; exact intern capability so concurrent backend jobs never consult a
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
+  (optimize-for-size bool)
   (user-symbol-cache-keys (__tl_dyn-array i64))
   (user-symbol-cache-values (__tl_dyn-array String))
   (user-symbol-cache-epochs (__tl_dyn-array i64))
@@ -1260,6 +1261,7 @@
         (compiler-backend-global-shared-view intern-state)
         owner-arena
         0
+        false
         false
         ;; User-symbol storage is deliberately lazy.  In particular, a
         ;; generated id near the high end of the intern lane must not force
@@ -1754,7 +1756,7 @@
 ;; Whether scalar functions get full register allocation. Register allocation
 ;; makes the EMITTED binary faster but its planning + register-aware emission
 ;; cost more compile time than it saves on a single self-compile, so it is
-;; reserved for opt level 2, the high-quality path. Lower opt levels stay on
+;; reserved for full optimization. Lower opt levels stay on
 ;; cheap stack-only homing. The option is owned by each CompilerBackendState,
 ;; so a given job emits deterministically even when another job is active.
 ;; SIMD (Avx2/Avx512) functions always use register allocation regardless.
@@ -1770,6 +1772,17 @@
     (set!
       (deref (compiler-backend-state-ptr state)).scalar-registers-enabled
       enabled)))
+
+(define (compiler-backend-state-optimize-for-size?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).optimize-for-size))
+
+(define (compiler-backend-state-set-optimize-for-size!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).optimize-for-size enabled)))
 
 ;; Public observations for the retained operand-render storage.  The backing
 ;; StateData remains opaque; capacities are reported from the actual arrays so
@@ -1845,6 +1858,14 @@
   [ok : bool]) : unit
   (unsafe
     (set! (deref (compiler-backend-state-ptr state)).absolute-switch-ok ok)))
+
+;; Only a closed executable linked in the low ELF code model can put a
+;; private literal's address in a zero-extending imm32.
+(define (compiler-backend-state-absolute-literal-ok?
+  [state : CompilerBackendState]) : bool
+  (and
+    (compiler-backend-state-closed-executable? state)
+    (compiler-backend-state-absolute-switch-ok? state)))
 
 (define (compiler-backend-state-abort-site-counter
   [state : CompilerBackendState]) : i64

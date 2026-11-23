@@ -473,6 +473,7 @@
     [(string.eq name "max") (Max)]
     [(string.eq name "all") (All)]
     [(string.eq name "any") (Any)]
+    [(string.eq name "splat_last") (SplatLast)]
     [else
       (ir-text-error
         cur
@@ -485,6 +486,7 @@
     [(string.eq name "sum") (Sum)]
     [(string.eq name "min") (Min)]
     [(string.eq name "max") (Max)]
+    [(string.eq name "last_lane") (LastLane)]
     [else
       (ir-text-error
         cur

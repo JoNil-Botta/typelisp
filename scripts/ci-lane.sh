@@ -172,6 +172,88 @@ lane_check() {
     fi
 }
 
+# Both jobs use the tested merge and its first parent from a depth-2 checkout.
+# Keep the validated full assignment when the PR diff cannot be read or
+# includes a path without required coverage in the affected map.
+lane_scope() {
+    [ "${GITHUB_EVENT_NAME:-}" = pull_request ] || return 0
+    _scope_base=$(git rev-parse --verify HEAD^1 2>/dev/null) || return 0
+    git -c core.quotePath=true diff --no-relative --no-ext-diff --no-textconv \
+        --name-only --no-renames "$_scope_base" HEAD -- > "$LANE_WORK/changed" || return 0
+
+    # Only independent, source-free self-tests can be omitted. Retain gates
+    # that participate in the dependency graph so the closure stays valid.
+    if ! awk -F '\t' '
+        { sub(/\r$/, "") }
+        FILENAME == ARGV[1] {
+            if ($2 == "-" && $1 ~ /-self-tests?$/) meta[$1] = 1
+            next
+        }
+        FILENAME == ARGV[2] {
+            if ($1 == "id" || /^#/) next
+            if ($5 != "-") needed[$1] = 1
+            if ($4 != "-") {
+                needed[$1] = 1
+                n = split($4, ids, ",")
+                for (i = 1; i <= n; i++) {
+                    sub(/@.*/, "", ids[i])
+                    needed[ids[i]] = 1
+                }
+            }
+            next
+        }
+        FILENAME == ARGV[3] {
+            if ($1 == "path" || $1 == "@always" || /^#/) next
+            pattern = "^" $1 "$"
+            gsub(/\./, "\\.", pattern)
+            gsub(/\*/, ".*", pattern)
+            if ($2 != "-") covered[pattern] = 1
+            n = split($2 "," $3, ids, ",")
+            for (i = 1; i <= n; i++) {
+                if (ids[i] == "*" || ids[i] in meta) {
+                    patterns[pattern] = 1
+                    break
+                }
+            }
+            next
+        }
+        /^"|^(scripts|\.github|perf)\// { full = 1; exit }
+        {
+            if ($0 == "") next
+            for (pattern in patterns) if ($0 ~ pattern) { full = 1; exit }
+            for (pattern in covered) if ($0 ~ pattern) next
+            full = 1
+            exit
+        }
+        END { if (!full) for (id in meta) if (!(id in needed)) print id }
+    ' "$ROOT/scripts/ci-affected-inputs.tsv" "$ROOT/scripts/ci-gates.tsv" \
+        "$ROOT/scripts/ci-affected-paths.tsv" "$LANE_WORK/changed" > "$LANE_WORK/skip"; then
+        return 0
+    fi
+    [ -s "$LANE_WORK/skip" ] || return 0
+
+    if ! awk -F '\t' -v OFS='\t' '
+        FILENAME == ARGV[1] { skip[$1] = 1; next }
+        {
+            for (col = 3; col <= 5; col++) {
+                n = split($col, ids, ",")
+                kept = ""
+                for (i = 1; i <= n; i++)
+                    if (!(ids[i] in skip)) kept = (kept == "" ? ids[i] : kept "," ids[i])
+                if (kept == "") exit 1
+                $col = kept
+            }
+            print
+        }
+    ' "$LANE_WORK/skip" "$LANE_WORK/lanes.tsv" > "$LANE_WORK/scoped-lanes.tsv"; then
+        return 0
+    fi
+    awk -F '\t' 'FILENAME == ARGV[1] { skip[$1] = 1; next } !($2 in skip)' \
+        "$LANE_WORK/skip" "$LANE_WORK/cells.tsv" > "$LANE_WORK/scoped-cells.tsv"
+    mv "$LANE_WORK/scoped-lanes.tsv" "$LANE_WORK/lanes.tsv"
+    mv "$LANE_WORK/scoped-cells.tsv" "$LANE_WORK/cells.tsv"
+}
+
 lane_host() {
     case "$1" in
         linux-[1-9]) printf 'linux\n' ;;
@@ -188,6 +270,7 @@ lane_field() {
 lane_setup() {
     _ls_host=$(lane_host "$1")
     lane_check
+    lane_scope
     _ls_owned=$(lane_field "$1" 5)
     _ls_planned=$(lane_field "$1" 4)
     _ls_tools=0
@@ -231,6 +314,7 @@ lane_aggregate() {
         *[!0-9:]* | :* | *:) lane_fail 'run id/attempt missing' ;;
     esac
     lane_check
+    lane_scope
     mkdir -p "$_la_out"
     _la_lanes=$(awk -F '\t' -v h="$_la_host" '$1 == h { print $2 }' "$LANE_WORK/lanes.tsv")
     [ -n "$_la_lanes" ] || lane_fail "no $_la_host lanes"

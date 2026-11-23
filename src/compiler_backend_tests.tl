@@ -4383,12 +4383,12 @@
   (reg-homes "%0=%r12"))
 
 (define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
-  (asm-has? asm "    movzbq %al, %rax\n" "    movq %rax, %r12\n"))
+  (asm-has? asm "    movzbl %al, %eax\n" "    movq %rax, %r12\n"))
 
 (define (compiler-backend-typelisp-call-result-store-bool-asm-ok?
   [asm : String]) : bool
   (and
-    (asm-lacks? asm "    movzbq %al, %rax\n")
+    (asm-lacks? asm "    movzbq %al, %rax\n" "    movzbl %al, %eax\n")
     (asm-has? asm "    movq %rax, %r12\n")))
 
 (define (compiler-backend-c-abi-call-result-store-bool-ok?) : bool
@@ -4464,7 +4464,7 @@
     (has
       ".extern tl_cabi_bool_return\n"
       "    call tl_cabi_bool_return\n"
-      "    movzbq %al, %rax\n")))
+      "    movzbl %al, %eax\n")))
 
 (define (compiler-backend-c-abi-bool-return-ok?) : bool
   (be_state.backend-and4
@@ -4890,7 +4890,7 @@
         (be_state.backend-and4
           (asm-has? asm "    movq 8(%r10), %r8\n")
           (asm-has? asm "(%r10)")
-          (asm-has? asm "movzbq")
+          (asm-has? asm "movzbl")
           (asm-lacks? asm "movsbq (%r10)"))
         (asm-lacks? asm "    movq 8(%r10), %rax\n" "    jge .Lf0_str_bounds_ok")
         (not
@@ -6239,7 +6239,7 @@
           ;; The boolean is never materialised, so neither half of the
           ;; `setcc`/`movzbq` pair survives and no site spends a `test`.
           (asm-lacks? body "    setl ")
-          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    movzbq " "    movzbl ")
           (asm-lacks? body "    testq ")))]
     [(Err _) false]))
 
@@ -6358,19 +6358,19 @@
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-lt-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       "    jge "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-ult-source))
       "    setb "
-      "    movzbq "
+      "    movzbl "
       "    jae "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-neg-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       "    jl "
       true)
     (compiler-backend-flags-reuse-body-ok?
@@ -6382,7 +6382,7 @@
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-gap-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       ""
       false)))
 
@@ -12743,12 +12743,12 @@ high:
         (be_state.CompilerBackendTarget.Windows))
         [(Ok asm)
           ;; The merged emitter folds the constant index 0 directly into the
-          ;; bounds compare (`cmpq $0, %rax`) instead of materializing it in a
+          ;; bounds check (`testq %rax, %rax`) instead of materializing it in a
           ;; scratch register. The Win64 safety invariant is unchanged: the
           ;; length (in %rax) is never clobbered, so no degenerate
           ;; `cmpq %rax, %rax` self-compare is emitted.
           (and
-            (asm-has? asm "    cmpq $0, %rax\n")
+            (asm-has? asm "    testq %rax, %rax\n")
             (asm-lacks? asm "    cmpq %rax, %rax\n"))]
         [(Err _) false])]
     ok))
@@ -12956,11 +12956,12 @@ high:
     (compiler-backend-peephole-single-dest-mnemonic? "decq")
     (compiler-backend-peephole-single-dest-mnemonic? "movzbq")
     (compiler-backend-peephole-single-dest-mnemonic? "movzwq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzbl")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzwl")
     (compiler-backend-peephole-single-dest-mnemonic? "movsbq")
     (compiler-backend-peephole-single-dest-mnemonic? "movswq")
     (compiler-backend-peephole-single-dest-mnemonic? "movslq")
     (not (compiler-backend-peephole-single-dest-mnemonic? "movq"))
-    (not (compiler-backend-peephole-single-dest-mnemonic? "movzbl"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "movsd"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "imulq"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "mulq"))
@@ -14586,7 +14587,7 @@ f:
         cabi.compiler-reg-id-r15
         (ir.compiler-ir-instr-seq-empty))
       (has "    movq %rcx, %r15\n    cmpq %rcx, %r13\n    cmovb %r13, %r15\n")
-      (lacks "setb" "movzbq" "    testq "))
+      (lacks "setb" "movzbq" "movzbl" "    testq "))
     ;; signed lt -> cmovl off the same operands.
     (asm-ok?
       (compiler-backend-select-flags-asm
@@ -19029,15 +19030,26 @@ f:
         "    vmovdqu -64(%rbp), %ymm14\n    vpaddq %ymm6, %ymm14, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
     [(Err _) false]))
 
+(define (compiler-backend-prefix-test-state
+  [mode : be_state.CompilerBackendMode]) : be_state.CompilerBackendState
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-set-current-mode!
+      (be_state.compiler-backend-state-function-state state)
+      mode)
+    state))
+
 (define (compiler-backend-vector-prefix-spill-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%vec6 %1=%r12 %2=spill:-64"))
+  (reg-homes "%0=%vec6 %1=%vec7 %2=spill:-64"))
 
 (define (compiler-backend-vector-prefix-source-carry-spill-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=spill:-64 %1=spill:-8 %2=%vec7"))
+  (reg-homes "%0=spill:-64 %1=spill:-96 %2=%vec7"))
 
 (define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
   (asm-ok?
-    (be_simd.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (Min)
@@ -19045,18 +19057,15 @@ f:
       (Var 1)
       4
       (I64)
-      "%xmm0"
-      "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
-      (be_state.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-prefix-test-state (Avx2)))
     (has
       "    vmovdqu %ymm6, %ymm15\n"
       "    vpslldq $8, %ymm15, %ymm0\n"
       "    vperm2i128 $0, %ymm15, %ymm15, %ymm0\n"
       "    vpcmpgtq "
       "    vpandn "
-      "    vmovq %r10, %xmm0\n"
+      "    vpermq $255, %ymm7, %ymm14\n"
       "    vmovdqu %ymm15, -64(%rbp)\n")))
 
 (define (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?) : bool
@@ -19065,7 +19074,7 @@ f:
       (compiler-backend-vector-prefix-source-carry-spill-assignments)]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Sum)
@@ -19073,17 +19082,15 @@ f:
           (Var 1)
           4
           (I64)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx2)))
         (has
           "    vmovdqu -64(%rbp), %ymm7\n"
-          "    vpbroadcastq -8(%rbp), %ymm0\n")
+          "    vmovdqu -96(%rbp), %ymm14\n"
+          "    vpermq $255, %ymm14, %ymm14\n")
         (lacks "    vmovdqu %ymm7, -64(%rbp)\n"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Any)
@@ -19091,20 +19098,17 @@ f:
           (Var 1)
           32
           (Bool)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx2)))
         (has
           "    vmovdqu -64(%rbp), %ymm7\n"
-          "    movq -8(%rbp), %r10\n"
-          "    setne %r10b\n"
-          "    vpbroadcastb %xmm0, %ymm0\n")))))
+          "    vmovdqu -96(%rbp), %ymm14\n"
+          "    vextracti128 $1, %ymm14, %xmm14\n"
+          "    vpbroadcastb %xmm14, %ymm14\n")))))
 
 (define (compiler-backend-avx2-vector-prefix-bool-spill-ok?) : bool
   (asm-ok?
-    (be_simd.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (All)
@@ -19112,17 +19116,14 @@ f:
       (Var 1)
       32
       (Bool)
-      "%xmm0"
-      "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
-      (be_state.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-prefix-test-state (Avx2)))
     (has
       "    vpslldq $1, %ymm15, %ymm0\n"
       "    vpslldq $8, %ymm15, %ymm0\n"
-      "    vpbroadcastb %xmm0, %ymm0\n"
-      "    setne %r10b\n"
-      "    vpand %ymm0, %ymm15, %ymm15\n")
+      "    vextracti128 $1, %ymm7, %xmm14\n"
+      "    vpbroadcastb %xmm14, %ymm14\n"
+      "    vpand %ymm14, %ymm15, %ymm15\n")
     (lacks "%al")
     (has "    vmovdqu %ymm15, -64(%rbp)\n")))
 
@@ -19132,7 +19133,7 @@ f:
       (compiler-backend-vector-prefix-spill-assignments)]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Min)
@@ -19140,20 +19141,17 @@ f:
           (Var 1)
           8
           (I64)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    vmovdqu64 %zmm6, %zmm15\n"
           "    valignq $7, %zmm1, %zmm15, %zmm0\n"
           "    kshiftlw $4, %k7, %k7\n"
           "    vpminsq %zmm0, %zmm15, %zmm15{%k7}\n"
-          "    vpbroadcastq %r8, %zmm0\n"
+          "    vpbroadcastq %xmm14, %zmm14\n"
           "    vmovdqu64 %zmm15, -64(%rbp)\n"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Max)
@@ -19161,19 +19159,16 @@ f:
           (Var 1)
           16
           (I32)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    valignd $15, %zmm1, %zmm15, %zmm0\n"
           "    valignd $8, %zmm1, %zmm15, %zmm0\n"
           "    vpmaxsd %zmm0, %zmm15, %zmm15{%k7}\n"
-          "    vpbroadcastd %r8d, %zmm0\n")))))
+          "    vpbroadcastd %xmm14, %zmm14\n")))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%k2 %1=%rax %2=spill:-64"))
+  (reg-homes "%0=%k2 %1=%k3 %2=spill:-64"))
 
 (define (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-64 %1=spill:-8 %2=%k3"))
@@ -19183,7 +19178,7 @@ f:
     [diag : cdiag.CompilerDiagnostic (cdiag.compiler-diagnostic-at-start "" "")]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-assignments)
           2
           (All)
@@ -19191,23 +19186,20 @@ f:
           (Var 1)
           64
           (Bool)
-          "%xmm0"
-          "%xmm1"
           (owned_view.compiler-owned-shared-view diag)
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    kmovq %k2, %r11\n"
           "    notq %r11\n"
           "    shlq $32, %r10\n"
-          "    movq %rax, %r10\n"
-          "    setne %r10b\n"
+          "    kmovq %k3, %r10\n"
+          "    sarq $63, %r10\n"
           "    andq %r10, %r11\n"
           "    kmovq %r11, %k7\n"
           "    kmovq %k7, -64(%rbp)\n")
         (lacks "    kmovq %k2, %rax\n" "%zmm"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments)
           2
           (Any)
@@ -19215,15 +19207,14 @@ f:
           (Var 1)
           64
           (Bool)
-          "%xmm0"
-          "%xmm1"
           diag
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    kmovq -64(%rbp), %k7\n"
           "    kmovq %k7, %r11\n"
-          "    movq -8(%rbp), %r10\n"
+          "    kmovq -8(%rbp), %k7\n"
+          "    kmovq %k7, %r10\n"
+          "    sarq $63, %r10\n"
           "    orq %r10, %r11\n"
           "    kmovq %r11, %k3\n")
         (lacks "%rax")))))
@@ -24769,7 +24760,7 @@ entry:
       "    leaq (%r10,%r8,4), %r10\n")
     (compiler-backend-instr-contains?
       (Load 4 (Var 1) (U8))
-      "    movzbq (%r10), %r8\n")
+      "    movzbl (%r10), %r8d\n")
     (compiler-backend-instr-contains?
       (irt.instr "store_ptr %1, 7 : i32")
       "    movl $7, (%r10)\n")
@@ -25593,7 +25584,7 @@ entry:
     [(Ok asm)
       (let
         [load-pos : i64
-          (backend.compiler-backend-string-find-from asm "    movzbq " 0)]
+          (backend.compiler-backend-string-find-from asm "    movzbl " 0)]
         [dst-base-pos : i64
           (backend.compiler-backend-string-find-from asm "    movq -8(%rbp)" 0)]
         [bad-rcx-pos : i64
@@ -25633,7 +25624,7 @@ entry:
       6)
       [(Ok asm)
         (and
-          (asm-has? asm "    movzbq (%r12,%r8,1), %rcx\n")
+          (asm-has? asm "    movzbl (%r12,%r8,1), %ecx\n")
           (asm-lacks? asm "    movq %r8, %r9\n" "    movq %r12, %r10\n")
           (not
             (let
@@ -25977,7 +25968,7 @@ entry:
         (U64)
         index
         index.backend-state)
-        [(Ok asm) (string.eq asm "    movzbq -48(%rbp), %rbx\n")]
+        [(Ok asm) (string.eq asm "    movzbl -48(%rbp), %ebx\n")]
         [(Err _) false]))))
 
 (define (compiler-backend-global-store-direct-home-shape-ok?) : bool
@@ -26513,7 +26504,7 @@ entry:
            %6 = mov %5 : i64")
         assignments
         7)
-      (has "    movzbq (%r12,%r8,1), %rcx\n")
+      (has "    movzbl (%r12,%r8,1), %ecx\n")
       (lacks "    addq (%r12"))))
 
 ;; M6: folding a single-use load into the comparing instruction's memory
@@ -26550,7 +26541,7 @@ entry:
   (asm-ok?
     (compiler-backend-cmp-mem-narrow-asm (U8) (U8) (Eq) 10)
     (has "    cmpb $10, (%r12,%r8,1)\n")
-    (lacks "    movzbq ")))
+    (lacks "    movzbq " "    movzbl ")))
 
 ;; The same at WORD width, and with a literal above the byte range so the width
 ;; is load-bearing rather than incidental.
@@ -26558,7 +26549,7 @@ entry:
   (asm-ok?
     (compiler-backend-cmp-mem-narrow-asm (U16) (U16) (Eq) 300)
     (has "    cmpw $300, (%r12,%r8,2)\n")
-    (lacks "    movzwq ")))
+    (lacks "    movzwq " "    movzwl ")))
 
 ;; Signedness/width refusal: a SIGN-extending byte load cannot produce 200, so
 ;; `ext(mem) == 200` is constant-false while `cmpb $200, (mem)` would be true
@@ -26586,9 +26577,9 @@ entry:
         ;; Same division of labour as the signed-literal refusal above: M6-C
         ;; declines the ordered narrow compare, M6-G folds the re-extension the
         ;; refusal leaves behind, so the surviving load writes the widening
-        ;; cast's home %r9 and no `movzbq %r13b, %r9` follows it.
-        (asm-has? asm "    movzbq (%r12,%r8,1), %r9\n")
-        (asm-lacks? asm "    movzbq %r13b, ")
+        ;; cast's home %r9 and no separate zero-extension follows it.
+        (asm-has? asm "    movzbl (%r12,%r8,1), %r9d\n")
+        (asm-lacks? asm "    movzbq %r13b, " "    movzbl %r13b, ")
         (asm-lacks? asm "    cmpb "))]
     [(Err _) false]))
 
@@ -26625,7 +26616,7 @@ entry:
         (compiler-backend-cmp-mem-direct-has?
           asm
           "    cmpb $47, (%r12,%r8,1)\n")
-        (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+        (asm-lacks? asm "    movzbq " "    movzbl "))]
     [(Err _) false]))
 
 ;; Unlike M6-C, an ORDERED compare folds too: the compare already runs at the
@@ -26640,7 +26631,7 @@ entry:
         (or
           (compiler-backend-cmp-mem-direct-has? asm "    jb ")
           (compiler-backend-cmp-mem-direct-has? asm "    jae "))
-        (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+        (asm-lacks? asm "    movzbq " "    movzbl "))]
     [(Err _) false]))
 
 ;; A register other operand is spelled at the byte width, on whichever side
@@ -26654,7 +26645,7 @@ entry:
           (compiler-backend-cmp-mem-direct-has?
             asm
             "    cmpb %r14b, (%r12,%r8,1)\n")
-          (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+          (asm-lacks? asm "    movzbq " "    movzbl "))]
       [(Err _) false])
     (match (compiler-backend-cmp-mem-direct-asm (U8) (Lt) (Var 4) (Var 3))
       [(Ok asm)
@@ -26662,7 +26653,7 @@ entry:
           (compiler-backend-cmp-mem-direct-has?
             asm
             "    cmpb (%r12,%r8,1), %r14b\n")
-          (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+          (asm-lacks? asm "    movzbq " "    movzbl "))]
       [(Err _) false])))
 
 ;; Refusals: an ordered compare with the literal on the LEFT (the memory operand
@@ -26673,7 +26664,7 @@ entry:
     (match (compiler-backend-cmp-mem-direct-asm (U8) (Lt) (I64 10) (Var 3))
       [(Ok asm)
         (and
-          (compiler-backend-cmp-mem-direct-has? asm "    movzbq (%r12,%r8,1), ")
+          (compiler-backend-cmp-mem-direct-has? asm "    movzbl (%r12,%r8,1), ")
           (not (compiler-backend-cmp-mem-direct-has? asm ", (%r12,%r8,1)\n")))]
       [(Err _) false])
     (match (compiler-backend-cmp-mem-direct-asm (I8) (Eq) (Var 3) (I64 200))
@@ -26926,7 +26917,7 @@ entry:
         (be_state.backend-and4
           (asm-has? body "    cmpb $10, (")
           (asm-has? body "    xorl %esi, %esi\n")
-          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    movzbq " "    movzbl ")
           (asm-lacks? body "    cmpq ")))]
     [(Err _) false]))
 
@@ -29546,10 +29537,10 @@ entry:
       "    movl $0, %r12d\n    jp 1f\n    setbe %r12b\n1:\n")
     (compiler-backend-float-unordered-sequence-ok?
       (Gt)
-      "    seta %r12b\n    movzbq %r12b, %r12\n")
+      "    seta %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-float-unordered-sequence-ok?
       (Ge)
-      "    setae %r12b\n    movzbq %r12b, %r12\n")))
+      "    setae %r12b\n    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-direct-float-compare-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
   (be_scalar.compiler-backend-emit-binop
@@ -30395,7 +30386,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    movzbq %al, %rax\n")]
+        [(Some asm) (string.eq asm "    movzbl %al, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30405,7 +30396,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    movzwq %ax, %rax\n")]
+        [(Some asm) (string.eq asm "    movzwl %ax, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30496,12 +30487,12 @@ entry:
             [(Ok negative-asm)
               (and
                 (be_state.backend-and4
-                  (asm-has? byte-asm "    movzbq %r12b, %r12\n")
+                  (asm-has? byte-asm "    movzbl %r12b, %r12d\n")
                   (asm-lacks?
                     byte-asm
                     "    andq $255, %r12\n"
                     "    andl $255, %r12d\n")
-                  (asm-has? word-asm "    movzwq %r12w, %r12\n")
+                  (asm-has? word-asm "    movzwl %r12w, %r12d\n")
                   (asm-lacks?
                     word-asm
                     "    andq $65535, %r12\n"
@@ -30539,7 +30530,7 @@ entry:
     (be_state.backend-and4
       (asm-has? asm "    movq %r15, %r12\n")
       (asm-has? asm "    setl %r12b\n")
-      (asm-has? asm "    movzbq %r12b, %r12\n")
+      (asm-has? asm "    movzbl %r12b, %r12d\n")
       (asm-lacks? asm "%rax"))
     (asm-lacks? asm "%r8")))
 
@@ -31610,7 +31601,7 @@ entry:
             "b"
             "8"
             false
-            "    movzbq %r8b, %r11"
+            "    movzbl %r8b, %r11d"
             flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si16
@@ -31624,7 +31615,7 @@ entry:
             "w"
             "16"
             false
-            "    movzwq %r8w, %r11"
+            "    movzwl %r8w, %r11d"
             flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si32
@@ -33691,7 +33682,7 @@ entry:
     [(Ok asm)
       (be_state.backend-and4
         (asm-has? asm "    call tl_tail_unit_target\n")
-        (asm-has? asm "    movq $0, %rax\n")
+        (asm-has? asm "    movl $0, %eax\n")
         (asm-lacks? asm "    leave\n    jmp tl_tail_unit_target\n")
         true)]
     [(Err _) false]))
@@ -38208,8 +38199,8 @@ entry:
         index
         7
         backend-state)
-      (has "    movzbq 48(%rbp), ")
-      (lacks "    movzbq 48(%rbp), %r9\n"))))
+      (has "    movzbl 48(%rbp), ")
+      (lacks "    movzbq 48(%rbp), %r9\n" "    movzbl 48(%rbp), %r9d\n"))))
 
 ;; #8894: the stale body cursor the float parameter copies used to consult.
 ;; Its occupancy reports every register free, although the pinned parameters

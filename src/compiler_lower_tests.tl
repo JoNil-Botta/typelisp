@@ -12445,13 +12445,14 @@
   [src : String]
   [elem-ty : ast.AstType]
   [lanes : i64]
+  [vector-loads : i64]
   [vector-shapes : i64]
   [vector-binops : i64]) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode src (lower.CompilerLowerMode.Avx2)))
     [(Some functions)
       (and
-        (= (lower-test-count functions "f" (VectorLoad)) 1)
+        (= (lower-test-count functions "f" (VectorLoad)) vector-loads)
         (= (lower-test-count functions "f" (VectorReduce)) 1)
         (= (lower-test-count functions "f" (VectorBinop)) vector-binops)
         (=
@@ -12479,7 +12480,10 @@
 
 (define (compiler-lower-spmd-reduce-map-fused-shape-ok?
   [mode : lower.CompilerLowerMode]
-  [lanes : i64]) : bool
+  [lanes : i64]
+  [vector-loads : i64]
+  [vector-binops : i64]
+  [vector-shapes : i64]) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode
       "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [r : i64]) : i64
@@ -12488,10 +12492,12 @@
       mode))
     [(Some functions)
       (and
-        (= (lower-test-count functions "f" (VectorLoad)) 1)
+        (= (lower-test-count functions "f" (VectorLoad)) vector-loads)
         (= (lower-test-count functions "f" (VectorReduce)) 1)
-        (= (lower-test-count functions "f" (VectorBinop)) 4)
-        (= (lower-test-function-vector-shape-count functions "f" lanes (I64)) 9)
+        (= (lower-test-count functions "f" (VectorBinop)) vector-binops)
+        (=
+          (lower-test-function-vector-shape-count functions "f" lanes (I64))
+          vector-shapes)
         (> (lower-test-count functions "f" (Bounds)) 0))]
     [_ false]))
 
@@ -12520,7 +12526,9 @@
 
 (define (compiler-lower-spmd-reduce-lane-identity-shape-ok?
   [mode : lower.CompilerLowerMode]
-  [lanes : i64]) : bool
+  [lanes : i64]
+  [vector-binops : i64]
+  [vector-shapes : i64]) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode
       (compiler-lower-spmd-reduce-lane-identity-source)
@@ -12529,8 +12537,10 @@
       (and
         (= (lower-test-count functions "f" (VectorLoad)) 0)
         (= (lower-test-count functions "f" (VectorReduce)) 1)
-        (= (lower-test-count functions "f" (VectorBinop)) 2)
-        (= (lower-test-function-vector-shape-count functions "f" lanes (I64)) 5)
+        (= (lower-test-count functions "f" (VectorBinop)) vector-binops)
+        (=
+          (lower-test-function-vector-shape-count functions "f" lanes (I64))
+          vector-shapes)
         (= (lower-test-count functions "f" (Bounds)) 0))]
     [_ false]))
 
@@ -12563,6 +12573,8 @@
       mode
       lanes)))
 
+;; Each integer fold loads five gangs, seeds four accumulators, merges
+;; three pairs and reduces horizontally once. Min/max fold with selects.
 (define (compiler-lower-avx2-spmd-reduce-tests-ok?) : bool
   (and
     (compiler-lower-and8
@@ -12570,56 +12582,69 @@
         "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
         (I64)
         4
-        4
-        1)
+        5
+        18
+        8)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         (I32)
         8
-        4
-        1)
+        5
+        18
+        8)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (I32)
         8
-        4
+        5
+        18
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (I32)
         8
-        4
+        5
+        18
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
         (F64)
         4
+        1
         2
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (I64)
         4
-        4
+        5
+        18
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (I64)
         4
-        4
+        5
+        18
         0)
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
         (lower.CompilerLowerMode.Avx2)
-        4))
+        4
+        13
+        19))
     (compiler-lower-avx2-spmd-reduce-shape-ok?
       "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       (F32)
       8
+      1
       2
       0)
     (compiler-lower-spmd-reduce-map-fused-shape-ok?
       (lower.CompilerLowerMode.Avx2)
-      4)
+      4
+      5
+      23
+      35)
     (compiler-lower-spmd-reduce-gather-shape-ok?
       (lower.CompilerLowerMode.Avx2)
       8)
@@ -12673,7 +12698,9 @@
         0)
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
         (lower.CompilerLowerMode.Avx512)
-        8)
+        8
+        2
+        5)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
         (F32)
@@ -12682,7 +12709,10 @@
         0))
     (compiler-lower-spmd-reduce-map-fused-shape-ok?
       (lower.CompilerLowerMode.Avx512)
-      8)
+      8
+      1
+      4
+      9)
     (compiler-lower-spmd-reduce-gather-shape-ok?
       (lower.CompilerLowerMode.Avx512)
       16)

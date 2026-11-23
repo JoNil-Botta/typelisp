@@ -56599,14 +56599,68 @@
                       Unit
                       (Unit)))])])))]))
 
+;; Keep the carry splatted for an AVX2 wrapping sum. Broadcasting the local
+;; total before adding the carry removes the shuffle from the recurrence.
+(define (lower-spmd-scan-sum-prefix
+  [state : LowerState]
+  [chunk : ir.CompilerIrValue]
+  [carry-var : i64]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [prefix-var : i64 0]
+    [total-var : i64 0]
+    (match (lower-state-alloc-var s)
+      [(Alloc next var)
+        (set!
+          s
+          (lower-state-emit
+            next
+            (ir.ir-instr-vector-prefix var Sum chunk Unit lanes (clone elem-ty))))
+        (set! prefix-var var)])
+    (match (lower-state-alloc-var s)
+      [(Alloc next var)
+        (set!
+          s
+          (lower-state-emit
+            next
+            (ir.ir-instr-vector-prefix
+              var
+              SplatLast
+              (Var prefix-var)
+              Unit
+              lanes
+              (clone elem-ty))))
+        (set! total-var var)])
+    (match (lower-state-alloc-var s)
+      [(Alloc next result)
+        (Expr
+          (lower-spmd-reduce-vector-accumulate
+            (lower-state-emit
+              next
+              (ir.ir-instr-vector-bin-op
+                result
+                Add
+                (Var prefix-var)
+                (Var carry-var)
+                lanes
+                (clone elem-ty)))
+            Sum
+            carry-var
+            (Var total-var)
+            lanes
+            (clone elem-ty))
+          (Var result)
+          elem-ty)])))
+
 (define (lower-spmd-scan-vector-body
-  [ctx : tc_core.TcContext]
   [state : LowerState]
   [index-var : i64]
   [next-index : ir.CompilerIrValue]
-  [acc-var : i64]
-  [input-var : i64]
-  [output-var : i64]
+  [carry-var : i64]
+  [input-data : ir.CompilerIrValue]
+  [output-data : ir.CompilerIrValue]
   [prefix-op : ir.CompilerIrVectorPrefixOp]
   [elem-ty : ast.AstType]
   [lanes : i64]) : LowerExpr
@@ -56614,8 +56668,7 @@
     [s : LowerState state]
     [chunk : ir.CompilerIrValue Unit]
     [full-mask : ir.CompilerIrValue Unit]
-    [prefix-value : ir.CompilerIrValue Unit]
-    [last-index : ir.CompilerIrValue Unit]
+    [prefix-value : ir.CompilerIrValue (Var carry-var)]
     (if (lower-type-bool? elem-ty)
       (begin
         (match (lower-emit-tail-mask
@@ -56626,9 +56679,9 @@
           [(Expr next-s value _)
             (set! s next-s)
             (set! full-mask value)])
-        (match (lower-emit-sequence-predicated-load
+        (match (lower-emit-predicated-load-data
           s
-          input-var
+          input-data
           (Var index-var)
           (lower-global-shared-view full-mask)
           lanes
@@ -56636,35 +56689,46 @@
           [(Expr next-s value _)
             (set! s next-s)
             (set! chunk value)]))
-      (match (lower-emit-sequence-vector-load
+      (match (lower-emit-vector-load-data
         s
-        input-var
+        input-data
         (Var index-var)
         lanes
         (lower-global-shared-view elem-ty))
         [(Expr next-s value _)
           (set! s next-s)
           (set! chunk value)]))
-    (match (lower-state-alloc-var s)
-      [(Alloc next-s prefix-var)
-        (set!
+    (if (and
+      (lower-mode-avx2? (lower-state-mode s))
+      (match (& prefix-op)
+        [(Sum) true]
+        [_ false]))
+      (match (lower-spmd-scan-sum-prefix
+        s
+        chunk
+        carry-var
+        lanes
+        (clone elem-ty))
+        [(Expr next prefix _)
+          (set! s next)
+          (set! prefix-value prefix)])
+      (set!
+        s
+        (lower-state-emit
           s
-          (lower-state-emit
-            next-s
-            (ir.ir-instr-vector-prefix
-              prefix-var
-              prefix-op
-              chunk
-              (Var acc-var)
-              lanes
-              (lower-global-shared-view elem-ty))))
-        (set! prefix-value (Var prefix-var))])
+          (ir.ir-instr-vector-prefix
+            carry-var
+            prefix-op
+            chunk
+            (Var carry-var)
+            lanes
+            (clone elem-ty)))))
     (if (lower-type-bool? elem-ty)
       (set!
         s
-        (lower-emit-sequence-predicated-store
+        (lower-emit-predicated-store-data
           s
-          output-var
+          output-data
           (Var index-var)
           prefix-value
           full-mask
@@ -56672,42 +56736,13 @@
           (lower-global-shared-view elem-ty)))
       (set!
         s
-        (lower-emit-sequence-vector-store
+        (lower-emit-vector-store-data
           s
-          output-var
+          output-data
           (Var index-var)
           prefix-value
           lanes
           (lower-global-shared-view elem-ty))))
-    (match (lower-emit-binop
-      s
-      Sub
-      (lower-global-shared-view next-index)
-      (I64 1)
-      (I64))
-      [(Expr next-s value _)
-        (set! s next-s)
-        (set! last-index value)])
-    ;; `vector-limit` already proves the whole output gang is in bounds.
-    ;; Reload the stored final lane through its raw data pointer so carry
-    ;; handoff does not add a redundant scalar bounds-check block.
-    (match (lower-sequence-data-pointer-value s output-var)
-      [(Expr data-state data-ptr _)
-        (match (lower-emit-elem-addr-gep
-          ctx
-          data-state
-          data-ptr
-          last-index
-          (lower-global-shared-view elem-ty))
-          [(Expr addr-state last-addr _)
-            (match (lower-emit-load
-              addr-state
-              last-addr
-              (lower-global-shared-view elem-ty))
-              [(Expr load-state last-value _)
-                (set!
-                  s
-                  (lower-state-emit load-state (Mov acc-var last-value elem-ty)))])])])
     (Expr (lower-state-emit s (Mov index-var next-index (I64))) Unit (Unit))))
 
 (define (lower-spmd-scan-scalar-tail-body
@@ -56838,6 +56873,10 @@
               (lower-state-emit
                 index-state
                 (Mov index-var start-value (lower-global-shared-view index-ty)))]
+            [carry-var : i64 0]
+            [input-data : ir.CompilerIrValue Unit]
+            [output-data : ir.CompilerIrValue Unit]
+            [tail-init-label : i64 (ir.compiler-ir-label-none)]
             [header-label : i64 (ir.compiler-ir-label-none)]
             [body-label : i64 (ir.compiler-ir-label-none)]
             [tail-header-label : i64 (ir.compiler-ir-label-none)]
@@ -56856,6 +56895,34 @@
             [next-index : ir.CompilerIrValue Unit]
             [vector-ok : ir.CompilerIrValue Unit]
             [tail-cond : ir.CompilerIrValue Unit]
+            (if (lower-type-bool? elem-ty)
+              (match (lower-vector-loop-select
+                s
+                (Var acc-var)
+                (I64 lanes)
+                (I64 0))
+                [(Expr seed-state seed _)
+                  (match (lower-emit-tail-mask seed-state (I64 0) seed lanes)
+                    [(Expr mask-state (Var var) _)
+                      (set! s mask-state)
+                      (set! carry-var var)]
+                    [_ unit])])
+              (match (lower-state-alloc-var s)
+                [(Alloc seed-state var)
+                  (set!
+                    s
+                    (lower-state-emit
+                      seed-state
+                      (Splat
+                        var
+                        (Var acc-var)
+                        lanes
+                        (lower-global-shared-view elem-ty))))
+                  (set! carry-var var)]))
+            (match (lower-state-fresh-label s "spmd_scan_tail_init")
+              [(Label next-s label)
+                (set! s next-s)
+                (set! tail-init-label label)])
             (match (lower-state-fresh-label
               s
               (lower-spmd-scan-vector-label s "header"))
@@ -56888,6 +56955,14 @@
               [(Expr next-s limit _)
                 (set! s next-s)
                 (set! vector-limit limit)])
+            (match (lower-sequence-data-pointer-value s input-var)
+              [(Expr next value _)
+                (set! s next)
+                (set! input-data value)])
+            (match (lower-sequence-data-pointer-value s output-var)
+              [(Expr next value _)
+                (set! s next)
+                (set! output-data value)])
             (match (lower-vector-loop-start-ok s index-var lanes)
               [(Expr next-s ok _)
                 (set! s next-s)
@@ -56920,16 +56995,15 @@
               (lower-state-finish-block
                 (lower-state-emit
                   s
-                  (Branch vector-ok body-label tail-header-label))
+                  (Branch vector-ok body-label tail-init-label))
                 body-label))
             (match (lower-spmd-scan-vector-body
-              ctx
               s
               index-var
               next-index
-              acc-var
-              input-var
-              output-var
+              carry-var
+              input-data
+              output-data
               prefix-op
               (lower-global-shared-view elem-ty)
               lanes)
@@ -56938,6 +57012,29 @@
                   s
                   (lower-state-finish-block
                     (lower-state-emit body-state (Jump header-label))
+                    tail-init-label))])
+            ;; The prefix mask is monotone, so all/any extracts its final lane.
+            (match (if (lower-type-bool? elem-ty)
+              (lower-emit-mask-reduce
+                s
+                (lower-spmd-reduce-mask-op op)
+                (Var carry-var)
+                lanes)
+              (lower-emit-vector-reduce
+                s
+                LastLane
+                (Var carry-var)
+                lanes
+                (lower-global-shared-view elem-ty)))
+              [(Expr carry-state carry _)
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      (lower-state-emit
+                        carry-state
+                        (Mov acc-var carry (lower-global-shared-view elem-ty)))
+                      (Jump tail-header-label))
                     tail-header-label))])
             (match (lower-vector-loop-i64-compare
               s
@@ -57044,6 +57141,232 @@
                           lanes)]))]))]))]
     [(No _) (Err (box (lower-diagnostic "lower: missing vector scan plan")))]))
 
+(defenum LowerReduceGroupInput
+  (Array ir.CompilerIrValue)
+  (Value LowerVectorMapValue LowerVectorMapValueCache))
+
+(defenum LowerReduceGroupBase
+  (Base LowerState LowerReduceGroupInput bool))
+
+;; Plans of this shape use the gang index only for contiguous array loads.
+;; Point those loads at the first element of the group, allowing the copies
+;; to address the other gangs with displacements.
+(define (lower-reduce-group-relative? [plan : (& LowerVectorMapValue)]) : bool
+  (match plan
+    [(or (Array _) (LaneArray _) (Uniform _) (LaneIndex) (LaneCount)) true]
+    [(or (BinOp _ left right) (Stage left right))
+      (and
+        (lower-reduce-group-relative? (deref left))
+        (lower-reduce-group-relative? (deref right)))]
+    [_ false]))
+
+(define (lower-reduce-group-rebase
+  [state : LowerState]
+  [input : LowerReduceGroupInput]
+  [index-var : i64]
+  [elem-ty : ast.AstType]) : LowerReduceGroupBase
+  (match input
+    [(Array base)
+      (match (lower-emit-gep state base (Var index-var) elem-ty)
+        [(Expr next address _) (Base next (Array address) true)])]
+    [(Value plan cache)
+      (unless
+        (lower-reduce-group-relative? (& plan))
+        (return (Base state (Value plan cache) false)))
+      (let
+        [s : LowerState state]
+        [rebased : LowerVectorMapValueCache (clone cache)]
+        (for [i (iterator.range 0 cache.count)]
+          (match (& (array-ref cache.keys i))
+            [(ArrayData _)
+              (match (lower-emit-gep
+                s
+                (clone (array-ref cache.values i))
+                (Var index-var)
+                (clone elem-ty))
+                [(Expr next address _)
+                  (set! s next)
+                  (set! (array-ref rebased.values i) address)])]
+            [_ unit]))
+        (Base s (Value plan rebased) true))]))
+
+;; Four full gangs share the same bounds proof. Each recurrence updates its
+;; own vector until the grouped loop ends, when the original accumulator
+;; takes over for the remaining full gangs and the scalar tail.
+(define (lower-avx2-reduce-groups
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [input : LowerReduceGroupInput]
+  [index-var : i64]
+  [limit : ir.CompilerIrValue]
+  [acc-var : i64]
+  [vector-acc-var : i64]
+  [op : ast.AstReduceOp]
+  [vector-op : ir.CompilerIrVectorReduceOp]
+  [elem-ty : ast.AstType]
+  [lanes : i64]) : LowerState
+  (unless
+    (and
+      (lower-mode-avx2? (lower-state-mode state))
+      (lower-spmd-reduce-vector-accumulator? (& elem-ty)))
+    (return state))
+  (let
+    [s : LowerState state]
+    [prepare : i64 (ir.compiler-ir-label-none)]
+    [body : i64 (ir.compiler-ir-label-none)]
+    [merge : i64 (ir.compiler-ir-label-none)]
+    [remainder : i64 (ir.compiler-ir-label-none)]
+    [width : i64 (* lanes 4)]
+    [group-limit : ir.CompilerIrValue Unit]
+    [long-enough : ir.CompilerIrValue Unit]
+    [first-fits : ir.CompilerIrValue Unit]
+    [group-input : LowerReduceGroupInput (Array Unit)]
+    [relative? : bool false]
+    [accs : (Array i64 4) (array vector-acc-var 0 0 0)]
+    (match (lower-state-fresh-label s "spmd_reduce_group_prepare")
+      [(Label next label)
+        (set! s next)
+        (set! prepare label)])
+    (match (lower-state-fresh-label s "spmd_reduce_group_body")
+      [(Label next label)
+        (set! s next)
+        (set! body label)])
+    (match (lower-state-fresh-label s "spmd_reduce_group_merge")
+      [(Label next label)
+        (set! s next)
+        (set! merge label)])
+    (match (lower-state-fresh-label s "spmd_reduce_group_remainder")
+      [(Label next label)
+        (set! s next)
+        (set! remainder label)])
+    (match (lower-emit-binop s Ge (clone limit) (I64 width) (I64))
+      [(Expr next value _)
+        (set! s next)
+        (set! long-enough value)])
+    (match (lower-emit-binop s Sub limit (I64 width) (I64))
+      [(Expr next value _)
+        (set! s next)
+        (set! group-limit value)])
+    ;; An unsigned comparison rejects a negative start. The signed length
+    ;; check also rejects any wrapped subtraction from a negative limit.
+    (match (lower-emit-binop s Le (Var index-var) (clone group-limit) (U64))
+      [(Expr next value _)
+        (set! s next)
+        (set! first-fits value)])
+    (match (lower-emit-binop s And first-fits long-enough (Bool))
+      [(Expr next fits _)
+        (set!
+          s
+          (lower-state-finish-block
+            (lower-state-emit next (Branch fits prepare remainder))
+            prepare))])
+    (for [gang (iterator.range 1 4)]
+      (match (lower-state-alloc-var s)
+        [(Alloc next var)
+          (set! (array-ref accs gang) var)
+          (set!
+            s
+            (lower-state-emit
+              next
+              (Splat
+                var
+                (lower-spmd-reduce-vector-accumulator-init op acc-var)
+                lanes
+                (clone elem-ty))))]))
+    (set! s (lower-state-finish-block (lower-state-emit s (Jump body)) body))
+    (match (lower-reduce-group-rebase s input index-var (clone elem-ty))
+      [(Base next rebased relative)
+        (set! s next)
+        (set! group-input rebased)
+        (set! relative? relative)])
+    (for [gang (iterator.range 0 4)]
+      (let
+        [chunk : ir.CompilerIrValue Unit]
+        [offset : i64 (* gang lanes)]
+        [gang-index : i64 index-var]
+        (if relative?
+          (match (lower-state-alloc-var s)
+            [(Alloc next var)
+              (set! s (lower-state-emit next (Mov var (I64 offset) (I64))))
+              (set! gang-index var)])
+          (when
+            (> gang 0)
+            (match (lower-emit-binop s Add (Var index-var) (I64 offset) (I64))
+              [(Expr next (Var var) _)
+                (set! s next)
+                (set! gang-index var)]
+              [_ unit])))
+        (match (lower-global-shared-view group-input)
+          [(Array data-ptr)
+            (match (lower-emit-vector-load-data
+              s
+              data-ptr
+              (Var gang-index)
+              lanes
+              (clone elem-ty))
+              [(Expr next value _)
+                (set! s next)
+                (set! chunk value)])]
+          [(Value plan cache)
+            (match (lower-emit-vector-map-value-cached
+              ctx
+              s
+              gang-index
+              lanes
+              (clone elem-ty)
+              plan
+              Full
+              (clone cache))
+              [(Emit next value _)
+                (set! s next)
+                (set! chunk value)])])
+        (set!
+          s
+          (lower-spmd-reduce-vector-accumulate
+            s
+            vector-op
+            (array-ref accs gang)
+            chunk
+            lanes
+            (clone elem-ty)))))
+    (match (lower-emit-binop s Add (Var index-var) (I64 width) (I64))
+      [(Expr next next-index _)
+        (set!
+          s
+          (lower-state-emit next (Mov index-var (clone next-index) (I64))))
+        (match (lower-vector-loop-next-ok s next-index group-limit)
+          [(Expr cmp fits _)
+            (set!
+              s
+              (lower-state-finish-block
+                (lower-state-emit cmp (Branch fits body merge))
+                merge))])])
+    (set!
+      s
+      (lower-spmd-reduce-vector-accumulate
+        (lower-spmd-reduce-vector-accumulate
+          s
+          vector-op
+          vector-acc-var
+          (Var (array-ref accs 1))
+          lanes
+          (clone elem-ty))
+        vector-op
+        (array-ref accs 2)
+        (Var (array-ref accs 3))
+        lanes
+        (clone elem-ty)))
+    (set!
+      s
+      (lower-spmd-reduce-vector-accumulate
+        s
+        vector-op
+        vector-acc-var
+        (Var (array-ref accs 2))
+        lanes
+        elem-ty))
+    (lower-state-finish-block (lower-state-emit s (Jump remainder)) remainder)))
+
 (define (lower-avx2-spmd-reduce-build
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -57141,6 +57464,20 @@
               [(Expr next-s value _)
                 (set! s next-s)
                 (set! data-ptr value)])
+            (set!
+              s
+              (lower-avx2-reduce-groups
+                ctx
+                s
+                (Array (clone data-ptr))
+                index-var
+                (clone vector-limit)
+                acc-var
+                vector-acc-var
+                op
+                vector-op
+                (lower-global-shared-view elem-ty)
+                lanes))
             (if (lower-spmd-reduce-vector-accumulator? elem-ty)
               (set!
                 s
@@ -57384,6 +57721,22 @@
                   [(Emit next-s _ next-cache)
                     (set! s next-s)
                     (set! preheader-cache next-cache)])
+                (set!
+                  s
+                  (lower-avx2-reduce-groups
+                    ctx
+                    s
+                    (Value
+                      (lower-global-shared-view value-plan)
+                      (lower-global-shared-view preheader-cache))
+                    index-var
+                    (clone vector-limit)
+                    acc-var
+                    vector-acc-var
+                    op
+                    vector-op
+                    (lower-global-shared-view elem-ty)
+                    lanes))
                 (set!
                   s
                   (lower-state-finish-block
@@ -57931,10 +58284,15 @@
             (lower-emit-splat state (I64 lanes) lanes elem-ty)
             (LaneCount)
             cache)])]
-    ;; Shuffle selectors may span two i64 vectors when the element lane count
-    ;; exceeds the selector lane count. Its emitter owns that split, so a
-    ;; generic leaf cache would materialize an unused, incorrectly shaped ID.
-    [(Shuffle _ _) (Emit state Unit cache)]
+    ;; The source uses the map's element width. Selector lanes use a separate
+    ;; i64 shape, and the dynamic emitter reads their cached array bases.
+    [(Shuffle source _)
+      (lower-vector-map-preheader-cache-leaves
+        state
+        lanes
+        elem-ty
+        (deref source)
+        cache)]
     [(Stage staged value)
       (match (lower-vector-map-preheader-cache-leaves
         state
@@ -58039,20 +58397,36 @@
   [gang-count : ir.CompilerIrValue]
   [lanes : i64]
   [plan : LowerVectorMapValue]
-  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  [emit-mode : LowerVectorMapEmitMode]
+  [cache : (& cache LowerVectorMapValueCache)]) : LowerExpr
   (match plan
     [(Array array-var)
-      (match emit-mode
-        [(Full)
-          (lower-emit-sequence-vector-load state array-var index lanes (I64))]
-        [(Predicated _ mask)
-          (lower-emit-sequence-predicated-load
+      (match (lower-vector-map-value-cache-lookup cache (ArrayData array-var))
+        [(Some data-ptr)
+          (lower-emit-vector-array-data-for-mode
             state
-            array-var
+            data-ptr
             index
-            mask
             lanes
-            (I64))])]
+            (I64)
+            emit-mode)]
+        [(No)
+          (match emit-mode
+            [(Full)
+              (lower-emit-sequence-vector-load
+                state
+                array-var
+                index
+                lanes
+                (I64))]
+            [(Predicated _ mask)
+              (lower-emit-sequence-predicated-load
+                state
+                array-var
+                index
+                mask
+                lanes
+                (I64))])])]
     [(Uniform value) (lower-emit-splat state value lanes (I64))]
     [(LaneIndex)
       (match (lower-emit-lane-id state lanes (I64))
@@ -58077,7 +58451,8 @@
         (lower-global-shared-view gang-count)
         lanes
         (deref staged)
-        (lower-global-shared-view emit-mode))
+        (lower-global-shared-view emit-mode)
+        cache)
         [(Expr staged-state _ _)
           (lower-emit-shuffle-selector-plan
             staged-state
@@ -58086,7 +58461,8 @@
             gang-count
             lanes
             (deref value)
-            emit-mode)])]
+            emit-mode
+            cache)])]
     [(BinOp op lhs rhs)
       (match (lower-emit-shuffle-selector-plan
         state
@@ -58095,7 +58471,8 @@
         (lower-global-shared-view gang-count)
         lanes
         (deref lhs)
-        (lower-global-shared-view emit-mode))
+        (lower-global-shared-view emit-mode)
+        cache)
         [(Expr lhs-state lhs-value _)
           (match (lower-emit-shuffle-selector-plan
             lhs-state
@@ -58104,7 +58481,8 @@
             gang-count
             lanes
             (deref rhs)
-            (lower-global-shared-view emit-mode))
+            (lower-global-shared-view emit-mode)
+            cache)
             [(Expr rhs-state rhs-value _)
               (match (lower-emit-vector-map-binop
                 rhs-state
@@ -58135,71 +58513,65 @@
     [_ (Expr state Unit (I64))]))
 
 (define (lower-emit-dynamic-vector-shuffle
-  [ctx : tc_core.TcContext]
   [state : LowerState]
   [index-var : i64]
   [lanes : i64]
   [elem-ty : ast.AstType]
-  [source-plan : LowerVectorMapValue]
+  [source-value : ir.CompilerIrValue]
   [selector-plan : LowerVectorMapValue]
-  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  [emit-mode : LowerVectorMapEmitMode]
+  [cache : (& cache LowerVectorMapValueCache)]) : LowerExpr
   (let
     [selector-lanes : i64
       (lower-simd-lanes-for-elem (lower-state-mode state) (I64))]
     [index-value : ir.CompilerIrValue (Var index-var)]
     (match emit-mode
       [(Full)
-        (match (lower-emit-vector-map-value
-          ctx
+        (match (lower-emit-shuffle-selector-plan
           state
-          index-var
-          lanes
-          (lower-global-shared-view elem-ty)
-          source-plan)
-          [(Expr source-state source-value _)
-            (match (lower-emit-shuffle-selector-plan
-              source-state
-              (lower-global-shared-view index-value)
-              0
-              (I64 lanes)
-              selector-lanes
-              (lower-global-shared-view selector-plan)
-              (Full))
-              [(Expr low-state selector-low _)
-                (if (> lanes selector-lanes)
-                  (match (lower-emit-binop
-                    low-state
-                    Add
-                    index-value
-                    (I64 selector-lanes)
-                    (I64))
-                    [(Expr high-index-state high-index _)
-                      (match (lower-emit-shuffle-selector-plan
-                        high-index-state
-                        high-index
-                        selector-lanes
-                        (I64 lanes)
-                        selector-lanes
-                        selector-plan
-                        (Full))
-                        [(Expr high-state selector-high _)
-                          (lower-emit-vector-shuffle-instr
-                            high-state
-                            source-value
-                            selector-low
-                            (Some selector-high)
-                            (I64 lanes)
-                            lanes
-                            elem-ty)])])
-                  (lower-emit-vector-shuffle-instr
-                    low-state
-                    source-value
-                    selector-low
-                    (No)
+          (lower-global-shared-view index-value)
+          0
+          (I64 lanes)
+          selector-lanes
+          (lower-global-shared-view selector-plan)
+          (Full)
+          cache)
+          [(Expr low-state selector-low _)
+            (if (> lanes selector-lanes)
+              (match (lower-emit-binop
+                low-state
+                Add
+                index-value
+                (I64 selector-lanes)
+                (I64))
+                [(Expr high-index-state high-index _)
+                  (match (lower-emit-shuffle-selector-plan
+                    high-index-state
+                    high-index
+                    selector-lanes
                     (I64 lanes)
-                    lanes
-                    elem-ty))])])]
-      [(Predicated end-value source-mask)
+                    selector-lanes
+                    selector-plan
+                    (Full)
+                    cache)
+                    [(Expr high-state selector-high _)
+                      (lower-emit-vector-shuffle-instr
+                        high-state
+                        source-value
+                        selector-low
+                        (Some selector-high)
+                        (I64 lanes)
+                        lanes
+                        elem-ty)])])
+              (lower-emit-vector-shuffle-instr
+                low-state
+                source-value
+                selector-low
+                (No)
+                (I64 lanes)
+                lanes
+                elem-ty))])]
+      [(Predicated end-value _)
         (match (lower-emit-binop
           state
           Sub
@@ -58207,73 +58579,65 @@
           (lower-global-shared-view index-value)
           (I64))
           [(Expr count-state active-lanes _)
-            (match (lower-emit-predicated-vector-map-value
-              ctx
+            (match (lower-emit-tail-mask
               count-state
-              index-var
+              (lower-global-shared-view index-value)
               (lower-global-shared-view end-value)
-              source-mask
-              lanes
-              (lower-global-shared-view elem-ty)
-              source-plan)
-              [(Expr source-state source-value _)
-                (match (lower-emit-tail-mask
-                  source-state
+              selector-lanes)
+              [(Expr low-mask-state low-mask _)
+                (match (lower-emit-shuffle-selector-plan
+                  low-mask-state
                   (lower-global-shared-view index-value)
-                  (lower-global-shared-view end-value)
-                  selector-lanes)
-                  [(Expr low-mask-state low-mask _)
-                    (match (lower-emit-shuffle-selector-plan
-                      low-mask-state
-                      (lower-global-shared-view index-value)
-                      0
-                      (lower-global-shared-view active-lanes)
-                      selector-lanes
-                      (lower-global-shared-view selector-plan)
-                      (Predicated (lower-global-shared-view end-value) low-mask))
-                      [(Expr low-state selector-low _)
-                        (if (> lanes selector-lanes)
-                          (match (lower-emit-binop
-                            low-state
-                            Add
-                            index-value
-                            (I64 selector-lanes)
-                            (I64))
-                            [(Expr high-index-state high-index _)
-                              (match (& high-index)
-                                [(Var high-index-var)
-                                  (match (lower-emit-tail-mask
-                                    high-index-state
-                                    (lower-global-shared-view high-index)
-                                    (lower-global-shared-view end-value)
-                                    selector-lanes)
-                                    [(Expr high-mask-state high-mask _)
-                                      (match (lower-emit-shuffle-selector-plan
-                                        high-mask-state
-                                        high-index
-                                        selector-lanes
-                                        (lower-global-shared-view active-lanes)
-                                        selector-lanes
-                                        selector-plan
-                                        (Predicated end-value high-mask))
-                                        [(Expr high-state selector-high _)
-                                          (lower-emit-vector-shuffle-instr
-                                            high-state
-                                            source-value
-                                            selector-low
-                                            (Some selector-high)
-                                            active-lanes
-                                            lanes
-                                            elem-ty)])])]
-                                [_ (Expr high-index-state Unit elem-ty)])])
-                          (lower-emit-vector-shuffle-instr
-                            low-state
-                            source-value
-                            selector-low
-                            (No)
-                            active-lanes
-                            lanes
-                            elem-ty))])])])])])))
+                  0
+                  (lower-global-shared-view active-lanes)
+                  selector-lanes
+                  (lower-global-shared-view selector-plan)
+                  (Predicated (lower-global-shared-view end-value) low-mask)
+                  cache)
+                  [(Expr low-state selector-low _)
+                    (if (> lanes selector-lanes)
+                      (match (lower-emit-binop
+                        low-state
+                        Add
+                        index-value
+                        (I64 selector-lanes)
+                        (I64))
+                        [(Expr high-index-state high-index _)
+                          (match (& high-index)
+                            [(Var high-index-var)
+                              (match (lower-emit-tail-mask
+                                high-index-state
+                                (lower-global-shared-view high-index)
+                                (lower-global-shared-view end-value)
+                                selector-lanes)
+                                [(Expr high-mask-state high-mask _)
+                                  (match (lower-emit-shuffle-selector-plan
+                                    high-mask-state
+                                    high-index
+                                    selector-lanes
+                                    (lower-global-shared-view active-lanes)
+                                    selector-lanes
+                                    selector-plan
+                                    (Predicated end-value high-mask)
+                                    cache)
+                                    [(Expr high-state selector-high _)
+                                      (lower-emit-vector-shuffle-instr
+                                        high-state
+                                        source-value
+                                        selector-low
+                                        (Some selector-high)
+                                        active-lanes
+                                        lanes
+                                        elem-ty)])])]
+                            [_ (Expr high-index-state Unit elem-ty)])])
+                      (lower-emit-vector-shuffle-instr
+                        low-state
+                        source-value
+                        selector-low
+                        (No)
+                        active-lanes
+                        lanes
+                        elem-ty))])])])])))
 
 (define (lower-emit-vector-shuffle
   [ctx : tc_core.TcContext]
@@ -58309,15 +58673,24 @@
             elem-ty
             source-plan)])]
     [_
-      (lower-emit-dynamic-vector-shuffle
+      (match (lower-emit-vector-map-value-for-mode
         ctx
         state
         index-var
         lanes
-        elem-ty
+        (lower-global-shared-view elem-ty)
         source-plan
-        selector-plan
-        emit-mode)]))
+        (lower-global-shared-view emit-mode))
+        [(Expr source-state source-value _)
+          (lower-emit-dynamic-vector-shuffle
+            source-state
+            index-var
+            lanes
+            elem-ty
+            source-value
+            selector-plan
+            emit-mode
+            (& (lower-vector-map-value-cache-empty)))])]))
 
 (define (lower-emit-vector-map-value
   [ctx : tc_core.TcContext]
@@ -58500,21 +58873,14 @@
 (define (lower-emit-vector-array-data-for-mode
   [state : LowerState]
   [data-ptr : ir.CompilerIrValue]
-  [index-var : i64]
+  [index : ir.CompilerIrValue]
   [lanes : i64]
   [elem-ty : ast.AstType]
   [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
   (match emit-mode
-    [(Full)
-      (lower-emit-vector-load-data state data-ptr (Var index-var) lanes elem-ty)]
+    [(Full) (lower-emit-vector-load-data state data-ptr index lanes elem-ty)]
     [(Predicated _ mask)
-      (lower-emit-predicated-load-data
-        state
-        data-ptr
-        (Var index-var)
-        mask
-        lanes
-        elem-ty)]))
+      (lower-emit-predicated-load-data state data-ptr index mask lanes elem-ty)]))
 
 (define (lower-emit-vector-map-value-cached
   [ctx : tc_core.TcContext]
@@ -58538,7 +58904,7 @@
                 (lower-emit-vector-array-data-for-mode
                   state
                   data-ptr
-                  index-var
+                  (Var index-var)
                   lanes
                   elem-ty
                   emit-mode)
@@ -58670,17 +59036,30 @@
             (LaneCount)
             cache)])]
     [(Shuffle source selector)
-      (match (lower-emit-vector-shuffle
+      (match (lower-emit-vector-map-value-cached
         ctx
         state
         index-var
         lanes
-        elem-ty
+        (lower-global-shared-view elem-ty)
         (deref source)
-        (deref selector)
-        emit-mode)
-        [(Expr shuffle-state shuffle-value _)
-          (Emit shuffle-state shuffle-value cache)])]
+        (lower-global-shared-view emit-mode)
+        cache)
+        [(Emit source-state source-value source-cache)
+          (match (& (deref selector))
+            [(LaneIndex) (Emit source-state source-value source-cache)]
+            [_
+              (match (lower-emit-dynamic-vector-shuffle
+                source-state
+                index-var
+                lanes
+                elem-ty
+                source-value
+                (deref selector)
+                emit-mode
+                (& source-cache))
+                [(Expr shuffle-state shuffle-value _)
+                  (Emit shuffle-state shuffle-value source-cache)])])])]
     [(Stage staged value)
       (match (lower-emit-vector-map-value-cached
         ctx

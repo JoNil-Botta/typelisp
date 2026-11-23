@@ -124,14 +124,16 @@
 (defenum CompilerIrVectorReduceOp
   (Sum)
   (Min)
-  (Max))
+  (Max)
+  (LastLane))
 
 (defenum CompilerIrVectorPrefixOp
   (Sum)
   (Min)
   (Max)
   (All)
-  (Any))
+  (Any)
+  (SplatLast))
 
 (defenum CompilerIrMaskReduceOp
   (All)
@@ -1093,8 +1095,10 @@
   (Splat i64 CompilerIrValue i64 ast.AstType)
   (VectorBinOp (Box CompilerIrInstrVectorBinOpPayload))
   ;; Inclusive, carry-seeded lane prefix. For associative `op`, the result
-  ;; lanes are `out[0] = op(carry, src[0])` and
-  ;; `out[i] = op(out[i - 1], src[i])`.
+  ;; lanes are `out[0] = op(carry[lanes - 1], src[0])` and
+  ;; `out[i] = op(out[i - 1], src[i])`. Sum with Unit carry is a
+  ;; local prefix seeded with zero. SplatLast projects the last lane of a
+  ;; local prefix into every lane and takes Unit carry.
   (VectorPrefix (Box CompilerIrInstrVectorPrefixPayload))
   (VectorReduce i64 CompilerIrVectorReduceOp CompilerIrValue i64 ast.AstType)
   (VectorCompare (Box CompilerIrInstrVectorComparePayload))
@@ -7298,7 +7302,8 @@
   (match op
     [(Sum) "sum"]
     [(Min) "min"]
-    [(Max) "max"]))
+    [(Max) "max"]
+    [(LastLane) "last_lane"]))
 
 (define (compiler-ir-vector-prefix-op-render [op : CompilerIrVectorPrefixOp]) : String
   (match op
@@ -7306,7 +7311,8 @@
     [(Min) "min"]
     [(Max) "max"]
     [(All) "all"]
-    [(Any) "any"]))
+    [(Any) "any"]
+    [(SplatLast) "splat_last"]))
 
 (define (compiler-ir-mask-reduce-op-render [op : CompilerIrMaskReduceOp]) : String
   (match op

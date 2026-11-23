@@ -7293,7 +7293,7 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : String
   (if (= (be_operand.compiler-backend-type-size type-segment-bases ty) 0)
-    "    movq $0, %rax\n"
+    "    movl $0, %eax\n"
     ""))
 
 ;; The edge index (compiler-backend-function-i64-array-edge-index) of one
@@ -8535,7 +8535,7 @@
   [ty : (& ty compiler_ast_types.AstType)]) : String
   (if (and normalize? (string.eq reg "%rax"))
     (match ty
-      [(Bool) "    movzbq %al, %rax\n"]
+      [(Bool) "    movzbl %al, %eax\n"]
       [_ ""])
     ""))
 
@@ -9133,10 +9133,17 @@
             (string.eq call-symbol "tl_alloc")
             (and
               (= name cbi.compiler-builtin-id-tl-alloc-global)
-              (string.eq call-symbol "tl_alloc_global"))))
+              (string.eq call-symbol "tl_alloc_global")
+              (not
+                (be_state.compiler-backend-state-optimize-for-size?
+                  backend-state)))))
         (Ok
           (str_cat.str-cat
-            (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
+            (if (and
+              (not
+                (be_state.compiler-backend-state-optimize-for-size?
+                  backend-state))
+              (compiler-backend-inline-fast-alloc? fast-alloc-size))
               (compiler-backend-emit-inline-fast-alloc
                 target
                 function

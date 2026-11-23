@@ -79058,7 +79058,8 @@
         pools
         source-names
         typecheck-intern-state
-        true)
+        true
+        false)
         [(Ok summary source-ctx source-top-env _)
           (let
             [_freeze-let-facts : unit
@@ -80417,7 +80418,8 @@
                     cfgs)
                   (ast.ast-node-pool-context-capture-active)
                   (ci.intern-compat-state-capture-active)
-                  (tc_core.TcSemanticObserver 0))))
+                  (tc_core.TcSemanticObserver 0)
+                  false)))
             (lower-compiler-program-with-path-mode-and-state
               lower-state
               path

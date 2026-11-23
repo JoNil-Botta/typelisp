@@ -11,6 +11,7 @@
 (import compiler_symbols as symbols)
 (import compiler_ownership_core as own)
 (import stdlib.string)
+(import stdlib.runtime)
 
 (defenum TypedResolutionAuthority
   (:lifetimes context)
@@ -905,13 +906,13 @@
   [item-ty : Expr]) : Expr
   `(let
     [grown : (__tl_dyn-array ,item-ty) (__tl_make-array ,item-ty ,capacity)]
-    [at : i64 0]
-    (while (< at ,count)
-      (set!
-        (array-ref grown at)
-        (unsafe
-          (ptr-read (ptr-offset (__tl_array-data ,cells) at))))
-      (set! at (+ at 1)))
+    (when
+      (> ,count 0)
+      (unsafe
+        (runtime.runtime-copy-bytes!
+          (ptr-cast (__tl_array-data grown) : (MutPtr u8))
+          (ptr-cast (__tl_array-data ,cells) : (Ptr u8))
+          (* ,count (comptime (size-of (type ,item-ty)))))))
     (set! ,cells grown)))
 
 ;; This bounded arithmetic is reached only after the requested count was checked

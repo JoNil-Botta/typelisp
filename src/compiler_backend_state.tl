@@ -1846,6 +1846,14 @@
   (unsafe
     (set! (deref (compiler-backend-state-ptr state)).absolute-switch-ok ok)))
 
+;; Only a closed executable linked in the low ELF code model can put a
+;; private literal's address in a zero-extending imm32.
+(define (compiler-backend-state-absolute-literal-ok?
+  [state : CompilerBackendState]) : bool
+  (and
+    (compiler-backend-state-closed-executable? state)
+    (compiler-backend-state-absolute-switch-ok? state)))
+
 (define (compiler-backend-state-abort-site-counter
   [state : CompilerBackendState]) : i64
   (unsafe

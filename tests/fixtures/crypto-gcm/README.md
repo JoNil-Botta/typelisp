@@ -278,3 +278,23 @@ exactly. The same loads and stores execute in order, including the result
 copies and tag stores. Conditional branches, calls, wipes and effective
 addresses are identical on each path. Both the original and shared paths
 execute one unconditional jump on the redirected arms.
+
+## Hot scalar spill-slot packing re-pin (PR #9935)
+
+`compiler-reg-color-order-slot-ids-by-references` now packs overlapping storage
+bands toward lower slot IDs while preserving alignment and adjacency, and places
+the hottest scalar spill slots closest to `%rsp` (disp8 range) in frames larger
+than 16 slots. Re-derived pins:
+
+- linux opt1: 19 bodies (`shape-linux-x86_64-opt1.sha256`);
+- linux opt2: 4 bodies (`construct-key-operation`, `seal-operation`,
+  `gcm_audit_open`, `main`; `shape-linux-x86_64-opt2.sha256`);
+- windows opt1: 19 bodies (`shape-windows-x86_64-opt1.sha256`);
+- windows opt2: 6 bodies (`construct-key-operation`, `gctr!`, `seal-operation`,
+  `expand!`, `gcm_audit_open$typelisp`, `main`; `shape-windows-x86_64-opt2.sha256`).
+
+Per changed body, checked before re-pinning: inventory, instruction counts,
+frame sizes, opcodes, conditional branches, calls, table/RIP references,
+GHASH multiply loop shape and volatile wipes are byte-identical. Every changed
+body differs strictly by a 1-to-1 permutation of `N(%rsp)` stack-slot
+displacements.
